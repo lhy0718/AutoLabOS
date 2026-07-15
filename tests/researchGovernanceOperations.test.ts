@@ -198,6 +198,99 @@ describe("research governance operations", () => {
     }));
   });
 
+  it("carries scientific review diagnostics and upstream node recommendations through the plugin chain", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-review-handoff-"));
+    const runRoot = path.join(workspace, "runs", "governed-research-run");
+    tempDirs.push(workspace);
+    await writeCompleteExternalBundle(runRoot);
+    await writeJson(path.join(runRoot, "review", "paper_scale_diagnostics.json"), {
+      diagnostics: [
+        {
+          id: "missing_seed_replication",
+          severity: "blocking",
+          source_node: "run_experiments",
+          target_node: "run_experiments",
+          recheck_condition: "Observed repeated-run evidence reaches the governed minimum."
+        },
+        {
+          id: "training_budget_mismatch",
+          severity: "blocking",
+          source_node: "implement_experiments",
+          target_node: "implement_experiments",
+          recheck_condition: "Executed training coverage matches the approved design."
+        }
+      ]
+    });
+    await writeJson(path.join(runRoot, "review", "node_strengthening_recommendations.json"), {
+      recommendations: [
+        {
+          node: "run_experiments",
+          priority: "high",
+          recheck_condition: "Execution evidence passes review."
+        },
+        {
+          node: "implement_experiments",
+          priority: "high",
+          recheck_condition: "Implementation budget passes review."
+        },
+        {
+          node: "generate_hypotheses",
+          priority: "high",
+          recheck_condition: "Claims remain within measured outcomes."
+        },
+        {
+          node: "design_experiments",
+          priority: "medium",
+          recheck_condition: "The design declares its evidence floor."
+        }
+      ]
+    });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    const improveResult = await runResearchImprove({
+      cwd: workspace,
+      reviewPath: reviewResult.output_path,
+      outDir: "outputs/governance/improve"
+    });
+    const evidenceBundle = JSON.parse(await readFile(
+      path.join(workspace, "outputs", "governance", "audit", "evidence-bundle.json"),
+      "utf8"
+    ));
+
+    expect(gateResult.artifact.verdict).toBe("blocked");
+    expect(gateResult.artifact.findings).toContainEqual(expect.objectContaining({
+      code: "missing_seed_replication",
+      target_node: "run_experiments",
+      target_surface: "validator",
+      recheck_condition: "Observed repeated-run evidence reaches the governed minimum."
+    }));
+    expect(evidenceBundle.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "review/paper_scale_diagnostics.json" }),
+      expect.objectContaining({ path: "review/node_strengthening_recommendations.json" })
+    ]));
+    expect(reviewResult.artifact.repair_targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target_node: "run_experiments" }),
+      expect.objectContaining({ target_node: "implement_experiments" }),
+      expect.objectContaining({ target_node: "generate_hypotheses", target_surface: "prompt" }),
+      expect.objectContaining({ target_node: "design_experiments", target_surface: "prompt" })
+    ]));
+    expect(improveResult.artifact.targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target_node: "run_experiments" }),
+      expect.objectContaining({ target_node: "implement_experiments" }),
+      expect.objectContaining({ target_node: "generate_hypotheses" }),
+      expect.objectContaining({ target_node: "design_experiments" })
+    ]));
+  });
+
   it("excludes JSON-quoted private paths from paper-readiness bundles", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-portability-"));
     const external = path.join(workspace, "external-artifacts");
@@ -235,6 +328,58 @@ describe("research governance operations", () => {
     );
   });
 
+  it("redacts run-specific identifiers from copied public bundle artifacts", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-redaction-"));
+    const external = path.join(workspace, "external-artifacts");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    const runId = ["11111111", "1111", "4111", "8111", "111111111111"].join("-");
+    const taskName = ["Task", "Alpha"].join("");
+    const modelName = ["Model", "1B"].join("-");
+    const conditionName = ["condition", "4", "parameter", "0"].join("_");
+    await writeJson(path.join(workspace, "outputs", "governance", "audit", "audit-summary.json"), {
+      task_id: runId,
+      statement: `A comparison on ${taskName} used ${modelName} and ${conditionName}.`,
+      trace_id: "evt_1778330583786_5f19307b",
+      contract_path: "done-condition-audit.json"
+    });
+
+    const packResult = await runResearchPack({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      reviewPath: reviewResult.output_path,
+      sourceDir: "outputs/governance/audit",
+      outDir: "outputs/governance/pack"
+    });
+    const packedText = await readFile(
+      path.join(workspace, "outputs", "governance", "pack", "artifacts", "audit-summary.json"),
+      "utf8"
+    );
+
+    expect(packResult.artifact.portability.valid).toBe(true);
+    expect(packResult.artifact.portability.redacted_files).toContain("artifacts/audit-summary.json");
+    expect(packedText).not.toContain(runId);
+    expect(packedText).not.toContain(taskName);
+    expect(packedText).not.toContain(modelName);
+    expect(packedText).not.toContain(conditionName);
+    expect(packedText).toContain("<task-id>");
+    expect(packedText).toContain("<model-id>");
+    expect(packedText).toContain("<condition-id>");
+    expect(packedText).toContain("evt_1778330583786_5f19307b");
+    expect(packedText).toContain("done-condition-audit.json");
+  });
+
   it("keeps explicit gate and review artifacts when source files target the same bundle paths", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-collision-"));
     const external = path.join(workspace, "external-artifacts");
@@ -270,7 +415,10 @@ describe("research governance operations", () => {
 
     expect(reviewFiles).toHaveLength(1);
     expect(packedReview).toEqual(reviewResult.artifact);
-    expect(packResult.artifact.portability).toEqual({ valid: true, issues: [] });
+    expect(packResult.artifact.portability).toEqual(expect.objectContaining({
+      valid: true,
+      issues: []
+    }));
   });
 
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {

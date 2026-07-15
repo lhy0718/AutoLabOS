@@ -60,6 +60,21 @@ const PRIVATE_PATH_PATTERN = new RegExp(
   "u"
 );
 const SENSITIVE_TEXT_PATTERN = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|private[_-]?key|credential|secret)\s*[=:]/iu;
+const RUN_UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
+const CONDITION_IDENTIFIER_PATTERN = /\b(?:condition|rank|dropout)[_-]\d[a-z0-9._-]*\b/giu;
+const PARAMETER_VALUE_PATTERN = /\b(?:rank|dropout)\s+\d+(?:\.\d+)?\b/giu;
+const MODEL_IDENTIFIER_PATTERN = /\b[A-Za-z][A-Za-z0-9._-]*[-_.]\d+(?:\.\d+)?[BbMm]\b/gu;
+const UPPER_HYPHEN_ENTITY_PATTERN = /\b[A-Z]{2,}(?:-[A-Za-z][A-Za-z0-9]*)+\b/gu;
+const CAMEL_CASE_ENTITY_PATTERN = /\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b/gu;
+const PUBLIC_CONTRACT_TOKENS = new Set([
+  "AutoLabOS",
+  "EvidenceBundle",
+  "GateReport",
+  "ReviewReport",
+  "MetaHarnessPatchPlan",
+  "PaperReadinessBundle"
+]);
+const RUN_IDENTIFIER_FIELD_PATTERN = /^(?:run|task|model|benchmark|condition)(?:_id|_name)?$/iu;
 
 export async function runResearchNew(input: {
   cwd: string;
@@ -151,11 +166,16 @@ export async function runResearchPack(input: {
 
   const files: Array<{ path: string; sha256: string; bytes: number }> = [];
   const portabilityIssues: string[] = [];
+  const redactedFiles: string[] = [];
   const limitations = review.blocking_issues.map((finding) => finding.message);
   const candidates = uniqueCandidateFiles([
-    { source: resolveWithinCwd(input.cwd, input.gatePath), relative: "gate-report.json" },
-    { source: resolveWithinCwd(input.cwd, input.reviewPath), relative: "review-report.json" },
-    ...PACK_ALLOWLIST.map((relative) => ({ source: path.join(sourceDir, relative), relative }))
+    { source: resolveWithinCwd(input.cwd, input.gatePath), relative: "gate-report.json", redactIdentifiers: false },
+    { source: resolveWithinCwd(input.cwd, input.reviewPath), relative: "review-report.json", redactIdentifiers: false },
+    ...PACK_ALLOWLIST.map((relative) => ({
+      source: path.join(sourceDir, relative),
+      relative,
+      redactIdentifiers: true
+    }))
   ]);
 
   for (const candidate of candidates) {
@@ -166,13 +186,19 @@ export async function runResearchPack(input: {
       portabilityIssues.push(`Excluded ${candidate.relative} because it contains non-portable or sensitive text.`);
       continue;
     }
+    const portableCopy = candidate.redactIdentifiers
+      ? redactRunSpecificIdentifiers(raw, candidate.relative)
+      : { content: raw, redacted: false };
     const destination = path.join(artifactDir, candidate.relative);
     await ensureDir(path.dirname(destination));
-    await fs.writeFile(destination, raw);
+    await fs.writeFile(destination, portableCopy.content);
+    if (portableCopy.redacted) {
+      redactedFiles.push(portableArtifactRef(path.posix.join("artifacts", candidate.relative)));
+    }
     files.push({
       path: portableArtifactRef(path.posix.join("artifacts", candidate.relative.replace(/\\/gu, "/"))),
-      sha256: createHash("sha256").update(raw).digest("hex"),
-      bytes: raw.byteLength
+      sha256: createHash("sha256").update(portableCopy.content).digest("hex"),
+      bytes: portableCopy.content.byteLength
     });
   }
 
@@ -184,7 +210,8 @@ export async function runResearchPack(input: {
     review,
     files,
     limitations,
-    portabilityIssues
+    portabilityIssues,
+    redactedFiles
   });
   assertValidArtifact(bundle);
   const outputPath = path.join(outDir, "paper-readiness-bundle.json");
@@ -234,8 +261,8 @@ function assertValidArtifact(artifact: unknown): void {
 }
 
 function uniqueCandidateFiles(
-  candidates: Array<{ source: string; relative: string }>
-): Array<{ source: string; relative: string }> {
+  candidates: Array<{ source: string; relative: string; redactIdentifiers: boolean }>
+): Array<{ source: string; relative: string; redactIdentifiers: boolean }> {
   const seenSources = new Set<string>();
   const seenDestinations = new Set<string>();
   return candidates.filter((candidate) => {
@@ -246,4 +273,66 @@ function uniqueCandidateFiles(
     seenDestinations.add(destinationKey);
     return true;
   });
+}
+
+function redactRunSpecificIdentifiers(
+  raw: Buffer,
+  relativePath: string
+): { content: Buffer; redacted: boolean } {
+  const text = raw.toString("utf8");
+  let sanitized = text;
+  if (relativePath.toLowerCase().endsWith(".json")) {
+    try {
+      sanitized = `${JSON.stringify(redactJsonValue(JSON.parse(text)), null, 2)}\n`;
+    } catch {
+      sanitized = redactFreeText(text);
+    }
+  } else {
+    sanitized = redactFreeText(text);
+  }
+  return {
+    content: Buffer.from(sanitized, "utf8"),
+    redacted: sanitized !== text
+  };
+}
+
+function redactJsonValue(value: unknown, key?: string): unknown {
+  if (typeof value === "string") {
+    if (key && RUN_IDENTIFIER_FIELD_PATTERN.test(key)) {
+      return identifierPlaceholder(key);
+    }
+    return redactFreeText(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactJsonValue(entry));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+      entryKey,
+      redactJsonValue(entryValue, entryKey)
+    ])
+  );
+}
+
+function identifierPlaceholder(key: string): string {
+  const normalized = key.toLowerCase();
+  if (normalized.startsWith("run")) return "<run-id>";
+  if (normalized.startsWith("model")) return "<model-id>";
+  if (normalized.startsWith("condition")) return "<condition-id>";
+  return "<task-id>";
+}
+
+function redactFreeText(value: string): string {
+  return value
+    .replace(RUN_UUID_PATTERN, "<run-id>")
+    .replace(CONDITION_IDENTIFIER_PATTERN, "<condition-id>")
+    .replace(PARAMETER_VALUE_PATTERN, "<parameter-value>")
+    .replace(MODEL_IDENTIFIER_PATTERN, "<model-id>")
+    .replace(UPPER_HYPHEN_ENTITY_PATTERN, "<task-id>")
+    .replace(CAMEL_CASE_ENTITY_PATTERN, (token) => (
+      PUBLIC_CONTRACT_TOKENS.has(token) ? token : "<task-id>"
+    ));
 }

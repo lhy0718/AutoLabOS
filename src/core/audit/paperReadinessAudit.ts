@@ -51,6 +51,16 @@ export interface PaperReadinessAuditDesignContractFinding {
   evidence_path: string;
 }
 
+export interface PaperReadinessAuditResearchScaleFinding {
+  code: string;
+  severity: "blocker" | "warning";
+  message: string;
+  target_node?: string;
+  target_surface?: "prompt" | "validator" | "skill";
+  evidence_path: string;
+  recheck_condition?: string;
+}
+
 export interface PaperReadinessAuditSummary {
   generated_at: string;
   verdict: PaperReadinessAuditVerdict;
@@ -93,6 +103,7 @@ export interface PaperReadinessAuditSummary {
   };
   citation_support_issues: PaperReadinessAuditUnsupportedClaim[];
   design_contract_findings: PaperReadinessAuditDesignContractFinding[];
+  research_scale_findings: PaperReadinessAuditResearchScaleFinding[];
   claim_ceiling: {
     allowed_level: string;
     rules_applied: string[];
@@ -150,6 +161,8 @@ interface LoadedRunArtifacts {
   evidenceStoreLines: Record<string, unknown>[];
   designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
   literatureDiscoveryPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
+  paperScaleDiagnostics: Record<string, unknown> | undefined;
+  nodeStrengtheningRecommendations: Record<string, unknown> | undefined;
   governanceConditionPayload: Record<string, unknown> | undefined;
   researchBriefText: string | undefined;
   mainTexExists: boolean;
@@ -273,6 +286,7 @@ async function buildAuditSummary(input: {
   const unsupportedClaims = collectUnsupportedClaims(input.artifacts, claimEvidence);
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
   const designContractFindings = collectDesignContractFindings(input.artifacts);
+  const researchScaleFindings = collectResearchScaleFindings(input.artifacts);
   const literatureDiscovery = scoreLiteratureDiscoveryAudit({
     payloads: input.artifacts.literatureDiscoveryPayloads
   });
@@ -351,6 +365,14 @@ async function buildAuditSummary(input: {
       severity: "blocker",
       message: "Figure audit reports a severe mismatch or review block requirement.",
       source: "figureAuditScoring"
+    });
+  }
+  for (const finding of researchScaleFindings) {
+    blockers.push({
+      code: finding.code,
+      severity: finding.severity,
+      message: finding.message,
+      source: "reviewResearchScaleArtifacts"
     });
   }
   if (evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent) {
@@ -556,6 +578,7 @@ async function buildAuditSummary(input: {
     },
     citation_support_issues: citationSupportIssues,
     design_contract_findings: designContractFindings,
+    research_scale_findings: researchScaleFindings,
     claim_ceiling: {
       allowed_level: allowedLevel,
       rules_applied: [...new Set(rulesApplied)]
@@ -627,6 +650,12 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     evidenceStoreLines: await readJsonl(path.join(runRoot, "evidence_store.jsonl")),
     designContractPayloads: await readDesignContractPayloads(runRoot),
     literatureDiscoveryPayloads: await readLiteratureDiscoveryPayloads(runRoot),
+    paperScaleDiagnostics: await readOptionalJson<Record<string, unknown>>(
+      path.join(runRoot, "review", "paper_scale_diagnostics.json")
+    ),
+    nodeStrengtheningRecommendations: await readOptionalJson<Record<string, unknown>>(
+      path.join(runRoot, "review", "node_strengthening_recommendations.json")
+    ),
     governanceConditionPayload: conditionPayload,
     researchBriefText: await readResearchBriefText(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
@@ -1186,6 +1215,77 @@ function collectDesignContractFindings(
   return dedupeDesignFindings(findings);
 }
 
+function collectResearchScaleFindings(
+  artifacts: LoadedRunArtifacts
+): PaperReadinessAuditResearchScaleFinding[] {
+  const findings: PaperReadinessAuditResearchScaleFinding[] = [];
+  const diagnosticsPath = path.posix.join("review", "paper_scale_diagnostics.json");
+  for (const row of recordArray(artifacts.paperScaleDiagnostics?.diagnostics)) {
+    const code = stringValue(row.id);
+    const targetNode = governedResearchNode(row.target_node) || governedResearchNode(row.source_node);
+    if (!code) {
+      continue;
+    }
+    findings.push({
+      code,
+      severity: row.severity === "blocking" ? "blocker" : "warning",
+      message: `Research-scale diagnostic ${code} must be resolved or explicitly governed down before manuscript promotion.`,
+      ...(targetNode ? { target_node: targetNode, target_surface: "validator" as const } : {}),
+      evidence_path: diagnosticsPath,
+      ...(stringValue(row.recheck_condition)
+        ? { recheck_condition: stringValue(row.recheck_condition) }
+        : {})
+    });
+  }
+
+  const recommendationsPath = path.posix.join("review", "node_strengthening_recommendations.json");
+  for (const row of recordArray(artifacts.nodeStrengtheningRecommendations?.recommendations)) {
+    const targetNode = governedResearchNode(row.node);
+    if (!targetNode) {
+      continue;
+    }
+    findings.push({
+      code: `node_strengthening_recommendation:${targetNode}`,
+      severity: row.priority === "high" ? "blocker" : "warning",
+      message: `Review evidence requires strengthening the ${targetNode} node before manuscript promotion.`,
+      target_node: targetNode,
+      target_surface: "prompt",
+      evidence_path: recommendationsPath,
+      ...(stringValue(row.recheck_condition)
+        ? { recheck_condition: stringValue(row.recheck_condition) }
+        : {})
+    });
+  }
+
+  const seen = new Set<string>();
+  return findings.filter((finding) => {
+    const key = `${finding.code}\u0000${finding.target_node || ""}\u0000${finding.evidence_path}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
+}
+
+function governedResearchNode(value: unknown): string | undefined {
+  const node = stringValue(value);
+  return node && GOVERNED_RESEARCH_NODES.has(node) ? node : undefined;
+}
+
+const GOVERNED_RESEARCH_NODES = new Set([
+  "collect_papers",
+  "analyze_papers",
+  "generate_hypotheses",
+  "design_experiments",
+  "implement_experiments",
+  "run_experiments",
+  "analyze_results",
+  "figure_audit",
+  "review",
+  "write_paper"
+]);
+
 function dedupeDesignFindings(
   findings: PaperReadinessAuditDesignContractFinding[]
 ): PaperReadinessAuditDesignContractFinding[] {
@@ -1332,6 +1432,8 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
       actions.add("Treat the manuscript as unaccepted, return to the failed gate, and rerun write_paper only after the cited blockers are repaired.");
     } else if (blocker.code === "artifact_contract_incomplete") {
       actions.add("Restore required governance artifacts or explicitly mark the bundle incomplete.");
+    } else if (blocker.source === "reviewResearchScaleArtifacts") {
+      actions.add("Repair the upstream node identified by review evidence, then rerun the scientific and manuscript-promotion gates.");
     }
   }
   if (actions.size === 0) {

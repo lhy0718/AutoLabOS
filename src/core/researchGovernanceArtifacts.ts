@@ -61,6 +61,9 @@ export interface GateFinding {
   severity: "blocker" | "warning";
   message: string;
   evidence_refs: string[];
+  target_node?: GovernedResearchNode;
+  target_surface?: "prompt" | "validator" | "skill";
+  recheck_condition?: string;
 }
 
 export interface GateReportArtifact extends ResearchGovernanceArtifactBase {
@@ -88,6 +91,7 @@ export interface ReviewRepairTarget {
   target_surface: "prompt" | "validator" | "skill";
   reason: string;
   evidence_refs: string[];
+  recheck_condition?: string;
 }
 
 export interface ReviewReportArtifact extends ResearchGovernanceArtifactBase {
@@ -130,6 +134,7 @@ export interface PaperReadinessBundleArtifact extends ResearchGovernanceArtifact
   portability: {
     valid: boolean;
     issues: string[];
+    redacted_files?: string[];
   };
 }
 
@@ -219,7 +224,8 @@ export function buildEvidenceBundleArtifact(
     summary.outputs.claim_evidence_path,
     summary.outputs.audit_timeline_path,
     summary.outputs.done_condition_path,
-    summary.outputs.external_intake_manifest_path
+    summary.outputs.external_intake_manifest_path,
+    ...summary.research_scale_findings.map((finding) => finding.evidence_path)
   ].filter((value): value is string => Boolean(value)).map(portableArtifactRef));
   const requiredRefs = new Set([
     portableArtifactRef(summary.outputs.summary_path),
@@ -256,13 +262,27 @@ export function buildGateReportArtifact(input: {
   now?: Date;
 }): GateReportArtifact {
   const summary = input.summary;
+  const researchScaleByKey = new Map(summary.research_scale_findings.map((finding) => [
+    `${finding.code}\u0000${finding.message}`,
+    finding
+  ]));
   const findings = uniqueFindings([
-    ...summary.top_blockers.map((finding) => ({
-      code: finding.code,
-      severity: finding.severity,
-      message: finding.message,
-      evidence_refs: [portableArtifactRef(summary.outputs.blockers_path)]
-    })),
+    ...summary.top_blockers.map((finding) => {
+      const researchScale = researchScaleByKey.get(`${finding.code}\u0000${finding.message}`);
+      return {
+        code: finding.code,
+        severity: finding.severity,
+        message: finding.message,
+        evidence_refs: [
+          portableArtifactRef(researchScale?.evidence_path || summary.outputs.blockers_path)
+        ],
+        ...(normalizeGovernedNode(researchScale?.target_node)
+          ? { target_node: normalizeGovernedNode(researchScale?.target_node) }
+          : {}),
+        ...(researchScale?.target_surface ? { target_surface: researchScale.target_surface } : {}),
+        ...(researchScale?.recheck_condition ? { recheck_condition: researchScale.recheck_condition } : {})
+      };
+    }),
     ...summary.unsupported_claims.map((finding) => ({
       code: "unsupported_claim",
       severity: "blocker" as const,
@@ -367,9 +387,11 @@ export function buildPaperReadinessBundleArtifact(input: {
   files: Array<{ path: string; sha256: string; bytes: number }>;
   limitations: string[];
   portabilityIssues?: string[];
+  redactedFiles?: string[];
   now?: Date;
 }): PaperReadinessBundleArtifact {
   const portabilityIssues = uniqueStrings(input.portabilityIssues ?? []);
+  const redactedFiles = uniqueStrings(input.redactedFiles ?? []);
   return {
     ...baseArtifact("PaperReadinessBundle", "research:pack", {
       sourceMode: "governance_artifact",
@@ -394,7 +416,8 @@ export function buildPaperReadinessBundleArtifact(input: {
     limitations: uniqueStrings(input.limitations),
     portability: {
       valid: portabilityIssues.length === 0,
-      issues: portabilityIssues
+      issues: portabilityIssues,
+      ...(redactedFiles.length > 0 ? { redacted_files: redactedFiles } : {})
     }
   };
 }
@@ -472,10 +495,12 @@ function inferReadinessClass(gate: GateReportArtifact): ResearchReadinessClass {
 
 function mapFindingToRepairTarget(finding: GateFinding): ReviewRepairTarget {
   const normalized = `${finding.code} ${finding.message}`.toLowerCase().replace(/[_-]+/gu, " ");
-  let targetNode: GovernedResearchNode = "review";
-  let targetSurface: ReviewRepairTarget["target_surface"] = "validator";
+  let targetNode: GovernedResearchNode = finding.target_node || "review";
+  let targetSurface: ReviewRepairTarget["target_surface"] = finding.target_surface || "validator";
 
-  if (/(artifact contract|governance artifact)/u.test(normalized)) {
+  if (finding.target_node) {
+    // Preserve the node selected by the governed review artifact.
+  } else if (/(artifact contract|governance artifact)/u.test(normalized)) {
     targetNode = "run_experiments";
     targetSurface = "validator";
   } else if (/(literature|canonical paper|related work|source coverage)/u.test(normalized)) {
@@ -512,9 +537,29 @@ function mapFindingToRepairTarget(finding: GateFinding): ReviewRepairTarget {
     target_node: targetNode,
     target_surface: targetSurface,
     reason: finding.message,
-    evidence_refs: finding.evidence_refs
+    evidence_refs: finding.evidence_refs,
+    ...(finding.recheck_condition ? { recheck_condition: finding.recheck_condition } : {})
   };
 }
+
+function normalizeGovernedNode(value: unknown): GovernedResearchNode | undefined {
+  return typeof value === "string" && GOVERNED_RESEARCH_NODES.has(value as GovernedResearchNode)
+    ? value as GovernedResearchNode
+    : undefined;
+}
+
+const GOVERNED_RESEARCH_NODES = new Set<GovernedResearchNode>([
+  "collect_papers",
+  "analyze_papers",
+  "generate_hypotheses",
+  "design_experiments",
+  "implement_experiments",
+  "run_experiments",
+  "analyze_results",
+  "figure_audit",
+  "review",
+  "write_paper"
+]);
 
 function proposedChangeForTarget(target: ReviewRepairTarget): string {
   return `Strengthen the ${target.target_node} ${target.target_surface} so finding ${target.finding_code} is blocked or downgraded before downstream promotion.`;
