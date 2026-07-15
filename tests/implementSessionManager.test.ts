@@ -31079,6 +31079,83 @@ describe("ImplementSessionManager", () => {
     expect(output).toEqual({ index: 0, label: 0, task: "benchmark_task_a" });
   });
 
+  it("repairs trailing-comma helper signatures without creating invalid syntax", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-helper-call-arity-trailing-comma-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "",
+        "def build_runtime_context(",
+        "    condition: dict,",
+        "    seed: int,",
+        ") -> dict:",
+        "    return {'condition': condition['marker'], 'seed': seed}",
+        "",
+        "def run_once():",
+        "    return build_runtime_context({'marker': 'candidate_condition'}, 7, {'budget': 1}, trace='enabled')",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(run_once(), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", [scriptPath], { cwd: workspace })).toThrow(
+      /positional arguments but 3 were given|unexpected keyword argument 'trace'/u
+    );
+
+    const repair = await repairPythonHelperCallArityDriftSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).not.toContain(",,");
+    expect(repairedSource).toContain("*_autolabos_extra_args");
+    expect(repairedSource).toContain("**_autolabos_extra_kwargs");
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output).toEqual({ condition: "candidate_condition", seed: 7 });
+  });
+
+  it("recovers helper signatures corrupted by a previous arity repair", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-helper-call-arity-recovery-"));
+    tempDirs.push(workspace);
+    const scriptPath = path.join(workspace, "runner.py");
+
+    writeFileSync(
+      scriptPath,
+      [
+        "from __future__ import annotations",
+        "import json",
+        "",
+        "def build_runtime_context(condition: dict, seed: int,, *_autolabos_extra_args, **_autolabos_extra_kwargs) -> dict:",
+        "    return {'condition': condition['marker'], 'seed': seed}",
+        "",
+        "if __name__ == '__main__':",
+        "    print(json.dumps(build_runtime_context({'marker': 'candidate_condition'}, 7), sort_keys=True))",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    expect(() => execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace })).toThrow(
+      /SyntaxError/u
+    );
+
+    const repair = await repairPythonHelperCallArityDriftSurface(scriptPath);
+    const repairedSource = readFileSync(scriptPath, "utf8");
+
+    expect(repair.repaired).toBe(true);
+    expect(repairedSource).not.toContain(",,");
+    execFileSync("python3", ["-m", "py_compile", scriptPath], { cwd: workspace });
+    const output = JSON.parse(execFileSync("python3", [scriptPath], { cwd: workspace, encoding: "utf8" }));
+    expect(output).toEqual({ condition: "candidate_condition", seed: 7 });
+  });
+
   it("repairs duplicate generated evaluation normalizers that leave stale two-argument calls", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-helper-eval-normalizer-"));
     tempDirs.push(workspace);

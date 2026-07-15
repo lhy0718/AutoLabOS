@@ -55570,7 +55570,9 @@ export async function repairPythonHelperCallArityDriftSurface(scriptPath?: strin
     return { repaired: false };
   }
 
-  const definitions = collectPythonTopLevelFunctionDefinitions(source);
+  const repairedInvalidExtraArgsSeparator = /,\s*,\s*\*_autolabos_extra_args/u.test(source);
+  let nextSource = source.replace(/,\s*,\s*(\*_autolabos_extra_args)/gu, ", $1");
+  const definitions = collectPythonTopLevelFunctionDefinitions(nextSource);
   const byName = new Map<string, PythonTopLevelFunctionDefinition[]>();
   for (const definition of definitions) {
     const group = byName.get(definition.name) || [];
@@ -55579,7 +55581,6 @@ export async function repairPythonHelperCallArityDriftSurface(scriptPath?: strin
   }
 
   const replacements: Array<{ definition: PythonTopLevelFunctionDefinition; nextSignature: string }> = [];
-  let nextSource = source;
   let repairedNormalizeEvalExampleCalls = false;
   const normalizeEvalExampleDefinitions = byName.get("normalize_eval_example") || [];
   const activeNormalizeEvalExampleDefinition = normalizeEvalExampleDefinitions.at(-1);
@@ -55609,7 +55610,7 @@ export async function repairPythonHelperCallArityDriftSurface(scriptPath?: strin
       continue;
     }
     const definition = group[0];
-    const callShape = extractPythonCallShape(source, name);
+    const callShape = extractPythonCallShape(nextSource, name);
     if (callShape.keywords.size === 0 && callShape.maxPositionalArgs === 0) {
       continue;
     }
@@ -55632,14 +55633,14 @@ export async function repairPythonHelperCallArityDriftSurface(scriptPath?: strin
     if (needsKeywordBridge) {
       additions.push("**_autolabos_extra_kwargs");
     }
-    const trimmedSignature = definition.signature.trim();
+    const trimmedSignature = definition.signature.trim().replace(/,\s*$/u, "");
     const nextSignature = trimmedSignature ? `${trimmedSignature}, ${additions.join(", ")}` : additions.join(", ");
     if (nextSignature !== definition.signature) {
       replacements.push({ definition, nextSignature });
     }
   }
 
-  if (replacements.length === 0 && !repairedNormalizeEvalExampleCalls) {
+  if (replacements.length === 0 && !repairedNormalizeEvalExampleCalls && !repairedInvalidExtraArgsSeparator) {
     return { repaired: false };
   }
 
@@ -55657,7 +55658,9 @@ export async function repairPythonHelperCallArityDriftSurface(scriptPath?: strin
   ])).sort();
   return {
     repaired: true,
-    message: "Allowed generated helper call arity drift before handoff: " + names.join(", ") + "."
+    message: names.length > 0
+      ? "Allowed generated helper call arity drift before handoff: " + names.join(", ") + "."
+      : "Normalized a previously repaired generated helper signature before handoff."
   };
 }
 

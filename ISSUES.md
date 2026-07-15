@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-12
+Last updated: 2026-07-15
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -14,6 +14,50 @@ Path placeholders:
 - `<repo-root>` means the local AutoLabOS implementation checkout.
 
 ---
+
+
+## Issue: LV-595
+
+- Status: helper-signature separator repair implemented; targeted regression, full CI, production build, harness validation, and exact persisted-runner copy migration pass; same-flow live revalidation pending
+- Validation target: generated helper call-arity repairs must preserve valid Python syntax for multiline signatures that already end with a trailing comma, and a later retry must be able to recover an already-corrupted signature.
+- Environment/session context: existing governed live run in `<validation-workspace>`, after `implement_experiments` exhausted its candidates and rolled back to `design_experiments`.
+- Reproduction steps:
+  1. Retry `implement_experiments` through the real TUI until a generated multiline helper receives positional and keyword compatibility arguments.
+  2. Inspect the repaired helper signature after implement handoff.
+  3. Run the node-owned Python compile verification.
+- Expected behavior:
+  - A trailing comma in the original multiline signature should be normalized before compatibility arguments are appended.
+  - Reapplying the repair to an already-corrupted signature should restore valid syntax.
+  - Candidate verification should proceed to semantic contract checks instead of failing on repair-generated syntax.
+- Actual behavior:
+  - The arity repair appended another separator after the existing trailing comma.
+  - The generated signature contained `,,` immediately before the compatibility varargs.
+  - Python compilation failed and the final implementation candidate rolled back without reaching semantic validation.
+- Fresh vs existing session comparison:
+  - Fresh session: valid generated source becomes invalid only after helper call-arity repair.
+  - Existing session: the invalid repaired signature remains in the persisted public runner after the final candidate fails.
+  - Divergence: the repair was neither syntax-preserving on first application nor self-healing on a later application.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: helper signature assembly trimmed surrounding whitespace but did not remove an existing terminal comma before inserting its own separator; the same parser could not recognize the resulting invalid signature on retry.
+- Code/test changes:
+  - Normalize one terminal comma before appending positional or keyword compatibility arguments.
+  - Normalize a previously generated double separator before collecting Python function definitions.
+  - Add domain-neutral regression coverage for both first-application and already-corrupted signatures.
+- Regression status:
+  - Same-flow live reproduction: confirmed on 2026-07-12.
+  - Targeted automated regression: both first-application and self-healing tests pass.
+  - Full CI passes: 195 root test files with 2,677 tests, plus 14 web tests.
+  - Production build and public-code sanitization pass.
+  - Harness validation passes with 502 issue entries checked and no structural violations.
+  - A copy of the exact persisted runner was repaired successfully and passes `python3 -m py_compile`.
+  - Same-flow live retry: pending.
+- Follow-up risks:
+  - Once syntax verification advances, the implementation node may expose the previously observed budget-deadline or missing-callable contract boundary; those must remain separate evidence-backed failures.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<run-id>/implement_attempts.json`
+  - `<validation-workspace>/.autolabos/runs/<run-id>/events.jsonl`
+  - `<validation-workspace>/outputs/topic-slug/experiment/experiment.py`
 
 
 ## Issue: LV-594
