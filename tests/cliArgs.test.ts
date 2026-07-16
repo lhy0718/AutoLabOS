@@ -520,6 +520,21 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports deterministic projection of an external promotion source", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "project-promotion-source",
+      "--source-root", "inputs/raw-source",
+      "--recipe", "inputs/projection.json",
+      "--out-dir", "outputs/projected-source"
+    ])).toEqual({
+      kind: "governance-benchmark-project-promotion-source",
+      sourceRoot: "inputs/raw-source",
+      recipePath: "inputs/projection.json",
+      outDir: "outputs/projected-source"
+    });
+  });
+
   it("requires complete roles and three trials when preparing execution evidence", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -579,6 +594,17 @@ describe("resolveCliAction", () => {
 
   it("requires a recipe for promotion benchmark build mode", () => {
     expect(resolveCliAction(["governance-benchmark", "build-promotion"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--recipe")
+    });
+  });
+
+  it("requires source, recipe, and output paths for promotion source projection", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "project-promotion-source",
+      "--source-root", "inputs/raw-source"
+    ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--recipe")
     });

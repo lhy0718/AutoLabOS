@@ -59,6 +59,10 @@ import {
   preparePromotionExecutionEvidence,
   type PreparePromotionExecutionEvidenceInput
 } from "../core/benchmark/promotionBenchmarkExecutionEvidence.js";
+import {
+  projectPromotionSource,
+  type ProjectPromotionSourceInput
+} from "../core/benchmark/promotionBenchmarkSourceProjection.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -312,6 +316,23 @@ export async function runPromotionExecutionEvidencePreparationCli(
   );
 }
 
+export async function runPromotionSourceProjectionCli(
+  input: ProjectPromotionSourceInput
+): Promise<void> {
+  const result = await projectPromotionSource(input);
+  process.stdout.write(
+    [
+      `Promotion source projection ${result.manifest.ready_for_confirmatory_intake ? "ready" : "prepared with blockers"}`,
+      `Output: ${result.output_dir}`,
+      `Manifest: ${result.manifest_path}`,
+      `Outputs: ${result.manifest.outputs.length}`,
+      `Promotion compatible: ${result.manifest.promotion_compatible}`,
+      `Execution evidence verified: ${result.manifest.execution_evidence_verified}`,
+      "Evidence boundary: deterministic byte selection and JSON-pointer extraction only; execution, operator identity, licensing, and scientific validity are not inferred"
+    ].join("\n") + "\n"
+  );
+}
+
 export async function runPromotionConfirmatoryFreezeCli(
   input: FreezePromotionConfirmatoryInput
 ): Promise<void> {
@@ -338,6 +359,8 @@ export async function runPromotionConfirmatoryAuditCli(
       `Promotion confirmatory intake audit ${result.report.passed ? "passed" : "failed"}: ${result.report.study_id}`,
       `Artifact-verified sources: ${result.report.artifact_verified_source_count}/${result.report.source_count}`,
       `Minimum sources: ${result.report.minimum_source_count}`,
+      `Declared source families: ${result.report.declared_source_family_count}/${result.report.minimum_source_family_count} minimum`,
+      `Declared operator groups: ${result.report.declared_operator_group_count}/${result.report.minimum_operator_group_count} minimum`,
       `Report: ${result.report_path}`
     ].join("\n") + "\n"
   );

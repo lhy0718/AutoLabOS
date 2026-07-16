@@ -375,6 +375,21 @@ This is a self-improvement path, but not an unconstrained repo-wide rewrite path
 
 AutoLabOS also has built-in harness presets such as `base`, `compact`, `failure-aware`, and `review-heavy`. These adjust artifact/context policy, failure-memory emphasis, prompt policy, and compression strategy for comparative evaluation paths without changing the governed production workflow.
 
+### External Source Projection
+
+External research-agent outputs can be normalized for promotion-benchmark intake without embedding source-specific adapters in public runtime code:
+
+```sh
+autolabos governance-benchmark project-promotion-source \
+  --source-root <raw-source> \
+  --recipe <projection.json> \
+  --out-dir <projected-bundle>
+```
+
+Projection recipes support byte-for-byte file copies and JSON-pointer extraction only. They cannot add literal evidence values. The projector records source/output hashes, rejects path escape, symlinks, credential-like paths or values, preserves the selected source license, and rejects files added outside the closed output manifest. A generated bundle is marked confirmatory-ready only when the canonical mutation contract, hash-bound real-execution evidence, redistribution declaration, and human license review all pass.
+
+Confirmatory intake requires every projected or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
+
 ---
 
 ## Common Commands

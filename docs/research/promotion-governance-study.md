@@ -150,12 +150,14 @@ Secondary metrics:
 - artifact trace coverage
 - wall time and provider cost
 
-All confidence intervals use paired bootstrap resampling clustered by base
-bundle. The implemented evaluator reports an exact paired sign test over
-base-bundle effects; McNemar's test may additionally be reported for a frozen
-single-trial binary comparison when its assumptions are met. Effect sizes and
-raw counts are reported regardless of significance. Synthetic development
-suites are always marked exploratory.
+Primary confidence intervals use paired bootstrap resampling clustered by base
+bundle. Because content-distinct runs from one system family are not
+independent system samples, the final analysis must also report family-stratified
+results and leave-one-family-out sensitivity. The implemented evaluator reports
+an exact paired sign test over base-bundle effects; McNemar's test may
+additionally be reported for a frozen single-trial binary comparison when its
+assumptions are met. Effect sizes and raw counts are reported regardless of
+significance. Synthetic development suites are always marked exploratory.
 
 ## Leakage And Validity Controls
 
@@ -166,8 +168,24 @@ suites are always marked exploratory.
   mutation does not introduce undeclared faults.
 - Include clean positive, clean null, and clean negative controls.
 - Freeze at least 20 source-hash-distinct canonical bundles before building the
-  confirmatory suite. Derive public base IDs from hashes and keep local source
-  IDs and original paths outside the frozen corpus.
+  confirmatory suite. Require at least three declared source-system families
+  and three declared operator groups, and allow neither a family nor an
+  operator group to contribute more than half of the bases. These declarations
+  support stratification; they do not prove real-world independence. Derive
+  public base IDs from hashes and keep local source IDs and original paths
+  outside the frozen corpus.
+- Preserve a non-empty `SOURCE_LICENSE.txt` and its hash for every native or
+  projected source. Carry only hashed family/operator identifiers and the
+  `declared_stratified` status through recipes, mutation provenance, case
+  manifests, suite loading, adjudication, and scoring. Each downstream gate
+  must recheck the minimum counts, per-base consistency, and 50 percent cap.
+- Normalize non-native bundles only through `project-promotion-source` recipes.
+  The projector permits byte-for-byte file selection and JSON-pointer
+  extraction, records source and output hashes, rejects symlinks and
+  credential-like paths or values, and cannot introduce literal evidence
+  values. A projected source remains ineligible until every canonical mutation
+  target, execution-evidence role, redistribution declaration, and human
+  license-review gate passes.
 - Require each source to bind run configuration, events, metrics, review
   decision, command, and execution log files in `execution-evidence.json`.
   Reject non-real or failed modes, fewer than three distinct trials, hash drift,
@@ -191,15 +209,43 @@ suites are always marked exploratory.
   pseudonymous IDs do not prove real-world identity.
 - Let the adjudication importer set paper eligibility only after the external
   real-run, artifact-verified provenance, held-out split, source-hash
-  independence, 20-base, 200-case, and clean-plus-nine-family paired-coverage
-  gates pass and mutation isolation is `double_verified`.
+  uniqueness, declared family/operator diversity, 20-base, 200-case, and
+  clean-plus-nine-family paired-coverage gates pass and mutation isolation is
+  `double_verified`.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
   independent adjudication importer may replace labels or change eligibility.
 
+## Source Acquisition Audit
+
+The public-source route was inspected on 2026-07-16 using official project
+repositories and linked first-party archives.
+
+- [CodeScientist](https://github.com/allenai/codescientist) exposes 20 reports,
+  external review ratings, and a linked 52 MB experiment archive. The archive
+  contains 20 top-level experiments with two to fourteen recorded runtime
+  directories per experiment, but several have fewer than three. It also
+  contains credential-labelled paths, so direct extraction is unsafe and the
+  selected evidence files require a secret scan and license review.
+- [The AI Scientist](https://github.com/sakanaai/ai-scientist) exposes ten
+  example projects and 59 run directories with structured result JSON, but the
+  repository examples do not supply every required execution-log, independent
+  human-review, figure-audit, checkpoint, and claim-link artifact. Its current
+  source license also requires explicit review before redistribution.
+- [Agent Laboratory](https://github.com/SamuelSchmidgall/AgentLaboratory)
+  documents checkpointed end-to-end execution but does not include completed
+  run bundles in the official repository.
+
+No inspected source is currently counted as confirmatory evidence. The
+acquisition audit establishes feasible raw-material routes, not 20 eligible
+bases. Missing canonical governance artifacts must not be filled with inferred
+or hand-authored success values.
+
 ## Minimum Publishable Experiment
 
-- At least 20 independent base bundles covering positive, null, and negative
-  outcomes, with 30 preferred for the final submission.
+- At least 20 source-hash-distinct base bundles covering positive, null, and
+  negative outcomes, drawn from at least three declared source families and
+  three declared operator groups with no group above 50 percent; 30 bases are
+  preferred for the final submission.
 - At least 200 held-out cases total. At the 20-base floor, each base contributes
   one clean control and one variant from every required fault family.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded

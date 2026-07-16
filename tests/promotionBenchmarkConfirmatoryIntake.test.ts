@@ -11,7 +11,9 @@ import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBen
 import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
-  MINIMUM_CONFIRMATORY_BASE_BUNDLES
+  MINIMUM_CONFIRMATORY_BASE_BUNDLES,
+  MINIMUM_CONFIRMATORY_OPERATOR_GROUPS,
+  MINIMUM_CONFIRMATORY_SOURCE_FAMILIES
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 
@@ -22,7 +24,7 @@ afterEach(async () => {
 });
 
 describe("promotion confirmatory intake", () => {
-  it("freezes independent external bundles into a provisional held-out corpus", async () => {
+  it("freezes source-distinct external bundles into a provisional held-out corpus", async () => {
     const workspace = await createWorkspace();
     const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
 
@@ -45,9 +47,12 @@ describe("promotion confirmatory intake", () => {
       adjudication_status: string;
       mutation_isolation_status: string;
       execution_provenance_status: string;
+      source_diversity_status: string;
       cases: Array<{
         base_bundle_id: string;
         split: string;
+        source_family_id_sha256: string;
+        operator_group_id_sha256: string;
         mutation_family?: string;
         gold: { decision: string; blocking_concerns: string[]; repair_owners: string[] };
       }>;
@@ -57,7 +62,8 @@ describe("promotion confirmatory intake", () => {
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
       mutation_isolation_status: "unreviewed",
-      execution_provenance_status: "artifact_verified"
+      execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified"
     });
     expect(recipe.cases).toHaveLength(200);
     expect(new Set(recipe.cases.map((item) => item.base_bundle_id))).toHaveProperty("size", 20);
@@ -65,6 +71,8 @@ describe("promotion confirmatory intake", () => {
     expect(recipe.cases.every((item) => item.gold.decision === "needs_review")).toBe(true);
     expect(recipe.cases.every((item) => item.gold.blocking_concerns.length === 0)).toBe(true);
     expect(recipe.cases.every((item) => item.gold.repair_owners.length === 0)).toBe(true);
+    expect(new Set(recipe.cases.map((item) => item.source_family_id_sha256))).toHaveProperty("size", 4);
+    expect(new Set(recipe.cases.map((item) => item.operator_group_id_sha256))).toHaveProperty("size", 4);
 
     const expectedFamilies = promotionVariantDefinitions()
       .flatMap((variant) => variant.mutation_family ? [variant.mutation_family] : [])
@@ -80,12 +88,18 @@ describe("promotion confirmatory intake", () => {
       intake_manifest_sha256: string;
       recipe_sha256: string;
       execution_provenance_status: string;
+      source_diversity_status: string;
       source_bundles: Array<{
         base_bundle_id: string;
         source_sha256: string;
+        source_family_id_sha256: string;
+        operator_group_id_sha256: string;
+        source_revision: string;
+        origin_kind: string;
         run_id_sha256: string;
         execution_fingerprint: string;
         evidence_manifest_sha256: string;
+        license_sha256: string;
         copied_root: string;
       }>;
     };
@@ -93,10 +107,15 @@ describe("promotion confirmatory intake", () => {
     expect(freezeManifest.intake_manifest_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(freezeManifest.recipe_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(freezeManifest.execution_provenance_status).toBe("artifact_verified");
+    expect(freezeManifest.source_diversity_status).toBe("declared_stratified");
     expect(new Set(freezeManifest.source_bundles.map((item) => item.source_sha256))).toHaveProperty("size", 20);
+    expect(new Set(freezeManifest.source_bundles.map((item) => item.source_family_id_sha256))).toHaveProperty("size", 4);
+    expect(new Set(freezeManifest.source_bundles.map((item) => item.operator_group_id_sha256))).toHaveProperty("size", 4);
+    expect(freezeManifest.source_bundles.every((item) => item.origin_kind === "native")).toBe(true);
     expect(new Set(freezeManifest.source_bundles.map((item) => item.run_id_sha256))).toHaveProperty("size", 20);
     expect(new Set(freezeManifest.source_bundles.map((item) => item.execution_fingerprint))).toHaveProperty("size", 20);
     expect(freezeManifest.source_bundles.every((item) => /^[a-f0-9]{64}$/u.test(item.evidence_manifest_sha256))).toBe(true);
+    expect(freezeManifest.source_bundles.every((item) => /^[a-f0-9]{64}$/u.test(item.license_sha256))).toBe(true);
     expect(freezeManifestText).not.toContain(path.join(workspace, "sources"));
     expect(freezeManifestText).not.toContain("local-source-");
     expect(recipeText).not.toContain(path.join(workspace, "sources"));
@@ -113,6 +132,7 @@ describe("promotion confirmatory intake", () => {
     const eligibility = evaluatePromotionAdjudicationEligibility({
       evidence_class: loaded.suite?.manifest.evidence_class,
       execution_provenance_status: loaded.suite?.manifest.execution_provenance_status,
+      source_diversity_status: loaded.suite?.manifest.source_diversity_status,
       cases: loaded.suite?.cases || [],
       adjudication_complete: false,
       mutation_isolation_verified: false
@@ -124,7 +144,7 @@ describe("promotion confirmatory intake", () => {
     ]));
   }, 30_000);
 
-  it("rejects an intake below the independent bundle minimum without creating output", async () => {
+  it("rejects an intake below the base-bundle minimum without creating output", async () => {
     const workspace = await createWorkspace();
     const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES - 1);
 
@@ -150,7 +170,11 @@ describe("promotion confirmatory intake", () => {
       passed: false,
       source_count: 2,
       artifact_verified_source_count: 2,
-      minimum_source_count: 20
+      minimum_source_count: 20,
+      declared_source_family_count: 2,
+      minimum_source_family_count: MINIMUM_CONFIRMATORY_SOURCE_FAMILIES,
+      declared_operator_group_count: 2,
+      minimum_operator_group_count: MINIMUM_CONFIRMATORY_OPERATOR_GROUPS
     });
     expect(result.report.global_issues.map((issue) => issue.code)).toContain("confirmatory_source_count_minimum_not_met");
     expect(result.report.sources.every((source) => source.passed)).toBe(true);
@@ -165,6 +189,7 @@ describe("promotion confirmatory intake", () => {
       sources: Array<{ source_id: string; source_root: string; evidence_class: string }>;
     };
     manifest.sources[1] = {
+      ...manifest.sources[1],
       source_id: "local-source-duplicate",
       source_root: "sources/bundle-duplicate",
       evidence_class: "external_real_run"
@@ -175,7 +200,7 @@ describe("promotion confirmatory intake", () => {
       cwd: workspace,
       manifestPath,
       outDir: "frozen"
-    })).rejects.toThrow("must be independent");
+    })).rejects.toThrow("must have distinct content hashes");
     await expect(readFile(path.join(workspace, "frozen", "recipe.json"), "utf8")).rejects.toThrow();
   });
 
@@ -192,6 +217,57 @@ describe("promotion confirmatory intake", () => {
     await expect(readFile(path.join(workspace, "frozen", "recipe.json"), "utf8")).rejects.toThrow();
   });
 
+  it("rejects a hash-distinct inventory concentrated in one declared family and operator group", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
+      sources: Array<{ source_family_id: string; operator_group_id: string }>;
+    };
+    for (const source of manifest.sources) {
+      source.source_family_id = "family-shared";
+      source.operator_group_id = "operator-shared";
+    }
+    await writeJson(path.join(workspace, manifestPath), manifest);
+
+    const result = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "audit"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.global_issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "confirmatory_source_family_minimum_not_met",
+      "confirmatory_operator_group_minimum_not_met",
+      "confirmatory_source_family_share_exceeded",
+      "confirmatory_operator_group_share_exceeded"
+    ]));
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath,
+      outDir: "frozen"
+    })).rejects.toThrow("execution evidence audit failed");
+  });
+
+  it("requires projected sources to carry a matching confirmatory-ready projection manifest", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
+      sources: Array<{ origin_kind: string }>;
+    };
+    manifest.sources[0].origin_kind = "projected";
+    await writeJson(path.join(workspace, manifestPath), manifest);
+
+    const result = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "audit"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.sources[0].issues.map((issue) => issue.code)).toContain("source_projection_manifest_unreadable");
+  });
+
   it("rejects a source when a hash-bound execution artifact changes after manifest creation", async () => {
     const workspace = await createWorkspace();
     const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
@@ -202,6 +278,27 @@ describe("promotion confirmatory intake", () => {
       manifestPath,
       outDir: "frozen"
     })).rejects.toThrow("execution_evidence_artifact_hash_mismatch");
+  });
+
+  it("rejects a native source without preserved license evidence", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    await rm(path.join(workspace, "sources", "bundle-01", "SOURCE_LICENSE.txt"));
+
+    const result = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "audit"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.sources[0].issues.map((issue) => issue.code))
+      .toContain("confirmatory_source_license_evidence_missing");
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath,
+      outDir: "frozen"
+    })).rejects.toThrow("confirmatory_source_license_evidence_missing");
   });
 
   it("does not overwrite an existing frozen corpus", async () => {
@@ -245,7 +342,13 @@ async function writeIntake(workspace: string, sourceCount: number): Promise<stri
     sources.push({
       source_id: `local-source-${String(index + 1).padStart(2, "0")}`,
       source_root: `sources/${directoryName}`,
-      evidence_class: "external_real_run"
+      evidence_class: "external_real_run",
+      source_family_id: `family-${String((index % 4) + 1).padStart(2, "0")}`,
+      operator_group_id: `operator-${String((index % 4) + 1).padStart(2, "0")}`,
+      source_revision: `revision-${String(index + 1).padStart(2, "0")}`,
+      origin_kind: "native",
+      distribution_scope: "redistributable",
+      license_review_status: "human_verified"
     });
   }
   const manifestPath = "intake.json";
@@ -261,6 +364,7 @@ async function writeBaseBundle(root: string, ordinal: number): Promise<void> {
   await mkdir(path.join(root, "figure_audit"), { recursive: true });
   await mkdir(path.join(root, "paper"), { recursive: true });
   await mkdir(path.join(root, "checkpoint"), { recursive: true });
+  await writeFile(path.join(root, "SOURCE_LICENSE.txt"), "Neutral test fixture license.\n", "utf8");
   await writeJson(path.join(root, "result_table.json"), [{ baseline: 0.5, comparator: 0.6 }]);
   await writeJson(path.join(root, "experiment_evidence.json"), {
     trials: [{ seed: 101 }, { seed: 211 }, { seed: 307 }]

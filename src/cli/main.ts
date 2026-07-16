@@ -22,6 +22,7 @@ import {
   runPromotionAdjudicationCli,
   runPromotionBenchmarkSystemsCli,
   runSyntheticPromotionCorpusCli,
+  runPromotionSourceProjectionCli,
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
@@ -59,6 +60,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
@@ -287,6 +289,16 @@ async function main(): Promise<void> {
 
   if (action.kind === "governance-benchmark-generate-promotion-development") {
     await runSyntheticPromotionCorpusCli({ cwd: process.cwd(), outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-project-promotion-source") {
+    await runPromotionSourceProjectionCli({
+      cwd: process.cwd(),
+      sourceRoot: action.sourceRoot,
+      recipePath: action.recipePath,
+      outDir: action.outDir
+    });
     return;
   }
 

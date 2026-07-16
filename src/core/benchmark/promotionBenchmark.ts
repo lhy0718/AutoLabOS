@@ -3,6 +3,12 @@ import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 
 import { writeJsonFile } from "../../utils/fs.js";
+import {
+  inspectPromotionSourceDiversity,
+  isPromotionSourceDiversityStatus,
+  isSha256,
+  type PromotionBenchmarkSourceDiversityStatus
+} from "./promotionBenchmarkSourceDiversity.js";
 
 export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "block"] as const;
 
@@ -21,6 +27,7 @@ export interface PromotionBenchmarkSuiteManifest {
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
+  source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
   cases: string[];
 }
 
@@ -31,6 +38,8 @@ export interface PromotionBenchmarkCaseManifest {
   split: PromotionBenchmarkSplit;
   artifact_root: string;
   source_sha256?: string;
+  source_family_id_sha256?: string;
+  operator_group_id_sha256?: string;
   artifact_sha256?: string;
   mutation_manifest?: string;
   mutation_family?: string;
@@ -131,6 +140,7 @@ export interface PromotionBenchmarkScoreReport {
   adjudication_status: PromotionBenchmarkAdjudicationStatus | "unspecified";
   mutation_isolation_status: PromotionBenchmarkMutationIsolationStatus | "unspecified";
   execution_provenance_status: PromotionBenchmarkExecutionProvenanceStatus | "unspecified";
+  source_diversity_status: PromotionBenchmarkSourceDiversityStatus | "unspecified";
   suite_ref: string;
   prediction_ref: string;
   passed: boolean;
@@ -245,6 +255,9 @@ export async function loadPromotionBenchmarkSuite(
       }
     }
   }
+  if (manifest.source_diversity_status === "declared_stratified") {
+    issues.push(...inspectPromotionSourceDiversity(cases).issues);
+  }
   return {
     suite: {
       suite_path: absoluteSuitePath,
@@ -323,6 +336,7 @@ export async function scorePromotionBenchmarkFromFiles(
     adjudication_status: loaded.suite?.manifest.adjudication_status || "unspecified",
     mutation_isolation_status: loaded.suite?.manifest.mutation_isolation_status || "unspecified",
     execution_provenance_status: loaded.suite?.manifest.execution_provenance_status || "unspecified",
+    source_diversity_status: loaded.suite?.manifest.source_diversity_status || "unspecified",
     suite_ref: portableRef(cwd, suitePath, "<external-suite>"),
     prediction_ref: portableRef(cwd, predictionsPath, "<external-predictions>"),
     passed: issues.length === 0,
@@ -630,6 +644,7 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     `- Adjudication: ${report.adjudication_status}`,
     `- Mutation isolation: ${report.mutation_isolation_status}`,
     `- Execution provenance: ${report.execution_provenance_status}`,
+    `- Source diversity: ${report.source_diversity_status}`,
     "",
     "## System Summary",
     "",
@@ -713,13 +728,18 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({ code: "suite_execution_provenance_status_invalid", message: "Suite execution_provenance_status is invalid." });
     return undefined;
   }
+  if (value.source_diversity_status !== undefined && !isPromotionSourceDiversityStatus(value.source_diversity_status)) {
+    issues.push({ code: "suite_source_diversity_status_invalid", message: "Suite source_diversity_status is invalid." });
+    return undefined;
+  }
   if (value.paper_claim_eligible === true
       && (value.adjudication_status !== "double_adjudicated"
         || value.mutation_isolation_status !== "double_verified"
-        || value.execution_provenance_status !== "artifact_verified")) {
+        || value.execution_provenance_status !== "artifact_verified"
+        || value.source_diversity_status !== "declared_stratified")) {
     issues.push({
       code: "suite_paper_claim_eligibility_unverified",
-      message: "Paper-claim-eligible suites require artifact-verified execution provenance, double adjudication, and double-verified mutation isolation."
+      message: "Paper-claim-eligible suites require artifact-verified execution provenance, declared source stratification, double adjudication, and double-verified mutation isolation."
     });
     return undefined;
   }
@@ -731,6 +751,7 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
+    ...(value.source_diversity_status ? { source_diversity_status: value.source_diversity_status } : {}),
     cases: stringArray(value.cases) || []
   };
 }
@@ -748,6 +769,14 @@ function parseCaseManifest(
     issues.push({ code: "case_manifest_invalid", message: "Case manifest has invalid identity, split, artifact, or gold fields.", ref });
     return undefined;
   }
+  if (value.source_family_id_sha256 !== undefined && !isSha256(value.source_family_id_sha256)) {
+    issues.push({ code: "case_source_family_hash_invalid", message: "Case source_family_id_sha256 must be a lowercase SHA-256 digest.", ref });
+    return undefined;
+  }
+  if (value.operator_group_id_sha256 !== undefined && !isSha256(value.operator_group_id_sha256)) {
+    issues.push({ code: "case_operator_group_hash_invalid", message: "Case operator_group_id_sha256 must be a lowercase SHA-256 digest.", ref });
+    return undefined;
+  }
   return {
     schema_version: "1.0",
     case_id: value.case_id,
@@ -755,6 +784,8 @@ function parseCaseManifest(
     split: value.split,
     artifact_root: value.artifact_root,
     ...(nonEmptyString(value.source_sha256) ? { source_sha256: value.source_sha256 } : {}),
+    ...(isSha256(value.source_family_id_sha256) ? { source_family_id_sha256: value.source_family_id_sha256 } : {}),
+    ...(isSha256(value.operator_group_id_sha256) ? { operator_group_id_sha256: value.operator_group_id_sha256 } : {}),
     ...(nonEmptyString(value.artifact_sha256) ? { artifact_sha256: value.artifact_sha256 } : {}),
     ...(nonEmptyString(value.mutation_manifest) ? { mutation_manifest: value.mutation_manifest } : {}),
     ...(nonEmptyString(value.mutation_family) ? { mutation_family: value.mutation_family } : {}),

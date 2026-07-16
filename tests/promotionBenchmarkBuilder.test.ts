@@ -130,6 +130,22 @@ describe("promotion benchmark builder", () => {
       recipePath: "recipe.json",
       outDir: "generated-suite"
     })).rejects.toThrow("double-verified mutation isolation");
+
+    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+      schema_version: "1.0",
+      suite_id: "claim-suite",
+      evidence_class: "external_real_run",
+      paper_claim_eligible: true,
+      adjudication_status: "double_adjudicated",
+      mutation_isolation_status: "double_verified",
+      execution_provenance_status: "artifact_verified",
+      cases: [recipeCase("case-a", "base-a", "test", "bundle")]
+    }));
+    await expect(buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "generated-suite"
+    })).rejects.toThrow("declared source stratification");
   });
 
   it("rejects a hand-authored artifact-verified status without execution evidence", async () => {

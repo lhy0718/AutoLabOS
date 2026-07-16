@@ -41,8 +41,11 @@ null, and negative research outcomes.
 4. Implement ungated, presence-checklist, manuscript-only, full-policy, and
    ablation conditions.
 5. Run a development pilot and repair benchmark validity failures.
-6. Collect at least 20 independently sourced real-run bundles, verify their
-   hash-bound execution provenance, freeze them into a provisional
+6. Collect at least 20 source-hash-distinct real-run bundles across at least
+   three declared source families and three declared operator groups, cap every
+   family and group at half of the sample, verify hash-bound execution
+   provenance and preserved license evidence, and freeze them with an
+   end-to-end `declared_stratified` marker into a provisional
    clean-plus-nine held-out corpus, obtain blind double adjudication and a
    separately blinded double mutation-isolation audit, execute the comparison
    systems, and compute paired uncertainty and tests.
@@ -117,9 +120,11 @@ on clean research bundles?
   an upstream repair owner.
 - Protocol: paired clean/counterfactual evaluation with base-bundle-disjoint
   development and test splits.
-- Minimum scale: 20 independently sourced base bundles, at least 200
-  counterfactual variants across nine blocking fault families, and all clean
-  controls; 30 base bundles are preferred for submission.
+- Minimum scale: 20 source-hash-distinct base bundles from at least three
+  declared source families and three declared operator groups, with no family
+  or group above 50 percent; at least 200 counterfactual variants across nine
+  blocking fault families and all clean controls. Thirty bases are preferred
+  for submission.
 - Limitation: mutation-based cases approximate real research failures and must
   be separated from naturally occurring live-run evidence in reporting.
 
@@ -135,8 +140,12 @@ on clean research bundles?
 
 ## Minimum Acceptable Evidence
 
-- At least 20 base bundles and 200 held-out cases, split by base bundle, with a
-  clean control and all nine required fault-family variants per base.
+- At least 20 source-hash-distinct base bundles and 200 held-out cases, split by
+  base bundle, with a clean control and all nine required fault-family variants
+  per base.
+- At least three declared source families and three declared operator groups,
+  no family or group above half of the base bundles, family-stratified metrics,
+  and leave-one-family-out sensitivity analysis.
 - All required fault families and clean positive, null, and negative controls.
 - At least one post-repair rerun for every fault family.
 - Three independent real-provider runs per manuscript-only test case when that
@@ -161,6 +170,10 @@ on clean research bundles?
   run artifacts.
 - Do not omit clean cases, failed runs, null results, or unfavorable ablations.
 - Do not claim human validation without independent adjudication records.
+- Do not convert an external source into canonical evidence with inferred
+  constants. Use only byte-preserving copies or JSON-pointer extraction, retain
+  source/output hashes, and require a completed human license review before
+  public freezing.
 - Do not expose the private annotation map, provisional gold, mutation
   metadata, or model predictions to either initial adjudicator.
 - Do not resolve annotation disagreement by majority inference from two labels;

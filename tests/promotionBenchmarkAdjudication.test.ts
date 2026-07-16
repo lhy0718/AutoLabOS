@@ -79,7 +79,7 @@ describe("promotion benchmark adjudication", () => {
       validation_issues: [expect.objectContaining({ code: "mutation_isolation_report_missing" })]
     });
     expect(result.report.eligibility.blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
-      "independent_base_bundle_minimum_not_met",
+      "base_bundle_minimum_not_met",
       "held_out_case_minimum_not_met",
       "paired_fault_family_coverage_incomplete"
     ]));
@@ -411,17 +411,20 @@ describe("promotion benchmark adjudication", () => {
     for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
       const baseBundleId = `base-${baseIndex + 1}`;
       const sourceHash = baseIndex.toString(16).padStart(64, "0");
-      const clean = caseManifest(`${baseBundleId}-clean`, baseBundleId, sourceHash);
+      const sourceFamilyHash = hashId(`source-family-${(baseIndex % 4) + 1}`);
+      const operatorGroupHash = hashId(`operator-group-${(baseIndex % 4) + 1}`);
+      const clean = caseManifest(`${baseBundleId}-clean`, baseBundleId, sourceHash, sourceFamilyHash, operatorGroupHash);
       if (baseIndex === 1) clean.gold.decision = "block";
       cases.push(clean);
       for (const family of REQUIRED_CONFIRMATORY_MUTATION_FAMILIES) {
-        cases.push(caseManifest(`${baseBundleId}-${family}`, baseBundleId, sourceHash, family));
+        cases.push(caseManifest(`${baseBundleId}-${family}`, baseBundleId, sourceHash, sourceFamilyHash, operatorGroupHash, family));
       }
     }
 
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "external_real_run",
       execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: true
@@ -429,11 +432,14 @@ describe("promotion benchmark adjudication", () => {
       paper_claim_eligible: true,
       base_bundle_count: 20,
       case_count: 200,
+      source_family_count: 4,
+      operator_group_count: 4,
       blockers: []
     });
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "synthetic_development",
       execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: true
@@ -441,10 +447,30 @@ describe("promotion benchmark adjudication", () => {
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "external_real_run",
       execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: false
     }).blockers.map((blocker) => blocker.code)).toContain("mutation_isolation_double_audit_incomplete");
+
+    const concentratedCases = cases.map((benchmarkCase) => ({
+      ...benchmarkCase,
+      source_family_id_sha256: hashId("shared-source-family"),
+      operator_group_id_sha256: hashId("shared-operator-group")
+    }));
+    expect(evaluatePromotionAdjudicationEligibility({
+      evidence_class: "external_real_run",
+      execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified",
+      cases: concentratedCases,
+      adjudication_complete: true,
+      mutation_isolation_verified: true
+    }).blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+      "source_family_minimum_not_met",
+      "operator_group_minimum_not_met",
+      "source_family_share_exceeded",
+      "operator_group_share_exceeded"
+    ]));
   });
 
   it("returns a failing process status when score validation fails", async () => {
@@ -589,6 +615,8 @@ function caseManifest(
   caseId: string,
   baseBundleId: string,
   sourceSha256: string,
+  sourceFamilyIdSha256: string,
+  operatorGroupIdSha256: string,
   mutationFamily?: string
 ): PromotionBenchmarkCaseManifest {
   return {
@@ -598,8 +626,14 @@ function caseManifest(
     split: "test",
     artifact_root: `../artifacts/${caseId}`,
     source_sha256: sourceSha256,
+    source_family_id_sha256: sourceFamilyIdSha256,
+    operator_group_id_sha256: operatorGroupIdSha256,
     artifact_sha256: "f".repeat(64),
     ...(mutationFamily ? { mutation_family: mutationFamily } : {}),
     gold: { decision: mutationFamily ? "block" : "promote", blocking_concerns: [], repair_owners: [] }
   };
+}
+
+function hashId(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

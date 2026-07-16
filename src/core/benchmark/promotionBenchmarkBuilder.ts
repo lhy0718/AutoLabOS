@@ -15,6 +15,12 @@ import {
   type PromotionDecision
 } from "./promotionBenchmark.js";
 import { inspectPromotionExecutionEvidence } from "./promotionBenchmarkExecutionEvidence.js";
+import {
+  inspectPromotionSourceDiversity,
+  isPromotionSourceDiversityStatus,
+  isSha256,
+  type PromotionBenchmarkSourceDiversityStatus
+} from "./promotionBenchmarkSourceDiversity.js";
 
 export type PromotionMutationOperation =
   | { op: "delete_path"; path: string }
@@ -26,6 +32,8 @@ export interface PromotionBenchmarkRecipeCase {
   base_bundle_id: string;
   split: PromotionBenchmarkSplit;
   source_root: string;
+  source_family_id_sha256?: string;
+  operator_group_id_sha256?: string;
   mutation_family?: string;
   operations: PromotionMutationOperation[];
   gold: {
@@ -43,6 +51,7 @@ export interface PromotionBenchmarkRecipe {
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
+  source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
   cases: PromotionBenchmarkRecipeCase[];
 }
 
@@ -58,6 +67,8 @@ export interface PromotionMutationManifest {
   case_id: string;
   base_bundle_id: string;
   source_sha256: string;
+  source_family_id_sha256?: string;
+  operator_group_id_sha256?: string;
   artifact_sha256: string;
   mutation_family?: string;
   operations: PromotionMutationRecord[];
@@ -111,6 +122,8 @@ export async function buildPromotionBenchmarkSuite(
         case_id: recipeCase.case_id,
         base_bundle_id: recipeCase.base_bundle_id,
         source_sha256: sourceHash,
+        ...(recipeCase.source_family_id_sha256 ? { source_family_id_sha256: recipeCase.source_family_id_sha256 } : {}),
+        ...(recipeCase.operator_group_id_sha256 ? { operator_group_id_sha256: recipeCase.operator_group_id_sha256 } : {}),
         artifact_sha256: artifactHash,
         ...(recipeCase.mutation_family ? { mutation_family: recipeCase.mutation_family } : {}),
         operations: mutationRecords
@@ -125,6 +138,8 @@ export async function buildPromotionBenchmarkSuite(
         split: recipeCase.split,
         artifact_root: `../artifacts/${recipeCase.case_id}`,
         source_sha256: sourceHash,
+        ...(recipeCase.source_family_id_sha256 ? { source_family_id_sha256: recipeCase.source_family_id_sha256 } : {}),
+        ...(recipeCase.operator_group_id_sha256 ? { operator_group_id_sha256: recipeCase.operator_group_id_sha256 } : {}),
         artifact_sha256: artifactHash,
         mutation_manifest: `../provenance/${recipeCase.case_id}.json`,
         ...(recipeCase.mutation_family ? { mutation_family: recipeCase.mutation_family } : {}),
@@ -142,6 +157,7 @@ export async function buildPromotionBenchmarkSuite(
       ...(recipe.adjudication_status ? { adjudication_status: recipe.adjudication_status } : {}),
       ...(recipe.mutation_isolation_status ? { mutation_isolation_status: recipe.mutation_isolation_status } : {}),
       ...(recipe.execution_provenance_status ? { execution_provenance_status: recipe.execution_provenance_status } : {}),
+      ...(recipe.source_diversity_status ? { source_diversity_status: recipe.source_diversity_status } : {}),
       cases: caseRefs
     });
     await fs.rename(stagingRoot, outDir);
@@ -267,14 +283,24 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
   if (value.execution_provenance_status !== undefined && !isExecutionProvenanceStatus(value.execution_provenance_status)) {
     throw new Error("Promotion benchmark recipe execution_provenance_status is invalid.");
   }
+  if (value.source_diversity_status !== undefined && !isPromotionSourceDiversityStatus(value.source_diversity_status)) {
+    throw new Error("Promotion benchmark recipe source_diversity_status is invalid.");
+  }
   if (value.execution_provenance_status === "artifact_verified" && value.evidence_class !== "external_real_run") {
     throw new Error("Artifact-verified execution provenance requires evidence_class=external_real_run.");
   }
   if (value.paper_claim_eligible === true
       && (value.adjudication_status !== "double_adjudicated"
         || value.mutation_isolation_status !== "double_verified"
-        || value.execution_provenance_status !== "artifact_verified")) {
-    throw new Error("Paper-claim-eligible promotion suites must have artifact-verified execution provenance, double adjudication, and double-verified mutation isolation.");
+        || value.execution_provenance_status !== "artifact_verified"
+        || value.source_diversity_status !== "declared_stratified")) {
+    throw new Error("Paper-claim-eligible promotion suites must have artifact-verified execution provenance, declared source stratification, double adjudication, and double-verified mutation isolation.");
+  }
+  if (value.source_diversity_status === "declared_stratified") {
+    const diversity = inspectPromotionSourceDiversity(cases);
+    if (!diversity.passed) {
+      throw new Error(`Declared source stratification is invalid: ${diversity.issues.map((issue) => issue.code).join(", ")}.`);
+    }
   }
   return {
     schema_version: "1.0",
@@ -284,6 +310,7 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
+    ...(value.source_diversity_status ? { source_diversity_status: value.source_diversity_status } : {}),
     cases
   };
 }
@@ -296,11 +323,19 @@ function parseRecipeCase(value: unknown, index: number): PromotionBenchmarkRecip
       || !stringArray(value.gold.repair_owners)) {
     throw new Error(`Invalid promotion benchmark recipe case at index ${index}.`);
   }
+  if (value.source_family_id_sha256 !== undefined && !isSha256(value.source_family_id_sha256)) {
+    throw new Error(`Invalid source-family hash at promotion benchmark recipe case ${index}.`);
+  }
+  if (value.operator_group_id_sha256 !== undefined && !isSha256(value.operator_group_id_sha256)) {
+    throw new Error(`Invalid operator-group hash at promotion benchmark recipe case ${index}.`);
+  }
   return {
     case_id: value.case_id,
     base_bundle_id: value.base_bundle_id,
     split: value.split,
     source_root: value.source_root,
+    ...(isSha256(value.source_family_id_sha256) ? { source_family_id_sha256: value.source_family_id_sha256 } : {}),
+    ...(isSha256(value.operator_group_id_sha256) ? { operator_group_id_sha256: value.operator_group_id_sha256 } : {}),
     ...(nonEmptyString(value.mutation_family) ? { mutation_family: value.mutation_family } : {}),
     operations: value.operations.map((operation, operationIndex) => parseOperation(operation, index, operationIndex + 1)),
     gold: {

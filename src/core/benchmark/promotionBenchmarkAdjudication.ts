@@ -14,6 +14,10 @@ import {
   type PromotionDecision
 } from "./promotionBenchmark.js";
 import {
+  inspectPromotionSourceDiversity,
+  type PromotionBenchmarkSourceDiversityStatus
+} from "./promotionBenchmarkSourceDiversity.js";
+import {
   validateVerifiedPromotionMutationAuditReport,
   type PromotionMutationAuditIssue
 } from "./promotionBenchmarkMutationAudit.js";
@@ -89,6 +93,8 @@ export interface PromotionAdjudicationEligibility {
   paper_claim_eligible: boolean;
   base_bundle_count: number;
   case_count: number;
+  source_family_count: number;
+  operator_group_count: number;
   blockers: PromotionEligibilityBlocker[];
 }
 
@@ -112,6 +118,7 @@ export interface PromotionAdjudicationReport {
   };
   validation_issues: PromotionAdjudicationIssue[];
   execution_provenance_status: PromotionBenchmarkExecutionProvenanceStatus | "unspecified";
+  source_diversity_status: PromotionBenchmarkSourceDiversityStatus | "unspecified";
   mutation_isolation: {
     status: "unreviewed" | "double_verified";
     report_path: string | null;
@@ -341,6 +348,7 @@ export async function adjudicatePromotionBenchmark(
   const eligibility = evaluatePromotionAdjudicationEligibility({
     evidence_class: loaded.suite.manifest.evidence_class,
     execution_provenance_status: loaded.suite.manifest.execution_provenance_status,
+    source_diversity_status: loaded.suite.manifest.source_diversity_status,
     cases: adjudicatedCases,
     adjudication_complete: passed,
     mutation_isolation_verified: mutationIsolationVerified
@@ -403,6 +411,7 @@ export async function adjudicatePromotionBenchmark(
       agreement: agreementMetrics(agreementPairs),
       validation_issues: issues,
       execution_provenance_status: loaded.suite.manifest.execution_provenance_status || "unspecified",
+      source_diversity_status: loaded.suite.manifest.source_diversity_status || "unspecified",
       mutation_isolation: {
         status: mutationIsolationVerified ? "double_verified" : "unreviewed",
         report_path: input.mutationAuditReportPath
@@ -473,6 +482,7 @@ async function writeAdjudicationReviewArtifacts(
     adjudication_passed: report.passed,
     mutation_isolation_status: report.mutation_isolation.status,
     execution_provenance_status: report.execution_provenance_status,
+    source_diversity_status: report.source_diversity_status,
     paper_claim_eligible: report.eligibility.paper_claim_eligible,
     diagnostic_count: diagnostics.length
   });
@@ -483,10 +493,17 @@ function adjudicationRepairTarget(code: string): "run_experiments" | "design_exp
     return "run_experiments";
   }
   if (code === "held_out_test_split_required"
-      || code === "independent_base_bundle_minimum_not_met"
+      || code === "base_bundle_minimum_not_met"
       || code === "held_out_case_minimum_not_met"
       || code === "base_source_provenance_incomplete"
-      || code === "base_bundle_independence_violation"
+      || code === "base_source_hash_reuse"
+      || code === "source_diversity_not_declared_stratified"
+      || code === "source_family_provenance_incomplete"
+      || code === "operator_group_provenance_incomplete"
+      || code === "source_family_minimum_not_met"
+      || code === "operator_group_minimum_not_met"
+      || code === "source_family_share_exceeded"
+      || code === "operator_group_share_exceeded"
       || code === "paired_fault_family_coverage_incomplete"
       || code === "clean_control_outcome_coverage_incomplete"
       || code === "mutation_isolation_not_double_verified") {
@@ -498,12 +515,14 @@ function adjudicationRepairTarget(code: string): "run_experiments" | "design_exp
 export function evaluatePromotionAdjudicationEligibility(input: {
   evidence_class?: PromotionBenchmarkEvidenceClass;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
+  source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
   cases: PromotionBenchmarkCaseManifest[];
   adjudication_complete: boolean;
   mutation_isolation_verified: boolean;
 }): PromotionAdjudicationEligibility {
   const blockers: PromotionEligibilityBlocker[] = [];
   const baseIds = [...new Set(input.cases.map((benchmarkCase) => benchmarkCase.base_bundle_id))];
+  const sourceDiversity = inspectPromotionSourceDiversity(input.cases);
   if (!input.adjudication_complete) {
     blockers.push({ code: "double_adjudication_incomplete", message: "All cases require two independent labels and resolved disagreements." });
   }
@@ -522,11 +541,19 @@ export function evaluatePromotionAdjudicationEligibility(input: {
       message: "Every confirmatory source requires hash-bound execution artifacts and a passing intake provenance audit."
     });
   }
+  if (input.source_diversity_status !== "declared_stratified") {
+    blockers.push({
+      code: "source_diversity_not_declared_stratified",
+      message: "Paper-eligible confirmatory suites require declared source-family and operator-group stratification."
+    });
+  } else {
+    blockers.push(...sourceDiversity.issues);
+  }
   if (input.cases.some((benchmarkCase) => benchmarkCase.split !== "test")) {
     blockers.push({ code: "held_out_test_split_required", message: "Every confirmatory case must belong to the held-out test split." });
   }
   if (baseIds.length < 20) {
-    blockers.push({ code: "independent_base_bundle_minimum_not_met", message: `Expected at least 20 base bundles; observed ${baseIds.length}.` });
+    blockers.push({ code: "base_bundle_minimum_not_met", message: `Expected at least 20 base bundles; observed ${baseIds.length}.` });
   }
   if (input.cases.length < 200) {
     blockers.push({ code: "held_out_case_minimum_not_met", message: `Expected at least 200 cases; observed ${input.cases.length}.` });
@@ -560,7 +587,7 @@ export function evaluatePromotionAdjudicationEligibility(input: {
     }
   }
   if (reusedSourceHash) {
-    blockers.push({ code: "base_bundle_independence_violation", message: "Different base bundle IDs must not share an identical source hash." });
+    blockers.push({ code: "base_source_hash_reuse", message: "Different base bundle IDs must not share an identical source hash." });
   }
 
   let incompleteBaseCoverage = 0;
@@ -583,6 +610,8 @@ export function evaluatePromotionAdjudicationEligibility(input: {
     paper_claim_eligible: blockers.length === 0,
     base_bundle_count: baseIds.length,
     case_count: input.cases.length,
+    source_family_count: sourceDiversity.source_family_count,
+    operator_group_count: sourceDiversity.operator_group_count,
     blockers
   };
 }

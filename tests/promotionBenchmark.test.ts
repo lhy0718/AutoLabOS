@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -45,6 +46,7 @@ describe("promotion benchmark", () => {
     expect(result.report.paper_claim_eligible).toBe(false);
     expect(result.report.mutation_isolation_status).toBe("unspecified");
     expect(result.report.execution_provenance_status).toBe("unspecified");
+    expect(result.report.source_diversity_status).toBe("unspecified");
     expect(result.report.paired_analysis).toMatchObject({
       inference_unit: "base_bundle_id",
       bootstrap_replicates: 5000,
@@ -78,6 +80,7 @@ describe("promotion benchmark", () => {
     const markdown = await readFile(path.join(workspace, "score", "promotion-score.md"), "utf8");
     expect(markdown).toContain("Concern-acceptance conflict");
     expect(markdown).toContain("Mutation isolation: unspecified");
+    expect(markdown).toContain("Source diversity: unspecified");
     expect(markdown).toContain("## Mutation Families");
     expect(markdown).toContain("clean_control");
   });
@@ -128,6 +131,31 @@ describe("promotion benchmark", () => {
       "case_path_outside_suite"
     ]));
   });
+
+  it("rejects a hand-authored stratification claim with concentrated source groups", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-diversity-"));
+    tempDirs.push(workspace);
+    const sharedFamily = hashId("shared-source-family");
+    const sharedOperator = hashId("shared-operator-group");
+    await writeSuite(workspace, ["alpha", "beta", "gamma"].map((suffix) => ({
+      ...caseManifest(`case-${suffix}`, `base-${suffix}`, "test", "promote", [], []),
+      source_family_id_sha256: sharedFamily,
+      operator_group_id_sha256: sharedOperator
+    })));
+    const suitePath = path.join(workspace, "suite.json");
+    const suite = JSON.parse(await readFile(suitePath, "utf8")) as Record<string, unknown>;
+    suite.source_diversity_status = "declared_stratified";
+    await writeFile(suitePath, JSON.stringify(suite));
+
+    const loaded = await loadPromotionBenchmarkSuite(suitePath);
+
+    expect(loaded.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "source_family_minimum_not_met",
+      "operator_group_minimum_not_met",
+      "source_family_share_exceeded",
+      "operator_group_share_exceeded"
+    ]));
+  });
 });
 
 function caseManifest(
@@ -169,6 +197,10 @@ function prediction(
 
 function blocking(code: string) {
   return { code, severity: "blocking" as const, evidence_refs: ["artifact.json"] };
+}
+
+function hashId(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 async function writeSuite(workspace: string, cases: Array<Record<string, unknown>>): Promise<void> {
