@@ -1,0 +1,16 @@
+[
+  {
+    "source": "arxiv",
+    "title": "One Reflection Is Not Enough: Self-Correcting Autonomous Research via Multi-Hypothesis Failure Attribution",
+    "authors": ["Ma, Jie", "Binfei Chu", "Jie Gao", "Jinlu Zhang", "Yiwei Ma", "Yi Tan", "Jiayi Ji", "Xiaoshuai Sun", "Rongrong Ji"],
+    "year": 2026,
+    "venue": "arXiv preprint",
+    "doi": null,
+    "arxiv_id": "2606.31478",
+    "url": "https://arxiv.org/abs/2606.31478v1",
+    "is_official_record": true,
+    "bibtex_url": null,
+    "source_priority": 2,
+    "raw": {"accessed_at": "2026-07-16", "arxiv_id": "2606.31478", "arxiv_version": "v1", "bibtex_source_kind": "arxiv_manual_normalized", "official_record_status": "preprint_only"}
+  }
+]

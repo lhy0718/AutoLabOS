@@ -1,0 +1,23 @@
+{
+  "recommendations": [
+    {
+      "node": "review",
+      "priority": "high",
+      "diagnostic_ids": [
+        "promotion_benchmark:stale_persisted_state:decision_mismatch+blocking_concern_missed+repair_owner_mismatch"
+      ],
+      "problem_summary": "artifact-audit failed stale_persisted_state: decision_mismatch, blocking_concern_missed, repair_owner_mismatch. Missing blockers: stale_persisted_state.",
+      "recheck_condition": "Re-run promotion-governance-synthetic-development-v1 and require correct decision, blocker coverage, and repair owner for stale_persisted_state."
+    },
+    {
+      "node": "run_experiments",
+      "priority": "high",
+      "diagnostic_ids": [
+        "promotion_benchmark:repeated_run_provenance_gap:decision_mismatch+blocking_concern_missed+repair_owner_mismatch",
+        "promotion_benchmark:executed_budget_mismatch:decision_mismatch+blocking_concern_missed+repair_owner_mismatch"
+      ],
+      "problem_summary": "artifact-audit failed repeated_run_provenance_gap: decision_mismatch, blocking_concern_missed, repair_owner_mismatch. Missing blockers: repeated_run_provenance_missing. artifact-audit failed executed_budget_mismatch: decision_mismatch, blocking_concern_missed, repair_owner_mismatch. Missing blockers: budget_contract_mismatch.",
+      "recheck_condition": "Re-run promotion-governance-synthetic-development-v1 and require correct decision, blocker coverage, and repair owner for repeated_run_provenance_gap. Re-run promotion-governance-synthetic-development-v1 and require correct decision, blocker coverage, and repair owner for executed_budget_mismatch."
+    }
+  ]
+}

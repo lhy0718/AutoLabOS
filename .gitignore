@@ -38,6 +38,14 @@ pnpm-debug.log*
 output/
 outputs/
 
+# Paper build and reference-resolution caches
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+**/.refgate/cache/
+
 # python
 __pycache__/
 *.pyc

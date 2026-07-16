@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "claim_ceiling": "development_instrument_validation",
+  "claims": [
+    {
+      "claim_id": "protocol-contract",
+      "claim": "The implementation validates suite confinement, split leakage, artifact hashes, complete per-trial coverage, and adjudication metadata.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmark.ts",
+        "src/core/benchmark/promotionBenchmarkBuilder.ts",
+        "tests/promotionBenchmark.test.ts",
+        "tests/promotionBenchmarkBuilder.test.ts"
+      ]
+    },
+    {
+      "claim_id": "development-four-system-summary",
+      "claim": "On the synthetic development suite, the fail-closed audit had zero false promotions and the advisory audit had a concern-acceptance conflict rate of one.",
+      "status": "development_only",
+      "artifact_refs": [
+        "papers/promotion-governance/development/promotion-score.json",
+        "papers/promotion-governance/development/predictions.jsonl",
+        "papers/promotion-governance/development/corpus-manifest.json"
+      ]
+    },
+    {
+      "claim_id": "pre-strengthening-failures",
+      "claim": "Before strengthening, the artifact audit missed repeated-run provenance, budget mismatch, and stale-state cases and routed them to run_experiments and review.",
+      "status": "development_only",
+      "artifact_refs": [
+        "papers/promotion-governance/development/pre-strengthening/promotion-score.json",
+        "papers/promotion-governance/development/pre-strengthening/review/promotion_benchmark_failure_analysis.json",
+        "papers/promotion-governance/development/pre-strengthening/review/node_strengthening_recommendations.json"
+      ]
+    },
+    {
+      "claim_id": "general-effectiveness",
+      "claim": "Fail-closed promotion governance generalizes to independently curated research bundles and real manuscript-only reviewers.",
+      "status": "blocked",
+      "missing_evidence": [
+        "double_adjudicated_held_out_suite",
+        "at_least_20_independent_base_bundles",
+        "three_real_provider_trials",
+        "post_repair_recovery_runs"
+      ]
+    }
+  ]
+}

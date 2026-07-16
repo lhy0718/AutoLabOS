@@ -1,0 +1,589 @@
+{
+  "audit_policy": {},
+  "entries": [
+    {
+      "authority": {
+        "bibtex_url": "https://aclanthology.org/2026.tacl-1.22.bib",
+        "record_type": "conference_proceedings",
+        "record_url": "https://aclanthology.org/2026.tacl-1.22/",
+        "source": "acl",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "dycke-gurevych-2026-automatic",
+        "entry_type": "article",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "checked",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "757140a526433bd7213703635d3c5dce4df054d12d70772160e96a1f10e2c271",
+        "raw_sha256": "757140a526433bd7213703635d3c5dce4df054d12d70772160e96a1f10e2c271",
+        "source_kind": "official_export"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "dycke-gurevych-2026-automatic",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Nils Dycke",
+          "Iryna Gurevych"
+        ],
+        "doi": "10.1162/tacl.a.642",
+        "title": "Automatic Reviewers Fail to Detect Faulty Reasoning in Research Papers: A New Counterfactual Evaluation Framework",
+        "url": "https://aclanthology.org/2026.tacl-1.22/",
+        "venue": "ACL Anthology",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "doi exact match"
+        ],
+        "score": 100,
+        "warnings": []
+      },
+      "short_title": "Automatic Reviewers Fail to Detect Faulty Reasoning in Research Papers",
+      "status": "verified_official_bibtex"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "preprint_record",
+        "record_url": "https://arxiv.org/abs/2507.18901v1",
+        "source": "arxiv",
+        "source_priority": 2
+      },
+      "bibtex": {
+        "citation_key": "hu2025reprobench",
+        "entry_type": "misc",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "checked",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "0873aacb1efe5e76e1e98d620bdfaeae01febd6b13af61e741b9836620970d0e",
+        "raw_sha256": "0873aacb1efe5e76e1e98d620bdfaeae01febd6b13af61e741b9836620970d0e",
+        "source_kind": "arxiv_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "hu2025reprobench",
+      "record": {
+        "accessed_at": "2026-07-16",
+        "arxiv_id": "2507.18901",
+        "authors": [
+          "Hu, Chuxuan",
+          "Liyun Zhang",
+          "Yeji Lim",
+          "Aum Wadhwani",
+          "Austin Peters",
+          "Daniel Kang"
+        ],
+        "doi": null,
+        "title": "REPRO-Bench: Can Agentic AI Systems Assess the Reproducibility of Social Science Research?",
+        "url": "https://arxiv.org/abs/2507.18901v1",
+        "venue": "arXiv preprint",
+        "year": 2025
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 94,
+        "warnings": []
+      },
+      "short_title": "REPRO-Bench",
+      "status": "arxiv_fallback_verified"
+    },
+    {
+      "authority": {
+        "bibtex_url": "https://aclanthology.org/2025.ijcnlp-long.127.bib",
+        "record_type": "conference_proceedings",
+        "record_url": "https://aclanthology.org/2025.ijcnlp-long.127/",
+        "source": "acl",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "javaji-etal-2025-ai",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "checked",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "096fe9a8de4c66737d62064f288447e750219442fdc803c3ee168719d245ec6a",
+        "raw_sha256": "096fe9a8de4c66737d62064f288447e750219442fdc803c3ee168719d245ec6a",
+        "source_kind": "official_export"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "javaji-etal-2025-ai",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Shashidhar Reddy Javaji",
+          "Yupeng Cao",
+          "Haohang Li",
+          "Yangyang Yu",
+          "Nikhil Muralidhar",
+          "Zining Zhu"
+        ],
+        "doi": "10.18653/v1/2025.ijcnlp-long.127",
+        "title": "Can {AI} Validate Science? Benchmarking {LLM}s on Claim {\\textrightarrow}{E}vidence Reasoning in {AI} Papers",
+        "url": "https://aclanthology.org/2025.ijcnlp-long.127/",
+        "venue": "ACL Anthology",
+        "year": 2025
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "doi exact match"
+        ],
+        "score": 100,
+        "warnings": []
+      },
+      "short_title": "Can {AI} Validate Science? Benchmarking {LLM}s on Claim {\\textrightarrow}{E}vidence Reasoning in {AI} Papers",
+      "status": "verified_official_bibtex"
+    },
+    {
+      "authority": {
+        "bibtex_url": "https://aclanthology.org/2026.acl-long.1134.bib",
+        "record_type": "conference_proceedings",
+        "record_url": "https://aclanthology.org/2026.acl-long.1134/",
+        "source": "acl",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "jiang-etal-2026-badscientist",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "checked",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "ecb12a9adf9410dd8cd0c77267e725f7d1787e12a074713e18e760ef2e162b71",
+        "raw_sha256": "ecb12a9adf9410dd8cd0c77267e725f7d1787e12a074713e18e760ef2e162b71",
+        "source_kind": "official_export"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "jiang-etal-2026-badscientist",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Fengqing Jiang",
+          "Yichen Feng",
+          "Yuetai Li",
+          "Luyao Niu",
+          "Basel Alomair",
+          "Radha Poovendran"
+        ],
+        "doi": "10.18653/v1/2026.acl-long.1134",
+        "title": "BadScientist: Can a Research Agent Write Convincing but Unsound Papers that Fool LLM Reviewers?",
+        "url": "https://aclanthology.org/2026.acl-long.1134/",
+        "venue": "ACL Anthology",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "doi exact match"
+        ],
+        "score": 100,
+        "warnings": []
+      },
+      "short_title": "BadScientist",
+      "status": "verified_official_bibtex"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "preprint_record",
+        "record_url": "https://arxiv.org/abs/2606.31478v1",
+        "source": "arxiv",
+        "source_priority": 2
+      },
+      "bibtex": {
+        "citation_key": "ma2026reflection",
+        "entry_type": "misc",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "checked",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "c4292d37c34fb6517ec48e01528fa79ea99f18fa149c589f4531572266be615f",
+        "raw_sha256": "c4292d37c34fb6517ec48e01528fa79ea99f18fa149c589f4531572266be615f",
+        "source_kind": "arxiv_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "ma2026reflection",
+      "record": {
+        "accessed_at": "2026-07-16",
+        "arxiv_id": "2606.31478",
+        "authors": [
+          "Ma, Jie",
+          "Binfei Chu",
+          "Jie Gao",
+          "Jinlu Zhang",
+          "Yiwei Ma",
+          "Yi Tan",
+          "Jiayi Ji",
+          "Xiaoshuai Sun",
+          "Rongrong Ji"
+        ],
+        "doi": null,
+        "title": "One Reflection Is Not Enough: Self-Correcting Autonomous Research via Multi-Hypothesis Failure Attribution",
+        "url": "https://arxiv.org/abs/2606.31478v1",
+        "venue": "arXiv preprint",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 94,
+        "warnings": []
+      },
+      "short_title": "One Reflection Is Not Enough",
+      "status": "arxiv_fallback_verified"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "conference_proceedings",
+        "record_url": "https://openreview.net/forum?id=Y8INhipPQe",
+        "source": "openreview",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "nishi2026claimgarden",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "c2c6288278dc27497501ead73cc4763006673f3838cfaa2dc02c9f2f4ab3b20c",
+        "raw_sha256": "c2c6288278dc27497501ead73cc4763006673f3838cfaa2dc02c9f2f4ab3b20c",
+        "source_kind": "publisher_metadata_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "nishi2026claimgarden",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Nishi, Hafumi"
+        ],
+        "doi": null,
+        "title": "ClaimGarden: Update-Aware Claim-State Control for AI Scientist Workflows",
+        "url": "https://openreview.net/forum?id=Y8INhipPQe",
+        "venue": "ICML 2026 Workshop on AI for Science",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 95,
+        "warnings": []
+      },
+      "short_title": "ClaimGarden",
+      "status": "verified_manual_fallback"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "conference_proceedings",
+        "record_url": "https://openreview.net/forum?id=VrYHFXGyUO",
+        "source": "openreview",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "petel2026madscps",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "16b75c0d5ec5e79a712d164c023a8401b2c86cb216092bc4b0b346d2064b31ec",
+        "raw_sha256": "16b75c0d5ec5e79a712d164c023a8401b2c86cb216092bc4b0b346d2064b31ec",
+        "source_kind": "publisher_metadata_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "petel2026madscps",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Petel, Mateo"
+        ],
+        "doi": null,
+        "title": "MADS-CPS: A Machine-Checkable Admissibility Contract for AI Scientists in Autonomous Laboratories",
+        "url": "https://openreview.net/forum?id=VrYHFXGyUO",
+        "venue": "ICML 2026 Workshop on AI for Science",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 95,
+        "warnings": []
+      },
+      "short_title": "MADS-CPS",
+      "status": "verified_manual_fallback"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "preprint_record",
+        "record_url": "https://arxiv.org/abs/2605.02651v2",
+        "source": "arxiv",
+        "source_priority": 2
+      },
+      "bibtex": {
+        "citation_key": "riehl2026ara",
+        "entry_type": "misc",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "checked",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "76f13108eeb75b534d236f4a3110e499cf8443c13ac835f0e0c8f136d6254e5c",
+        "raw_sha256": "76f13108eeb75b534d236f4a3110e499cf8443c13ac835f0e0c8f136d6254e5c",
+        "source_kind": "arxiv_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "riehl2026ara",
+      "record": {
+        "accessed_at": "2026-07-16",
+        "arxiv_id": "2605.02651",
+        "authors": [
+          "Riehl, Kevin",
+          "Andres L. Marin",
+          "Nikofors Zacharof",
+          "Fan Wu",
+          "Patrick Langer",
+          "Robert Jakob",
+          "Anastasios Kouvelas",
+          "Georgios Fontaras",
+          "Michail A. Makridis"
+        ],
+        "doi": null,
+        "title": "ARA: Agentic Reproducibility Assessment For Scalable Support Of Scientific Peer-Review",
+        "url": "https://arxiv.org/abs/2605.02651v2",
+        "venue": "arXiv preprint",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 94,
+        "warnings": []
+      },
+      "short_title": "ARA",
+      "status": "arxiv_fallback_verified"
+    },
+    {
+      "authority": {
+        "bibtex_url": "https://aclanthology.org/2025.findings-emnlp.320.bib",
+        "record_type": "conference_proceedings",
+        "record_url": "https://aclanthology.org/2025.findings-emnlp.320/",
+        "source": "acl",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "schmidgall-etal-2025-agent",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "checked",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "1326557766639e358c4233e5b8554de7d0f879c255da3386f211ac773c56a522",
+        "raw_sha256": "1326557766639e358c4233e5b8554de7d0f879c255da3386f211ac773c56a522",
+        "source_kind": "official_export"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "schmidgall-etal-2025-agent",
+      "record": {
+        "accessed_at": null,
+        "arxiv_id": null,
+        "authors": [
+          "Samuel Schmidgall",
+          "Yusheng Su",
+          "Ze Wang",
+          "Ximeng Sun",
+          "Jialian Wu",
+          "Xiaodong Yu",
+          "Jiang Liu",
+          "Michael Moor",
+          "Zicheng Liu",
+          "Emad Barsoum"
+        ],
+        "doi": "10.18653/v1/2025.findings-emnlp.320",
+        "title": "Agent Laboratory: Using LLM Agents as Research Assistants",
+        "url": "https://aclanthology.org/2025.findings-emnlp.320/",
+        "venue": "ACL Anthology",
+        "year": 2025
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "doi exact match"
+        ],
+        "score": 100,
+        "warnings": []
+      },
+      "short_title": "Agent Laboratory",
+      "status": "verified_official_bibtex"
+    },
+    {
+      "authority": {
+        "bibtex_url": null,
+        "record_type": "preprint_record",
+        "record_url": "https://arxiv.org/abs/2504.01848v3",
+        "source": "arxiv",
+        "source_priority": 2
+      },
+      "bibtex": {
+        "citation_key": "starace2025paperbench",
+        "entry_type": "misc",
+        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "field_checks": {
+          "arxiv_id": "checked",
+          "bibtex_source": "manual_fallback_with_reason",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "ae8ab37e2b067fd52f0df6fac6448efb88cd635d84248b46d8c14de8fbd79ee7",
+        "raw_sha256": "ae8ab37e2b067fd52f0df6fac6448efb88cd635d84248b46d8c14de8fbd79ee7",
+        "source_kind": "arxiv_manual_normalized"
+      },
+      "checked_at": "2026-07-16",
+      "checked_by": "refgate",
+      "citation_key": "starace2025paperbench",
+      "record": {
+        "accessed_at": "2026-07-16",
+        "arxiv_id": "2504.01848",
+        "authors": [
+          "Starace, Giulio",
+          "Oliver Jaffe",
+          "Dane Sherburn",
+          "James Aung",
+          "Jun Shern Chan",
+          "Leon Maksin",
+          "Rachel Dias",
+          "Evan Mays",
+          "Benjamin Kinsella",
+          "Wyatt Thompson",
+          "Johannes Heidecke",
+          "Amelia Glaese",
+          "Tejal Patwardhan"
+        ],
+        "doi": null,
+        "title": "PaperBench: Evaluating AI's Ability to Replicate AI Research",
+        "url": "https://arxiv.org/abs/2504.01848v3",
+        "venue": "arXiv preprint",
+        "year": 2025
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "title normalized exact match",
+          "year match",
+          "first author match",
+          "official record"
+        ],
+        "score": 94,
+        "warnings": []
+      },
+      "short_title": "PaperBench",
+      "status": "arxiv_fallback_verified"
+    }
+  ],
+  "generated_at": "2026-07-16",
+  "project": null,
+  "schema_version": "refgate.lock.v1"
+}

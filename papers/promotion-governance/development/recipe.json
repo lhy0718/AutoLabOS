@@ -1,0 +1,1209 @@
+{
+  "schema_version": "1.0",
+  "suite_id": "promotion-governance-synthetic-development-v1",
+  "evidence_class": "synthetic_development",
+  "paper_claim_eligible": false,
+  "adjudication_status": "unreviewed",
+  "cases": [
+    {
+      "case_id": "development-1-1",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "operations": [],
+      "gold": {
+        "decision": "promote",
+        "blocking_concerns": [],
+        "repair_owners": []
+      }
+    },
+    {
+      "case_id": "development-1-2",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "comparison_evidence_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "result_table.json",
+          "pointer": "/0/comparator"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "result_table_incomplete",
+          "baseline_or_comparator_missing"
+        ],
+        "repair_owners": [
+          "design_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-3",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "repeated_run_provenance_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/0/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/1/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/2/seed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "repeated_run_provenance_missing"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-4",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "hidden_failed_execution",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/status",
+          "value": "failed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "run_execution_failed",
+          "hidden_failed_run"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-5",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "executed_budget_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/executed_budget/trials",
+          "value": 1
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "budget_contract_mismatch"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-6",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "result_figure_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/severe_mismatch_count",
+          "value": 1
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/review_block_required",
+          "value": true
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "figure_result_caption_mismatch"
+        ],
+        "repair_owners": [
+          "figure_audit"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-7",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "claim_evidence_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/status",
+          "value": "blocked"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/evidence_ids",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "downgrade",
+        "blocking_concerns": [
+          "unsupported_claims_present"
+        ],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-8",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "citation_support_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/section_heading",
+          "value": "Related Work"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_papers"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-9",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "stale_persisted_state",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "checkpoint/state.json",
+          "pointer": "/paper_ready",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "stale_persisted_state"
+        ],
+        "repair_owners": [
+          "review"
+        ]
+      }
+    },
+    {
+      "case_id": "development-1-10",
+      "base_bundle_id": "base-development-1",
+      "split": "development",
+      "source_root": "base-bundles/base-development-1",
+      "mutation_family": "unsupported_claim_strength",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_ranking_claimed",
+          "value": true
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_evidence_present",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-1",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "operations": [],
+      "gold": {
+        "decision": "promote",
+        "blocking_concerns": [],
+        "repair_owners": []
+      }
+    },
+    {
+      "case_id": "development-2-2",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "comparison_evidence_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "result_table.json",
+          "pointer": "/0/comparator"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "result_table_incomplete",
+          "baseline_or_comparator_missing"
+        ],
+        "repair_owners": [
+          "design_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-3",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "repeated_run_provenance_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/0/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/1/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/2/seed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "repeated_run_provenance_missing"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-4",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "hidden_failed_execution",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/status",
+          "value": "failed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "run_execution_failed",
+          "hidden_failed_run"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-5",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "executed_budget_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/executed_budget/trials",
+          "value": 1
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "budget_contract_mismatch"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-6",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "result_figure_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/severe_mismatch_count",
+          "value": 1
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/review_block_required",
+          "value": true
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "figure_result_caption_mismatch"
+        ],
+        "repair_owners": [
+          "figure_audit"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-7",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "claim_evidence_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/status",
+          "value": "blocked"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/evidence_ids",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "downgrade",
+        "blocking_concerns": [
+          "unsupported_claims_present"
+        ],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-8",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "citation_support_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/section_heading",
+          "value": "Related Work"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_papers"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-9",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "stale_persisted_state",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "checkpoint/state.json",
+          "pointer": "/paper_ready",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "stale_persisted_state"
+        ],
+        "repair_owners": [
+          "review"
+        ]
+      }
+    },
+    {
+      "case_id": "development-2-10",
+      "base_bundle_id": "base-development-2",
+      "split": "development",
+      "source_root": "base-bundles/base-development-2",
+      "mutation_family": "unsupported_claim_strength",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_ranking_claimed",
+          "value": true
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_evidence_present",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-1",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "operations": [],
+      "gold": {
+        "decision": "promote",
+        "blocking_concerns": [],
+        "repair_owners": []
+      }
+    },
+    {
+      "case_id": "development-3-2",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "comparison_evidence_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "result_table.json",
+          "pointer": "/0/comparator"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "result_table_incomplete",
+          "baseline_or_comparator_missing"
+        ],
+        "repair_owners": [
+          "design_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-3",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "repeated_run_provenance_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/0/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/1/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/2/seed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "repeated_run_provenance_missing"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-4",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "hidden_failed_execution",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/status",
+          "value": "failed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "run_execution_failed",
+          "hidden_failed_run"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-5",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "executed_budget_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/executed_budget/trials",
+          "value": 1
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "budget_contract_mismatch"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-6",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "result_figure_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/severe_mismatch_count",
+          "value": 1
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/review_block_required",
+          "value": true
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "figure_result_caption_mismatch"
+        ],
+        "repair_owners": [
+          "figure_audit"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-7",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "claim_evidence_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/status",
+          "value": "blocked"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/evidence_ids",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "downgrade",
+        "blocking_concerns": [
+          "unsupported_claims_present"
+        ],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-8",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "citation_support_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/section_heading",
+          "value": "Related Work"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_papers"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-9",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "stale_persisted_state",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "checkpoint/state.json",
+          "pointer": "/paper_ready",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "stale_persisted_state"
+        ],
+        "repair_owners": [
+          "review"
+        ]
+      }
+    },
+    {
+      "case_id": "development-3-10",
+      "base_bundle_id": "base-development-3",
+      "split": "development",
+      "source_root": "base-bundles/base-development-3",
+      "mutation_family": "unsupported_claim_strength",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_ranking_claimed",
+          "value": true
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_evidence_present",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-1",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "operations": [],
+      "gold": {
+        "decision": "promote",
+        "blocking_concerns": [],
+        "repair_owners": []
+      }
+    },
+    {
+      "case_id": "development-4-2",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "comparison_evidence_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "result_table.json",
+          "pointer": "/0/comparator"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "result_table_incomplete",
+          "baseline_or_comparator_missing"
+        ],
+        "repair_owners": [
+          "design_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-3",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "repeated_run_provenance_gap",
+      "operations": [
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/0/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/1/seed"
+        },
+        {
+          "op": "remove_json_pointer",
+          "path": "experiment_evidence.json",
+          "pointer": "/trials/2/seed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "repeated_run_provenance_missing"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-4",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "hidden_failed_execution",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/status",
+          "value": "failed"
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "run_execution_failed",
+          "hidden_failed_run"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-5",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "executed_budget_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "run_record.json",
+          "pointer": "/executed_budget/trials",
+          "value": 1
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "budget_contract_mismatch"
+        ],
+        "repair_owners": [
+          "run_experiments"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-6",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "result_figure_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/severe_mismatch_count",
+          "value": 1
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "figure_audit/figure_audit_summary.json",
+          "pointer": "/review_block_required",
+          "value": true
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "figure_result_caption_mismatch"
+        ],
+        "repair_owners": [
+          "figure_audit"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-7",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "claim_evidence_conflict",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/status",
+          "value": "blocked"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/artifact_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/evidence_ids",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "downgrade",
+        "blocking_concerns": [
+          "unsupported_claims_present"
+        ],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-8",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "citation_support_mismatch",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/section_heading",
+          "value": "Related Work"
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_status_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/claim_evidence_table.json",
+          "pointer": "/claims/0/citation_refs",
+          "value": []
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "paper/evidence_links.json",
+          "pointer": "/claims/0/citation_paper_ids",
+          "value": []
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_papers"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-9",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "stale_persisted_state",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "checkpoint/state.json",
+          "pointer": "/paper_ready",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "block",
+        "blocking_concerns": [
+          "stale_persisted_state"
+        ],
+        "repair_owners": [
+          "review"
+        ]
+      }
+    },
+    {
+      "case_id": "development-4-10",
+      "base_bundle_id": "base-development-4",
+      "split": "development",
+      "source_root": "base-bundles/base-development-4",
+      "mutation_family": "unsupported_claim_strength",
+      "operations": [
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_ranking_claimed",
+          "value": true
+        },
+        {
+          "op": "set_json_pointer",
+          "path": "design_contracts.json",
+          "pointer": "/sota_evidence_present",
+          "value": false
+        }
+      ],
+      "gold": {
+        "decision": "needs_review",
+        "blocking_concerns": [],
+        "repair_owners": [
+          "analyze_results"
+        ]
+      }
+    }
+  ]
+}

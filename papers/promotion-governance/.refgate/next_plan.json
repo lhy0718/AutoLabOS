@@ -1,0 +1,30 @@
+{
+  "action_count": 1,
+  "actions": [
+    {
+      "code": "MAP_CLAIM_SOURCES",
+      "command": "python -m refgate paper-audit --tex manuscript.tex --bib references.bib --lock refgate.lock.json --claims refgate_claims.tsv --report refgate-audit.md --resolver-output .refgate/queries.json --source-dir SOURCES_DIR --source-map-output refgate_source_map.tsv --claim-review-output refgate_claim_review.md --submission --json",
+      "index": 0,
+      "kind": "claim_source_mapping",
+      "message": "Add full source text/PDF files named by citation key, then rerun paper-audit with source mapping.",
+      "network_required": false,
+      "requires_human_review": true,
+      "selected": false,
+      "skip_reason": "writes_files",
+      "writes_files": true
+    }
+  ],
+  "execute": false,
+  "failed_count": 0,
+  "gates": {
+    "allow_human_review": false,
+    "allow_network": false,
+    "allow_writes": false,
+    "max_actions": null
+  },
+  "input": "paper-audit",
+  "ok": true,
+  "schema_version": "refgate.next_actions.v1",
+  "selected_count": 0,
+  "skipped_count": 1
+}

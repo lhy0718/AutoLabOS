@@ -1,0 +1,433 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-16T11:53:48.503Z",
+  "suite_id": "promotion-governance-synthetic-development-v1",
+  "suite_ref": "<external-suite>",
+  "prediction_ref": "<external-predictions>",
+  "passed": true,
+  "validation_issues": [],
+  "case_count": 40,
+  "prediction_count": 120,
+  "systems": [
+    {
+      "system_id": "always-promote",
+      "prediction_count": 40,
+      "covered_case_count": 40,
+      "expected_case_count": 40,
+      "coverage_rate": 1,
+      "exact_decision_accuracy": 0.1,
+      "macro_decision_f1": 0.045454545454545456,
+      "false_paper_ready_count": 36,
+      "false_paper_ready_rate": 1,
+      "concern_acceptance_conflict_count": 0,
+      "concern_acceptance_conflict_rate": null,
+      "clean_case_count": 4,
+      "clean_case_promotion_accuracy": 1,
+      "blocker_precision": null,
+      "blocker_recall": 0,
+      "blocker_f1": null,
+      "repair_owner_exact_match_accuracy": 0,
+      "trace_coverage": null,
+      "mean_latency_ms": 0,
+      "total_cost_usd": 0,
+      "decision_confusion": {
+        "promote": {
+          "promote": 4,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "needs_review": {
+          "promote": 8,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "downgrade": {
+          "promote": 4,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "block": {
+          "promote": 24,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        }
+      },
+      "by_mutation_family": [
+        {
+          "mutation_family": "citation_support_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "claim_evidence_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "clean_control",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": null,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": null
+        },
+        {
+          "mutation_family": "comparison_evidence_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "executed_budget_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "hidden_failed_execution",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "repeated_run_provenance_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "result_figure_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "stale_persisted_state",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "unsupported_claim_strength",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 0
+        }
+      ]
+    },
+    {
+      "system_id": "artifact-audit",
+      "prediction_count": 40,
+      "covered_case_count": 40,
+      "expected_case_count": 40,
+      "coverage_rate": 1,
+      "exact_decision_accuracy": 0.7,
+      "macro_decision_f1": 0.7666666666666666,
+      "false_paper_ready_count": 12,
+      "false_paper_ready_rate": 0.3333333333333333,
+      "concern_acceptance_conflict_count": 0,
+      "concern_acceptance_conflict_rate": 0,
+      "clean_case_count": 4,
+      "clean_case_promotion_accuracy": 1,
+      "blocker_precision": 1,
+      "blocker_recall": 0.6666666666666666,
+      "blocker_f1": 0.8,
+      "repair_owner_exact_match_accuracy": 0.6666666666666666,
+      "trace_coverage": 1,
+      "mean_latency_ms": 1.475,
+      "total_cost_usd": 0,
+      "decision_confusion": {
+        "promote": {
+          "promote": 4,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "needs_review": {
+          "promote": 0,
+          "needs_review": 8,
+          "downgrade": 0,
+          "block": 0
+        },
+        "downgrade": {
+          "promote": 0,
+          "needs_review": 0,
+          "downgrade": 4,
+          "block": 0
+        },
+        "block": {
+          "promote": 12,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 12
+        }
+      },
+      "by_mutation_family": [
+        {
+          "mutation_family": "citation_support_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 1
+        },
+        {
+          "mutation_family": "claim_evidence_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": 1,
+          "repair_owner_exact_match_accuracy": 1
+        },
+        {
+          "mutation_family": "clean_control",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": null,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": null
+        },
+        {
+          "mutation_family": "comparison_evidence_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": 1,
+          "repair_owner_exact_match_accuracy": 1
+        },
+        {
+          "mutation_family": "executed_budget_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "hidden_failed_execution",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": 1,
+          "repair_owner_exact_match_accuracy": 1
+        },
+        {
+          "mutation_family": "repeated_run_provenance_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "result_figure_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": 1,
+          "repair_owner_exact_match_accuracy": 1
+        },
+        {
+          "mutation_family": "stale_persisted_state",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "unsupported_claim_strength",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": 0,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 1
+        }
+      ]
+    },
+    {
+      "system_id": "presence-checklist",
+      "prediction_count": 40,
+      "covered_case_count": 40,
+      "expected_case_count": 40,
+      "coverage_rate": 1,
+      "exact_decision_accuracy": 0.1,
+      "macro_decision_f1": 0.045454545454545456,
+      "false_paper_ready_count": 36,
+      "false_paper_ready_rate": 1,
+      "concern_acceptance_conflict_count": 0,
+      "concern_acceptance_conflict_rate": null,
+      "clean_case_count": 4,
+      "clean_case_promotion_accuracy": 1,
+      "blocker_precision": null,
+      "blocker_recall": 0,
+      "blocker_f1": null,
+      "repair_owner_exact_match_accuracy": 0,
+      "trace_coverage": null,
+      "mean_latency_ms": 0.05,
+      "total_cost_usd": 0,
+      "decision_confusion": {
+        "promote": {
+          "promote": 4,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "needs_review": {
+          "promote": 8,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "downgrade": {
+          "promote": 4,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        },
+        "block": {
+          "promote": 24,
+          "needs_review": 0,
+          "downgrade": 0,
+          "block": 0
+        }
+      },
+      "by_mutation_family": [
+        {
+          "mutation_family": "citation_support_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "claim_evidence_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "clean_control",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 1,
+          "false_paper_ready_rate": null,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": null
+        },
+        {
+          "mutation_family": "comparison_evidence_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "executed_budget_mismatch",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "hidden_failed_execution",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "repeated_run_provenance_gap",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "result_figure_conflict",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "stale_persisted_state",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": 0,
+          "repair_owner_exact_match_accuracy": 0
+        },
+        {
+          "mutation_family": "unsupported_claim_strength",
+          "case_count": 4,
+          "prediction_count": 4,
+          "exact_decision_accuracy": 0,
+          "false_paper_ready_rate": 1,
+          "blocker_recall": null,
+          "repair_owner_exact_match_accuracy": 0
+        }
+      ]
+    }
+  ]
+}

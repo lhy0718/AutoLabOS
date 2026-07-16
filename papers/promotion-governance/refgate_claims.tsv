@@ -1,0 +1,15 @@
+claim_id	manuscript_location	claim_text	citation_key	source_location	quote_or_evidence	evidence_kind	status	notes	claim_type	importance
+claim-0001	line 41	draft papers	schmidgall-etal-2025-agent				claim_unchecked		related_work	normal
+claim-0002	line 43		starace2025paperbench				claim_unchecked		related_work	normal
+claim-0003	line 45	receive favorable automatic reviews	jiang-etal-2026-badscientist				claim_unchecked		related_work	normal
+claim-0004	line 48		dycke-gurevych-2026-automatic				claim_unchecked		related_work	normal
+claim-0005	line 70	within a multi-agent research workflow	schmidgall-etal-2025-agent				claim_unchecked		related_work	normal
+claim-0006	line 72	paper understanding through executed artifacts	starace2025paperbench				claim_unchecked		related_work	normal
+claim-0007	line 79	papers	jiang-etal-2026-badscientist				claim_unchecked		related_work	normal
+claim-0008	line 81		dycke-gurevych-2026-automatic				claim_unchecked		related_work	normal
+claim-0009	line 82	reasoning in AI papers	javaji-etal-2025-ai				claim_unchecked		related_work	normal
+claim-0010	line 88	; REPRO-Bench evaluates agents using papers and replication	riehl2026ara				claim_unchecked		related_work	normal
+claim-0011	line 89	packages	hu2025reprobench				claim_unchecked		related_work	normal
+claim-0012	line 90	admissibility for autonomous laboratories	petel2026madscps				claim_unchecked		related_work	normal
+claim-0013	line 92	ClaimGarden controls claim states under evidence	ma2026reflection				claim_unchecked		related_work	normal
+claim-0014	line 93	updates	nishi2026claimgarden				claim_unchecked		related_work	normal

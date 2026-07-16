@@ -1,0 +1,230 @@
+\documentclass[10pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{booktabs}
+\usepackage{microtype}
+\usepackage{url}
+
+\title{From Concern Detection to Promotion Control:\\
+A Protocol for Fail-Closed Governance of Autonomous Research Artifacts}
+\author{Anonymous}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Autonomous research systems increasingly produce complete-looking manuscripts
+and run bundles, yet review components can identify serious scientific defects
+without preventing a paper-ready decision. We formulate this gap as
+\emph{promotion governance}: deciding whether an artifact bundle should be
+promoted, reviewed, downgraded, or blocked, while linking each blocking concern
+to inspectable evidence and a responsible repair stage. We introduce a
+manifest-driven evaluation protocol with clean controls, counterfactual fault
+variants, base-bundle-disjoint splits, blind manuscript-only requests, and
+metrics for false promotion, concern--acceptance conflict, clean-case retention,
+repair localization, traceability, and cost. A synthetic development suite
+with four base bundles and 40 cases validates the evaluator and exposes three
+missing integrity checks in an artifact audit. After those checks were added,
+the audit passed all development cases; an advisory-only ablation still
+accepted every defective case despite detecting its concerns. These results
+are instrument validation, not empirical evidence for general effectiveness:
+the suite is synthetic, unreviewed, and explicitly ineligible for paper-level
+claims. We specify the independently adjudicated, real-provider experiment
+needed to test the central hypothesis.
+\end{abstract}
+
+\section{Introduction}
+
+Research agents can search literature, implement experiments, analyze results,
+and draft papers \cite{schmidgall-etal-2025-agent}. Capability benchmarks
+therefore evaluate increasingly complete replication and research workflows
+\cite{starace2025paperbench}. Completion, however, is not equivalent to
+scientific readiness. BadScientist shows that plausible but unsound papers can
+receive favorable automatic reviews \cite{jiang-etal-2026-badscientist}, while
+counterfactual evaluation finds that automatic reviewers often fail to alter
+their judgments when faulty reasoning is injected
+\cite{dycke-gurevych-2026-automatic}.
+
+We study the policy boundary between detecting a concern and allowing an
+artifact bundle to advance. A useful research governor must fail closed: a
+blocking concern cannot coexist with a paper-ready decision unless the concern
+is resolved or explicitly downgraded. It must also avoid the trivial solution
+of blocking everything. This motivates three questions: whether artifact-bound
+gates reduce false promotion, whether binding concerns to transitions prevents
+concern--acceptance conflict, and what clean-case, repair-localization, latency,
+and cost trade-offs follow.
+
+The contribution at the present evidence level is a protocol and tested
+instrumentation, not a confirmed performance claim. We provide (i) a portable
+artifact-bundle task with explicit promotion and repair labels, (ii) leakage and
+adjudication gates, (iii) baselines that isolate detection from action binding,
+and (iv) a development failure analysis that routes audit misses back to the
+responsible workflow stages.
+
+\section{Related Work}
+
+\paragraph{Research-agent capability.}
+Agent Laboratory organizes literature review, experimentation, and reporting
+within a multi-agent research workflow \cite{schmidgall-etal-2025-agent}.
+PaperBench evaluates replication of published machine-learning research from
+paper understanding through executed artifacts \cite{starace2025paperbench}.
+These systems motivate artifact-level evaluation, but their primary object is
+research capability rather than the consistency of a promotion decision with
+detected blockers.
+
+\paragraph{Review and claim verification.}
+BadScientist operationalizes concern--acceptance conflict for unsound generated
+papers \cite{jiang-etal-2026-badscientist}. Dycke and Gurevych inject reasoning
+faults to test whether automatic reviews respond appropriately
+\cite{dycke-gurevych-2026-automatic}. CLAIM-BENCH evaluates claim--evidence
+reasoning in AI papers \cite{javaji-etal-2025-ai}. Our task retains concern
+detection but adds an explicit action contract, artifact evidence references,
+and a repair owner.
+
+\paragraph{Artifact assurance and recovery.}
+ARA reconstructs scientific workflows for reproducibility assessment
+\cite{riehl2026ara}; REPRO-Bench evaluates agents using papers and replication
+packages \cite{hu2025reprobench}. MADS-CPS proposes machine-checkable run-level
+admissibility for autonomous laboratories \cite{petel2026madscps}. SAGE routes
+experiment failures to structured intervention levels
+\cite{ma2026reflection}, and ClaimGarden controls claim states under evidence
+updates \cite{nishi2026claimgarden}. The closest distinction is therefore not
+artifact inspection or failure attribution alone, but whether detected
+scientific blockers deterministically constrain paper-readiness promotion
+without over-blocking clean bundles.
+
+\section{Promotion Governance Protocol}
+
+\subsection{Task and labels}
+
+Each case is a portable research-run artifact tree paired with a private case
+manifest. The evaluated system returns one decision from \texttt{promote},
+\texttt{needs\_review}, \texttt{downgrade}, or \texttt{block}; zero or more
+concerns with severity and evidence paths; and the workflow stages responsible
+for repair. Gold labels remain outside the visible artifact tree.
+
+Every suite declares an evidence class, adjudication status, and paper-claim
+eligibility. A paper-eligible suite must be independently double adjudicated.
+All variants derived from one base bundle remain in the same split, and source
+content hashes detect renamed duplicates across splits.
+
+\subsection{Fault families and controls}
+
+The protocol requires clean positive, null, and negative controls together
+with variants covering missing comparison evidence, repeated-run provenance,
+hidden failed execution, declared-versus-executed budget mismatch,
+result--figure conflict, claim--evidence conflict, citation support mismatch,
+stale persisted state, and unsupported claim strength. Each mutation records
+before and after hashes. Human adjudicators must verify that a mutation
+introduces only its declared fault.
+
+\subsection{Comparison conditions}
+
+We define four deterministic conditions and one provider condition.
+\emph{Always promote} trusts the incoming ready state. A \emph{presence
+checklist} verifies required files without semantic consistency checks. An
+\emph{advisory artifact audit} reports the same concerns, evidence, and repair
+owners as the full audit but does not bind them to the decision. The
+\emph{fail-closed artifact audit} applies the binding policy. Finally, a blind
+\emph{manuscript-only reviewer} receives only paper text under opaque request
+identifiers; case labels, mutations, paths, and gold data remain private.
+
+\subsection{Metrics and inference}
+
+Primary metrics are false paper-ready promotion and concern--acceptance
+conflict. We also report four-way decision macro-F1, clean-case promotion,
+blocker precision/recall/F1, exact repair-owner match, trace coverage, latency,
+and provider cost. Every system trial must cover every case. Pairwise effects
+are computed per case, with 5,000-replicate bootstrap intervals clustered by
+base bundle and exact paired sign tests over base-bundle effects. Synthetic
+development suites remain exploratory regardless of numeric performance.
+
+\section{Implementation and Development Validation}
+
+The protocol is implemented as manifest-driven builders, runners, scorers, and
+blind request import/export commands. Paths are confined to suite roots;
+symbolic links, duplicate cases, hash mismatches, split leakage, and incomplete
+trial coverage are validation failures. Failure analysis emits review
+diagnostics and node-strengthening recommendations with explicit recheck
+conditions.
+
+The development corpus contains four synthetic base bundles, one clean control
+and nine counterfactual variants per bundle, for 40 cases. It is marked
+as synthetic development evidence with unreviewed adjudication and no
+paper-claim eligibility. Table~\ref{tab:development} therefore tests
+instrumentation only.
+
+\begin{table}[t]
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Condition & Acc. & False prom. & Conflict & Clean & Blocker F1 \\
+\midrule
+Always promote & .10 & 1.00 & -- & 1.00 & -- \\
+Presence checklist & .10 & 1.00 & -- & 1.00 & -- \\
+Advisory audit & .10 & 1.00 & 1.00 & 1.00 & 1.00 \\
+Fail-closed audit & 1.00 & .00 & .00 & 1.00 & 1.00 \\
+\bottomrule
+\end{tabular}
+\caption{Synthetic development results over four base bundles and 40 cases.
+The labels were generated for instrument debugging and were not independently
+adjudicated; the table is not confirmatory evidence.}
+\label{tab:development}
+\end{table}
+
+Before strengthening, the fail-closed audit reached .70 decision accuracy and
+.333 false-promotion rate, missing repeated-run provenance, executed-budget,
+and stale-state faults. The failure analyzer routed the first two to experiment
+execution and the third to review. Added integrity checks were then evaluated
+on the same frozen suite. In the final development run, the fail-closed audit
+differed from the advisory ablation by .90 decision accuracy and -1.00 false
+promotion. The cluster bootstrap intervals are degenerate because each
+synthetic fault repeats identically across only four base bundles; the paired
+sign-test value is .125. This is direct evidence that the development sample is
+too small for inferential claims, despite perfect case-level scores.
+
+\section{Confirmatory Study and Readiness Gate}
+
+The frozen confirmatory study requires at least 20 independently sourced base
+bundles and 200 variants, with 30 base bundles preferred. Two reviewers must
+adjudicate held-out labels and mutation isolation. The manuscript-only
+condition requires three preserved real-provider trials per case. At least one
+post-repair rerun per fault family must measure recovery and regression. Raw
+requests, responses, decisions, failures, manifests, hashes, latency, and cost
+must be retained.
+
+The central hypothesis is that fail-closed governance lowers false promotion
+by at least 20 absolute percentage points relative to the presence checklist
+while retaining at least 90 percent clean-case promotion. The study is stopped
+or downgraded if the full policy blocks more than 10 percent of clean bundles,
+if the checklist is within five points on both primary safety and clean-case
+metrics, if mutations leak labels, or if independent adjudication is absent.
+
+\section{Limitations and Ethical Considerations}
+
+Counterfactual faults may be easier than naturally occurring research defects,
+and deterministic checks can overfit a known artifact schema. A promotion gate
+does not establish scientific truth; it enforces consistency between available
+evidence, stated concerns, and allowed transitions. Provider-based reviewers
+introduce model, prompt, and temporal dependence. Public artifact bundles must
+exclude credentials, private paths, personal data, and proprietary research
+content. False promotion can amplify unsound claims, while false blocking can
+suppress valid null or negative results; both errors must remain visible.
+
+\section{Conclusion}
+
+Promotion governance treats paper readiness as an evidence-bound transition
+rather than a by-product of workflow completion. The implementation and
+development suite show that this distinction is measurable and that detected
+failures can drive targeted audit strengthening. They do not yet show that the
+policy generalizes. Independent artifact curation, adjudication, real-provider
+review, and a frozen confirmatory run are required before advancing beyond a
+research memo.
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+\end{document}
