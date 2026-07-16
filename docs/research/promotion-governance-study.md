@@ -301,6 +301,18 @@ real-world operator identities. The frozen hashes, selection rules, exclusions,
 and evidence ceiling are recorded in
 `docs/research/evidence/promotion-source-acquisition-v3.json`.
 
+The 20 annotation packs were subsequently assembled into one closed reviewer
+batch containing 20 opaque tasks and 343 hash-bound outputs. Its reviewer
+directory occupies 159,120,555 bytes. Self-inspection reproduced the manifest,
+task, common-rubric, and reviewer-artifact-tree hashes and found neither the
+current machine path nor the controller-private map in the reviewer directory.
+The artifact copies preserve source-native upstream paths exactly because
+changing those bytes would invalidate the source evidence; this is an
+additional reason to keep the batch local until license and privacy review are
+complete. No human annotation has been imported, and the closed packaging does
+not establish reviewer independence, accepted normalization, clean execution
+evidence, or confirmatory eligibility.
+
 ## Minimum Publishable Experiment
 
 - At least 20 source-hash-distinct base bundles covering positive, null, and

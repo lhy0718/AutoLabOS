@@ -27,6 +27,21 @@
     "confirmatory_admitted": 0,
     "maximum_declared_family_share": 0.35
   },
+  "review_batch": {
+    "batch_id": "source-normalization-review-batch-v1",
+    "item_count": 20,
+    "output_count": 343,
+    "reviewer_size_bytes": 159120555,
+    "batch_manifest_sha256": "ad96b67c18952e535a11d575ff556e66776d2943712599b99108faa059bc0771",
+    "reviewer_tasks_sha256": "6cec337d3fc606329ffa0183c0de1560862b2bef8fb325aa2dabfef35818bd23",
+    "rubric_sha256": "5f2ad004d634897ca12e76a4573d29967107b44ebb8cff7501e75d111888b1fc",
+    "reviewer_artifact_tree_sha256": "c7cc7b7f20c39db7718f8e3d3e2c2fbff212460a888c2c06aee5d1cff7bd90ed",
+    "inspection_passed": true,
+    "current_machine_path_matches": 0,
+    "controller_private_map_matches": 0,
+    "human_annotations": 0,
+    "evidence_boundary": "The closed reviewer batch binds 20 opaque tasks to exact projected source bytes and keeps the controller map outside the reviewer directory. Source-native upstream paths remain unchanged as evidence, so the batch remains local-only and license-unreviewed. Packaging and self-inspection do not establish human completion, reviewer independence, normalization validity, or confirmatory eligibility."
+  },
   "selected_records": [
     {"slot":"family-a-01","source_family":"family-a","candidate_identity_sha256":"8441ff4010779463ef2353b89324ecefa318f26de17b11dce43aa30f765a772c","raw_source_sha256":"9f27785db0239b473a5dffb4a9faf3b788efafb93e9adf917f6cbc7cc04ec258","recipe_sha256":"fbc4b04c02d021ed77a83498a79c959d1c06b8df115bac2163915ba4c57cf45e","artifact_set_sha256":"bc94480b9302af529fffeb71a259495679b5cf46d3d264ef6669eafb12563e10","normalization_id":"normalization-fa99b5a3ab85c8fa71d991c6"},
     {"slot":"family-a-02","source_family":"family-a","candidate_identity_sha256":"f68fb0514fe0d484211abbf4a55dda7e7373e53e84f2181833855e442706e7cc","raw_source_sha256":"22c40911511550dc8be4e17b1b9b5132a580bb1ca26c42503e32389021b8ea08","recipe_sha256":"ff44b3592a0f1bfb134942981fe2712d78870db37848fac4f600f3c7298fbd54","artifact_set_sha256":"9f84fcee9191b67e20ae396c221a51722f2f87ac0824e38ccd18ce189ab854aa","normalization_id":"normalization-bad28b603fca46deb8b83dc7"},
