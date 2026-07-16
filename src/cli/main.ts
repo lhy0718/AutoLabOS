@@ -27,6 +27,7 @@ import {
   runPromotionSourceProjectionCli,
   runPromotionSourceNormalizationPackExportCli,
   runPromotionSourceNormalizationBatchExportCli,
+  runPromotionSourceNormalizationAnnotationPreflightCli,
   runPromotionSourceNormalizationBatchAdjudicationCli,
   runPromotionSourceNormalizationBatchMaterializationCli,
   runPromotionSourceNormalizationCli,
@@ -70,6 +71,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
+    "  autolabos governance-benchmark preflight-promotion-source-normalization-annotation --reviewer-root <review-batch/reviewer> --annotation <labels.jsonl> --out-dir <preflight-output>",
     "  autolabos governance-benchmark adjudicate-promotion-source-normalization-batch --batch-root <review-batch> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <adjudication>",
     "  autolabos governance-benchmark materialize-promotion-source-normalization-batch --adjudication-root <adjudication> --out-dir <normalized-batch>",
     "  autolabos governance-benchmark normalize-promotion-source --source-root <projected-bundle> --map <private-normalization-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <normalized-bundle>",
@@ -329,6 +331,16 @@ async function main(): Promise<void> {
     await runPromotionSourceNormalizationBatchExportCli({
       cwd: process.cwd(),
       recipePath: action.recipePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-preflight-promotion-source-normalization-annotation") {
+    await runPromotionSourceNormalizationAnnotationPreflightCli({
+      cwd: process.cwd(),
+      reviewerRoot: action.reviewerRoot,
+      annotationPath: action.annotationPath,
       outDir: action.outDir
     });
     return;

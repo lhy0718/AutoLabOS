@@ -18,6 +18,8 @@ import {
 } from "../src/core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
 import { adjudicatePromotionSourceNormalizationBatch } from
   "../src/core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
+import { preflightPromotionSourceNormalizationAnnotation } from
+  "../src/core/benchmark/promotionBenchmarkSourceNormalizationAnnotationPreflight.js";
 import {
   inspectPromotionSourceNormalizationBatchMaterialization,
   materializePromotionSourceNormalizationBatch
@@ -353,6 +355,94 @@ describe("promotion source normalization", () => {
     });
     expect((await inspectPromotionSourceNormalization(path.join(workspace, "normalized-from-batch"))).passed)
       .toBe(true);
+  });
+
+  it("preflights one blind reviewer file without controller data or peer labels", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), tasks.map((task) =>
+      normalizationAnnotation(task.normalization_id, "reviewer-a")));
+
+    const result = await preflightPromotionSourceNormalizationAnnotation({
+      cwd: workspace,
+      reviewerRoot: "review-batch/reviewer",
+      annotationPath: "reviewer-a.jsonl",
+      outDir: "reviewer-a-preflight"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      annotator_id: "reviewer-a",
+      task_count: 2,
+      annotation_count: 2,
+      materialization_ready_count: 2,
+      validation_issues: [],
+      materialization_findings: []
+    });
+    expect(result.report.evidence_boundary).toContain("does not expose the controller map");
+    expect(await readFile(path.join(workspace, result.summary_path), "utf8")).not.toContain("source_root");
+    await expect(preflightPromotionSourceNormalizationAnnotation({
+      cwd: workspace,
+      reviewerRoot: "review-batch/reviewer",
+      annotationPath: "reviewer-a.jsonl",
+      outDir: "review-batch/reviewer/preflight"
+    })).rejects.toThrow("outside the closed reviewer directory");
+  });
+
+  it("reports incomplete and non-materializable reviewer annotations without adjudicating", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await writeJsonLines(path.join(workspace, "incomplete-reviewer.jsonl"), [{
+      ...normalizationAnnotation(tasks[0].normalization_id, "reviewer-a"),
+      result_table_path: "support/claim-source.md"
+    }]);
+
+    const result = await preflightPromotionSourceNormalizationAnnotation({
+      cwd: workspace,
+      reviewerRoot: "review-batch/reviewer",
+      annotationPath: "incomplete-reviewer.jsonl",
+      outDir: "incomplete-preflight"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report).toMatchObject({
+      task_count: 2,
+      annotation_count: 1,
+      materialization_ready_count: 0
+    });
+    expect(result.report.validation_issues.map((issue) => issue.code)).toContain(
+      "source_normalization_annotation_coverage_incomplete"
+    );
+    expect(result.report.materialization_findings.map((issue) => issue.code)).toContain(
+      "source_normalization_annotation_not_materialization_ready"
+    );
+    await expect(access(path.join(workspace, "incomplete-preflight", "adjudicated-labels.jsonl"))).rejects.toThrow();
+  });
+
+  it("accepts a complete honest negative label file while keeping clean-base eligibility separate", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await writeJsonLines(path.join(workspace, "negative-reviewer.jsonl"), tasks.map((task) => ({
+      ...normalizationAnnotation(task.normalization_id, "reviewer-a"),
+      claim_status: "blocked",
+      paper_ready: false,
+      review_block_required: true,
+      rationale: "The projected review evidence does not support a paper-ready decision."
+    })));
+
+    const result = await preflightPromotionSourceNormalizationAnnotation({
+      cwd: workspace,
+      reviewerRoot: "review-batch/reviewer",
+      annotationPath: "negative-reviewer.jsonl",
+      outDir: "negative-preflight"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      annotator_id: "reviewer-a",
+      task_count: 2,
+      annotation_count: 2,
+      materialization_ready_count: 0,
+      validation_issues: []
+    });
+    expect(result.report.materialization_findings).toHaveLength(2);
   });
 
   it("requires a distinct resolver for every batch-label disagreement", async () => {

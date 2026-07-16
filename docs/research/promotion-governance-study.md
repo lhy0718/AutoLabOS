@@ -204,6 +204,12 @@ significance. Synthetic development suites are always marked exploratory.
   paths, preserves both initial labels, and writes generated canonical fields
   separately from the nested projected source. The readiness path must be the
   same manifest-bound file selected for the review-decision role. The
+  reviewer-side preflight uses only the opaque reviewer pack and one label
+  file to check complete coverage before submission and to report
+  projection-bound path and downstream materialization findings separately.
+  Honest negative labels remain submission-valid even when they are not
+  clean-base eligible; the preflight cannot read controller maps or peer
+  labels and does not count as adjudication. The
   independent inspector rechecks every output hash, the closed nested
   projection, the adjudication trace, execution evidence, license, and all
   mutation targets. Human mapping is never treated as proof that execution

@@ -231,7 +231,7 @@ export async function exportPromotionSourceNormalizationPack(
       schema_version: "1.0",
       normalization_id: normalizationId,
       artifact_root: `artifacts/${normalizationId}`,
-      required_output_fields: normalizationOutputFields()
+      required_output_fields: promotionSourceNormalizationOutputFields()
     })}\n`, "utf8");
     await writeJsonFile(path.join(stagingRoot, "private-normalization-map.json"), privateMap);
     await fs.writeFile(path.join(stagingRoot, "annotator", "RUBRIC.md"), normalizationRubric(), "utf8");
@@ -296,8 +296,13 @@ export async function normalizePromotionSource(
     adjudicationSource = "third_party_resolution";
   }
 
-  validateAcceptedLabel(acceptedAnnotation, projection.manifest.outputs.map((output) => output.target_path));
-  await validateSelectedResultTable(path.join(sourceRoot, acceptedAnnotation.result_table_path));
+  validatePromotionSourceNormalizationAcceptedLabel(
+    acceptedAnnotation,
+    projection.manifest.outputs.map((output) => output.target_path)
+  );
+  await validatePromotionSourceNormalizationResultTable(
+    path.join(sourceRoot, acceptedAnnotation.result_table_path)
+  );
 
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
@@ -629,7 +634,7 @@ async function validateAdjudicationTrace(
   }
 }
 
-function validateAcceptedLabel(
+export function validatePromotionSourceNormalizationAcceptedLabel(
   annotation: PromotionSourceNormalizationAnnotation,
   projectedPaths: string[]
 ): void {
@@ -690,7 +695,7 @@ function validateAcceptedLabel(
   }
 }
 
-async function validateSelectedResultTable(filePath: string): Promise<void> {
+export async function validatePromotionSourceNormalizationResultTable(filePath: string): Promise<void> {
   const value = JSON.parse(await fs.readFile(filePath, "utf8")) as unknown;
   if (!Array.isArray(value) || value.length === 0 || !isRecord(value[0])
       || value[0].baseline == null || value[0].comparator == null) {
@@ -966,7 +971,7 @@ async function hashContainedRegularFile(root: string, relativePath: string): Pro
   return hashFile(current);
 }
 
-function normalizationOutputFields(): string[] {
+export function promotionSourceNormalizationOutputFields(): string[] {
   return [
     "schema_version", "normalization_id", "annotator_id", "label_source", "run_id", "run_status",
     "execution_backend", "started_at", "completed_at", "exit_code", "planned_trial_count",

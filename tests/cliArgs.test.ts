@@ -602,6 +602,18 @@ describe("resolveCliAction", () => {
     });
     expect(resolveCliAction([
       "governance-benchmark",
+      "preflight-promotion-source-normalization-annotation",
+      "--reviewer-root", "outputs/source-normalization-review-batch/reviewer",
+      "--annotation", "labels-a.jsonl",
+      "--out-dir", "outputs/source-normalization-preflight-a"
+    ])).toEqual({
+      kind: "governance-benchmark-preflight-promotion-source-normalization-annotation",
+      reviewerRoot: "outputs/source-normalization-review-batch/reviewer",
+      annotationPath: "labels-a.jsonl",
+      outDir: "outputs/source-normalization-preflight-a"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
       "adjudicate-promotion-source-normalization-batch",
       "--batch-root", "outputs/source-normalization-review-batch",
       "--annotations", "labels-a.jsonl",
@@ -730,6 +742,15 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("exactly two --annotations")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "preflight-promotion-source-normalization-annotation",
+      "--reviewer-root", "outputs/source-normalization-review-batch/reviewer",
+      "--annotation", "labels-a.jsonl"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--out-dir")
     });
   });
 

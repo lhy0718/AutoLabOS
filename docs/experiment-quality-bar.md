@@ -137,7 +137,18 @@ but they must not be elevated into experimental evidence sections of a paper.
 - result claims exceed what artifacts support
 - brief-governed minimum evidence is unmet (for example: required repeat count, baseline count, or uncertainty reporting is missing)
 
-## 10) Why this bar exists
+## 10) Human annotation validity is not outcome eligibility
+Reviewer-side validation must not require a positive scientific outcome.
+
+- Treat schema validity, assigned-task coverage, and annotator consistency as submission checks.
+- Report downstream corpus admission, clean-base eligibility, or paper-readiness as separate findings.
+- Allow complete, well-formed negative labels to pass submission preflight even when they make an item ineligible for materialization or promotion.
+- Never use a preflight rule that pressures annotators to label an item as successful, complete, or paper-ready.
+
+Adjudication may compare valid labels, and downstream gates may reject an item,
+but those decisions must remain distinct and auditable.
+
+## 11) Why this bar exists
 These artifacts are handoff boundaries between nodes.
 Missing structure here causes:
 - ambiguous runtime state
@@ -145,7 +156,7 @@ Missing structure here causes:
 - brittle paper-stage behavior
 - inflated claims from underpowered experiments
 
-## 11) Intended strictness
+## 12) Intended strictness
 - Strict on structural presence and non-empty required fields.
 - Moderately strict on comparator/result traceability.
 - Conservative on novelty/scientific significance scoring.

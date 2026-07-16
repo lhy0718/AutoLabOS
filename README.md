@@ -399,6 +399,11 @@ autolabos governance-benchmark export-promotion-source-normalization-batch \
   --recipe <batch-recipe.json> \
   --out-dir <review-batch>
 
+autolabos governance-benchmark preflight-promotion-source-normalization-annotation \
+  --reviewer-root <review-batch>/reviewer \
+  --annotation <labels-a.jsonl> \
+  --out-dir <preflight-a>
+
 autolabos governance-benchmark adjudicate-promotion-source-normalization-batch \
   --batch-root <review-batch> \
   --annotations <labels-a.jsonl> \
@@ -434,6 +439,8 @@ The batch recipe is source-neutral:
 ```
 
 Batch export rejects duplicate source hashes or normalization IDs, changed projections, mismatched task maps, divergent rubrics, absolute paths, and path traversal. Give each independent reviewer a separate copy of `<review-batch>/reviewer` only. Keep `<review-batch>/controller` private; it reconnects opaque task IDs to source and map paths. Packaging a batch does not prove that reviewers are independent or that any human annotation has occurred.
+
+Each reviewer can run the single-file preflight using only the closed `reviewer` directory and their own JSON Lines file. It checks full opaque-task coverage and one annotator ID, then reports projection, selected-path, result-table, and clean-base materialization findings separately. A complete honest negative label file can pass submission preflight even when every item is ineligible for clean-base materialization. The command writes no accepted labels, reads no controller map or peer annotation, and does not establish reviewer identity or independence.
 
 Batch adjudication requires two complete JSON Lines files with one distinct pseudonymous annotator ID per file. It reports exact agreement for every normalized field, accepts a third pseudonymous ID only for initial disagreements, and emits per-item materialization inputs only after complete resolution. The report validates record structure and role separation; it does not establish real-world identity, expertise, or independence.
 

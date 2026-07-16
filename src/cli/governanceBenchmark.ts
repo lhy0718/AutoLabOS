@@ -74,6 +74,10 @@ import {
   type ExportPromotionSourceNormalizationBatchInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
 import {
+  preflightPromotionSourceNormalizationAnnotation,
+  type PreflightPromotionSourceNormalizationAnnotationInput
+} from "../core/benchmark/promotionBenchmarkSourceNormalizationAnnotationPreflight.js";
+import {
   adjudicatePromotionSourceNormalizationBatch,
   type AdjudicatePromotionSourceNormalizationBatchInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
@@ -460,6 +464,23 @@ export async function runPromotionSourceNormalizationBatchExportCli(
       "Evidence boundary: distribute the reviewer directory only; packaging does not establish human completion or independence"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionSourceNormalizationAnnotationPreflightCli(
+  input: PreflightPromotionSourceNormalizationAnnotationInput
+): Promise<void> {
+  const result = await preflightPromotionSourceNormalizationAnnotation(input);
+  process.stdout.write(
+    [
+      `Source-normalization annotation preflight ${result.report.passed ? "passed" : "failed"}`,
+      `Annotator: ${result.report.annotator_id || "unresolved"}`,
+      `Coverage: ${result.report.annotation_count}/${result.report.task_count}`,
+      `Materialization-ready: ${result.report.materialization_ready_count}/${result.report.task_count}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationBatchAdjudicationCli(
