@@ -103,8 +103,14 @@ describe("promotion benchmark manuscript-only prompt pack", () => {
       schema_version: "1.0",
       suite_id: "suite-alpha",
       protocol: "manuscript-only-v1",
+      requests_sha256: "b".repeat(64),
       requests: [
-        { request_id: "request-alpha", case_id: "case-alpha", manuscript_sha256: "a".repeat(64) }
+        {
+          request_id: "request-alpha",
+          case_id: "case-alpha",
+          manuscript_sha256: "a".repeat(64),
+          prompt_sha256: "c".repeat(64)
+        }
       ]
     }));
     await writeFile(path.join(workspace, "responses.jsonl"), "", "utf8");

@@ -445,6 +445,25 @@ Confirmatory intake requires every projected, normalized, or native bundle to pr
 
 Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
+### Fresh Provider Execution
+
+Run the manuscript-only comparator through a configured OpenAI Responses API key without manually constructing response files:
+
+```sh
+autolabos governance-benchmark run-promotion-provider \
+  --suite <suite.json> \
+  --provider openai \
+  --model <supported-model> \
+  --reasoning <supported-effort> \
+  --system <system-id> \
+  --trial <trial-id> \
+  --out-dir <new-output-dir>
+```
+
+The command requires a new output directory and an explicit model, reasoning effort, system ID, and trial ID. It hash-binds the opaque prompt pack, saves each provider output before advancing, hashes provider response IDs instead of exposing them, records the resolved model, token usage, cost, latency, failures, and predictions, and withholds predictions after any incomplete or malformed response. Fake-response environment variables are rejected in external-evidence mode. The recorded receipt supports auditing but does not independently verify provider identity.
+
+Manual prompt export and response import remain useful adapter surfaces, but they do not by themselves establish a fresh external provider run. A completed provider-run manifest marks one trial as external empirical evidence while keeping `independent_trial_requirement_met=false`; the preregistered manuscript-only comparison still requires three independent complete trials.
+
 ---
 
 ## Common Commands

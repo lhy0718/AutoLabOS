@@ -81,6 +81,22 @@ import {
   materializePromotionSourceNormalizationBatch,
   type MaterializePromotionSourceNormalizationBatchInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalizationMaterialization.js";
+import {
+  runPromotionBenchmarkProvider
+} from "../core/benchmark/promotionBenchmarkProviderRunner.js";
+import { resolveOpenAiApiKey } from "../config.js";
+import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+
+export interface RunPromotionProviderCliInput {
+  cwd: string;
+  suitePath: string;
+  provider: "openai";
+  model: string;
+  reasoningEffort: string;
+  systemId: string;
+  trialId: string;
+  outDir: string;
+}
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -212,6 +228,46 @@ export async function runPromotionBenchmarkSystemsCli(
   );
 }
 
+export async function runPromotionProviderCli(
+  input: RunPromotionProviderCliInput
+): Promise<void> {
+  const apiKey = await resolveOpenAiApiKey(input.cwd);
+  if (!apiKey) {
+    throw new Error("OPENAI_API_KEY is required for an external promotion provider run.");
+  }
+  const client = new OpenAiResponsesTextClient(async () => apiKey, {
+    model: input.model,
+    reasoningEffort: input.reasoningEffort
+  });
+  const result = await runPromotionBenchmarkProvider({
+    cwd: input.cwd,
+    suitePath: input.suitePath,
+    outDir: input.outDir,
+    provider: "openai_responses_api",
+    model: input.model,
+    reasoningEffort: input.reasoningEffort,
+    systemId: input.systemId,
+    trialId: input.trialId,
+    evidenceClass: "external_real_provider"
+  }, {
+    complete: (request) => client.complete({
+      prompt: request.prompt,
+      model: request.model,
+      reasoningEffort: request.reasoningEffort
+    })
+  });
+  process.stdout.write(
+    [
+      `Promotion provider run completed: ${result.manifest.run_id}`,
+      `Suite: ${result.manifest.suite_id}`,
+      `Responses: ${result.manifest.completed_response_count}/${result.manifest.request_count}`,
+      `Cost USD: ${result.manifest.usage.cost_usd.toFixed(6)}`,
+      `Predictions: ${result.predictions_path}`,
+      `Manifest: ${result.manifest_path}`
+    ].join("\n") + "\n"
+  );
+}
+
 export async function runPromotionPromptPackExportCli(
   input: ExportPromotionPromptPackInput
 ): Promise<void> {
@@ -220,6 +276,7 @@ export async function runPromotionPromptPackExportCli(
     [
       `Promotion prompt pack exported: ${result.suite_id}`,
       `Requests: ${result.request_count}`,
+      `Requests SHA-256: ${result.requests_sha256}`,
       `Provider input: ${result.requests_path}`,
       `Private map: ${result.private_map_path}`
     ].join("\n") + "\n"

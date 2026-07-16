@@ -10,6 +10,10 @@ import {
   type PromotionExecutionBackend,
   type PromotionExecutionEvidenceRole
 } from "../core/benchmark/promotionBenchmarkExecutionEvidence.js";
+import {
+  buildOpenAiResponsesModelChoices,
+  buildOpenAiResponsesReasoningChoices
+} from "../integrations/openai/modelCatalog.js";
 import { NodeOptionPackageName } from "../types.js";
 
 const META_HARNESS_CLI_NODES = [
@@ -31,6 +35,7 @@ export type CliAction =
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
   | { kind: "governance-benchmark-build-promotion"; recipePath: string; outDir: string }
   | { kind: "governance-benchmark-run-promotion"; suitePath: string; systems: PromotionBenchmarkSystemName[]; trialId?: string; outDir?: string }
+  | { kind: "governance-benchmark-run-promotion-provider"; suitePath: string; provider: "openai"; model: string; reasoningEffort: string; systemId: string; trialId: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-prompts"; suitePath: string; outDir: string }
   | { kind: "governance-benchmark-import-promotion-responses"; requestMapPath: string; responsesPath: string; systemId: string; trialId: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-annotations"; suitePath: string; outDir: string }
@@ -359,11 +364,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|run-promotion-provider|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
       };
     }
     if (subcommand === "project-promotion-source") {
@@ -673,6 +678,55 @@ export function resolveCliAction(args: string[]): CliAction {
       }
       if (!suitePath) return { kind: "error", message: "Missing required argument: --suite <suite.json>." };
       return { kind: "governance-benchmark-run-promotion", suitePath, systems, trialId, outDir };
+    }
+    if (subcommand === "run-promotion-provider") {
+      let suitePath: string | undefined;
+      let provider: "openai" | undefined;
+      let model: string | undefined;
+      let reasoningEffort: string | undefined;
+      let systemId: string | undefined;
+      let trialId: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (!["--suite", "--provider", "--model", "--reasoning", "--system", "--trial", "--out-dir"].includes(token)) {
+          return { kind: "error", message: `Unsupported governance-benchmark run-promotion-provider argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--suite") suitePath = value;
+        else if (token === "--provider") {
+          if (value !== "openai") return { kind: "error", message: `Unsupported promotion provider: ${value}.` };
+          provider = value;
+        } else if (token === "--model") model = value;
+        else if (token === "--reasoning") reasoningEffort = value;
+        else if (token === "--system") systemId = value;
+        else if (token === "--trial") trialId = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!suitePath || !provider || !model || !reasoningEffort || !systemId || !trialId || !outDir) {
+        return {
+          kind: "error",
+          message: "run-promotion-provider requires --suite, --provider, --model, --reasoning, --system, --trial, and --out-dir."
+        };
+      }
+      if (!buildOpenAiResponsesModelChoices().includes(model)) {
+        return { kind: "error", message: `Unsupported OpenAI Responses model: ${model}.` };
+      }
+      if (!buildOpenAiResponsesReasoningChoices(model).includes(reasoningEffort)) {
+        return { kind: "error", message: `Unsupported reasoning effort for ${model}: ${reasoningEffort}.` };
+      }
+      return {
+        kind: "governance-benchmark-run-promotion-provider",
+        suitePath,
+        provider,
+        model,
+        reasoningEffort,
+        systemId,
+        trialId,
+        outDir
+      };
     }
     if (subcommand === "export-promotion-prompts") {
       let suitePath: string | undefined;

@@ -373,6 +373,29 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports an explicit fresh promotion provider run", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "outputs/promotion-suite/suite.json",
+      "--provider", "openai",
+      "--model", "gpt-5.4",
+      "--reasoning", "high",
+      "--system", "manuscript-reviewer",
+      "--trial", "trial-beta",
+      "--out-dir", "outputs/provider-runs/trial-beta"
+    ])).toEqual({
+      kind: "governance-benchmark-run-promotion-provider",
+      suitePath: "outputs/promotion-suite/suite.json",
+      provider: "openai",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-beta",
+      outDir: "outputs/provider-runs/trial-beta"
+    });
+  });
+
   it("supports promotion prompt export and response import modes", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -734,6 +757,28 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--responses")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "suite.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--provider")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "suite.json",
+      "--provider", "openai",
+      "--model", "unsupported-model",
+      "--reasoning", "high",
+      "--system", "manuscript-reviewer",
+      "--trial", "trial-alpha",
+      "--out-dir", "outputs/provider-run"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Unsupported OpenAI Responses model")
     });
   });
 

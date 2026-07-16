@@ -126,7 +126,11 @@ source does not enumerate case identifiers or encode case-specific metrics.
 - **Manuscript-only reviewer:** reviews the paper-facing text without run
   artifacts. Results from this condition are reportable only when produced by
   a real provider under a preserved protocol; Codex mock runs remain smoke
-  evidence.
+  evidence. The fresh provider runner hash-binds its prompt pack, requires a
+  new output root, preserves outputs, hashed response identifiers, usage,
+  cost, latency, failures, and predictions, and fails closed on partial or
+  malformed responses. One completed runner invocation remains one trial and
+  does not satisfy the three-trial requirement by itself.
 - **Artifact-grounded promotion:** applies the full gate, claim ceiling, figure
   consistency, execution-state, and review-transition policy.
 - **Ablations:** remove one of concern-to-action binding, claim ceiling, figure
