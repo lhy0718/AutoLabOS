@@ -92,6 +92,10 @@ import {
   aggregatePromotionBenchmarkProviderRuns,
   type AggregatePromotionProviderRunsInput
 } from "../core/benchmark/promotionBenchmarkProviderAggregate.js";
+import {
+  evaluatePromotionConfirmatoryGate,
+  type EvaluatePromotionConfirmatoryGateInput
+} from "../core/benchmark/promotionBenchmarkConfirmatoryGate.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 
@@ -231,7 +235,8 @@ export async function runPromotionBenchmarkSystemsCli(
       `Promotion benchmark systems completed: ${result.suite_id}`,
       `Systems: ${result.systems.join(", ")}`,
       `Predictions: ${result.prediction_count}`,
-      `Output: ${result.predictions_path}`
+      `Output: ${result.predictions_path}`,
+      `Manifest: ${result.manifest_path}`
     ].join("\n") + "\n"
   );
 }
@@ -291,6 +296,25 @@ export async function runPromotionProviderAggregationCli(
       `Manifest: ${result.manifest_path}`
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionConfirmatoryGateCli(
+  input: EvaluatePromotionConfirmatoryGateInput
+): Promise<void> {
+  const result = await evaluatePromotionConfirmatoryGate(input);
+  process.stdout.write(
+    [
+      "Promotion confirmatory gate: " + result.report.readiness,
+      "Suite: " + result.report.suite_id,
+      "Claim class: " + result.report.claim_class,
+      "Cases: " + result.report.case_count,
+      "Base bundles: " + result.report.base_bundle_count,
+      "Blockers: " + result.report.blockers.length,
+      "Report: " + result.gate_report_path,
+      "Recommendations: " + result.recommendations_path
+    ].join("\n") + "\n"
+  );
+  if (!result.report.evidence_gate_passed) process.exitCode = 1;
 }
 
 export async function runPromotionPromptPackExportCli(

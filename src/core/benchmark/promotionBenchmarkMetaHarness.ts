@@ -104,7 +104,7 @@ export async function analyzePromotionBenchmarkFailures(
       case_id: failure.case_id
     }));
   });
-  const recommendations = buildRecommendations(diagnostics);
+  const recommendations = buildPromotionNodeStrengtheningRecommendations(diagnostics);
   const outDir = path.resolve(cwd, input.outDir);
   const reviewDir = path.join(outDir, "review");
   await fs.mkdir(reviewDir, { recursive: true });
@@ -139,7 +139,9 @@ export async function analyzePromotionBenchmarkFailures(
   };
 }
 
-function buildRecommendations(diagnostics: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+export function buildPromotionNodeStrengtheningRecommendations(
+  diagnostics: Array<Record<string, unknown>>
+): Array<Record<string, unknown>> {
   const byNode = new Map<string, Array<Record<string, unknown>>>();
   for (const diagnostic of diagnostics) {
     const node = String(diagnostic.target_node || "review");

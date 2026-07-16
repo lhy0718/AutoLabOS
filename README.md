@@ -484,6 +484,86 @@ autolabos governance-benchmark aggregate-promotion-provider-runs \
 
 Aggregation accepts exactly three distinct run and trial IDs. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused response receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence.
 
+### Post-Repair Evidence And Confirmatory Gate
+
+Post-repair metrics are recomputed from artifacts rather than accepted as
+operator-entered values. A recovery manifest names the original and repaired
+suites, their raw prediction files, the evaluated system, and hash-bound
+case/trial pairs:
+
+```json
+{
+  "schema_version": "1.0",
+  "study_id": "study-a",
+  "original_suite_path": "suite/suite.json",
+  "repaired_suite_path": "repaired/suite.json",
+  "original_predictions_path": "predictions.jsonl",
+  "repaired_predictions_path": "repaired-predictions.jsonl",
+  "original_system_run_manifest_path": "system-run-manifest.json",
+  "repaired_system_run_manifest_path": "repaired-system-run-manifest.json",
+  "system_id": "artifact-audit",
+  "pairs": [
+    {
+      "pair_kind": "fault_repair",
+      "source_case_id": "case-a",
+      "source_trial_id": "trial-a",
+      "repaired_case_id": "case-a-repaired",
+      "repaired_trial_id": "trial-b",
+      "mutation_family": "fault-family-a",
+      "declared_repair_owner": "run_experiments"
+    }
+  ]
+}
+```
+
+The evaluator requires at least one valid fault-repair rerun for every
+registered fault family and one unchanged clean-control rerun for every base
+bundle. Fault repairs must preserve the source hash while changing the
+artifact hash; clean controls must preserve both. Recovery and clean-control
+regression rates are then derived from the referenced raw predictions. Both
+prediction files must be backed by deterministic system-run manifests emitted
+by `run-promotion-systems`; the evaluator rechecks paths, SHA-256 digests,
+protocol declarations, trial coverage, and case counts before scoring recovery.
+
+Run the final evidence gate with non-provider system predictions, the three
+fresh provider run manifests, and the recovery manifest:
+
+```sh
+autolabos governance-benchmark gate-promotion-confirmatory \
+  --suite <suite.json> \
+  --predictions <non-provider-predictions.jsonl> \
+  --system-run-manifest <system-run-manifest.json> \
+  --provider-run-manifest <trial-a/provider-run-manifest.json> \
+  --provider-run-manifest <trial-b/provider-run-manifest.json> \
+  --provider-run-manifest <trial-c/provider-run-manifest.json> \
+  --recovery-manifest <recovery-manifest.json> \
+  --ungated-system <system-id> \
+  --checklist-system <system-id> \
+  --manuscript-system <system-id> \
+  --full-system <system-id> \
+  --ablation-system <system-id> \
+  --out-dir <new-gate-output-dir>
+```
+
+The base prediction file must not contain the manuscript-only system. The gate
+revalidates and aggregates the three provider runs itself, merges only the
+verified provider predictions, recomputes the benchmark score, checks the
+20-base/200-case/family-stratification and ablation contracts, verifies
+post-repair evidence, and evaluates H1--H4. Evidence completeness and
+hypothesis support are separate: a complete null or negative result may remain
+a `paper_scale_candidate` with a lower claim class, while missing or invalid
+evidence yields `blocked_for_paper_scale`. This gate never emits
+`paper_ready=true`; manuscript quality and submission checks remain separate.
+The gate records a suite snapshot hash over the suite manifest, every case
+manifest, and every verified case artifact tree, plus hashes for its score,
+provider aggregate, system-run manifest, and recovery report.
+
+Its `review/` directory uses the same paper-scale diagnostics and
+node-strengthening recommendation format as the promotion meta-harness, so
+missing design evidence routes to `design_experiments`, missing execution or
+provider/recovery evidence routes to `run_experiments`, and eligibility defects
+route to `review`.
+
 ---
 
 ## Common Commands

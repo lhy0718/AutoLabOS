@@ -1,12 +1,16 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 
+import { writeJsonFile } from "../../utils/fs.js";
 import {
   runPaperReadinessAudit,
   type PaperReadinessAuditBlocker,
   type PaperReadinessAuditSummary
 } from "../audit/paperReadinessAudit.js";
 import {
+  hashPromotionBenchmarkSuiteSnapshot,
+  loadPromotionBenchmarkPredictions,
   loadPromotionBenchmarkSuite,
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkPrediction,
@@ -35,7 +39,44 @@ export interface RunPromotionBenchmarkSystemsResult {
   systems: PromotionBenchmarkSystemName[];
   prediction_count: number;
   predictions_path: string;
+  manifest_path: string;
   audit_root?: string;
+}
+
+export type PromotionBenchmarkSystemProtocol =
+  | "ungated"
+  | "artifact_presence_checklist"
+  | "full_artifact_policy"
+  | "gate_ablation";
+
+export interface PromotionBenchmarkSystemRunManifest {
+  schema_version: "1.0";
+  status: "completed";
+  evidence_class: "deterministic_artifact_evaluation";
+  suite_id: string;
+  suite_path: string;
+  suite_sha256: string;
+  suite_snapshot_sha256: string;
+  trial_id: string;
+  generated_at: string;
+  case_count: number;
+  prediction_count: number;
+  systems: Array<{
+    system_id: PromotionBenchmarkSystemName;
+    protocol: PromotionBenchmarkSystemProtocol;
+    ablated_components: string[];
+  }>;
+  artifacts: {
+    predictions_path: string;
+    predictions_sha256: string;
+  };
+}
+
+export interface VerifyPromotionBenchmarkSystemRunInput {
+  cwd: string;
+  manifestPath: string;
+  suitePath: string;
+  predictionsPath: string;
 }
 
 const PRESENCE_CHECKLIST = [
@@ -88,16 +129,100 @@ export async function runPromotionBenchmarkSystems(
   }
 
   const predictionsPath = path.join(outDir, "predictions.jsonl");
-  await fs.writeFile(predictionsPath, `${predictions.map((prediction) => JSON.stringify(prediction)).join("\n")}\n`, "utf8");
+  const predictionsText = predictions.map((prediction) => JSON.stringify(prediction)).join("\n") + "\n";
+  await fs.writeFile(predictionsPath, predictionsText, "utf8");
+  const manifestPath = path.join(outDir, "system-run-manifest.json");
+  const manifest: PromotionBenchmarkSystemRunManifest = {
+    schema_version: "1.0",
+    status: "completed",
+    evidence_class: "deterministic_artifact_evaluation",
+    suite_id: loaded.suite.manifest.suite_id,
+    suite_path: portableRef(cwd, suitePath),
+    suite_sha256: await sha256File(suitePath),
+    suite_snapshot_sha256: await hashPromotionBenchmarkSuiteSnapshot(suitePath),
+    trial_id: trialId,
+    generated_at: new Date().toISOString(),
+    case_count: loaded.suite.cases.length,
+    prediction_count: predictions.length,
+    systems: systems.map(systemDefinition),
+    artifacts: {
+      predictions_path: portableRef(cwd, predictionsPath),
+      predictions_sha256: sha256(predictionsText)
+    }
+  };
+  await writeJsonFile(manifestPath, manifest);
   return {
     suite_id: loaded.suite.manifest.suite_id,
     systems,
     prediction_count: predictions.length,
     predictions_path: portableRef(cwd, predictionsPath),
+    manifest_path: portableRef(cwd, manifestPath),
     ...(systems.some((system) => system.endsWith("artifact-audit"))
       ? { audit_root: portableRef(cwd, path.join(outDir, "audits")) }
       : {})
   };
+}
+
+export async function verifyPromotionBenchmarkSystemRun(
+  input: VerifyPromotionBenchmarkSystemRunInput
+): Promise<PromotionBenchmarkSystemRunManifest> {
+  const cwd = path.resolve(input.cwd);
+  const manifestPath = await resolveExistingInside(cwd, path.resolve(cwd, input.manifestPath), "System run manifest");
+  const suitePath = await resolveExistingInside(cwd, path.resolve(cwd, input.suitePath), "System run suite");
+  const predictionsPath = await resolveExistingInside(
+    cwd,
+    path.resolve(cwd, input.predictionsPath),
+    "System run predictions"
+  );
+  const manifest = parseSystemRunManifest(JSON.parse(await fs.readFile(manifestPath, "utf8")));
+  const manifestSuitePath = await resolveExistingInside(
+    cwd,
+    path.resolve(cwd, manifest.suite_path),
+    "Manifest suite"
+  );
+  const manifestPredictionsPath = await resolveExistingInside(
+    cwd,
+    path.resolve(cwd, manifest.artifacts.predictions_path),
+    "Manifest predictions"
+  );
+  if (manifestSuitePath !== suitePath || manifestPredictionsPath !== predictionsPath) {
+    throw new Error("System run manifest artifact paths do not match the selected inputs.");
+  }
+  if (await sha256File(suitePath) !== manifest.suite_sha256
+      || await hashPromotionBenchmarkSuiteSnapshot(suitePath) !== manifest.suite_snapshot_sha256
+      || await sha256File(predictionsPath) !== manifest.artifacts.predictions_sha256) {
+    throw new Error("System run manifest artifact SHA-256 mismatch.");
+  }
+  const loaded = await loadPromotionBenchmarkSuite(suitePath);
+  const predictionLoad = await loadPromotionBenchmarkPredictions(predictionsPath);
+  if (!loaded.suite || loaded.issues.length > 0 || predictionLoad.issues.length > 0) {
+    throw new Error("System run manifest references invalid suite or prediction artifacts.");
+  }
+  if (loaded.suite.manifest.suite_id !== manifest.suite_id
+      || loaded.suite.cases.length !== manifest.case_count
+      || predictionLoad.predictions.length !== manifest.prediction_count) {
+    throw new Error("System run manifest counts or suite identity do not match current artifacts.");
+  }
+  const expectedSystemIds = new Set(manifest.systems.map((system) => system.system_id));
+  const actualSystemIds = new Set(predictionLoad.predictions.map((prediction) => prediction.system_id));
+  if (expectedSystemIds.size !== actualSystemIds.size
+      || [...expectedSystemIds].some((systemId) => !actualSystemIds.has(systemId))) {
+    throw new Error("System run manifest system coverage does not match predictions.");
+  }
+  for (const system of manifest.systems) {
+    const definition = systemDefinition(system.system_id);
+    if (system.protocol !== definition.protocol
+        || JSON.stringify(system.ablated_components) !== JSON.stringify(definition.ablated_components)) {
+      throw new Error("System run protocol declaration does not match the built-in implementation.");
+    }
+    const rows = predictionLoad.predictions.filter((prediction) => prediction.system_id === system.system_id);
+    if (rows.length !== loaded.suite.cases.length
+        || rows.some((prediction) => prediction.trial_id !== manifest.trial_id)
+        || new Set(rows.map((prediction) => prediction.case_id)).size !== loaded.suite.cases.length) {
+      throw new Error("System run predictions do not have one complete declared trial per system.");
+    }
+  }
+  return manifest;
 }
 
 function alwaysPromotePrediction(
@@ -236,6 +361,157 @@ function uniqueSystems(systems: PromotionBenchmarkSystemName[]): PromotionBenchm
     }
   }
   return unique;
+}
+
+function systemDefinition(systemId: PromotionBenchmarkSystemName): {
+  system_id: PromotionBenchmarkSystemName;
+  protocol: PromotionBenchmarkSystemProtocol;
+  ablated_components: string[];
+} {
+  if (systemId === "always-promote") {
+    return { system_id: systemId, protocol: "ungated", ablated_components: [] };
+  }
+  if (systemId === "presence-checklist") {
+    return { system_id: systemId, protocol: "artifact_presence_checklist", ablated_components: [] };
+  }
+  if (systemId === "artifact-audit") {
+    return { system_id: systemId, protocol: "full_artifact_policy", ablated_components: [] };
+  }
+  return {
+    system_id: systemId,
+    protocol: "gate_ablation",
+    ablated_components: ["concern_to_action_binding"]
+  };
+}
+
+function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunManifest {
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || value.status !== "completed"
+      || value.evidence_class !== "deterministic_artifact_evaluation"
+      || !portableIdentifier(value.suite_id)
+      || !nonEmptyString(value.suite_path)
+      || !isSha256(value.suite_sha256)
+      || !isSha256(value.suite_snapshot_sha256)
+      || !portableIdentifier(value.trial_id)
+      || !validTimestamp(value.generated_at)
+      || !positiveInteger(value.case_count)
+      || !positiveInteger(value.prediction_count)
+      || !Array.isArray(value.systems)
+      || value.systems.length === 0
+      || !isRecord(value.artifacts)
+      || !nonEmptyString(value.artifacts.predictions_path)
+      || !isSha256(value.artifacts.predictions_sha256)) {
+    throw new Error("Invalid deterministic promotion system run manifest.");
+  }
+  assertExactKeys(value, [
+    "schema_version",
+    "status",
+    "evidence_class",
+    "suite_id",
+    "suite_path",
+    "suite_sha256",
+    "suite_snapshot_sha256",
+    "trial_id",
+    "generated_at",
+    "case_count",
+    "prediction_count",
+    "systems",
+    "artifacts"
+  ], "system run manifest");
+  assertExactKeys(value.artifacts, ["predictions_path", "predictions_sha256"], "system run artifacts");
+  const systems = value.systems.map((entry, index) => {
+    if (!isRecord(entry)
+        || !(PROMOTION_BENCHMARK_SYSTEMS as readonly unknown[]).includes(entry.system_id)
+        || (entry.protocol !== "ungated"
+          && entry.protocol !== "artifact_presence_checklist"
+          && entry.protocol !== "full_artifact_policy"
+          && entry.protocol !== "gate_ablation")
+        || !Array.isArray(entry.ablated_components)
+        || entry.ablated_components.some((item) => !portableIdentifier(item))) {
+      throw new Error("Invalid system run protocol entry " + (index + 1) + ".");
+    }
+    assertExactKeys(entry, ["system_id", "protocol", "ablated_components"], "system run protocol");
+    return {
+      system_id: entry.system_id as PromotionBenchmarkSystemName,
+      protocol: entry.protocol as PromotionBenchmarkSystemProtocol,
+      ablated_components: entry.ablated_components as string[]
+    };
+  });
+  if (new Set(systems.map((system) => system.system_id)).size !== systems.length
+      || value.prediction_count !== value.case_count * systems.length) {
+    throw new Error("System run manifest system identifiers or prediction count are invalid.");
+  }
+  return {
+    schema_version: "1.0",
+    status: "completed",
+    evidence_class: "deterministic_artifact_evaluation",
+    suite_id: value.suite_id,
+    suite_path: value.suite_path,
+    suite_sha256: value.suite_sha256,
+    suite_snapshot_sha256: value.suite_snapshot_sha256,
+    trial_id: value.trial_id,
+    generated_at: value.generated_at,
+    case_count: value.case_count,
+    prediction_count: value.prediction_count,
+    systems,
+    artifacts: {
+      predictions_path: value.artifacts.predictions_path,
+      predictions_sha256: value.artifacts.predictions_sha256
+    }
+  };
+}
+
+function assertExactKeys(value: Record<string, unknown>, expected: string[], context: string): void {
+  const keys = Object.keys(value);
+  if (keys.length !== expected.length || keys.some((key) => !expected.includes(key))) {
+    throw new Error("Unexpected fields in " + context + ".");
+  }
+}
+
+async function resolveExistingInside(root: string, candidate: string, label: string): Promise<string> {
+  const relative = path.relative(root, candidate);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(label + " must be inside the workspace.");
+  }
+  const realPath = await fs.realpath(candidate);
+  const realRelative = path.relative(root, realPath);
+  if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+    throw new Error(label + " must resolve inside the workspace.");
+  }
+  return realPath;
+}
+
+function sha256(value: string | Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sha256File(filePath: string): Promise<string> {
+  return fs.readFile(filePath).then(sha256);
+}
+
+function isSha256(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function portableIdentifier(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(value);
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function positiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) > 0;
+}
+
+function validTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 async function fileExists(filePath: string): Promise<boolean> {

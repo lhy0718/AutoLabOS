@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { scorePromotionBenchmarkFromFiles } from "../src/core/benchmark/promotionBenchmark.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
-import { runPromotionBenchmarkSystems } from "../src/core/benchmark/promotionBenchmarkSystems.js";
+import {
+  runPromotionBenchmarkSystems,
+  verifyPromotionBenchmarkSystemRun
+} from "../src/core/benchmark/promotionBenchmarkSystems.js";
 
 const tempDirs: string[] = [];
 
@@ -62,10 +65,23 @@ describe("promotion benchmark systems", () => {
       suitePath: built.suite_path,
       outDir: "predictions"
     });
-    const predictions = (await readFile(path.join(workspace, evaluated.predictions_path), "utf8"))
+    const predictionsText = await readFile(path.join(workspace, evaluated.predictions_path), "utf8");
+    const predictions = predictionsText
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { case_id: string; system_id: string; decision: string; repair_owners: string[] });
+    const verifiedRun = await verifyPromotionBenchmarkSystemRun({
+      cwd: workspace,
+      manifestPath: evaluated.manifest_path,
+      suitePath: built.suite_path,
+      predictionsPath: evaluated.predictions_path
+    });
+    expect(verifiedRun.systems.map((system) => system.protocol)).toEqual([
+      "ungated",
+      "artifact_presence_checklist",
+      "gate_ablation",
+      "full_artifact_policy"
+    ]);
     expect(predictions).toHaveLength(8);
     expect(predictions.filter((row) => row.system_id === "always-promote").map((row) => row.decision)).toEqual([
       "promote",
@@ -110,6 +126,28 @@ describe("promotion benchmark systems", () => {
       blocker_recall: 1,
       repair_owner_exact_match_accuracy: 1
     });
+
+    const suiteManifest = JSON.parse(
+      await readFile(path.join(workspace, built.suite_path), "utf8")
+    ) as { cases: string[] };
+    const casePath = path.resolve(path.dirname(path.join(workspace, built.suite_path)), suiteManifest.cases[0]);
+    const caseText = await readFile(casePath, "utf8");
+    await writeFile(casePath, caseText + "\n", "utf8");
+    await expect(verifyPromotionBenchmarkSystemRun({
+      cwd: workspace,
+      manifestPath: evaluated.manifest_path,
+      suitePath: built.suite_path,
+      predictionsPath: evaluated.predictions_path
+    })).rejects.toThrow("SHA-256 mismatch");
+    await writeFile(casePath, caseText, "utf8");
+
+    await writeFile(path.join(workspace, evaluated.predictions_path), predictionsText + "\n", "utf8");
+    await expect(verifyPromotionBenchmarkSystemRun({
+      cwd: workspace,
+      manifestPath: evaluated.manifest_path,
+      suitePath: built.suite_path,
+      predictionsPath: evaluated.predictions_path
+    })).rejects.toThrow("SHA-256 mismatch");
   });
 });
 

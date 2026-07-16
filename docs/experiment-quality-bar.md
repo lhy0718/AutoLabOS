@@ -148,7 +148,30 @@ Reviewer-side validation must not require a positive scientific outcome.
 Adjudication may compare valid labels, and downstream gates may reject an item,
 but those decisions must remain distinct and auditable.
 
-## 11) Why this bar exists
+## 11) Confirmatory score and claim-gate separation
+
+A schema-valid score report is not a paper-scale acceptance decision.
+
+- Treat `score.passed=true` only as evidence that the suite and prediction
+  artifacts were parseable, complete for the systems that were present, and
+  successfully scored.
+- Require a separate artifact-backed confirmatory gate to verify the
+  preregistered sample floor, full case matrix, comparator roles, ablation,
+  repeated provider evidence, post-repair reruns, family-stratified analysis,
+  and claim-evidence eligibility.
+- Recompute provider aggregation, benchmark metrics, recovery rate, and
+  clean-control regression from referenced raw artifacts. Do not accept
+  operator-entered summary values.
+- Emit `blocked_for_paper_scale` and node-targeted strengthening
+  recommendations when required evidence is missing or invalid.
+- Do not require hypotheses to be supported as a condition of annotation
+  validity or evidence completeness. A complete null or negative result may
+  remain a `paper_scale_candidate` with a lower claim class.
+- A confirmatory evidence gate may establish `paper_scale_candidate` at most.
+  It must not emit `paper_ready=true` without the separate manuscript,
+  reference, template, and submission audit.
+
+## 12) Why this bar exists
 These artifacts are handoff boundaries between nodes.
 Missing structure here causes:
 - ambiguous runtime state
@@ -156,7 +179,7 @@ Missing structure here causes:
 - brittle paper-stage behavior
 - inflated claims from underpowered experiments
 
-## 12) Intended strictness
+## 13) Intended strictness
 - Strict on structural presence and non-empty required fields.
 - Moderately strict on comparator/result traceability.
 - Conservative on novelty/scientific significance scoring.

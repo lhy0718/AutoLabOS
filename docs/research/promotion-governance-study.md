@@ -331,6 +331,31 @@ complete. No human annotation has been imported, and the closed packaging does
 not establish reviewer independence, accepted normalization, clean execution
 evidence, or confirmatory eligibility.
 
+### Confirmatory Decision Boundary
+
+The implementation now separates benchmark score validity from paper-scale
+claim eligibility. The confirmatory gate revalidates three source provider-run
+manifests, merges only their hash-verified manuscript-only predictions,
+recomputes all system and paired metrics, checks the frozen sample and
+source-family contracts, and consumes a post-repair manifest whose recovery
+and clean-control regression rates are derived from raw suites and predictions.
+It also emits the same `paper_scale_diagnostics.json` and
+`node_strengthening_recommendations.json` shapes used by the promotion
+meta-harness.
+
+The gate can return `paper_scale_candidate` for a complete null or negative
+result while lowering its claim class; hypothesis support is not used as a
+proxy for evidence validity. Missing evidence returns
+`blocked_for_paper_scale` and identifies `design_experiments`,
+`run_experiments`, `analyze_results`, or `review` as the recheck target. The
+gate never returns `paper_ready=true`.
+
+This is an implemented evaluation contract, not a completed experiment. At
+the current checkpoint, no human normalization labels have been admitted and
+no three-run external provider aggregate has been executed for a paper-eligible
+suite. Therefore no confirmatory metrics, hypothesis verdicts, or paper-scale
+empirical claims exist yet.
+
 ## Minimum Publishable Experiment
 
 - At least 20 source-hash-distinct base bundles covering positive, null, and

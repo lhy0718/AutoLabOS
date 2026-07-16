@@ -329,6 +329,58 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports artifact-backed confirmatory promotion gating", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "gate-promotion-confirmatory",
+      "--suite",
+      "inputs/suite.json",
+      "--predictions",
+      "inputs/non-provider-predictions.jsonl",
+      "--system-run-manifest",
+      "runs/deterministic/system-run-manifest.json",
+      "--provider-run-manifest",
+      "runs/trial-a/provider-run-manifest.json",
+      "--provider-run-manifest",
+      "runs/trial-b/provider-run-manifest.json",
+      "--provider-run-manifest",
+      "runs/trial-c/provider-run-manifest.json",
+      "--recovery-manifest",
+      "inputs/recovery-manifest.json",
+      "--ungated-system",
+      "ungated",
+      "--checklist-system",
+      "checklist",
+      "--manuscript-system",
+      "manuscript",
+      "--full-system",
+      "full-policy",
+      "--ablation-system",
+      "policy-ablation",
+      "--out-dir",
+      "outputs/confirmatory-gate"
+    ])).toEqual({
+      kind: "governance-benchmark-gate-promotion-confirmatory",
+      suitePath: "inputs/suite.json",
+      predictionsPath: "inputs/non-provider-predictions.jsonl",
+      systemRunManifestPath: "runs/deterministic/system-run-manifest.json",
+      providerRunManifestPaths: [
+        "runs/trial-a/provider-run-manifest.json",
+        "runs/trial-b/provider-run-manifest.json",
+        "runs/trial-c/provider-run-manifest.json"
+      ],
+      recoveryManifestPath: "inputs/recovery-manifest.json",
+      systemRoles: {
+        ungated: "ungated",
+        checklist: "checklist",
+        manuscript: "manuscript",
+        full: "full-policy",
+        ablations: ["policy-ablation"]
+      },
+      outDir: "outputs/confirmatory-gate"
+    });
+  });
+
   it("supports promotion benchmark failure analysis", () => {
     expect(resolveCliAction([
       "governance-benchmark",

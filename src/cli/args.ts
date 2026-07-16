@@ -54,6 +54,7 @@ export type CliAction =
   | { kind: "governance-benchmark-prepare-promotion-execution-evidence"; sourceRoot: string; runId: string; executionBackend: PromotionExecutionBackend; startedAt: string; completedAt: string; trialIds: string[]; artifacts: Array<{ role: PromotionExecutionEvidenceRole; path: string }> }
   | { kind: "governance-benchmark-audit-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-freeze-promotion-confirmatory"; manifestPath: string; outDir: string }
+  | { kind: "governance-benchmark-gate-promotion-confirmatory"; suitePath: string; predictionsPath: string; systemRunManifestPath?: string; providerRunManifestPaths: string[]; recoveryManifestPath?: string; systemRoles: { ungated: string; checklist: string; manuscript: string; full: string; ablations: string[] }; outDir: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
   | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
   | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
@@ -366,11 +367,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "preflight-promotion-source-normalization-annotation" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "aggregate-promotion-provider-runs" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "preflight-promotion-source-normalization-annotation" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "gate-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "aggregate-promotion-provider-runs" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|preflight-promotion-source-normalization-annotation|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|run-promotion-provider|aggregate-promotion-provider-runs|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|preflight-promotion-source-normalization-annotation|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|gate-promotion-confirmatory|build-promotion|run-promotion|run-promotion-provider|aggregate-promotion-provider-runs|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
       };
     }
     if (subcommand === "project-promotion-source") {
@@ -945,6 +946,60 @@ export function resolveCliAction(args: string[]): CliAction {
         annotationPaths,
         resolutionPath,
         mutationAuditReportPath,
+        outDir
+      };
+    }
+    if (subcommand === "gate-promotion-confirmatory") {
+      let suitePath: string | undefined;
+      let predictionsPath: string | undefined;
+      let systemRunManifestPath: string | undefined;
+      let recoveryManifestPath: string | undefined;
+      let ungated: string | undefined;
+      let checklist: string | undefined;
+      let manuscript: string | undefined;
+      let full: string | undefined;
+      const ablations: string[] = [];
+      const providerRunManifestPaths: string[] = [];
+      let outDir = "outputs/governance-benchmark/promotion-confirmatory-gate";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: "Missing value for " + token + "." };
+        }
+        if (token === "--suite") suitePath = value;
+        else if (token === "--predictions") predictionsPath = value;
+        else if (token === "--system-run-manifest") systemRunManifestPath = value;
+        else if (token === "--provider-run-manifest") providerRunManifestPaths.push(value);
+        else if (token === "--recovery-manifest") recoveryManifestPath = value;
+        else if (token === "--ungated-system") ungated = value;
+        else if (token === "--checklist-system") checklist = value;
+        else if (token === "--manuscript-system") manuscript = value;
+        else if (token === "--full-system") full = value;
+        else if (token === "--ablation-system") ablations.push(value);
+        else if (token === "--out-dir") outDir = value;
+        else {
+          return {
+            kind: "error",
+            message: "Unsupported governance-benchmark gate-promotion-confirmatory argument: " + token
+          };
+        }
+        index += 1;
+      }
+      if (!suitePath || !predictionsPath || !ungated || !checklist || !manuscript || !full) {
+        return {
+          kind: "error",
+          message: "gate-promotion-confirmatory requires --suite, --predictions, --ungated-system, --checklist-system, --manuscript-system, and --full-system."
+        };
+      }
+      return {
+        kind: "governance-benchmark-gate-promotion-confirmatory",
+        suitePath,
+        predictionsPath,
+        systemRunManifestPath,
+        providerRunManifestPaths,
+        recoveryManifestPath,
+        systemRoles: { ungated, checklist, manuscript, full, ablations },
         outDir
       };
     }

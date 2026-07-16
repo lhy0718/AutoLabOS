@@ -186,6 +186,11 @@ export interface ScorePromotionBenchmarkInput {
   outDir?: string;
 }
 
+export interface LoadedPromotionBenchmarkPredictions {
+  predictions: PromotionBenchmarkPrediction[];
+  issues: PromotionBenchmarkValidationIssue[];
+}
+
 const CLUSTER_BOOTSTRAP_REPLICATES = 5_000;
 
 export async function loadPromotionBenchmarkSuite(
@@ -300,9 +305,9 @@ export async function scorePromotionBenchmarkFromFiles(
   const suitePath = path.resolve(cwd, input.suitePath);
   const predictionsPath = path.resolve(cwd, input.predictionsPath);
   const loaded = await loadPromotionBenchmarkSuite(suitePath);
-  const predictionIssues: PromotionBenchmarkValidationIssue[] = [];
-  const predictions = await readPredictions(predictionsPath, predictionIssues);
-  const issues = [...loaded.issues, ...predictionIssues];
+  const loadedPredictions = await loadPromotionBenchmarkPredictions(predictionsPath);
+  const predictions = loadedPredictions.predictions;
+  const issues = [...loaded.issues, ...loadedPredictions.issues];
   const cases = loaded.suite?.cases || [];
   const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
   const seen = new Set<string>();
@@ -391,6 +396,14 @@ export async function scorePromotionBenchmarkFromFiles(
     output_path: portableRef(cwd, outputPath, "<output>/promotion-score.json"),
     report_path: portableRef(cwd, reportPath, "<output>/promotion-score.md")
   };
+}
+
+export async function loadPromotionBenchmarkPredictions(
+  predictionsPath: string
+): Promise<LoadedPromotionBenchmarkPredictions> {
+  const issues: PromotionBenchmarkValidationIssue[] = [];
+  const predictions = await readPredictions(path.resolve(predictionsPath), issues);
+  return { predictions, issues };
 }
 
 function scoreSystem(
@@ -1076,6 +1089,36 @@ export async function hashPromotionArtifactTree(root: string): Promise<string> {
     hash.update("\0");
   };
   await visit(absoluteRoot);
+  return hash.digest("hex");
+}
+
+export async function hashPromotionBenchmarkSuiteSnapshot(suitePath: string): Promise<string> {
+  const loaded = await loadPromotionBenchmarkSuite(suitePath);
+  if (!loaded.suite || loaded.issues.length > 0) {
+    throw new Error(
+      "Cannot hash an invalid promotion benchmark suite: "
+      + loaded.issues.map((issue) => issue.code).join(", ")
+    );
+  }
+  const hash = createHash("sha256");
+  hash.update("suite_manifest\0");
+  hash.update(await fs.readFile(loaded.suite.suite_path));
+  hash.update("\0");
+  const caseRefs = [...loaded.suite.manifest.cases].sort();
+  for (const caseRef of caseRefs) {
+    const casePath = resolveContainedPath(loaded.suite.suite_root, caseRef);
+    if (!casePath) throw new Error("Suite snapshot case path escaped the suite root.");
+    hash.update("case_manifest\0" + caseRef.replace(/\\/gu, "/") + "\0");
+    hash.update(await fs.readFile(casePath));
+    hash.update("\0");
+  }
+  const cases = [...loaded.suite.cases].sort((left, right) => left.case_id.localeCompare(right.case_id));
+  for (const benchmarkCase of cases) {
+    const artifactRoot = loaded.suite.case_artifact_roots[benchmarkCase.case_id];
+    hash.update("artifact_tree\0" + benchmarkCase.case_id + "\0");
+    hash.update(await hashPromotionArtifactTree(artifactRoot));
+    hash.update("\0");
+  }
   return hash.digest("hex");
 }
 

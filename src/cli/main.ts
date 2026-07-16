@@ -34,6 +34,7 @@ import {
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
+  runPromotionConfirmatoryGateCli,
   runPromotionFailureAnalysisCli,
   runPromotionBenchmarkScoreCli
 } from "./governanceBenchmark.js";
@@ -78,6 +79,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
+    "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
     "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai --model <id> --reasoning <effort> --system <id> --trial <id> --out-dir <new-output-dir>",
@@ -405,6 +407,20 @@ async function main(): Promise<void> {
     await runPromotionConfirmatoryFreezeCli({
       cwd: process.cwd(),
       manifestPath: action.manifestPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-gate-promotion-confirmatory") {
+    await runPromotionConfirmatoryGateCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      predictionsPath: action.predictionsPath,
+      systemRunManifestPath: action.systemRunManifestPath,
+      providerRunManifestPaths: action.providerRunManifestPaths,
+      recoveryManifestPath: action.recoveryManifestPath,
+      systemRoles: action.systemRoles,
       outDir: action.outDir
     });
     return;
