@@ -17,6 +17,8 @@ import {
   runPromotionPromptPackExportCli,
   runPromotionResponseImportCli,
   runPromotionAnnotationPackExportCli,
+  runPromotionMutationAuditPackExportCli,
+  runPromotionMutationAuditVerificationCli,
   runPromotionAdjudicationCli,
   runPromotionBenchmarkSystemsCli,
   runSyntheticPromotionCorpusCli,
@@ -61,7 +63,9 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts]",
     "  autolabos governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions]",
     "  autolabos governance-benchmark export-promotion-annotations --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-annotations]",
-    "  autolabos governance-benchmark adjudicate-promotion --suite <suite.json> --map <private-annotation-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] [--out-dir outputs/governance-benchmark/promotion-adjudication]",
+    "  autolabos governance-benchmark export-promotion-mutation-audit --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-mutation-audit]",
+    "  autolabos governance-benchmark verify-promotion-mutations --suite <suite.json> --map <private-mutation-audit-map.json> --audits <audit-a.jsonl> --audits <audit-b.jsonl> [--out-dir outputs/governance-benchmark/promotion-mutation-verification]",
+    "  autolabos governance-benchmark adjudicate-promotion --suite <suite.json> --map <private-annotation-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] [--mutation-audit-report <mutation-audit-report.json>] [--out-dir outputs/governance-benchmark/promotion-adjudication]",
     "  autolabos governance-benchmark analyze-promotion-failures --suite <suite.json> --predictions <predictions.jsonl> --system <id> [--out-dir outputs/governance-benchmark/promotion-failures]",
     "  autolabos governance-benchmark score-promotion --suite <suite.json> --predictions <predictions.jsonl> [--out-dir outputs/governance-benchmark/promotion-score]",
     "  autolabos meta-harness [--runs 5] [--node generate_hypotheses|design_experiments|analyze_results|review] [--no-apply] [--dry-run]",
@@ -341,6 +345,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (action.kind === "governance-benchmark-export-promotion-mutation-audit") {
+    await runPromotionMutationAuditPackExportCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-verify-promotion-mutations") {
+    await runPromotionMutationAuditVerificationCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      privateMapPath: action.privateMapPath,
+      auditPaths: action.auditPaths,
+      outDir: action.outDir
+    });
+    return;
+  }
+
   if (action.kind === "governance-benchmark-adjudicate-promotion") {
     await runPromotionAdjudicationCli({
       cwd: process.cwd(),
@@ -348,6 +372,7 @@ async function main(): Promise<void> {
       privateMapPath: action.privateMapPath,
       annotationPaths: action.annotationPaths,
       resolutionPath: action.resolutionPath,
+      mutationAuditReportPath: action.mutationAuditReportPath,
       outDir: action.outDir
     });
     return;

@@ -10,6 +10,7 @@ export type PromotionDecision = typeof PROMOTION_DECISIONS[number];
 export type PromotionBenchmarkSplit = "development" | "test";
 export type PromotionBenchmarkEvidenceClass = "synthetic_development" | "human_adjudicated_test" | "external_real_run";
 export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annotator" | "double_adjudicated";
+export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified";
 
 export interface PromotionBenchmarkSuiteManifest {
   schema_version: "1.0";
@@ -17,6 +18,7 @@ export interface PromotionBenchmarkSuiteManifest {
   evidence_class?: PromotionBenchmarkEvidenceClass;
   paper_claim_eligible?: boolean;
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
+  mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   cases: string[];
 }
 
@@ -125,6 +127,7 @@ export interface PromotionBenchmarkScoreReport {
   evidence_class: PromotionBenchmarkEvidenceClass | "unspecified";
   paper_claim_eligible: boolean;
   adjudication_status: PromotionBenchmarkAdjudicationStatus | "unspecified";
+  mutation_isolation_status: PromotionBenchmarkMutationIsolationStatus | "unspecified";
   suite_ref: string;
   prediction_ref: string;
   passed: boolean;
@@ -315,6 +318,7 @@ export async function scorePromotionBenchmarkFromFiles(
     evidence_class: loaded.suite?.manifest.evidence_class || "unspecified",
     paper_claim_eligible: loaded.suite?.manifest.paper_claim_eligible === true,
     adjudication_status: loaded.suite?.manifest.adjudication_status || "unspecified",
+    mutation_isolation_status: loaded.suite?.manifest.mutation_isolation_status || "unspecified",
     suite_ref: portableRef(cwd, suitePath, "<external-suite>"),
     prediction_ref: portableRef(cwd, predictionsPath, "<external-predictions>"),
     passed: issues.length === 0,
@@ -620,6 +624,7 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     `- Evidence class: ${report.evidence_class}`,
     `- Paper-claim eligible: ${report.paper_claim_eligible}`,
     `- Adjudication: ${report.adjudication_status}`,
+    `- Mutation isolation: ${report.mutation_isolation_status}`,
     "",
     "## System Summary",
     "",
@@ -695,12 +700,25 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({ code: "suite_adjudication_status_invalid", message: "Suite adjudication_status is invalid." });
     return undefined;
   }
+  if (value.mutation_isolation_status !== undefined && !isPromotionMutationIsolationStatus(value.mutation_isolation_status)) {
+    issues.push({ code: "suite_mutation_isolation_status_invalid", message: "Suite mutation_isolation_status is invalid." });
+    return undefined;
+  }
+  if (value.paper_claim_eligible === true
+      && (value.adjudication_status !== "double_adjudicated" || value.mutation_isolation_status !== "double_verified")) {
+    issues.push({
+      code: "suite_paper_claim_eligibility_unverified",
+      message: "Paper-claim-eligible suites require double adjudication and double-verified mutation isolation."
+    });
+    return undefined;
+  }
   return {
     schema_version: "1.0",
     suite_id: value.suite_id,
     ...(value.evidence_class ? { evidence_class: value.evidence_class } : {}),
     ...(typeof value.paper_claim_eligible === "boolean" ? { paper_claim_eligible: value.paper_claim_eligible } : {}),
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
+    ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     cases: stringArray(value.cases) || []
   };
 }
@@ -896,6 +914,10 @@ function isPromotionEvidenceClass(value: unknown): value is PromotionBenchmarkEv
 
 function isPromotionAdjudicationStatus(value: unknown): value is PromotionBenchmarkAdjudicationStatus {
   return value === "unreviewed" || value === "single_annotator" || value === "double_adjudicated";
+}
+
+function isPromotionMutationIsolationStatus(value: unknown): value is PromotionBenchmarkMutationIsolationStatus {
+  return value === "unreviewed" || value === "double_verified";
 }
 
 function nonEmptyString(value: unknown): value is string {

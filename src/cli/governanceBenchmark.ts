@@ -47,6 +47,12 @@ import {
   type AdjudicatePromotionBenchmarkInput,
   type ExportPromotionAnnotationPackInput
 } from "../core/benchmark/promotionBenchmarkAdjudication.js";
+import {
+  exportPromotionMutationAuditPack,
+  verifyPromotionMutationAudit,
+  type ExportPromotionMutationAuditPackInput,
+  type VerifyPromotionMutationAuditInput
+} from "../core/benchmark/promotionBenchmarkMutationAudit.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -220,6 +226,38 @@ export async function runPromotionAnnotationPackExportCli(
   );
 }
 
+export async function runPromotionMutationAuditPackExportCli(
+  input: ExportPromotionMutationAuditPackInput
+): Promise<void> {
+  const result = await exportPromotionMutationAuditPack(input);
+  process.stdout.write(
+    [
+      `Promotion mutation audit pack exported: ${result.suite_id}`,
+      `Tasks: ${result.audit_count}`,
+      `Auditor directory: ${result.auditor_dir}`,
+      `Auditor input: ${result.tasks_path}`,
+      `Private map: ${result.private_map_path}`,
+      `Rubric: ${result.rubric_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionMutationAuditVerificationCli(
+  input: VerifyPromotionMutationAuditInput
+): Promise<void> {
+  const result = await verifyPromotionMutationAudit(input);
+  process.stdout.write(
+    [
+      `Promotion mutation audit ${result.report.passed ? "passed" : "failed"}: ${result.report.suite_id}`,
+      `Isolated cases: ${result.report.verified_case_count}/${result.report.case_count}`,
+      `Confounded cases: ${result.report.confounded_case_count}`,
+      `Status: ${result.report.mutation_isolation_status}`,
+      `Report: ${result.report_path}`
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
+}
+
 export async function runPromotionAdjudicationCli(
   input: AdjudicatePromotionBenchmarkInput
 ): Promise<void> {
@@ -229,6 +267,7 @@ export async function runPromotionAdjudicationCli(
       `Promotion adjudication ${result.report.passed ? "passed" : "failed"}: ${result.report.suite_id}`,
       `Accepted labels: ${result.report.accepted_label_count}/${result.report.case_count}`,
       `Disagreements: ${result.report.disagreement_count}; resolved=${result.report.resolved_disagreement_count}`,
+      `Mutation isolation: ${result.report.mutation_isolation.status}`,
       `Paper-claim eligible: ${result.report.eligibility.paper_claim_eligible}`,
       `Report: ${result.report_path}`,
       ...(result.suite_path ? [`Suite: ${result.suite_path}`] : [])

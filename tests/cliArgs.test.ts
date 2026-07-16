@@ -418,6 +418,8 @@ describe("resolveCliAction", () => {
       "labels-b.jsonl",
       "--resolution",
       "resolution.jsonl",
+      "--mutation-audit-report",
+      "mutation-audit-report.json",
       "--out-dir",
       "outputs/adjudicated"
     ])).toEqual({
@@ -426,7 +428,43 @@ describe("resolveCliAction", () => {
       privateMapPath: "private-map.json",
       annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
       resolutionPath: "resolution.jsonl",
+      mutationAuditReportPath: "mutation-audit-report.json",
       outDir: "outputs/adjudicated"
+    });
+  });
+
+  it("supports promotion mutation audit export and double verification", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-mutation-audit",
+      "--suite",
+      "suite.json",
+      "--out-dir",
+      "outputs/mutation-audit"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-mutation-audit",
+      suitePath: "suite.json",
+      outDir: "outputs/mutation-audit"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "verify-promotion-mutations",
+      "--suite",
+      "suite.json",
+      "--map",
+      "private-mutation-map.json",
+      "--audits",
+      "audit-a.jsonl",
+      "--audits",
+      "audit-b.jsonl",
+      "--out-dir",
+      "outputs/mutation-verification"
+    ])).toEqual({
+      kind: "governance-benchmark-verify-promotion-mutations",
+      suitePath: "suite.json",
+      privateMapPath: "private-mutation-map.json",
+      auditPaths: ["audit-a.jsonl", "audit-b.jsonl"],
+      outDir: "outputs/mutation-verification"
     });
   });
 
@@ -522,6 +560,26 @@ describe("resolveCliAction", () => {
       "private-map.json",
       "--annotations",
       "labels-a.jsonl"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two")
+    });
+  });
+
+  it("requires a suite and exactly two mutation audit files for mutation verification", () => {
+    expect(resolveCliAction(["governance-benchmark", "export-promotion-mutation-audit"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--suite")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "verify-promotion-mutations",
+      "--suite",
+      "suite.json",
+      "--map",
+      "private-map.json",
+      "--audits",
+      "audit-a.jsonl"
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("exactly two")

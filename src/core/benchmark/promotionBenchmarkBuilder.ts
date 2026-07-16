@@ -9,6 +9,7 @@ import {
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkAdjudicationStatus,
   type PromotionBenchmarkEvidenceClass,
+  type PromotionBenchmarkMutationIsolationStatus,
   type PromotionBenchmarkSplit,
   type PromotionDecision
 } from "./promotionBenchmark.js";
@@ -38,6 +39,7 @@ export interface PromotionBenchmarkRecipe {
   evidence_class?: PromotionBenchmarkEvidenceClass;
   paper_claim_eligible?: boolean;
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
+  mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   cases: PromotionBenchmarkRecipeCase[];
 }
 
@@ -135,6 +137,7 @@ export async function buildPromotionBenchmarkSuite(
       ...(recipe.evidence_class ? { evidence_class: recipe.evidence_class } : {}),
       ...(typeof recipe.paper_claim_eligible === "boolean" ? { paper_claim_eligible: recipe.paper_claim_eligible } : {}),
       ...(recipe.adjudication_status ? { adjudication_status: recipe.adjudication_status } : {}),
+      ...(recipe.mutation_isolation_status ? { mutation_isolation_status: recipe.mutation_isolation_status } : {}),
       cases: caseRefs
     });
     await fs.rename(stagingRoot, outDir);
@@ -254,8 +257,12 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
   if (value.adjudication_status !== undefined && !isAdjudicationStatus(value.adjudication_status)) {
     throw new Error("Promotion benchmark recipe adjudication_status is invalid.");
   }
-  if (value.paper_claim_eligible === true && value.adjudication_status !== "double_adjudicated") {
-    throw new Error("Paper-claim-eligible promotion suites must be double adjudicated.");
+  if (value.mutation_isolation_status !== undefined && !isMutationIsolationStatus(value.mutation_isolation_status)) {
+    throw new Error("Promotion benchmark recipe mutation_isolation_status is invalid.");
+  }
+  if (value.paper_claim_eligible === true
+      && (value.adjudication_status !== "double_adjudicated" || value.mutation_isolation_status !== "double_verified")) {
+    throw new Error("Paper-claim-eligible promotion suites must be double adjudicated with double-verified mutation isolation.");
   }
   return {
     schema_version: "1.0",
@@ -263,6 +270,7 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
     ...(value.evidence_class ? { evidence_class: value.evidence_class } : {}),
     ...(typeof value.paper_claim_eligible === "boolean" ? { paper_claim_eligible: value.paper_claim_eligible } : {}),
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
+    ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     cases
   };
 }
@@ -413,6 +421,10 @@ function isEvidenceClass(value: unknown): value is PromotionBenchmarkEvidenceCla
 
 function isAdjudicationStatus(value: unknown): value is PromotionBenchmarkAdjudicationStatus {
   return value === "unreviewed" || value === "single_annotator" || value === "double_adjudicated";
+}
+
+function isMutationIsolationStatus(value: unknown): value is PromotionBenchmarkMutationIsolationStatus {
+  return value === "unreviewed" || value === "double_verified";
 }
 
 function validId(value: unknown): value is string {

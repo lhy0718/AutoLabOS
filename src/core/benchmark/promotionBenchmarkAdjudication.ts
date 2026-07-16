@@ -12,6 +12,10 @@ import {
   type PromotionBenchmarkEvidenceClass,
   type PromotionDecision
 } from "./promotionBenchmark.js";
+import {
+  validateVerifiedPromotionMutationAuditReport,
+  type PromotionMutationAuditIssue
+} from "./promotionBenchmarkMutationAudit.js";
 
 export const REQUIRED_CONFIRMATORY_MUTATION_FAMILIES = [
   "comparison_evidence_gap",
@@ -106,6 +110,11 @@ export interface PromotionAdjudicationReport {
     full_label_exact_rate: number | null;
   };
   validation_issues: PromotionAdjudicationIssue[];
+  mutation_isolation: {
+    status: "unreviewed" | "double_verified";
+    report_path: string | null;
+    validation_issues: PromotionMutationAuditIssue[];
+  };
   eligibility: PromotionAdjudicationEligibility;
   adjudicated_suite_path: string | null;
 }
@@ -116,6 +125,7 @@ export interface AdjudicatePromotionBenchmarkInput {
   privateMapPath: string;
   annotationPaths: string[];
   resolutionPath?: string;
+  mutationAuditReportPath?: string;
   outDir: string;
 }
 
@@ -296,6 +306,32 @@ export async function adjudicatePromotionBenchmark(
     return left && right ? [[left, right] as const] : [];
   });
   const passed = issues.length === 0 && accepted.size === loaded.suite.cases.length;
+  const mutationIsolationValidation = input.mutationAuditReportPath
+    ? await validateVerifiedPromotionMutationAuditReport({
+        reportPath: path.resolve(cwd, input.mutationAuditReportPath),
+        suitePath,
+        suiteId: loaded.suite.manifest.suite_id,
+        cases: loaded.suite.cases
+      })
+    : {
+        verified: false,
+        auditor_ids: [],
+        issues: [{
+          code: "mutation_isolation_report_missing",
+          message: "A separately double-audited mutation-isolation report is required for paper eligibility."
+        }]
+      };
+  const roleOverlap = mutationIsolationValidation.auditor_ids.filter((auditorId) =>
+    new Set(adjudicatorIds).has(auditorId));
+  const mutationIsolationIssues = [
+    ...mutationIsolationValidation.issues,
+    ...(roleOverlap.length > 0 ? [{
+      code: "mutation_auditors_not_role_separated",
+      message: "Mutation-isolation auditors must use IDs distinct from promotion-label adjudicators.",
+      ref: roleOverlap.sort().join(",")
+    }] : [])
+  ];
+  const mutationIsolationVerified = mutationIsolationValidation.verified && roleOverlap.length === 0;
   const adjudicatedCases = loaded.suite.cases.map((benchmarkCase) => ({
     ...benchmarkCase,
     gold: accepted.get(benchmarkCase.case_id)?.label || benchmarkCase.gold
@@ -303,7 +339,8 @@ export async function adjudicatePromotionBenchmark(
   const eligibility = evaluatePromotionAdjudicationEligibility({
     evidence_class: loaded.suite.manifest.evidence_class,
     cases: adjudicatedCases,
-    adjudication_complete: passed
+    adjudication_complete: passed,
+    mutation_isolation_verified: mutationIsolationVerified
   });
 
   await fs.mkdir(path.dirname(outDir), { recursive: true });
@@ -325,6 +362,7 @@ export async function adjudicatePromotionBenchmark(
         ...loaded.suite.manifest,
         evidence_class: evidenceClass,
         adjudication_status: "double_adjudicated",
+        mutation_isolation_status: mutationIsolationVerified ? "double_verified" : "unreviewed",
         paper_claim_eligible: eligibility.paper_claim_eligible
       });
       const labelRows = privateMap.entries.map((entry) => {
@@ -361,6 +399,13 @@ export async function adjudicatePromotionBenchmark(
       resolved_disagreement_count: disagreements.filter((entry) => resolution.records.has(entry.annotation_id)).length,
       agreement: agreementMetrics(agreementPairs),
       validation_issues: issues,
+      mutation_isolation: {
+        status: mutationIsolationVerified ? "double_verified" : "unreviewed",
+        report_path: input.mutationAuditReportPath
+          ? portableRef(cwd, path.resolve(cwd, input.mutationAuditReportPath))
+          : null,
+        validation_issues: mutationIsolationIssues
+      },
       eligibility,
       adjudicated_suite_path: suiteOutputPath
     };
@@ -386,6 +431,7 @@ async function writeAdjudicationReviewArtifacts(
 ): Promise<void> {
   const rows = [
     ...report.validation_issues.map((issue) => ({ code: issue.code, message: issue.message, ref: issue.ref })),
+    ...report.mutation_isolation.validation_issues.map((issue) => ({ code: issue.code, message: issue.message, ref: issue.ref })),
     ...report.eligibility.blockers.map((blocker) => ({ code: blocker.code, message: blocker.message, ref: undefined }))
   ];
   const seen = new Set<string>();
@@ -421,6 +467,7 @@ async function writeAdjudicationReviewArtifacts(
   await writeJsonFile(path.join(reviewRoot, "decision.json"), {
     outcome: report.eligibility.paper_claim_eligible ? "accept" : "revise",
     adjudication_passed: report.passed,
+    mutation_isolation_status: report.mutation_isolation.status,
     paper_claim_eligible: report.eligibility.paper_claim_eligible,
     diagnostic_count: diagnostics.length
   });
@@ -434,7 +481,8 @@ function adjudicationRepairTarget(code: string): "run_experiments" | "design_exp
       || code === "base_source_provenance_incomplete"
       || code === "base_bundle_independence_violation"
       || code === "paired_fault_family_coverage_incomplete"
-      || code === "clean_control_outcome_coverage_incomplete") {
+      || code === "clean_control_outcome_coverage_incomplete"
+      || code === "mutation_isolation_not_double_verified") {
     return "design_experiments";
   }
   return "review";
@@ -444,11 +492,18 @@ export function evaluatePromotionAdjudicationEligibility(input: {
   evidence_class?: PromotionBenchmarkEvidenceClass;
   cases: PromotionBenchmarkCaseManifest[];
   adjudication_complete: boolean;
+  mutation_isolation_verified: boolean;
 }): PromotionAdjudicationEligibility {
   const blockers: PromotionEligibilityBlocker[] = [];
   const baseIds = [...new Set(input.cases.map((benchmarkCase) => benchmarkCase.base_bundle_id))];
   if (!input.adjudication_complete) {
     blockers.push({ code: "double_adjudication_incomplete", message: "All cases require two independent labels and resolved disagreements." });
+  }
+  if (!input.mutation_isolation_verified) {
+    blockers.push({
+      code: "mutation_isolation_double_audit_incomplete",
+      message: "Every mutated case requires two independent isolation audits with no confounded mutation."
+    });
   }
   if (input.evidence_class !== "external_real_run") {
     blockers.push({ code: "external_real_run_evidence_required", message: "Paper-eligible confirmatory suites require external real-run artifacts." });

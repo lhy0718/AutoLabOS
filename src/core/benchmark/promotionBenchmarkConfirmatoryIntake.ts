@@ -114,6 +114,7 @@ export async function freezePromotionConfirmatoryCorpus(
       evidence_class: "external_real_run",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed",
       cases
     };
     const recipePath = path.join(stagingRoot, "recipe.json");
@@ -126,6 +127,7 @@ export async function freezePromotionConfirmatoryCorpus(
       evidence_class: "external_real_run",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed",
       intake_manifest_sha256: intakeManifestSha256,
       recipe_sha256: recipeSha256,
       base_bundle_count: prepared.length,

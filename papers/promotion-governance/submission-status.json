@@ -10,6 +10,7 @@
     "evidence_class": "synthetic_development",
     "paper_claim_eligible": false,
     "adjudication_status": "unreviewed",
+    "mutation_isolation_status": "unreviewed",
     "base_bundle_count": 4,
     "case_count": 40
   },
@@ -17,6 +18,7 @@
     "at_least_20_independent_base_bundles",
     "at_least_200_held_out_cases",
     "double_adjudicated_gold_labels",
+    "double_verified_mutation_isolation",
     "three_real_provider_trials_for_manuscript_only_baseline",
     "post_repair_recovery_and_regression_evaluation",
     "full_text_review_of_14_citation_bearing_claims",

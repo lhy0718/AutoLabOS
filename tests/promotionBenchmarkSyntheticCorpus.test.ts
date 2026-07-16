@@ -26,12 +26,14 @@ describe("synthetic promotion development corpus", () => {
       evidence_class: string;
       paper_claim_eligible: boolean;
       adjudication_status: string;
+      mutation_isolation_status: string;
     };
     expect(corpus).toMatchObject({ base_bundle_count: 4, case_count: 40 });
     expect(manifest).toMatchObject({
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
-      adjudication_status: "unreviewed"
+      adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed"
     });
 
     const suite = await buildPromotionBenchmarkSuite({

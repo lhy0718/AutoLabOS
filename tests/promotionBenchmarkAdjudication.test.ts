@@ -16,6 +16,10 @@ import {
   type PromotionBenchmarkCaseManifest
 } from "../src/core/benchmark/promotionBenchmark.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
+import {
+  exportPromotionMutationAuditPack,
+  verifyPromotionMutationAudit
+} from "../src/core/benchmark/promotionBenchmarkMutationAudit.js";
 import { runPromotionBenchmarkScoreCli } from "../src/cli/governanceBenchmark.js";
 import { runMetaHarness } from "../src/core/metaHarness/metaHarness.js";
 
@@ -68,6 +72,11 @@ describe("promotion benchmark adjudication", () => {
       },
       eligibility: { paper_claim_eligible: false, base_bundle_count: 1, case_count: 2 }
     });
+    expect(result.report.mutation_isolation).toMatchObject({
+      status: "unreviewed",
+      report_path: null,
+      validation_issues: [expect.objectContaining({ code: "mutation_isolation_report_missing" })]
+    });
     expect(result.report.eligibility.blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
       "independent_base_bundle_minimum_not_met",
       "held_out_case_minimum_not_met",
@@ -79,6 +88,7 @@ describe("promotion benchmark adjudication", () => {
     expect(loaded.suite?.manifest).toMatchObject({
       evidence_class: "external_real_run",
       adjudication_status: "double_adjudicated",
+      mutation_isolation_status: "unreviewed",
       paper_claim_eligible: false
     });
     expect(loaded.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold).toEqual({
@@ -101,9 +111,10 @@ describe("promotion benchmark adjudication", () => {
     const promptTargets = JSON.parse(await readFile(path.join(harness.contextDir, "prompt_target_map.json"), "utf8")) as {
       targets: Array<{ target_node: string; recommended_prompt_node: string }>;
     };
-    expect(promptTargets.targets).toEqual([
-      expect.objectContaining({ target_node: "design_experiments", recommended_prompt_node: "design_experiments" })
-    ]);
+    expect(promptTargets.targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ target_node: "design_experiments", recommended_prompt_node: "design_experiments" }),
+      expect.objectContaining({ target_node: "review", recommended_prompt_node: "review" })
+    ]));
   });
 
   it("fails closed on disagreement until an independent resolver supplies a label", async () => {
@@ -153,6 +164,91 @@ describe("promotion benchmark adjudication", () => {
       resolved_disagreement_count: 1
     });
     expect(resolved.suite_path).not.toBeNull();
+  });
+
+  it("binds a verified mutation-isolation report into the adjudicated suite", async () => {
+    const workspace = await createWorkspace();
+    const annotationPack = await exportPromotionAnnotationPack({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      outDir: "annotation-pack"
+    });
+    const annotationMap = JSON.parse(await readFile(
+      path.join(workspace, annotationPack.private_map_path),
+      "utf8"
+    )) as PrivateMap;
+    await writeAnnotations(workspace, "labels-a.jsonl", annotationMap, "annotator-alpha");
+    await writeAnnotations(workspace, "labels-b.jsonl", annotationMap, "annotator-beta");
+
+    const mutationPack = await exportPromotionMutationAuditPack({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      outDir: "mutation-audit-pack"
+    });
+    const mutationTasks = (await readFile(path.join(workspace, mutationPack.tasks_path), "utf8"))
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => JSON.parse(line) as { audit_id: string });
+    await writeMutationAudits(workspace, "mutation-a.jsonl", mutationTasks, "mutation-auditor-alpha");
+    await writeMutationAudits(workspace, "mutation-b.jsonl", mutationTasks, "mutation-auditor-beta");
+    const mutationVerification = await verifyPromotionMutationAudit({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: mutationPack.private_map_path,
+      auditPaths: ["mutation-a.jsonl", "mutation-b.jsonl"],
+      outDir: "mutation-verification"
+    });
+
+    const result = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: annotationPack.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      mutationAuditReportPath: mutationVerification.report_path,
+      outDir: "fully-adjudicated"
+    });
+    expect(result.report).toMatchObject({
+      passed: true,
+      mutation_isolation: {
+        status: "double_verified",
+        report_path: mutationVerification.report_path,
+        validation_issues: []
+      },
+      eligibility: { paper_claim_eligible: false }
+    });
+    expect(result.report.eligibility.blockers.map((blocker) => blocker.code))
+      .not.toContain("mutation_isolation_double_audit_incomplete");
+    const loaded = await loadPromotionBenchmarkSuite(path.join(workspace, result.suite_path || "missing"));
+    expect(loaded.issues).toEqual([]);
+    expect(loaded.suite?.manifest).toMatchObject({
+      adjudication_status: "double_adjudicated",
+      mutation_isolation_status: "double_verified",
+      paper_claim_eligible: false
+    });
+
+    await writeMutationAudits(workspace, "mutation-overlap-a.jsonl", mutationTasks, "annotator-alpha");
+    await writeMutationAudits(workspace, "mutation-overlap-b.jsonl", mutationTasks, "mutation-auditor-beta");
+    const overlappingVerification = await verifyPromotionMutationAudit({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: mutationPack.private_map_path,
+      auditPaths: ["mutation-overlap-a.jsonl", "mutation-overlap-b.jsonl"],
+      outDir: "mutation-verification-overlap"
+    });
+    const overlappingRoles = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: annotationPack.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      mutationAuditReportPath: overlappingVerification.report_path,
+      outDir: "role-overlap-adjudication"
+    });
+    expect(overlappingRoles.report.passed).toBe(true);
+    expect(overlappingRoles.report.mutation_isolation).toMatchObject({
+      status: "unreviewed",
+      validation_issues: [expect.objectContaining({ code: "mutation_auditors_not_role_separated" })]
+    });
+    expect(overlappingRoles.report.eligibility.paper_claim_eligible).toBe(false);
   });
 
   it("requires distinct full-coverage initial adjudicators", async () => {
@@ -275,7 +371,8 @@ describe("promotion benchmark adjudication", () => {
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "external_real_run",
       cases,
-      adjudication_complete: true
+      adjudication_complete: true,
+      mutation_isolation_verified: true
     })).toMatchObject({
       paper_claim_eligible: true,
       base_bundle_count: 20,
@@ -285,8 +382,15 @@ describe("promotion benchmark adjudication", () => {
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "synthetic_development",
       cases,
-      adjudication_complete: true
+      adjudication_complete: true,
+      mutation_isolation_verified: true
     }).paper_claim_eligible).toBe(false);
+    expect(evaluatePromotionAdjudicationEligibility({
+      evidence_class: "external_real_run",
+      cases,
+      adjudication_complete: true,
+      mutation_isolation_verified: false
+    }).blockers.map((blocker) => blocker.code)).toContain("mutation_isolation_double_audit_incomplete");
   });
 
   it("returns a failing process status when score validation fails", async () => {
@@ -323,6 +427,7 @@ async function createWorkspace(): Promise<string> {
     evidence_class: "external_real_run",
     paper_claim_eligible: false,
     adjudication_status: "unreviewed",
+    mutation_isolation_status: "unreviewed",
     cases: [
       {
         case_id: "case-clean",
@@ -372,6 +477,24 @@ function annotationRecord(annotationId: string, adjudicatorId: string, label: Pr
     ...label,
     rationale: "Artifact-grounded independent judgment."
   };
+}
+
+async function writeMutationAudits(
+  workspace: string,
+  fileName: string,
+  tasks: Array<{ audit_id: string }>,
+  auditorId: string
+): Promise<void> {
+  const rows = tasks.map((task) => JSON.stringify({
+    schema_version: "1.0",
+    audit_id: task.audit_id,
+    auditor_id: auditorId,
+    audit_source: "human",
+    decision: "isolated",
+    additional_faults: [],
+    rationale: "The pair differs only according to the declared mutation operation."
+  }));
+  await writeFile(path.join(workspace, fileName), `${rows.join("\n")}\n`, "utf8");
 }
 
 function caseManifest(

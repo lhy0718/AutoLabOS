@@ -105,8 +105,10 @@ manifest. The evaluated system returns one decision from \texttt{promote},
 concerns with severity and evidence paths; and the workflow stages responsible
 for repair. Gold labels remain outside the visible artifact tree.
 
-Every suite declares an evidence class, adjudication status, and paper-claim
-eligibility. A paper-eligible suite must be independently double adjudicated.
+Every suite declares an evidence class, adjudication status,
+mutation-isolation status, and paper-claim eligibility. A paper-eligible suite
+must be independently double adjudicated and have double-verified mutation
+isolation.
 All variants derived from one base bundle remain in the same split, and source
 content hashes detect renamed duplicates across splits. The confirmatory intake
 freezer rejects fewer than 20 sources, duplicate source trees, and bundles that
@@ -121,10 +123,13 @@ with variants covering missing comparison evidence, repeated-run provenance,
 hidden failed execution, declared-versus-executed budget mismatch,
 result--figure conflict, claim--evidence conflict, citation support mismatch,
 stale persisted state, and unsupported claim strength. Each mutation records
-before and after hashes. Human adjudicators must verify that a mutation
-introduces only its declared fault. Because promotion-label reviewers are blind
-to mutation metadata, mutation-isolation verification requires a separate
-auditor role and remains a confirmatory-readiness requirement.
+before and after hashes. The implementation exports each mutated artifact with
+its clean pair, declared family, and operations under an opaque audit ID. Two
+separate auditors must label every pair as isolated; either auditor can mark a
+pair confounded and block progression. The verifier binds records to suite,
+case, artifact, and mutation-manifest hashes. Promotion-label reviewers remain
+blind to mutation metadata, and their declared IDs cannot overlap the mutation
+auditor IDs.
 
 \subsection{Comparison conditions}
 
@@ -197,7 +202,9 @@ too small for inferential claims, despite perfect case-level scores.
 The frozen confirmatory study requires at least 20 independently sourced base
 bundles and 200 held-out cases, with 30 base bundles preferred. Two reviewers
 must adjudicate held-out promotion labels, and separate reviewers must verify
-mutation isolation without access to system predictions. The manuscript-only
+mutation isolation without access to system predictions. Pseudonymous IDs
+enforce record-level role separation but do not prove real-world identity, so
+an external assignment log is also required. The manuscript-only
 condition requires three preserved real-provider trials per case. At least one
 post-repair rerun per fault family must measure recovery and regression. Raw
 requests, responses, decisions, failures, manifests, hashes, latency, and cost

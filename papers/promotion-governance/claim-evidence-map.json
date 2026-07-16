@@ -38,6 +38,18 @@
       ]
     },
     {
+      "claim_id": "mutation-isolation-hard-gate",
+      "claim": "The implementation exports clean/mutated audit pairs without promotion labels, requires two independent full-coverage isolation audits, blocks on confounds or integrity failures, binds reports to suite and artifact hashes, separates declared auditor roles, and feeds repair targets to review and the meta-harness.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkMutationAudit.ts",
+        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
+        "src/core/benchmark/promotionBenchmark.ts",
+        "tests/promotionBenchmarkMutationAudit.test.ts",
+        "tests/promotionBenchmarkAdjudication.test.ts"
+      ]
+    },
+    {
       "claim_id": "development-four-system-summary",
       "claim": "On the synthetic development suite, the fail-closed audit had zero false promotions and the advisory audit had a concern-acceptance conflict rate of one.",
       "status": "development_only",
@@ -63,6 +75,7 @@
       "status": "blocked",
       "missing_evidence": [
         "double_adjudicated_held_out_suite",
+        "double_verified_mutation_isolation",
         "at_least_20_independent_base_bundles",
         "three_real_provider_trials",
         "post_repair_recovery_runs"

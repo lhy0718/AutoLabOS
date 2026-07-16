@@ -41,6 +41,7 @@ describe("promotion confirmatory intake", () => {
       evidence_class: string;
       paper_claim_eligible: boolean;
       adjudication_status: string;
+      mutation_isolation_status: string;
       cases: Array<{
         base_bundle_id: string;
         split: string;
@@ -51,7 +52,8 @@ describe("promotion confirmatory intake", () => {
     expect(recipe).toMatchObject({
       evidence_class: "external_real_run",
       paper_claim_eligible: false,
-      adjudication_status: "unreviewed"
+      adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed"
     });
     expect(recipe.cases).toHaveLength(200);
     expect(new Set(recipe.cases.map((item) => item.base_bundle_id))).toHaveProperty("size", 20);
@@ -95,7 +97,8 @@ describe("promotion confirmatory intake", () => {
     const eligibility = evaluatePromotionAdjudicationEligibility({
       evidence_class: loaded.suite?.manifest.evidence_class,
       cases: loaded.suite?.cases || [],
-      adjudication_complete: false
+      adjudication_complete: false,
+      mutation_isolation_verified: false
     });
     expect(eligibility.paper_claim_eligible).toBe(false);
     expect(eligibility.blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([

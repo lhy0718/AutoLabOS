@@ -30,6 +30,7 @@ describe("promotion benchmark builder", () => {
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed",
       cases: [
         {
           case_id: "case-clean",
@@ -69,7 +70,8 @@ describe("promotion benchmark builder", () => {
     expect(loaded.suite?.manifest).toMatchObject({
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
-      adjudication_status: "unreviewed"
+      adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed"
     });
     expect(loaded.suite?.cases.map((benchmarkCase) => benchmarkCase.case_id)).toEqual([
       "case-clean",
@@ -90,7 +92,7 @@ describe("promotion benchmark builder", () => {
     expect(tampered.issues.map((issue) => issue.code)).toContain("artifact_hash_mismatch");
   });
 
-  it("rejects paper-claim eligibility without double adjudication", async () => {
+  it("rejects paper-claim eligibility without double adjudication and double-verified mutation isolation", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-builder-adjudication-"));
     tempDirs.push(workspace);
     await mkdir(path.join(workspace, "bundle"), { recursive: true });
@@ -109,6 +111,21 @@ describe("promotion benchmark builder", () => {
       recipePath: "recipe.json",
       outDir: "generated-suite"
     })).rejects.toThrow("double adjudicated");
+
+    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+      schema_version: "1.0",
+      suite_id: "claim-suite",
+      evidence_class: "human_adjudicated_test",
+      paper_claim_eligible: true,
+      adjudication_status: "double_adjudicated",
+      mutation_isolation_status: "unreviewed",
+      cases: [recipeCase("case-a", "base-a", "test", "bundle")]
+    }));
+    await expect(buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "generated-suite"
+    })).rejects.toThrow("double-verified mutation isolation");
   });
 
   it("rejects split leakage and sources outside the recipe directory before writing output", async () => {

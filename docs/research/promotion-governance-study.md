@@ -175,13 +175,20 @@ suites are always marked exploratory.
   evidence as different evidence classes.
 - Do not claim human validation until at least two independent reviewers have
   adjudicated the held-out labels.
+- Export a separate paired mutation-audit pack. Require exactly two complete
+  `isolated` judgments per mutated case, bind the report to suite and artifact
+  hashes, and block on any `confounded` judgment.
 - Export opaque annotation IDs and artifact directories before review; keep the
   case map, provisional gold, mutation metadata, and system predictions hidden.
 - Require exactly two complete initial label files and a distinct third
   resolver for every disagreement. Do not infer agreement from missing rows.
+- Require mutation-auditor pseudonyms to be distinct from promotion-label
+  adjudicator pseudonyms. Preserve an external role-assignment log because
+  pseudonymous IDs do not prove real-world identity.
 - Let the adjudication importer set paper eligibility only after the external
   real-run, held-out split, source-hash independence, 20-base, 200-case, and
-  clean-plus-nine-family paired-coverage gates pass.
+  clean-plus-nine-family paired-coverage gates pass and mutation isolation is
+  `double_verified`.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
   independent adjudication importer may replace labels or change eligibility.
 
@@ -197,6 +204,8 @@ suites are always marked exploratory.
 - Three independent provider runs per manuscript-only case when that condition
   is used for external claims.
 - Raw decisions, concerns, manifests, hashes, costs, and failures preserved.
+- Two independent mutation-isolation audit files and the hash-bound verifier
+  report preserved.
 
 ## Kill Signals
 

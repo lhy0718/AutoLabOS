@@ -43,6 +43,7 @@ describe("promotion benchmark", () => {
 
     expect(result.report.passed).toBe(true);
     expect(result.report.paper_claim_eligible).toBe(false);
+    expect(result.report.mutation_isolation_status).toBe("unspecified");
     expect(result.report.paired_analysis).toMatchObject({
       inference_unit: "base_bundle_id",
       bootstrap_replicates: 5000,
@@ -75,6 +76,7 @@ describe("promotion benchmark", () => {
     });
     const markdown = await readFile(path.join(workspace, "score", "promotion-score.md"), "utf8");
     expect(markdown).toContain("Concern-acceptance conflict");
+    expect(markdown).toContain("Mutation isolation: unspecified");
     expect(markdown).toContain("## Mutation Families");
     expect(markdown).toContain("clean_control");
   });

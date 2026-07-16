@@ -43,8 +43,9 @@ null, and negative research outcomes.
 5. Run a development pilot and repair benchmark validity failures.
 6. Collect at least 20 independently sourced real-run bundles, freeze their
    hashes into a provisional clean-plus-nine held-out corpus, obtain blind
-   double adjudication, execute the comparison systems, and compute paired
-   uncertainty and tests.
+   double adjudication and a separately blinded double mutation-isolation
+   audit, execute the comparison systems, and compute paired uncertainty and
+   tests.
 7. Run review and meta-harness gates, then draft only within the measured
    evidence ceiling.
 
@@ -164,6 +165,9 @@ on clean research bundles?
   metadata, or model predictions to either initial adjudicator.
 - Do not resolve annotation disagreement by majority inference from two labels;
   require a distinct third resolver and preserve the resolution record.
+- Do not let promotion-label adjudicators perform the mutation-isolation audit.
+  Require two complete audit files under distinct role IDs and block on any
+  confounded mutation.
 
 ## Allowed Budgeted Passes
 
@@ -202,6 +206,8 @@ on clean research bundles?
   BadScientist, CLAIM-BENCH, MADS-CPS, and end-to-end research benchmarks.
 - The benchmark has frozen manifests, hashes, independent labels, and no split
   leakage.
+- Every held-out mutation has two hash-bound `isolated` audit judgments from
+  declared auditors separate from promotion-label adjudicators.
 - Ungated, checklist, and full-policy conditions are executed on the held-out
   set.
 - Manuscript-only claims rely on real provider runs rather than mocks.

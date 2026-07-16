@@ -19,9 +19,11 @@ Each case contains:
 - responsible workflow nodes,
 - source, mutation, and resulting artifact hashes.
 
-Each suite also declares an evidence class, paper-claim eligibility, and
-adjudication status. A recipe with `paper_claim_eligible=true` is rejected
-unless `adjudication_status=double_adjudicated`.
+Each suite also declares an evidence class, paper-claim eligibility,
+adjudication status, and mutation-isolation status. A recipe with
+`paper_claim_eligible=true` is rejected unless
+`adjudication_status=double_adjudicated` and
+`mutation_isolation_status=double_verified`.
 
 All variants of one base bundle must remain in one split. Source hashes are also
 checked across splits, so renaming an identical base bundle does not bypass the
@@ -80,9 +82,10 @@ node dist/cli/main.js governance-benchmark generate-promotion-development \
   --out-dir outputs/governance-benchmark/promotion-development-corpus
 ```
 
-Its `corpus-manifest.json` sets `paper_claim_eligible=false` and
-`adjudication_status=unreviewed`. It must not be reported as confirmatory
-evidence.
+Its `corpus-manifest.json` sets `paper_claim_eligible=false`,
+`adjudication_status=unreviewed`, and
+`mutation_isolation_status=unreviewed`. It must not be reported as
+confirmatory evidence.
 
 ## Freeze Confirmatory Intake
 
@@ -125,7 +128,8 @@ base ID, places every clean-plus-nine case in the test split, and records only
 source, private-intake-manifest, recipe hashes, and frozen relative roots in
 `frozen-intake-manifest.json`. Every recipe label remains provisional
 `needs_review`; the frozen corpus is always
-`adjudication_status=unreviewed` and `paper_claim_eligible=false`.
+`adjudication_status=unreviewed`, `mutation_isolation_status=unreviewed`, and
+`paper_claim_eligible=false`.
 
 Declaring `evidence_class=external_real_run` is an operator attestation, not
 proof that an execution occurred. Review the underlying run records and raw
@@ -156,6 +160,38 @@ node dist/cli/main.js governance-benchmark import-promotion-responses \
 Only `requests.jsonl` is provider input. Keep `private-request-map.json` outside
 the provider context.
 
+## Independent Mutation-Isolation Audit
+
+Mutation auditors inspect a clean/mutated artifact pair together with the
+declared mutation family and operations. They do not receive promotion labels,
+system predictions, or another auditor's records.
+
+```bash
+node dist/cli/main.js governance-benchmark export-promotion-mutation-audit \
+  --suite <suite.json> \
+  --out-dir <mutation-audit-pack>
+
+node dist/cli/main.js governance-benchmark verify-promotion-mutations \
+  --suite <suite.json> \
+  --map <mutation-audit-pack/private-mutation-audit-map.json> \
+  --audits <mutation-audit-a.jsonl> \
+  --audits <mutation-audit-b.jsonl> \
+  --out-dir <mutation-verification>
+```
+
+Give each auditor only `mutation-audit-pack/mutation-auditor/`. Each file must
+cover every mutated case exactly once, use one stable pseudonymous auditor ID,
+and mark a case `confounded` whenever the pair contains an additional defect.
+One confounded judgment is sufficient to fail the audit and route repair to
+`design_experiments`. Coverage, identity, hash, or report-integrity failures
+route to `review`. Verification binds the report to suite, case, artifact, and
+mutation-manifest hashes.
+
+The final importer also rejects a declared auditor ID reused by a
+promotion-label adjudicator. Pseudonymous IDs enforce record-level separation;
+they do not prove real-world human identity, so study operations must retain an
+external assignment log outside the public benchmark bundle.
+
 ## Blind Double Adjudication
 
 Export an annotation pack before exposing any provisional gold labels or
@@ -185,6 +221,7 @@ node dist/cli/main.js governance-benchmark adjudicate-promotion \
   --annotations <labels-a.jsonl> \
   --annotations <labels-b.jsonl> \
   --resolution <resolution.jsonl> \
+  --mutation-audit-report <mutation-verification/mutation-audit-report.json> \
   --out-dir <adjudicated-suite>
 ```
 
@@ -195,6 +232,8 @@ and full-label agreement. A completed suite is marked
 `adjudication_status=double_adjudicated`, but it becomes
 `paper_claim_eligible=true` only when all of the following also hold:
 
+- every mutated case has two independent `isolated` judgments and the suite is
+  marked `mutation_isolation_status=double_verified`,
 - the source evidence class is `external_real_run`,
 - all cases are in the held-out test split,
 - at least 20 source-hash-distinct base bundles are present,

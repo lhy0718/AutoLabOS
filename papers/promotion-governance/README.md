@@ -88,7 +88,8 @@ resulting recipe must declare:
 {
   "evidence_class": "external_real_run",
   "paper_claim_eligible": false,
-  "adjudication_status": "unreviewed"
+  "adjudication_status": "unreviewed",
+  "mutation_isolation_status": "unreviewed"
 }
 ```
 
@@ -98,18 +99,30 @@ preserved run records and raw evidence. The freezer also does not sanitize
 content already inside a source bundle. All provisional labels remain
 `needs_review`; freezing never grants paper-claim eligibility.
 
-Export the built suite with `export-promotion-annotations`, collect exactly two
-independent full-coverage human label files, and import them with
-`adjudicate-promotion`. A third independent resolver is mandatory for every
-disagreement. Give the adjudicator only the exported `annotator/` directory,
+First export the built suite with `export-promotion-mutation-audit`. Give each
+mutation auditor only the generated `mutation-auditor/` directory and collect
+exactly two full-coverage files under distinct pseudonymous IDs. Verify them
+with `verify-promotion-mutations`; any confounded case blocks progression and
+routes the mutation operator to `design_experiments`.
+
+Separately export the suite with `export-promotion-annotations`, collect
+exactly two independent full-coverage human label files, and import them with
+`adjudicate-promotion --mutation-audit-report <report.json>`. A third
+independent resolver is mandatory for every label disagreement. Give the label
+adjudicator only the exported `annotator/` directory,
 which contains the opaque tasks, rubric, and artifact directories. The sibling
 private map, recipe, mutation metadata, provisional gold, and system predictions
 stay hidden. The importer, rather than a hand-edited
 recipe, sets `adjudication_status=double_adjudicated` and promotes
-`paper_claim_eligible=true` only after the external-real-run, held-out,
-20-base, 200-case, and per-base paired-family gates all pass.
+`paper_claim_eligible=true` only after the mutation audit is
+`double_verified` and the external-real-run, held-out, 20-base, 200-case, and
+per-base paired-family gates all pass.
 The clean controls must include both promotable and non-promotable adjudicated
 outcomes.
+
+The importer rejects declared mutation-auditor IDs that overlap label
+adjudicator IDs. These pseudonyms do not establish real-world identity, so the
+confirmatory study must retain an external role-assignment record.
 
 Real provider requests must be exported through the blind prompt pack; only
 `requests.jsonl` may enter provider context.
