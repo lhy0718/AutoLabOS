@@ -168,9 +168,13 @@ suites are always marked exploratory.
 - Freeze at least 20 source-hash-distinct canonical bundles before building the
   confirmatory suite. Derive public base IDs from hashes and keep local source
   IDs and original paths outside the frozen corpus.
-- Treat `external_real_run` as an operator attestation until run records and raw
-  execution evidence are independently checked; hash freezing alone does not
-  prove that execution occurred.
+- Require each source to bind run configuration, events, metrics, review
+  decision, command, and execution log files in `execution-evidence.json`.
+  Reject non-real or failed modes, fewer than three distinct trials, hash drift,
+  and duplicate run IDs or execution fingerprints before freezing.
+- Treat `execution_provenance_status=artifact_verified` as verification of the
+  declared artifact record, not proof that execution occurred or that operators
+  were independent.
 - Report deterministic replay, synthetic mutation, real provider, and live-run
   evidence as different evidence classes.
 - Do not claim human validation until at least two independent reviewers have
@@ -186,9 +190,9 @@ suites are always marked exploratory.
   adjudicator pseudonyms. Preserve an external role-assignment log because
   pseudonymous IDs do not prove real-world identity.
 - Let the adjudication importer set paper eligibility only after the external
-  real-run, held-out split, source-hash independence, 20-base, 200-case, and
-  clean-plus-nine-family paired-coverage gates pass and mutation isolation is
-  `double_verified`.
+  real-run, artifact-verified provenance, held-out split, source-hash
+  independence, 20-base, 200-case, and clean-plus-nine-family paired-coverage
+  gates pass and mutation isolation is `double_verified`.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
   independent adjudication importer may replace labels or change eligibility.
 
@@ -204,6 +208,7 @@ suites are always marked exploratory.
 - Three independent provider runs per manuscript-only case when that condition
   is used for external claims.
 - Raw decisions, concerns, manifests, hashes, costs, and failures preserved.
+- A passing hash-bound execution-provenance audit for every base bundle.
 - Two independent mutation-isolation audit files and the hash-bound verifier
   report preserved.
 

@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -31,6 +32,7 @@ describe("promotion benchmark builder", () => {
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
       mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "unverified",
       cases: [
         {
           case_id: "case-clean",
@@ -71,7 +73,8 @@ describe("promotion benchmark builder", () => {
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
-      mutation_isolation_status: "unreviewed"
+      mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "unverified"
     });
     expect(loaded.suite?.cases.map((benchmarkCase) => benchmarkCase.case_id)).toEqual([
       "case-clean",
@@ -100,7 +103,7 @@ describe("promotion benchmark builder", () => {
     await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
       schema_version: "1.0",
       suite_id: "claim-suite",
-      evidence_class: "human_adjudicated_test",
+      evidence_class: "external_real_run",
       paper_claim_eligible: true,
       adjudication_status: "single_annotator",
       cases: [recipeCase("case-a", "base-a", "test", "bundle")]
@@ -110,15 +113,16 @@ describe("promotion benchmark builder", () => {
       cwd: workspace,
       recipePath: "recipe.json",
       outDir: "generated-suite"
-    })).rejects.toThrow("double adjudicated");
+    })).rejects.toThrow("artifact-verified execution provenance");
 
     await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
       schema_version: "1.0",
       suite_id: "claim-suite",
-      evidence_class: "human_adjudicated_test",
+      evidence_class: "external_real_run",
       paper_claim_eligible: true,
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "artifact_verified",
       cases: [recipeCase("case-a", "base-a", "test", "bundle")]
     }));
     await expect(buildPromotionBenchmarkSuite({
@@ -126,6 +130,56 @@ describe("promotion benchmark builder", () => {
       recipePath: "recipe.json",
       outDir: "generated-suite"
     })).rejects.toThrow("double-verified mutation isolation");
+  });
+
+  it("rejects a hand-authored artifact-verified status without execution evidence", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-builder-provenance-"));
+    tempDirs.push(workspace);
+    await mkdir(path.join(workspace, "bundle"), { recursive: true });
+    await writeFile(path.join(workspace, "bundle", "artifact.json"), "{}\n", "utf8");
+    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+      schema_version: "1.0",
+      suite_id: "provenance-suite",
+      evidence_class: "external_real_run",
+      paper_claim_eligible: false,
+      adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "artifact_verified",
+      cases: [recipeCase("case-a", "base-a", "test", "bundle")]
+    }));
+
+    await expect(buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "generated-suite"
+    })).rejects.toThrow("execution_evidence_manifest_unreadable");
+  });
+
+  it("rejects duplicated execution identities hidden behind source-tree differences", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-builder-duplicate-provenance-"));
+    tempDirs.push(workspace);
+    await writeExecutionEvidenceFixture(path.join(workspace, "bundle-a"));
+    await cp(path.join(workspace, "bundle-a"), path.join(workspace, "bundle-b"), { recursive: true });
+    await writeFile(path.join(workspace, "bundle-b", "unrelated.txt"), "different source tree\n", "utf8");
+    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+      schema_version: "1.0",
+      suite_id: "duplicate-provenance-suite",
+      evidence_class: "external_real_run",
+      paper_claim_eligible: false,
+      adjudication_status: "unreviewed",
+      mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "artifact_verified",
+      cases: [
+        recipeCase("case-a", "base-a", "test", "bundle-a"),
+        recipeCase("case-b", "base-b", "test", "bundle-b")
+      ]
+    }));
+
+    await expect(buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "generated-suite"
+    })).rejects.toThrow("distinct run ID values");
   });
 
   it("rejects split leakage and sources outside the recipe directory before writing output", async () => {
@@ -182,4 +236,36 @@ function recipeCase(caseId: string, baseBundleId: string, split: "development" |
     operations: [],
     gold: { decision: "promote", blocking_concerns: [], repair_owners: [] }
   };
+}
+
+async function writeExecutionEvidenceFixture(root: string): Promise<void> {
+  const artifacts = [
+    { role: "run_config", path: "run-config.json", content: '{"trials":3}\n' },
+    { role: "event_log", path: "events.jsonl", content: '{"event":"completed"}\n' },
+    { role: "metrics", path: "metrics.json", content: '{"score":0.5}\n' },
+    { role: "review_decision", path: "review/decision.json", content: '{"outcome":"accept"}\n' },
+    { role: "command", path: "command.txt", content: "runner --config run-config.json\n" },
+    { role: "execution_log", path: "execution.log", content: "completed\n" }
+  ];
+  for (const artifact of artifacts) {
+    await mkdir(path.dirname(path.join(root, artifact.path)), { recursive: true });
+    await writeFile(path.join(root, artifact.path), artifact.content, "utf8");
+  }
+  await writeFile(path.join(root, "execution-evidence.json"), `${JSON.stringify({
+    schema_version: "1.0",
+    evidence_class: "external_real_run",
+    run_id: "run-shared",
+    execution_mode: "real_execution",
+    execution_status: "completed",
+    execution_backend: "local_runtime",
+    started_at: "2026-01-01T00:00:00.000Z",
+    completed_at: "2026-01-01T00:01:00.000Z",
+    exit_code: 0,
+    trial_ids: ["trial-a", "trial-b", "trial-c"],
+    artifacts: artifacts.map((artifact) => ({
+      role: artifact.role,
+      path: artifact.path,
+      sha256: createHash("sha256").update(artifact.content).digest("hex")
+    }))
+  }, null, 2)}\n`, "utf8");
 }

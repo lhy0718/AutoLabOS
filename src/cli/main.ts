@@ -22,6 +22,7 @@ import {
   runPromotionAdjudicationCli,
   runPromotionBenchmarkSystemsCli,
   runSyntheticPromotionCorpusCli,
+  runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
   runPromotionFailureAnalysisCli,
   runPromotionBenchmarkScoreCli
@@ -57,6 +58,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
@@ -283,6 +285,15 @@ async function main(): Promise<void> {
 
   if (action.kind === "governance-benchmark-generate-promotion-development") {
     await runSyntheticPromotionCorpusCli({ cwd: process.cwd(), outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-audit-promotion-confirmatory") {
+    await runPromotionConfirmatoryAuditCli({
+      cwd: process.cwd(),
+      manifestPath: action.manifestPath,
+      outDir: action.outDir
+    });
     return;
   }
 

@@ -4,6 +4,8 @@
   "evidence_class": "synthetic_development",
   "paper_claim_eligible": false,
   "adjudication_status": "unreviewed",
+  "mutation_isolation_status": "unreviewed",
+  "execution_provenance_status": "unverified",
   "cases": [
     {
       "case_id": "development-1-1",

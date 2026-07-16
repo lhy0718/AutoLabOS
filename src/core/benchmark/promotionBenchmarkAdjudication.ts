@@ -10,6 +10,7 @@ import {
   loadPromotionBenchmarkSuite,
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkEvidenceClass,
+  type PromotionBenchmarkExecutionProvenanceStatus,
   type PromotionDecision
 } from "./promotionBenchmark.js";
 import {
@@ -110,6 +111,7 @@ export interface PromotionAdjudicationReport {
     full_label_exact_rate: number | null;
   };
   validation_issues: PromotionAdjudicationIssue[];
+  execution_provenance_status: PromotionBenchmarkExecutionProvenanceStatus | "unspecified";
   mutation_isolation: {
     status: "unreviewed" | "double_verified";
     report_path: string | null;
@@ -338,6 +340,7 @@ export async function adjudicatePromotionBenchmark(
   }));
   const eligibility = evaluatePromotionAdjudicationEligibility({
     evidence_class: loaded.suite.manifest.evidence_class,
+    execution_provenance_status: loaded.suite.manifest.execution_provenance_status,
     cases: adjudicatedCases,
     adjudication_complete: passed,
     mutation_isolation_verified: mutationIsolationVerified
@@ -399,6 +402,7 @@ export async function adjudicatePromotionBenchmark(
       resolved_disagreement_count: disagreements.filter((entry) => resolution.records.has(entry.annotation_id)).length,
       agreement: agreementMetrics(agreementPairs),
       validation_issues: issues,
+      execution_provenance_status: loaded.suite.manifest.execution_provenance_status || "unspecified",
       mutation_isolation: {
         status: mutationIsolationVerified ? "double_verified" : "unreviewed",
         report_path: input.mutationAuditReportPath
@@ -468,13 +472,16 @@ async function writeAdjudicationReviewArtifacts(
     outcome: report.eligibility.paper_claim_eligible ? "accept" : "revise",
     adjudication_passed: report.passed,
     mutation_isolation_status: report.mutation_isolation.status,
+    execution_provenance_status: report.execution_provenance_status,
     paper_claim_eligible: report.eligibility.paper_claim_eligible,
     diagnostic_count: diagnostics.length
   });
 }
 
 function adjudicationRepairTarget(code: string): "run_experiments" | "design_experiments" | "review" {
-  if (code === "external_real_run_evidence_required") return "run_experiments";
+  if (code === "external_real_run_evidence_required" || code === "execution_provenance_not_artifact_verified") {
+    return "run_experiments";
+  }
   if (code === "held_out_test_split_required"
       || code === "independent_base_bundle_minimum_not_met"
       || code === "held_out_case_minimum_not_met"
@@ -490,6 +497,7 @@ function adjudicationRepairTarget(code: string): "run_experiments" | "design_exp
 
 export function evaluatePromotionAdjudicationEligibility(input: {
   evidence_class?: PromotionBenchmarkEvidenceClass;
+  execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   cases: PromotionBenchmarkCaseManifest[];
   adjudication_complete: boolean;
   mutation_isolation_verified: boolean;
@@ -507,6 +515,12 @@ export function evaluatePromotionAdjudicationEligibility(input: {
   }
   if (input.evidence_class !== "external_real_run") {
     blockers.push({ code: "external_real_run_evidence_required", message: "Paper-eligible confirmatory suites require external real-run artifacts." });
+  }
+  if (input.execution_provenance_status !== "artifact_verified") {
+    blockers.push({
+      code: "execution_provenance_not_artifact_verified",
+      message: "Every confirmatory source requires hash-bound execution artifacts and a passing intake provenance audit."
+    });
   }
   if (input.cases.some((benchmarkCase) => benchmarkCase.split !== "test")) {
     blockers.push({ code: "held_out_test_split_required", message: "Every confirmatory case must belong to the held-out test split." });

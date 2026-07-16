@@ -11,6 +11,7 @@ export type PromotionBenchmarkSplit = "development" | "test";
 export type PromotionBenchmarkEvidenceClass = "synthetic_development" | "human_adjudicated_test" | "external_real_run";
 export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annotator" | "double_adjudicated";
 export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified";
+export type PromotionBenchmarkExecutionProvenanceStatus = "unverified" | "artifact_verified";
 
 export interface PromotionBenchmarkSuiteManifest {
   schema_version: "1.0";
@@ -19,6 +20,7 @@ export interface PromotionBenchmarkSuiteManifest {
   paper_claim_eligible?: boolean;
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
+  execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   cases: string[];
 }
 
@@ -128,6 +130,7 @@ export interface PromotionBenchmarkScoreReport {
   paper_claim_eligible: boolean;
   adjudication_status: PromotionBenchmarkAdjudicationStatus | "unspecified";
   mutation_isolation_status: PromotionBenchmarkMutationIsolationStatus | "unspecified";
+  execution_provenance_status: PromotionBenchmarkExecutionProvenanceStatus | "unspecified";
   suite_ref: string;
   prediction_ref: string;
   passed: boolean;
@@ -319,6 +322,7 @@ export async function scorePromotionBenchmarkFromFiles(
     paper_claim_eligible: loaded.suite?.manifest.paper_claim_eligible === true,
     adjudication_status: loaded.suite?.manifest.adjudication_status || "unspecified",
     mutation_isolation_status: loaded.suite?.manifest.mutation_isolation_status || "unspecified",
+    execution_provenance_status: loaded.suite?.manifest.execution_provenance_status || "unspecified",
     suite_ref: portableRef(cwd, suitePath, "<external-suite>"),
     prediction_ref: portableRef(cwd, predictionsPath, "<external-predictions>"),
     passed: issues.length === 0,
@@ -625,6 +629,7 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     `- Paper-claim eligible: ${report.paper_claim_eligible}`,
     `- Adjudication: ${report.adjudication_status}`,
     `- Mutation isolation: ${report.mutation_isolation_status}`,
+    `- Execution provenance: ${report.execution_provenance_status}`,
     "",
     "## System Summary",
     "",
@@ -704,11 +709,17 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({ code: "suite_mutation_isolation_status_invalid", message: "Suite mutation_isolation_status is invalid." });
     return undefined;
   }
+  if (value.execution_provenance_status !== undefined && !isPromotionExecutionProvenanceStatus(value.execution_provenance_status)) {
+    issues.push({ code: "suite_execution_provenance_status_invalid", message: "Suite execution_provenance_status is invalid." });
+    return undefined;
+  }
   if (value.paper_claim_eligible === true
-      && (value.adjudication_status !== "double_adjudicated" || value.mutation_isolation_status !== "double_verified")) {
+      && (value.adjudication_status !== "double_adjudicated"
+        || value.mutation_isolation_status !== "double_verified"
+        || value.execution_provenance_status !== "artifact_verified")) {
     issues.push({
       code: "suite_paper_claim_eligibility_unverified",
-      message: "Paper-claim-eligible suites require double adjudication and double-verified mutation isolation."
+      message: "Paper-claim-eligible suites require artifact-verified execution provenance, double adjudication, and double-verified mutation isolation."
     });
     return undefined;
   }
@@ -719,6 +730,7 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     ...(typeof value.paper_claim_eligible === "boolean" ? { paper_claim_eligible: value.paper_claim_eligible } : {}),
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
+    ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
     cases: stringArray(value.cases) || []
   };
 }
@@ -918,6 +930,10 @@ function isPromotionAdjudicationStatus(value: unknown): value is PromotionBenchm
 
 function isPromotionMutationIsolationStatus(value: unknown): value is PromotionBenchmarkMutationIsolationStatus {
   return value === "unreviewed" || value === "double_verified";
+}
+
+function isPromotionExecutionProvenanceStatus(value: unknown): value is PromotionBenchmarkExecutionProvenanceStatus {
+  return value === "unverified" || value === "artifact_verified";
 }
 
 function nonEmptyString(value: unknown): value is string {

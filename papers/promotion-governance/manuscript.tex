@@ -200,15 +200,19 @@ too small for inferential claims, despite perfect case-level scores.
 \section{Confirmatory Study and Readiness Gate}
 
 The frozen confirmatory study requires at least 20 independently sourced base
-bundles and 200 held-out cases, with 30 base bundles preferred. Two reviewers
-must adjudicate held-out promotion labels, and separate reviewers must verify
-mutation isolation without access to system predictions. Pseudonymous IDs
-enforce record-level role separation but do not prove real-world identity, so
-an external assignment log is also required. The manuscript-only
-condition requires three preserved real-provider trials per case. At least one
-post-repair rerun per fault family must measure recovery and regression. Raw
-requests, responses, decisions, failures, manifests, hashes, latency, and cost
-must be retained.
+bundles and 200 held-out cases, with 30 base bundles preferred. Each base must
+bind run configuration, events, metrics, review decision, command, and
+execution log files by hash. The intake gate rejects failed or non-real modes,
+fewer than three distinct trials, hash drift, and duplicate run identities or
+execution fingerprints. This verifies the declared artifact record, not the
+real-world occurrence of execution. Two reviewers must adjudicate held-out
+promotion labels, and separate reviewers must verify mutation isolation without
+access to system predictions. Pseudonymous IDs enforce record-level role
+separation but do not prove real-world identity, so an external assignment log
+is also required. The manuscript-only condition requires three preserved
+real-provider trials per case. At least one post-repair rerun per fault family
+must measure recovery and regression. Raw requests, responses, decisions,
+failures, manifests, hashes, latency, and cost must be retained.
 
 The central hypothesis is that fail-closed governance lowers false promotion
 by at least 20 absolute percentage points relative to the presence checklist

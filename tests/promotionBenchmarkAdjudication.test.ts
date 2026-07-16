@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -89,6 +90,7 @@ describe("promotion benchmark adjudication", () => {
       evidence_class: "external_real_run",
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "artifact_verified",
       paper_claim_eligible: false
     });
     expect(loaded.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold).toEqual({
@@ -166,6 +168,54 @@ describe("promotion benchmark adjudication", () => {
     expect(resolved.suite_path).not.toBeNull();
   });
 
+  it("routes unverified execution provenance through review to run_experiments and the design prompt", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = path.join(workspace, "suite", "suite.json");
+    const suite = JSON.parse(await readFile(suitePath, "utf8")) as Record<string, unknown>;
+    suite.execution_provenance_status = "unverified";
+    await writeFile(suitePath, `${JSON.stringify(suite, null, 2)}\n`, "utf8");
+    const exported = await exportPromotionAnnotationPack({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      outDir: "provenance-annotation-pack"
+    });
+    const privateMap = JSON.parse(await readFile(path.join(workspace, exported.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(workspace, "provenance-labels-a.jsonl", privateMap, "annotator-alpha");
+    await writeAnnotations(workspace, "provenance-labels-b.jsonl", privateMap, "annotator-beta");
+
+    const result = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["provenance-labels-a.jsonl", "provenance-labels-b.jsonl"],
+      outDir: "provenance-blocked"
+    });
+
+    expect(result.report.execution_provenance_status).toBe("unverified");
+    expect(result.report.eligibility.blockers.map((blocker) => blocker.code))
+      .toContain("execution_provenance_not_artifact_verified");
+    const recommendations = JSON.parse(await readFile(
+      path.join(workspace, "provenance-blocked", "review", "node_strengthening_recommendations.json"),
+      "utf8"
+    )) as { recommendations: Array<{ node: string }> };
+    expect(recommendations.recommendations).toContainEqual(expect.objectContaining({ node: "run_experiments" }));
+
+    const harness = await runMetaHarness({
+      cwd: workspace,
+      runs: 0,
+      nodes: ["design_experiments"],
+      externalRunRoots: [path.join(workspace, "provenance-blocked")],
+      noApply: true
+    });
+    const promptTargets = JSON.parse(await readFile(path.join(harness.contextDir, "prompt_target_map.json"), "utf8")) as {
+      targets: Array<{ target_node: string; recommended_prompt_node: string }>;
+    };
+    expect(promptTargets.targets).toContainEqual(expect.objectContaining({
+      target_node: "run_experiments",
+      recommended_prompt_node: "design_experiments"
+    }));
+  });
+
   it("binds a verified mutation-isolation report into the adjudicated suite", async () => {
     const workspace = await createWorkspace();
     const annotationPack = await exportPromotionAnnotationPack({
@@ -223,6 +273,7 @@ describe("promotion benchmark adjudication", () => {
     expect(loaded.suite?.manifest).toMatchObject({
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "double_verified",
+      execution_provenance_status: "artifact_verified",
       paper_claim_eligible: false
     });
 
@@ -370,6 +421,7 @@ describe("promotion benchmark adjudication", () => {
 
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "external_real_run",
+      execution_provenance_status: "artifact_verified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: true
@@ -381,12 +433,14 @@ describe("promotion benchmark adjudication", () => {
     });
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "synthetic_development",
+      execution_provenance_status: "artifact_verified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: true
     }).paper_claim_eligible).toBe(false);
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "external_real_run",
+      execution_provenance_status: "artifact_verified",
       cases,
       adjudication_complete: true,
       mutation_isolation_verified: false
@@ -421,6 +475,7 @@ async function createWorkspace(): Promise<string> {
   tempDirs.push(workspace);
   await mkdir(path.join(workspace, "bundle"), { recursive: true });
   await writeFile(path.join(workspace, "bundle", "result_table.json"), '{"rows":[{"metric":"primary_score","baseline":0.5,"comparator":0.6}]}\n', "utf8");
+  await writeExecutionEvidence(path.join(workspace, "bundle"));
   await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
     schema_version: "1.0",
     suite_id: "adjudication-suite",
@@ -428,6 +483,7 @@ async function createWorkspace(): Promise<string> {
     paper_claim_eligible: false,
     adjudication_status: "unreviewed",
     mutation_isolation_status: "unreviewed",
+    execution_provenance_status: "artifact_verified",
     cases: [
       {
         case_id: "case-clean",
@@ -450,6 +506,38 @@ async function createWorkspace(): Promise<string> {
   }, null, 2));
   await buildPromotionBenchmarkSuite({ cwd: workspace, recipePath: "recipe.json", outDir: "suite" });
   return workspace;
+}
+
+async function writeExecutionEvidence(root: string): Promise<void> {
+  const artifacts = [
+    { role: "run_config", path: "run-config.json", content: '{"trials":3}\n' },
+    { role: "event_log", path: "events.jsonl", content: '{"event":"completed"}\n' },
+    { role: "metrics", path: "metrics.json", content: '{"primary_score":0.6}\n' },
+    { role: "review_decision", path: "review/decision.json", content: '{"outcome":"accept"}\n' },
+    { role: "command", path: "command.txt", content: "runner --config run-config.json\n" },
+    { role: "execution_log", path: "execution.log", content: "completed\n" }
+  ];
+  for (const artifact of artifacts) {
+    await mkdir(path.dirname(path.join(root, artifact.path)), { recursive: true });
+    await writeFile(path.join(root, artifact.path), artifact.content, "utf8");
+  }
+  await writeFile(path.join(root, "execution-evidence.json"), `${JSON.stringify({
+    schema_version: "1.0",
+    evidence_class: "external_real_run",
+    run_id: "run-adjudication-fixture",
+    execution_mode: "real_execution",
+    execution_status: "completed",
+    execution_backend: "local_runtime",
+    started_at: "2026-01-01T00:00:00.000Z",
+    completed_at: "2026-01-01T00:01:00.000Z",
+    exit_code: 0,
+    trial_ids: ["trial-a", "trial-b", "trial-c"],
+    artifacts: artifacts.map((artifact) => ({
+      role: artifact.role,
+      path: artifact.path,
+      sha256: createHash("sha256").update(artifact.content).digest("hex")
+    }))
+  }, null, 2)}\n`, "utf8");
 }
 
 async function writeAnnotations(

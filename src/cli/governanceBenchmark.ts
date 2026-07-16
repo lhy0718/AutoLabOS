@@ -34,7 +34,9 @@ import {
   type GenerateSyntheticPromotionCorpusInput
 } from "../core/benchmark/promotionBenchmarkSyntheticCorpus.js";
 import {
+  auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
+  type AuditPromotionConfirmatoryIntakeInput,
   type FreezePromotionConfirmatoryInput
 } from "../core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
 import {
@@ -306,6 +308,21 @@ export async function runPromotionConfirmatoryFreezeCli(
       "Paper-claim eligible: false"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionConfirmatoryAuditCli(
+  input: AuditPromotionConfirmatoryIntakeInput
+): Promise<void> {
+  const result = await auditPromotionConfirmatoryIntake(input);
+  process.stdout.write(
+    [
+      `Promotion confirmatory intake audit ${result.report.passed ? "passed" : "failed"}: ${result.report.study_id}`,
+      `Artifact-verified sources: ${result.report.artifact_verified_source_count}/${result.report.source_count}`,
+      `Minimum sources: ${result.report.minimum_source_count}`,
+      `Report: ${result.report_path}`
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionFailureAnalysisCli(

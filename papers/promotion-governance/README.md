@@ -12,6 +12,7 @@ Current blockers:
 
 - fewer than 20 independently sourced base bundles,
 - no 200-case held-out confirmatory suite,
+- no artifact-verified execution provenance for 20 independent sources,
 - no double-adjudicated held-out labels,
 - no independent mutation-isolation audit,
 - no three-trial real-provider manuscript-only baseline,
@@ -70,6 +71,10 @@ Create a local manifest for at least 20 independently sourced canonical
 bundles, then freeze it before building the suite:
 
 ```bash
+node dist/cli/main.js governance-benchmark audit-promotion-confirmatory \
+  --manifest <intake.json> \
+  --out-dir <intake-audit>
+
 node dist/cli/main.js governance-benchmark freeze-promotion-confirmatory \
   --manifest <intake.json> \
   --out-dir <frozen-corpus>
@@ -89,15 +94,19 @@ resulting recipe must declare:
   "evidence_class": "external_real_run",
   "paper_claim_eligible": false,
   "adjudication_status": "unreviewed",
-  "mutation_isolation_status": "unreviewed"
+  "mutation_isolation_status": "unreviewed",
+  "execution_provenance_status": "artifact_verified"
 }
 ```
 
-This stage does not establish that the bundles came from real executions.
-`external_real_run` is an operator attestation that must be checked against the
-preserved run records and raw evidence. The freezer also does not sanitize
-content already inside a source bundle. All provisional labels remain
-`needs_review`; freezing never grants paper-claim eligibility.
+Each source must include a hash-bound `execution-evidence.json` covering run
+configuration, events, metrics, review decision, command, and execution log.
+The audit rejects incomplete roles, non-real modes, failed exits, fewer than
+three distinct trials, hash drift, and duplicate run identities or execution
+fingerprints. This verifies the declared artifact record, not the real-world
+occurrence or operator independence of an execution. The freezer also does not
+sanitize source content. All provisional labels remain `needs_review`;
+freezing never grants paper-claim eligibility.
 
 First export the built suite with `export-promotion-mutation-audit`. Give each
 mutation auditor only the generated `mutation-auditor/` directory and collect
@@ -115,8 +124,9 @@ private map, recipe, mutation metadata, provisional gold, and system predictions
 stay hidden. The importer, rather than a hand-edited
 recipe, sets `adjudication_status=double_adjudicated` and promotes
 `paper_claim_eligible=true` only after the mutation audit is
-`double_verified` and the external-real-run, held-out, 20-base, 200-case, and
-per-base paired-family gates all pass.
+`double_verified`, execution provenance is `artifact_verified`, and the
+external-real-run, held-out, 20-base, 200-case, and per-base paired-family gates
+all pass.
 The clean controls must include both promotable and non-promotable adjudicated
 outcomes.
 

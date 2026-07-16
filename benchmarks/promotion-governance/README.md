@@ -23,7 +23,8 @@ Each suite also declares an evidence class, paper-claim eligibility,
 adjudication status, and mutation-isolation status. A recipe with
 `paper_claim_eligible=true` is rejected unless
 `adjudication_status=double_adjudicated` and
-`mutation_isolation_status=double_verified`.
+`mutation_isolation_status=double_verified`, and
+`execution_provenance_status=artifact_verified`.
 
 All variants of one base bundle must remain in one split. Source hashes are also
 checked across splits, so renaming an identical base bundle does not bypass the
@@ -84,7 +85,8 @@ node dist/cli/main.js governance-benchmark generate-promotion-development \
 
 Its `corpus-manifest.json` sets `paper_claim_eligible=false`,
 `adjudication_status=unreviewed`, and
-`mutation_isolation_status=unreviewed`. It must not be reported as
+`mutation_isolation_status=unreviewed`, and
+`execution_provenance_status=unverified`. It must not be reported as
 confirmatory evidence.
 
 ## Freeze Confirmatory Intake
@@ -110,7 +112,19 @@ The `sources` array must contain at least 20 entries. `source_root` is resolved
 relative to the intake manifest. `source_id` is local bookkeeping and is not
 copied into the frozen corpus.
 
+Every source root must contain `execution-evidence.json`. The sidecar must
+declare `evidence_class=external_real_run`, `execution_mode=real_execution`, a
+completed zero-exit execution, an allowed execution backend, ordered start and
+completion timestamps, and at least three distinct trial IDs. It must also
+bind six distinct non-empty files by SHA-256 under the roles `run_config`,
+`event_log`, `metrics`, `review_decision`, `command`, and `execution_log`.
+Paths must be relative and remain inside the source bundle.
+
 ```bash
+node dist/cli/main.js governance-benchmark audit-promotion-confirmatory \
+  --manifest <intake.json> \
+  --out-dir <intake-audit>
+
 node dist/cli/main.js governance-benchmark freeze-promotion-confirmatory \
   --manifest <intake.json> \
   --out-dir <frozen-corpus>
@@ -120,26 +134,32 @@ node dist/cli/main.js governance-benchmark build-promotion \
   --out-dir <confirmatory-suite>
 ```
 
-The freezer rejects fewer than 20 sources, duplicate tree hashes, symbolic
-links, existing or source-contained output directories, and any source that
-cannot support all nine declared fault mutations. It rehashes every copy to
-reject source changes during freezing, copies each source under a hash-derived
-base ID, places every clean-plus-nine case in the test split, and records only
-source, private-intake-manifest, recipe hashes, and frozen relative roots in
-`frozen-intake-manifest.json`. Every recipe label remains provisional
-`needs_review`; the frozen corpus is always
-`adjudication_status=unreviewed`, `mutation_isolation_status=unreviewed`, and
+The audit writes a fail-closed report even when the 20-source floor is not met.
+The freezer additionally rejects duplicate tree hashes, run IDs, or execution
+fingerprints; symbolic links; existing or source-contained output directories;
+and any source that cannot support all nine declared fault mutations. It
+rehashes every copy to reject source changes during freezing, copies each
+source under a hash-derived base ID, and places every clean-plus-nine case in
+the test split. The frozen manifest records source, intake, recipe, execution
+evidence, and fingerprint hashes without copying local source IDs or original
+paths. Every recipe label remains provisional `needs_review`; the frozen corpus
+is always `adjudication_status=unreviewed`,
+`mutation_isolation_status=unreviewed`,
+`execution_provenance_status=artifact_verified`, and
 `paper_claim_eligible=false`.
 
-Declaring `evidence_class=external_real_run` is an operator attestation, not
-proof that an execution occurred. Review the underlying run records and raw
-evidence independently. The freezer does not rewrite or de-identify content
-already stored inside a source bundle, so run the repository's artifact and
-privacy checks before publishing a frozen corpus.
+Artifact verification establishes that the declared execution files exist,
+match their hashes, cover the required roles, and differ across sources. It
+does not prove that an execution occurred or that operators are independent;
+those remain external study-governance obligations. The freezer does not
+rewrite or de-identify source content, so run artifact and privacy checks before
+publishing a frozen corpus.
 
 The builder refuses existing output directories, paths outside the recipe
 root, symbolic links, duplicate case IDs, and base-bundle split leakage. The
-loader verifies artifact hashes before scoring.
+builder also revalidates every source sidecar and rejects duplicate source
+hashes, run IDs, or execution fingerprints when a recipe claims
+`artifact_verified`; the loader verifies artifact hashes before scoring.
 
 For a manuscript-only model baseline, export opaque requests that contain no
 case ID, mutation label, gold decision, or artifact path:
@@ -234,6 +254,7 @@ and full-label agreement. A completed suite is marked
 
 - every mutated case has two independent `isolated` judgments and the suite is
   marked `mutation_isolation_status=double_verified`,
+- the suite is marked `execution_provenance_status=artifact_verified`,
 - the source evidence class is `external_real_run`,
 - all cases are in the held-out test split,
 - at least 20 source-hash-distinct base bundles are present,

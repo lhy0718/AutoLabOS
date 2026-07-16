@@ -32,6 +32,7 @@ export type CliAction =
   | { kind: "governance-benchmark-verify-promotion-mutations"; suitePath: string; privateMapPath: string; auditPaths: string[]; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; mutationAuditReportPath?: string; outDir: string }
   | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
+  | { kind: "governance-benchmark-audit-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-freeze-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
   | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
@@ -345,12 +346,30 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
       };
+    }
+    if (subcommand === "audit-promotion-confirmatory") {
+      let manifestPath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-confirmatory-audit";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--manifest" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--manifest") manifestPath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark audit-promotion-confirmatory argument: ${token}` };
+      }
+      if (!manifestPath) return { kind: "error", message: "Missing required argument: --manifest <intake.json>." };
+      return { kind: "governance-benchmark-audit-promotion-confirmatory", manifestPath, outDir };
     }
     if (subcommand === "freeze-promotion-confirmatory") {
       let manifestPath: string | undefined;

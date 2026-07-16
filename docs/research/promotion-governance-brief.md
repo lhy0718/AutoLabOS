@@ -41,11 +41,11 @@ null, and negative research outcomes.
 4. Implement ungated, presence-checklist, manuscript-only, full-policy, and
    ablation conditions.
 5. Run a development pilot and repair benchmark validity failures.
-6. Collect at least 20 independently sourced real-run bundles, freeze their
-   hashes into a provisional clean-plus-nine held-out corpus, obtain blind
-   double adjudication and a separately blinded double mutation-isolation
-   audit, execute the comparison systems, and compute paired uncertainty and
-   tests.
+6. Collect at least 20 independently sourced real-run bundles, verify their
+   hash-bound execution provenance, freeze them into a provisional
+   clean-plus-nine held-out corpus, obtain blind double adjudication and a
+   separately blinded double mutation-isolation audit, execute the comparison
+   systems, and compute paired uncertainty and tests.
 7. Run review and meta-harness gates, then draft only within the measured
    evidence ceiling.
 

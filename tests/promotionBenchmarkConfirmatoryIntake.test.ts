@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +9,7 @@ import { loadPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenc
 import { evaluatePromotionAdjudicationEligibility } from "../src/core/benchmark/promotionBenchmarkAdjudication.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
 import {
+  auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
   MINIMUM_CONFIRMATORY_BASE_BUNDLES
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
@@ -42,6 +44,7 @@ describe("promotion confirmatory intake", () => {
       paper_claim_eligible: boolean;
       adjudication_status: string;
       mutation_isolation_status: string;
+      execution_provenance_status: string;
       cases: Array<{
         base_bundle_id: string;
         split: string;
@@ -53,7 +56,8 @@ describe("promotion confirmatory intake", () => {
       evidence_class: "external_real_run",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
-      mutation_isolation_status: "unreviewed"
+      mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "artifact_verified"
     });
     expect(recipe.cases).toHaveLength(200);
     expect(new Set(recipe.cases.map((item) => item.base_bundle_id))).toHaveProperty("size", 20);
@@ -75,12 +79,24 @@ describe("promotion confirmatory intake", () => {
     const freezeManifest = JSON.parse(freezeManifestText) as {
       intake_manifest_sha256: string;
       recipe_sha256: string;
-      source_bundles: Array<{ base_bundle_id: string; source_sha256: string; copied_root: string }>;
+      execution_provenance_status: string;
+      source_bundles: Array<{
+        base_bundle_id: string;
+        source_sha256: string;
+        run_id_sha256: string;
+        execution_fingerprint: string;
+        evidence_manifest_sha256: string;
+        copied_root: string;
+      }>;
     };
     expect(freezeManifest.source_bundles).toHaveLength(20);
     expect(freezeManifest.intake_manifest_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(freezeManifest.recipe_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(freezeManifest.execution_provenance_status).toBe("artifact_verified");
     expect(new Set(freezeManifest.source_bundles.map((item) => item.source_sha256))).toHaveProperty("size", 20);
+    expect(new Set(freezeManifest.source_bundles.map((item) => item.run_id_sha256))).toHaveProperty("size", 20);
+    expect(new Set(freezeManifest.source_bundles.map((item) => item.execution_fingerprint))).toHaveProperty("size", 20);
+    expect(freezeManifest.source_bundles.every((item) => /^[a-f0-9]{64}$/u.test(item.evidence_manifest_sha256))).toBe(true);
     expect(freezeManifestText).not.toContain(path.join(workspace, "sources"));
     expect(freezeManifestText).not.toContain("local-source-");
     expect(recipeText).not.toContain(path.join(workspace, "sources"));
@@ -96,6 +112,7 @@ describe("promotion confirmatory intake", () => {
     expect(loaded.suite?.cases).toHaveLength(200);
     const eligibility = evaluatePromotionAdjudicationEligibility({
       evidence_class: loaded.suite?.manifest.evidence_class,
+      execution_provenance_status: loaded.suite?.manifest.execution_provenance_status,
       cases: loaded.suite?.cases || [],
       adjudication_complete: false,
       mutation_isolation_verified: false
@@ -117,6 +134,26 @@ describe("promotion confirmatory intake", () => {
       outDir: "frozen"
     })).rejects.toThrow("requires at least 20 source bundles");
     await expect(readFile(path.join(workspace, "frozen", "recipe.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("writes a fail-closed audit report for an artifact-valid inventory below the source minimum", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, 2);
+
+    const result = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "audit"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: false,
+      source_count: 2,
+      artifact_verified_source_count: 2,
+      minimum_source_count: 20
+    });
+    expect(result.report.global_issues.map((issue) => issue.code)).toContain("confirmatory_source_count_minimum_not_met");
+    expect(result.report.sources.every((source) => source.passed)).toBe(true);
   });
 
   it("rejects duplicate source content even when source ids and paths differ", async () => {
@@ -151,8 +188,20 @@ describe("promotion confirmatory intake", () => {
       cwd: workspace,
       manifestPath,
       outDir: "frozen"
-    })).rejects.toThrow("Mutation target does not exist");
+    })).rejects.toThrow("confirmatory_mutation_compatibility_failed");
     await expect(readFile(path.join(workspace, "frozen", "recipe.json"), "utf8")).rejects.toThrow();
+  });
+
+  it("rejects a source when a hash-bound execution artifact changes after manifest creation", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    await writeJson(path.join(workspace, "sources", "bundle-20", "metrics.json"), { changed: true });
+
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath,
+      outDir: "frozen"
+    })).rejects.toThrow("execution_evidence_artifact_hash_mismatch");
   });
 
   it("does not overwrite an existing frozen corpus", async () => {
@@ -242,6 +291,35 @@ async function writeBaseBundle(root: string, ordinal: number): Promise<void> {
   await writeJson(path.join(root, "design_contracts.json"), {
     sota_ranking_claimed: false,
     sota_evidence_present: false
+  });
+  await writeFile(path.join(root, "events.jsonl"), `${JSON.stringify({ event: "completed", ordinal })}\n`, "utf8");
+  await writeJson(path.join(root, "metrics.json"), { ordinal, completed_trials: 3 });
+  await writeJson(path.join(root, "review", "decision.json"), { outcome: "accept", ordinal });
+  await writeFile(path.join(root, "command.txt"), `runner --case ${ordinal}\n`, "utf8");
+  await writeFile(path.join(root, "execution.log"), `completed run ${ordinal}\n`, "utf8");
+  const evidenceArtifacts = [
+    { role: "run_config", path: "run_config.json" },
+    { role: "event_log", path: "events.jsonl" },
+    { role: "metrics", path: "metrics.json" },
+    { role: "review_decision", path: "review/decision.json" },
+    { role: "command", path: "command.txt" },
+    { role: "execution_log", path: "execution.log" }
+  ];
+  await writeJson(path.join(root, "execution-evidence.json"), {
+    schema_version: "1.0",
+    evidence_class: "external_real_run",
+    run_id: `run-${String(ordinal).padStart(2, "0")}`,
+    execution_mode: "real_execution",
+    execution_status: "completed",
+    execution_backend: "local_runtime",
+    started_at: `2026-01-${String(ordinal).padStart(2, "0")}T00:00:00.000Z`,
+    completed_at: `2026-01-${String(ordinal).padStart(2, "0")}T00:01:00.000Z`,
+    exit_code: 0,
+    trial_ids: ["trial-a", "trial-b", "trial-c"],
+    artifacts: await Promise.all(evidenceArtifacts.map(async (artifact) => ({
+      ...artifact,
+      sha256: createHash("sha256").update(await readFile(path.join(root, artifact.path))).digest("hex")
+    })))
   });
 }
 

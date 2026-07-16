@@ -59,6 +59,7 @@ export async function generateSyntheticPromotionCorpus(
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
       mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "unverified",
       cases
     };
     await writeJsonFile(path.join(stagingRoot, "recipe.json"), recipe);
@@ -69,6 +70,7 @@ export async function generateSyntheticPromotionCorpus(
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
       mutation_isolation_status: "unreviewed",
+      execution_provenance_status: "unverified",
       base_bundle_count: deltas.length,
       case_count: cases.length,
       clean_control_count: deltas.length,

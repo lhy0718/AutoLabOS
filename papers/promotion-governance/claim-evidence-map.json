@@ -50,6 +50,19 @@
       ]
     },
     {
+      "claim_id": "execution-provenance-hard-gate",
+      "claim": "The implementation rejects non-real, failed, incomplete, hash-drifted, or duplicate confirmatory execution records and requires artifact-verified execution provenance before paper eligibility.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkExecutionEvidence.ts",
+        "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
+        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
+        "tests/promotionBenchmarkExecutionEvidence.test.ts",
+        "tests/promotionBenchmarkConfirmatoryIntake.test.ts",
+        "tests/promotionBenchmarkAdjudication.test.ts"
+      ]
+    },
+    {
       "claim_id": "development-four-system-summary",
       "claim": "On the synthetic development suite, the fail-closed audit had zero false promotions and the advisory audit had a concern-acceptance conflict rate of one.",
       "status": "development_only",
@@ -76,6 +89,7 @@
       "missing_evidence": [
         "double_adjudicated_held_out_suite",
         "double_verified_mutation_isolation",
+        "artifact_verified_execution_provenance",
         "at_least_20_independent_base_bundles",
         "three_real_provider_trials",
         "post_repair_recovery_runs"

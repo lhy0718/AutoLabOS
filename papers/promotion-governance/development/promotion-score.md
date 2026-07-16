@@ -7,6 +7,8 @@
 - Evidence class: synthetic_development
 - Paper-claim eligible: false
 - Adjudication: unreviewed
+- Mutation isolation: unreviewed
+- Execution provenance: unverified
 
 ## System Summary
 

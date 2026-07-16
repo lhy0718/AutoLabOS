@@ -9,10 +9,12 @@ import {
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkAdjudicationStatus,
   type PromotionBenchmarkEvidenceClass,
+  type PromotionBenchmarkExecutionProvenanceStatus,
   type PromotionBenchmarkMutationIsolationStatus,
   type PromotionBenchmarkSplit,
   type PromotionDecision
 } from "./promotionBenchmark.js";
+import { inspectPromotionExecutionEvidence } from "./promotionBenchmarkExecutionEvidence.js";
 
 export type PromotionMutationOperation =
   | { op: "delete_path"; path: string }
@@ -40,6 +42,7 @@ export interface PromotionBenchmarkRecipe {
   paper_claim_eligible?: boolean;
   adjudication_status?: PromotionBenchmarkAdjudicationStatus;
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
+  execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   cases: PromotionBenchmarkRecipeCase[];
 }
 
@@ -138,6 +141,7 @@ export async function buildPromotionBenchmarkSuite(
       ...(typeof recipe.paper_claim_eligible === "boolean" ? { paper_claim_eligible: recipe.paper_claim_eligible } : {}),
       ...(recipe.adjudication_status ? { adjudication_status: recipe.adjudication_status } : {}),
       ...(recipe.mutation_isolation_status ? { mutation_isolation_status: recipe.mutation_isolation_status } : {}),
+      ...(recipe.execution_provenance_status ? { execution_provenance_status: recipe.execution_provenance_status } : {}),
       cases: caseRefs
     });
     await fs.rename(stagingRoot, outDir);
@@ -260,9 +264,17 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
   if (value.mutation_isolation_status !== undefined && !isMutationIsolationStatus(value.mutation_isolation_status)) {
     throw new Error("Promotion benchmark recipe mutation_isolation_status is invalid.");
   }
+  if (value.execution_provenance_status !== undefined && !isExecutionProvenanceStatus(value.execution_provenance_status)) {
+    throw new Error("Promotion benchmark recipe execution_provenance_status is invalid.");
+  }
+  if (value.execution_provenance_status === "artifact_verified" && value.evidence_class !== "external_real_run") {
+    throw new Error("Artifact-verified execution provenance requires evidence_class=external_real_run.");
+  }
   if (value.paper_claim_eligible === true
-      && (value.adjudication_status !== "double_adjudicated" || value.mutation_isolation_status !== "double_verified")) {
-    throw new Error("Paper-claim-eligible promotion suites must be double adjudicated with double-verified mutation isolation.");
+      && (value.adjudication_status !== "double_adjudicated"
+        || value.mutation_isolation_status !== "double_verified"
+        || value.execution_provenance_status !== "artifact_verified")) {
+    throw new Error("Paper-claim-eligible promotion suites must have artifact-verified execution provenance, double adjudication, and double-verified mutation isolation.");
   }
   return {
     schema_version: "1.0",
@@ -271,6 +283,7 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
     ...(typeof value.paper_claim_eligible === "boolean" ? { paper_claim_eligible: value.paper_claim_eligible } : {}),
     ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
+    ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
     cases
   };
 }
@@ -313,13 +326,42 @@ function parseOperation(value: unknown, caseIndex: number, operationIndex: numbe
 }
 
 async function validateRecipeSources(recipe: PromotionBenchmarkRecipe, recipeRoot: string): Promise<void> {
+  const inspectedRoots = new Set<string>();
+  const sourceHashOwners = new Map<string, string>();
+  const runIdOwners = new Map<string, string>();
+  const fingerprintOwners = new Map<string, string>();
   for (const recipeCase of recipe.cases) {
     const sourceRoot = resolveContainedPath(recipeRoot, recipeCase.source_root);
     if (!sourceRoot || !(await directoryExists(sourceRoot))) {
       throw new Error(`Recipe source_root must be an existing directory inside the recipe root: ${recipeCase.case_id}`);
     }
-    await hashPromotionArtifactTree(sourceRoot);
+    const sourceSha256 = await hashPromotionArtifactTree(sourceRoot);
+    if (recipe.execution_provenance_status === "artifact_verified" && !inspectedRoots.has(sourceRoot)) {
+      const inspection = await inspectPromotionExecutionEvidence(sourceRoot);
+      if (!inspection.passed) {
+        throw new Error(
+          `Artifact-verified recipe source failed execution evidence inspection: ${inspection.issues.map((issue) => issue.code).join(", ")}.`
+        );
+      }
+      rejectCrossRootDuplicate(sourceHashOwners, sourceSha256, sourceRoot, "source hash");
+      rejectCrossRootDuplicate(runIdOwners, inspection.run_id!, sourceRoot, "run ID");
+      rejectCrossRootDuplicate(fingerprintOwners, inspection.execution_fingerprint!, sourceRoot, "execution fingerprint");
+      inspectedRoots.add(sourceRoot);
+    }
   }
+}
+
+function rejectCrossRootDuplicate(
+  owners: Map<string, string>,
+  value: string,
+  sourceRoot: string,
+  label: string
+): void {
+  const owner = owners.get(value);
+  if (owner && owner !== sourceRoot) {
+    throw new Error(`Artifact-verified recipe sources must have distinct ${label} values.`);
+  }
+  owners.set(value, sourceRoot);
 }
 
 function setJsonPointer(root: unknown, pointer: string, value: unknown): void {
@@ -425,6 +467,10 @@ function isAdjudicationStatus(value: unknown): value is PromotionBenchmarkAdjudi
 
 function isMutationIsolationStatus(value: unknown): value is PromotionBenchmarkMutationIsolationStatus {
   return value === "unreviewed" || value === "double_verified";
+}
+
+function isExecutionProvenanceStatus(value: unknown): value is PromotionBenchmarkExecutionProvenanceStatus {
+  return value === "unverified" || value === "artifact_verified";
 }
 
 function validId(value: unknown): value is string {

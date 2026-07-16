@@ -44,6 +44,7 @@ describe("promotion benchmark", () => {
     expect(result.report.passed).toBe(true);
     expect(result.report.paper_claim_eligible).toBe(false);
     expect(result.report.mutation_isolation_status).toBe("unspecified");
+    expect(result.report.execution_provenance_status).toBe("unspecified");
     expect(result.report.paired_analysis).toMatchObject({
       inference_unit: "base_bundle_id",
       bootstrap_replicates: 5000,
