@@ -23,6 +23,8 @@ import {
   runPromotionBenchmarkSystemsCli,
   runSyntheticPromotionCorpusCli,
   runPromotionSourceProjectionCli,
+  runPromotionSourceNormalizationPackExportCli,
+  runPromotionSourceNormalizationCli,
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
@@ -61,6 +63,8 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
+    "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
+    "  autolabos governance-benchmark normalize-promotion-source --source-root <projected-bundle> --map <private-normalization-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <normalized-bundle>",
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
@@ -297,6 +301,27 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       sourceRoot: action.sourceRoot,
       recipePath: action.recipePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-promotion-source-normalization") {
+    await runPromotionSourceNormalizationPackExportCli({
+      cwd: process.cwd(),
+      sourceRoot: action.sourceRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-normalize-promotion-source") {
+    await runPromotionSourceNormalizationCli({
+      cwd: process.cwd(),
+      sourceRoot: action.sourceRoot,
+      privateMapPath: action.privateMapPath,
+      annotationPaths: action.annotationPaths,
+      resolutionPath: action.resolutionPath,
       outDir: action.outDir
     });
     return;

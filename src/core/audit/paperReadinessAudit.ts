@@ -852,14 +852,16 @@ function collectExecutionIntegrityFindings(
 
   if (plannedTrials > 1) {
     const trials = recordArray(artifacts.experimentEvidence?.trials);
-    const missingSeedCount = trials.length === 0
+    const provenanceKeys = trials.map(trialProvenanceKey);
+    const missingProvenanceCount = trials.length === 0
       ? plannedTrials
-      : trials.filter((trial) => !hasSeedProvenance(trial)).length;
-    if (trials.length < plannedTrials || missingSeedCount > 0) {
+      : provenanceKeys.filter((value) => !value).length;
+    const distinctProvenanceCount = new Set(provenanceKeys.filter((value) => value.length > 0)).size;
+    if (trials.length < plannedTrials || missingProvenanceCount > 0 || distinctProvenanceCount < plannedTrials) {
       findings.push({
         code: "repeated_run_provenance_missing",
         severity: "blocker",
-        message: `Repeated-run contract declares ${plannedTrials} trial(s), but seed-level evidence is incomplete or missing.`,
+        message: `Repeated-run contract declares ${plannedTrials} trial(s), but distinct trial-level provenance is incomplete, missing, or reused.`,
         evidence_path: "experiment_evidence.json",
         target_node: "run_experiments"
       });
@@ -891,9 +893,12 @@ function collectExecutionIntegrityFindings(
   return findings;
 }
 
-function hasSeedProvenance(value: Record<string, unknown>): boolean {
-  return ["seed", "seed_id", "random_seed", "evaluation_seed"]
-    .some((key) => Object.prototype.hasOwnProperty.call(value, key) && value[key] !== null && value[key] !== "");
+function trialProvenanceKey(value: Record<string, unknown>): string {
+  for (const key of ["trial_id", "run_id", "seed", "seed_id", "random_seed", "evaluation_seed"]) {
+    if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === null || value[key] === "") continue;
+    return `${key}:${String(value[key])}`;
+  }
+  return "";
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

@@ -41,7 +41,12 @@ describe("promotion source projection", () => {
       issues: []
     });
     expect(resultTable).toEqual([{ baseline: 0.5, comparator: 0.6 }]);
-    expect(inspection).toMatchObject({ passed: true, issues: [] });
+    expect(inspection).toMatchObject({
+      integrity_passed: true,
+      confirmatory_ready: true,
+      passed: true,
+      issues: []
+    });
     expect(result.manifest.outputs.some((output) => output.mode === "json_pointer")).toBe(true);
     expect(JSON.stringify(result.manifest)).not.toContain(path.join(workspace, "raw-source"));
     expect(JSON.stringify(result.manifest)).not.toContain("measurements.json");
@@ -85,7 +90,11 @@ describe("promotion source projection", () => {
       "source_projection_distribution_local_only",
       "source_projection_license_review_required"
     ]));
-    expect(inspection.passed).toBe(false);
+    expect(inspection).toMatchObject({
+      integrity_passed: true,
+      confirmatory_ready: false,
+      passed: false
+    });
     expect(inspection.issues.map((issue) => issue.code)).toContain("source_projection_not_confirmatory_ready");
   });
 
@@ -154,7 +163,7 @@ describe("promotion source projection", () => {
 
     const inspection = await inspectPromotionSourceProjection(path.join(workspace, "projected"));
 
-    expect(inspection.passed).toBe(false);
+    expect(inspection).toMatchObject({ integrity_passed: false, confirmatory_ready: false, passed: false });
     expect(inspection.issues.map((issue) => issue.code)).toContain("source_projection_output_hash_mismatch");
   });
 
@@ -173,7 +182,7 @@ describe("promotion source projection", () => {
 
     const inspection = await inspectPromotionSourceProjection(path.join(workspace, "projected"));
 
-    expect(inspection.passed).toBe(false);
+    expect(inspection).toMatchObject({ integrity_passed: false, confirmatory_ready: false, passed: false });
     expect(inspection.issues).toContainEqual(expect.objectContaining({
       code: "source_projection_untracked_artifact",
       ref: "untracked-evidence.json"
@@ -209,7 +218,9 @@ async function writeCompleteRawSource(root: string): Promise<void> {
   await mkdir(root, { recursive: true });
   await writeFile(path.join(root, "LICENSE"), "Example license terms.\n", "utf8");
   await writeJson(path.join(root, "measurements.json"), { baseline: 0.5, comparator: 0.6 });
-  await writeJson(path.join(root, "experiment_evidence.json"), { trials: [{ seed: 101 }, { seed: 211 }, { seed: 307 }] });
+  await writeJson(path.join(root, "experiment_evidence.json"), {
+    trials: [{ trial_id: "trial-a" }, { trial_id: "trial-b" }, { trial_id: "trial-c" }]
+  });
   await writeJson(path.join(root, "run_record.json"), { status: "completed", executed_budget: { trials: 3 } });
   await writeJson(path.join(root, "figure_audit", "figure_audit_summary.json"), { severe_mismatch_count: 0, review_block_required: false });
   const claim = { claim_id: "claim-primary", section_heading: "Results", status: "verified", artifact_refs: ["result_table.json"], citation_refs: ["source-primary"] };

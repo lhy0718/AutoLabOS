@@ -535,6 +535,36 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports blind source-normalization pack export and double-annotation materialization", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-source-normalization",
+      "--source-root", "outputs/projected-source",
+      "--out-dir", "outputs/normalization-pack"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-source-normalization",
+      sourceRoot: "outputs/projected-source",
+      outDir: "outputs/normalization-pack"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "normalize-promotion-source",
+      "--source-root", "outputs/projected-source",
+      "--map", "outputs/normalization-pack/private-normalization-map.json",
+      "--annotations", "labels-a.jsonl",
+      "--annotations", "labels-b.jsonl",
+      "--resolution", "labels-resolution.jsonl",
+      "--out-dir", "outputs/normalized-source"
+    ])).toEqual({
+      kind: "governance-benchmark-normalize-promotion-source",
+      sourceRoot: "outputs/projected-source",
+      privateMapPath: "outputs/normalization-pack/private-normalization-map.json",
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      resolutionPath: "labels-resolution.jsonl",
+      outDir: "outputs/normalized-source"
+    });
+  });
+
   it("requires complete roles and three trials when preparing execution evidence", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -607,6 +637,20 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--recipe")
+    });
+  });
+
+  it("requires exactly two source-normalization annotations", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "normalize-promotion-source",
+      "--source-root", "outputs/projected-source",
+      "--map", "private-map.json",
+      "--annotations", "labels-a.jsonl",
+      "--out-dir", "outputs/normalized-source"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two --annotations")
     });
   });
 

@@ -388,6 +388,39 @@ describe("paper-readiness audit", () => {
     );
     expect(report).toContain("## Execution Integrity Findings");
   });
+
+  it("requires distinct trial provenance while accepting source-neutral trial IDs", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-trial-provenance-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ],
+      runRecord: { id: "trial-provenance-case", status: "completed", executed_budget: { trials: 3 } }
+    });
+    await writeJson(path.join(runRoot, "run_config.json"), { planned_budget: { trials: 3 } });
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: [{ trial_id: "trial-a" }, { trial_id: "trial-a" }, { trial_id: "trial-a" }]
+    });
+    const duplicateSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/duplicate-trial-audit"
+    });
+    expect(duplicateSummary.execution_integrity_findings.map((finding) => finding.code))
+      .toContain("repeated_run_provenance_missing");
+
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: [{ trial_id: "trial-a" }, { trial_id: "trial-b" }, { trial_id: "trial-c" }]
+    });
+    const distinctSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/distinct-trial-audit"
+    });
+    expect(distinctSummary.execution_integrity_findings.map((finding) => finding.code))
+      .not.toContain("repeated_run_provenance_missing");
+  });
 });
 
 async function writeMinimalAuditRun(

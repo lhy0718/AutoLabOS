@@ -86,6 +86,8 @@ export interface ProjectPromotionSourceResult {
 }
 
 export interface PromotionSourceProjectionInspection {
+  integrity_passed: boolean;
+  confirmatory_ready: boolean;
   passed: boolean;
   manifest: PromotionSourceProjectionManifest | null;
   issues: PromotionSourceProjectionIssue[];
@@ -234,6 +236,8 @@ export async function inspectPromotionSourceProjection(
     manifest = parseProjectionManifest(JSON.parse(await fs.readFile(manifestPath, "utf8")) as unknown);
   } catch {
     return {
+      integrity_passed: false,
+      confirmatory_ready: false,
       passed: false,
       manifest: null,
       issues: [{ code: "source_projection_manifest_unreadable", message: "The source projection manifest is missing or invalid." }]
@@ -285,13 +289,21 @@ export async function inspectPromotionSourceProjection(
   if (licenseSha256 && hashArtifactSet(manifest.outputs, licenseSha256) !== manifest.artifact_set_sha256) {
     issues.push({ code: "source_projection_artifact_set_hash_mismatch", message: "The projected artifact set no longer matches its manifest." });
   }
+  const integrityPassed = issues.length === 0;
   if (!manifest.ready_for_confirmatory_intake || !manifest.promotion_compatible || !manifest.execution_evidence_verified) {
     issues.push({ code: "source_projection_not_confirmatory_ready", message: "The projection was not prepared as a confirmatory-ready source bundle." });
   }
   if (manifest.distribution_scope !== "redistributable" || manifest.license_review_status !== "human_verified") {
     issues.push({ code: "source_projection_redistribution_unverified", message: "Public redistribution and human license review are required for confirmatory intake." });
   }
-  return { passed: issues.length === 0, manifest, issues };
+  const confirmatoryReady = integrityPassed && issues.length === 0;
+  return {
+    integrity_passed: integrityPassed,
+    confirmatory_ready: confirmatoryReady,
+    passed: confirmatoryReady,
+    manifest,
+    issues
+  };
 }
 
 type SelectedSourceFile = {

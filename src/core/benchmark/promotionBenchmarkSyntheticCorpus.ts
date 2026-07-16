@@ -114,9 +114,9 @@ async function writeCleanBaseBundle(root: string, baseId: string, delta: number,
   );
   await writeJsonFile(path.join(root, "experiment_evidence.json"), {
     trials: [
-      { seed: 101 + baseIndex, score: baseline + delta - 0.01 },
-      { seed: 211 + baseIndex, score: baseline + delta },
-      { seed: 307 + baseIndex, score: baseline + delta + 0.01 }
+      { trial_id: `trial-${baseIndex + 1}-a`, score: baseline + delta - 0.01 },
+      { trial_id: `trial-${baseIndex + 1}-b`, score: baseline + delta },
+      { trial_id: `trial-${baseIndex + 1}-c`, score: baseline + delta + 0.01 }
     ]
   });
   await writeJsonFile(path.join(root, "run_config.json"), { planned_budget: { trials: 3 } });

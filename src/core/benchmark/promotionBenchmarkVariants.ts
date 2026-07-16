@@ -29,7 +29,7 @@ export function promotionVariantDefinitions(): PromotionVariantDefinition[] {
       operations: [0, 1, 2].map((index) => ({
         op: "remove_json_pointer" as const,
         path: "experiment_evidence.json",
-        pointer: `/trials/${index}/seed`
+        pointer: `/trials/${index}/trial_id`
       })),
       gold: {
         decision: "block",

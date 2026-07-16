@@ -179,17 +179,29 @@ significance. Synthetic development suites are always marked exploratory.
   `declared_stratified` status through recipes, mutation provenance, case
   manifests, suite loading, adjudication, and scoring. Each downstream gate
   must recheck the minimum counts, per-base consistency, and 50 percent cap.
-- Normalize non-native bundles only through `project-promotion-source` recipes.
-  The projector permits byte-for-byte file selection and JSON-pointer
-  extraction, records source and output hashes, rejects symlinks and
-  credential-like paths or values, and cannot introduce literal evidence
-  values. A projected source remains ineligible until every canonical mutation
-  target, execution-evidence role, redistribution declaration, and human
-  license-review gate passes.
-- Require each source to bind run configuration, events, metrics, review
+- Admit non-native bundles through two separate stages. First,
+  `project-promotion-source` permits only byte-for-byte file selection and
+  JSON-pointer extraction, records source and output hashes, rejects symlinks
+  and credential-like paths or values, and cannot introduce literal evidence
+  values. Projection integrity is evaluated separately from confirmatory
+  readiness, so an intact but incomplete source can proceed to annotation
+  without being promoted.
+- Second, export an opaque source-normalization pack and require two independent
+  human mappings or a distinct third-party resolution. The materializer accepts
+  only source-bound result, execution, figure, claim, citation, and readiness
+  paths, preserves both initial labels, and writes generated canonical fields
+  separately from the nested projected source. The readiness path must be the
+  same manifest-bound file selected for the review-decision role. The
+  independent inspector rechecks every output hash, the closed nested
+  projection, the adjudication trace, execution evidence, license, and all
+  mutation targets. Human mapping is never treated as proof that execution
+  occurred.
+- Require each normalized or native source to bind run configuration, events, metrics, review
   decision, command, and execution log files in `execution-evidence.json`.
-  Reject non-real or failed modes, fewer than three distinct trials, hash drift,
-  and duplicate run IDs or execution fingerprints before freezing.
+  Reject non-real or failed modes, fewer than three distinct portable trial
+  identifiers, hash drift, and duplicate run IDs or execution fingerprints
+  before freezing. Seed fields remain valid provenance when present, but the
+  benchmark contract does not assume that every external system is stochastic.
 - Treat `execution_provenance_status=artifact_verified` as verification of the
   declared artifact record, not proof that execution occurred or that operators
   were independent.
@@ -217,7 +229,7 @@ significance. Synthetic development suites are always marked exploratory.
 
 ## Source Acquisition Audit
 
-The public-source route was inspected on 2026-07-16 using official project
+The public-source route was inspected on 2026-07-16 and rechecked on 2026-07-17 using official project
 repositories and linked first-party archives.
 
 - [CodeScientist](https://github.com/allenai/codescientist) exposes 20 reports,
@@ -231,6 +243,11 @@ repositories and linked first-party archives.
   repository examples do not supply every required execution-log, independent
   human-review, figure-audit, checkpoint, and claim-link artifact. Its current
   source license also requires explicit review before redistribution.
+- [AutoSOTA](https://github.com/tsinghua-fib-lab/AutoSOTA) exposes optimized
+  repository snapshots with final reports, result files, and execution code.
+  The selected deterministic sample contained three structured result files
+  with 35 recorded values each, but lacked a complete start/end/exit trace,
+  source-grounded figure audit, and independent human claim-evidence mapping.
 - [Agent Laboratory](https://github.com/SamuelSchmidgall/AgentLaboratory)
   documents checkpointed end-to-end execution but does not include completed
   run bundles in the official repository.
@@ -239,6 +256,33 @@ No inspected source is currently counted as confirmatory evidence. The
 acquisition audit establishes feasible raw-material routes, not 20 eligible
 bases. Missing canonical governance artifacts must not be filled with inferred
 or hand-authored success values.
+
+The machine-readable acquisition audit is preserved in
+`docs/research/evidence/promotion-source-route-audit.json`. Across the 20
+CodeScientist experiment directories, it found 86 recorded runtime directories
+and complete report/history coverage; ten experiments had at least three
+runtime directories. The current confirmatory intake still admitted zero
+bases: every experiment lacked a hash-bound AutoLabOS execution manifest,
+preserved source-license evidence, reviewed redistribution status, a projection
+manifest, and compatibility with the nine canonical mutations. Runtime
+directory counts are therefore source-route observations, not trial or
+eligibility claims.
+
+One official AI Scientist example was then exercised through the new route at
+repository revision `1de1dbc1f4ee2c5f61e9c94348d55eb51d7fa2eb`. A deterministic
+projection selected 18 manifest-bound outputs, including six structured run
+results, run scripts, logs, review and paper records, and figures. A
+CodeScientist experiment selected by the preregistered rule "first
+lexicographic experiment with at least three non-empty result files" was also
+projected into 18 manifest-bound outputs from three recorded runs. The first
+lexicographic AutoSOTA ICML directory with a final report and at least three
+structured result or seed-log files was projected at revision
+`151532bd861cd40f5d7e8d0b6caa9c72fce24f55` into 13 manifest-bound output
+records. All three closed projections passed integrity inspection and produced
+opaque normalization tasks. They remain intentionally blocked with
+`local_evaluation_only`, `unreviewed` license status, zero human annotations,
+no accepted normalization, and no confirmatory admission. These are same-flow
+validations of source routes, not empirical benchmark results.
 
 ## Minimum Publishable Experiment
 

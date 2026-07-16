@@ -388,7 +388,24 @@ autolabos governance-benchmark project-promotion-source \
 
 Projection recipes support byte-for-byte file copies and JSON-pointer extraction only. They cannot add literal evidence values. The projector records source/output hashes, rejects path escape, symlinks, credential-like paths or values, preserves the selected source license, and rejects files added outside the closed output manifest. A generated bundle is marked confirmatory-ready only when the canonical mutation contract, hash-bound real-execution evidence, redistribution declaration, and human license review all pass.
 
-Confirmatory intake requires every projected or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
+An integrity-valid projection that is not yet canonical can enter a separate blind human-normalization path without being treated as confirmatory-ready:
+
+```sh
+autolabos governance-benchmark export-promotion-source-normalization \
+  --source-root <projected-bundle> \
+  --out-dir <annotation-pack>
+
+autolabos governance-benchmark normalize-promotion-source \
+  --source-root <projected-bundle> \
+  --map <annotation-pack>/private-normalization-map.json \
+  --annotations <labels-a.jsonl> \
+  --annotations <labels-b.jsonl> \
+  --out-dir <normalized-bundle>
+```
+
+The second command requires distinct annotator IDs and exact agreement, or a `--resolution` record from a third ID. It only accepts result, execution, figure, claim, citation, and readiness paths already bound by the projection manifest; the readiness path must be the selected review-decision artifact. The normalized bundle keeps generated canonical fields separate from the nested source, preserves the annotation trace, and independently rechecks source hashes, output closure, execution evidence, license status, and mutation compatibility. Annotator IDs are audit pseudonyms, not proof of real-world identity.
+
+Confirmatory intake requires every projected, normalized, or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
 
 ---
 

@@ -367,7 +367,11 @@ async function writeBaseBundle(root: string, ordinal: number): Promise<void> {
   await writeFile(path.join(root, "SOURCE_LICENSE.txt"), "Neutral test fixture license.\n", "utf8");
   await writeJson(path.join(root, "result_table.json"), [{ baseline: 0.5, comparator: 0.6 }]);
   await writeJson(path.join(root, "experiment_evidence.json"), {
-    trials: [{ seed: 101 }, { seed: 211 }, { seed: 307 }]
+    trials: [
+      { trial_id: `trial-${ordinal}-a` },
+      { trial_id: `trial-${ordinal}-b` },
+      { trial_id: `trial-${ordinal}-c` }
+    ]
   });
   await writeJson(path.join(root, "run_config.json"), { planned_budget: { trials: 3 } });
   await writeJson(path.join(root, "run_record.json"), {

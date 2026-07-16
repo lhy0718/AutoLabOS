@@ -63,6 +63,12 @@ import {
   projectPromotionSource,
   type ProjectPromotionSourceInput
 } from "../core/benchmark/promotionBenchmarkSourceProjection.js";
+import {
+  exportPromotionSourceNormalizationPack,
+  normalizePromotionSource,
+  type ExportPromotionSourceNormalizationPackInput,
+  type NormalizePromotionSourceInput
+} from "../core/benchmark/promotionBenchmarkSourceNormalization.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -329,6 +335,37 @@ export async function runPromotionSourceProjectionCli(
       `Promotion compatible: ${result.manifest.promotion_compatible}`,
       `Execution evidence verified: ${result.manifest.execution_evidence_verified}`,
       "Evidence boundary: deterministic byte selection and JSON-pointer extraction only; execution, operator identity, licensing, and scientific validity are not inferred"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionSourceNormalizationPackExportCli(
+  input: ExportPromotionSourceNormalizationPackInput
+): Promise<void> {
+  const result = await exportPromotionSourceNormalizationPack(input);
+  process.stdout.write(
+    [
+      `Promotion source-normalization pack exported: ${result.normalization_id}`,
+      `Annotator pack: ${result.annotator_dir}`,
+      `Tasks: ${result.tasks_path}`,
+      `Private map: ${result.private_map_path}`,
+      `Rubric: ${result.rubric_path}`,
+      "Evidence boundary: annotation tasks expose projected artifacts but no canonical promotion label"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionSourceNormalizationCli(
+  input: NormalizePromotionSourceInput
+): Promise<void> {
+  const result = await normalizePromotionSource(input);
+  process.stdout.write(
+    [
+      `Promotion source normalized: ${result.normalization_id}`,
+      `Adjudication: ${result.adjudication_source}`,
+      `Output: ${result.output_dir}`,
+      `Manifest: ${result.manifest_path}`,
+      "Evidence boundary: human mapping is preserved separately from hash-bound source execution artifacts"
     ].join("\n") + "\n"
   );
 }

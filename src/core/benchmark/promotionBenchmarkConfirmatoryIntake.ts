@@ -21,6 +21,7 @@ import {
   type PromotionSourceDistributionScope,
   type PromotionSourceLicenseReviewStatus
 } from "./promotionBenchmarkSourceProjection.js";
+import { inspectPromotionSourceNormalization } from "./promotionBenchmarkSourceNormalization.js";
 import {
   MAXIMUM_PROMOTION_GROUP_SHARE,
   MINIMUM_PROMOTION_OPERATOR_GROUPS,
@@ -32,7 +33,7 @@ export const MINIMUM_CONFIRMATORY_SOURCE_FAMILIES = MINIMUM_PROMOTION_SOURCE_FAM
 export const MINIMUM_CONFIRMATORY_OPERATOR_GROUPS = MINIMUM_PROMOTION_OPERATOR_GROUPS;
 export const MAXIMUM_CONFIRMATORY_GROUP_SHARE = MAXIMUM_PROMOTION_GROUP_SHARE;
 
-export type PromotionConfirmatorySourceOriginKind = "native" | "projected";
+export type PromotionConfirmatorySourceOriginKind = "native" | "projected" | "normalized";
 
 export interface PromotionConfirmatoryIntakeSource {
   source_id: string;
@@ -337,6 +338,27 @@ async function inspectConfirmatorySources(
         });
       }
     }
+    if (source.origin_kind === "normalized") {
+      const normalization = await inspectPromotionSourceNormalization(sourceRoot);
+      issues.push(...normalization.issues);
+      if (normalization.manifest
+          && (normalization.manifest.source_family_id_sha256 !== sha256Text(source.source_family_id)
+            || normalization.manifest.operator_group_id_sha256 !== sha256Text(source.operator_group_id)
+            || normalization.manifest.source_revision !== source.source_revision)) {
+        issues.push({
+          code: "confirmatory_source_normalization_identity_mismatch",
+          message: "Normalized source identity declarations do not match the normalization manifest."
+        });
+      }
+      if (normalization.manifest
+          && (normalization.manifest.distribution_scope !== source.distribution_scope
+            || normalization.manifest.license_review_status !== source.license_review_status)) {
+        issues.push({
+          code: "confirmatory_source_normalization_license_scope_mismatch",
+          message: "Normalized source distribution or license-review declarations do not match its manifest."
+        });
+      }
+    }
     if (sourceSha256) {
       try {
         await validatePromotionMutationCompatibility(sourceRoot, mutationVariants);
@@ -488,7 +510,7 @@ function parseIntakeManifest(value: unknown): PromotionConfirmatoryIntakeManifes
     if (!isRecord(source) || !validId(source.source_id) || !nonEmptyString(source.source_root)
         || source.evidence_class !== "external_real_run" || !validId(source.source_family_id)
         || !validId(source.operator_group_id) || !nonEmptyString(source.source_revision)
-        || (source.origin_kind !== "native" && source.origin_kind !== "projected")
+        || (source.origin_kind !== "native" && source.origin_kind !== "projected" && source.origin_kind !== "normalized")
         || (source.distribution_scope !== "local_evaluation_only" && source.distribution_scope !== "redistributable")
         || (source.license_review_status !== "unreviewed" && source.license_review_status !== "human_verified")) {
       throw new Error(`Invalid promotion confirmatory source at index ${index + 1}.`);
