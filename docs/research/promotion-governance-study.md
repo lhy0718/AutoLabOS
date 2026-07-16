@@ -153,8 +153,10 @@ Secondary metrics:
 Primary confidence intervals use paired bootstrap resampling clustered by base
 bundle. Because content-distinct runs from one system family are not
 independent system samples, the final analysis must also report family-stratified
-results and leave-one-family-out sensitivity. The implemented evaluator reports
-an exact paired sign test over base-bundle effects; McNemar's test may
+results and leave-one-family-out sensitivity. The implemented evaluator emits
+per-family system metrics and recomputes all paired comparisons after each
+declared family is omitted. It also reports an exact paired sign test over
+base-bundle effects; McNemar's test may
 additionally be reported for a frozen single-trial binary comparison when its
 assumptions are met. Effect sizes and raw counts are reported regardless of
 significance. Synthetic development suites are always marked exploratory.

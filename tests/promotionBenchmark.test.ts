@@ -47,6 +47,13 @@ describe("promotion benchmark", () => {
     expect(result.report.mutation_isolation_status).toBe("unspecified");
     expect(result.report.execution_provenance_status).toBe("unspecified");
     expect(result.report.source_diversity_status).toBe("unspecified");
+    expect(result.report.source_family_analysis).toEqual({
+      availability: "unavailable",
+      unavailable_reason: "source_family_assignment_incomplete",
+      family_count: 0,
+      families: [],
+      leave_one_family_out: []
+    });
     expect(result.report.paired_analysis).toMatchObject({
       inference_unit: "base_bundle_id",
       bootstrap_replicates: 5000,
@@ -81,8 +88,102 @@ describe("promotion benchmark", () => {
     expect(markdown).toContain("Concern-acceptance conflict");
     expect(markdown).toContain("Mutation isolation: unspecified");
     expect(markdown).toContain("Source diversity: unspecified");
+    expect(markdown).toContain("## Source Family Stratification");
+    expect(markdown).toContain("Availability: unavailable");
     expect(markdown).toContain("## Mutation Families");
     expect(markdown).toContain("clean_control");
+  });
+
+  it("reports source-family strata and leave-one-family-out comparisons", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-families-"));
+    tempDirs.push(workspace);
+    const cases = ["alpha", "beta", "gamma"].flatMap((suffix) => {
+      const sourceFamily = hashId(`source-family-${suffix}`);
+      const operatorGroup = hashId(`operator-group-${suffix}`);
+      return [
+        {
+          ...caseManifest(`case-${suffix}-clean`, `base-${suffix}`, "test", "promote", [], []),
+          source_family_id_sha256: sourceFamily,
+          operator_group_id_sha256: operatorGroup
+        },
+        {
+          ...caseManifest(
+            `case-${suffix}-blocked`,
+            `base-${suffix}`,
+            "test",
+            "block",
+            ["execution_gap"],
+            ["run_experiments"]
+          ),
+          source_family_id_sha256: sourceFamily,
+          operator_group_id_sha256: operatorGroup
+        }
+      ];
+    });
+    await writeSuite(workspace, cases);
+    const predictions = cases.flatMap((benchmarkCase) => {
+      const caseId = String(benchmarkCase.case_id);
+      const isBlocked = caseId.endsWith("-blocked");
+      return [
+        prediction(
+          "governed",
+          caseId,
+          isBlocked ? "block" : "promote",
+          isBlocked ? [blocking("execution_gap")] : [],
+          isBlocked ? ["run_experiments"] : []
+        ),
+        prediction("checklist", caseId, "promote")
+      ];
+    });
+    await writeFile(
+      path.join(workspace, "predictions.jsonl"),
+      `${predictions.map((row) => JSON.stringify(row)).join("\n")}\n`
+    );
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+
+    expect(result.report.passed).toBe(true);
+    expect(result.report.source_family_analysis).toMatchObject({
+      availability: "complete",
+      unavailable_reason: null,
+      family_count: 3
+    });
+    expect(result.report.source_family_analysis.families).toHaveLength(3);
+    for (const family of result.report.source_family_analysis.families) {
+      expect(family).toMatchObject({ base_bundle_count: 1, case_count: 2 });
+      expect(family.systems).toHaveLength(2);
+      expect(family.systems.find((system) => system.system_id === "governed")).toMatchObject({
+        exact_decision_accuracy: 1,
+        false_paper_ready_rate: 0
+      });
+      expect(family.systems.find((system) => system.system_id === "checklist")).toMatchObject({
+        exact_decision_accuracy: 0.5,
+        false_paper_ready_rate: 1
+      });
+    }
+    expect(result.report.source_family_analysis.leave_one_family_out).toHaveLength(3);
+    for (const analysis of result.report.source_family_analysis.leave_one_family_out) {
+      expect(analysis).toMatchObject({
+        remaining_base_bundle_count: 2,
+        remaining_case_count: 4
+      });
+      expect(analysis.comparisons).toContainEqual(expect.objectContaining({
+        system_a: "checklist",
+        system_b: "governed",
+        common_case_count: 4,
+        decision_accuracy_delta: -0.5,
+        false_paper_ready_rate_delta: 1
+      }));
+    }
+    const markdown = await readFile(path.join(workspace, "score", "promotion-score.md"), "utf8");
+    expect(markdown).toContain("Availability: complete. Families: 3.");
+    expect(markdown).toContain("## Leave-One-Family-Out Sensitivity");
+    expect(markdown).toContain("| checklist | governed | -0.500 |");
   });
 
   it("requires every system trial to cover every suite case", async () => {

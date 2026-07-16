@@ -131,6 +131,28 @@ export interface PromotionBenchmarkMutationFamilyMetrics {
   repair_owner_exact_match_accuracy: number | null;
 }
 
+export interface PromotionBenchmarkSourceFamilyMetrics {
+  source_family_id_sha256: string;
+  base_bundle_count: number;
+  case_count: number;
+  systems: PromotionBenchmarkSystemMetrics[];
+}
+
+export interface PromotionBenchmarkLeaveOneFamilyOutAnalysis {
+  omitted_source_family_id_sha256: string;
+  remaining_base_bundle_count: number;
+  remaining_case_count: number;
+  comparisons: PromotionBenchmarkPairedComparison[];
+}
+
+export interface PromotionBenchmarkSourceFamilyAnalysis {
+  availability: "complete" | "unavailable";
+  unavailable_reason: "source_family_assignment_incomplete" | null;
+  family_count: number;
+  families: PromotionBenchmarkSourceFamilyMetrics[];
+  leave_one_family_out: PromotionBenchmarkLeaveOneFamilyOutAnalysis[];
+}
+
 export interface PromotionBenchmarkScoreReport {
   schema_version: "1.0";
   generated_at: string;
@@ -148,6 +170,7 @@ export interface PromotionBenchmarkScoreReport {
   case_count: number;
   prediction_count: number;
   systems: PromotionBenchmarkSystemMetrics[];
+  source_family_analysis: PromotionBenchmarkSourceFamilyAnalysis;
   paired_analysis: {
     inference_unit: "base_bundle_id";
     bootstrap_replicates: number;
@@ -326,6 +349,11 @@ export async function scorePromotionBenchmarkFromFiles(
   if (systems.length === 0) issues.push({ code: "no_scored_systems", message: "No valid predictions were available." });
 
   const pairedComparisons = scorePairedComparisons(validPredictions, cases, loaded.suite?.manifest.suite_id || "invalid-suite");
+  const sourceFamilyAnalysis = scoreSourceFamilyAnalysis(
+    validPredictions,
+    cases,
+    loaded.suite?.manifest.suite_id || "invalid-suite"
+  );
 
   const report: PromotionBenchmarkScoreReport = {
     schema_version: "1.0",
@@ -344,6 +372,7 @@ export async function scorePromotionBenchmarkFromFiles(
     case_count: cases.length,
     prediction_count: validPredictions.length,
     systems,
+    source_family_analysis: sourceFamilyAnalysis,
     paired_analysis: {
       inference_unit: "base_bundle_id",
       bootstrap_replicates: CLUSTER_BOOTSTRAP_REPLICATES,
@@ -536,6 +565,79 @@ function scorePairedComparisons(
   return comparisons;
 }
 
+function scoreSourceFamilyAnalysis(
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[],
+  suiteId: string
+): PromotionBenchmarkSourceFamilyAnalysis {
+  if (cases.length === 0) {
+    return unavailableSourceFamilyAnalysis();
+  }
+  const familyByBase = new Map<string, string>();
+  for (const benchmarkCase of cases) {
+    if (!benchmarkCase.source_family_id_sha256) {
+      return unavailableSourceFamilyAnalysis();
+    }
+    const observed = familyByBase.get(benchmarkCase.base_bundle_id);
+    if (observed && observed !== benchmarkCase.source_family_id_sha256) {
+      return unavailableSourceFamilyAnalysis();
+    }
+    familyByBase.set(benchmarkCase.base_bundle_id, benchmarkCase.source_family_id_sha256);
+  }
+
+  const casesByFamily = groupBy(cases, (benchmarkCase) =>
+    benchmarkCase.source_family_id_sha256 as string);
+  const systemIds = [...new Set(predictions.map((prediction) => prediction.system_id))].sort();
+  const families = [...casesByFamily.entries()].sort(([left], [right]) => left.localeCompare(right))
+    .map(([familyId, familyCases]) => {
+      const caseIds = new Set(familyCases.map((benchmarkCase) => benchmarkCase.case_id));
+      const familyPredictions = predictions.filter((prediction) => caseIds.has(prediction.case_id));
+      return {
+        source_family_id_sha256: familyId,
+        base_bundle_count: new Set(familyCases.map((benchmarkCase) => benchmarkCase.base_bundle_id)).size,
+        case_count: familyCases.length,
+        systems: systemIds.map((systemId) => scoreSystem(
+          systemId,
+          familyPredictions.filter((prediction) => prediction.system_id === systemId),
+          familyCases
+        ))
+      };
+    });
+  const leaveOneFamilyOut = families.map((family) => {
+    const remainingCases = cases.filter((benchmarkCase) =>
+      benchmarkCase.source_family_id_sha256 !== family.source_family_id_sha256);
+    const remainingCaseIds = new Set(remainingCases.map((benchmarkCase) => benchmarkCase.case_id));
+    const remainingPredictions = predictions.filter((prediction) => remainingCaseIds.has(prediction.case_id));
+    return {
+      omitted_source_family_id_sha256: family.source_family_id_sha256,
+      remaining_base_bundle_count: new Set(remainingCases.map((benchmarkCase) => benchmarkCase.base_bundle_id)).size,
+      remaining_case_count: remainingCases.length,
+      comparisons: scorePairedComparisons(
+        remainingPredictions,
+        remainingCases,
+        `${suiteId}\u0000leave-one-family-out\u0000${family.source_family_id_sha256}`
+      )
+    };
+  });
+  return {
+    availability: "complete",
+    unavailable_reason: null,
+    family_count: families.length,
+    families,
+    leave_one_family_out: leaveOneFamilyOut
+  };
+}
+
+function unavailableSourceFamilyAnalysis(): PromotionBenchmarkSourceFamilyAnalysis {
+  return {
+    availability: "unavailable",
+    unavailable_reason: "source_family_assignment_incomplete",
+    family_count: 0,
+    families: [],
+    leave_one_family_out: []
+  };
+}
+
 function aggregateCaseMetric(
   predictions: PromotionBenchmarkPrediction[],
   cases: PromotionBenchmarkCaseManifest[],
@@ -676,6 +778,52 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
       ),
       ""
     );
+  }
+  lines.push(
+    "## Source Family Stratification",
+    "",
+    `Availability: ${report.source_family_analysis.availability}. Families: ${report.source_family_analysis.family_count}.`,
+    ""
+  );
+  if (report.source_family_analysis.availability === "unavailable") {
+    lines.push(`Reason: ${report.source_family_analysis.unavailable_reason}.`, "");
+  } else {
+    for (const family of report.source_family_analysis.families) {
+      lines.push(
+        `### Family ${family.source_family_id_sha256.slice(0, 12)}`,
+        "",
+        `Bases: ${family.base_bundle_count}. Cases: ${family.case_count}.`,
+        "",
+        "| System | Decision accuracy | False promotion | Clean promotion | Blocker F1 | Repair owner |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        ...family.systems.map((system) =>
+          `| ${system.system_id} | ${formatMetric(system.exact_decision_accuracy)} | ${formatMetric(system.false_paper_ready_rate)} | ${formatMetric(system.clean_case_promotion_accuracy)} | ${formatMetric(system.blocker_f1)} | ${formatMetric(system.repair_owner_exact_match_accuracy)} |`
+        ),
+        ""
+      );
+    }
+    lines.push(
+      "## Leave-One-Family-Out Sensitivity",
+      "",
+      "| Omitted family | Remaining bases | Remaining cases | Comparisons |",
+      "| --- | ---: | ---: | ---: |",
+      ...report.source_family_analysis.leave_one_family_out.map((analysis) =>
+        `| ${analysis.omitted_source_family_id_sha256.slice(0, 12)} | ${analysis.remaining_base_bundle_count} | ${analysis.remaining_case_count} | ${analysis.comparisons.length} |`
+      ),
+      ""
+    );
+    for (const analysis of report.source_family_analysis.leave_one_family_out) {
+      lines.push(
+        `### Omit Family ${analysis.omitted_source_family_id_sha256.slice(0, 12)}`,
+        "",
+        "| System A | System B | Decision delta | Decision 95% CI | Sign-test p | False-promotion delta | False-promotion 95% CI | Sign-test p |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ...analysis.comparisons.map((comparison) =>
+          `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
+        ),
+        ""
+      );
+    }
   }
   lines.push(
     "## Paired Analysis",

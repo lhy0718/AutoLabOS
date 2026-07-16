@@ -443,6 +443,8 @@ The normalization command requires distinct annotator IDs and exact agreement, o
 
 Confirmatory intake requires every projected, normalized, or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
 
+Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
+
 ---
 
 ## Common Commands
