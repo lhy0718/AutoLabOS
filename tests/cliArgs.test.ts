@@ -396,6 +396,27 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports aggregating exactly three fresh promotion provider runs", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "aggregate-promotion-provider-runs",
+      "--suite", "outputs/promotion-suite/suite.json",
+      "--run-manifest", "outputs/provider-runs/trial-a/provider-run-manifest.json",
+      "--run-manifest", "outputs/provider-runs/trial-b/provider-run-manifest.json",
+      "--run-manifest", "outputs/provider-runs/trial-c/provider-run-manifest.json",
+      "--out-dir", "outputs/provider-runs/aggregate"
+    ])).toEqual({
+      kind: "governance-benchmark-aggregate-promotion-provider-runs",
+      suitePath: "outputs/promotion-suite/suite.json",
+      runManifestPaths: [
+        "outputs/provider-runs/trial-a/provider-run-manifest.json",
+        "outputs/provider-runs/trial-b/provider-run-manifest.json",
+        "outputs/provider-runs/trial-c/provider-run-manifest.json"
+      ],
+      outDir: "outputs/provider-runs/aggregate"
+    });
+  });
+
   it("supports promotion prompt export and response import modes", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -779,6 +800,17 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("Unsupported OpenAI Responses model")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "aggregate-promotion-provider-runs",
+      "--suite", "suite.json",
+      "--run-manifest", "trial-a/provider-run-manifest.json",
+      "--run-manifest", "trial-b/provider-run-manifest.json",
+      "--out-dir", "outputs/aggregate"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly three --run-manifest")
     });
   });
 

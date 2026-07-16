@@ -464,6 +464,19 @@ The command requires a new output directory and an explicit model, reasoning eff
 
 Manual prompt export and response import remain useful adapter surfaces, but they do not by themselves establish a fresh external provider run. A completed provider-run manifest marks one trial as external empirical evidence while keeping `independent_trial_requirement_met=false`; the preregistered manuscript-only comparison still requires three independent complete trials.
 
+After three fresh runs complete against the same suite, system, model, reasoning effort, and prompt protocol, aggregate them with their manifests:
+
+```sh
+autolabos governance-benchmark aggregate-promotion-provider-runs \
+  --suite <suite.json> \
+  --run-manifest <trial-a/provider-run-manifest.json> \
+  --run-manifest <trial-b/provider-run-manifest.json> \
+  --run-manifest <trial-c/provider-run-manifest.json> \
+  --out-dir <new-aggregate-output-dir>
+```
+
+Aggregation accepts exactly three distinct run and trial IDs. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused response receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence.
+
 ---
 
 ## Common Commands

@@ -84,6 +84,10 @@ import {
 import {
   runPromotionBenchmarkProvider
 } from "../core/benchmark/promotionBenchmarkProviderRunner.js";
+import {
+  aggregatePromotionBenchmarkProviderRuns,
+  type AggregatePromotionProviderRunsInput
+} from "../core/benchmark/promotionBenchmarkProviderAggregate.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 
@@ -263,6 +267,23 @@ export async function runPromotionProviderCli(
       `Responses: ${result.manifest.completed_response_count}/${result.manifest.request_count}`,
       `Cost USD: ${result.manifest.usage.cost_usd.toFixed(6)}`,
       `Predictions: ${result.predictions_path}`,
+      `Manifest: ${result.manifest_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionProviderAggregationCli(
+  input: AggregatePromotionProviderRunsInput
+): Promise<void> {
+  const result = await aggregatePromotionBenchmarkProviderRuns(input);
+  process.stdout.write(
+    [
+      `Promotion provider runs aggregated: ${result.manifest.aggregate_id}`,
+      `Suite: ${result.manifest.suite_id}`,
+      `Trials: ${result.manifest.trial_count}`,
+      `Predictions: ${result.manifest.prediction_count}`,
+      `Independent trial requirement: ${result.manifest.independent_trial_requirement_met}`,
+      `Output: ${result.predictions_path}`,
       `Manifest: ${result.manifest_path}`
     ].join("\n") + "\n"
   );
