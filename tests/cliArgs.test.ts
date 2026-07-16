@@ -483,6 +483,70 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports preparing promotion execution evidence from six role-bound artifacts", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-execution-evidence",
+      "--source-root", "outputs/source-bundle",
+      "--run-id", "run-neutral-a",
+      "--backend", "local_runtime",
+      "--started-at", "2026-01-01T00:00:00.000Z",
+      "--completed-at", "2026-01-01T00:01:00.000Z",
+      "--trial", "trial-a",
+      "--trial", "trial-b",
+      "--trial", "trial-c",
+      "--artifact", "run_config=run-config.json",
+      "--artifact", "event_log=events.jsonl",
+      "--artifact", "metrics=metrics.json",
+      "--artifact", "review_decision=review/decision.json",
+      "--artifact", "command=command.txt",
+      "--artifact", "execution_log=execution.log"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-execution-evidence",
+      sourceRoot: "outputs/source-bundle",
+      runId: "run-neutral-a",
+      executionBackend: "local_runtime",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      completedAt: "2026-01-01T00:01:00.000Z",
+      trialIds: ["trial-a", "trial-b", "trial-c"],
+      artifacts: [
+        { role: "run_config", path: "run-config.json" },
+        { role: "event_log", path: "events.jsonl" },
+        { role: "metrics", path: "metrics.json" },
+        { role: "review_decision", path: "review/decision.json" },
+        { role: "command", path: "command.txt" },
+        { role: "execution_log", path: "execution.log" }
+      ]
+    });
+  });
+
+  it("requires complete roles and three trials when preparing execution evidence", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-execution-evidence",
+      "--source-root", "outputs/source-bundle",
+      "--run-id", "run-neutral-a",
+      "--backend", "local_runtime",
+      "--started-at", "2026-01-01T00:00:00.000Z",
+      "--completed-at", "2026-01-01T00:01:00.000Z",
+      "--trial", "trial-a",
+      "--trial", "trial-b"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("three --trial") });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-execution-evidence",
+      "--source-root", "outputs/source-bundle",
+      "--run-id", "run-neutral-a",
+      "--backend", "local_runtime",
+      "--started-at", "2026-01-01T00:00:00.000Z",
+      "--completed-at", "2026-01-01T00:01:00.000Z",
+      "--trial", "trial-a",
+      "--trial", "trial-b",
+      "--trial", "trial-c",
+      "--artifact", "run_config=run-config.json"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("roles") });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");

@@ -4,6 +4,12 @@ import {
   PROMOTION_BENCHMARK_SYSTEMS,
   type PromotionBenchmarkSystemName
 } from "../core/benchmark/promotionBenchmarkSystems.js";
+import {
+  PROMOTION_EXECUTION_BACKENDS,
+  PROMOTION_EXECUTION_EVIDENCE_ROLES,
+  type PromotionExecutionBackend,
+  type PromotionExecutionEvidenceRole
+} from "../core/benchmark/promotionBenchmarkExecutionEvidence.js";
 import { NodeOptionPackageName } from "../types.js";
 
 const META_HARNESS_CLI_NODES = [
@@ -32,6 +38,7 @@ export type CliAction =
   | { kind: "governance-benchmark-verify-promotion-mutations"; suitePath: string; privateMapPath: string; auditPaths: string[]; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; mutationAuditReportPath?: string; outDir: string }
   | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
+  | { kind: "governance-benchmark-prepare-promotion-execution-evidence"; sourceRoot: string; runId: string; executionBackend: PromotionExecutionBackend; startedAt: string; completedAt: string; trialIds: string[]; artifacts: Array<{ role: PromotionExecutionEvidenceRole; path: string }> }
   | { kind: "governance-benchmark-audit-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-freeze-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
@@ -346,11 +353,71 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+      };
+    }
+    if (subcommand === "prepare-promotion-execution-evidence") {
+      let sourceRoot: string | undefined;
+      let runId: string | undefined;
+      let executionBackend: PromotionExecutionBackend | undefined;
+      let startedAt: string | undefined;
+      let completedAt: string | undefined;
+      const trialIds: string[] = [];
+      const artifacts: Array<{ role: PromotionExecutionEvidenceRole; path: string }> = [];
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (!["--source-root", "--run-id", "--backend", "--started-at", "--completed-at", "--trial", "--artifact"].includes(token)) {
+          return { kind: "error", message: `Unsupported governance-benchmark prepare-promotion-execution-evidence argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--source-root") sourceRoot = value;
+        else if (token === "--run-id") runId = value;
+        else if (token === "--backend") {
+          if (!(PROMOTION_EXECUTION_BACKENDS as readonly string[]).includes(value)) {
+            return { kind: "error", message: `Unsupported execution backend: ${value}.` };
+          }
+          executionBackend = value as PromotionExecutionBackend;
+        } else if (token === "--started-at") startedAt = value;
+        else if (token === "--completed-at") completedAt = value;
+        else if (token === "--trial") trialIds.push(value);
+        else {
+          const separator = value.indexOf("=");
+          const role = separator > 0 ? value.slice(0, separator) : "";
+          const artifactPath = separator > 0 ? value.slice(separator + 1) : "";
+          if (!(PROMOTION_EXECUTION_EVIDENCE_ROLES as readonly string[]).includes(role) || !artifactPath) {
+            return { kind: "error", message: `Invalid --artifact value: ${value}; expected <role>=<relative-path>.` };
+          }
+          artifacts.push({ role: role as PromotionExecutionEvidenceRole, path: artifactPath });
+        }
+        index += 1;
+      }
+      if (!sourceRoot || !runId || !executionBackend || !startedAt || !completedAt) {
+        return {
+          kind: "error",
+          message: "Missing required arguments: --source-root, --run-id, --backend, --started-at, and --completed-at are required."
+        };
+      }
+      if (trialIds.length < 3) return { kind: "error", message: "At least three --trial values are required." };
+      const artifactRoles = new Set(artifacts.map((artifact) => artifact.role));
+      if (artifactRoles.size !== artifacts.length) return { kind: "error", message: "Each --artifact role must be supplied exactly once." };
+      const missingRoles = PROMOTION_EXECUTION_EVIDENCE_ROLES.filter((role) => !artifactRoles.has(role));
+      if (missingRoles.length > 0) {
+        return { kind: "error", message: `Missing required --artifact roles: ${missingRoles.join(", ")}.` };
+      }
+      return {
+        kind: "governance-benchmark-prepare-promotion-execution-evidence",
+        sourceRoot,
+        runId,
+        executionBackend,
+        startedAt,
+        completedAt,
+        trialIds,
+        artifacts
       };
     }
     if (subcommand === "audit-promotion-confirmatory") {

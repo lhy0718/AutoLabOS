@@ -120,6 +120,33 @@ bind six distinct non-empty files by SHA-256 under the roles `run_config`,
 `event_log`, `metrics`, `review_decision`, `command`, and `execution_log`.
 Paths must be relative and remain inside the source bundle.
 
+Prepare the sidecar from files already produced by a completed real run:
+
+```bash
+node dist/cli/main.js governance-benchmark prepare-promotion-execution-evidence \
+  --source-root <source-bundle> \
+  --run-id <portable-run-id> \
+  --backend <api_provider|local_model|local_runtime|remote_runtime> \
+  --started-at <ISO-timestamp> \
+  --completed-at <ISO-timestamp> \
+  --trial <trial-a> --trial <trial-b> --trial <trial-c> \
+  --artifact run_config=<run-config.json> \
+  --artifact event_log=<events.jsonl> \
+  --artifact metrics=<metrics.json> \
+  --artifact review_decision=<review/decision.json> \
+  --artifact command=<command.txt> \
+  --artifact execution_log=<execution.log>
+```
+
+The preparer accepts exactly one file per required role, computes the hashes,
+writes `execution-evidence.json` only when no sidecar already exists, and runs
+the same fail-closed inspection used by the intake freezer. It rejects paths
+outside the bundle, symbolic links, empty files, reused paths or roles, invalid
+time ordering or timestamps without explicit timezones, and fewer than three
+distinct trial IDs. The operator remains
+responsible for supplying artifacts from an actual external execution; this
+command does not establish execution occurrence or operator independence.
+
 ```bash
 node dist/cli/main.js governance-benchmark audit-promotion-confirmatory \
   --manifest <intake.json> \

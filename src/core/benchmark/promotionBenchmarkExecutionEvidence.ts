@@ -11,9 +11,15 @@ export const PROMOTION_EXECUTION_EVIDENCE_ROLES = [
   "command",
   "execution_log"
 ] as const;
+export const PROMOTION_EXECUTION_BACKENDS = [
+  "api_provider",
+  "local_model",
+  "local_runtime",
+  "remote_runtime"
+] as const;
 
 export type PromotionExecutionEvidenceRole = typeof PROMOTION_EXECUTION_EVIDENCE_ROLES[number];
-export type PromotionExecutionBackend = "api_provider" | "local_model" | "local_runtime" | "remote_runtime";
+export type PromotionExecutionBackend = typeof PROMOTION_EXECUTION_BACKENDS[number];
 
 export interface PromotionExecutionEvidenceArtifact {
   role: PromotionExecutionEvidenceRole;
@@ -52,12 +58,44 @@ export interface PromotionExecutionEvidenceInspection {
   issues: PromotionExecutionEvidenceIssue[];
 }
 
+export interface PreparePromotionExecutionEvidenceInput {
+  cwd: string;
+  sourceRoot: string;
+  runId: string;
+  executionBackend: PromotionExecutionBackend;
+  startedAt: string;
+  completedAt: string;
+  trialIds: string[];
+  artifacts: Array<{ role: PromotionExecutionEvidenceRole; path: string }>;
+}
+
+export interface PreparePromotionExecutionEvidenceResult {
+  manifest_path: string;
+  inspection: PromotionExecutionEvidenceInspection;
+}
+
 export async function inspectPromotionExecutionEvidence(
   sourceRoot: string
 ): Promise<PromotionExecutionEvidenceInspection> {
   const root = path.resolve(sourceRoot);
   const manifestPath = path.join(root, PROMOTION_EXECUTION_EVIDENCE_MANIFEST);
   const issues: PromotionExecutionEvidenceIssue[] = [];
+  try {
+    const rootStat = await fs.lstat(root);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+      issues.push({
+        code: "execution_evidence_source_root_invalid",
+        message: "Execution-evidence source root must be a regular directory, not a symbolic link."
+      });
+      return emptyInspection(issues);
+    }
+  } catch {
+    issues.push({
+      code: "execution_evidence_source_root_unreadable",
+      message: "Execution-evidence source root must be readable."
+    });
+    return emptyInspection(issues);
+  }
   let manifestBytes: Buffer;
   try {
     const stat = await fs.lstat(manifestPath);
@@ -69,10 +107,10 @@ export async function inspectPromotionExecutionEvidence(
       return emptyInspection(issues);
     }
     manifestBytes = await fs.readFile(manifestPath);
-  } catch (error) {
+  } catch {
     issues.push({
       code: "execution_evidence_manifest_unreadable",
-      message: `${PROMOTION_EXECUTION_EVIDENCE_MANIFEST} is required and must be readable: ${errorMessage(error)}`
+      message: `${PROMOTION_EXECUTION_EVIDENCE_MANIFEST} is required and must be readable.`
     });
     return emptyInspection(issues);
   }
@@ -110,6 +148,14 @@ export async function inspectPromotionExecutionEvidence(
       continue;
     }
     try {
+      if (await hasSymbolicLinkComponent(root, artifact.path)) {
+        issues.push({
+          code: "execution_evidence_artifact_symlink",
+          message: "Execution-evidence artifact paths must not contain symbolic links.",
+          ref: artifact.path
+        });
+        continue;
+      }
       const stat = await fs.lstat(target);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
         issues.push({
@@ -129,10 +175,10 @@ export async function inspectPromotionExecutionEvidence(
         continue;
       }
       observedHashes.push({ role: artifact.role, sha256: observedSha256 });
-    } catch (error) {
+    } catch {
       issues.push({
         code: "execution_evidence_artifact_unreadable",
-        message: errorMessage(error),
+        message: "Execution-evidence artifact must be readable.",
         ref: artifact.path
       });
     }
@@ -153,6 +199,92 @@ export async function inspectPromotionExecutionEvidence(
     artifact_count: manifest.artifacts.length,
     roles,
     issues
+  };
+}
+
+export async function preparePromotionExecutionEvidence(
+  input: PreparePromotionExecutionEvidenceInput
+): Promise<PreparePromotionExecutionEvidenceResult> {
+  const cwd = path.resolve(input.cwd);
+  const root = path.resolve(cwd, input.sourceRoot);
+  const rootStat = await fs.lstat(root).catch(() => {
+    throw new Error("Execution-evidence source root must be readable.");
+  });
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("Execution-evidence source root must be a regular directory, not a symbolic link.");
+  }
+  if (!validId(input.runId)) throw new Error("Execution evidence requires a portable run ID.");
+  if (!isExecutionBackend(input.executionBackend)) throw new Error("Execution evidence requires an allowed backend.");
+  const startedAt = parseTimestamp(input.startedAt);
+  const completedAt = parseTimestamp(input.completedAt);
+  if (startedAt == null || completedAt == null || completedAt <= startedAt) {
+    throw new Error("Execution evidence requires valid ordered start and completion timestamps.");
+  }
+  if (input.trialIds.length < 3 || new Set(input.trialIds).size !== input.trialIds.length
+      || input.trialIds.some((trialId) => !validId(trialId))) {
+    throw new Error("Execution evidence requires at least three distinct portable trial IDs.");
+  }
+
+  const artifactByRole = new Map<PromotionExecutionEvidenceRole, string>();
+  const seenPaths = new Set<string>();
+  for (const artifact of input.artifacts) {
+    if (!isEvidenceRole(artifact.role)) throw new Error(`Unknown execution-evidence role: ${artifact.role}`);
+    if (artifactByRole.has(artifact.role)) throw new Error(`Duplicate execution-evidence role: ${artifact.role}`);
+    if (!safeRelativePath(artifact.path)) {
+      throw new Error(`Execution-evidence artifact path must be portable and relative: ${artifact.path}`);
+    }
+    if (seenPaths.has(artifact.path)) throw new Error(`Execution-evidence artifact path is reused: ${artifact.path}`);
+    artifactByRole.set(artifact.role, artifact.path);
+    seenPaths.add(artifact.path);
+  }
+  const missingRoles = PROMOTION_EXECUTION_EVIDENCE_ROLES.filter((role) => !artifactByRole.has(role));
+  if (missingRoles.length > 0) {
+    throw new Error(`Missing execution-evidence roles: ${missingRoles.join(", ")}.`);
+  }
+
+  const artifacts: PromotionExecutionEvidenceArtifact[] = [];
+  for (const role of PROMOTION_EXECUTION_EVIDENCE_ROLES) {
+    const artifactPath = artifactByRole.get(role)!;
+    const target = resolveContainedFile(root, artifactPath);
+    if (!target) throw new Error(`Execution-evidence artifact must stay inside the source bundle: ${artifactPath}`);
+    const containsSymbolicLink = await hasSymbolicLinkComponent(root, artifactPath).catch(() => {
+      throw new Error(`Execution-evidence artifact must be readable: ${artifactPath}`);
+    });
+    if (containsSymbolicLink) {
+      throw new Error(`Execution-evidence artifact path must not contain symbolic links: ${artifactPath}`);
+    }
+    const stat = await fs.lstat(target).catch(() => {
+      throw new Error(`Execution-evidence artifact must be readable: ${artifactPath}`);
+    });
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
+      throw new Error(`Execution-evidence artifact must be a non-empty regular file: ${artifactPath}`);
+    }
+    artifacts.push({ role, path: artifactPath, sha256: sha256(await fs.readFile(target)) });
+  }
+
+  const manifest: PromotionExecutionEvidenceManifest = {
+    schema_version: "1.0",
+    evidence_class: "external_real_run",
+    run_id: input.runId,
+    execution_mode: "real_execution",
+    execution_status: "completed",
+    execution_backend: input.executionBackend,
+    started_at: input.startedAt,
+    completed_at: input.completedAt,
+    exit_code: 0,
+    trial_ids: input.trialIds,
+    artifacts
+  };
+  const manifestPath = path.join(root, PROMOTION_EXECUTION_EVIDENCE_MANIFEST);
+  await writeExclusiveManifest(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const inspection = await inspectPromotionExecutionEvidence(root);
+  if (!inspection.passed) {
+    await fs.rm(manifestPath, { force: true });
+    throw new Error(`Prepared execution evidence failed self-inspection: ${inspection.issues.map((issue) => issue.code).join(", ")}.`);
+  }
+  return {
+    manifest_path: portableRef(cwd, manifestPath),
+    inspection
   };
 }
 
@@ -260,6 +392,7 @@ function resolveContainedFile(root: string, ref: string): string | undefined {
 
 function safeRelativePath(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && !path.isAbsolute(value)
+    && !value.includes("\\")
     && !value.split(/[\\/]/u).some((segment) => segment === "" || segment === "." || segment === "..");
 }
 
@@ -268,7 +401,7 @@ function isEvidenceRole(value: unknown): value is PromotionExecutionEvidenceRole
 }
 
 function isExecutionBackend(value: unknown): value is PromotionExecutionBackend {
-  return value === "api_provider" || value === "local_model" || value === "local_runtime" || value === "remote_runtime";
+  return typeof value === "string" && (PROMOTION_EXECUTION_BACKENDS as readonly string[]).includes(value);
 }
 
 function validId(value: unknown): value is string {
@@ -280,7 +413,8 @@ function stringArray(value: unknown): value is string[] {
 }
 
 function parseTimestamp(value: unknown): number | null {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T/iu.test(value)) return null;
+  if (typeof value !== "string"
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value)) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -295,4 +429,40 @@ function sha256(value: Uint8Array): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function writeExclusiveManifest(filePath: string, contents: string): Promise<void> {
+  const handle = await fs.open(filePath, "wx", 0o644).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "EEXIST") {
+      throw new Error(`${PROMOTION_EXECUTION_EVIDENCE_MANIFEST} already exists; refusing to overwrite it.`);
+    }
+    throw new Error(`Unable to create ${PROMOTION_EXECUTION_EVIDENCE_MANIFEST}.`);
+  });
+  try {
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+  } catch {
+    await handle.close().catch(() => undefined);
+    await fs.rm(filePath, { force: true });
+    throw new Error(`Unable to write ${PROMOTION_EXECUTION_EVIDENCE_MANIFEST}.`);
+  }
+  await handle.close();
+}
+
+function portableRef(cwd: string, absolutePath: string): string {
+  const relative = path.relative(cwd, absolutePath).replace(/\\/gu, "/");
+  return relative && !relative.startsWith("../") ? relative : path.basename(absolutePath);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+async function hasSymbolicLinkComponent(root: string, ref: string): Promise<boolean> {
+  let current = root;
+  for (const segment of ref.split("/")) {
+    current = path.join(current, segment);
+    if ((await fs.lstat(current)).isSymbolicLink()) return true;
+  }
+  return false;
 }

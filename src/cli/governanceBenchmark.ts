@@ -55,6 +55,10 @@ import {
   type ExportPromotionMutationAuditPackInput,
   type VerifyPromotionMutationAuditInput
 } from "../core/benchmark/promotionBenchmarkMutationAudit.js";
+import {
+  preparePromotionExecutionEvidence,
+  type PreparePromotionExecutionEvidenceInput
+} from "../core/benchmark/promotionBenchmarkExecutionEvidence.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -289,6 +293,21 @@ export async function runSyntheticPromotionCorpusCli(
       `Cases: ${result.case_count}`,
       `Recipe: ${result.recipe_path}`,
       "Evidence class: synthetic development; not paper-claim eligible"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionExecutionEvidencePreparationCli(
+  input: PreparePromotionExecutionEvidenceInput
+): Promise<void> {
+  const result = await preparePromotionExecutionEvidence(input);
+  process.stdout.write(
+    [
+      "Promotion execution evidence prepared and self-inspected",
+      `Manifest: ${result.manifest_path}`,
+      `Artifact roles: ${result.inspection.roles.length}`,
+      `Execution fingerprint: ${result.inspection.execution_fingerprint}`,
+      "Evidence boundary: artifact existence and hashes verified; execution occurrence and operator independence are not proven"
     ].join("\n") + "\n"
   );
 }
