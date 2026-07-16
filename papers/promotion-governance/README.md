@@ -13,6 +13,7 @@ Current blockers:
 - fewer than 20 independently sourced base bundles,
 - no 200-case held-out confirmatory suite,
 - no double-adjudicated held-out labels,
+- no independent mutation-isolation audit,
 - no three-trial real-provider manuscript-only baseline,
 - no post-repair recovery evaluation,
 - 14 citation-bearing claims still require full-text source review in Refgate,
@@ -65,7 +66,23 @@ node dist/cli/main.js governance-benchmark score-promotion \
 
 ## Confirmatory Boundary
 
-A confirmatory recipe must declare:
+Create a local manifest for at least 20 independently sourced canonical
+bundles, then freeze it before building the suite:
+
+```bash
+node dist/cli/main.js governance-benchmark freeze-promotion-confirmatory \
+  --manifest <intake.json> \
+  --out-dir <frozen-corpus>
+
+node dist/cli/main.js governance-benchmark build-promotion \
+  --recipe <frozen-corpus/recipe.json> \
+  --out-dir <confirmatory-suite>
+```
+
+The freezer rejects duplicate source hashes and bundles that cannot support
+all nine fault mutations. It derives opaque base IDs from source hashes and
+does not copy local source IDs or original source paths into its manifest. The
+resulting recipe must declare:
 
 ```json
 {
@@ -74,6 +91,12 @@ A confirmatory recipe must declare:
   "adjudication_status": "unreviewed"
 }
 ```
+
+This stage does not establish that the bundles came from real executions.
+`external_real_run` is an operator attestation that must be checked against the
+preserved run records and raw evidence. The freezer also does not sanitize
+content already inside a source bundle. All provisional labels remain
+`needs_review`; freezing never grants paper-claim eligibility.
 
 Export the built suite with `export-promotion-annotations`, collect exactly two
 independent full-coverage human label files, and import them with

@@ -152,6 +152,52 @@ export async function buildPromotionBenchmarkSuite(
   };
 }
 
+export async function validatePromotionMutationCompatibility(
+  sourceRoot: string,
+  variants: ReadonlyArray<ReadonlyArray<PromotionMutationOperation>>
+): Promise<void> {
+  const root = path.resolve(sourceRoot);
+  if (!(await directoryExists(root))) throw new Error("Promotion mutation source must be an existing directory.");
+  await hashPromotionArtifactTree(root);
+
+  for (const [variantIndex, operations] of variants.entries()) {
+    const jsonSnapshots = new Map<string, unknown>();
+    const deletedPaths = new Set<string>();
+    for (const [operationIndex, operation] of operations.entries()) {
+      const target = resolveContainedPath(root, operation.path);
+      const ref = `variant ${variantIndex + 1}, operation ${operationIndex + 1}`;
+      if (!target || target === root) throw new Error(`Mutation target escapes source root at ${ref}: ${operation.path}`);
+      if ([...deletedPaths].some((deleted) => target === deleted || target.startsWith(`${deleted}${path.sep}`))) {
+        throw new Error(`Mutation target was deleted earlier at ${ref}: ${operation.path}`);
+      }
+      const stat = await fs.lstat(target).catch((error) => {
+        if (isNodeError(error) && error.code === "ENOENT") return undefined;
+        throw error;
+      });
+      if (!stat) throw new Error(`Mutation target does not exist at ${ref}: ${operation.path}`);
+      if (stat.isSymbolicLink()) throw new Error(`Symbolic links are not allowed at ${ref}: ${operation.path}`);
+
+      if (operation.op === "delete_path") {
+        deletedPaths.add(target);
+        jsonSnapshots.delete(target);
+        continue;
+      }
+      if (!stat.isFile()) throw new Error(`JSON mutation target must be a file at ${ref}: ${operation.path}`);
+      let parsed = jsonSnapshots.get(target);
+      if (parsed === undefined) {
+        try {
+          parsed = JSON.parse(await fs.readFile(target, "utf8")) as unknown;
+        } catch (error) {
+          throw new Error(`JSON mutation target is unreadable at ${ref}: ${operation.path}; ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      if (operation.op === "set_json_pointer") setJsonPointer(parsed, operation.pointer, operation.value);
+      else removeJsonPointer(parsed, operation.pointer);
+      jsonSnapshots.set(target, parsed);
+    }
+  }
+}
+
 async function applyMutation(
   artifactRoot: string,
   operation: PromotionMutationOperation,

@@ -34,6 +34,10 @@ import {
   type GenerateSyntheticPromotionCorpusInput
 } from "../core/benchmark/promotionBenchmarkSyntheticCorpus.js";
 import {
+  freezePromotionConfirmatoryCorpus,
+  type FreezePromotionConfirmatoryInput
+} from "../core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
+import {
   analyzePromotionBenchmarkFailures,
   type AnalyzePromotionBenchmarkFailuresInput
 } from "../core/benchmark/promotionBenchmarkMetaHarness.js";
@@ -244,6 +248,23 @@ export async function runSyntheticPromotionCorpusCli(
       `Cases: ${result.case_count}`,
       `Recipe: ${result.recipe_path}`,
       "Evidence class: synthetic development; not paper-claim eligible"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionConfirmatoryFreezeCli(
+  input: FreezePromotionConfirmatoryInput
+): Promise<void> {
+  const result = await freezePromotionConfirmatoryCorpus(input);
+  process.stdout.write(
+    [
+      `Promotion confirmatory intake frozen: ${result.study_id}`,
+      `Base bundles: ${result.base_bundle_count}`,
+      `Cases: ${result.case_count}`,
+      `Recipe: ${result.recipe_path}`,
+      `Freeze manifest: ${result.freeze_manifest_path}`,
+      "Labels: provisional; blind independent adjudication required",
+      "Paper-claim eligible: false"
     ].join("\n") + "\n"
   );
 }

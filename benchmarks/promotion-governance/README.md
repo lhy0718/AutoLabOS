@@ -50,7 +50,9 @@ A confirmatory suite should include clean controls and paired variants spanning:
 
 Fault names and artifact contents must not reveal the gold decision to the
 evaluated system. Human adjudicators should verify that each mutation introduces
-only the declared fault family.
+only the declared fault family. This mutation-isolation audit is a separate
+role from blind promotion-label adjudication because the latter must not see
+the declared mutation family.
 
 ## Build And Score
 
@@ -81,6 +83,55 @@ node dist/cli/main.js governance-benchmark generate-promotion-development \
 Its `corpus-manifest.json` sets `paper_claim_eligible=false` and
 `adjudication_status=unreviewed`. It must not be reported as confirmatory
 evidence.
+
+## Freeze Confirmatory Intake
+
+Create a local intake manifest only after collecting at least 20 independently
+sourced canonical artifact bundles:
+
+```json
+{
+  "schema_version": "1.0",
+  "study_id": "promotion-confirmatory-v1",
+  "sources": [
+    {
+      "source_id": "local-source-001",
+      "source_root": "../private-bundles/bundle-001",
+      "evidence_class": "external_real_run"
+    }
+  ]
+}
+```
+
+The `sources` array must contain at least 20 entries. `source_root` is resolved
+relative to the intake manifest. `source_id` is local bookkeeping and is not
+copied into the frozen corpus.
+
+```bash
+node dist/cli/main.js governance-benchmark freeze-promotion-confirmatory \
+  --manifest <intake.json> \
+  --out-dir <frozen-corpus>
+
+node dist/cli/main.js governance-benchmark build-promotion \
+  --recipe <frozen-corpus/recipe.json> \
+  --out-dir <confirmatory-suite>
+```
+
+The freezer rejects fewer than 20 sources, duplicate tree hashes, symbolic
+links, existing or source-contained output directories, and any source that
+cannot support all nine declared fault mutations. It rehashes every copy to
+reject source changes during freezing, copies each source under a hash-derived
+base ID, places every clean-plus-nine case in the test split, and records only
+source, private-intake-manifest, recipe hashes, and frozen relative roots in
+`frozen-intake-manifest.json`. Every recipe label remains provisional
+`needs_review`; the frozen corpus is always
+`adjudication_status=unreviewed` and `paper_claim_eligible=false`.
+
+Declaring `evidence_class=external_real_run` is an operator attestation, not
+proof that an execution occurred. Review the underlying run records and raw
+evidence independently. The freezer does not rewrite or de-identify content
+already stored inside a source bundle, so run the repository's artifact and
+privacy checks before publishing a frozen corpus.
 
 The builder refuses existing output directories, paths outside the recipe
 root, symbolic links, duplicate case IDs, and base-bundle split leakage. The
@@ -149,7 +200,7 @@ and full-label agreement. A completed suite is marked
 - at least 20 source-hash-distinct base bundles are present,
 - at least 200 cases are present, and
 - every base bundle has one clean control and all nine required fault-family
-  variants.
+  variants, and
 - adjudicated clean controls include both promotable and non-promotable
   outcomes.
 

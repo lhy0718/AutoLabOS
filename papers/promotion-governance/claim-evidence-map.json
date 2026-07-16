@@ -27,6 +27,17 @@
       ]
     },
     {
+      "claim_id": "confirmatory-intake-freeze-contract",
+      "claim": "The implementation rejects undersized, duplicate, or mutation-incompatible confirmatory sources; derives opaque base identities from source hashes; emits held-out clean-plus-nine recipes; and keeps every pre-adjudication label and paper-eligibility state provisional.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
+        "src/core/benchmark/promotionBenchmarkBuilder.ts",
+        "src/core/benchmark/promotionBenchmarkVariants.ts",
+        "tests/promotionBenchmarkConfirmatoryIntake.test.ts"
+      ]
+    },
+    {
       "claim_id": "development-four-system-summary",
       "claim": "On the synthetic development suite, the fail-closed audit had zero false promotions and the advisory audit had a concern-acceptance conflict rate of one.",
       "status": "development_only",

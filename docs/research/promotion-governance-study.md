@@ -165,7 +165,12 @@ suites are always marked exploratory.
 - Separate mutation implementation from policy implementation and test that a
   mutation does not introduce undeclared faults.
 - Include clean positive, clean null, and clean negative controls.
-- Freeze the benchmark manifest and file hashes before confirmatory runs.
+- Freeze at least 20 source-hash-distinct canonical bundles before building the
+  confirmatory suite. Derive public base IDs from hashes and keep local source
+  IDs and original paths outside the frozen corpus.
+- Treat `external_real_run` as an operator attestation until run records and raw
+  execution evidence are independently checked; hash freezing alone does not
+  prove that execution occurred.
 - Report deterministic replay, synthetic mutation, real provider, and live-run
   evidence as different evidence classes.
 - Do not claim human validation until at least two independent reviewers have
@@ -177,6 +182,8 @@ suites are always marked exploratory.
 - Let the adjudication importer set paper eligibility only after the external
   real-run, held-out split, source-hash independence, 20-base, 200-case, and
   clean-plus-nine-family paired-coverage gates pass.
+- Keep every frozen recipe label at provisional `needs_review`; only the blind
+  independent adjudication importer may replace labels or change eligibility.
 
 ## Minimum Publishable Experiment
 

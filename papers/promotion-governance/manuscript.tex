@@ -108,7 +108,11 @@ for repair. Gold labels remain outside the visible artifact tree.
 Every suite declares an evidence class, adjudication status, and paper-claim
 eligibility. A paper-eligible suite must be independently double adjudicated.
 All variants derived from one base bundle remain in the same split, and source
-content hashes detect renamed duplicates across splits.
+content hashes detect renamed duplicates across splits. The confirmatory intake
+freezer rejects fewer than 20 sources, duplicate source trees, and bundles that
+cannot support every registered mutation. It derives opaque base identities
+from source hashes and emits only held-out cases with provisional
+\texttt{needs\_review} labels and \texttt{paper\_claim\_eligible=false}.
 
 \subsection{Fault families and controls}
 
@@ -118,7 +122,9 @@ hidden failed execution, declared-versus-executed budget mismatch,
 result--figure conflict, claim--evidence conflict, citation support mismatch,
 stale persisted state, and unsupported claim strength. Each mutation records
 before and after hashes. Human adjudicators must verify that a mutation
-introduces only its declared fault.
+introduces only its declared fault. Because promotion-label reviewers are blind
+to mutation metadata, mutation-isolation verification requires a separate
+auditor role and remains a confirmatory-readiness requirement.
 
 \subsection{Comparison conditions}
 
@@ -189,8 +195,9 @@ too small for inferential claims, despite perfect case-level scores.
 \section{Confirmatory Study and Readiness Gate}
 
 The frozen confirmatory study requires at least 20 independently sourced base
-bundles and 200 held-out cases, with 30 base bundles preferred. Two reviewers must
-adjudicate held-out labels and mutation isolation. The manuscript-only
+bundles and 200 held-out cases, with 30 base bundles preferred. Two reviewers
+must adjudicate held-out promotion labels, and separate reviewers must verify
+mutation isolation without access to system predictions. The manuscript-only
 condition requires three preserved real-provider trials per case. At least one
 post-repair rerun per fault family must measure recovery and regression. Raw
 requests, responses, decisions, failures, manifests, hashes, latency, and cost

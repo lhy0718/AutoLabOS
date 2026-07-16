@@ -299,6 +299,21 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports confirmatory promotion intake freezing", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "freeze-promotion-confirmatory",
+      "--manifest",
+      "inputs/confirmatory-intake.json",
+      "--out-dir",
+      "outputs/confirmatory-corpus"
+    ])).toEqual({
+      kind: "governance-benchmark-freeze-promotion-confirmatory",
+      manifestPath: "inputs/confirmatory-intake.json",
+      outDir: "outputs/confirmatory-corpus"
+    });
+  });
+
   it("supports promotion benchmark failure analysis", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -449,6 +464,13 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["governance-benchmark", "build-promotion"])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--recipe")
+    });
+  });
+
+  it("requires a manifest for confirmatory promotion intake freezing", () => {
+    expect(resolveCliAction(["governance-benchmark", "freeze-promotion-confirmatory"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--manifest")
     });
   });
 
