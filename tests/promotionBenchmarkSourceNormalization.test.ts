@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -12,6 +12,10 @@ import {
   inspectPromotionSourceNormalization,
   normalizePromotionSource
 } from "../src/core/benchmark/promotionBenchmarkSourceNormalization.js";
+import {
+  exportPromotionSourceNormalizationBatch,
+  inspectPromotionSourceNormalizationBatch
+} from "../src/core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
 
 const tempDirs: string[] = [];
 
@@ -216,6 +220,94 @@ describe("promotion source normalization", () => {
     expect(inspection.passed).toBe(false);
     expect(inspection.issues.map((issue) => issue.code)).toContain("source_normalization_license_source_mismatch");
   });
+
+  it("exports a closed multi-source reviewer batch without exposing controller maps", async () => {
+    const workspace = await createProjectedWorkspace();
+    await exportPromotionSourceNormalizationPack({
+      cwd: workspace,
+      sourceRoot: "projected",
+      outDir: "pack-a"
+    });
+    await createAdditionalProjectedSource(workspace);
+    await exportPromotionSourceNormalizationPack({
+      cwd: workspace,
+      sourceRoot: "projected-b",
+      outDir: "pack-b"
+    });
+    await writeJson(path.join(workspace, "batch-recipe.json"), {
+      schema_version: "1.0",
+      batch_id: "review-batch-neutral",
+      items: [
+        { item_id: "source-item-001", source_root: "projected", pack_root: "pack-a" },
+        { item_id: "source-item-002", source_root: "projected-b", pack_root: "pack-b" }
+      ]
+    });
+
+    const exported = await exportPromotionSourceNormalizationBatch({
+      cwd: workspace,
+      recipePath: "batch-recipe.json",
+      outDir: "review-batch"
+    });
+    const inspection = await inspectPromotionSourceNormalizationBatch(path.join(workspace, "review-batch"));
+    const tasks = (await readFile(path.join(workspace, exported.tasks_path), "utf8"))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    const controllerMap = JSON.parse(await readFile(path.join(workspace, exported.controller_map_path), "utf8"));
+
+    expect(exported).toMatchObject({ batch_id: "review-batch-neutral", item_count: 2 });
+    expect(inspection).toMatchObject({ passed: true, issues: [] });
+    expect(tasks.map((task) => task.item_id)).toEqual(["source-item-001", "source-item-002"]);
+    expect(new Set(tasks.map((task) => task.normalization_id)).size).toBe(2);
+    expect(controllerMap.items.map((item: { source_root: string }) => item.source_root))
+      .toEqual(["projected", "projected-b"]);
+    await expect(access(path.join(workspace, exported.reviewer_dir, "private-normalization-map.json"))).rejects.toThrow();
+    expect(inspection.manifest?.outputs.some((output) => output.path.startsWith("reviewer/controller/"))).toBe(false);
+    expect(await readFile(path.join(workspace, exported.tasks_path), "utf8")).not.toContain("private_map_path");
+
+    await writeFile(path.join(workspace, exported.tasks_path), "{}\n", "utf8");
+    const drifted = await inspectPromotionSourceNormalizationBatch(path.join(workspace, "review-batch"));
+    expect(drifted.passed).toBe(false);
+    expect(drifted.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "source_normalization_batch_output_hash_mismatch",
+      "source_normalization_batch_controller_map_invalid",
+      "source_normalization_batch_reviewer_payload_invalid"
+    ]));
+  });
+
+  it("rejects duplicate normalization packs and non-portable recipe paths", async () => {
+    const workspace = await createProjectedWorkspace();
+    await exportPromotionSourceNormalizationPack({ cwd: workspace, sourceRoot: "projected", outDir: "pack-a" });
+    await cp(path.join(workspace, "pack-a"), path.join(workspace, "pack-copy"), { recursive: true });
+    await cp(path.join(workspace, "projected"), path.join(workspace, "projected-copy"), { recursive: true });
+    await writeJson(path.join(workspace, "duplicate-recipe.json"), {
+      schema_version: "1.0",
+      batch_id: "review-batch-duplicate",
+      items: [
+        { item_id: "source-item-001", source_root: "projected", pack_root: "pack-a" },
+        { item_id: "source-item-002", source_root: "projected-copy", pack_root: "pack-copy" }
+      ]
+    });
+
+    await expect(exportPromotionSourceNormalizationBatch({
+      cwd: workspace,
+      recipePath: "duplicate-recipe.json",
+      outDir: "duplicate-batch"
+    })).rejects.toThrow("normalization IDs must be unique");
+
+    await writeJson(path.join(workspace, "absolute-recipe.json"), {
+      schema_version: "1.0",
+      batch_id: "review-batch-absolute",
+      items: [{
+        item_id: "source-item-001",
+        source_root: path.join(workspace, "projected"),
+        pack_root: "pack-a"
+      }]
+    });
+    await expect(exportPromotionSourceNormalizationBatch({
+      cwd: workspace,
+      recipePath: "absolute-recipe.json",
+      outDir: "absolute-batch"
+    })).rejects.toThrow("Invalid source-normalization batch recipe item");
+  });
 });
 
 async function createProjectedWorkspace(): Promise<string> {
@@ -263,6 +355,26 @@ async function createProjectedWorkspace(): Promise<string> {
   });
   expect(projection.manifest.ready_for_confirmatory_intake).toBe(false);
   return workspace;
+}
+
+async function createAdditionalProjectedSource(workspace: string): Promise<void> {
+  await writeJson(path.join(workspace, "raw", "reported-results.json"), [
+    { metric: "primary_score", baseline: 0.4, comparator: 0.7 }
+  ]);
+  const recipe = JSON.parse(await readFile(path.join(workspace, "projection.json"), "utf8"));
+  await writeJson(path.join(workspace, "projection-b.json"), {
+    ...recipe,
+    projection_id: "projection-neutral-b",
+    source_family_id: "family-neutral-b",
+    operator_group_id: "operator-neutral-b",
+    source_revision: "revision-neutral-b"
+  });
+  await projectPromotionSource({
+    cwd: workspace,
+    sourceRoot: "raw",
+    recipePath: "projection-b.json",
+    outDir: "projected-b"
+  });
 }
 
 function normalizationAnnotation(normalizationId: string, annotatorId: string) {

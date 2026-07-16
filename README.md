@@ -395,6 +395,10 @@ autolabos governance-benchmark export-promotion-source-normalization \
   --source-root <projected-bundle> \
   --out-dir <annotation-pack>
 
+autolabos governance-benchmark export-promotion-source-normalization-batch \
+  --recipe <batch-recipe.json> \
+  --out-dir <review-batch>
+
 autolabos governance-benchmark normalize-promotion-source \
   --source-root <projected-bundle> \
   --map <annotation-pack>/private-normalization-map.json \
@@ -403,7 +407,25 @@ autolabos governance-benchmark normalize-promotion-source \
   --out-dir <normalized-bundle>
 ```
 
-The second command requires distinct annotator IDs and exact agreement, or a `--resolution` record from a third ID. It only accepts result, execution, figure, claim, citation, and readiness paths already bound by the projection manifest; the readiness path must be the selected review-decision artifact. The normalized bundle keeps generated canonical fields separate from the nested source, preserves the annotation trace, and independently rechecks source hashes, output closure, execution evidence, license status, and mutation compatibility. Annotator IDs are audit pseudonyms, not proof of real-world identity.
+The batch recipe is source-neutral:
+
+```json
+{
+  "schema_version": "1.0",
+  "batch_id": "review-batch-a",
+  "items": [
+    {
+      "item_id": "source-item-001",
+      "source_root": "outputs/projections/source-item-001",
+      "pack_root": "outputs/normalization-packs/source-item-001"
+    }
+  ]
+}
+```
+
+Batch export rejects duplicate source hashes or normalization IDs, changed projections, mismatched task maps, divergent rubrics, absolute paths, and path traversal. Give each independent reviewer a separate copy of `<review-batch>/reviewer` only. Keep `<review-batch>/controller` private; it reconnects opaque task IDs to source and map paths. Packaging a batch does not prove that reviewers are independent or that any human annotation has occurred.
+
+The normalization command requires distinct annotator IDs and exact agreement, or a `--resolution` record from a third ID. It only accepts result, execution, figure, claim, citation, and readiness paths already bound by the projection manifest; the readiness path must be the selected review-decision artifact. The normalized bundle keeps generated canonical fields separate from the nested source, preserves the annotation trace, and independently rechecks source hashes, output closure, execution evidence, license status, and mutation compatibility. Annotator IDs are audit pseudonyms, not proof of real-world identity.
 
 Confirmatory intake requires every projected, normalized, or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
 

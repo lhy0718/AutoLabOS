@@ -69,6 +69,10 @@ import {
   type ExportPromotionSourceNormalizationPackInput,
   type NormalizePromotionSourceInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalization.js";
+import {
+  exportPromotionSourceNormalizationBatch,
+  type ExportPromotionSourceNormalizationBatchInput
+} from "../core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -351,6 +355,23 @@ export async function runPromotionSourceNormalizationPackExportCli(
       `Private map: ${result.private_map_path}`,
       `Rubric: ${result.rubric_path}`,
       "Evidence boundary: annotation tasks expose projected artifacts but no canonical promotion label"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionSourceNormalizationBatchExportCli(
+  input: ExportPromotionSourceNormalizationBatchInput
+): Promise<void> {
+  const result = await exportPromotionSourceNormalizationBatch(input);
+  process.stdout.write(
+    [
+      `Promotion source-normalization review batch exported: ${result.batch_id}`,
+      `Items: ${result.item_count}`,
+      `Reviewer pack: ${result.reviewer_dir}`,
+      `Tasks: ${result.tasks_path}`,
+      `Controller map: ${result.controller_map_path}`,
+      `Manifest: ${result.manifest_path}`,
+      "Evidence boundary: distribute the reviewer directory only; packaging does not establish human completion or independence"
     ].join("\n") + "\n"
   );
 }
