@@ -1,7 +1,7 @@
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "audit_id": "promotion-source-route-audit-20260717",
-  "generated_at": "2026-07-17T04:45:23+09:00",
+  "generated_at": "2026-07-17T05:12:14+09:00",
   "source_routes": [
     {
       "route_id": "archive-runtime-corpus",
@@ -152,11 +152,34 @@
       "route_status": "projection_integrity_passed_waiting_for_license_review_and_two_independent_human_annotations"
     }
   ],
+  "balanced_candidate_batch": {
+    "batch_id": "promotion-source-acquisition-v3-20260717",
+    "evidence_path": "docs/research/evidence/promotion-source-acquisition-v3.json",
+    "selection_policy": "lexical_order_plus_three_bounded_standard_json_results_plus_shared_numeric_comparison_pointer",
+    "metric_values_used_for_selection": false,
+    "selected_count": 20,
+    "source_hash_distinct_count": 20,
+    "declared_family_distribution": {
+      "family-a": 7,
+      "family-b": 7,
+      "family-c": 6
+    },
+    "maximum_declared_family_share": 0.35,
+    "excluded_before_projection_count": 6,
+    "projection_integrity_passed_count": 20,
+    "annotation_packs_ready_for_human_review": 20,
+    "initial_human_annotation_count": 0,
+    "normalization_materialized_count": 0,
+    "confirmatory_admitted_count": 0,
+    "status": "candidate_pool_frozen_waiting_for_license_review_two_independent_human_normalizations_and_clean_execution_evidence"
+  },
   "triage": {
     "source_route_count": 3,
     "confirmatory_bases_admitted": 0,
     "archive_repeat_floor_candidates_before_projection_and_license_review": 10,
-    "normalization_packs_ready_for_human_review": 3,
+    "source_hash_distinct_candidate_projections": 20,
+    "normalization_packs_ready_for_human_review": 20,
+    "clean_bases": 0,
     "initial_human_annotation_count": 0,
     "next_gate": "human_license_review_plus_two_independent_source_normalizations_plus_clean_execution_evidence_acquisition"
   },

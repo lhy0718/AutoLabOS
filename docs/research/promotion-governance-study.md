@@ -284,6 +284,23 @@ opaque normalization tasks. They remain intentionally blocked with
 no accepted normalization, and no confirmatory admission. These are same-flow
 validations of source routes, not empirical benchmark results.
 
+A balanced acquisition pass then froze 20 source-hash-distinct candidate
+projections across the three routes, with a 7/7/6 family distribution and a
+maximum declared family share of 35 percent. Candidates were traversed in
+lexical order and required three bounded standard-JSON result records with a
+shared numeric comparison pointer. Metric values and apparent outcome quality
+were not used for selection. Six structurally ineligible candidates were
+logged by opaque hash rather than silently replaced; five came from the third
+route, so the resulting pool is not representative of all source outputs.
+Every selected projection passed byte and manifest integrity checks and
+produced a blind annotation pack. However, all 20 remain local-only and
+license-unreviewed, with zero human annotations, zero accepted normalizations,
+and zero confirmatory admissions. They are candidate projections, not clean
+benchmark bases, and the declared route groups do not establish independent
+real-world operator identities. The frozen hashes, selection rules, exclusions,
+and evidence ceiling are recorded in
+`docs/research/evidence/promotion-source-acquisition-v3.json`.
+
 ## Minimum Publishable Experiment
 
 - At least 20 source-hash-distinct base bundles covering positive, null, and
