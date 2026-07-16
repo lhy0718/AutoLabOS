@@ -14,7 +14,7 @@ export function formatPaperReadinessAuditCliSummary(summary: PaperReadinessAudit
   const bySeverity = groupBlockersBySeverity(summary.top_blockers);
   const lines = [
     `Paper-readiness audit: ${summary.verdict}`,
-    `Input: ${summary.input.mode}${summary.input.seed_id ? ` ${summary.input.seed_id}` : ""}`,
+    `Input: ${summary.input.mode}`,
     `Run artifacts: ${summary.input.run_root}`,
     `Claim ceiling: ${summary.claim_ceiling.allowed_level}`,
     `Severity: ${bySeverity.blocker.length} blocker(s), ${bySeverity.warning.length} warning(s)`,

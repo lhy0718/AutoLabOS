@@ -5,7 +5,7 @@ import { scoreGovernanceTask, scoreGovernanceTasks } from "../src/core/benchmark
 describe("governance scorer", () => {
   it("computes task-level metrics for claim discipline and evidence linkage", () => {
     const score = scoreGovernanceTask({
-      task_id: "AGB-001",
+      task_id: "case-alpha",
       paper_ready: false,
       expected_paper_ready: false,
       unsupported_claim_count: 0,
@@ -27,7 +27,7 @@ describe("governance scorer", () => {
   it("surfaces false paper-ready and missing-baseline pass failures in summary metrics", () => {
     const summary = scoreGovernanceTasks([
       {
-        task_id: "AGB-001",
+        task_id: "case-alpha",
         paper_ready: true,
         expected_paper_ready: false,
         unsupported_claim_count: 2,
@@ -39,7 +39,7 @@ describe("governance scorer", () => {
         figure_result_mismatch_count: 1
       },
       {
-        task_id: "AGB-002",
+        task_id: "case-beta",
         paper_ready: false,
         expected_paper_ready: false,
         unsupported_claim_count: 0,
@@ -62,7 +62,7 @@ describe("governance scorer", () => {
   it("does not report placeholder values as measured results", () => {
     const summary = scoreGovernanceTasks([
       {
-        task_id: "AGB-placeholder",
+        task_id: "placeholder-case",
         paper_ready: true,
         unsupported_claim_count: 99,
         placeholder: true

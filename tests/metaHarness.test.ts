@@ -127,6 +127,7 @@ describe("runMetaHarness", () => {
     });
     const callLlm = vi.fn();
     const applyWithSafetyNet = vi.fn();
+    const bootstrapRuntime = vi.fn();
 
     const result = await runMetaHarness(
       {
@@ -137,7 +138,7 @@ describe("runMetaHarness", () => {
         noApply: true
       },
       {
-        bootstrapRuntime: fakeBootstrapRuntime(workspace),
+        bootstrapRuntime,
         callLlm,
         applyWithSafetyNet
       }
@@ -146,6 +147,7 @@ describe("runMetaHarness", () => {
     expect(result.lines.join("\n")).toContain("External run contexts included: 2");
     expect(callLlm).not.toHaveBeenCalled();
     expect(applyWithSafetyNet).not.toHaveBeenCalled();
+    expect(bootstrapRuntime).not.toHaveBeenCalled();
     await expect(
       fs.stat(path.join(result.contextDir, "external-runs", "external-1", "result_analysis.json"))
     ).resolves.toBeTruthy();
@@ -187,7 +189,12 @@ describe("runMetaHarness", () => {
       expect.arrayContaining(["review/decision.json", "paper/paper_readiness.json"])
     );
     const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
-      targets: Array<{ source_artifact: string; target_node: string; recommended_prompt_node: string }>;
+      targets: Array<{
+        source_artifact: string;
+        target_node: string;
+        recommended_prompt_node: string;
+        diagnostic_ids?: string[];
+      }>;
     };
     expect(promptTargetMap.targets).toEqual(
       expect.arrayContaining([
@@ -208,6 +215,9 @@ describe("runMetaHarness", () => {
         })
       ])
     );
+    expect(
+      promptTargetMap.targets.filter((target) => target.diagnostic_ids?.includes("diagnostic:tiny_eval_sample"))
+    ).toHaveLength(1);
     await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
   });
 
@@ -486,6 +496,16 @@ async function createExternalRunRoot(
         recommendations: [
           { node: "write_paper", priority: "high", diagnostic_ids: ["finding:paper_surface"] },
           { node: "run_experiments", priority: "high", diagnostic_ids: ["diagnostic:tiny_eval_sample"] }
+        ]
+      }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(root, "review", "paper_scale_diagnostics.json"),
+      JSON.stringify({
+        diagnostics: [
+          { id: "diagnostic:tiny_eval_sample", target_node: "run_experiments" },
+          { id: "diagnostic:tiny_eval_sample", target_node: "run_experiments" }
         ]
       }, null, 2),
       "utf8"

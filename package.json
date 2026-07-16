@@ -55,8 +55,6 @@
     "test:watch": "vitest",
     "eval:harness": "tsx src/cli/main.ts eval-harness",
     "evolve:skills": "bash scripts/evolve-skills.sh",
-    "demo:audit-blockers": "npm run build && node scripts/demo-audit-blockers.mjs",
-    "demo:audit-full-seeds": "npm run build && node scripts/demo-audit-full-seeds.mjs",
     "p6:preflight": "node scripts/p6-preflight.mjs",
     "p6:doctor": "python3 scripts/p6-doctor-pty-smoke.py",
     "p6:start-live": "python3 scripts/p6-start-live-run.py",

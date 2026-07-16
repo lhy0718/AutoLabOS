@@ -35,8 +35,8 @@ The governed workflow remains fixed around:
 3. Add a deterministic benchmark condition model for gated, ungated, and ablation runs.
 4. Validate required artifact contracts against real run directories.
 5. Add scoring outputs for claim discipline, evidence linkage, result table completeness, figure audit, paper readiness, and live-validation failure handling.
-6. Run AGB-001 as a dry-run to lock the contract.
-7. Batch or replay AGB-002 through AGB-010.
+6. Run case-missing-baseline as a dry-run to lock the contract.
+7. Batch or replay the remaining manifest-defined governance cases.
 8. Export paper/demo-ready artifact bundles only after run-scoped artifacts and public outputs agree.
 
 ## Unified Priority Checklist
@@ -51,8 +51,8 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - [x] P0-4. Gated, ungated, and ablation execution branches.
 - [x] P0-5. Required artifact contract validation.
 - [x] P0-6. Governance rubric and scoring output.
-- [x] P0-7. AGB-001 dry-run contract lock.
-- [x] P0-8. AGB-001 live governance-block validation. Live TUI run attempted on 2026-05-02 and continued on 2026-05-03; `LV-320` through `LV-330` were surfaced through same-flow validation. Completed after the repaired live flow stopped at the AGB-001 missing-baseline design blocker without auto retry, auto rollback, fabricated baseline execution, or paper-ready promotion.
+- [x] P0-7. case-missing-baseline dry-run contract lock.
+- [x] P0-8. case-missing-baseline live governance-block validation. Live TUI run attempted on 2026-05-02 and continued on 2026-05-03; `LV-320` through `LV-330` were surfaced through same-flow validation. Completed after the repaired live flow stopped at the case-missing-baseline missing-baseline design blocker without auto retry, auto rollback, fabricated baseline execution, or paper-ready promotion.
 
 ### P1 — Next Release Cycle
 
@@ -62,7 +62,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - [x] P1-4. Figure audit and visualization-agent handoff review.
 - [x] P1-5. Review-before-writing enforcement.
 - [x] P1-6. Live-validation failure taxonomy and scoring.
-- [x] P1-7. AGB-002 through AGB-010 batch or replay.
+- [x] P1-7. the remaining manifest-defined governance cases batch or replay.
 - [x] P1-8. Paper/system demo artifact bundle export.
 - [x] P1-9. Runtime and worker surfaces: environment bootstrapping, eval-history/fitness, prompt/skill contracts, failure memory, stage routing, model-worker adapter, and autonomy metrics.
 - [x] P1-10. Design and positioning reviews: StagePolicies, ExplorationManager, differentiation, baseline-first support, HITL modes, rapid iteration, external benchmark plans, artifact access, and responsible-use docs.
@@ -100,9 +100,9 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 
 - [x] P4-1. External artifact intake contract for draft/run/log audits.
 - [x] P4-2. Audit output contract expansion for claim-evidence exports.
-- [x] P4-3. Full AGB seed audit coverage beyond AGB-001/003/010.
+- [x] P4-3. Full fixed-seed audit coverage beyond the initial blocker smoke cases.
 - [x] P4-4. Concierge pilot workflow for real user artifacts.
-- [x] P4-5. Literature discovery audit track for AGB-007/008.
+- [x] P4-5. Literature discovery audit track for the literature-discovery governance cases.
 - [x] P4-6. Competitive-signal watchlist for domain skill libraries and benchmark-store UX.
 - [x] P4-7. Pilot readiness review and go/no-go package.
 
@@ -176,7 +176,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - `npm test -- tests/briefStartPath.test.ts tests/researchBriefFiles.test.ts tests/runBriefParser.test.ts tests/runBriefStartFlow.test.ts tests/newSlashCommands.test.ts`
   - `npm run build`
 - Completion criteria:
-  - `/brief start <path-to-AGB-001-brief.md>` is accepted as an input path without copying from or modifying an external reference source.
+  - `/brief start <path-to-case-missing-baseline-brief.md>` is accepted as an input path without copying from or modifying an external reference source.
   - `--latest` behavior remains unchanged.
   - Missing required research-brief governance fields are surfaced as execution risks.
   - Path handling is covered by regression tests using a fixture path outside the repo.
@@ -271,7 +271,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Scoring output includes primary metrics such as `false_paper_ready_rate`, `unsupported_claim_count`, `claim_to_evidence_coverage`, `missing_baseline_pass_rate`, and `figure_result_mismatch_rate`.
   - Placeholder values are never reported as measured results.
 
-### P0-7. AGB-001 Dry-Run
+### P0-7. case-missing-baseline Dry-Run
 
 - [x] Status: completed 2026-05-02 via deterministic benchmark replay
 - Related repo files:
@@ -284,23 +284,23 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Existing: `src/core/nodes/review.ts`
   - Existing: `src/core/nodes/writePaper.ts`
 - Generated files:
-  - `outputs/governance-benchmark/AGB-001/README.md` generated by run/export tooling
+  - `outputs/governance-benchmark/case-missing-baseline/README.md` generated by run/export tooling
 - Validation commands:
   - `npm test -- tests/cliArgs.test.ts tests/governanceDryRun.test.ts tests/governanceArtifactContract.test.ts tests/governanceSeedBundle.test.ts tests/governanceScorer.test.ts`
-  - `npm run dev -- governance-benchmark dry-run --seed outputs/governance-benchmark/seeds/AGB-001 --task AGB-001 --condition gated --condition ungated --out-dir outputs/governance-benchmark/AGB-001`
+  - `npm run dev -- governance-benchmark dry-run --seed outputs/governance-benchmark/seeds/case-missing-baseline --task case-missing-baseline --condition gated --condition ungated --out-dir outputs/governance-benchmark/case-missing-baseline`
   - `npm run build`
   - `npm run validate:harness`
   - `npm test -- tests/collectPapers.test.ts -t "excludes blocked collected items"` after the full-suite run hit a transient afterEach timeout in that test.
   - Live flow is tracked separately in P0-8.
 - Completion criteria:
-  - [x] AGB-001 replays a run under both `gated` and `ungated` conditions.
+  - [x] case-missing-baseline replays a run under both `gated` and `ungated` conditions.
   - [x] Missing baseline is detected from the seed result table.
   - [x] Comparative improvement claim is blocked or downgraded in the gated condition.
   - [x] Required artifacts and scoring outputs exist and are parseable in the replay output.
 
-### P0-8. AGB-001 Live Governance-Block Validation
+### P0-8. case-missing-baseline Live Governance-Block Validation
 
-- [x] Status: completed on 2026-05-03 after correcting the P0-8 target from paper-producing full-run validation to AGB-001's intended missing-baseline governance-block validation. `LV-320` through `LV-330` repairs were implemented with automated validation passing where applicable; rebuilt same-flow revalidation passed the LV-329 locked-split projection symptom and the LV-330 retry/rollback repair by stopping once at the missing-baseline `design_experiments` blocker without auto retry or auto rollback.
+- [x] Status: completed on 2026-05-03 after correcting the P0-8 target from paper-producing full-run validation to case-missing-baseline's intended missing-baseline governance-block validation. `LV-320` through `LV-330` repairs were implemented with automated validation passing where applicable; rebuilt same-flow revalidation passed the LV-329 locked-split projection symptom and the LV-330 retry/rollback repair by stopping once at the missing-baseline `design_experiments` blocker without auto retry or auto rollback.
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -318,11 +318,11 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - `npm run build`
   - `npm test`
   - `npm run validate:harness`
-  - Start AutoLabOS from a validation workspace, run `/doctor`, then run `/brief start <path-to-AGB-001-brief.md>`.
+  - Start AutoLabOS from a validation workspace, run `/doctor`, then run `/brief start <path-to-case-missing-baseline-brief.md>`.
   - Re-run the same live flow after any fix before checking this item.
 - Validation notes:
-  - Scope correction: AGB-001 intentionally lacks baseline/comparator evidence and is therefore not a valid target for paper-producing live full-run completion. Its live validation target is claim-ceiling enforcement, missing-baseline detection, and governed blocking before fabricated downstream experiment/paper artifacts.
-  - Live TUI run started from an external AGB-001 brief path under the `gated` benchmark condition.
+  - Scope correction: case-missing-baseline intentionally lacks baseline/comparator evidence and is therefore not a valid target for paper-producing live full-run completion. Its live validation target is claim-ceiling enforcement, missing-baseline detection, and governed blocking before fabricated downstream experiment/paper artifacts.
+  - Live TUI run started from an external case-missing-baseline brief path under the `gated` benchmark condition.
   - `/doctor` was run before the live execution and surfaced pre-existing duplicate live-validation issue identifiers in `ISSUES.md`.
   - The run progressed through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, multiple `implement_experiments` attempts, and repeated `run_experiments` retries.
   - The final live state was `failed` at `run_experiments` after retry 3/3 with `TypeError: compute_classification_metrics() missing 1 required positional argument: 'records'`.
@@ -334,12 +334,12 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - After the `LV-324` repair, the rebuilt same-flow live run advanced into real `run_experiments`; the prior evaluator `records` TypeError did not reproduce, but the runner failed before metrics creation because the final baseline/retrieval condition resolver searched canonical names while generated helpers used semantically specific names (`LV-325`).
   - After the `LV-325` repair, rebuilt P0-8 run `26756a6f-cf0e-4cb6-9266-99f400bff3db` no longer reproduced the resolver-name failure. The first `run_experiments` attempt instead failed the metrics contract because `accuracy_delta_vs_baseline` was absent (`LV-326`).
   - The same run auto-repaired `LV-326`: `implement_experiments` regenerated the runner, local verification passed, `run_experiments` completed, and `metrics.json` contained `accuracy_delta_vs_baseline: 0`.
-  - `analyze_results` then completed and correctly backtracked to `design_experiments` because `accuracy_delta_vs_baseline=0` did not satisfy `> 0` and evidence quality remained weak. That exposed that the original P0-8 "full-run" target was mis-scoped for AGB-001, because this seed should stop when missing-baseline evidence prevents comparative claims.
+  - `analyze_results` then completed and correctly backtracked to `design_experiments` because `accuracy_delta_vs_baseline=0` did not satisfy `> 0` and evidence quality remained weak. That exposed that the original P0-8 "full-run" target was mis-scoped for case-missing-baseline, because this seed should stop when missing-baseline evidence prevents comparative claims.
   - Continuing that same run with `/retry` reran `design_experiments` and `implement_experiments`. An intermediate regenerated runner exposed an undefined `format_float(...)` summary helper, then the next regenerated runner advanced to a stable `run_experiments` blocker: `_training_records()` only accepted `split == "train"` while the locked seed dataset used `SUPPORT_RECORDS` / `SUPPORT_SPLIT = "support"` (`LV-327`).
   - `LV-327` repair is implemented with targeted regression, build, full test, and harness validation passing. Rebuilt same-flow validation no longer reproduced the support-split training-record failure before the next stable blocker.
   - During the rebuilt same-flow revalidation for `LV-327`, the run advanced past the original support-split boundary, then a regenerated runner failed `run_experiments` after three retries because `_invoke_runtime_wrapper(args)` searched persistence-wrapper names while the script only exposed implementation-shaped helpers such as `execute_experiment(...)` (`LV-328`).
   - `LV-328` repair is implemented with targeted regression, build, full test, and harness validation passing. Rebuilt same-flow revalidation no longer reproduced the wrapper-alias failure and advanced to `run_experiments`.
-  - After the `LV-328` repair, rebuilt P0-8 run `57e75851-3f00-40ab-aa78-039eb216c60a` exposed `LV-329`: the external AGB-001 seed brief records a result-table artifact audit with an intentionally absent baseline, but `design_experiments`/`implement_experiments` projected it into a baseline-first locked train/test classification experiment. `run_experiments` repeatedly failed because no explicit locked split exists, including after 9 `run_experiments` executions and two automatic rollbacks from `run_experiments` to `implement_experiments`; final run state is `failed`.
+  - After the `LV-328` repair, rebuilt P0-8 run `57e75851-3f00-40ab-aa78-039eb216c60a` exposed `LV-329`: the external case-missing-baseline seed brief records a result-table artifact audit with an intentionally absent baseline, but `design_experiments`/`implement_experiments` projected it into a baseline-first locked train/test classification experiment. `run_experiments` repeatedly failed because no explicit locked split exists, including after 9 `run_experiments` executions and two automatic rollbacks from `run_experiments` to `implement_experiments`; final run state is `failed`.
   - `LV-329` repair is implemented in the brief-vs-design consistency gate with targeted regression, build, full test, and harness validation passing. The gate now treats explicit missing-baseline brief contracts as design-blocking when a generated design declares baseline execution or baseline-comparison claim framing.
   - After the `LV-329` repair, rebuilt P0-8 run `f4584126-cc2d-484f-8327-1aaf3c03e68a` passed same-flow revalidation for the original locked-split projection symptom: the run completed `collect_papers`, `analyze_papers`, and `generate_hypotheses`, then blocked `design_experiments` on all three attempts with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED`.
   - The repaired live run wrote `design_experiments_panel/brief_design_consistency.json` with `paper_scale_blocked: true`; `implement_experiments` and `run_experiments` remained `pending` at the validation checkpoint, so the prior locked-split runtime failure did not recur.
@@ -348,14 +348,14 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - After the `LV-330` repair, rebuilt P0-8 run `71fee061-6751-4b64-a2b2-39aa02fd88d6` failed once at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED`; no `NODE_RETRY` or `NODE_ROLLBACK` was recorded, `rollbackCounters` stayed empty, and `implement_experiments` / `run_experiments` remained `pending`.
   - `LV-321`, `LV-322`, `LV-323`, `LV-324`, and `LV-325` repairs pass targeted regressions, full build, full test suite, harness validation, and same-flow revalidation for their original symptoms.
 - Completion criteria:
-  - [x] Live TUI run starts from the external AGB-001 brief path without copying private source paths into committed docs.
+  - [x] Live TUI run starts from the external case-missing-baseline brief path without copying private source paths into committed docs.
   - [x] `/doctor` output is checked before the live run.
   - [x] Run artifacts include traceable brief snapshot/source metadata, `events.jsonl`, `run_record.json`, and `runs.json`.
   - [x] Benchmark condition is recorded for the live run and matches the selected condition.
   - [x] Missing baseline is detected in live run artifacts.
   - [x] Comparative improvement claim is blocked or downgraded before paper-ready classification.
   - [x] Deterministic brief-contract blocker stops without auto retry or auto rollback.
-  - [x] No downstream review or paper artifacts are required for AGB-001 completion when the live run correctly blocks before fabricated baseline execution.
+  - [x] No downstream review or paper artifacts are required for case-missing-baseline completion when the live run correctly blocks before fabricated baseline execution.
   - [x] Fresh-session and existing/resumed-session behavior are compared.
   - [x] Any live-validation issue is recorded in `ISSUES.md` with the required taxonomy and regression status.
 
@@ -379,7 +379,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - Completion criteria:
   - Weak evidence is classified as `system_validation_note`, `research_memo`, or `blocked_for_paper_scale`, not `paper_ready`.
   - `write_paper` fails fast when pre-draft critique or brief evidence assessment blocks paper-scale drafting.
-  - AGB-001, AGB-002, AGB-003, AGB-009, and AGB-010 cannot pass as paper-ready when their intended missing evidence remains unresolved.
+  - case-missing-baseline, case-claim-evidence, case-comparison-evidence, case-state-projection, and case-fallback-evidence cannot pass as paper-ready when their intended missing evidence remains unresolved.
 
 ### P1-2. Claim-Evidence Table
 
@@ -401,7 +401,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - Completion criteria:
   - `paper/claim_evidence_table.json` maps every major claim to literature, experiment, qualitative observation, or limitation evidence.
   - Unsupported claims are counted, downgraded, or blocked.
-  - AGB scoring can compute `unsupported_claim_count`, `claim_to_evidence_coverage`, and citation support metrics from artifacts.
+  - Governance scoring can compute `unsupported_claim_count`, `claim_to_evidence_coverage`, and citation support metrics from artifacts.
 
 ### P1-3. Result Table Validation And Baseline Compare
 
@@ -421,7 +421,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - Completion criteria:
   - Result tables preserve condition, dataset/task, primary metric, numeric result, comparator status, and caveats.
   - Missing comparator or missing metric is represented explicitly, not silently omitted.
-  - AGB-003 and AGB-009 block superiority/performance claims without valid comparator and metric evidence.
+  - case-comparison-evidence and case-state-projection block superiority/performance claims without valid comparator and metric evidence.
 
 ### P1-4. Figure Audit And Visualization Handoff
 
@@ -481,12 +481,12 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - For real interactive defects: re-run the same TUI/web flow after fixes.
 - Completion criteria:
   - Every live-validation case records one dominant class: `persisted_state_bug`, `in_memory_projection_bug`, `refresh_render_bug`, `resume_reload_bug`, or `race_timing_bug`.
-  - AGB-009 separates syntax success from metric evidence.
-  - AGB-010 preserves fallback labels and excludes deterministic fallback from paper-scale evidence.
+  - case-state-projection separates syntax success from metric evidence.
+  - case-fallback-evidence preserves fallback labels and excludes deterministic fallback from paper-scale evidence.
 
-### P1-7. AGB-002 Through AGB-010 Batch Or Replay
+### P1-7. case-claim-evidence Through case-fallback-evidence Batch Or Replay
 
-- [x] Status: completed 2026-05-03 with a repo CLI batch surface that discovers all AGB-001 through AGB-010 seeds from an external seed root, replays fixed result-table seeds, and writes queue manifests for seeds that need live or task-specific replay.
+- [x] Status: completed 2026-05-03 with a repo CLI batch surface that discovers all the complete manifest-defined governance case set seeds from an external seed root, replays fixed result-table seeds, and writes queue manifests for seeds that need live or task-specific replay.
 - Related repo files:
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/main.ts`
@@ -504,17 +504,17 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - `node dist/cli/main.js governance-benchmark batch --seeds <external-seed-root> --condition gated --condition ungated --out-dir outputs/governance-benchmark/batch`
 - Validation notes:
   - The batch runner uses placeholders such as `<external-seed-root>` in generated batch summaries when seed sources live outside the repo checkout.
-  - The actual AGB seed root was run locally on 2026-05-03. The batch reported `passed=true`, discovered all 10 expected tasks, replayed AGB-001 and AGB-003 from fixed `result_table.csv` artifacts, queued AGB-002 and AGB-004 through AGB-010 for live/task-specific replay, and recorded zero failed tasks.
-  - AGB-003 fixed-artifact replay treats the failed comparator's blank metric as missing evidence rather than numeric zero, so the gated condition blocks/downgrades the comparative claim.
+  - The external fixed-seed root was run locally on 2026-05-03. The batch reported `passed=true`, discovered every manifest-defined task, replayed fixed result-table artifacts, queued cases requiring live or task-specific execution, and recorded zero failed tasks.
+  - case-comparison-evidence fixed-artifact replay treats the failed comparator's blank metric as missing evidence rather than numeric zero, so the gated condition blocks/downgrades the comparative claim.
 - Completion criteria:
   - [x] All 10 tasks can be queued for gated/ungated runs or replayed from fixed artifacts.
-  - [x] AGB-002 validates scope-limited claims and limitations through a queue manifest for task-specific replay.
-  - [x] AGB-003 validates comparator-failure result table discipline through fixed-artifact replay.
-  - [x] AGB-004 validates citation support precision through a queue manifest for task-specific replay.
-  - [x] AGB-005 validates figure audit behavior through a queue manifest for task-specific replay.
-  - [x] AGB-006 validates BaselineLock and SingleChangeEnforcer behavior through a queue manifest for task-specific replay.
-  - [x] AGB-007 and AGB-008 validate literature discovery trace, abstention, and exclusion reasons through queue manifests for task-specific replay.
-  - [x] AGB-009 and AGB-010 validate live execution evidence boundaries through queue manifests for task-specific replay.
+  - [x] case-claim-evidence validates scope-limited claims and limitations through a queue manifest for task-specific replay.
+  - [x] case-comparison-evidence validates comparator-failure result table discipline through fixed-artifact replay.
+  - [x] case-execution-state validates citation support precision through a queue manifest for task-specific replay.
+  - [x] case-budget-contract validates figure audit behavior through a queue manifest for task-specific replay.
+  - [x] case-result-figure-consistency validates BaselineLock and SingleChangeEnforcer behavior through a queue manifest for task-specific replay.
+  - [x] case-literature-trace and case-citation-support validate literature discovery trace, abstention, and exclusion reasons through queue manifests for task-specific replay.
+  - [x] case-state-projection and case-fallback-evidence validate live execution evidence boundaries through queue manifests for task-specific replay.
 
 ### P1-8. Paper/System Demo Artifact Bundle Export
 
@@ -539,9 +539,9 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - The exporter reads selected public output directories and copies them into `outputs/governance-benchmark/demo-bundles` or a caller-provided output directory. It does not mutate `.autolabos/runs/<run-id>/` or the selected public source directories.
   - The bundle manifest and README explicitly distinguish workflow completion, `write_paper` completion, PDF build success, and `paper_ready=true`.
   - Regression tests select three public demo bundles and verify that paper-ready, PDF-built, and draft-only states remain distinct.
-  - A local CLI smoke used the currently available fixed-artifact replay outputs for AGB-001 and AGB-003 and exported two demo bundles under ignored `outputs/`.
+  - A local CLI smoke used the currently available fixed-artifact replay outputs for case-missing-baseline and case-comparison-evidence and exported two demo bundles under ignored `outputs/`.
 - Completion criteria:
-  - [x] Paper-producing live full-run validation uses a seed or run with explicit baseline/comparator evidence; AGB-001 is excluded because its intended outcome is a missing-baseline governance block.
+  - [x] Paper-producing live full-run validation uses a seed or run with explicit baseline/comparator evidence; case-missing-baseline is excluded because its intended outcome is a missing-baseline governance block.
   - [x] Export bundle includes brief, condition, run config, events, required artifacts, scoring output, unsupported claim notes, and README.
   - [x] Bundle distinguishes workflow completion, `write_paper` completion, PDF build success, and `paper_ready=true`.
   - [x] At least 3 public demo bundles can be selected without editing run-scoped source artifacts.
@@ -628,10 +628,8 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Updated: `src/cli/main.ts`
   - Tests: `tests/paperReadinessAudit.test.ts`, `tests/cliArgs.test.ts`
 - CLI:
-  - `autolabos audit --seed AGB-001 --out-dir outputs/audit`
-  - `autolabos audit --seed AGB-003 --out-dir outputs/audit`
-  - `autolabos audit --seed AGB-010 --out-dir outputs/audit`
   - `autolabos audit --run <run-artifact-root> --out-dir outputs/audit`
+  - `autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] --out-dir outputs/audit`
 - Generated outputs:
   - `outputs/audit/paper-readiness-audit.md`
   - `outputs/audit/audit-summary.json`
@@ -639,7 +637,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - Completion criteria:
   - [x] Audit reports include verdict, top blockers, unsupported claims, baseline/comparator status, result-table completeness, figure/result/caption mismatch status, citation support issues, claim ceiling, and next actions.
   - [x] Claim ceiling rules block comparative claims without baseline/comparator evidence, block paper-ready promotion without complete metric/result tables, block quantitative research claims for fallback-only evidence, downgrade unsupported related-work claims, block manuscript promotion on figure/result mismatch, and block hidden failed runs.
-  - [x] AGB-001, AGB-003, and AGB-010 are regression-covered as false paper-ready blocking demos.
+  - [x] Missing-comparison and fallback-only artifact bundles are regression-covered as false paper-ready blocking cases.
   - [x] `write_paper` completion remains visible but is not treated as paper-ready.
 
 ### P2-1. Whole-Run Evolution Regression Scope
@@ -774,11 +772,11 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Existing: `src/cli/args.ts`
   - Existing: `src/cli/audit.ts`
   - Existing: `src/core/audit/paperReadinessAudit.ts`
-  - Existing: `src/core/audit/auditDemoBundle.ts`
+  - Existing: `src/core/benchmark/promotionBenchmarkSystems.ts`
   - Existing: `tests/paperReadinessAudit.test.ts`
   - Existing: `tests/cliArgs.test.ts`
-  - Existing: `tests/auditDemoBundle.test.ts`
-  - Existing: `scripts/demo-audit-blockers.mjs`
+  - Existing: `tests/promotionBenchmarkSystems.test.ts`
+  - Existing: `benchmarks/promotion-governance/README.md`
   - Existing: `docs/tui-live-validation.md`
   - Existing: `docs/live-validation-issue-template.md`
   - Existing: `docs/live-validation-playbook.md`
@@ -791,13 +789,13 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - Validation commands:
   - Docs-only P3 edits: markdown/readability inspection plus portability scan.
   - Audit CLI/runtime changes: `npm test -- tests/paperReadinessAudit.test.ts tests/cliArgs.test.ts tests/auditCli.test.ts`; `npm run build`; `npm run validate:harness`.
-  - Demo script changes: run the script in a generated output directory, confirm AGB-001/AGB-003/AGB-010 remain blocked or downgraded, then run portability scan on generated sample outputs.
+  - Demo script changes: run the script in a generated output directory, confirm case-missing-baseline/case-comparison-evidence/case-fallback-evidence remain blocked or downgraded, then run portability scan on generated sample outputs.
   - Live validation playbook changes: verify reproduction steps against `docs/tui-live-validation.md` and `docs/live-validation-issue-template.md`; run same-flow live validation when the playbook claims a concrete interactive flow.
   - Release hygiene changes: `npm audit`; `npm --prefix web audit`; `npm test`; `npm run build`; `npm run validate:harness`.
 - Completion criteria:
   - [x] P3-1 adds compact audit CLI summary output, severity grouping, stable report anchors, usage examples for `--seed`, `--run`, and `--out-dir`, and regression coverage for report shape.
   - [x] P3-1 keeps audit reports conservative and does not weaken claim ceilings, baseline/comparator requirements, result-table requirements, figure-audit checks, citation support, or failed-run visibility.
-  - [x] P3-2 adds a repo-safe demo path for AGB-001, AGB-003, and AGB-010 that shows false paper-ready claims blocked or downgraded.
+  - [x] P3-2 adds a repo-safe demo path for case-missing-baseline, case-comparison-evidence, and case-fallback-evidence that shows false paper-ready claims blocked or downgraded.
   - [x] P3-2 keeps demo outputs generated or fixture-scoped, free of machine-local paths, and explicit about expected verdicts and blockers.
   - [x] P3-3 documents fresh-run, resume, and failed-run inspection flows for real TUI/web validation.
   - [x] P3-3 keeps deterministic smoke checks secondary to direct live validation when the issue is interactive.
@@ -812,14 +810,14 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 - [x] Status: P4 complete; external intake, claim-evidence export, full-seed audit replay, literature discovery audit checks, concierge pilot docs, competitive watch triggers, and pilot go/no-go review are implemented and validated on 2026-05-05.
 - Planning interpretation:
   - The next implementation wedge is not more autonomous research. It is the ability to accept a real draft/run/log bundle, produce a conservative paper-readiness audit, and learn whether external users will share artifacts and request repeat audits.
-  - AGB-001/003/010 remain the short demo path; P4 broadens regression coverage to the remaining governance seeds and adds the customer-facing intake workflow.
+  - the initial blocker smoke cases remain the short demo path; P4 broadens regression coverage to the remaining governance seeds and adds the customer-facing intake workflow.
   - Competitive tracking should focus on domain skill libraries, benchmark/run-store onboarding, citation hallucination checking, method-evolution graphs, and evidence governance signals only when they change implementation priorities.
 - Scope checklist:
   - [x] P4-1. External artifact intake contract for draft/run/log audits.
   - [x] P4-2. Audit output contract expansion for claim-evidence exports.
-  - [x] P4-3. Full AGB seed audit coverage beyond AGB-001/003/010.
+  - [x] P4-3. Full fixed-seed audit coverage beyond the initial blocker smoke cases.
   - [x] P4-4. Concierge pilot workflow for real user artifacts.
-  - [x] P4-5. Literature discovery audit track for AGB-007/008.
+  - [x] P4-5. Literature discovery audit track for the literature-discovery governance cases.
   - [x] P4-6. Competitive-signal watchlist for domain skill libraries and benchmark-store UX.
   - [x] P4-7. Pilot readiness review and go/no-go package.
 - Related repo files:
@@ -827,7 +825,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Existing: `src/cli/main.ts`
   - Existing: `src/cli/audit.ts`
   - Existing: `src/core/audit/paperReadinessAudit.ts`
-  - Existing: `src/core/audit/auditDemoBundle.ts`
+  - Existing: `src/core/benchmark/promotionBenchmarkBuilder.ts`
   - Existing: `src/core/benchmark/governanceSeedBundle.ts`
   - Existing: `src/core/benchmark/governanceDryRun.ts`
   - Existing: `src/core/benchmark/governanceScorer.ts`
@@ -837,7 +835,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Existing: `src/core/audit/externalArtifactIntake.ts`
   - Existing: `src/core/audit/claimEvidenceExport.ts`
   - Existing: `src/core/audit/literatureDiscoveryAudit.ts`
-  - Existing: `scripts/demo-audit-full-seeds.mjs`
+  - Existing: `src/core/benchmark/promotionBenchmarkPromptPack.ts`
   - Existing: `docs/roadmap/p4-external-pilot.md`
   - Existing: `docs/status/pilot-readiness-review.md`
   - Existing: `docs/templates/concierge-audit-request.md`
@@ -846,11 +844,11 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Existing: `docs/external-benchmark-plan.md`
   - Existing: `docs/differentiation.md`
   - Existing: `tests/paperReadinessAudit.test.ts`
-  - Existing: `tests/auditDemoBundle.test.ts`
+  - Existing: `tests/promotionBenchmarkBuilder.test.ts`
   - Existing: `tests/externalArtifactIntake.test.ts`
   - Existing: `tests/auditClaimEvidenceExport.test.ts`
   - Existing: `tests/literatureDiscoveryAudit.test.ts`
-  - Existing: `tests/fullSeedAuditDemo.test.ts`
+  - Existing: `tests/promotionBenchmarkSystems.test.ts`
   - Existing: `tests/governanceDryRun.test.ts`
   - Existing: `tests/governanceSeedBundle.test.ts`
 - Planned files if needed:
@@ -860,14 +858,14 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Audit intake/runtime changes: `npm test -- tests/paperReadinessAudit.test.ts tests/externalArtifactIntake.test.ts tests/auditClaimEvidenceExport.test.ts`; `npm run build`; `npm run validate:harness`.
   - Full seed demo changes: run the demo in ignored `outputs/`, verify expected verdicts/blockers for each included seed, then run targeted tests and portability scan.
   - Literature discovery audit changes: `npm test -- tests/literatureDiscoveryAudit.test.ts tests/governanceDryRun.test.ts`; `npm run build`.
-  - Pilot readiness changes: `npm audit`; `npm --prefix web audit`; `npm test`; `npm run build`; `npm run validate:harness`; `npm run demo:audit-blockers -- --out-dir outputs/audit-demo`.
-  - Completed P4 validation on 2026-05-05: targeted P4 tests passed; `npm run build` passed; `npm test` passed; `npm run validate:harness` passed; `npm audit` and `npm --prefix web audit` found 0 vulnerabilities; `npm run demo:audit-blockers -- --out-dir outputs/audit-demo-p4-smoke` passed; `npm run demo:audit-full-seeds -- --out-dir outputs/audit-full-seeds-p4-smoke` passed with all expected outcomes met.
+  - Pilot readiness changes: `npm audit`; `npm --prefix web audit`; `npm test`; `npm run build`; `npm run validate:harness`; `npm test -- tests/paperReadinessAudit.test.ts tests/promotionBenchmarkSystems.test.ts`.
+  - Completed P4 validation on 2026-05-05: targeted P4 tests, build, full tests, harness validation, dependency audits, and the historical fixed-seed blocker checks passed. The retired demo commands are now covered by paper-readiness and promotion benchmark regressions.
 - Completion criteria:
   - [x] P4-1 defines a repo-safe external artifact intake contract for draft, run root, logs, result tables, citation lists, figure audit summaries, and optional paper artifacts.
   - [x] P4-1 accepts external artifacts through explicit caller-provided paths, copies or summarizes only allowlisted files into repo-controlled output, and never commits machine-local paths or private source names.
   - [x] P4-2 emits `claim-evidence-table.json` or an equivalent normalized claim-evidence export alongside `paper-readiness-audit.md`, `audit-summary.json`, and `blockers.json`.
   - [x] P4-2 keeps the claim-evidence export derived from existing artifacts/scorers and does not invent support for unsupported claims.
-  - [x] P4-3 extends audit regression coverage to AGB-002, AGB-004, AGB-005, AGB-006, AGB-009, and any available remaining seeds without weakening the AGB-001/003/010 demo path.
+  - [x] P4-3 extends audit regression coverage to case-claim-evidence, case-execution-state, case-budget-contract, case-result-figure-consistency, case-state-projection, and any available remaining seeds without weakening the the initial blocker smoke cases demo path.
   - [x] P4-3 keeps each seed's expected failure mode explicit: toy overgeneralization, hallucinated related-work support, figure-caption mismatch, single-change violation, syntax-without-metric, or fallback confusion.
   - [x] P4-4 adds a concierge pilot request template and operator checklist for receiving one real external artifact bundle, running the audit, redacting sensitive paths, and recording follow-up behavior.
   - [x] P4-4 measures pilot signals as artifact access, repeat audit request, repo integration request, and concrete recent failure examples rather than generic praise.
@@ -936,7 +934,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
   - Done-condition changes: `npm test -- tests/doneConditionAudit.test.ts tests/governanceSeedBundle.test.ts tests/briefValidation.test.ts`; `npm run validate:harness`.
   - Autonomy metric changes: `npm test -- tests/autonomyMetrics.test.ts tests/evalHarness.test.ts`; `npm run build`.
   - Pilot evidence docs: update status docs from sanitized pilot signal records only; run portability scan before commit.
-  - Completed P5 validation on 2026-05-05: targeted P5 tests passed; `npm run build` passed; `npm run validate:harness` passed; `npm run demo:audit-full-seeds -- --out-dir outputs/audit-full-seeds-p5-smoke` passed with all expected outcomes met; full `npm test` passed with 178 test files and 1810 root tests plus 14 web tests.
+  - Completed P5 validation on 2026-05-05: targeted P5 tests, build, harness validation, historical fixed-seed checks, and the full test suite passed. The retired fixed-seed demo is now represented by manifest-driven promotion benchmark regressions.
 - Completion criteria:
   - [x] P5-1 emits `audit-timeline.json` from existing run events, checkpoints, review packets, figure audit artifacts, paper gate artifacts, and audit outputs.
   - [x] P5-1 includes timeline entries for node start/end, checkpoint creation, result-table availability, figure audit decision, review decision, claim-ceiling changes, and paper-readiness verdict where evidence exists.
@@ -1023,7 +1021,7 @@ This is the canonical checklist. Earlier numeric-only implementation items have 
 
 ## First Implementation Slice
 
-Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after AGB-001 passes should P1-1 through P1-7 be broadened across AGB-002 through AGB-010. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
+Start with P0-1 through P0-6 before executing benchmark runs. These establish the hardening, input, condition, artifact, and scoring contracts. Then run P0-7 as the contract lock. Only after case-missing-baseline passes should P1-1 through P1-7 be broadened across the remaining manifest-defined governance cases. P1-8 through P1-11 and the P2 queue should be implemented incrementally after the P0 hardening slice has validation coverage.
 
 P3 starts only after the P0/P1/P2 checklist is complete. P3 should harden the audit-first product surface, demo reliability, live-validation workflow, and release package without changing the governed workflow or weakening evidence gates.
 

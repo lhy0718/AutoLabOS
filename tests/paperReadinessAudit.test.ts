@@ -15,16 +15,33 @@ afterEach(async () => {
 
 describe("paper-readiness audit", () => {
   it.each([
-    ["AGB-001", "baseline_or_comparator_missing", "descriptive_only_no_comparative_claims"],
-    ["AGB-003", "baseline_or_comparator_missing", "descriptive_only_no_comparative_claims"],
-    ["AGB-010", "fallback_only_evidence", "system_validation_note_only"]
-  ])("blocks false paper-ready promotion for %s", async (seedId, expectedBlocker, expectedCeiling) => {
+    {
+      name: "missing baseline",
+      resultTable: [{ metric: "primary_score", baseline: null, comparator: 0.7, delta: null }],
+      expectedBlocker: "baseline_or_comparator_missing",
+      expectedCeiling: "descriptive_only_no_comparative_claims"
+    },
+    {
+      name: "missing comparator",
+      resultTable: [{ metric: "primary_score", baseline: 0.6, comparator: null, delta: null }],
+      expectedBlocker: "baseline_or_comparator_missing",
+      expectedCeiling: "descriptive_only_no_comparative_claims"
+    },
+    {
+      name: "fallback-only evidence",
+      resultTable: [{ metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1 }],
+      evidenceStore: [{ deterministic_fallback_used: true, fallback_label: "bounded_fallback" }],
+      expectedBlocker: "fallback_only_evidence",
+      expectedCeiling: "system_validation_note_only"
+    }
+  ])("blocks false paper-ready promotion for $name", async ({ resultTable, evidenceStore, expectedBlocker, expectedCeiling }) => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-seed-"));
     tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, { resultTable, evidenceStore });
 
     const summary = await runPaperReadinessAudit({
       cwd: workspace,
-      seedId,
+      runRoot,
       outDir: "outputs/audit"
     });
 
@@ -39,7 +56,7 @@ describe("paper-readiness audit", () => {
     expect(summary.outputs.blocked_claim_events_path).toBe("outputs/audit/blocked-claim-events.json");
     expect(summary.outputs.done_condition_path).toBe("outputs/audit/done-condition-audit.json");
     expect(summary.outputs.autonomy_metrics_path).toBe("outputs/audit/autonomy-metrics.json");
-    expect(summary.audit_timeline.status).toBe("available");
+    expect(summary.audit_timeline.status).toBe("timeline_incomplete");
     expect(summary.done_condition.status).toBe("pass");
     expect(summary.judge_lane.judge_nodes).toContain("paper_readiness_audit");
 
@@ -93,15 +110,13 @@ describe("paper-readiness audit", () => {
   it("audits an existing run artifact root", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-run-"));
     tempDirs.push(workspace);
-    const seedSummary = await runPaperReadinessAudit({
-      cwd: workspace,
-      seedId: "AGB-001",
-      outDir: "outputs/seed-audit"
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [{ metric: "primary_score", baseline: null, comparator: 0.7, delta: null }]
     });
 
     const summary = await runPaperReadinessAudit({
       cwd: workspace,
-      runRoot: seedSummary.input.run_root,
+      runRoot,
       outDir: "outputs/run-audit"
     });
 
@@ -250,12 +265,9 @@ describe("paper-readiness audit", () => {
   it("fails the done-condition audit when paper_ready hides known blockers", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-done-condition-"));
     tempDirs.push(workspace);
-    const seedSummary = await runPaperReadinessAudit({
-      cwd: workspace,
-      seedId: "AGB-001",
-      outDir: "outputs/seed-audit"
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [{ metric: "primary_score", baseline: null, comparator: 0.7, delta: null }]
     });
-    const runRoot = path.join(workspace, seedSummary.input.run_root);
     await writeFile(
       path.join(runRoot, "paper", "paper_readiness.json"),
       JSON.stringify({ paper_ready: true, readiness_state: "paper_ready" }),
@@ -263,13 +275,13 @@ describe("paper-readiness audit", () => {
     );
     await writeFile(
       path.join(runRoot, "run_record.json"),
-      JSON.stringify({ id: "AGB-001-gated-audit", status: "failed" }),
+      JSON.stringify({ id: "failed-run", status: "failed" }),
       "utf8"
     );
 
     const summary = await runPaperReadinessAudit({
       cwd: workspace,
-      runRoot: seedSummary.input.run_root,
+      runRoot,
       outDir: "outputs/done-condition-audit"
     });
 
@@ -286,12 +298,9 @@ describe("paper-readiness audit", () => {
   it("uses only run-artifact evidence for selected P2 design contract audit findings", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-design-contract-"));
     tempDirs.push(workspace);
-    const seedSummary = await runPaperReadinessAudit({
-      cwd: workspace,
-      seedId: "AGB-003",
-      outDir: "outputs/seed-audit"
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [{ metric: "primary_score", baseline: null, comparator: 0.7, delta: null }]
     });
-    const runRoot = path.join(workspace, seedSummary.input.run_root);
     await mkdir(path.join(runRoot, "audit"), { recursive: true });
     await writeFile(
       path.join(runRoot, "audit", "design_contracts.json"),
@@ -316,7 +325,7 @@ describe("paper-readiness audit", () => {
 
     const summary = await runPaperReadinessAudit({
       cwd: workspace,
-      runRoot: seedSummary.input.run_root,
+      runRoot,
       outDir: "outputs/design-contract-audit"
     });
 
@@ -335,12 +344,57 @@ describe("paper-readiness audit", () => {
     expect(report).toContain('<a id="design-contract-findings"></a>');
     expect(report).toContain("distributed_worker_failure_hidden");
   });
+
+  it("blocks repeated-run provenance, budget, and persisted-state inconsistencies", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-execution-integrity-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ],
+      runRecord: { id: "integrity-case", status: "completed", executed_budget: { trials: 1 } }
+    });
+    await writeJson(path.join(runRoot, "run_config.json"), { planned_budget: { trials: 3 } });
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: [{ score: 0.69 }, { score: 0.7 }, { score: 0.71 }]
+    });
+    await mkdir(path.join(runRoot, "checkpoint"), { recursive: true });
+    await writeJson(path.join(runRoot, "checkpoint", "state.json"), { paper_ready: false });
+    await writeJson(path.join(runRoot, "paper", "paper_readiness.json"), {
+      paper_ready: true,
+      readiness_state: "paper_ready"
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/execution-integrity-audit"
+    });
+
+    expect(summary.verdict).toBe("blocked");
+    expect(summary.execution_integrity_findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "repeated_run_provenance_missing", target_node: "run_experiments" }),
+      expect.objectContaining({ code: "budget_contract_mismatch", target_node: "run_experiments" }),
+      expect.objectContaining({ code: "stale_persisted_state", target_node: "review" })
+    ]));
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+      "repeated_run_provenance_missing",
+      "budget_contract_mismatch",
+      "stale_persisted_state"
+    ]));
+    const report = await readFile(
+      path.join(workspace, "outputs", "execution-integrity-audit", "paper-readiness-audit.md"),
+      "utf8"
+    );
+    expect(report).toContain("## Execution Integrity Findings");
+  });
 });
 
 async function writeMinimalAuditRun(
   workspace: string,
   input: {
     resultTable: unknown;
+    evidenceStore?: Record<string, unknown>[];
     runRecord?: Record<string, unknown>;
     includeGovernanceCondition?: boolean;
   }
@@ -358,7 +412,9 @@ async function writeMinimalAuditRun(
   await writeJson(path.join(runRoot, "result_table.json"), input.resultTable);
   await writeFile(
     path.join(runRoot, "evidence_store.jsonl"),
-    `${JSON.stringify({ id: "ev_metric", metric: "accuracy_delta_vs_baseline", metric_evidence_present: true })}\n`,
+    `${(input.evidenceStore || [{ id: "ev_metric", metric: "primary_score", metric_evidence_present: true }])
+      .map((row) => JSON.stringify(row))
+      .join("\n")}\n`,
     "utf8"
   );
   await writeJson(path.join(runRoot, "figure_audit", "figure_audit_summary.json"), {

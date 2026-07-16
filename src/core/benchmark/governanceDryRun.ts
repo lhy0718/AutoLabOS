@@ -428,7 +428,7 @@ async function writeDryRunArtifacts(input: {
   await fs.writeFile(
     path.join(input.runDir, "paper", "main.tex"),
     [
-      "\\section{AGB-001 Dry-Run Result}",
+      "\\section{Governance Dry-Run Result}",
       input.missingBaselineDetected
         ? "The seed supports only a descriptive proposed-condition result; no baseline comparison is claimed."
         : "The seed includes enough rows for a comparison.",

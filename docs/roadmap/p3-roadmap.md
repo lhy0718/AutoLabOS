@@ -24,11 +24,11 @@ Completion signal:
 
 ## P3-2. Public Demo Bundle
 
-Goal: produce a repo-safe demo package showing AGB false-paper-ready blocking.
+Goal: produce a repo-safe demo package showing fixed-case false-paper-ready blocking.
 
 Candidate work:
 
-- add demo script for AGB-001, AGB-003, and AGB-010 audit runs
+- add demo script for case-missing-baseline, case-comparison-evidence, and case-fallback-evidence audit runs
 - export sample audit reports under a generated or fixture directory
 - document expected verdicts and blockers
 - ensure generated examples do not contain machine-local paths

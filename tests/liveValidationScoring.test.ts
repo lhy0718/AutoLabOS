@@ -17,7 +17,7 @@ describe("live validation scoring", () => {
 
   it("separates syntax success from metric evidence for execution-bound cases", () => {
     const score = scoreLiveValidationCase({
-      case_id: "AGB-009",
+      case_id: "case-refresh-state",
       reproduced: true,
       regression_rechecked: false,
       dominant_failure_class: "persisted_state_bug",
@@ -32,7 +32,7 @@ describe("live validation scoring", () => {
 
   it("preserves deterministic fallback labels while excluding them from paper-scale evidence", () => {
     const score = scoreLiveValidationCase({
-      case_id: "AGB-010",
+      case_id: "case-fallback-evidence",
       reproduced: true,
       regression_rechecked: true,
       dominant_failure_class: "refresh_render_bug",

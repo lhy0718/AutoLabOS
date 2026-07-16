@@ -86,17 +86,22 @@ export async function runMetaHarness(
     ...deps
   };
 
-  const bootstrap = await resolvedDeps.bootstrapRuntime({
-    cwd: options.cwd,
-    allowInteractiveSetup: false
-  });
-  if (!bootstrap.runtime) {
-    throw new Error("AutoLabOS runtime must be configured before meta-harness can run.");
-  }
-
   const timestamp = formatTimestamp(resolvedDeps.now());
   const contextDir = path.join(options.cwd, "outputs", "meta-harness", timestamp);
-  const selectedRuns = await selectRecentRuns(bootstrap.runtime, options.runs);
+  const externalOnly = (options.externalRunRoots || []).length > 0 && options.runs === 0 && options.noApply;
+  let runtime: AutoLabOSRuntime | undefined;
+  let selectedRuns: MetaHarnessRunSummary[] = [];
+  if (!externalOnly) {
+    const bootstrap = await resolvedDeps.bootstrapRuntime({
+      cwd: options.cwd,
+      allowInteractiveSetup: false
+    });
+    if (!bootstrap.runtime) {
+      throw new Error("AutoLabOS runtime must be configured before meta-harness can run.");
+    }
+    runtime = bootstrap.runtime;
+    selectedRuns = await selectRecentRuns(runtime, options.runs);
+  }
   await buildMetaHarnessContext({
     cwd: options.cwd,
     contextDir,
@@ -119,7 +124,8 @@ export async function runMetaHarness(
   const taskPath = path.join(contextDir, "TASK.md");
   const systemPrompt = await fs.readFile(taskPath, "utf8");
   const userPrompt = await assembleContextPrompt(contextDir);
-  const client = resolvedDeps.createLlm(bootstrap.runtime);
+  if (!runtime) throw new Error("AutoLabOS runtime is required when meta-harness apply or LLM review is enabled.");
+  const client = resolvedDeps.createLlm(runtime);
   const llmResponse = await resolvedDeps.callLlm(client, { systemPrompt, userPrompt });
   const parsed = parseMetaHarnessResponse(llmResponse);
   if (!parsed) {
@@ -440,6 +446,7 @@ function nodeArtifactPathsForMetaHarnessNode(node: MetaHarnessNode, runRoot: str
 
 async function collectPromptTargetMapEntries(runRoot: string, runId: string, artifactPrefix = ""): Promise<PromptTargetMapEntry[]> {
   const entries: PromptTargetMapEntry[] = [];
+  const coveredDiagnosticKeys = new Set<string>();
   const strengtheningPath = path.join(runRoot, "review", "node_strengthening_recommendations.json");
   const strengthening = await readJsonObjectIfPresent(strengtheningPath);
   const recommendations = Array.isArray(strengthening?.recommendations) ? strengthening.recommendations : [];
@@ -452,6 +459,10 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
     if (!targetNode || !promptNode) {
       continue;
     }
+    const diagnosticIds = asStringArray(recommendation.diagnostic_ids) ?? [];
+    for (const diagnosticId of diagnosticIds) {
+      coveredDiagnosticKeys.add(`${targetNode}\u0000${diagnosticId}`);
+    }
     entries.push({
       run_id: runId,
       source_artifact: `${artifactPrefix}review/node_strengthening_recommendations.json`,
@@ -459,7 +470,7 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
       recommended_prompt_node: promptNode,
       prompt_file: `node-prompts/${promptNode}.md`,
       priority: asString(recommendation.priority) || undefined,
-      diagnostic_ids: asStringArray(recommendation.diagnostic_ids),
+      diagnostic_ids: diagnosticIds,
       problem_summary: asString(recommendation.problem_summary) || undefined,
       recheck_condition: asString(recommendation.recheck_condition) || undefined
     });
@@ -468,6 +479,7 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
   const diagnosticsPath = path.join(runRoot, "review", "paper_scale_diagnostics.json");
   const diagnostics = await readJsonObjectIfPresent(diagnosticsPath);
   const diagnosticRows = Array.isArray(diagnostics?.diagnostics) ? diagnostics.diagnostics : [];
+  const seenDiagnosticKeys = new Set<string>();
   for (const diagnostic of diagnosticRows) {
     if (!isRecord(diagnostic)) {
       continue;
@@ -477,6 +489,14 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
     if (!targetNode || !promptNode) {
       continue;
     }
+    const diagnosticId = asString(diagnostic.id);
+    const diagnosticKey = `${targetNode}\u0000${diagnosticId}`;
+    if (diagnosticId && (coveredDiagnosticKeys.has(diagnosticKey) || seenDiagnosticKeys.has(diagnosticKey))) {
+      continue;
+    }
+    if (diagnosticId) {
+      seenDiagnosticKeys.add(diagnosticKey);
+    }
     entries.push({
       run_id: runId,
       source_artifact: `${artifactPrefix}review/paper_scale_diagnostics.json`,
@@ -484,7 +504,7 @@ async function collectPromptTargetMapEntries(runRoot: string, runId: string, art
       recommended_prompt_node: promptNode,
       prompt_file: `node-prompts/${promptNode}.md`,
       priority: asString(diagnostic.severity) === "blocking" ? "high" : "medium",
-      diagnostic_ids: [asString(diagnostic.id)].filter(Boolean),
+      diagnostic_ids: [diagnosticId].filter(Boolean),
       problem_summary: asString(diagnostic.summary) || undefined,
       recheck_condition: asString(diagnostic.recheck_condition) || undefined
     });

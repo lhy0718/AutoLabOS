@@ -4,10 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const CODE_DIRS = ["src", "tests", "docs", "scripts", "node-prompts", "plugins", path.join(".codex", "skills")];
-const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", "node-prompts", "plugins", path.join(".codex", "skills")];
+const CODE_DIRS = ["src", "tests", "docs", "scripts", "benchmarks", "node-prompts", "plugins", path.join(".codex", "skills")];
+const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", "benchmarks", "node-prompts", "plugins", path.join(".codex", "skills")];
 const ROOT_PUBLIC_TEXT_FILES = ["ISSUES.md"];
-const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md"]);
+const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md", ".json", ".jsonl", ".yaml", ".yml", ".tex"]);
 
 function walkCodeFiles(dir: string): string[] {
   const absolute = path.join(ROOT, dir);
@@ -168,7 +168,8 @@ describe("public code sanitization", () => {
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([95, 97, 117, 116, 111, 108, 97, 98, 111, 115, 95, 108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
       new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95, 114, 97, 110, 107])}(?:$|[^A-Za-z0-9_])`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${NUMERIC_CONDITION_MARKER_PREFIX}\d+${NUMERIC_CONDITION_MARKER_MIDDLE}[A-Za-z0-9_]+`, "u")
+      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${NUMERIC_CONDITION_MARKER_PREFIX}\d+${NUMERIC_CONDITION_MARKER_MIDDLE}[A-Za-z0-9_]+`, "u"),
+      new RegExp(String.raw`${chars([65, 71, 66, 45])}\d+`, "u")
     ];
 
     const scanFiles = [...CODE_DIRS.flatMap(walkCodeFiles), ...ROOT_PUBLIC_TEXT_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)))];

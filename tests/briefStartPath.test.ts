@@ -28,7 +28,7 @@ describe("/brief start path handling", () => {
       const paths = resolveAppPaths(workspace);
       await ensureScaffold(paths);
       const runStore = new RunStore(paths);
-      const externalBriefPath = path.join(externalRoot, "AGB-001-brief.md");
+      const externalBriefPath = path.join(externalRoot, "case-alpha-brief.md");
       const briefMarkdown = buildCompleteBriefMarkdown();
       await mkdir(path.dirname(externalBriefPath), { recursive: true });
       await writeFile(externalBriefPath, briefMarkdown, "utf8");

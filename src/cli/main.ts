@@ -12,7 +12,14 @@ import {
   runGovernanceBenchmarkBatchCli,
   runGovernanceBenchmarkDryRunCli,
   runGovernanceBenchmarkExportBundlesCli,
-  runGovernanceBenchmarkSeedCli
+  runGovernanceBenchmarkSeedCli,
+  runPromotionBenchmarkBuildCli,
+  runPromotionPromptPackExportCli,
+  runPromotionResponseImportCli,
+  runPromotionBenchmarkSystemsCli,
+  runSyntheticPromotionCorpusCli,
+  runPromotionFailureAnalysisCli,
+  runPromotionBenchmarkScoreCli
 } from "./governanceBenchmark.js";
 import { runMetaHarnessCli } from "./metaHarness.js";
 import { getAppVersion } from "../tui/version.js";
@@ -38,12 +45,19 @@ function printHelp(): void {
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
-    "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] | --seed AGB-001..AGB-010) [--out-dir outputs/audit]",
+    "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]",
     "  autolabos research <new|audit|review|improve|pack> [options]",
-    "  autolabos governance-benchmark seed --source <path> [--task AGB-001] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
-    "  autolabos governance-benchmark dry-run --seed <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/AGB-001]",
-    "  autolabos governance-benchmark batch --seeds <path> [--task AGB-001] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
+    "  autolabos governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
+    "  autolabos governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]",
+    "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
+    "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite]",
+    "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
+    "  autolabos governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts]",
+    "  autolabos governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions]",
+    "  autolabos governance-benchmark analyze-promotion-failures --suite <suite.json> --predictions <predictions.jsonl> --system <id> [--out-dir outputs/governance-benchmark/promotion-failures]",
+    "  autolabos governance-benchmark score-promotion --suite <suite.json> --predictions <predictions.jsonl> [--out-dir outputs/governance-benchmark/promotion-score]",
     "  autolabos meta-harness [--runs 5] [--node generate_hypotheses|design_experiments|analyze_results|review] [--no-apply] [--dry-run]",
     "  autolabos meta-harness --external-run <run-artifact-root> [--external-run <run-artifact-root>] --no-apply",
     "  autolabos --help",
@@ -58,14 +72,10 @@ function printAuditHelp(): void {
     "Audit AI research-agent outputs for paper-readiness without treating write_paper completion as paper-ready.",
     "",
     "Usage:",
-    "  autolabos audit --seed AGB-001 [--out-dir outputs/audit]",
-    "  autolabos audit --seed AGB-001..AGB-010 [--out-dir outputs/audit]",
     "  autolabos audit --run <run-artifact-root> [--out-dir outputs/audit]",
     "  autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--out-dir outputs/audit]",
     "",
     "Examples:",
-    "  autolabos audit --seed AGB-001",
-    "  autolabos audit --seed AGB-003 --out-dir outputs/audit/AGB-003",
     "  autolabos audit --run .autolabos/runs/<run-id> --out-dir outputs/audit/<run-id>",
     "  autolabos audit --external <external-artifact-root> --draft <draft.md> --log <run.log> --out-dir outputs/audit/external",
     "",
@@ -91,7 +101,7 @@ function printResearchHelp(): void {
     "",
     "Usage:",
     "  autolabos research new --brief <path> [--out-dir <dir>]",
-    "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>] | --seed <id>) [--out-dir <dir>]",
+    "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>]) [--out-dir <dir>]",
     "  autolabos research review --gate <gate-report.json> [--out-dir <dir>]",
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
     "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <dir>] [--out-dir <dir>]"
@@ -175,7 +185,6 @@ async function main(): Promise<void> {
       externalRoot: action.externalRoot,
       draftPath: action.draftPath,
       logPath: action.logPath,
-      seedId: action.seedId,
       outDir: action.outDir
     });
     return;
@@ -193,7 +202,6 @@ async function main(): Promise<void> {
       externalRoot: action.externalRoot,
       draftPath: action.draftPath,
       logPath: action.logPath,
-      seedId: action.seedId,
       outDir: action.outDir
     });
     return;
@@ -259,6 +267,73 @@ async function main(): Promise<void> {
       publicOutputRoots: action.publicOutputRoots,
       outDir: action.outDir,
       maxBundles: action.maxBundles
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-generate-promotion-development") {
+    await runSyntheticPromotionCorpusCli({ cwd: process.cwd(), outDir: action.outDir });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-build-promotion") {
+    await runPromotionBenchmarkBuildCli({
+      cwd: process.cwd(),
+      recipePath: action.recipePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-run-promotion") {
+    await runPromotionBenchmarkSystemsCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      systems: action.systems,
+      trialId: action.trialId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-promotion-prompts") {
+    await runPromotionPromptPackExportCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-import-promotion-responses") {
+    await runPromotionResponseImportCli({
+      cwd: process.cwd(),
+      requestMapPath: action.requestMapPath,
+      responsesPath: action.responsesPath,
+      systemId: action.systemId,
+      trialId: action.trialId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-analyze-promotion-failures") {
+    await runPromotionFailureAnalysisCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      predictionsPath: action.predictionsPath,
+      systemId: action.systemId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-score-promotion") {
+    await runPromotionBenchmarkScoreCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      predictionsPath: action.predictionsPath,
+      outDir: action.outDir
     });
     return;
   }

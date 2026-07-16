@@ -6,7 +6,7 @@ P4 converts the audit-first surface from seed demo readiness into a pilot-ready 
 
 1. Accept an explicit external artifact root without exposing local source paths in generated outputs.
 2. Emit a normalized claim-evidence export next to the audit report.
-3. Expand seed replay coverage from AGB-001/003/010 to AGB-001 through AGB-010.
+3. Expand seed replay coverage from the initial blocker smoke cases to the complete manifest-defined governance case set.
 4. Keep literature discovery audit findings separate from manuscript paper-readiness blockers.
 5. Use pilot evidence, not generic interest, as the go/no-go signal.
 

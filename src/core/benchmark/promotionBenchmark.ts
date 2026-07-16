@@ -1,0 +1,929 @@
+import path from "node:path";
+import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
+
+import { writeJsonFile } from "../../utils/fs.js";
+
+export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "block"] as const;
+
+export type PromotionDecision = typeof PROMOTION_DECISIONS[number];
+export type PromotionBenchmarkSplit = "development" | "test";
+export type PromotionBenchmarkEvidenceClass = "synthetic_development" | "human_adjudicated_test" | "external_real_run";
+export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annotator" | "double_adjudicated";
+
+export interface PromotionBenchmarkSuiteManifest {
+  schema_version: "1.0";
+  suite_id: string;
+  evidence_class?: PromotionBenchmarkEvidenceClass;
+  paper_claim_eligible?: boolean;
+  adjudication_status?: PromotionBenchmarkAdjudicationStatus;
+  cases: string[];
+}
+
+export interface PromotionBenchmarkCaseManifest {
+  schema_version: "1.0";
+  case_id: string;
+  base_bundle_id: string;
+  split: PromotionBenchmarkSplit;
+  artifact_root: string;
+  source_sha256?: string;
+  artifact_sha256?: string;
+  mutation_manifest?: string;
+  mutation_family?: string;
+  gold: {
+    decision: PromotionDecision;
+    blocking_concerns: string[];
+    repair_owners: string[];
+  };
+}
+
+export interface PromotionBenchmarkConcernPrediction {
+  code: string;
+  severity: "blocking" | "warning";
+  evidence_refs?: string[];
+}
+
+export interface PromotionBenchmarkPrediction {
+  case_id: string;
+  system_id: string;
+  trial_id: string;
+  decision: PromotionDecision;
+  concerns: PromotionBenchmarkConcernPrediction[];
+  repair_owners: string[];
+  latency_ms?: number;
+  cost_usd?: number;
+}
+
+export interface PromotionBenchmarkValidationIssue {
+  code: string;
+  message: string;
+  ref?: string;
+}
+
+export interface LoadedPromotionBenchmarkSuite {
+  suite_path: string;
+  suite_root: string;
+  manifest: PromotionBenchmarkSuiteManifest;
+  cases: PromotionBenchmarkCaseManifest[];
+  case_artifact_roots: Record<string, string>;
+}
+
+export interface PromotionBenchmarkSystemMetrics {
+  system_id: string;
+  trial_count: number;
+  prediction_count: number;
+  covered_case_count: number;
+  expected_case_count: number;
+  coverage_rate: number;
+  exact_decision_accuracy: number;
+  macro_decision_f1: number;
+  false_paper_ready_count: number;
+  false_paper_ready_rate: number | null;
+  concern_acceptance_conflict_count: number;
+  concern_acceptance_conflict_rate: number | null;
+  clean_case_count: number;
+  clean_case_promotion_accuracy: number | null;
+  blocker_precision: number | null;
+  blocker_recall: number | null;
+  blocker_f1: number | null;
+  repair_owner_exact_match_accuracy: number | null;
+  trace_coverage: number | null;
+  mean_latency_ms: number | null;
+  total_cost_usd: number | null;
+  decision_confusion: Record<PromotionDecision, Record<PromotionDecision, number>>;
+  by_mutation_family: PromotionBenchmarkMutationFamilyMetrics[];
+}
+
+export interface PromotionBenchmarkPairedComparison {
+  system_a: string;
+  system_b: string;
+  common_case_count: number;
+  common_base_bundle_count: number;
+  decision_accuracy_delta: number;
+  decision_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
+  decision_accuracy_exact_paired_sign_test_p: number | null;
+  false_paper_ready_common_case_count: number;
+  false_paper_ready_rate_delta: number | null;
+  false_paper_ready_cluster_bootstrap_95_ci: [number, number] | null;
+  false_paper_ready_exact_paired_sign_test_p: number | null;
+}
+
+export interface PromotionBenchmarkMutationFamilyMetrics {
+  mutation_family: string;
+  case_count: number;
+  prediction_count: number;
+  exact_decision_accuracy: number;
+  false_paper_ready_rate: number | null;
+  blocker_recall: number | null;
+  repair_owner_exact_match_accuracy: number | null;
+}
+
+export interface PromotionBenchmarkScoreReport {
+  schema_version: "1.0";
+  generated_at: string;
+  suite_id: string;
+  evidence_class: PromotionBenchmarkEvidenceClass | "unspecified";
+  paper_claim_eligible: boolean;
+  adjudication_status: PromotionBenchmarkAdjudicationStatus | "unspecified";
+  suite_ref: string;
+  prediction_ref: string;
+  passed: boolean;
+  validation_issues: PromotionBenchmarkValidationIssue[];
+  case_count: number;
+  prediction_count: number;
+  systems: PromotionBenchmarkSystemMetrics[];
+  paired_analysis: {
+    inference_unit: "base_bundle_id";
+    bootstrap_replicates: number;
+    exploratory_only: boolean;
+    comparisons: PromotionBenchmarkPairedComparison[];
+  };
+}
+
+export interface ScorePromotionBenchmarkInput {
+  cwd: string;
+  suitePath: string;
+  predictionsPath: string;
+  outDir?: string;
+}
+
+const CLUSTER_BOOTSTRAP_REPLICATES = 5_000;
+
+export async function loadPromotionBenchmarkSuite(
+  suitePath: string
+): Promise<{ suite?: LoadedPromotionBenchmarkSuite; issues: PromotionBenchmarkValidationIssue[] }> {
+  const absoluteSuitePath = path.resolve(suitePath);
+  const suiteRoot = path.dirname(absoluteSuitePath);
+  const issues: PromotionBenchmarkValidationIssue[] = [];
+  const manifest = parseSuiteManifest(await readJson(absoluteSuitePath, issues, "suite_manifest_unreadable"), issues);
+  if (!manifest) return { issues };
+
+  const cases: PromotionBenchmarkCaseManifest[] = [];
+  const caseArtifactRoots: Record<string, string> = {};
+  const seenCaseIds = new Set<string>();
+  for (const caseRef of manifest.cases) {
+    const casePath = resolveContainedPath(suiteRoot, caseRef);
+    if (!casePath) {
+      issues.push({ code: "case_path_outside_suite", message: "Case manifest must stay inside the suite root.", ref: caseRef });
+      continue;
+    }
+    const benchmarkCase = parseCaseManifest(
+      await readJson(casePath, issues, "case_manifest_unreadable", caseRef),
+      caseRef,
+      issues
+    );
+    if (!benchmarkCase) continue;
+    if (seenCaseIds.has(benchmarkCase.case_id)) {
+      issues.push({ code: "duplicate_case_id", message: `Duplicate case id: ${benchmarkCase.case_id}.`, ref: caseRef });
+      continue;
+    }
+    seenCaseIds.add(benchmarkCase.case_id);
+    const artifactRoot = path.resolve(path.dirname(casePath), benchmarkCase.artifact_root);
+    if (!isContainedPath(suiteRoot, artifactRoot) || !(await directoryExists(artifactRoot))) {
+      issues.push({
+        code: "artifact_root_missing_or_outside_suite",
+        message: "Case artifact_root must resolve to an existing directory inside the suite root.",
+        ref: caseRef
+      });
+      continue;
+    }
+    if (benchmarkCase.mutation_manifest) {
+      const mutationManifestPath = path.resolve(path.dirname(casePath), benchmarkCase.mutation_manifest);
+      if (!isContainedPath(suiteRoot, mutationManifestPath) || !(await fileExists(mutationManifestPath))) {
+        issues.push({
+          code: "mutation_manifest_missing_or_outside_suite",
+          message: "Case mutation_manifest must resolve to an existing file inside the suite root.",
+          ref: caseRef
+        });
+        continue;
+      }
+    }
+    if (benchmarkCase.artifact_sha256) {
+      const actualHash = await hashPromotionArtifactTree(artifactRoot);
+      if (actualHash !== benchmarkCase.artifact_sha256) {
+        issues.push({
+          code: "artifact_hash_mismatch",
+          message: `Artifact hash mismatch for case ${benchmarkCase.case_id}.`,
+          ref: caseRef
+        });
+        continue;
+      }
+    }
+    caseArtifactRoots[benchmarkCase.case_id] = artifactRoot;
+    cases.push(benchmarkCase);
+  }
+
+  const splitByBase = new Map<string, PromotionBenchmarkSplit>();
+  const splitBySourceHash = new Map<string, PromotionBenchmarkSplit>();
+  for (const benchmarkCase of cases) {
+    const prior = splitByBase.get(benchmarkCase.base_bundle_id);
+    if (prior && prior !== benchmarkCase.split) {
+      issues.push({
+        code: "base_bundle_split_leakage",
+        message: `Base bundle ${benchmarkCase.base_bundle_id} appears in both development and test splits.`,
+        ref: benchmarkCase.case_id
+      });
+    } else {
+      splitByBase.set(benchmarkCase.base_bundle_id, benchmarkCase.split);
+    }
+    if (benchmarkCase.source_sha256) {
+      const priorHashSplit = splitBySourceHash.get(benchmarkCase.source_sha256);
+      if (priorHashSplit && priorHashSplit !== benchmarkCase.split) {
+        issues.push({
+          code: "source_bundle_split_leakage",
+          message: "Identical source bundle content appears in both development and test splits.",
+          ref: benchmarkCase.case_id
+        });
+      } else {
+        splitBySourceHash.set(benchmarkCase.source_sha256, benchmarkCase.split);
+      }
+    }
+  }
+  return {
+    suite: {
+      suite_path: absoluteSuitePath,
+      suite_root: suiteRoot,
+      manifest,
+      cases,
+      case_artifact_roots: caseArtifactRoots
+    },
+    issues
+  };
+}
+
+export async function scorePromotionBenchmarkFromFiles(
+  input: ScorePromotionBenchmarkInput
+): Promise<{ report: PromotionBenchmarkScoreReport; output_path: string; report_path: string }> {
+  const cwd = path.resolve(input.cwd);
+  const suitePath = path.resolve(cwd, input.suitePath);
+  const predictionsPath = path.resolve(cwd, input.predictionsPath);
+  const loaded = await loadPromotionBenchmarkSuite(suitePath);
+  const predictionIssues: PromotionBenchmarkValidationIssue[] = [];
+  const predictions = await readPredictions(predictionsPath, predictionIssues);
+  const issues = [...loaded.issues, ...predictionIssues];
+  const cases = loaded.suite?.cases || [];
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  const seen = new Set<string>();
+  const validPredictions: PromotionBenchmarkPrediction[] = [];
+
+  for (const prediction of predictions) {
+    if (!caseById.has(prediction.case_id)) {
+      issues.push({ code: "prediction_case_unknown", message: `Unknown case: ${prediction.case_id}.`, ref: prediction.case_id });
+      continue;
+    }
+    const key = `${prediction.system_id}\u0000${prediction.trial_id}\u0000${prediction.case_id}`;
+    if (seen.has(key)) {
+      issues.push({ code: "duplicate_prediction", message: "System, trial, and case tuples must be unique.", ref: prediction.case_id });
+      continue;
+    }
+    seen.add(key);
+    validPredictions.push(prediction);
+  }
+
+  const systems = [...groupBy(validPredictions, (prediction) => prediction.system_id).entries()]
+    .map(([systemId, rows]) => scoreSystem(systemId, rows, cases))
+    .sort((left, right) => left.system_id.localeCompare(right.system_id));
+  for (const system of systems) {
+    if (system.coverage_rate < 1) {
+      issues.push({
+        code: "system_case_coverage_incomplete",
+        message: `System ${system.system_id} covers ${system.covered_case_count}/${system.expected_case_count} cases.`,
+        ref: system.system_id
+      });
+    }
+  }
+  for (const [systemId, systemRows] of groupBy(validPredictions, (prediction) => prediction.system_id)) {
+    for (const [trialId, trialRows] of groupBy(systemRows, (prediction) => prediction.trial_id)) {
+      const coveredCases = new Set(trialRows.map((prediction) => prediction.case_id)).size;
+      if (coveredCases !== cases.length) {
+        issues.push({
+          code: "system_trial_case_coverage_incomplete",
+          message: `System ${systemId}, trial ${trialId} covers ${coveredCases}/${cases.length} cases.`,
+          ref: `${systemId}:${trialId}`
+        });
+      }
+    }
+  }
+  if (systems.length === 0) issues.push({ code: "no_scored_systems", message: "No valid predictions were available." });
+
+  const pairedComparisons = scorePairedComparisons(validPredictions, cases, loaded.suite?.manifest.suite_id || "invalid-suite");
+
+  const report: PromotionBenchmarkScoreReport = {
+    schema_version: "1.0",
+    generated_at: new Date().toISOString(),
+    suite_id: loaded.suite?.manifest.suite_id || "<invalid-suite>",
+    evidence_class: loaded.suite?.manifest.evidence_class || "unspecified",
+    paper_claim_eligible: loaded.suite?.manifest.paper_claim_eligible === true,
+    adjudication_status: loaded.suite?.manifest.adjudication_status || "unspecified",
+    suite_ref: portableRef(cwd, suitePath, "<external-suite>"),
+    prediction_ref: portableRef(cwd, predictionsPath, "<external-predictions>"),
+    passed: issues.length === 0,
+    validation_issues: issues,
+    case_count: cases.length,
+    prediction_count: validPredictions.length,
+    systems,
+    paired_analysis: {
+      inference_unit: "base_bundle_id",
+      bootstrap_replicates: CLUSTER_BOOTSTRAP_REPLICATES,
+      exploratory_only: loaded.suite?.manifest.paper_claim_eligible !== true,
+      comparisons: pairedComparisons
+    }
+  };
+  const outDir = path.resolve(cwd, input.outDir || path.join("outputs", "governance-benchmark", "promotion-score"));
+  await fs.mkdir(outDir, { recursive: true });
+  const outputPath = path.join(outDir, "promotion-score.json");
+  const reportPath = path.join(outDir, "promotion-score.md");
+  await writeJsonFile(outputPath, report);
+  await fs.writeFile(reportPath, renderPromotionScoreMarkdown(report), "utf8");
+  return {
+    report,
+    output_path: portableRef(cwd, outputPath, "<output>/promotion-score.json"),
+    report_path: portableRef(cwd, reportPath, "<output>/promotion-score.md")
+  };
+}
+
+function scoreSystem(
+  systemId: string,
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[]
+): PromotionBenchmarkSystemMetrics {
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  const confusion = emptyConfusion();
+  let exact = 0;
+  let falsePromotions = 0;
+  let nonPromotable = 0;
+  let conflicts = 0;
+  let withBlockingConcern = 0;
+  let clean = 0;
+  let cleanPromotions = 0;
+  let blockerTp = 0;
+  let blockerFp = 0;
+  let blockerFn = 0;
+  let repairCases = 0;
+  let repairExact = 0;
+  let concernCount = 0;
+  let tracedConcernCount = 0;
+  const latencies: number[] = [];
+  const costs: number[] = [];
+
+  for (const prediction of predictions) {
+    const benchmarkCase = caseById.get(prediction.case_id);
+    if (!benchmarkCase) continue;
+    confusion[benchmarkCase.gold.decision][prediction.decision] += 1;
+    if (prediction.decision === benchmarkCase.gold.decision) exact += 1;
+    if (benchmarkCase.gold.decision === "promote") {
+      clean += 1;
+      if (prediction.decision === "promote") cleanPromotions += 1;
+    } else {
+      nonPromotable += 1;
+      if (prediction.decision === "promote") falsePromotions += 1;
+    }
+
+    const blocking = prediction.concerns.filter((concern) => concern.severity === "blocking");
+    if (blocking.length > 0) {
+      withBlockingConcern += 1;
+      if (prediction.decision === "promote") conflicts += 1;
+    }
+    const expectedBlockers = new Set(benchmarkCase.gold.blocking_concerns);
+    const predictedBlockers = new Set(blocking.map((concern) => concern.code));
+    for (const code of predictedBlockers) expectedBlockers.has(code) ? blockerTp += 1 : blockerFp += 1;
+    for (const code of expectedBlockers) if (!predictedBlockers.has(code)) blockerFn += 1;
+
+    if (benchmarkCase.gold.repair_owners.length > 0) {
+      repairCases += 1;
+      if (setsEqual(new Set(benchmarkCase.gold.repair_owners), new Set(prediction.repair_owners))) repairExact += 1;
+    }
+    concernCount += prediction.concerns.length;
+    tracedConcernCount += prediction.concerns.filter((concern) => (concern.evidence_refs?.length || 0) > 0).length;
+    if (isNonNegativeFinite(prediction.latency_ms)) latencies.push(prediction.latency_ms);
+    if (isNonNegativeFinite(prediction.cost_usd)) costs.push(prediction.cost_usd);
+  }
+
+  const precision = ratioOrNull(blockerTp, blockerTp + blockerFp);
+  const recall = ratioOrNull(blockerTp, blockerTp + blockerFn);
+  const coveredCases = new Set(predictions.map((prediction) => prediction.case_id)).size;
+  return {
+    system_id: systemId,
+    trial_count: new Set(predictions.map((prediction) => prediction.trial_id)).size,
+    prediction_count: predictions.length,
+    covered_case_count: coveredCases,
+    expected_case_count: cases.length,
+    coverage_rate: cases.length > 0 ? coveredCases / cases.length : 0,
+    exact_decision_accuracy: predictions.length > 0 ? exact / predictions.length : 0,
+    macro_decision_f1: macroF1(confusion),
+    false_paper_ready_count: falsePromotions,
+    false_paper_ready_rate: ratioOrNull(falsePromotions, nonPromotable),
+    concern_acceptance_conflict_count: conflicts,
+    concern_acceptance_conflict_rate: ratioOrNull(conflicts, withBlockingConcern),
+    clean_case_count: clean,
+    clean_case_promotion_accuracy: ratioOrNull(cleanPromotions, clean),
+    blocker_precision: precision,
+    blocker_recall: recall,
+    blocker_f1: harmonicMean(precision, recall),
+    repair_owner_exact_match_accuracy: ratioOrNull(repairExact, repairCases),
+    trace_coverage: ratioOrNull(tracedConcernCount, concernCount),
+    mean_latency_ms: meanOrNull(latencies),
+    total_cost_usd: costs.length > 0 ? costs.reduce((sum, value) => sum + value, 0) : null,
+    decision_confusion: confusion,
+    by_mutation_family: scoreMutationFamilies(predictions, cases)
+  };
+}
+
+function scoreMutationFamilies(
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[]
+): PromotionBenchmarkMutationFamilyMetrics[] {
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  const grouped = groupBy(predictions, (prediction) => caseById.get(prediction.case_id)?.mutation_family || "clean_control");
+  return [...grouped.entries()].map(([mutationFamily, rows]) => {
+    let exact = 0;
+    let falsePromotions = 0;
+    let nonPromotable = 0;
+    let blockerTp = 0;
+    let blockerFn = 0;
+    let repairCases = 0;
+    let repairExact = 0;
+    for (const prediction of rows) {
+      const benchmarkCase = caseById.get(prediction.case_id);
+      if (!benchmarkCase) continue;
+      if (prediction.decision === benchmarkCase.gold.decision) exact += 1;
+      if (benchmarkCase.gold.decision !== "promote") {
+        nonPromotable += 1;
+        if (prediction.decision === "promote") falsePromotions += 1;
+      }
+      const expected = new Set(benchmarkCase.gold.blocking_concerns);
+      const predicted = new Set(
+        prediction.concerns.filter((concern) => concern.severity === "blocking").map((concern) => concern.code)
+      );
+      for (const code of expected) predicted.has(code) ? blockerTp += 1 : blockerFn += 1;
+      if (benchmarkCase.gold.repair_owners.length > 0) {
+        repairCases += 1;
+        if (setsEqual(new Set(benchmarkCase.gold.repair_owners), new Set(prediction.repair_owners))) repairExact += 1;
+      }
+    }
+    return {
+      mutation_family: mutationFamily,
+      case_count: new Set(rows.map((row) => row.case_id)).size,
+      prediction_count: rows.length,
+      exact_decision_accuracy: rows.length > 0 ? exact / rows.length : 0,
+      false_paper_ready_rate: ratioOrNull(falsePromotions, nonPromotable),
+      blocker_recall: ratioOrNull(blockerTp, blockerTp + blockerFn),
+      repair_owner_exact_match_accuracy: ratioOrNull(repairExact, repairCases)
+    };
+  }).sort((left, right) => left.mutation_family.localeCompare(right.mutation_family));
+}
+
+function scorePairedComparisons(
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[],
+  suiteId: string
+): PromotionBenchmarkPairedComparison[] {
+  const rowsBySystem = groupBy(predictions, (prediction) => prediction.system_id);
+  const systemIds = [...rowsBySystem.keys()].sort();
+  const comparisons: PromotionBenchmarkPairedComparison[] = [];
+  for (let leftIndex = 0; leftIndex < systemIds.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < systemIds.length; rightIndex += 1) {
+      const systemA = systemIds[leftIndex];
+      const systemB = systemIds[rightIndex];
+      const decisionA = aggregateCaseMetric(rowsBySystem.get(systemA) || [], cases, "decision_accuracy");
+      const decisionB = aggregateCaseMetric(rowsBySystem.get(systemB) || [], cases, "decision_accuracy");
+      const decisionDiffs = pairedCaseDifferences(decisionA, decisionB, cases);
+      const falsePromotionA = aggregateCaseMetric(rowsBySystem.get(systemA) || [], cases, "false_paper_ready");
+      const falsePromotionB = aggregateCaseMetric(rowsBySystem.get(systemB) || [], cases, "false_paper_ready");
+      const falsePromotionDiffs = pairedCaseDifferences(falsePromotionA, falsePromotionB, cases);
+      const decisionStats = clusteredDifferenceStats(decisionDiffs, `${suiteId}\u0000${systemA}\u0000${systemB}\u0000decision`);
+      const falsePromotionStats = clusteredDifferenceStats(
+        falsePromotionDiffs,
+        `${suiteId}\u0000${systemA}\u0000${systemB}\u0000false-promotion`
+      );
+      comparisons.push({
+        system_a: systemA,
+        system_b: systemB,
+        common_case_count: decisionDiffs.length,
+        common_base_bundle_count: new Set(decisionDiffs.map((row) => row.base_bundle_id)).size,
+        decision_accuracy_delta: decisionStats.delta ?? 0,
+        decision_accuracy_cluster_bootstrap_95_ci: decisionStats.ci,
+        decision_accuracy_exact_paired_sign_test_p: decisionStats.p,
+        false_paper_ready_common_case_count: falsePromotionDiffs.length,
+        false_paper_ready_rate_delta: falsePromotionStats.delta,
+        false_paper_ready_cluster_bootstrap_95_ci: falsePromotionStats.ci,
+        false_paper_ready_exact_paired_sign_test_p: falsePromotionStats.p
+      });
+    }
+  }
+  return comparisons;
+}
+
+function aggregateCaseMetric(
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[],
+  metric: "decision_accuracy" | "false_paper_ready"
+): Map<string, number> {
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  const values = new Map<string, number[]>();
+  for (const prediction of predictions) {
+    const benchmarkCase = caseById.get(prediction.case_id);
+    if (!benchmarkCase || (metric === "false_paper_ready" && benchmarkCase.gold.decision === "promote")) continue;
+    const value = metric === "decision_accuracy"
+      ? Number(prediction.decision === benchmarkCase.gold.decision)
+      : Number(prediction.decision === "promote");
+    values.set(prediction.case_id, [...(values.get(prediction.case_id) || []), value]);
+  }
+  return new Map([...values.entries()].map(([caseId, rows]) => [caseId, rows.reduce((sum, value) => sum + value, 0) / rows.length]));
+}
+
+function pairedCaseDifferences(
+  left: Map<string, number>,
+  right: Map<string, number>,
+  cases: PromotionBenchmarkCaseManifest[]
+): Array<{ base_bundle_id: string; difference: number }> {
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  return [...left.entries()].flatMap(([caseId, leftValue]) => {
+    const rightValue = right.get(caseId);
+    const benchmarkCase = caseById.get(caseId);
+    return rightValue == null || !benchmarkCase
+      ? []
+      : [{ base_bundle_id: benchmarkCase.base_bundle_id, difference: leftValue - rightValue }];
+  });
+}
+
+function clusteredDifferenceStats(
+  rows: Array<{ base_bundle_id: string; difference: number }>,
+  seedMaterial: string
+): { delta: number | null; ci: [number, number] | null; p: number | null } {
+  if (rows.length === 0) return { delta: null, ci: null, p: null };
+  const delta = rows.reduce((sum, row) => sum + row.difference, 0) / rows.length;
+  const clusters = [...groupBy(rows, (row) => row.base_bundle_id).values()];
+  const clusterMeans = clusters.map((cluster) => cluster.reduce((sum, row) => sum + row.difference, 0) / cluster.length);
+  const p = exactPairedSignTest(clusterMeans);
+  if (clusters.length < 2) return { delta, ci: null, p };
+
+  const random = deterministicRandom(seedMaterial);
+  const bootstrap: number[] = [];
+  for (let replicate = 0; replicate < CLUSTER_BOOTSTRAP_REPLICATES; replicate += 1) {
+    let sum = 0;
+    let count = 0;
+    for (let draw = 0; draw < clusters.length; draw += 1) {
+      const cluster = clusters[Math.floor(random() * clusters.length)];
+      for (const row of cluster) {
+        sum += row.difference;
+        count += 1;
+      }
+    }
+    bootstrap.push(sum / count);
+  }
+  bootstrap.sort((left, right) => left - right);
+  return { delta, ci: [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)], p };
+}
+
+function exactPairedSignTest(values: number[]): number | null {
+  const nonTies = values.filter((value) => Math.abs(value) > Number.EPSILON);
+  if (nonTies.length === 0) return null;
+  const positives = nonTies.filter((value) => value > 0).length;
+  const tail = Math.min(positives, nonTies.length - positives);
+  let cumulative = 0;
+  for (let successes = 0; successes <= tail; successes += 1) {
+    cumulative += binomialCoefficient(nonTies.length, successes) * (0.5 ** nonTies.length);
+  }
+  return Math.min(1, 2 * cumulative);
+}
+
+function binomialCoefficient(n: number, k: number): number {
+  const limit = Math.min(k, n - k);
+  let result = 1;
+  for (let index = 1; index <= limit; index += 1) result = (result * (n - limit + index)) / index;
+  return result;
+}
+
+function deterministicRandom(seedMaterial: string): () => number {
+  let state = Number.parseInt(createHash("sha256").update(seedMaterial).digest("hex").slice(0, 8), 16) || 1;
+  return () => {
+    state ^= state << 13;
+    state ^= state >>> 17;
+    state ^= state << 5;
+    return (state >>> 0) / 0x1_0000_0000;
+  };
+}
+
+function quantile(sortedValues: number[], probability: number): number {
+  return sortedValues[Math.floor((sortedValues.length - 1) * probability)];
+}
+
+function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): string {
+  const lines = [
+    "# Promotion Benchmark Score",
+    "",
+    `- Suite: ${report.suite_id}`,
+    `- Cases: ${report.case_count}`,
+    `- Predictions: ${report.prediction_count}`,
+    `- Validation: ${report.passed ? "passed" : "failed"}`,
+    `- Evidence class: ${report.evidence_class}`,
+    `- Paper-claim eligible: ${report.paper_claim_eligible}`,
+    `- Adjudication: ${report.adjudication_status}`,
+    "",
+    "## System Summary",
+    "",
+    "| System | Decision accuracy | Macro-F1 | False promotion | Concern-acceptance conflict | Clean promotion | Blocker F1 | Repair owner | Trace coverage |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...report.systems.map((system) => [
+      system.system_id,
+      formatMetric(system.exact_decision_accuracy),
+      formatMetric(system.macro_decision_f1),
+      formatMetric(system.false_paper_ready_rate),
+      formatMetric(system.concern_acceptance_conflict_rate),
+      formatMetric(system.clean_case_promotion_accuracy),
+      formatMetric(system.blocker_f1),
+      formatMetric(system.repair_owner_exact_match_accuracy),
+      formatMetric(system.trace_coverage)
+    ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
+    "",
+    "## Mutation Families",
+    ""
+  ];
+  for (const system of report.systems) {
+    lines.push(
+      `### ${system.system_id}`,
+      "",
+      "| Family | Cases | Decision accuracy | False promotion | Blocker recall | Repair owner |",
+      "| --- | ---: | ---: | ---: | ---: | ---: |",
+      ...system.by_mutation_family.map((family) =>
+        `| ${family.mutation_family} | ${family.case_count} | ${formatMetric(family.exact_decision_accuracy)} | ${formatMetric(family.false_paper_ready_rate)} | ${formatMetric(family.blocker_recall)} | ${formatMetric(family.repair_owner_exact_match_accuracy)} |`
+      ),
+      ""
+    );
+  }
+  lines.push(
+    "## Paired Analysis",
+    "",
+    `Inference unit: ${report.paired_analysis.inference_unit}. Bootstrap replicates: ${report.paired_analysis.bootstrap_replicates}. Exploratory only: ${report.paired_analysis.exploratory_only}.`,
+    "",
+    "| System A | System B | Decision delta | Decision 95% CI | Sign-test p | False-promotion delta | False-promotion 95% CI | Sign-test p |",
+    "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ...report.paired_analysis.comparisons.map((comparison) =>
+      `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
+    ),
+    ""
+  );
+  if (report.validation_issues.length > 0) {
+    lines.push("## Validation Issues", "", ...report.validation_issues.map((issue) => `- ${issue.code}: ${issue.message}`), "");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatInterval(value: [number, number] | null): string {
+  return value == null ? "n/a" : `[${value[0].toFixed(3)}, ${value[1].toFixed(3)}]`;
+}
+
+function formatMetric(value: number | null): string {
+  return value == null ? "n/a" : value.toFixed(3);
+}
+
+function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidationIssue[]): PromotionBenchmarkSuiteManifest | undefined {
+  if (!isRecord(value) || value.schema_version !== "1.0" || !nonEmptyString(value.suite_id) || !stringArray(value.cases)?.length) {
+    issues.push({ code: "suite_manifest_invalid", message: "Suite manifest requires schema_version=1.0, suite_id, and cases." });
+    return undefined;
+  }
+  if (value.evidence_class !== undefined && !isPromotionEvidenceClass(value.evidence_class)) {
+    issues.push({ code: "suite_evidence_class_invalid", message: "Suite evidence_class is invalid." });
+    return undefined;
+  }
+  if (value.paper_claim_eligible !== undefined && typeof value.paper_claim_eligible !== "boolean") {
+    issues.push({ code: "suite_paper_claim_eligibility_invalid", message: "Suite paper_claim_eligible must be boolean." });
+    return undefined;
+  }
+  if (value.adjudication_status !== undefined && !isPromotionAdjudicationStatus(value.adjudication_status)) {
+    issues.push({ code: "suite_adjudication_status_invalid", message: "Suite adjudication_status is invalid." });
+    return undefined;
+  }
+  return {
+    schema_version: "1.0",
+    suite_id: value.suite_id,
+    ...(value.evidence_class ? { evidence_class: value.evidence_class } : {}),
+    ...(typeof value.paper_claim_eligible === "boolean" ? { paper_claim_eligible: value.paper_claim_eligible } : {}),
+    ...(value.adjudication_status ? { adjudication_status: value.adjudication_status } : {}),
+    cases: stringArray(value.cases) || []
+  };
+}
+
+function parseCaseManifest(
+  value: unknown,
+  ref: string,
+  issues: PromotionBenchmarkValidationIssue[]
+): PromotionBenchmarkCaseManifest | undefined {
+  if (!isRecord(value) || value.schema_version !== "1.0" || !nonEmptyString(value.case_id)
+      || !nonEmptyString(value.base_bundle_id) || (value.split !== "development" && value.split !== "test")
+      || !nonEmptyString(value.artifact_root) || !isRecord(value.gold)
+      || !isPromotionDecision(value.gold.decision) || !stringArray(value.gold.blocking_concerns)
+      || !stringArray(value.gold.repair_owners)) {
+    issues.push({ code: "case_manifest_invalid", message: "Case manifest has invalid identity, split, artifact, or gold fields.", ref });
+    return undefined;
+  }
+  return {
+    schema_version: "1.0",
+    case_id: value.case_id,
+    base_bundle_id: value.base_bundle_id,
+    split: value.split,
+    artifact_root: value.artifact_root,
+    ...(nonEmptyString(value.source_sha256) ? { source_sha256: value.source_sha256 } : {}),
+    ...(nonEmptyString(value.artifact_sha256) ? { artifact_sha256: value.artifact_sha256 } : {}),
+    ...(nonEmptyString(value.mutation_manifest) ? { mutation_manifest: value.mutation_manifest } : {}),
+    ...(nonEmptyString(value.mutation_family) ? { mutation_family: value.mutation_family } : {}),
+    gold: {
+      decision: value.gold.decision,
+      blocking_concerns: stringArray(value.gold.blocking_concerns) || [],
+      repair_owners: stringArray(value.gold.repair_owners) || []
+    }
+  };
+}
+
+async function readPredictions(filePath: string, issues: PromotionBenchmarkValidationIssue[]): Promise<PromotionBenchmarkPrediction[]> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    issues.push({ code: "prediction_file_unreadable", message: error instanceof Error ? error.message : String(error) });
+    return [];
+  }
+  const predictions: PromotionBenchmarkPrediction[] = [];
+  for (const [index, line] of raw.split(/\r?\n/gu).entries()) {
+    if (!line.trim()) continue;
+    try {
+      const prediction = parsePrediction(JSON.parse(line), index + 1, issues);
+      if (prediction) predictions.push(prediction);
+    } catch {
+      issues.push({ code: "prediction_json_invalid", message: `Prediction line ${index + 1} is not valid JSON.` });
+    }
+  }
+  return predictions;
+}
+
+function parsePrediction(
+  value: unknown,
+  line: number,
+  issues: PromotionBenchmarkValidationIssue[]
+): PromotionBenchmarkPrediction | undefined {
+  if (!isRecord(value) || !nonEmptyString(value.case_id) || !nonEmptyString(value.system_id)
+      || !nonEmptyString(value.trial_id) || !isPromotionDecision(value.decision)
+      || !Array.isArray(value.concerns) || !stringArray(value.repair_owners)) {
+    issues.push({ code: "prediction_schema_invalid", message: `Prediction line ${line} has an invalid schema.` });
+    return undefined;
+  }
+  const concerns: PromotionBenchmarkConcernPrediction[] = [];
+  for (const concern of value.concerns) {
+    if (!isRecord(concern) || !nonEmptyString(concern.code)
+        || (concern.severity !== "blocking" && concern.severity !== "warning")
+        || (concern.evidence_refs !== undefined && !stringArray(concern.evidence_refs))) {
+      issues.push({ code: "prediction_concern_invalid", message: `Prediction line ${line} has an invalid concern.` });
+      return undefined;
+    }
+    concerns.push({
+      code: concern.code,
+      severity: concern.severity,
+      ...(concern.evidence_refs ? { evidence_refs: stringArray(concern.evidence_refs) || [] } : {})
+    });
+  }
+  return {
+    case_id: value.case_id,
+    system_id: value.system_id,
+    trial_id: value.trial_id,
+    decision: value.decision,
+    concerns,
+    repair_owners: stringArray(value.repair_owners) || [],
+    ...(isNonNegativeFinite(value.latency_ms) ? { latency_ms: value.latency_ms } : {}),
+    ...(isNonNegativeFinite(value.cost_usd) ? { cost_usd: value.cost_usd } : {})
+  };
+}
+
+async function readJson(filePath: string, issues: PromotionBenchmarkValidationIssue[], code: string, ref?: string): Promise<unknown> {
+  try {
+    return JSON.parse(await fs.readFile(filePath, "utf8"));
+  } catch (error) {
+    issues.push({ code, message: error instanceof Error ? error.message : String(error), ...(ref ? { ref } : {}) });
+    return undefined;
+  }
+}
+
+function emptyConfusion(): Record<PromotionDecision, Record<PromotionDecision, number>> {
+  return Object.fromEntries(PROMOTION_DECISIONS.map((gold) => [
+    gold,
+    Object.fromEntries(PROMOTION_DECISIONS.map((predicted) => [predicted, 0]))
+  ])) as Record<PromotionDecision, Record<PromotionDecision, number>>;
+}
+
+function macroF1(confusion: Record<PromotionDecision, Record<PromotionDecision, number>>): number {
+  const scores = PROMOTION_DECISIONS.map((decision) => {
+    const tp = confusion[decision][decision];
+    const fp = PROMOTION_DECISIONS.filter((gold) => gold !== decision).reduce((sum, gold) => sum + confusion[gold][decision], 0);
+    const fn = PROMOTION_DECISIONS.filter((predicted) => predicted !== decision).reduce((sum, predicted) => sum + confusion[decision][predicted], 0);
+    return harmonicMean(ratioOrNull(tp, tp + fp), ratioOrNull(tp, tp + fn)) || 0;
+  });
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
+}
+
+function resolveContainedPath(root: string, value: string): string | undefined {
+  const resolved = path.resolve(root, value);
+  return isContainedPath(root, resolved) ? resolved : undefined;
+}
+
+function isContainedPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function directoryExists(directoryPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(directoryPath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function hashPromotionArtifactTree(root: string): Promise<string> {
+  const absoluteRoot = path.resolve(root);
+  const hash = createHash("sha256");
+  const visit = async (current: string): Promise<void> => {
+    const stat = await fs.lstat(current);
+    const relative = path.relative(absoluteRoot, current).replace(/\\/gu, "/") || ".";
+    if (stat.isSymbolicLink()) {
+      throw new Error(`Symbolic links are not allowed in promotion benchmark artifacts: ${relative}`);
+    }
+    if (stat.isDirectory()) {
+      hash.update(`directory\0${relative}\0`);
+      const entries = await fs.readdir(current);
+      for (const entry of entries.sort()) await visit(path.join(current, entry));
+      return;
+    }
+    if (!stat.isFile()) throw new Error(`Unsupported artifact type: ${relative}`);
+    hash.update(`file\0${relative}\0`);
+    hash.update(await fs.readFile(current));
+    hash.update("\0");
+  };
+  await visit(absoluteRoot);
+  return hash.digest("hex");
+}
+
+function harmonicMean(left: number | null, right: number | null): number | null {
+  return left == null || right == null || left + right === 0 ? null : (2 * left * right) / (left + right);
+}
+
+function ratioOrNull(numerator: number, denominator: number): number | null {
+  return denominator > 0 ? numerator / denominator : null;
+}
+
+function meanOrNull(values: number[]): number | null {
+  return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isPromotionDecision(value: unknown): value is PromotionDecision {
+  return typeof value === "string" && (PROMOTION_DECISIONS as readonly string[]).includes(value);
+}
+
+function isPromotionEvidenceClass(value: unknown): value is PromotionBenchmarkEvidenceClass {
+  return value === "synthetic_development" || value === "human_adjudicated_test" || value === "external_real_run";
+}
+
+function isPromotionAdjudicationStatus(value: unknown): value is PromotionBenchmarkAdjudicationStatus {
+  return value === "unreviewed" || value === "single_annotator" || value === "double_adjudicated";
+}
+
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function stringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every(nonEmptyString) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function setsEqual(left: Set<string>, right: Set<string>): boolean {
+  return left.size === right.size && [...left].every((value) => right.has(value));
+}
+
+function groupBy<T>(values: T[], keyFor: (value: T) => string): Map<string, T[]> {
+  const groups = new Map<string, T[]>();
+  for (const value of values) {
+    const key = keyFor(value);
+    groups.set(key, [...(groups.get(key) || []), value]);
+  }
+  return groups;
+}
+
+function portableRef(cwd: string, absolutePath: string, fallback: string): string {
+  const relative = path.relative(cwd, absolutePath).replace(/\\/gu, "/");
+  return relative && !relative.startsWith("../") ? relative : fallback;
+}

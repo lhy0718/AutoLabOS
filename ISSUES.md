@@ -10706,15 +10706,15 @@ Path placeholders:
   - `LV-333` repair implemented with targeted regression, build, and same-flow revalidation on 2026-05-05. The Codex OAuth Responses SSE reader now honors abort while awaiting stream reads.
   - `LV-332` reproduced during P6 helper regression testing. Vitest global setup/teardown deleted the real P6 live validation workspace because `p6-paper-ready-live` was not in the validation-root preservation allowlist, removing the active run artifacts before continuation. Repair in progress by preserving the P6 real live workspace during test cleanup.
   - `LV-331` reproduced during P6 paper-ready full live validation automation. `npm run p6:continue` successfully approved `collect_papers` and started `analyze_papers`, but the PTY helper kept waiting for a narrow approval log pattern, timed out while `analyze_papers` was already running, then terminated the TUI process. The live run was left with `analyze_papers.status: running` and no after-checkpoint/evidence artifact yet. Repair in progress in the P6 PTY helper and same-flow revalidation pending.
-  - `LV-330` reproduced during rebuilt P0-8 AGB-001 same-flow TUI revalidation after the LV-329 repair. The missing-baseline brief contract was correctly blocked at `design_experiments`, but the runtime treated that deterministic governance blocker as retryable, exhausted three `design_experiments` attempts, then auto-rolled back to `generate_hypotheses`. Repair implemented in the state graph failure classifier with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing: the repaired run failed once at `design_experiments`, did not emit `NODE_RETRY` or `NODE_ROLLBACK`, and left downstream experiment nodes pending.
-  - `LV-329` reproduced during rebuilt P0-8 AGB-001 same-flow TUI revalidation after the LV-328 repair. The wrapper-alias failure no longer reproduced; the run advanced into `run_experiments`, then failed after 9 `run_experiments` executions and 2 automatic rollbacks because the AGB seed artifact-audit brief explicitly has no baseline/locked split while the generated experiment plan and runner require a baseline-first locked train/test split. Repair implemented in the brief-vs-design consistency gate with targeted regression, build, full test, harness validation, and rebuilt same-flow TUI revalidation passing for the original locked-split projection symptom: the rebuilt run blocked at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED` before `implement_experiments` or `run_experiments`.
-  - `LV-328` reproduced in rebuilt P0-8 AGB-001 same-flow TUI validation while revalidating the LV-327 repair. The regenerated runner no longer failed at the support-split training-record boundary, but then failed `run_experiments` because `_invoke_runtime_wrapper(...)` searched final wrapper names while the generated script exposed only implementation-shaped helpers such as `execute_experiment(...)`. Repair implemented with targeted regression, build, full test, harness validation, and same-flow live revalidation passing for the original wrapper-alias symptom.
-  - `LV-327` reproduced in rebuilt P0-8 AGB-001 same-flow TUI validation after the evidence-gated backtrack retry. The regenerated retrieval-feature runner passed local `py_compile` but failed `run_experiments` because `_training_records()` only accepted `split == "train"` while the locked seed dataset used `SUPPORT_RECORDS` / `SUPPORT_SPLIT = "support"` as the fixed training evidence. Repair implemented with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing for the original support-split symptom.
-  - `LV-326` reproduced in rebuilt P0-8 AGB-001 same-flow TUI validation and same-run repair succeeded. The first rebuilt `run_experiments` attempt produced metrics without `accuracy_delta_vs_baseline`; the auto-repair regenerated the runner, `run_experiments` passed, and `analyze_results` correctly backtracked to `design_experiments` because the objective remained unmet and evidence was weak.
+  - `LV-330` reproduced during rebuilt P0-8 case-missing-baseline same-flow TUI revalidation after the LV-329 repair. The missing-baseline brief contract was correctly blocked at `design_experiments`, but the runtime treated that deterministic governance blocker as retryable, exhausted three `design_experiments` attempts, then auto-rolled back to `generate_hypotheses`. Repair implemented in the state graph failure classifier with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing: the repaired run failed once at `design_experiments`, did not emit `NODE_RETRY` or `NODE_ROLLBACK`, and left downstream experiment nodes pending.
+  - `LV-329` reproduced during rebuilt P0-8 case-missing-baseline same-flow TUI revalidation after the LV-328 repair. The wrapper-alias failure no longer reproduced; the run advanced into `run_experiments`, then failed after 9 `run_experiments` executions and 2 automatic rollbacks because the fixed-seed artifact-audit brief explicitly has no baseline/locked split while the generated experiment plan and runner require a baseline-first locked train/test split. Repair implemented in the brief-vs-design consistency gate with targeted regression, build, full test, harness validation, and rebuilt same-flow TUI revalidation passing for the original locked-split projection symptom: the rebuilt run blocked at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED` before `implement_experiments` or `run_experiments`.
+  - `LV-328` reproduced in rebuilt P0-8 case-missing-baseline same-flow TUI validation while revalidating the LV-327 repair. The regenerated runner no longer failed at the support-split training-record boundary, but then failed `run_experiments` because `_invoke_runtime_wrapper(...)` searched final wrapper names while the generated script exposed only implementation-shaped helpers such as `execute_experiment(...)`. Repair implemented with targeted regression, build, full test, harness validation, and same-flow live revalidation passing for the original wrapper-alias symptom.
+  - `LV-327` reproduced in rebuilt P0-8 case-missing-baseline same-flow TUI validation after the evidence-gated backtrack retry. The regenerated retrieval-feature runner passed local `py_compile` but failed `run_experiments` because `_training_records()` only accepted `split == "train"` while the locked seed dataset used `SUPPORT_RECORDS` / `SUPPORT_SPLIT = "support"` as the fixed training evidence. Repair implemented with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing for the original support-split symptom.
+  - `LV-326` reproduced in rebuilt P0-8 case-missing-baseline same-flow TUI validation and same-run repair succeeded. The first rebuilt `run_experiments` attempt produced metrics without `accuracy_delta_vs_baseline`; the auto-repair regenerated the runner, `run_experiments` passed, and `analyze_results` correctly backtracked to `design_experiments` because the objective remained unmet and evidence was weak.
   - `LV-325` repair implemented with targeted regression, build, full test, harness validation, and rebuilt same-flow live revalidation passing for the original resolver-mismatch symptom. P0-8 advanced through `run_experiments` after a later same-run metrics-contract repair, then backtracked from `analyze_results` on evidence quality.
-  - `LV-324` repair implemented with automated regression, build, and harness validation passing; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-323 repair advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and failed to unwrap the returned `conditions` mapping.
-  - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
-  - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 AGB-001 same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
+  - `LV-324` repair implemented with automated regression, build, and harness validation passing; same-flow live revalidation pending. P0-8 case-missing-baseline same-flow TUI revalidation after the LV-323 repair advanced past dataset-dispatch mismatch, then exposed a generated baseline-first evaluator whose final dispatcher called `run_baseline_first_condition_evaluation(records)` without `records` and failed to unwrap the returned `conditions` mapping.
+  - `LV-323` repair implemented; same-flow live revalidation pending. P0-8 case-missing-baseline same-flow TUI revalidation after the LV-322 repair advanced past rollback artifact loss, then exposed a generated runner whose final dataset dispatcher could not invoke `load_dataset(config)` and did not search generated `fallback_dataset()`.
+  - `LV-322` repair implemented; same-flow live revalidation pending. P0-8 case-missing-baseline same-flow TUI revalidation after the LV-320 repair rolled back from `run_experiments` to `implement_experiments`, then failed because the public experiment runner path no longer existed.
   - `LV-321` repair implemented; same-flow live revalidation pending. The P0-8 rerun advanced past the LV-320 `records` TypeError, then exposed a generated numeric-helper alias mismatch where `_coerce_float(...)` was called while only `coerce_float(...)` existed.
   - `LV-320` repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02. The repair wraps generated `compute_classification_metrics(...)` helpers that require `records` when generated call sites omit that argument. Resume/reload still needs UI projection review for `interaction: busy`.
   - `LV-319` active: same-flow Web API revalidation after the LV-318 metrics-payload arity repair advanced through final payload construction, but the generated runner now writes only failed condition rows because `EleutherAI/pythia-410m` model configuration cannot be loaded in the validation environment. The metrics contract then fails because `accuracy_delta_vs_baseline` is absent and 0 successful tuned conditions were observed.
@@ -13342,7 +13342,7 @@ Path placeholders:
 
 ## Issue: LV-330
 
-- Status: repair implemented after rebuilt P0-8 AGB-001 same-flow TUI reproduction on 2026-05-03 KST; same-flow live revalidation passed on 2026-05-03 KST
+- Status: repair implemented after rebuilt P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-03 KST; same-flow live revalidation passed on 2026-05-03 KST
 - Validation target: deterministic brief-contract blockers from `design_experiments` should stop as a governed blocked state instead of consuming identical retries or rolling back to upstream generation.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
@@ -13350,12 +13350,12 @@ Path placeholders:
   - reproduction run: `f4584126-cc2d-484f-8327-1aaf3c03e68a`
   - revalidation run after repair: `71fee061-6751-4b64-a2b2-39aa02fd88d6`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-329 brief-vs-design consistency repair.
-  2. Start a fresh same-flow P0-8 AGB-001 TUI run with the `gated` benchmark condition.
-  3. Run `/doctor`, then start the external AGB-001 brief through `/brief start <path-to-AGB-001-brief.md>`.
+  2. Start a fresh same-flow P0-8 case-missing-baseline TUI run with the `gated` benchmark condition.
+  3. Run `/doctor`, then start the external case-missing-baseline brief through `/brief start <path-to-case-missing-baseline-brief.md>`.
   4. Let the run progress through `collect_papers`, `analyze_papers`, and `generate_hypotheses`.
   5. Let `design_experiments` return the missing-baseline brief-contract blocker.
 
@@ -13414,25 +13414,25 @@ Path placeholders:
 
 ## Issue: LV-329
 
-- Status: repair implemented with automated validation after rebuilt P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02; rebuilt same-flow live revalidation passed for the original locked-split projection symptom on 2026-05-03 KST
-- Validation target: AGB-001 live governance-block validation should preserve the brief's seed artifact-audit contract and missing-baseline claim ceiling instead of projecting it into an executable locked train/test classification experiment.
+- Status: repair implemented with automated validation after rebuilt P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02; rebuilt same-flow live revalidation passed for the original locked-split projection symptom on 2026-05-03 KST
+- Validation target: case-missing-baseline live governance-block validation should preserve the brief's seed artifact-audit contract and missing-baseline claim ceiling instead of projecting it into an executable locked train/test classification experiment.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `57e75851-3f00-40ab-aa78-039eb216c60a`
   - revalidation run after repair: `f4584126-cc2d-484f-8327-1aaf3c03e68a`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-328 runtime-wrapper alias repair.
-  2. Start a fresh same-flow P0-8 AGB-001 TUI run with the `gated` benchmark condition.
-  3. Run `/doctor`, then start the external AGB-001 brief through `/brief start <path-to-AGB-001-brief.md>`.
+  2. Start a fresh same-flow P0-8 case-missing-baseline TUI run with the `gated` benchmark condition.
+  3. Run `/doctor`, then start the external case-missing-baseline brief through `/brief start <path-to-case-missing-baseline-brief.md>`.
   4. Let the run progress through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, and `implement_experiments`.
   5. Let `run_experiments` execute after the generated runner passes local verification and after automatic rollback/repair attempts.
 
 - Expected behavior:
-  - Because the AGB seed brief defines a seed artifact audit with a result table and an intentionally absent baseline, the governed workflow should preserve that contract.
+  - Because the fixed-seed brief defines an artifact audit with a result table and an intentionally absent baseline, the governed workflow should preserve that contract.
   - The run should detect/report the missing baseline, downgrade or block improvement claims, and avoid fabricating a model-training locked split requirement that the brief disallows.
   - If the evidence cannot support a paper-scale experiment, the workflow should route to blocked/downgraded evidence handling rather than fail as if a required dataset split were accidentally missing.
 
@@ -13448,13 +13448,13 @@ Path placeholders:
   - `design_experiments_panel/brief_design_consistency.json` recorded `paper_scale_blocked: true` with both missing-baseline error codes. `implement_experiments` and `run_experiments` remained `pending` at the validation checkpoint.
 
 - Fresh vs existing session comparison:
-  - Fresh session: the run started in a fresh rebuilt P0-8 AGB-001 validation workspace after the LV-328 repair.
+  - Fresh session: the run started in a fresh rebuilt P0-8 case-missing-baseline validation workspace after the LV-328 repair.
   - Existing session: the same persisted run recorded the `run_experiments` retry sequence, two automatic rollbacks, final failure, and a regenerated implementation that again materialized baseline-first locked-split sections.
   - Divergence: no fresh/resumed projection divergence established; this is a mode/contract projection failure visible in persisted run artifacts and node-owned execution artifacts.
 
 - Root cause hypothesis:
   - Type: `persisted_state_bug`
-  - Hypothesis: the brief/run-context artifact records AGB-001 as a seed artifact audit with intentionally missing baseline evidence, but later experiment-design and implementation projection persist a baseline-first locked train/test execution contract. The failing boundary is the mode-specific policy divergence between the persisted brief contract and the generated experiment plan/runner.
+  - Hypothesis: the brief/run-context artifact records case-missing-baseline as a seed artifact audit with intentionally missing baseline evidence, but later experiment-design and implementation projection persist a baseline-first locked train/test execution contract. The failing boundary is the mode-specific policy divergence between the persisted brief contract and the generated experiment plan/runner.
 
 - Code/test changes:
   - Code:
@@ -13464,7 +13464,7 @@ Path placeholders:
       - routes the run to blocked/downgraded evidence handling at `design_experiments` instead of allowing `implement_experiments` to synthesize a baseline-first locked train/test execution contract.
   - Tests:
     - `tests/briefDesignConsistency.test.ts`
-      - adds deterministic regression coverage for an AGB-style seed artifact-audit brief whose baseline is intentionally absent but whose generated design tries to run a locked baseline-first retrieval-feature ablation.
+      - adds deterministic regression coverage for a manifest-defined artifact-audit brief whose baseline is intentionally absent but whose generated design tries to run a locked baseline-first retrieval-feature ablation.
 
 - Regression status:
   - Reproduced in real TUI same-flow validation on 2026-05-02.
@@ -13473,10 +13473,10 @@ Path placeholders:
   - Full automated regression: pass on 2026-05-02 with `npm test` (`160` root test files / `1759` root tests, plus `1` web test file / `14` web tests).
   - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
   - Same-flow revalidation after repair: pass on 2026-05-03 KST for the original locked-split projection symptom. Rebuilt P0-8 run `f4584126-cc2d-484f-8327-1aaf3c03e68a` blocked at `design_experiments` with `MISSING_BASELINE_CONTRACT_VIOLATED` and `MISSING_BASELINE_CLAIM_CEILING_VIOLATED`; `implement_experiments` and `run_experiments` remained pending at the validation checkpoint.
-  - Under the corrected P0-8 checklist scope, this contributes to completing AGB-001 as a live governance-block validation target. Paper-producing live full-run validation should use a seed with explicit baseline/comparator evidence rather than AGB-001.
+  - Under the corrected P0-8 checklist scope, this contributes to completing case-missing-baseline as a live governance-block validation target. Paper-producing live full-run validation should use a seed with explicit baseline/comparator evidence rather than case-missing-baseline.
 
 - Follow-up risks:
-  - A narrow repair that only synthesizes train/test rows would violate the AGB seed brief and could fabricate unsupported baseline evidence.
+  - A narrow repair that only synthesizes train/test rows would violate the fixed-seed brief and could fabricate unsupported baseline evidence.
   - The proper fix should preserve the missing-baseline evidence ceiling and route the run into blocked/downgraded governance handling, not convert the seed audit into a paper-scale classification benchmark.
 
 - Evidence/artifacts:
@@ -13498,11 +13498,11 @@ Path placeholders:
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `3c5fbb05-67a2-432d-ab41-4a765e998d78`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Rebuild AutoLabOS with the LV-327 support-split training-record repair.
-  2. Start a fresh same-flow P0-8 AGB-001 TUI run with the `gated` benchmark condition.
+  2. Start a fresh same-flow P0-8 case-missing-baseline TUI run with the `gated` benchmark condition.
   3. Let the run advance through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, and `implement_experiments`.
   4. Let `run_experiments` execute the generated retrieval-augmentation runner after local `python -m py_compile` passes.
 
@@ -13524,7 +13524,7 @@ Path placeholders:
     - `RuntimeError: No execution wrapper was found. Expected one of: execute_and_persist_metrics, run_experiment_and_write_metrics, execute_experiment_and_write_metrics, execute_from_args, run_from_args, run_cli`
 
 - Fresh vs existing session comparison:
-  - Fresh session: the run started in a fresh rebuilt P0-8 AGB-001 TUI validation workspace after the LV-327 repair.
+  - Fresh session: the run started in a fresh rebuilt P0-8 case-missing-baseline TUI validation workspace after the LV-327 repair.
   - Existing session: the same persisted run recorded the `run_experiments` retry sequence and the automatic backtrack to `implement_experiments`.
   - Divergence: no fresh/resumed projection divergence established; this is a generated-runner final-entrypoint alias gap visible in node-owned execution artifacts.
 
@@ -13565,17 +13565,17 @@ Path placeholders:
 
 ## Issue: LV-327
 
-- Status: repair implemented with automated validation after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02; same-flow live revalidation pending
+- Status: repair implemented with automated validation after P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02; same-flow live revalidation pending
 - Validation target: `implement_experiments` local handoff verification should reconcile support-split locked seed datasets before handing a generated retrieval-feature runner to `run_experiments`.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `26756a6f-cf0e-4cb6-9266-99f400bff3db`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
-  1. Continue the rebuilt P0-8 AGB-001 run after the LV-326 same-run repair and the `analyze_results -> design_experiments` evidence-gated backtrack.
+  1. Continue the rebuilt P0-8 case-missing-baseline run after the LV-326 same-run repair and the `analyze_results -> design_experiments` evidence-gated backtrack.
   2. Retry `design_experiments`, let `implement_experiments` regenerate the retrieval-feature experiment runner, and let `run_experiments` execute the generated command.
   3. Observe the generated runner pass local `python -m py_compile` before handoff.
 
@@ -13591,7 +13591,7 @@ Path placeholders:
   - The final run state was `status: failed`, `currentNode: run_experiments`.
 
 - Fresh vs existing session comparison:
-  - Fresh session: the run started in a fresh rebuilt P0-8 AGB-001 TUI validation workspace and advanced to the LV-326 same-run repair before this blocker.
+  - Fresh session: the run started in a fresh rebuilt P0-8 case-missing-baseline TUI validation workspace and advanced to the LV-326 same-run repair before this blocker.
   - Existing session: the same persisted run recorded the evidence-gated backtrack retry, regenerated implementation, and final `run_experiments` failure.
   - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution artifacts.
 
@@ -13616,7 +13616,7 @@ Path placeholders:
   - Build: pass on 2026-05-02 with `npm run build`.
   - Full automated regression: pass on 2026-05-02 with `npm test` (`160` root test files / `1757` root tests, plus `1` web test file / `14` web tests).
   - Harness validation: pass on 2026-05-02 with `npm run validate:harness`.
-  - Same-flow revalidation after repair: pending at the time of this entry. Later P0-8 scope correction treats AGB-001 as a live governance-block validation target rather than a paper-producing full-run target.
+  - Same-flow revalidation after repair: pending at the time of this entry. Later P0-8 scope correction treats case-missing-baseline as a live governance-block validation target rather than a paper-producing full-run target.
 
 - Follow-up risks:
   - Future generated runner shapes may still use other semantically equivalent training split names; the repair currently covers the observed support-split locked seed dataset pattern.
@@ -13637,13 +13637,13 @@ Path placeholders:
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `26756a6f-cf0e-4cb6-9266-99f400bff3db`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-325 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let the run advance through `collect_papers`, `analyze_papers`, `generate_hypotheses`, `design_experiments`, `implement_experiments`, and `run_experiments`.
 
 - Expected behavior:
@@ -13659,7 +13659,7 @@ Path placeholders:
   - `analyze_results` completed and then recommended/applied `backtrack_to_design` because the objective metric did not satisfy `> 0` and evidence remained weak.
 
 - Fresh vs existing session comparison:
-  - Fresh session: reproduced in a fresh rebuilt P0-8 AGB-001 TUI validation workspace.
+  - Fresh session: reproduced in a fresh rebuilt P0-8 case-missing-baseline TUI validation workspace.
   - Existing session: the same persisted run recorded the initial metrics-contract failures, the implementation repair, the successful second `run_experiments`, and the evidence-gated backtrack.
   - Divergence: no fresh/resumed projection divergence established; this was a generated-runner metrics-contract gap that the same run repaired.
 
@@ -13688,20 +13688,20 @@ Path placeholders:
 
 ## Issue: LV-325
 
-- Status: repair implemented with automated validation and rebuilt same-flow live revalidation passing for the original resolver-mismatch symptom after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Status: repair implemented with automated validation and rebuilt same-flow live revalidation passing for the original resolver-mismatch symptom after P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02
 - Validation target: `implement_experiments` local handoff verification should reconcile generated baseline/retrieval condition resolver names before `run_experiments`.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `1dff774b-300d-4f34-bf25-4515cd168b6f`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-324 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let the run advance through `implement_experiments` and into `run_experiments`.
 
 - Expected behavior:
@@ -13716,7 +13716,7 @@ Path placeholders:
   - The workflow rolled back into `implement_experiments` for a repair attempt under the old built CLI.
 
 - Fresh vs existing session comparison:
-  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 case-missing-baseline.
   - Existing session: the same persisted run recorded the `run_experiments` failure and rollback into `implement_experiments`.
   - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
 
@@ -13745,7 +13745,7 @@ Path placeholders:
 
 - Follow-up risks:
   - Future generated runner shapes may still require adjacent alias repairs if they search a different canonical resolver surface.
-  - Later P0-8 scope correction treats AGB-001 as a live governance-block validation target rather than a paper-producing full-run target.
+  - Later P0-8 scope correction treats case-missing-baseline as a live governance-block validation target rather than a paper-producing full-run target.
 - Evidence/artifacts:
   - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/run_record.json`
   - `<validation-workspace>/.autolabos/runs/1dff774b-300d-4f34-bf25-4515cd168b6f/events.jsonl`
@@ -13754,20 +13754,20 @@ Path placeholders:
 
 ## Issue: LV-324
 
-- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Status: repair implemented; same-flow live revalidation pending after P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02
 - Validation target: `implement_experiments` local handoff verification should reconcile generated baseline-first condition evaluator signatures before `run_experiments`.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `238eadcd-c672-4e81-a6b9-6ae0db4ba6cb`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-323 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let the run advance through `implement_experiments` and into `run_experiments` after dataset-dispatch repair.
 
 - Expected behavior:
@@ -13782,7 +13782,7 @@ Path placeholders:
   - The generated runner defined `_fallback_records_for_payload()` and `run_baseline_first_condition_evaluation(records)`, but `execute_locked_baseline_first_comparison()` called the evaluator as `candidate()` and only accepted top-level baseline/retrieval keys.
 
 - Fresh vs existing session comparison:
-  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 case-missing-baseline.
   - Existing session: the same persisted run recorded the failed `run_experiments` attempts and ended as `status: failed`, `node: run_experiments`.
   - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
 
@@ -13811,7 +13811,7 @@ Path placeholders:
 
 - Follow-up risks:
   - Implement-stage verification still uses syntax-level local checks for many generated runners, so adjacent dynamic dispatcher mismatches may only surface in `run_experiments`.
-  - Later P0-8 scope correction treats AGB-001 as a live governance-block validation target rather than a paper-producing full-run target.
+  - Later P0-8 scope correction treats case-missing-baseline as a live governance-block validation target rather than a paper-producing full-run target.
 - Evidence/artifacts:
   - `<validation-workspace>/.autolabos/runs/238eadcd-c672-4e81-a6b9-6ae0db4ba6cb/run_record.json`
   - `<validation-workspace>/.autolabos/runs/238eadcd-c672-4e81-a6b9-6ae0db4ba6cb/events.jsonl`
@@ -13819,20 +13819,20 @@ Path placeholders:
 
 ## Issue: LV-441
 
-- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Status: repair implemented; same-flow live revalidation pending after P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02
 - Validation target: `implement_experiments` local handoff verification should reconcile generated dataset loader/fallback helper names before `run_experiments`.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `921c29f4-6d94-4929-a4b5-a32b968334ea`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-322 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let the run advance through `implement_experiments` and into `run_experiments` after rollback repair.
 
 - Expected behavior:
@@ -13847,7 +13847,7 @@ Path placeholders:
   - The public runner defined generated helpers including `load_dataset(config)` and `fallback_dataset()`, while `_entrypoint_load_dataset(...)` searched `load_or_create_dataset`, `load_dataset` through incompatible call patterns, and fallback names `build_fallback_dataset`/`make_fallback_dataset`.
 
 - Fresh vs existing session comparison:
-  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 AGB-001.
+  - Fresh session: reproduced in a fresh TUI validation workspace for P0-8 case-missing-baseline.
   - Existing session: the same persisted run recorded the failed `run_experiments` attempts and auto-rolled back to `implement_experiments`.
   - Divergence: no fresh/resumed projection divergence established; this is a generated-runner handoff compatibility gap visible in node-owned execution.
 
@@ -26353,20 +26353,20 @@ The resolved entries below are kept as recent validation history and regression 
 
 ## Issue: LV-322
 
-- Status: repair implemented; same-flow live revalidation pending after P0-8 AGB-001 same-flow TUI reproduction on 2026-05-02
+- Status: repair implemented; same-flow live revalidation pending after P0-8 case-missing-baseline same-flow TUI reproduction on 2026-05-02
 - Validation target: rollback from `run_experiments` to `implement_experiments` should preserve or regenerate the public experiment artifact surface before verification resumes.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `7f3aa8d7-d163-43fd-94dc-c715afe07013`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-320 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let `run_experiments` fail and trigger the automatic rollback to `implement_experiments`.
 
 - Expected behavior:
@@ -26382,7 +26382,7 @@ The resolved entries below are kept as recent validation history and regression 
   - The public experiment directory for that run was absent when inspected after the failure.
 
 - Fresh vs existing session comparison:
-  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reached the rollback artifact-loss failure.
+  - Fresh session: a new TUI process in a fresh validation workspace started the case-missing-baseline brief and reached the rollback artifact-loss failure.
   - Existing session: not separately reloaded after the rollback artifact loss; the issue was observed in the active real TUI session and persisted artifacts.
   - Divergence: the observed failure is an artifact consistency problem after rollback, not a fresh/resumed state projection divergence.
 
@@ -26429,13 +26429,13 @@ The resolved entries below are kept as recent validation history and regression 
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `7f3aa8d7-d163-43fd-94dc-c715afe07013`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Build AutoLabOS with the LV-320 repair.
   2. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   3. Run `/doctor`.
-  4. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  4. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   5. Let the workflow proceed into `run_experiments`.
 
 - Expected behavior:
@@ -26449,7 +26449,7 @@ The resolved entries below are kept as recent validation history and regression 
     - `NameError: name '_coerce_float' is not defined. Did you mean: 'coerce_float'?`
 
 - Fresh vs existing session comparison:
-  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reproduced the numeric-helper alias failure.
+  - Fresh session: a new TUI process in a fresh validation workspace started the case-missing-baseline brief and reproduced the numeric-helper alias failure.
   - Existing session: not separately reloaded for this specific alias failure before the subsequent rollback artifact-loss boundary.
   - Divergence: no session divergence observed; the failure is a generated helper-name projection mismatch visible in live execution.
 
@@ -26487,18 +26487,18 @@ The resolved entries below are kept as recent validation history and regression 
 ## Issue: LV-320
 
 - Status: repair implemented; same-flow live revalidation advanced to LV-321 and LV-322 on 2026-05-02
-- Validation target: AGB-001 live governance-block validation through the real TUI under the `gated` governance benchmark condition.
+- Validation target: case-missing-baseline live governance-block validation through the real TUI under the `gated` governance benchmark condition.
 - Environment/session context:
   - validation workspace: `<validation-workspace>`
   - TUI command: built AutoLabOS CLI with `--benchmark-condition gated`
   - run: `7ccf8e69-1682-4e39-b467-f32039bee315`
   - backend: native Codex OAuth with `gpt-5.5` and `medium`
-  - input brief: external AGB-001 brief path, not copied into committed docs
+  - input brief: external case-missing-baseline brief path, not copied into committed docs
 
 - Reproduction steps:
   1. Start the built TUI from `<validation-workspace>` with `--benchmark-condition gated`.
   2. Run `/doctor`.
-  3. Start the external AGB-001 brief with `/brief start <path-to-AGB-001-brief.md>`.
+  3. Start the external case-missing-baseline brief with `/brief start <path-to-case-missing-baseline-brief.md>`.
   4. Let the governed workflow proceed through implementation and experiment execution retries.
   5. Restart the TUI from the same workspace and run `/session`.
 
@@ -26516,7 +26516,7 @@ The resolved entries below are kept as recent validation history and regression 
   - Restarting the TUI and running `/session` preserved `status: failed` and `node: run_experiments`, but also displayed `interaction: busy`.
 
 - Fresh vs existing session comparison:
-  - Fresh session: a new TUI process in a fresh validation workspace started the AGB-001 brief and reproduced the run failure at `run_experiments`.
+  - Fresh session: a new TUI process in a fresh validation workspace started the case-missing-baseline brief and reproduced the run failure at `run_experiments`.
   - Existing session: restarting the TUI in the same workspace reloaded the persisted run as `status: failed`, `node: run_experiments`, with the same failure summary.
   - Divergence: no persisted run-state divergence observed for node/status; the remaining UI projection concern is the `interaction: busy` display after failed reload.
 
@@ -26550,7 +26550,7 @@ The resolved entries below are kept as recent validation history and regression 
 - Follow-up risks:
   - A repair should distinguish true executed evidence from failed metrics payloads that contain placeholder-like zero metrics.
   - The `interaction: busy` projection after failed reload may require a separate UI/state fix if it persists after the generated-runner failure is repaired.
-  - Later P0-8 scope correction treats AGB-001 as a live governance-block validation target. Review/write-paper surface validation should use a seed with explicit baseline/comparator evidence.
+  - Later P0-8 scope correction treats case-missing-baseline as a live governance-block validation target. Review/write-paper surface validation should use a seed with explicit baseline/comparator evidence.
 
 - Evidence/artifacts:
   - `<validation-workspace>/.autolabos/runs/7ccf8e69-1682-4e39-b467-f32039bee315/governance_condition.json`

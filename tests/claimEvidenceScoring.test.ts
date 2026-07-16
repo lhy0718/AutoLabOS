@@ -90,7 +90,7 @@ describe("claim evidence scoring", () => {
   it("feeds governance scorer metrics without reporting unmeasured placeholders", () => {
     const score = scoreClaimEvidenceArtifacts({});
     const taskInput = buildGovernanceTaskScoreInputFromClaimEvidence({
-      taskId: "AGB-002",
+      taskId: "case-claim-evidence",
       paperReady: false,
       expectedPaperReady: false,
       claimEvidenceScore: score

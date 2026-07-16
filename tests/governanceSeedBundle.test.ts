@@ -16,29 +16,29 @@ describe("governanceSeedBundle", () => {
   it("imports an external seed directory into a workspace-controlled output bundle", async () => {
     const workspace = await makeTempDir("autolabos-seed-workspace-");
     const source = await makeTempDir("autolabos-seed-source-");
-    await writeFile(path.join(source, "AGB-001-brief.md"), "# Research Brief\n", "utf8");
+    await writeFile(path.join(source, "case-alpha-brief.md"), "# Research Brief\n", "utf8");
     await mkdir(path.join(source, "fixtures"), { recursive: true });
     await writeFile(path.join(source, "fixtures", "result.json"), "{\"ok\":true}\n", "utf8");
 
     const result = await importGovernanceSeedBundle({
       cwd: workspace,
       sourcePath: source,
-      taskId: "AGB-001"
+      taskId: "case-alpha"
     });
 
-    expect(result.manifest.task_id).toBe("AGB-001");
+    expect(result.manifest.task_id).toBe("case-alpha");
     expect(result.manifest.mode).toBe("import");
     expect(result.manifest.source_path).toBe(source);
     expect(result.manifest.source_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.manifest.files.map((file) => file.relative_path)).toEqual([
-      "AGB-001-brief.md",
+      "case-alpha-brief.md",
       "fixtures/result.json"
     ]);
-    expect(result.manifest.output_dir).toBe("outputs/governance-benchmark/seeds/AGB-001");
-    expect(await readFile(path.join(workspace, result.manifest.output_dir, "source", "AGB-001-brief.md"), "utf8"))
+    expect(result.manifest.output_dir).toBe("outputs/governance-benchmark/seeds/case-alpha");
+    expect(await readFile(path.join(workspace, result.manifest.output_dir, "source", "case-alpha-brief.md"), "utf8"))
       .toBe("# Research Brief\n");
     expect(JSON.parse(await readFile(result.manifestPath, "utf8"))).toMatchObject({
-      task_id: "AGB-001",
+      task_id: "case-alpha",
       mode: "import"
     });
   });
@@ -46,19 +46,19 @@ describe("governanceSeedBundle", () => {
   it("writes a reference-only manifest without copying the source bundle", async () => {
     const workspace = await makeTempDir("autolabos-seed-reference-workspace-");
     const source = await makeTempDir("autolabos-seed-reference-source-");
-    await writeFile(path.join(source, "AGB-002-brief.md"), "# Research Brief\n", "utf8");
+    await writeFile(path.join(source, "case-beta-brief.md"), "# Research Brief\n", "utf8");
 
     const result = await importGovernanceSeedBundle({
       cwd: workspace,
       sourcePath: source,
-      taskId: "AGB-002",
+      taskId: "case-beta",
       referenceOnly: true
     });
 
     expect(result.manifest.mode).toBe("reference");
     await expect(stat(path.join(workspace, result.manifest.output_dir, "source"))).rejects.toThrow();
     expect(JSON.parse(await readFile(result.manifestPath, "utf8"))).toMatchObject({
-      task_id: "AGB-002",
+      task_id: "case-beta",
       mode: "reference",
       source_path: source
     });
@@ -74,7 +74,7 @@ describe("governanceSeedBundle", () => {
       importGovernanceSeedBundle({
         cwd: workspace,
         sourcePath: source,
-        taskId: "AGB-003",
+        taskId: "case-gamma",
         outDir: outside
       })
     ).rejects.toThrow("output directory must stay inside the workspace");

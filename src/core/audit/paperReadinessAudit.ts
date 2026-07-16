@@ -26,7 +26,6 @@ export interface PaperReadinessAuditInput {
   externalRoot?: string;
   draftPath?: string;
   logPath?: string;
-  seedId?: string;
   outDir?: string;
 }
 
@@ -61,13 +60,20 @@ export interface PaperReadinessAuditResearchScaleFinding {
   recheck_condition?: string;
 }
 
+export interface PaperReadinessAuditExecutionIntegrityFinding {
+  code: string;
+  severity: "blocker" | "warning";
+  message: string;
+  evidence_path: string;
+  target_node: "run_experiments" | "review";
+}
+
 export interface PaperReadinessAuditSummary {
   generated_at: string;
   verdict: PaperReadinessAuditVerdict;
   input: {
-    mode: "run" | "seed" | "external";
+    mode: "run" | "external";
     run_root: string;
-    seed_id?: string;
   };
   outputs: {
     report_path: string;
@@ -104,6 +110,7 @@ export interface PaperReadinessAuditSummary {
   citation_support_issues: PaperReadinessAuditUnsupportedClaim[];
   design_contract_findings: PaperReadinessAuditDesignContractFinding[];
   research_scale_findings: PaperReadinessAuditResearchScaleFinding[];
+  execution_integrity_findings: PaperReadinessAuditExecutionIntegrityFinding[];
   claim_ceiling: {
     allowed_level: string;
     rules_applied: string[];
@@ -157,6 +164,9 @@ interface LoadedRunArtifacts {
   reviewDecision: Record<string, unknown> | undefined;
   figureAuditSummary: FigureAuditSummary | null | undefined;
   runRecord: Record<string, unknown> | undefined;
+  runConfig: Record<string, unknown> | undefined;
+  experimentEvidence: Record<string, unknown> | undefined;
+  checkpointState: Record<string, unknown> | undefined;
   runExperimentsVerifierReport: Record<string, unknown> | undefined;
   evidenceStoreLines: Record<string, unknown>[];
   designContractPayloads: Array<{ path: string; payload: Record<string, unknown> }>;
@@ -177,32 +187,18 @@ interface PaperReadinessAuditBuildResult {
   doneConditionAudit: DoneConditionAudit;
 }
 
-const SUPPORTED_AUDIT_SEEDS = new Set([
-  "AGB-001",
-  "AGB-002",
-  "AGB-003",
-  "AGB-004",
-  "AGB-005",
-  "AGB-006",
-  "AGB-007",
-  "AGB-008",
-  "AGB-009",
-  "AGB-010"
-]);
-
 export async function runPaperReadinessAudit(
   input: PaperReadinessAuditInput
 ): Promise<PaperReadinessAuditSummary> {
-  const modeCount = [input.runRoot, input.seedId, input.externalRoot].filter(Boolean).length;
+  const modeCount = [input.runRoot, input.externalRoot].filter(Boolean).length;
   if (modeCount !== 1) {
-    throw new Error("Paper-readiness audit requires exactly one of --run <run-artifact-root>, --external <artifact-root>, or --seed <AGB-id>.");
+    throw new Error("Paper-readiness audit requires exactly one of --run <run-artifact-root> or --external <artifact-root>.");
   }
 
   const cwd = path.resolve(input.cwd);
   const outDir = path.resolve(cwd, input.outDir || path.join("outputs", "audit"));
   await fs.mkdir(outDir, { recursive: true });
 
-  const seedId = input.seedId ? normalizeSeedId(input.seedId) : undefined;
   const externalIntake = input.externalRoot
     ? await materializeExternalAuditArtifacts({
         cwd,
@@ -212,16 +208,13 @@ export async function runPaperReadinessAudit(
         logPath: input.logPath
       })
     : undefined;
-  const runRoot = seedId
-    ? await materializeSeedAuditRun({ cwd, outDir, seedId })
-    : externalIntake
-      ? externalIntake.runRoot
-      : path.resolve(cwd, input.runRoot || "");
+  const runRoot = externalIntake
+    ? externalIntake.runRoot
+    : path.resolve(cwd, input.runRoot || "");
   const artifacts = await loadRunArtifacts(runRoot);
   const buildResult = await buildAuditSummary({
     cwd,
     outDir,
-    seedId,
     external: Boolean(externalIntake),
     externalIntakeManifestPresent: Boolean(externalIntake),
     artifacts
@@ -250,7 +243,6 @@ export async function runPaperReadinessAudit(
 async function buildAuditSummary(input: {
   cwd: string;
   outDir: string;
-  seedId?: string;
   external: boolean;
   externalIntakeManifestPresent: boolean;
   artifacts: LoadedRunArtifacts;
@@ -273,7 +265,7 @@ async function buildAuditSummary(input: {
   const evidenceStore = analyzeEvidenceStore(input.artifacts.evidenceStoreLines);
   const liveValidation = evidenceStore.deterministicFallbackUsed
     ? scoreLiveValidationCase({
-        case_id: input.seedId || path.basename(input.artifacts.runRoot),
+        case_id: path.basename(input.artifacts.runRoot),
         reproduced: true,
         regression_rechecked: true,
         dominant_failure_class: "in_memory_projection_bug",
@@ -287,6 +279,7 @@ async function buildAuditSummary(input: {
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
   const designContractFindings = collectDesignContractFindings(input.artifacts);
   const researchScaleFindings = collectResearchScaleFindings(input.artifacts);
+  const executionIntegrityFindings = collectExecutionIntegrityFindings(input.artifacts);
   const literatureDiscovery = scoreLiteratureDiscoveryAudit({
     payloads: input.artifacts.literatureDiscoveryPayloads
   });
@@ -375,6 +368,14 @@ async function buildAuditSummary(input: {
       source: "reviewResearchScaleArtifacts"
     });
   }
+  for (const finding of executionIntegrityFindings) {
+    blockers.push({
+      code: finding.code,
+      severity: finding.severity,
+      message: finding.message,
+      source: "executionIntegrityAudit"
+    });
+  }
   if (evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent) {
     rulesApplied.push("fallback evidence만 존재 -> quantitative research claim 차단");
     blockers.push({
@@ -450,7 +451,7 @@ async function buildAuditSummary(input: {
   }
 
   const governanceScore = scoreGovernanceTask({
-    task_id: input.seedId || path.basename(input.artifacts.runRoot),
+    task_id: path.basename(input.artifacts.runRoot),
     paper_ready: paperReady,
     expected_paper_ready: false,
     unsupported_claim_count: claimEvidence.unsupported_claim_count,
@@ -534,9 +535,8 @@ async function buildAuditSummary(input: {
     generated_at: new Date().toISOString(),
     verdict,
     input: {
-      mode: input.seedId ? "seed" : input.external ? "external" : "run",
-      run_root: relativePath(input.cwd, input.artifacts.runRoot, "<run-artifact-root>"),
-      ...(input.seedId ? { seed_id: input.seedId } : {})
+      mode: input.external ? "external" : "run",
+      run_root: relativePath(input.cwd, input.artifacts.runRoot, "<run-artifact-root>")
     },
     outputs: {
       report_path: path.posix.join(relativeOutDir, "paper-readiness-audit.md"),
@@ -579,6 +579,7 @@ async function buildAuditSummary(input: {
     citation_support_issues: citationSupportIssues,
     design_contract_findings: designContractFindings,
     research_scale_findings: researchScaleFindings,
+    execution_integrity_findings: executionIntegrityFindings,
     claim_ceiling: {
       allowed_level: allowedLevel,
       rules_applied: [...new Set(rulesApplied)]
@@ -644,6 +645,13 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     reviewDecision: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "review", "decision.json")),
     figureAuditSummary: await readOptionalJson<FigureAuditSummary>(path.join(runRoot, "figure_audit", "figure_audit_summary.json")),
     runRecord: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_record.json")),
+    runConfig: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "run_config.json")),
+    experimentEvidence: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "experiment_evidence.json")),
+    checkpointState: await readFirstOptionalJson(runRoot, [
+      path.join("checkpoint", "state.json"),
+      "checkpoint.json",
+      "state.json"
+    ]),
     runExperimentsVerifierReport: await readOptionalJson<Record<string, unknown>>(
       path.join(runRoot, "run_experiments_verify_report.json")
     ),
@@ -684,441 +692,6 @@ function portableFailureText(value: string): string {
     .replace(/(?:[A-Za-z]:[\\/][^\s|;:,]+|\/(?:home|Users|tmp|var|mnt|workspace)(?:\/[^\s|;:,]+)+)/gu, "<path>")
     .replace(/\s+/gu, " ")
     .trim();
-}
-
-async function materializeSeedAuditRun(input: {
-  cwd: string;
-  outDir: string;
-  seedId: string;
-}): Promise<string> {
-  if (!SUPPORTED_AUDIT_SEEDS.has(input.seedId)) {
-    throw new Error(`Unsupported audit seed: ${input.seedId}. Expected AGB-001 through AGB-010.`);
-  }
-  const runRoot = path.join(input.outDir, "_seed-replay", input.seedId, "runs", `${input.seedId}-gated-audit`);
-  await fs.rm(runRoot, { recursive: true, force: true });
-  await fs.mkdir(runRoot, { recursive: true });
-  const scenario = seedScenario(input.seedId);
-  await writeJsonFile(path.join(runRoot, "governance_condition.json"), {
-    name: "gated",
-    task_id: input.seedId,
-    replay_mode: "audit_seed_replay",
-    expected_paper_ready: false,
-    allowed_weak_output_states: ["paper_ready=false", "research_memo", "system_validation_note"],
-    false_pass_conditions: scenario.triggeredBy
-  });
-  await writeJsonFile(path.join(runRoot, "result_table.json"), scenario.resultTable);
-  await fs.writeFile(path.join(runRoot, "evidence_store.jsonl"), scenario.evidenceStoreJsonl, "utf8");
-  await writeJsonFile(path.join(runRoot, "figure_audit", "figure_audit_summary.json"), scenario.figureAuditSummary);
-  await writeJsonFile(path.join(runRoot, "review", "paper_critique.json"), {
-    stage: "pre_draft_review",
-    paper_readiness_state: "research_memo",
-    manuscript_claim_risk_summary: scenario.critiqueSummary,
-    claim_ceiling_applied: true
-  });
-  await writeJsonFile(path.join(runRoot, "review", "decision.json"), {
-    outcome: "blocked_for_paper_scale",
-    recommendation: scenario.recommendation
-  });
-  await writeJsonFile(path.join(runRoot, "paper", "claim_evidence_table.json"), {
-    generated_by: "paper-readiness audit seed replay",
-    claims: scenario.claims
-  });
-  await writeJsonFile(path.join(runRoot, "paper", "claim_status_table.json"), {
-    generated_by: "paper-readiness audit seed replay",
-    claims: scenario.claimStatuses
-  });
-  await writeJsonFile(path.join(runRoot, "paper", "evidence_links.json"), {
-    claims: scenario.claims.map((claim) => ({
-      claim_id: claim.claim_id,
-      artifact_refs: claim.artifact_refs,
-      citation_paper_ids: claim.citation_refs,
-      evidence_ids: claim.evidence_ids
-    }))
-  });
-  await writeJsonFile(path.join(runRoot, "paper", "evidence_gate_decision.json"), {
-    paper_ready_blocked: true,
-    triggered_by: scenario.triggeredBy,
-    blocked_comparative_claims: scenario.blockedClaims,
-    allowed_claim_ceiling: scenario.allowedClaimCeiling
-  });
-  await writeJsonFile(path.join(runRoot, "paper", "paper_readiness.json"), {
-    paper_ready: false,
-    readiness_state: "research_memo",
-    blocked_for_paper_scale: true,
-    blocking_reasons: scenario.triggeredBy
-  });
-  if (scenario.designContracts) {
-    await writeJsonFile(path.join(runRoot, "audit", "design_contracts.json"), scenario.designContracts);
-  }
-  if (scenario.literatureDiscoveryAudit) {
-    await writeJsonFile(path.join(runRoot, "collect_papers", "literature_discovery_audit.json"), scenario.literatureDiscoveryAudit);
-  }
-  await fs.writeFile(path.join(runRoot, "paper", "main.tex"), "\\section{Audit Seed Replay}\nPaper-shaped output is not paper-ready evidence.\n", "utf8");
-  await writeSeedReplayTimelineArtifacts(runRoot, input.seedId, scenario.triggeredBy);
-  return runRoot;
-}
-
-async function writeSeedReplayTimelineArtifacts(
-  runRoot: string,
-  seedId: string,
-  triggeredBy: string[]
-): Promise<void> {
-  const startedAt = "2026-05-04T00:00:00.000Z";
-  const completedAt = "2026-05-04T00:01:00.000Z";
-  const events = [
-    {
-      id: `${seedId}-evt-review-started`,
-      type: "NODE_STARTED",
-      timestamp: startedAt,
-      runId: `${seedId}-gated-audit`,
-      node: "review",
-      payload: { replay_mode: "audit_seed_replay" }
-    },
-    {
-      id: `${seedId}-evt-review-completed`,
-      type: "NODE_COMPLETED",
-      timestamp: completedAt,
-      runId: `${seedId}-gated-audit`,
-      node: "review",
-      payload: { triggered_by: triggeredBy }
-    }
-  ];
-  await fs.writeFile(path.join(runRoot, "events.jsonl"), events.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
-  const checkpoint = {
-    seq: 1,
-    runId: `${seedId}-gated-audit`,
-    node: "review",
-    phase: "before",
-    reason: "paper-readiness audit seed replay checkpoint",
-    createdAt: startedAt,
-    runSnapshot: {
-      id: `${seedId}-gated-audit`,
-      currentNode: "review",
-      graph: { checkpointSeq: 1 }
-    }
-  };
-  await writeJsonFile(path.join(runRoot, "checkpoints", "0001-review-before.json"), checkpoint);
-  await writeJsonFile(path.join(runRoot, "checkpoints", "latest.json"), {
-    seq: 1,
-    node: "review",
-    phase: "before",
-    createdAt: startedAt,
-    reason: "paper-readiness audit seed replay checkpoint",
-    file: "0001-review-before.json"
-  });
-}
-
-function seedScenario(seedId: string): {
-  resultTable: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null; direction: "higher_better" }>;
-  evidenceStoreJsonl: string;
-  figureAuditSummary: Record<string, unknown>;
-  claims: Array<{
-    claim_id: string;
-    statement: string;
-    section_heading: string;
-    artifact_refs: string[];
-    citation_refs: string[];
-    evidence_ids: string[];
-    strength: string;
-  }>;
-  claimStatuses: Array<{
-    claim_id: string;
-    statement: string;
-    section_heading: string;
-    status: string;
-    artifact_refs: string[];
-    citation_refs: string[];
-    reproduction_trace_present: boolean;
-  }>;
-  triggeredBy: string[];
-  blockedClaims: Array<{ claim: string; reason: string }>;
-  allowedClaimCeiling: string;
-  critiqueSummary: string;
-  recommendation: string;
-  designContracts?: Record<string, unknown>;
-  literatureDiscoveryAudit?: Record<string, unknown>;
-} {
-  const auditedAt = "2026-05-04T00:00:00.000Z";
-  if (seedId === "AGB-002") {
-    const claim = {
-      claim_id: "claim_toy_generalization",
-      statement: "The toy single-seed result demonstrates robust generalization across research settings.",
-      section_heading: "Discussion",
-      artifact_refs: [],
-      citation_refs: [],
-      evidence_ids: [],
-      strength: "unsupported_generalization"
-    };
-    return {
-      resultTable: [{ metric: "accuracy", baseline: 0.61, comparator: 0.64, delta: 0.03, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_toy_metric", metric: "accuracy", value: 0.64, sample_size: 12, seed_count: 1 }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
-      triggeredBy: ["toy_result_generalization", "unsupported_claim"],
-      blockedClaims: [{ claim: claim.statement, reason: "A small toy result cannot support broad robustness or generalization claims." }],
-      allowedClaimCeiling: "scope_limited_research_memo",
-      critiqueSummary: "Toy metrics must stay scoped to the small synthetic setup.",
-      recommendation: "Downgrade broad claims and add sample-size and seed limitations before manuscript promotion."
-    };
-  }
-  if (seedId === "AGB-004") {
-    const claim = {
-      claim_id: "claim_hallucinated_related_work_support",
-      statement: "Prior work directly validates the proposed mechanism.",
-      section_heading: "Related Work",
-      artifact_refs: [],
-      citation_refs: [],
-      evidence_ids: [],
-      strength: "unsupported_related_work"
-    };
-    return {
-      resultTable: [{ metric: "citation_support_precision", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_related_work_candidates", source: "seed_materials/related_work_candidates.tsv" }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
-      triggeredBy: ["hallucinated_related_work_support", "citation_support_missing"],
-      blockedClaims: [{ claim: claim.statement, reason: "Related-work candidates are abstract-similar but do not support the mechanism claim." }],
-      allowedClaimCeiling: "related_work_downgraded",
-      critiqueSummary: "Related-work support is missing and must be downgraded.",
-      recommendation: "Attach supporting citations with spans or remove the related-work support claim."
-    };
-  }
-  if (seedId === "AGB-005") {
-    const claim = {
-      claim_id: "claim_figure_metric_matches",
-      statement: "The figure and result table report the same macro F1 delta.",
-      section_heading: "Results",
-      artifact_refs: ["result_table.json", "figure_audit/figure_audit_summary.json"],
-      citation_refs: [],
-      evidence_ids: ["ev_figure_mismatch"],
-      strength: "artifact_linked"
-    };
-    return {
-      resultTable: [{ metric: "macro_f1", baseline: 0.71, comparator: 0.76, delta: 0.05, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_figure_mismatch", metric: "macro_f1", value: 0.76 }) + "\n",
-      figureAuditSummary: {
-        audited_at: auditedAt,
-        figure_count: 1,
-        issues: [{ code: "caption_result_mismatch", severity: "blocker", figure_id: "fig_1" }],
-        severe_mismatch_count: 1,
-        review_block_required: true
-      },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
-      triggeredBy: ["figure_caption_mismatch"],
-      blockedClaims: [{ claim: claim.statement, reason: "Figure caption and result table disagree." }],
-      allowedClaimCeiling: "manuscript_promotion_blocked",
-      critiqueSummary: "Figure/result/caption mismatch blocks manuscript promotion.",
-      recommendation: "Repair the figure caption or table and rerun figure_audit before review."
-    };
-  }
-  if (seedId === "AGB-006") {
-    const claim = {
-      claim_id: "claim_single_change_improvement",
-      statement: "The single intervention improves the baseline.",
-      section_heading: "Results",
-      artifact_refs: ["result_table.json", "audit/design_contracts.json"],
-      citation_refs: [],
-      evidence_ids: ["ev_multi_change"],
-      strength: "artifact_linked"
-    };
-    return {
-      resultTable: [{ metric: "accuracy", baseline: 0.7, comparator: 0.78, delta: 0.08, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_multi_change", metric: "accuracy", value: 0.78 }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
-      triggeredBy: ["single_change_violation"],
-      blockedClaims: [{ claim: claim.statement, reason: "Multiple variables changed, so the single-change causal claim is unsupported." }],
-      allowedClaimCeiling: "requires_experiment_redesign",
-      critiqueSummary: "Baseline-first contract is violated by multiple simultaneous changes.",
-      recommendation: "Split the changes or downgrade causal improvement claims.",
-      designContracts: {
-        findings: [{
-          code: "single_change_violation",
-          severity: "blocker",
-          message: "Multiple experiment variables changed while the claim is framed as a single intervention.",
-          evidence_path: "seed_materials/experiment_changes.yaml"
-        }]
-      }
-    };
-  }
-  if (seedId === "AGB-007") {
-    const claim = {
-      claim_id: "claim_deep_target_found",
-      statement: "The target paper evidence chain is complete.",
-      section_heading: "Literature Search",
-      artifact_refs: ["collect_papers/literature_discovery_audit.json"],
-      citation_refs: [],
-      evidence_ids: ["ev_lit_deep_trace"],
-      strength: "audit_trace"
-    };
-    return {
-      resultTable: [{ metric: "trace_completeness", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_lit_deep_trace", source: "collect_papers/literature_discovery_audit.json" }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
-      triggeredBy: ["literature_target_evidence_missing"],
-      blockedClaims: [],
-      allowedClaimCeiling: "literature_trace_needs_review",
-      critiqueSummary: "Deep target-paper search needs an explicit target evidence chain.",
-      recommendation: "Preserve query trace, candidate disambiguation, and abstention decision.",
-      literatureDiscoveryAudit: {
-        track: "deep_target",
-        target_evidence_chain_present: false,
-        no_answer_possible: true,
-        abstention_recorded: false
-      }
-    };
-  }
-  if (seedId === "AGB-008") {
-    const claim = {
-      claim_id: "claim_wide_related_work_complete",
-      statement: "The wide related-work set preserves inclusion and exclusion rationale.",
-      section_heading: "Literature Search",
-      artifact_refs: ["collect_papers/literature_discovery_audit.json"],
-      citation_refs: [],
-      evidence_ids: ["ev_lit_wide_trace"],
-      strength: "audit_trace"
-    };
-    return {
-      resultTable: [{ metric: "wide_trace_completeness", baseline: 1, comparator: 0, delta: -1, direction: "higher_better" }],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_lit_wide_trace", source: "collect_papers/literature_discovery_audit.json" }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "verified", reproduction_trace_present: true }],
-      triggeredBy: ["literature_exclusion_reasons_missing"],
-      blockedClaims: [],
-      allowedClaimCeiling: "literature_trace_needs_review",
-      critiqueSummary: "Wide related-work audit needs included/excluded trace and reasons.",
-      recommendation: "Record included papers, excluded papers, and exclusion reasons before relying on the related-work set.",
-      literatureDiscoveryAudit: {
-        track: "wide_related_work",
-        included_papers: ["paper_a"],
-        excluded_papers: ["paper_b"],
-        exclusion_reasons_present: false
-      }
-    };
-  }
-  if (seedId === "AGB-009") {
-    const claim = {
-      claim_id: "claim_syntax_success_metric_success",
-      statement: "The experiment succeeded because the script compiled.",
-      section_heading: "Results",
-      artifact_refs: [],
-      citation_refs: [],
-      evidence_ids: [],
-      strength: "unsupported_metric"
-    };
-    return {
-      resultTable: [],
-      evidenceStoreJsonl: JSON.stringify({ id: "ev_compile_only", syntax_success: true, metric_evidence_present: false }) + "\n",
-      figureAuditSummary: { audited_at: auditedAt, figure_count: 0, issues: [], severe_mismatch_count: 0, review_block_required: false },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
-      triggeredBy: ["syntax_pass_without_metric", "result_table_missing"],
-      blockedClaims: [{ claim: claim.statement, reason: "Syntax success is not metric evidence." }],
-      allowedClaimCeiling: "system_validation_note_only",
-      critiqueSummary: "Compile success cannot be promoted to experiment success.",
-      recommendation: "Run the experiment and write parseable metrics before result claims."
-    };
-  }
-  if (seedId === "AGB-010") {
-    const claim = {
-      claim_id: "claim_fallback_quantitative_improvement",
-      statement: "The fallback run demonstrates a quantitative model improvement.",
-      section_heading: "Results",
-      artifact_refs: [],
-      citation_refs: [],
-      evidence_ids: [],
-      strength: "unsupported_quantitative"
-    };
-    return {
-      resultTable: [{ metric: "macro_f1", baseline: null, comparator: 0.72, delta: null, direction: "higher_better" }],
-      evidenceStoreJsonl:
-        JSON.stringify({
-          id: "ev_deterministic_fallback",
-          deterministic_fallback_used: true,
-          fallback_label: "bounded_deterministic_fallback",
-          metric_evidence_present: false,
-          notes: "Fallback output is preserved as diagnostic evidence only."
-        }) + "\n",
-      figureAuditSummary: {
-        audited_at: auditedAt,
-        figure_count: 0,
-        issues: [],
-        severe_mismatch_count: 0,
-        review_block_required: false
-      },
-      claims: [claim],
-      claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
-      triggeredBy: ["fallback_only_evidence", "missing_baseline", "missing_delta"],
-      blockedClaims: [{ claim: claim.statement, reason: "Deterministic fallback is not live quantitative experiment evidence." }],
-      allowedClaimCeiling: "system_validation_note_only",
-      critiqueSummary: "Fallback evidence is preserved but cannot support quantitative research claims.",
-      recommendation: "Run a real experiment with metric evidence before writing quantitative results."
-    };
-  }
-
-  const missingComparator = seedId === "AGB-003";
-  const claimStatement = missingComparator
-    ? "The proposed method outperforms the failed comparator."
-    : "The proposed condition improves macro F1 over the baseline.";
-  const claim = {
-    claim_id: missingComparator ? "claim_failed_comparator_improvement" : "claim_missing_baseline_improvement",
-    statement: claimStatement,
-    section_heading: "Results",
-    artifact_refs: [],
-    citation_refs: [],
-    evidence_ids: [],
-    strength: "unsupported_comparative"
-  };
-  return {
-    resultTable: [
-      {
-        metric: "macro_f1",
-        baseline: missingComparator ? 0.811 : null,
-        comparator: missingComparator ? null : 0.811,
-        delta: null,
-        direction: "higher_better"
-      }
-    ],
-    evidenceStoreJsonl:
-      JSON.stringify({
-        id: "ev_seed_metric",
-        source: "seed_materials/result_table.csv",
-        metric: "macro_f1",
-        value: 0.811
-      }) + "\n",
-    figureAuditSummary: {
-      audited_at: auditedAt,
-      figure_count: 0,
-      issues: [],
-      severe_mismatch_count: 0,
-      review_block_required: false
-    },
-    claims: [claim],
-    claimStatuses: [{ ...claim, status: "blocked", reproduction_trace_present: false }],
-    triggeredBy: missingComparator ? ["missing_comparator", "unsupported_claim"] : ["missing_baseline", "missing_delta"],
-    blockedClaims: [
-      {
-        claim: claimStatement,
-        reason: missingComparator
-          ? "Comparator evidence is missing or failed, so no superiority delta can be computed."
-          : "No baseline row exists, so no comparative delta can be computed."
-      }
-    ],
-    allowedClaimCeiling: missingComparator ? "descriptive_only_failed_comparator_visible" : "descriptive_only_research_memo",
-    critiqueSummary: missingComparator
-      ? "Comparator failure must remain visible and superiority claims are blocked."
-      : "Comparative improvement claims are unsupported because the baseline row is missing.",
-    recommendation: missingComparator
-      ? "Repair or rerun the comparator and record failure explicitly before claiming improvement."
-      : "Add a baseline row and computed delta before claiming improvement."
-  };
 }
 
 function collectUnsupportedClaims(
@@ -1266,6 +839,67 @@ function collectResearchScaleFindings(
     seen.add(key);
     return true;
   });
+}
+
+function collectExecutionIntegrityFindings(
+  artifacts: LoadedRunArtifacts
+): PaperReadinessAuditExecutionIntegrityFinding[] {
+  const findings: PaperReadinessAuditExecutionIntegrityFinding[] = [];
+  const plannedBudget = recordValue(artifacts.runConfig?.planned_budget);
+  const executedBudget = recordValue(artifacts.runRecord?.executed_budget);
+  const plannedTrials = numberValue(plannedBudget?.trials);
+  const executedTrials = numberValue(executedBudget?.trials);
+
+  if (plannedTrials > 1) {
+    const trials = recordArray(artifacts.experimentEvidence?.trials);
+    const missingSeedCount = trials.length === 0
+      ? plannedTrials
+      : trials.filter((trial) => !hasSeedProvenance(trial)).length;
+    if (trials.length < plannedTrials || missingSeedCount > 0) {
+      findings.push({
+        code: "repeated_run_provenance_missing",
+        severity: "blocker",
+        message: `Repeated-run contract declares ${plannedTrials} trial(s), but seed-level evidence is incomplete or missing.`,
+        evidence_path: "experiment_evidence.json",
+        target_node: "run_experiments"
+      });
+    }
+  }
+
+  if (plannedTrials > 0 && executedTrials > 0 && plannedTrials !== executedTrials) {
+    findings.push({
+      code: "budget_contract_mismatch",
+      severity: "blocker",
+      message: `Declared trial budget (${plannedTrials}) does not match executed trial count (${executedTrials}).`,
+      evidence_path: "run_config.json + run_record.json",
+      target_node: "run_experiments"
+    });
+  }
+
+  const checkpointPaperReady = artifacts.checkpointState?.paper_ready;
+  const publicPaperReady = artifacts.paperReadiness?.paper_ready;
+  if (typeof checkpointPaperReady === "boolean" && typeof publicPaperReady === "boolean"
+      && checkpointPaperReady !== publicPaperReady) {
+    findings.push({
+      code: "stale_persisted_state",
+      severity: "blocker",
+      message: "Checkpoint paper-readiness state disagrees with the public paper-readiness artifact.",
+      evidence_path: "checkpoint/state.json + paper/paper_readiness.json",
+      target_node: "review"
+    });
+  }
+  return findings;
+}
+
+function hasSeedProvenance(value: Record<string, unknown>): boolean {
+  return ["seed", "seed_id", "random_seed", "evaluation_seed"]
+    .some((key) => Object.prototype.hasOwnProperty.call(value, key) && value[key] !== null && value[key] !== "");
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 function governedResearchNode(value: unknown): string | undefined {
@@ -1432,6 +1066,12 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
       actions.add("Treat the manuscript as unaccepted, return to the failed gate, and rerun write_paper only after the cited blockers are repaired.");
     } else if (blocker.code === "artifact_contract_incomplete") {
       actions.add("Restore required governance artifacts or explicitly mark the bundle incomplete.");
+    } else if (blocker.code === "repeated_run_provenance_missing") {
+      actions.add("Persist every planned trial with explicit seed provenance before rerunning the review gate.");
+    } else if (blocker.code === "budget_contract_mismatch") {
+      actions.add("Reconcile the declared and executed trial budgets, then regenerate result and review artifacts.");
+    } else if (blocker.code === "stale_persisted_state") {
+      actions.add("Refresh checkpoint and public readiness artifacts from one terminal run state before promotion.");
     } else if (blocker.source === "reviewResearchScaleArtifacts") {
       actions.add("Repair the upstream node identified by review evidence, then rerun the scientific and manuscript-promotion gates.");
     }
@@ -1451,7 +1091,7 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     "",
     `Generated: ${summary.generated_at}`,
     `Verdict: ${summary.verdict}`,
-    `Input: ${summary.input.mode}${summary.input.seed_id ? ` ${summary.input.seed_id}` : ""}`,
+    `Input: ${summary.input.mode}`,
     `Run artifacts: ${summary.input.run_root}`,
     "",
     '<a id="top-blockers"></a>',
@@ -1509,6 +1149,13 @@ function renderAuditMarkdown(summary: PaperReadinessAuditSummary): string {
     "",
     ...listOrNone(summary.design_contract_findings.map((finding) =>
       `${finding.severity}: ${finding.code} - ${finding.message} (${finding.evidence_path})`
+    )),
+    "",
+    '<a id="execution-integrity-findings"></a>',
+    "## Execution Integrity Findings",
+    "",
+    ...listOrNone(summary.execution_integrity_findings.map((finding) =>
+      `${finding.severity}: ${finding.code} - ${finding.message} (${finding.evidence_path}; repair owner: ${finding.target_node})`
     )),
     "",
     '<a id="literature-discovery-findings"></a>',
@@ -1677,6 +1324,14 @@ async function readOptionalJson<T = unknown>(filePath: string): Promise<T | unde
   } catch {
     return undefined;
   }
+}
+
+async function readFirstOptionalJson<T = unknown>(root: string, candidates: string[]): Promise<T | undefined> {
+  for (const candidate of candidates) {
+    const value = await readOptionalJson<T>(path.join(root, candidate));
+    if (value !== undefined) return value;
+  }
+  return undefined;
 }
 
 async function readDesignContractPayloads(runRoot: string): Promise<Array<{ path: string; payload: Record<string, unknown> }>> {

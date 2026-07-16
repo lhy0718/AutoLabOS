@@ -93,7 +93,7 @@ function inputFor(overrides: Partial<MinimumGateInput> = {}): MinimumGateInput {
 describe("governance paper-readiness gate", () => {
   it.each([
     {
-      taskId: "AGB-001",
+      taskId: "case-missing-baseline",
       input: inputFor({
         presence: completePresence({ baselineSummaryPresent: false }),
         report: completeReport({ condition_comparisons: [] })
@@ -101,14 +101,14 @@ describe("governance paper-readiness gate", () => {
       failedCheck: "baseline_or_comparator"
     },
     {
-      taskId: "AGB-002",
+      taskId: "case-unsupported-claim",
       input: inputFor({
         presence: completePresence({ evidenceStorePresent: false })
       }),
       failedCheck: "claim_evidence_linkage"
     },
     {
-      taskId: "AGB-003",
+      taskId: "case-incomplete-results",
       input: inputFor({
         report: completeReport({
           results_table: [
@@ -125,14 +125,14 @@ describe("governance paper-readiness gate", () => {
       failedCheck: "results_table_schema"
     },
     {
-      taskId: "AGB-009",
+      taskId: "case-stale-state",
       input: inputFor({
         presence: completePresence({ metricsPresent: false })
       }),
       failedCheck: "executed_result"
     },
     {
-      taskId: "AGB-010",
+      taskId: "case-fallback-only",
       input: inputFor({
         presence: completePresence({ hypothesesPresent: false }),
         report: completeReport({ primary_findings: [] })

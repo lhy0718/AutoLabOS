@@ -85,23 +85,13 @@ describe("resolveCliAction", () => {
     });
   });
 
-  it("supports paper-readiness audit by seed and run root", () => {
-    expect(resolveCliAction(["audit", "--seed", "AGB-001", "--out-dir", "outputs/audit"])).toEqual({
-      kind: "audit",
-      seedId: "AGB-001",
-      runRoot: undefined,
-      externalRoot: undefined,
-      draftPath: undefined,
-      logPath: undefined,
-      outDir: "outputs/audit"
-    });
+  it("supports paper-readiness audit by run and external artifact roots", () => {
     expect(resolveCliAction(["audit", "--run", "outputs/run-a"])).toEqual({
       kind: "audit",
       runRoot: "outputs/run-a",
       externalRoot: undefined,
       draftPath: undefined,
       logPath: undefined,
-      seedId: undefined,
       outDir: undefined
     });
     expect(resolveCliAction(["audit", "--external", "incoming/run-a", "--draft", "incoming/draft.md", "--log", "incoming/run.log"])).toEqual({
@@ -110,7 +100,6 @@ describe("resolveCliAction", () => {
       externalRoot: "incoming/run-a",
       draftPath: "incoming/draft.md",
       logPath: "incoming/run.log",
-      seedId: undefined,
       outDir: undefined
     });
   });
@@ -120,9 +109,9 @@ describe("resolveCliAction", () => {
       kind: "error",
       message: expect.stringContaining("--run")
     });
-    expect(resolveCliAction(["audit", "--run", "outputs/run-a", "--seed", "AGB-001"])).toMatchObject({
+    expect(resolveCliAction(["audit", "--run", "outputs/run-a", "--seed", "case-alpha"])).toMatchObject({
       kind: "error",
-      message: expect.stringContaining("--run")
+      message: expect.stringContaining("--seed")
     });
     expect(resolveCliAction(["audit", "--draft", "draft.md"])).toMatchObject({
       kind: "error",
@@ -173,17 +162,17 @@ describe("resolveCliAction", () => {
         "governance-benchmark",
         "seed",
         "--source",
-        "fixtures/AGB-001",
+        "fixtures/case-alpha",
         "--task",
-        "AGB-001",
+        "case-alpha",
         "--out-dir",
         "outputs/seeds",
         "--reference-only"
       ])
     ).toEqual({
       kind: "governance-benchmark-seed",
-      sourcePath: "fixtures/AGB-001",
-      taskId: "AGB-001",
+      sourcePath: "fixtures/case-alpha",
+      taskId: "case-alpha",
       outDir: "outputs/seeds",
       referenceOnly: true
     });
@@ -195,22 +184,22 @@ describe("resolveCliAction", () => {
         "governance-benchmark",
         "dry-run",
         "--seed",
-        "outputs/governance-benchmark/seeds/AGB-001",
+        "outputs/governance-benchmark/seeds/case-alpha",
         "--task",
-        "AGB-001",
+        "case-alpha",
         "--condition",
         "gated",
         "--condition",
         "ungated",
         "--out-dir",
-        "outputs/governance-benchmark/AGB-001"
+        "outputs/governance-benchmark/case-alpha"
       ])
     ).toEqual({
       kind: "governance-benchmark-dry-run",
-      seedPath: "outputs/governance-benchmark/seeds/AGB-001",
-      taskId: "AGB-001",
+      seedPath: "outputs/governance-benchmark/seeds/case-alpha",
+      taskId: "case-alpha",
       conditions: ["gated", "ungated"],
-      outDir: "outputs/governance-benchmark/AGB-001"
+      outDir: "outputs/governance-benchmark/case-alpha"
     });
   });
 
@@ -222,9 +211,9 @@ describe("resolveCliAction", () => {
         "--seeds",
         "outputs/governance-benchmark/seeds",
         "--task",
-        "AGB-001",
+        "case-alpha",
         "--task",
-        "AGB-002",
+        "case-beta",
         "--condition",
         "gated",
         "--condition",
@@ -235,7 +224,7 @@ describe("resolveCliAction", () => {
     ).toEqual({
       kind: "governance-benchmark-batch",
       seedsRoot: "outputs/governance-benchmark/seeds",
-      taskIds: ["AGB-001", "AGB-002"],
+      taskIds: ["case-alpha", "case-beta"],
       conditions: ["gated", "ungated"],
       outDir: "outputs/governance-benchmark/batch"
     });
@@ -263,6 +252,131 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports promotion benchmark scoring mode", () => {
+    expect(
+      resolveCliAction([
+        "governance-benchmark",
+        "score-promotion",
+        "--suite",
+        "benchmarks/promotion/suite.json",
+        "--predictions",
+        "outputs/predictions.jsonl",
+        "--out-dir",
+        "outputs/promotion-score"
+      ])
+    ).toEqual({
+      kind: "governance-benchmark-score-promotion",
+      suitePath: "benchmarks/promotion/suite.json",
+      predictionsPath: "outputs/predictions.jsonl",
+      outDir: "outputs/promotion-score"
+    });
+  });
+
+  it("supports promotion benchmark build mode", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "build-promotion",
+      "--recipe",
+      "benchmarks/promotion/recipe.json",
+      "--out-dir",
+      "outputs/promotion-suite"
+    ])).toEqual({
+      kind: "governance-benchmark-build-promotion",
+      recipePath: "benchmarks/promotion/recipe.json",
+      outDir: "outputs/promotion-suite"
+    });
+  });
+
+  it("supports synthetic promotion development corpus generation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "generate-promotion-development",
+      "--out-dir",
+      "outputs/development-corpus"
+    ])).toEqual({
+      kind: "governance-benchmark-generate-promotion-development",
+      outDir: "outputs/development-corpus"
+    });
+  });
+
+  it("supports promotion benchmark failure analysis", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "analyze-promotion-failures",
+      "--suite",
+      "suite.json",
+      "--predictions",
+      "predictions.jsonl",
+      "--system",
+      "artifact-audit",
+      "--out-dir",
+      "outputs/failures"
+    ])).toEqual({
+      kind: "governance-benchmark-analyze-promotion-failures",
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      systemId: "artifact-audit",
+      outDir: "outputs/failures"
+    });
+  });
+
+  it("supports promotion benchmark system run mode", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion",
+      "--suite",
+      "outputs/promotion-suite/suite.json",
+      "--system",
+      "presence-checklist",
+      "--system",
+      "artifact-audit",
+      "--trial",
+      "trial-beta",
+      "--out-dir",
+      "outputs/predictions"
+    ])).toEqual({
+      kind: "governance-benchmark-run-promotion",
+      suitePath: "outputs/promotion-suite/suite.json",
+      systems: ["presence-checklist", "artifact-audit"],
+      trialId: "trial-beta",
+      outDir: "outputs/predictions"
+    });
+  });
+
+  it("supports promotion prompt export and response import modes", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-prompts",
+      "--suite",
+      "suite.json",
+      "--out-dir",
+      "outputs/prompts"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-prompts",
+      suitePath: "suite.json",
+      outDir: "outputs/prompts"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "import-promotion-responses",
+      "--map",
+      "private-map.json",
+      "--responses",
+      "responses.jsonl",
+      "--system",
+      "provider-alpha",
+      "--trial",
+      "trial-alpha"
+    ])).toEqual({
+      kind: "governance-benchmark-import-promotion-responses",
+      requestMapPath: "private-map.json",
+      responsesPath: "responses.jsonl",
+      systemId: "provider-alpha",
+      trialId: "trial-alpha",
+      outDir: "outputs/governance-benchmark/provider-predictions"
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");
@@ -286,6 +400,52 @@ describe("resolveCliAction", () => {
   it("requires a source for governance benchmark demo bundle export mode", () => {
     const action = resolveCliAction(["governance-benchmark", "export-bundles"]);
     expect(action.kind).toBe("error");
+  });
+
+  it("requires suite and predictions for promotion benchmark scoring mode", () => {
+    const action = resolveCliAction(["governance-benchmark", "score-promotion", "--suite", "suite.json"]);
+    expect(action.kind).toBe("error");
+  });
+
+  it("requires a recipe for promotion benchmark build mode", () => {
+    expect(resolveCliAction(["governance-benchmark", "build-promotion"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--recipe")
+    });
+  });
+
+  it("requires a suite and validates systems for promotion benchmark runs", () => {
+    expect(resolveCliAction(["governance-benchmark", "run-promotion"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--suite")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion",
+      "--suite",
+      "suite.json",
+      "--system",
+      "unknown-system"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("unknown-system")
+    });
+  });
+
+  it("requires complete promotion provider adapter arguments", () => {
+    expect(resolveCliAction(["governance-benchmark", "export-promotion-prompts"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--suite")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "import-promotion-responses",
+      "--map",
+      "private-map.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--responses")
+    });
   });
 
   it("rejects init subcommand", () => {

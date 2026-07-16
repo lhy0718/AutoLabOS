@@ -10,7 +10,7 @@ External benchmarks should test whether AutoLabOS governance improves research-r
 
 Candidate external benchmark targets:
 
-- AGB-001 through AGB-010 as governed benchmark seeds and task manifests
+- the complete manifest-defined governance case set as governed benchmark seeds and task manifests
 - governed research-run suites with missing-baseline and weak-evidence traps
 - controlled paper-readiness tasks with known artifact requirements
 - code-and-experiment repair tasks that require runnable outputs

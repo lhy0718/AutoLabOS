@@ -11,6 +11,32 @@ import {
   exportGovernanceDemoBundles,
   type GovernanceDemoBundleExportInput
 } from "../core/benchmark/governanceBundleExporter.js";
+import {
+  scorePromotionBenchmarkFromFiles,
+  type ScorePromotionBenchmarkInput
+} from "../core/benchmark/promotionBenchmark.js";
+import {
+  buildPromotionBenchmarkSuite,
+  type BuildPromotionBenchmarkInput
+} from "../core/benchmark/promotionBenchmarkBuilder.js";
+import {
+  runPromotionBenchmarkSystems,
+  type RunPromotionBenchmarkSystemsInput
+} from "../core/benchmark/promotionBenchmarkSystems.js";
+import {
+  exportPromotionBenchmarkPromptPack,
+  importPromotionBenchmarkResponses,
+  type ExportPromotionPromptPackInput,
+  type ImportPromotionResponsesInput
+} from "../core/benchmark/promotionBenchmarkPromptPack.js";
+import {
+  generateSyntheticPromotionCorpus,
+  type GenerateSyntheticPromotionCorpusInput
+} from "../core/benchmark/promotionBenchmarkSyntheticCorpus.js";
+import {
+  analyzePromotionBenchmarkFailures,
+  type AnalyzePromotionBenchmarkFailuresInput
+} from "../core/benchmark/promotionBenchmarkMetaHarness.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -90,6 +116,109 @@ export async function runGovernanceBenchmarkExportBundlesCli(
       ...manifest.entries.map((entry) =>
         `${entry.run_id}: paper_ready=${entry.readiness.paper_ready}, pdf_built=${entry.readiness.pdf_built}, write_paper_completed=${entry.readiness.write_paper_completed}`
       )
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionBenchmarkScoreCli(
+  input: ScorePromotionBenchmarkInput
+): Promise<void> {
+  const result = await scorePromotionBenchmarkFromFiles(input);
+  process.stdout.write(
+    [
+      `Promotion benchmark score ${result.report.passed ? "passed" : "failed"}: ${result.report.suite_id}`,
+      `Cases: ${result.report.case_count}`,
+      `Predictions: ${result.report.prediction_count}`,
+      `Systems: ${result.report.systems.length}`,
+      `Output: ${result.output_path}`,
+      `Report: ${result.report_path}`,
+      ...result.report.systems.map((system) =>
+        `${system.system_id}: coverage=${system.covered_case_count}/${system.expected_case_count}, false_promotion=${system.false_paper_ready_rate ?? "n/a"}, concern_acceptance_conflict=${system.concern_acceptance_conflict_rate ?? "n/a"}`
+      )
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionBenchmarkBuildCli(
+  input: BuildPromotionBenchmarkInput
+): Promise<void> {
+  const result = await buildPromotionBenchmarkSuite(input);
+  process.stdout.write(
+    [
+      `Promotion benchmark built: ${result.suite_id}`,
+      `Cases: ${result.case_count}`,
+      `Output: ${result.output_dir}`,
+      `Suite: ${result.suite_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionBenchmarkSystemsCli(
+  input: RunPromotionBenchmarkSystemsInput
+): Promise<void> {
+  const result = await runPromotionBenchmarkSystems(input);
+  process.stdout.write(
+    [
+      `Promotion benchmark systems completed: ${result.suite_id}`,
+      `Systems: ${result.systems.join(", ")}`,
+      `Predictions: ${result.prediction_count}`,
+      `Output: ${result.predictions_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionPromptPackExportCli(
+  input: ExportPromotionPromptPackInput
+): Promise<void> {
+  const result = await exportPromotionBenchmarkPromptPack(input);
+  process.stdout.write(
+    [
+      `Promotion prompt pack exported: ${result.suite_id}`,
+      `Requests: ${result.request_count}`,
+      `Provider input: ${result.requests_path}`,
+      `Private map: ${result.private_map_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionResponseImportCli(
+  input: ImportPromotionResponsesInput
+): Promise<void> {
+  const result = await importPromotionBenchmarkResponses(input);
+  process.stdout.write(
+    [
+      `Promotion provider responses imported: ${result.prediction_count}`,
+      `Output: ${result.predictions_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runSyntheticPromotionCorpusCli(
+  input: GenerateSyntheticPromotionCorpusInput
+): Promise<void> {
+  const result = await generateSyntheticPromotionCorpus(input);
+  process.stdout.write(
+    [
+      `Synthetic promotion development corpus generated: ${result.corpus_id}`,
+      `Base bundles: ${result.base_bundle_count}`,
+      `Cases: ${result.case_count}`,
+      `Recipe: ${result.recipe_path}`,
+      "Evidence class: synthetic development; not paper-claim eligible"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionFailureAnalysisCli(
+  input: AnalyzePromotionBenchmarkFailuresInput
+): Promise<void> {
+  const result = await analyzePromotionBenchmarkFailures(input);
+  process.stdout.write(
+    [
+      `Promotion failure analysis completed: ${result.suite_id}`,
+      `System: ${result.system_id}`,
+      `Failed cases: ${result.failed_case_count}/${result.evaluated_case_count}`,
+      `Node recommendations: ${result.recommendation_count}`,
+      `Output: ${result.output_dir}`
     ].join("\n") + "\n"
   );
 }

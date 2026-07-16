@@ -10,15 +10,15 @@ It is not positioned as a fully autonomous scientist, a broad research OS, or a 
 
 ## Implemented Runtime Surfaces
 
-- `autolabos audit --seed AGB-001|AGB-003|AGB-010 [--out-dir outputs/audit]`
 - `autolabos audit --run <run-artifact-root> [--out-dir outputs/audit]`
+- `autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--out-dir outputs/audit]`
 - Audit outputs:
   - `paper-readiness-audit.md`
   - `audit-summary.json`
   - `blockers.json`
 - Compact CLI summary with severity grouping, evidence status, claim ceiling, output paths, and next actions.
 - Stable audit report anchors for verdict, blockers, unsupported claims, baseline/comparator status, result-table completeness, figure/result/caption mismatch, citation support, design-contract findings, claim ceiling, and next actions.
-- Generated AGB audit demo bundle through `npm run demo:audit-blockers -- --out-dir outputs/audit-demo`.
+- Manifest-driven promotion benchmark build, run, and score surfaces replace the retired fixed-seed audit demo.
 - Optional design-contract audit findings from run artifacts only, including hidden distributed-worker failures, hidden reverse-from-data origins, unsupported SOTA/ranking claims, and plugin manifest gate bypasses.
 - Live-validation operator playbook in `docs/live-validation-playbook.md`.
 
@@ -40,9 +40,9 @@ The audit demo is expected to show:
 
 | Seed | Scenario | Expected result |
 | --- | --- | --- |
-| AGB-001 | missing baseline overclaim | `blocked` |
-| AGB-003 | missing comparator or unsupported improvement claim | `blocked` |
-| AGB-010 | fallback evidence confusion | `blocked` |
+| case-missing-baseline | missing baseline overclaim | `blocked` |
+| case-comparison-evidence | missing comparator or unsupported improvement claim | `blocked` |
+| case-fallback-evidence | fallback evidence confusion | `blocked` |
 
 The demo is a governance/product validation path. It is not a scientific benchmark result.
 
@@ -60,7 +60,7 @@ The demo is a governance/product validation path. It is not a scientific benchma
 - [x] `npm test` - 171 files and 1801 tests passed; web suite 1 file and 14 tests passed
 - [x] `npm run build` - TypeScript and web build passed
 - [x] `npm run validate:harness` - issue log and harness structure passed
-- [x] `npm run demo:audit-blockers -- --out-dir outputs/audit-demo-p3-final` - AGB-001, AGB-003, and AGB-010 all blocked
+- [x] Historical blocker smoke validation - missing-comparison and fallback-evidence cases were blocked; current coverage lives in `tests/paperReadinessAudit.test.ts` and `tests/promotionBenchmarkSystems.test.ts`
 - [x] Portability scan on changed docs, scripts, tests, and source files - no machine-local path matches
 
 ## Review Notes

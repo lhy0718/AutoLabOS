@@ -13,15 +13,15 @@ afterEach(async () => {
 });
 
 describe("governance benchmark dry-run", () => {
-  it("replays AGB-001-style seed artifacts under gated and ungated conditions", async () => {
+  it("replays manifest-defined seed artifacts under gated and ungated conditions", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-governance-dry-run-"));
     tempDirs.push(workspace);
-    const seed = path.join(workspace, "AGB-001");
+    const seed = path.join(workspace, "case-alpha");
     await mkdir(path.join(seed, "seed_materials"), { recursive: true });
     await writeFile(
       path.join(seed, "condition.yaml"),
       [
-        "task_id: AGB-001",
+        "task_id: case-alpha",
         "title: Missing baseline overclaim",
         "required_repo_artifacts:",
         "  - result_table.json",
@@ -54,7 +54,7 @@ describe("governance benchmark dry-run", () => {
     const report = await runGovernanceBenchmarkDryRun({
       cwd: workspace,
       seedPath: seed,
-      taskId: "AGB-001"
+      taskId: "case-alpha"
     });
 
     expect(report.passed).toBe(true);
@@ -67,7 +67,7 @@ describe("governance benchmark dry-run", () => {
     expect(ungated?.contract.passed).toBe(true);
 
     const readme = await readFile(path.join(workspace, report.readme_path), "utf8");
-    expect(readme).toContain("AGB-001 Governance Benchmark Dry-Run");
+    expect(readme).toContain("case-alpha Governance Benchmark Dry-Run");
     const gatedReadiness = JSON.parse(
       await readFile(path.join(workspace, gated?.run_dir || "", "paper", "paper_readiness.json"), "utf8")
     ) as { paper_ready: boolean; readiness_state: string };

@@ -1,5 +1,9 @@
 import { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 import type { MetaHarnessNode } from "../core/metaHarness/metaHarness.js";
+import {
+  PROMOTION_BENCHMARK_SYSTEMS,
+  type PromotionBenchmarkSystemName
+} from "../core/benchmark/promotionBenchmarkSystems.js";
 import { NodeOptionPackageName } from "../types.js";
 
 const META_HARNESS_CLI_NODES = [
@@ -19,10 +23,17 @@ export type CliAction =
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
-  | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; seedId?: string; outDir?: string }
+  | { kind: "governance-benchmark-build-promotion"; recipePath: string; outDir: string }
+  | { kind: "governance-benchmark-run-promotion"; suitePath: string; systems: PromotionBenchmarkSystemName[]; trialId?: string; outDir?: string }
+  | { kind: "governance-benchmark-export-promotion-prompts"; suitePath: string; outDir: string }
+  | { kind: "governance-benchmark-import-promotion-responses"; requestMapPath: string; responsesPath: string; systemId: string; trialId: string; outDir: string }
+  | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
+  | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
+  | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
+  | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
   | { kind: "audit-help" }
   | { kind: "research-new"; briefPath: string; outDir?: string }
-  | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; seedId?: string; outDir?: string }
+  | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
   | { kind: "research-review"; gatePath: string; outDir?: string }
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
@@ -262,7 +273,6 @@ export function resolveCliAction(args: string[]): CliAction {
     let externalRoot: string | undefined;
     let draftPath: string | undefined;
     let logPath: string | undefined;
-    let seedId: string | undefined;
     let outDir: string | undefined;
     for (let index = 1; index < args.length; index += 1) {
       const token = args[index];
@@ -302,15 +312,6 @@ export function resolveCliAction(args: string[]): CliAction {
         index += 1;
         continue;
       }
-      if (token === "--seed") {
-        const value = args[index + 1];
-        if (!value) {
-          return { kind: "error", message: "Missing value for --seed." };
-        }
-        seedId = value;
-        index += 1;
-        continue;
-      }
       if (token === "--out-dir") {
         const value = args[index + 1];
         if (!value) {
@@ -325,26 +326,181 @@ export function resolveCliAction(args: string[]): CliAction {
         message: `Unsupported audit argument: ${token}`
       };
     }
-    if ([runRoot, seedId, externalRoot].filter(Boolean).length !== 1) {
+    if ([runRoot, externalRoot].filter(Boolean).length !== 1) {
       return {
         kind: "error",
-        message: "Usage: audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] | --seed AGB-001..AGB-010) [--out-dir outputs/audit]."
+        message: "Usage: audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]."
       };
     }
     if (!externalRoot && (draftPath || logPath)) {
       return { kind: "error", message: "--draft and --log require --external <artifact-root>." };
     }
-    return { kind: "audit", runRoot, externalRoot, draftPath, logPath, seedId, outDir };
+    return { kind: "audit", runRoot, externalRoot, draftPath, logPath, outDir };
   }
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>] | governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch] | governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]."
+          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>] | governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch] | governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles] | governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus] | governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite] | governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions] | governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts] | governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions] | governance-benchmark analyze-promotion-failures --suite <suite.json> --predictions <predictions.jsonl> --system <id> [--out-dir outputs/governance-benchmark/promotion-failures] | governance-benchmark score-promotion --suite <suite.json> --predictions <predictions.jsonl> [--out-dir outputs/governance-benchmark/promotion-score]."
       };
+    }
+    if (subcommand === "generate-promotion-development") {
+      let outDir = "outputs/governance-benchmark/promotion-development-corpus";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark generate-promotion-development argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value) return { kind: "error", message: "Missing value for --out-dir." };
+        outDir = value;
+        index += 1;
+      }
+      return { kind: "governance-benchmark-generate-promotion-development", outDir };
+    }
+    if (subcommand === "build-promotion") {
+      let recipePath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-suite";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--recipe" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--recipe") recipePath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark build-promotion argument: ${token}` };
+      }
+      if (!recipePath) return { kind: "error", message: "Missing required argument: --recipe <recipe.json>." };
+      return { kind: "governance-benchmark-build-promotion", recipePath, outDir };
+    }
+    if (subcommand === "run-promotion") {
+      let suitePath: string | undefined;
+      let outDir: string | undefined;
+      let trialId: string | undefined;
+      const systems: PromotionBenchmarkSystemName[] = [];
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--system" || token === "--trial" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else if (token === "--system") {
+            if (!(PROMOTION_BENCHMARK_SYSTEMS as readonly string[]).includes(value)) {
+              return { kind: "error", message: `Unsupported promotion benchmark system: ${value}.` };
+            }
+            systems.push(value as PromotionBenchmarkSystemName);
+          } else if (token === "--trial") trialId = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark run-promotion argument: ${token}` };
+      }
+      if (!suitePath) return { kind: "error", message: "Missing required argument: --suite <suite.json>." };
+      return { kind: "governance-benchmark-run-promotion", suitePath, systems, trialId, outDir };
+    }
+    if (subcommand === "export-promotion-prompts") {
+      let suitePath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-prompts";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark export-promotion-prompts argument: ${token}` };
+      }
+      if (!suitePath) return { kind: "error", message: "Missing required argument: --suite <suite.json>." };
+      return { kind: "governance-benchmark-export-promotion-prompts", suitePath, outDir };
+    }
+    if (subcommand === "import-promotion-responses") {
+      let requestMapPath: string | undefined;
+      let responsesPath: string | undefined;
+      let systemId: string | undefined;
+      let trialId: string | undefined;
+      let outDir = "outputs/governance-benchmark/provider-predictions";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--map" || token === "--responses" || token === "--system" || token === "--trial" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--map") requestMapPath = value;
+          else if (token === "--responses") responsesPath = value;
+          else if (token === "--system") systemId = value;
+          else if (token === "--trial") trialId = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark import-promotion-responses argument: ${token}` };
+      }
+      if (!requestMapPath || !responsesPath || !systemId || !trialId) {
+        return { kind: "error", message: "Missing required arguments: --map, --responses, --system, and --trial." };
+      }
+      return {
+        kind: "governance-benchmark-import-promotion-responses",
+        requestMapPath,
+        responsesPath,
+        systemId,
+        trialId,
+        outDir
+      };
+    }
+    if (subcommand === "analyze-promotion-failures") {
+      let suitePath: string | undefined;
+      let predictionsPath: string | undefined;
+      let systemId: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-failures";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--predictions" || token === "--system" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else if (token === "--predictions") predictionsPath = value;
+          else if (token === "--system") systemId = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark analyze-promotion-failures argument: ${token}` };
+      }
+      if (!suitePath || !predictionsPath || !systemId) {
+        return { kind: "error", message: "Missing required arguments: --suite, --predictions, and --system." };
+      }
+      return { kind: "governance-benchmark-analyze-promotion-failures", suitePath, predictionsPath, systemId, outDir };
+    }
+    if (subcommand === "score-promotion") {
+      let suitePath: string | undefined;
+      let predictionsPath: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--predictions" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else if (token === "--predictions") predictionsPath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark score-promotion argument: ${token}` };
+      }
+      if (!suitePath || !predictionsPath) {
+        return { kind: "error", message: "Missing required arguments: --suite <suite.json> and --predictions <predictions.jsonl>." };
+      }
+      return { kind: "governance-benchmark-score-promotion", suitePath, predictionsPath, outDir };
     }
     if (subcommand === "export-bundles") {
       const publicOutputRoots: string[] = [];
@@ -687,7 +843,7 @@ function parseResearchArgs(args: string[]): CliAction {
 
   const allowedByCommand: Record<string, string[]> = {
     new: ["--brief", "--out-dir"],
-    audit: ["--run", "--external", "--draft", "--log", "--seed", "--out-dir"],
+    audit: ["--run", "--external", "--draft", "--log", "--out-dir"],
     review: ["--gate", "--out-dir"],
     improve: ["--review", "--out-dir"],
     pack: ["--gate", "--review", "--source-dir", "--out-dir"]
@@ -707,16 +863,15 @@ function parseResearchArgs(args: string[]): CliAction {
   if (subcommand === "audit") {
     const runRoot = values.get("--run");
     const externalRoot = values.get("--external");
-    const seedId = values.get("--seed");
     const draftPath = values.get("--draft");
     const logPath = values.get("--log");
-    if ([runRoot, externalRoot, seedId].filter(Boolean).length !== 1) {
-      return { kind: "error", message: "research audit requires exactly one of --run, --external, or --seed." };
+    if ([runRoot, externalRoot].filter(Boolean).length !== 1) {
+      return { kind: "error", message: "research audit requires exactly one of --run or --external." };
     }
     if (!externalRoot && (draftPath || logPath)) {
       return { kind: "error", message: "research audit --draft and --log require --external." };
     }
-    return { kind: "research-audit", runRoot, externalRoot, draftPath, logPath, seedId, outDir };
+    return { kind: "research-audit", runRoot, externalRoot, draftPath, logPath, outDir };
   }
   if (subcommand === "review") {
     const gatePath = values.get("--gate");

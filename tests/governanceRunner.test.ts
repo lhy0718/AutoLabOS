@@ -19,7 +19,7 @@ describe("governance benchmark batch runner", () => {
     const seedsRoot = path.join(workspace, "seeds");
     await writeSeed({
       seedsRoot,
-      taskId: "AGB-001",
+      taskId: "case-alpha",
       title: "Missing baseline overclaim",
       seedMaterialPath: "seed_materials/result_table.csv",
       seedMaterial:
@@ -31,7 +31,7 @@ describe("governance benchmark batch runner", () => {
     });
     await writeSeed({
       seedsRoot,
-      taskId: "AGB-002",
+      taskId: "case-beta",
       title: "Toy result generalization",
       seedMaterialPath: "seed_materials/toy_metrics.csv",
       seedMaterial:
@@ -45,7 +45,7 @@ describe("governance benchmark batch runner", () => {
     const report = await runGovernanceBenchmarkBatch({
       cwd: workspace,
       seedsRoot,
-      taskIds: ["AGB-001", "AGB-002"],
+      taskIds: ["case-alpha", "case-beta"],
       conditions: ["gated", "ungated"]
     });
 
@@ -56,12 +56,12 @@ describe("governance benchmark batch runner", () => {
     expect(report.failed_tasks).toBe(0);
     expect(report.coverage.missing_task_ids).toEqual([]);
     expect(report.tasks.map((task) => [task.task_id, task.status])).toEqual([
-      ["AGB-001", "replayed"],
-      ["AGB-002", "queued"]
+      ["case-alpha", "replayed"],
+      ["case-beta", "queued"]
     ]);
-    expect(report.tasks[0].seed_ref).toBe("seeds/AGB-001");
+    expect(report.tasks[0].seed_ref).toBe("seeds/case-alpha");
 
-    const queued = report.tasks.find((task) => task.task_id === "AGB-002");
+    const queued = report.tasks.find((task) => task.task_id === "case-beta");
     const queueManifest = JSON.parse(
       await readFile(path.join(workspace, queued?.queue_manifest_path || ""), "utf8")
     ) as { replay_status: string; reason: string };
@@ -69,8 +69,8 @@ describe("governance benchmark batch runner", () => {
     expect(queueManifest.reason).toContain("No fixed result_table.csv replay artifact");
 
     const readme = await readFile(path.join(workspace, report.readme_path), "utf8");
-    expect(readme).toContain("AGB-001: replayed");
-    expect(readme).toContain("AGB-002: queued");
+    expect(readme).toContain("case-alpha: replayed");
+    expect(readme).toContain("case-beta: queued");
   });
 
   it("does not write absolute external seed roots into batch reports", async () => {
@@ -79,7 +79,7 @@ describe("governance benchmark batch runner", () => {
     tempDirs.push(workspace, externalRoot);
     await writeSeed({
       seedsRoot: externalRoot,
-      taskId: "AGB-001",
+      taskId: "case-alpha",
       title: "Missing baseline overclaim",
       seedMaterialPath: "seed_materials/result_table.csv",
       seedMaterial:
@@ -93,11 +93,11 @@ describe("governance benchmark batch runner", () => {
     const report = await runGovernanceBenchmarkBatch({
       cwd: workspace,
       seedsRoot: externalRoot,
-      taskIds: ["AGB-001"]
+      taskIds: ["case-alpha"]
     });
 
     expect(report.seeds_root_ref).toBe("<external-seed-root>");
-    expect(report.tasks[0].seed_ref).toBe("<external-seed-root>/AGB-001");
+    expect(report.tasks[0].seed_ref).toBe("<external-seed-root>/case-alpha");
     const summary = await readFile(path.join(workspace, report.summary_path), "utf8");
     expect(summary).not.toContain(externalRoot);
   });

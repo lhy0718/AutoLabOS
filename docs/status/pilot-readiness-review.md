@@ -8,12 +8,12 @@ Date: 2026-05-05
 - External intake manifest with sanitized source reference.
 - Allowlisted artifact copying into the audit output directory.
 - `claim-evidence-table.json` generated from existing claim artifacts and scorer issues.
-- AGB-001 through AGB-010 full seed audit demo.
+- the complete manifest-defined governance case set full seed audit demo.
 - Literature discovery findings for target-paper trace and wide related-work trace gaps.
 
 ## Demo-Only Evidence
 
-- AGB seed replay is regression and product-demo evidence.
+- Fixed-seed replay is regression and product-demo evidence.
 - It is not customer validation and is not scientific performance evidence.
 
 ## Manual Concierge Steps
@@ -47,8 +47,8 @@ No-go if:
 - `npm run validate:harness`: passed.
 - `npm audit`: found 0 vulnerabilities.
 - `npm --prefix web audit`: found 0 vulnerabilities.
-- `npm run demo:audit-blockers -- --out-dir outputs/audit-demo-p4-smoke`: passed; AGB-001, AGB-003, and AGB-010 remained blocked or downgraded.
-- `npm run demo:audit-full-seeds -- --out-dir outputs/audit-full-seeds-p4-smoke`: passed; AGB-001 through AGB-010 matched expected conservative outcomes.
+- Historical blocker smoke validation passed; missing-comparison and fallback-evidence cases remained blocked or downgraded.
+- Historical full fixed-seed validation passed; every manifest-defined case matched its conservative expected outcome. Current coverage lives in the promotion benchmark regressions.
 
 ## Remaining Risks
 

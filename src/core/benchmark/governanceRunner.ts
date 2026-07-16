@@ -64,9 +64,6 @@ interface ResolvedSeedTask {
 }
 
 const DEFAULT_BATCH_CONDITIONS: GovernanceBenchmarkConditionName[] = ["gated", "ungated"];
-const EXPECTED_GOVERNANCE_TASK_IDS = Array.from({ length: 10 }, (_, index) =>
-  `AGB-${String(index + 1).padStart(3, "0")}`
-);
 
 export async function runGovernanceBenchmarkBatch(
   input: GovernanceBenchmarkBatchInput
@@ -155,7 +152,7 @@ export async function runGovernanceBenchmarkBatch(
   }
 
   const discoveredTaskIds = tasks.map((task) => task.task_id).sort();
-  const expectedTaskIds = requestedTaskIds.length ? requestedTaskIds : EXPECTED_GOVERNANCE_TASK_IDS;
+  const expectedTaskIds = requestedTaskIds.length ? requestedTaskIds : discoveredTaskIds;
   const missingTaskIds = expectedTaskIds.filter((taskId) => !discoveredTaskIds.includes(taskId));
   const summaryPath = path.join(outputDir, "summary.json");
   const readmePath = path.join(outputDir, "README.md");
