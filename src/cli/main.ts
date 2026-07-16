@@ -25,6 +25,7 @@ import {
   runPromotionSourceProjectionCli,
   runPromotionSourceNormalizationPackExportCli,
   runPromotionSourceNormalizationBatchExportCli,
+  runPromotionSourceNormalizationBatchAdjudicationCli,
   runPromotionSourceNormalizationCli,
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
@@ -66,6 +67,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
+    "  autolabos governance-benchmark adjudicate-promotion-source-normalization-batch --batch-root <review-batch> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <adjudication>",
     "  autolabos governance-benchmark normalize-promotion-source --source-root <projected-bundle> --map <private-normalization-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <normalized-bundle>",
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
@@ -321,6 +323,17 @@ async function main(): Promise<void> {
     await runPromotionSourceNormalizationBatchExportCli({
       cwd: process.cwd(),
       recipePath: action.recipePath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-adjudicate-promotion-source-normalization-batch") {
+    await runPromotionSourceNormalizationBatchAdjudicationCli({
+      cwd: process.cwd(),
+      batchRoot: action.batchRoot,
+      annotationPaths: action.annotationPaths,
+      resolutionPath: action.resolutionPath,
       outDir: action.outDir
     });
     return;

@@ -16,6 +16,8 @@ import {
   exportPromotionSourceNormalizationBatch,
   inspectPromotionSourceNormalizationBatch
 } from "../src/core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
+import { adjudicatePromotionSourceNormalizationBatch } from
+  "../src/core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
 
 const tempDirs: string[] = [];
 
@@ -308,7 +310,151 @@ describe("promotion source normalization", () => {
       outDir: "absolute-batch"
     })).rejects.toThrow("Invalid source-normalization batch recipe item");
   });
+
+  it("adjudicates complete independent batch labels into runnable materialization jobs", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), tasks.map((task) =>
+      normalizationAnnotation(task.normalization_id, "reviewer-a")));
+    await writeJsonLines(path.join(workspace, "reviewer-b.jsonl"), tasks.map((task) =>
+      normalizationAnnotation(task.normalization_id, "reviewer-b")));
+
+    const result = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+      outDir: "batch-adjudication"
+    });
+    const jobs = (await readFile(path.join(workspace, result.materialization_jobs_path!), "utf8"))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      task_count: 2,
+      accepted_label_count: 2,
+      disagreement_count: 0,
+      resolved_disagreement_count: 0,
+      initial_annotator_ids: ["reviewer-a", "reviewer-b"],
+      resolver_id: null
+    });
+    expect(result.report.agreement.full_label_exact_rate).toBe(1);
+    expect(Object.values(result.report.agreement.field_exact_rates).every((rate) => rate === 1)).toBe(true);
+    expect(jobs).toHaveLength(2);
+
+    await normalizePromotionSource({
+      cwd: workspace,
+      sourceRoot: jobs[0].source_root,
+      privateMapPath: jobs[0].private_map_path,
+      annotationPaths: jobs[0].annotation_paths,
+      outDir: "normalized-from-batch"
+    });
+    expect((await inspectPromotionSourceNormalization(path.join(workspace, "normalized-from-batch"))).passed)
+      .toBe(true);
+  });
+
+  it("requires a distinct resolver for every batch-label disagreement", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    const left = tasks.map((task) => normalizationAnnotation(task.normalization_id, "reviewer-a"));
+    const right = tasks.map((task, index) => ({
+      ...normalizationAnnotation(task.normalization_id, "reviewer-b"),
+      ...(index === 0 ? { claim_text: "A distinct artifact-grounded comparison is reported." } : {})
+    }));
+    await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), left);
+    await writeJsonLines(path.join(workspace, "reviewer-b.jsonl"), right);
+
+    const unresolved = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+      outDir: "unresolved-adjudication"
+    });
+    expect(unresolved.report.passed).toBe(false);
+    expect(unresolved.materialization_jobs_path).toBeNull();
+    expect(unresolved.report.validation_issues).toContainEqual(expect.objectContaining({
+      code: "source_normalization_batch_disagreement_unresolved",
+      ref: tasks[0].normalization_id
+    }));
+
+    await writeJsonLines(path.join(workspace, "resolver.jsonl"), [
+      { ...left[0], annotator_id: "reviewer-c" }
+    ]);
+    const resolved = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+      resolutionPath: "resolver.jsonl",
+      outDir: "resolved-adjudication"
+    });
+
+    expect(resolved.report).toMatchObject({
+      passed: true,
+      disagreement_count: 1,
+      resolved_disagreement_count: 1,
+      resolver_id: "reviewer-c"
+    });
+    expect(resolved.report.agreement.full_label_exact_rate).toBe(0.5);
+    expect(resolved.report.agreement.field_exact_rates.claim_text).toBe(0.5);
+  });
+
+  it("fails closed on reused annotator IDs and incomplete batch coverage", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), tasks.map((task) =>
+      normalizationAnnotation(task.normalization_id, "reviewer-a")));
+    await writeJsonLines(path.join(workspace, "reviewer-incomplete.jsonl"), [
+      normalizationAnnotation(tasks[0].normalization_id, "reviewer-a")
+    ]);
+
+    const result = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-incomplete.jsonl"],
+      outDir: "invalid-adjudication"
+    });
+    const codes = result.report.validation_issues.map((issue) => issue.code);
+
+    expect(result.report.passed).toBe(false);
+    expect(result.accepted_labels_path).toBeNull();
+    expect(codes).toEqual(expect.arrayContaining([
+      "source_normalization_batch_initial_annotators_not_independent",
+      "source_normalization_batch_annotation_coverage_incomplete"
+    ]));
+  });
+
+  it("keeps adjudication outputs outside the closed reviewer batch", async () => {
+    const { workspace } = await createReviewBatchWorkspace();
+    await expect(adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+      outDir: "review-batch/adjudication"
+    })).rejects.toThrow("outside the closed review batch");
+  });
 });
+
+async function createReviewBatchWorkspace(): Promise<{
+  workspace: string;
+  tasks: Array<{ item_id: string; normalization_id: string }>;
+}> {
+  const workspace = await createProjectedWorkspace();
+  await exportPromotionSourceNormalizationPack({ cwd: workspace, sourceRoot: "projected", outDir: "pack-a" });
+  await createAdditionalProjectedSource(workspace);
+  await exportPromotionSourceNormalizationPack({ cwd: workspace, sourceRoot: "projected-b", outDir: "pack-b" });
+  await writeJson(path.join(workspace, "batch-recipe.json"), {
+    schema_version: "1.0",
+    batch_id: "review-batch-neutral",
+    items: [
+      { item_id: "source-item-001", source_root: "projected", pack_root: "pack-a" },
+      { item_id: "source-item-002", source_root: "projected-b", pack_root: "pack-b" }
+    ]
+  });
+  const batch = await exportPromotionSourceNormalizationBatch({
+    cwd: workspace,
+    recipePath: "batch-recipe.json",
+    outDir: "review-batch"
+  });
+  const tasks = (await readFile(path.join(workspace, batch.tasks_path), "utf8"))
+    .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+  return { workspace, tasks };
+}
 
 async function createProjectedWorkspace(): Promise<string> {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-source-normalization-"));
@@ -436,4 +582,8 @@ async function writeJson(filePath: string, value: unknown): Promise<void> {
 
 async function writeJsonLine(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value)}\n`, "utf8");
+}
+
+async function writeJsonLines(filePath: string, values: unknown[]): Promise<void> {
+  await writeFile(filePath, `${values.map((value) => JSON.stringify(value)).join("\n")}\n`, "utf8");
 }

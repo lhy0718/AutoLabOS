@@ -73,6 +73,10 @@ import {
   exportPromotionSourceNormalizationBatch,
   type ExportPromotionSourceNormalizationBatchInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
+import {
+  adjudicatePromotionSourceNormalizationBatch,
+  type AdjudicatePromotionSourceNormalizationBatchInput
+} from "../core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -372,6 +376,24 @@ export async function runPromotionSourceNormalizationBatchExportCli(
       `Controller map: ${result.controller_map_path}`,
       `Manifest: ${result.manifest_path}`,
       "Evidence boundary: distribute the reviewer directory only; packaging does not establish human completion or independence"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionSourceNormalizationBatchAdjudicationCli(
+  input: AdjudicatePromotionSourceNormalizationBatchInput
+): Promise<void> {
+  const result = await adjudicatePromotionSourceNormalizationBatch(input);
+  process.stdout.write(
+    [
+      `Promotion source-normalization batch adjudicated: ${result.report.batch_id}`,
+      `Passed: ${result.report.passed}`,
+      `Accepted labels: ${result.report.accepted_label_count}/${result.report.task_count}`,
+      `Disagreements: ${result.report.disagreement_count}`,
+      `Resolved disagreements: ${result.report.resolved_disagreement_count}`,
+      `Report: ${result.report_path}`,
+      `Materialization jobs: ${result.materialization_jobs_path || "not emitted"}`,
+      "Evidence boundary: structural coverage and pseudonymous role separation do not prove real-world reviewer identity or independence"
     ].join("\n") + "\n"
   );
 }

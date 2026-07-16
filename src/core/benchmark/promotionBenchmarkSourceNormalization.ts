@@ -74,6 +74,37 @@ export interface PromotionSourceNormalizationLabel {
   evidence_refs: string[];
 }
 
+export const PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS = [
+  "run_id",
+  "run_status",
+  "execution_backend",
+  "started_at",
+  "completed_at",
+  "exit_code",
+  "planned_trial_count",
+  "executed_trial_count",
+  "trial_ids",
+  "execution_artifacts",
+  "result_table_path",
+  "figure_count",
+  "figure_paths",
+  "severe_mismatch_count",
+  "review_block_required",
+  "claim_text",
+  "claim_section_heading",
+  "claim_status",
+  "claim_source_paths",
+  "citation_refs",
+  "citation_source_paths",
+  "evidence_ids",
+  "citation_paper_ids",
+  "paper_ready",
+  "readiness_source_path",
+  "sota_ranking_claimed",
+  "sota_evidence_present",
+  "evidence_refs"
+] as const satisfies readonly (keyof PromotionSourceNormalizationLabel)[];
+
 export interface PromotionSourceNormalizationAnnotation extends PromotionSourceNormalizationLabel {
   schema_version: "1.0";
   normalization_id: string;
@@ -713,6 +744,12 @@ function parseAnnotation(value: unknown): PromotionSourceNormalizationAnnotation
   };
 }
 
+export function parsePromotionSourceNormalizationAnnotation(
+  value: unknown
+): PromotionSourceNormalizationAnnotation {
+  return parseAnnotation(value);
+}
+
 function parseLabel(value: unknown): PromotionSourceNormalizationLabel {
   if (!isRecord(value) || !validId(value.run_id)
       || (value.run_status !== "completed" && value.run_status !== "failed" && value.run_status !== "partial")
@@ -868,6 +905,19 @@ function labelFrom(value: PromotionSourceNormalizationLabel): PromotionSourceNor
 
 function labelsEqual(left: PromotionSourceNormalizationLabel, right: PromotionSourceNormalizationLabel): boolean {
   return JSON.stringify(labelFrom(left)) === JSON.stringify(labelFrom(right));
+}
+
+export function promotionSourceNormalizationLabelFrom(
+  value: PromotionSourceNormalizationLabel
+): PromotionSourceNormalizationLabel {
+  return labelFrom(value);
+}
+
+export function promotionSourceNormalizationLabelsEqual(
+  left: PromotionSourceNormalizationLabel,
+  right: PromotionSourceNormalizationLabel
+): boolean {
+  return labelsEqual(left, right);
 }
 
 async function inventoryNormalizationOutputs(root: string): Promise<PromotionSourceNormalizationOutputRecord[]> {

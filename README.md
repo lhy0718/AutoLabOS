@@ -399,6 +399,12 @@ autolabos governance-benchmark export-promotion-source-normalization-batch \
   --recipe <batch-recipe.json> \
   --out-dir <review-batch>
 
+autolabos governance-benchmark adjudicate-promotion-source-normalization-batch \
+  --batch-root <review-batch> \
+  --annotations <labels-a.jsonl> \
+  --annotations <labels-b.jsonl> \
+  --out-dir <adjudication>
+
 autolabos governance-benchmark normalize-promotion-source \
   --source-root <projected-bundle> \
   --map <annotation-pack>/private-normalization-map.json \
@@ -424,6 +430,8 @@ The batch recipe is source-neutral:
 ```
 
 Batch export rejects duplicate source hashes or normalization IDs, changed projections, mismatched task maps, divergent rubrics, absolute paths, and path traversal. Give each independent reviewer a separate copy of `<review-batch>/reviewer` only. Keep `<review-batch>/controller` private; it reconnects opaque task IDs to source and map paths. Packaging a batch does not prove that reviewers are independent or that any human annotation has occurred.
+
+Batch adjudication requires two complete JSON Lines files with one distinct pseudonymous annotator ID per file. It reports exact agreement for every normalized field, accepts a third pseudonymous ID only for initial disagreements, and emits per-item materialization inputs only after complete resolution. The report validates record structure and role separation; it does not establish real-world identity, expertise, or independence.
 
 The normalization command requires distinct annotator IDs and exact agreement, or a `--resolution` record from a third ID. It only accepts result, execution, figure, claim, citation, and readiness paths already bound by the projection manifest; the readiness path must be the selected review-decision artifact. The normalized bundle keeps generated canonical fields separate from the nested source, preserves the annotation trace, and independently rechecks source hashes, output closure, execution evidence, license status, and mutation compatibility. Annotator IDs are audit pseudonyms, not proof of real-world identity.
 

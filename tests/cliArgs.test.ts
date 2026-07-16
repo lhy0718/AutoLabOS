@@ -558,6 +558,21 @@ describe("resolveCliAction", () => {
     });
     expect(resolveCliAction([
       "governance-benchmark",
+      "adjudicate-promotion-source-normalization-batch",
+      "--batch-root", "outputs/source-normalization-review-batch",
+      "--annotations", "labels-a.jsonl",
+      "--annotations", "labels-b.jsonl",
+      "--resolution", "labels-resolution.jsonl",
+      "--out-dir", "outputs/source-normalization-adjudication"
+    ])).toEqual({
+      kind: "governance-benchmark-adjudicate-promotion-source-normalization-batch",
+      batchRoot: "outputs/source-normalization-review-batch",
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      resolutionPath: "labels-resolution.jsonl",
+      outDir: "outputs/source-normalization-adjudication"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
       "normalize-promotion-source",
       "--source-root", "outputs/projected-source",
       "--map", "outputs/normalization-pack/private-normalization-map.json",
