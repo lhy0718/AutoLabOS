@@ -26,6 +26,7 @@ import {
   runPromotionSourceNormalizationPackExportCli,
   runPromotionSourceNormalizationBatchExportCli,
   runPromotionSourceNormalizationBatchAdjudicationCli,
+  runPromotionSourceNormalizationBatchMaterializationCli,
   runPromotionSourceNormalizationCli,
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
@@ -68,6 +69,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
     "  autolabos governance-benchmark adjudicate-promotion-source-normalization-batch --batch-root <review-batch> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <adjudication>",
+    "  autolabos governance-benchmark materialize-promotion-source-normalization-batch --adjudication-root <adjudication> --out-dir <normalized-batch>",
     "  autolabos governance-benchmark normalize-promotion-source --source-root <projected-bundle> --map <private-normalization-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] --out-dir <normalized-bundle>",
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
@@ -334,6 +336,15 @@ async function main(): Promise<void> {
       batchRoot: action.batchRoot,
       annotationPaths: action.annotationPaths,
       resolutionPath: action.resolutionPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-materialize-promotion-source-normalization-batch") {
+    await runPromotionSourceNormalizationBatchMaterializationCli({
+      cwd: process.cwd(),
+      adjudicationRoot: action.adjudicationRoot,
       outDir: action.outDir
     });
     return;

@@ -42,6 +42,7 @@ export type CliAction =
   | { kind: "governance-benchmark-export-promotion-source-normalization"; sourceRoot: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-source-normalization-batch"; recipePath: string; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion-source-normalization-batch"; batchRoot: string; annotationPaths: string[]; resolutionPath?: string; outDir: string }
+  | { kind: "governance-benchmark-materialize-promotion-source-normalization-batch"; adjudicationRoot: string; outDir: string }
   | { kind: "governance-benchmark-normalize-promotion-source"; sourceRoot: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-execution-evidence"; sourceRoot: string; runId: string; executionBackend: PromotionExecutionBackend; startedAt: string; completedAt: string; trialIds: string[]; artifacts: Array<{ role: PromotionExecutionEvidenceRole; path: string }> }
   | { kind: "governance-benchmark-audit-promotion-confirmatory"; manifestPath: string; outDir: string }
@@ -358,11 +359,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|adjudicate-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|build-promotion|run-promotion|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
       };
     }
     if (subcommand === "project-promotion-source") {
@@ -454,6 +455,32 @@ export function resolveCliAction(args: string[]): CliAction {
         batchRoot,
         annotationPaths,
         resolutionPath,
+        outDir
+      };
+    }
+    if (subcommand === "materialize-promotion-source-normalization-batch") {
+      let adjudicationRoot: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--adjudication-root" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark materialize-promotion-source-normalization-batch argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--adjudication-root") adjudicationRoot = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!adjudicationRoot || !outDir) {
+        return {
+          kind: "error",
+          message: "Missing required arguments: --adjudication-root and --out-dir are required."
+        };
+      }
+      return {
+        kind: "governance-benchmark-materialize-promotion-source-normalization-batch",
+        adjudicationRoot,
         outDir
       };
     }

@@ -77,6 +77,10 @@ import {
   adjudicatePromotionSourceNormalizationBatch,
   type AdjudicatePromotionSourceNormalizationBatchInput
 } from "../core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
+import {
+  materializePromotionSourceNormalizationBatch,
+  type MaterializePromotionSourceNormalizationBatchInput
+} from "../core/benchmark/promotionBenchmarkSourceNormalizationMaterialization.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -394,6 +398,22 @@ export async function runPromotionSourceNormalizationBatchAdjudicationCli(
       `Report: ${result.report_path}`,
       `Materialization jobs: ${result.materialization_jobs_path || "not emitted"}`,
       "Evidence boundary: structural coverage and pseudonymous role separation do not prove real-world reviewer identity or independence"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionSourceNormalizationBatchMaterializationCli(
+  input: MaterializePromotionSourceNormalizationBatchInput
+): Promise<void> {
+  const result = await materializePromotionSourceNormalizationBatch(input);
+  process.stdout.write(
+    [
+      `Promotion source-normalization batch materialized: ${result.report.batch_id}`,
+      `Passed: ${result.report.passed}`,
+      `Materialized: ${result.report.materialized_count}/${result.report.item_count}`,
+      `Failed: ${result.report.failed_count}`,
+      `Report: ${result.report_path}`,
+      "Evidence boundary: batch success requires every item to pass source, execution, license, and mutation inspection"
     ].join("\n") + "\n"
   );
 }

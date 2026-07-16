@@ -18,6 +18,10 @@ import {
 } from "../src/core/benchmark/promotionBenchmarkSourceNormalizationBatch.js";
 import { adjudicatePromotionSourceNormalizationBatch } from
   "../src/core/benchmark/promotionBenchmarkSourceNormalizationAdjudication.js";
+import {
+  inspectPromotionSourceNormalizationBatchMaterialization,
+  materializePromotionSourceNormalizationBatch
+} from "../src/core/benchmark/promotionBenchmarkSourceNormalizationMaterialization.js";
 
 const tempDirs: string[] = [];
 
@@ -428,6 +432,95 @@ describe("promotion source normalization", () => {
       outDir: "review-batch/adjudication"
     })).rejects.toThrow("outside the closed review batch");
   });
+
+  it("materializes every passing adjudicated item and detects later artifact drift", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await createPassingBatchAdjudication(workspace, tasks);
+
+    const result = await materializePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      adjudicationRoot: "batch-adjudication",
+      outDir: "batch-materialization"
+    });
+    const inspection = await inspectPromotionSourceNormalizationBatchMaterialization(
+      path.join(workspace, "batch-materialization")
+    );
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      item_count: 2,
+      materialized_count: 2,
+      failed_count: 0
+    });
+    expect(inspection).toMatchObject({ integrity_passed: true, issues: [] });
+
+    await writeJson(
+      path.join(workspace, "batch-materialization", "items", tasks[0].item_id, "result_table.json"),
+      [{ baseline: 0.1, comparator: 0.9 }]
+    );
+    const drifted = await inspectPromotionSourceNormalizationBatchMaterialization(
+      path.join(workspace, "batch-materialization")
+    );
+    expect(drifted.integrity_passed).toBe(false);
+    expect(drifted.issues).toContainEqual(expect.objectContaining({
+      code: "source_normalization_batch_materialized_item_integrity_failed",
+      ref: tasks[0].item_id
+    }));
+  });
+
+  it("preserves item failures when agreed labels do not satisfy source-readiness gates", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await createPassingBatchAdjudication(workspace, tasks, (annotation) => ({
+      ...annotation,
+      paper_ready: false,
+      claim_status: "blocked"
+    }));
+
+    const result = await materializePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      adjudicationRoot: "batch-adjudication",
+      outDir: "failed-materialization"
+    });
+    const inspection = await inspectPromotionSourceNormalizationBatchMaterialization(
+      path.join(workspace, "failed-materialization")
+    );
+
+    expect(result.report).toMatchObject({
+      passed: false,
+      item_count: 2,
+      materialized_count: 0,
+      failed_count: 2
+    });
+    expect(result.report.items.every((item) => item.status === "failed" && item.failure)).toBe(true);
+    expect(inspection).toMatchObject({ integrity_passed: true, issues: [] });
+  });
+
+  it("rejects changed materialization jobs before normalizing any item", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await createPassingBatchAdjudication(workspace, tasks);
+    await writeFile(
+      path.join(workspace, "batch-adjudication", "materialization-jobs.jsonl"),
+      "{}\n",
+      "utf8"
+    );
+
+    await expect(materializePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      adjudicationRoot: "batch-adjudication",
+      outDir: "rejected-materialization"
+    })).rejects.toThrow("materialization jobs path or hash mismatch");
+  });
+
+  it("keeps batch materialization outputs outside every projected source", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    await createPassingBatchAdjudication(workspace, tasks);
+
+    await expect(materializePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      adjudicationRoot: "batch-adjudication",
+      outDir: "projected/materialization"
+    })).rejects.toThrow("outside every projected source");
+  });
 });
 
 async function createReviewBatchWorkspace(): Promise<{
@@ -454,6 +547,25 @@ async function createReviewBatchWorkspace(): Promise<{
   const tasks = (await readFile(path.join(workspace, batch.tasks_path), "utf8"))
     .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
   return { workspace, tasks };
+}
+
+async function createPassingBatchAdjudication(
+  workspace: string,
+  tasks: Array<{ item_id: string; normalization_id: string }>,
+  transform: (annotation: ReturnType<typeof normalizationAnnotation>) => ReturnType<typeof normalizationAnnotation>
+    = (annotation) => annotation
+): Promise<void> {
+  await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), tasks.map((task) =>
+    transform(normalizationAnnotation(task.normalization_id, "reviewer-a"))));
+  await writeJsonLines(path.join(workspace, "reviewer-b.jsonl"), tasks.map((task) =>
+    transform(normalizationAnnotation(task.normalization_id, "reviewer-b"))));
+  const adjudication = await adjudicatePromotionSourceNormalizationBatch({
+    cwd: workspace,
+    batchRoot: "review-batch",
+    annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+    outDir: "batch-adjudication"
+  });
+  expect(adjudication.report.passed).toBe(true);
 }
 
 async function createProjectedWorkspace(): Promise<string> {
