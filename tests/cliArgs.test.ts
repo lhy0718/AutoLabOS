@@ -377,6 +377,44 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports blind promotion annotation export and double adjudication", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-annotations",
+      "--suite",
+      "suite.json",
+      "--out-dir",
+      "outputs/annotations"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-annotations",
+      suitePath: "suite.json",
+      outDir: "outputs/annotations"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "adjudicate-promotion",
+      "--suite",
+      "suite.json",
+      "--map",
+      "private-map.json",
+      "--annotations",
+      "labels-a.jsonl",
+      "--annotations",
+      "labels-b.jsonl",
+      "--resolution",
+      "resolution.jsonl",
+      "--out-dir",
+      "outputs/adjudicated"
+    ])).toEqual({
+      kind: "governance-benchmark-adjudicate-promotion",
+      suitePath: "suite.json",
+      privateMapPath: "private-map.json",
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      resolutionPath: "resolution.jsonl",
+      outDir: "outputs/adjudicated"
+    });
+  });
+
   it("requires a run id for compare-analysis", () => {
     const action = resolveCliAction(["compare-analysis"]);
     expect(action.kind).toBe("error");
@@ -445,6 +483,26 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--responses")
+    });
+  });
+
+  it("requires a suite and exactly two annotation files for adjudication", () => {
+    expect(resolveCliAction(["governance-benchmark", "export-promotion-annotations"])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--suite")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "adjudicate-promotion",
+      "--suite",
+      "suite.json",
+      "--map",
+      "private-map.json",
+      "--annotations",
+      "labels-a.jsonl"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two")
     });
   });
 

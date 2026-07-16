@@ -37,6 +37,12 @@ import {
   analyzePromotionBenchmarkFailures,
   type AnalyzePromotionBenchmarkFailuresInput
 } from "../core/benchmark/promotionBenchmarkMetaHarness.js";
+import {
+  adjudicatePromotionBenchmark,
+  exportPromotionAnnotationPack,
+  type AdjudicatePromotionBenchmarkInput,
+  type ExportPromotionAnnotationPackInput
+} from "../core/benchmark/promotionBenchmarkAdjudication.js";
 
 export interface RunGovernanceBenchmarkSeedCliInput {
   cwd: string;
@@ -137,6 +143,7 @@ export async function runPromotionBenchmarkScoreCli(
       )
     ].join("\n") + "\n"
   );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionBenchmarkBuildCli(
@@ -191,6 +198,39 @@ export async function runPromotionResponseImportCli(
       `Output: ${result.predictions_path}`
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionAnnotationPackExportCli(
+  input: ExportPromotionAnnotationPackInput
+): Promise<void> {
+  const result = await exportPromotionAnnotationPack(input);
+  process.stdout.write(
+    [
+      `Promotion annotation pack exported: ${result.suite_id}`,
+      `Tasks: ${result.annotation_count}`,
+      `Annotator directory: ${result.annotator_dir}`,
+      `Annotator input: ${result.tasks_path}`,
+      `Private map: ${result.private_map_path}`,
+      `Rubric: ${result.rubric_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionAdjudicationCli(
+  input: AdjudicatePromotionBenchmarkInput
+): Promise<void> {
+  const result = await adjudicatePromotionBenchmark(input);
+  process.stdout.write(
+    [
+      `Promotion adjudication ${result.report.passed ? "passed" : "failed"}: ${result.report.suite_id}`,
+      `Accepted labels: ${result.report.accepted_label_count}/${result.report.case_count}`,
+      `Disagreements: ${result.report.disagreement_count}; resolved=${result.report.resolved_disagreement_count}`,
+      `Paper-claim eligible: ${result.report.eligibility.paper_claim_eligible}`,
+      `Report: ${result.report_path}`,
+      ...(result.suite_path ? [`Suite: ${result.suite_path}`] : [])
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runSyntheticPromotionCorpusCli(

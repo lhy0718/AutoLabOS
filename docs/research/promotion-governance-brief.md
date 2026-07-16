@@ -132,7 +132,8 @@ on clean research bundles?
 
 ## Minimum Acceptable Evidence
 
-- At least 20 base bundles and 200 blocking variants, split by base bundle.
+- At least 20 base bundles and 200 held-out cases, split by base bundle, with a
+  clean control and all nine required fault-family variants per base.
 - All required fault families and clean positive, null, and negative controls.
 - At least one post-repair rerun for every fault family.
 - Three independent real-provider runs per manuscript-only test case when that
@@ -157,6 +158,10 @@ on clean research bundles?
   run artifacts.
 - Do not omit clean cases, failed runs, null results, or unfavorable ablations.
 - Do not claim human validation without independent adjudication records.
+- Do not expose the private annotation map, provisional gold, mutation
+  metadata, or model predictions to either initial adjudicator.
+- Do not resolve annotation disagreement by majority inference from two labels;
+  require a distinct third resolver and preserve the resolution record.
 
 ## Allowed Budgeted Passes
 

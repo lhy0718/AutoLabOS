@@ -1,0 +1,394 @@
+import os from "node:os";
+import path from "node:path";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  REQUIRED_CONFIRMATORY_MUTATION_FAMILIES,
+  adjudicatePromotionBenchmark,
+  evaluatePromotionAdjudicationEligibility,
+  exportPromotionAnnotationPack,
+  type PromotionAnnotationLabel
+} from "../src/core/benchmark/promotionBenchmarkAdjudication.js";
+import {
+  loadPromotionBenchmarkSuite,
+  type PromotionBenchmarkCaseManifest
+} from "../src/core/benchmark/promotionBenchmark.js";
+import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
+import { runPromotionBenchmarkScoreCli } from "../src/cli/governanceBenchmark.js";
+import { runMetaHarness } from "../src/core/metaHarness/metaHarness.js";
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+describe("promotion benchmark adjudication", () => {
+  it("exports a gold-blind pack and replaces provisional labels after double adjudication", async () => {
+    const workspace = await createWorkspace();
+    const exported = await exportPromotionAnnotationPack({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      outDir: "annotation-pack"
+    });
+    const tasksText = await readFile(path.join(workspace, exported.tasks_path), "utf8");
+    expect(tasksText).not.toMatch(/case-clean|case-fault|mutation_family|gold/iu);
+    expect(tasksText).toMatch(/blocking_concerns|repair_owners/iu);
+    expect(tasksText).toContain("annotation-");
+    const rubric = await readFile(path.join(workspace, exported.rubric_path), "utf8");
+    expect(rubric).toContain("Do not use the private map");
+    expect(rubric).toContain("`figure_audit`");
+    expect(exported.tasks_path).toContain("annotation-pack/annotator/");
+    expect(exported.private_map_path).toBe("annotation-pack/private-annotation-map.json");
+    await expect(access(path.join(workspace, exported.annotator_dir, "private-annotation-map.json"))).rejects.toThrow();
+
+    const privateMap = JSON.parse(await readFile(path.join(workspace, exported.private_map_path), "utf8")) as PrivateMap;
+    expect(privateMap.entries.map((entry) => entry.case_id)).toEqual(["case-clean", "case-fault"]);
+    await writeAnnotations(workspace, "labels-a.jsonl", privateMap, "annotator-alpha");
+    await writeAnnotations(workspace, "labels-b.jsonl", privateMap, "annotator-beta");
+
+    const result = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "adjudicated"
+    });
+    expect(result.report).toMatchObject({
+      passed: true,
+      disagreement_count: 0,
+      accepted_label_count: 2,
+      agreement: {
+        decision_exact_rate: 1,
+        blocking_concern_exact_rate: 1,
+        repair_owner_exact_rate: 1,
+        full_label_exact_rate: 1
+      },
+      eligibility: { paper_claim_eligible: false, base_bundle_count: 1, case_count: 2 }
+    });
+    expect(result.report.eligibility.blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
+      "independent_base_bundle_minimum_not_met",
+      "held_out_case_minimum_not_met",
+      "paired_fault_family_coverage_incomplete"
+    ]));
+
+    const loaded = await loadPromotionBenchmarkSuite(path.join(workspace, result.suite_path || "missing"));
+    expect(loaded.issues).toEqual([]);
+    expect(loaded.suite?.manifest).toMatchObject({
+      evidence_class: "external_real_run",
+      adjudication_status: "double_adjudicated",
+      paper_claim_eligible: false
+    });
+    expect(loaded.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold).toEqual({
+      decision: "block",
+      blocking_concerns: ["comparison_evidence_gap"],
+      repair_owners: ["design_experiments"]
+    });
+    const provisional = await loadPromotionBenchmarkSuite(path.join(workspace, "suite", "suite.json"));
+    expect(provisional.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold.decision).toBe("needs_review");
+
+    const reviewDecision = JSON.parse(await readFile(path.join(workspace, "adjudicated", "review", "decision.json"), "utf8"));
+    expect(reviewDecision).toMatchObject({ outcome: "revise", adjudication_passed: true, paper_claim_eligible: false });
+    const harness = await runMetaHarness({
+      cwd: workspace,
+      runs: 0,
+      nodes: ["design_experiments", "review"],
+      externalRunRoots: [path.join(workspace, "adjudicated")],
+      noApply: true
+    });
+    const promptTargets = JSON.parse(await readFile(path.join(harness.contextDir, "prompt_target_map.json"), "utf8")) as {
+      targets: Array<{ target_node: string; recommended_prompt_node: string }>;
+    };
+    expect(promptTargets.targets).toEqual([
+      expect.objectContaining({ target_node: "design_experiments", recommended_prompt_node: "design_experiments" })
+    ]);
+  });
+
+  it("fails closed on disagreement until an independent resolver supplies a label", async () => {
+    const workspace = await createWorkspace();
+    const exported = await exportPromotionAnnotationPack({ cwd: workspace, suitePath: "suite/suite.json", outDir: "annotation-pack" });
+    const privateMap = JSON.parse(await readFile(path.join(workspace, exported.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(workspace, "labels-a.jsonl", privateMap, "annotator-alpha");
+    await writeAnnotations(workspace, "labels-b.jsonl", privateMap, "annotator-beta", {
+      "case-fault": { decision: "downgrade", blocking_concerns: ["comparison_evidence_gap"], repair_owners: ["design_experiments"] }
+    });
+
+    const unresolved = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "unresolved"
+    });
+    expect(unresolved.report).toMatchObject({
+      passed: false,
+      disagreement_count: 1,
+      resolved_disagreement_count: 0,
+      adjudicated_suite_path: null
+    });
+    expect(unresolved.report.validation_issues.map((issue) => issue.code)).toContain("unresolved_annotation_disagreement");
+    expect(unresolved.suite_path).toBeNull();
+
+    const faultEntry = privateMap.entries.find((entry) => entry.case_id === "case-fault");
+    if (!faultEntry) throw new Error("fault entry missing");
+    await writeFile(path.join(workspace, "resolution.jsonl"), `${JSON.stringify(annotationRecord(
+      faultEntry.annotation_id,
+      "resolver-gamma",
+      { decision: "block", blocking_concerns: ["comparison_evidence_gap"], repair_owners: ["design_experiments"] }
+    ))}\n`, "utf8");
+    const resolved = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      resolutionPath: "resolution.jsonl",
+      outDir: "resolved"
+    });
+    expect(resolved.report).toMatchObject({
+      passed: true,
+      resolver_id: "resolver-gamma",
+      disagreement_count: 1,
+      resolved_disagreement_count: 1
+    });
+    expect(resolved.suite_path).not.toBeNull();
+  });
+
+  it("requires distinct full-coverage initial adjudicators", async () => {
+    const workspace = await createWorkspace();
+    const exported = await exportPromotionAnnotationPack({ cwd: workspace, suitePath: "suite/suite.json", outDir: "annotation-pack" });
+    const privateMap = JSON.parse(await readFile(path.join(workspace, exported.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(workspace, "labels-a.jsonl", privateMap, "annotator-shared");
+    const firstOnly = { ...privateMap, entries: privateMap.entries.slice(0, 1) };
+    await writeAnnotations(workspace, "labels-b.jsonl", firstOnly, "annotator-shared");
+
+    const result = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "invalid"
+    });
+    expect(result.report.passed).toBe(false);
+    expect(result.report.validation_issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "initial_adjudicators_not_independent",
+      "annotation_case_coverage_incomplete"
+    ]));
+    const recommendations = JSON.parse(await readFile(
+      path.join(workspace, "invalid", "review", "node_strengthening_recommendations.json"),
+      "utf8"
+    )) as { recommendations: Array<{ node: string }> };
+    expect(recommendations.recommendations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ node: "review" })
+    ]));
+  });
+
+  it("rejects repair owners outside the fixed workflow contract", async () => {
+    const workspace = await createWorkspace();
+    const exported = await exportPromotionAnnotationPack({ cwd: workspace, suitePath: "suite/suite.json", outDir: "annotation-pack" });
+    const privateMap = JSON.parse(await readFile(path.join(workspace, exported.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(workspace, "labels-a.jsonl", privateMap, "annotator-alpha", {
+      "case-fault": { decision: "block", blocking_concerns: ["comparison_evidence_gap"], repair_owners: ["imaginary_node"] }
+    });
+    await writeAnnotations(workspace, "labels-b.jsonl", privateMap, "annotator-beta");
+
+    const result = await adjudicatePromotionBenchmark({
+      cwd: workspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: exported.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "invalid-owner"
+    });
+    expect(result.report.passed).toBe(false);
+    expect(result.report.validation_issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "annotation_record_invalid", message: expect.stringContaining("imaginary_node") })
+    ]));
+  });
+
+  it("rejects case-manifest or artifact drift after blind export", async () => {
+    const manifestWorkspace = await createWorkspace();
+    const manifestExport = await exportPromotionAnnotationPack({
+      cwd: manifestWorkspace,
+      suitePath: "suite/suite.json",
+      outDir: "annotation-pack"
+    });
+    const manifestMap = JSON.parse(await readFile(path.join(manifestWorkspace, manifestExport.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(manifestWorkspace, "labels-a.jsonl", manifestMap, "annotator-alpha");
+    await writeAnnotations(manifestWorkspace, "labels-b.jsonl", manifestMap, "annotator-beta");
+    const faultManifestPath = path.join(manifestWorkspace, "suite", "cases", "case-fault.json");
+    const faultManifest = JSON.parse(await readFile(faultManifestPath, "utf8")) as Record<string, unknown>;
+    faultManifest.gold = { decision: "downgrade", blocking_concerns: [], repair_owners: [] };
+    await writeFile(faultManifestPath, `${JSON.stringify(faultManifest, null, 2)}\n`, "utf8");
+    const manifestDrift = await adjudicatePromotionBenchmark({
+      cwd: manifestWorkspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: manifestExport.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "manifest-drift"
+    });
+    expect(manifestDrift.report.passed).toBe(false);
+    expect(manifestDrift.report.validation_issues.map((issue) => issue.code)).toContain("annotation_map_case_manifest_hash_mismatch");
+
+    const artifactWorkspace = await createWorkspace();
+    const cleanManifestPath = path.join(artifactWorkspace, "suite", "cases", "case-clean.json");
+    const cleanManifest = JSON.parse(await readFile(cleanManifestPath, "utf8")) as Record<string, unknown>;
+    delete cleanManifest.artifact_sha256;
+    await writeFile(cleanManifestPath, `${JSON.stringify(cleanManifest, null, 2)}\n`, "utf8");
+    const artifactExport = await exportPromotionAnnotationPack({
+      cwd: artifactWorkspace,
+      suitePath: "suite/suite.json",
+      outDir: "annotation-pack"
+    });
+    const artifactMap = JSON.parse(await readFile(path.join(artifactWorkspace, artifactExport.private_map_path), "utf8")) as PrivateMap;
+    await writeAnnotations(artifactWorkspace, "labels-a.jsonl", artifactMap, "annotator-alpha");
+    await writeAnnotations(artifactWorkspace, "labels-b.jsonl", artifactMap, "annotator-beta");
+    await writeFile(
+      path.join(artifactWorkspace, "suite", "artifacts", "case-clean", "result_table.json"),
+      '{"rows":[{"metric":"primary_score","baseline":0.1,"comparator":0.9}]}\n',
+      "utf8"
+    );
+    const artifactDrift = await adjudicatePromotionBenchmark({
+      cwd: artifactWorkspace,
+      suitePath: "suite/suite.json",
+      privateMapPath: artifactExport.private_map_path,
+      annotationPaths: ["labels-a.jsonl", "labels-b.jsonl"],
+      outDir: "artifact-drift"
+    });
+    expect(artifactDrift.report.passed).toBe(false);
+    expect(artifactDrift.report.validation_issues.map((issue) => issue.code)).toContain("annotation_map_artifact_hash_mismatch");
+  });
+
+  it("promotes eligibility only at the frozen external, held-out, paired scale floor", () => {
+    const cases: PromotionBenchmarkCaseManifest[] = [];
+    for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
+      const baseBundleId = `base-${baseIndex + 1}`;
+      const sourceHash = baseIndex.toString(16).padStart(64, "0");
+      const clean = caseManifest(`${baseBundleId}-clean`, baseBundleId, sourceHash);
+      if (baseIndex === 1) clean.gold.decision = "block";
+      cases.push(clean);
+      for (const family of REQUIRED_CONFIRMATORY_MUTATION_FAMILIES) {
+        cases.push(caseManifest(`${baseBundleId}-${family}`, baseBundleId, sourceHash, family));
+      }
+    }
+
+    expect(evaluatePromotionAdjudicationEligibility({
+      evidence_class: "external_real_run",
+      cases,
+      adjudication_complete: true
+    })).toMatchObject({
+      paper_claim_eligible: true,
+      base_bundle_count: 20,
+      case_count: 200,
+      blockers: []
+    });
+    expect(evaluatePromotionAdjudicationEligibility({
+      evidence_class: "synthetic_development",
+      cases,
+      adjudication_complete: true
+    }).paper_claim_eligible).toBe(false);
+  });
+
+  it("returns a failing process status when score validation fails", async () => {
+    const workspace = await createWorkspace();
+    await writeFile(path.join(workspace, "empty-predictions.jsonl"), "", "utf8");
+    const previousExitCode = process.exitCode;
+    try {
+      process.exitCode = undefined;
+      await runPromotionBenchmarkScoreCli({
+        cwd: workspace,
+        suitePath: "suite/suite.json",
+        predictionsPath: "empty-predictions.jsonl",
+        outDir: "invalid-score"
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+});
+
+interface PrivateMap {
+  entries: Array<{ annotation_id: string; case_id: string }>;
+}
+
+async function createWorkspace(): Promise<string> {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-adjudication-"));
+  tempDirs.push(workspace);
+  await mkdir(path.join(workspace, "bundle"), { recursive: true });
+  await writeFile(path.join(workspace, "bundle", "result_table.json"), '{"rows":[{"metric":"primary_score","baseline":0.5,"comparator":0.6}]}\n', "utf8");
+  await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+    schema_version: "1.0",
+    suite_id: "adjudication-suite",
+    evidence_class: "external_real_run",
+    paper_claim_eligible: false,
+    adjudication_status: "unreviewed",
+    cases: [
+      {
+        case_id: "case-clean",
+        base_bundle_id: "base-alpha",
+        split: "test",
+        source_root: "bundle",
+        operations: [],
+        gold: { decision: "promote", blocking_concerns: [], repair_owners: [] }
+      },
+      {
+        case_id: "case-fault",
+        base_bundle_id: "base-alpha",
+        split: "test",
+        source_root: "bundle",
+        mutation_family: "comparison_evidence_gap",
+        operations: [{ op: "remove_json_pointer", path: "result_table.json", pointer: "/rows/0/comparator" }],
+        gold: { decision: "needs_review", blocking_concerns: [], repair_owners: [] }
+      }
+    ]
+  }, null, 2));
+  await buildPromotionBenchmarkSuite({ cwd: workspace, recipePath: "recipe.json", outDir: "suite" });
+  return workspace;
+}
+
+async function writeAnnotations(
+  workspace: string,
+  fileName: string,
+  privateMap: PrivateMap,
+  adjudicatorId: string,
+  overrides: Record<string, PromotionAnnotationLabel> = {}
+): Promise<void> {
+  const rows = privateMap.entries.map((entry) => {
+    const label = overrides[entry.case_id] || (entry.case_id === "case-clean"
+      ? { decision: "promote" as const, blocking_concerns: [], repair_owners: [] }
+      : { decision: "block" as const, blocking_concerns: ["comparison_evidence_gap"], repair_owners: ["design_experiments"] });
+    return JSON.stringify(annotationRecord(entry.annotation_id, adjudicatorId, label));
+  });
+  await writeFile(path.join(workspace, fileName), `${rows.join("\n")}\n`, "utf8");
+}
+
+function annotationRecord(annotationId: string, adjudicatorId: string, label: PromotionAnnotationLabel) {
+  return {
+    schema_version: "1.0",
+    annotation_id: annotationId,
+    adjudicator_id: adjudicatorId,
+    label_source: "human",
+    ...label,
+    rationale: "Artifact-grounded independent judgment."
+  };
+}
+
+function caseManifest(
+  caseId: string,
+  baseBundleId: string,
+  sourceSha256: string,
+  mutationFamily?: string
+): PromotionBenchmarkCaseManifest {
+  return {
+    schema_version: "1.0",
+    case_id: caseId,
+    base_bundle_id: baseBundleId,
+    split: "test",
+    artifact_root: `../artifacts/${caseId}`,
+    source_sha256: sourceSha256,
+    artifact_sha256: "f".repeat(64),
+    ...(mutationFamily ? { mutation_family: mutationFamily } : {}),
+    gold: { decision: mutationFamily ? "block" : "promote", blocking_concerns: [], repair_owners: [] }
+  };
+}

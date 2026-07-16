@@ -69,12 +69,24 @@ A confirmatory recipe must declare:
 
 ```json
 {
-  "evidence_class": "human_adjudicated_test",
-  "paper_claim_eligible": true,
-  "adjudication_status": "double_adjudicated"
+  "evidence_class": "external_real_run",
+  "paper_claim_eligible": false,
+  "adjudication_status": "unreviewed"
 }
 ```
 
-The builder rejects paper-claim eligibility without double adjudication. Real
-provider requests must be exported through the blind prompt pack; only
+Export the built suite with `export-promotion-annotations`, collect exactly two
+independent full-coverage human label files, and import them with
+`adjudicate-promotion`. A third independent resolver is mandatory for every
+disagreement. Give the adjudicator only the exported `annotator/` directory,
+which contains the opaque tasks, rubric, and artifact directories. The sibling
+private map, recipe, mutation metadata, provisional gold, and system predictions
+stay hidden. The importer, rather than a hand-edited
+recipe, sets `adjudication_status=double_adjudicated` and promotes
+`paper_claim_eligible=true` only after the external-real-run, held-out,
+20-base, 200-case, and per-base paired-family gates all pass.
+The clean controls must include both promotable and non-promotable adjudicated
+outcomes.
+
+Real provider requests must be exported through the blind prompt pack; only
 `requests.jsonl` may enter provider context.

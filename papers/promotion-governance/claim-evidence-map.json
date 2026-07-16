@@ -9,8 +9,21 @@
       "artifact_refs": [
         "src/core/benchmark/promotionBenchmark.ts",
         "src/core/benchmark/promotionBenchmarkBuilder.ts",
+        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
         "tests/promotionBenchmark.test.ts",
-        "tests/promotionBenchmarkBuilder.test.ts"
+        "tests/promotionBenchmarkBuilder.test.ts",
+        "tests/promotionBenchmarkAdjudication.test.ts"
+      ]
+    },
+    {
+      "claim_id": "blind-double-adjudication-contract",
+      "claim": "The implementation exports gold-blind annotation packs, rejects incomplete or non-independent labels, requires third-party resolution for disagreements, preserves adjudication traces, and emits review-to-meta-harness repair targets.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
+        "src/core/metaHarness/metaHarness.ts",
+        "tests/promotionBenchmarkAdjudication.test.ts",
+        "tests/metaHarness.test.ts"
       ]
     },
     {

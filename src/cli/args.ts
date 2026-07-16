@@ -27,6 +27,8 @@ export type CliAction =
   | { kind: "governance-benchmark-run-promotion"; suitePath: string; systems: PromotionBenchmarkSystemName[]; trialId?: string; outDir?: string }
   | { kind: "governance-benchmark-export-promotion-prompts"; suitePath: string; outDir: string }
   | { kind: "governance-benchmark-import-promotion-responses"; requestMapPath: string; responsesPath: string; systemId: string; trialId: string; outDir: string }
+  | { kind: "governance-benchmark-export-promotion-annotations"; suitePath: string; outDir: string }
+  | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; outDir: string }
   | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
   | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
@@ -340,11 +342,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>] | governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch] | governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles] | governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus] | governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite] | governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions] | governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts] | governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions] | governance-benchmark analyze-promotion-failures --suite <suite.json> --predictions <predictions.jsonl> --system <id> [--out-dir outputs/governance-benchmark/promotion-failures] | governance-benchmark score-promotion --suite <suite.json> --predictions <predictions.jsonl> [--out-dir outputs/governance-benchmark/promotion-score]."
+          "Usage: governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only] | governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>] | governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch] | governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles] | governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus] | governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite] | governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions] | governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts] | governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions] | governance-benchmark export-promotion-annotations --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-annotations] | governance-benchmark adjudicate-promotion --suite <suite.json> --map <private-annotation-map.json> --annotations <labels-a.jsonl> --annotations <labels-b.jsonl> [--resolution <labels-resolution.jsonl>] [--out-dir outputs/governance-benchmark/promotion-adjudication] | governance-benchmark analyze-promotion-failures --suite <suite.json> --predictions <predictions.jsonl> --system <id> [--out-dir outputs/governance-benchmark/promotion-failures] | governance-benchmark score-promotion --suite <suite.json> --predictions <predictions.jsonl> [--out-dir outputs/governance-benchmark/promotion-score]."
       };
     }
     if (subcommand === "generate-promotion-development") {
@@ -453,6 +455,57 @@ export function resolveCliAction(args: string[]): CliAction {
         responsesPath,
         systemId,
         trialId,
+        outDir
+      };
+    }
+    if (subcommand === "export-promotion-annotations") {
+      let suitePath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-annotations";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark export-promotion-annotations argument: ${token}` };
+      }
+      if (!suitePath) return { kind: "error", message: "Missing required argument: --suite <suite.json>." };
+      return { kind: "governance-benchmark-export-promotion-annotations", suitePath, outDir };
+    }
+    if (subcommand === "adjudicate-promotion") {
+      let suitePath: string | undefined;
+      let privateMapPath: string | undefined;
+      let resolutionPath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-adjudication";
+      const annotationPaths: string[] = [];
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token === "--suite" || token === "--map" || token === "--annotations" || token === "--resolution" || token === "--out-dir") {
+          const value = args[index + 1];
+          if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+          if (token === "--suite") suitePath = value;
+          else if (token === "--map") privateMapPath = value;
+          else if (token === "--annotations") annotationPaths.push(value);
+          else if (token === "--resolution") resolutionPath = value;
+          else outDir = value;
+          index += 1;
+          continue;
+        }
+        return { kind: "error", message: `Unsupported governance-benchmark adjudicate-promotion argument: ${token}` };
+      }
+      if (!suitePath || !privateMapPath || annotationPaths.length !== 2) {
+        return { kind: "error", message: "adjudicate-promotion requires --suite, --map, and exactly two --annotations files." };
+      }
+      return {
+        kind: "governance-benchmark-adjudicate-promotion",
+        suitePath,
+        privateMapPath,
+        annotationPaths,
+        resolutionPath,
         outDir
       };
     }

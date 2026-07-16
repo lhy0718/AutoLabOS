@@ -105,6 +105,65 @@ node dist/cli/main.js governance-benchmark import-promotion-responses \
 Only `requests.jsonl` is provider input. Keep `private-request-map.json` outside
 the provider context.
 
+## Blind Double Adjudication
+
+Export an annotation pack before exposing any provisional gold labels or
+mutation metadata to reviewers:
+
+```bash
+node dist/cli/main.js governance-benchmark export-promotion-annotations \
+  --suite <suite.json> \
+  --out-dir <annotation-pack>
+```
+
+Give annotators only the generated `annotation-pack/annotator/` directory. It
+contains `annotation-tasks.jsonl`, `RUBRIC.md`, and the opaque `artifacts/`
+directories. The sibling `private-annotation-map.json`, source suite, recipe,
+provenance manifests, system predictions, and all other annotators' labels must
+stay outside each annotator's context. Each annotation record must declare
+`label_source=human`, use one stable pseudonymous adjudicator ID, cover every
+opaque task exactly once, and include an artifact-grounded rationale.
+
+Import exactly two independent annotation files. Supply a third independent
+resolution file only for cases where the first two labels disagree:
+
+```bash
+node dist/cli/main.js governance-benchmark adjudicate-promotion \
+  --suite <suite.json> \
+  --map <annotation-pack/private-annotation-map.json> \
+  --annotations <labels-a.jsonl> \
+  --annotations <labels-b.jsonl> \
+  --resolution <resolution.jsonl> \
+  --out-dir <adjudicated-suite>
+```
+
+The command fails closed when coverage is incomplete, adjudicator IDs are not
+independent, or a disagreement lacks a third-party resolution. It reports
+decision agreement, Cohen's kappa, concern agreement, repair-owner agreement,
+and full-label agreement. A completed suite is marked
+`adjudication_status=double_adjudicated`, but it becomes
+`paper_claim_eligible=true` only when all of the following also hold:
+
+- the source evidence class is `external_real_run`,
+- all cases are in the held-out test split,
+- at least 20 source-hash-distinct base bundles are present,
+- at least 200 cases are present, and
+- every base bundle has one clean control and all nine required fault-family
+  variants.
+- adjudicated clean controls include both promotable and non-promotable
+  outcomes.
+
+Synthetic development suites remain ineligible even if two people annotate
+them.
+
+Every adjudication output also includes `review/paper_scale_diagnostics.json`,
+`review/node_strengthening_recommendations.json`, and `review/decision.json`.
+Passing adjudication with insufficient study scale produces `outcome=revise`,
+not acceptance. The output directory can be passed directly to
+`meta-harness --external-run ... --no-apply`; missing external evidence routes
+to `run_experiments`, study-design gaps route to `design_experiments`, and
+annotation integrity or independence failures route to `review`.
+
 ## Recipe Operations
 
 - `delete_path`: remove a file or directory below the copied artifact root.

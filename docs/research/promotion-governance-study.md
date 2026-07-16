@@ -170,13 +170,20 @@ suites are always marked exploratory.
   evidence as different evidence classes.
 - Do not claim human validation until at least two independent reviewers have
   adjudicated the held-out labels.
+- Export opaque annotation IDs and artifact directories before review; keep the
+  case map, provisional gold, mutation metadata, and system predictions hidden.
+- Require exactly two complete initial label files and a distinct third
+  resolver for every disagreement. Do not infer agreement from missing rows.
+- Let the adjudication importer set paper eligibility only after the external
+  real-run, held-out split, source-hash independence, 20-base, 200-case, and
+  clean-plus-nine-family paired-coverage gates pass.
 
 ## Minimum Publishable Experiment
 
 - At least 20 independent base bundles covering positive, null, and negative
   outcomes, with 30 preferred for the final submission.
-- At least 200 counterfactual variants across the nine blocking fault families,
-  plus all clean controls.
+- At least 200 held-out cases total. At the 20-base floor, each base contributes
+  one clean control and one variant from every required fault family.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded
   comparisons.
 - At least one gate ablation and one post-repair rerun per fault family.
