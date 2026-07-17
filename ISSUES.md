@@ -13322,6 +13322,8 @@ Path placeholders:
   - Added global task-level uniqueness enforcement and controller-map inspection under R-005.
   - Added a bounded `prefix_before_last` family transform and support for Parquet sources without JSON-string columns.
   - Added a hash-bound v9 source recipe and exact evidence record.
+  - Compared five official source routes under one access, repeat, outcome, and redistribution rubric.
+  - Defined separate `source_native`, `source_projected`, `benchmark_curated`, and `system_generated` provenance classes.
   - Paired-comparator selection and canonical-curation provenance remain pending.
 
 - Regression status:
@@ -13338,6 +13340,8 @@ Path placeholders:
 - Evidence/artifacts:
   - `docs/research/evidence/promotion-trial-candidate-source-v9.json`
   - `docs/research/evidence/promotion-trial-candidate-handoff-v9.json`
+  - `docs/research/evidence/promotion-source-portfolio-v2.json`
+  - `docs/research/promotion-benchmark-curation-boundary.md`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/trial-candidate-handoff.json`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/controller/trial-candidate-map.json`
 

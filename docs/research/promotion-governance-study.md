@@ -508,6 +508,14 @@ The v9 recipe and generated evidence record are
 has been human approved, canonically curated, or admitted to confirmatory
 evaluation. The paper-scale admission count remains zero.
 
+The five-route public source comparison is frozen in
+`docs/research/evidence/promotion-source-portfolio-v2.json`. It retains two
+ungated corpora as holdout routes and excludes gated or non-redistributable raw
+corpora from the default reproduction package. The provenance and admission
+rules for future controls are defined in
+`docs/research/promotion-benchmark-curation-boundary.md`. These records do not
+change the zero-admission decision.
+
 ### Exploratory Instrument Check
 
 A deterministic development run exercised the complete local instrument on
