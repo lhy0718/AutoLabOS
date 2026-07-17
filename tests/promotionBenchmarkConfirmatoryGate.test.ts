@@ -17,7 +17,10 @@ import type {
 } from "../src/core/benchmark/promotionBenchmark.js";
 import type { PromotionProviderAggregateManifest } from "../src/core/benchmark/promotionBenchmarkProviderAggregate.js";
 import type { PromotionRecoveryReport } from "../src/core/benchmark/promotionBenchmarkRecovery.js";
-import type { PromotionBenchmarkSystemRunManifest } from "../src/core/benchmark/promotionBenchmarkSystems.js";
+import {
+  PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
+  type PromotionBenchmarkSystemRunManifest
+} from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 import {
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
@@ -131,6 +134,20 @@ describe("promotion confirmatory gate", () => {
       claim_class: "confirmatory_signal"
     });
     expect(assessment.hypotheses.every((item) => item.status === "supported")).toBe(true);
+  });
+
+  it("rejects deterministic evidence from an unversioned system protocol", () => {
+    const fixture = makeAssessmentFixture(true);
+    fixture.systemRunManifest.schema_version = "1.0";
+    fixture.systemRunManifest.protocol_revision = null;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "system_run_protocol_revision_mismatch",
+      target_node: "run_experiments"
+    }));
   });
 
   it("keeps complete null or mixed evidence publishable while lowering the claim class", () => {
@@ -335,6 +352,8 @@ function makeAssessmentFixture(h1Supported: boolean): {
     external_empirical_evidence_eligible: true
   } as PromotionProviderAggregateManifest;
   const systemRunManifest = {
+    schema_version: "1.1",
+    protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
     systems: [
       { system_id: roles.ungated, protocol: "ungated", ablated_components: [] },
       { system_id: roles.checklist, protocol: "artifact_presence_checklist", ablated_components: [] },

@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-007` Presence baseline semantics were not version-bound — `RESOLVED`
   - `R-006` Source-native traces lack complete paired-comparison and curation provenance — `IN_PROGRESS`
   - `R-005` Operator-conditioned groups overcount source-native bases — `MITIGATED`
   - `R-004` Deterministic bounded fallback masquerading as adapter evidence — `MITIGATED_FOR_CURRENT_RUN`
@@ -10880,6 +10881,64 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-007
+
+- Status: resolved; baseline semantics, protocol revision, targeted regressions, and same-flow development execution pass
+- Validation target: deterministic comparison baselines must match the preregistered protocol and preserve enough versioned provenance to reject semantically stale runs from paper-scale evidence.
+- Environment/session context: repository-owned synthetic development suite; no generated metric, gold label, or source artifact was manually substituted.
+
+- Reproduction steps:
+  1. Compare the presence-checklist description in the research protocol with `presenceChecklistPrediction`.
+  2. Observe that the protocol requires file presence and JSON parseability.
+  3. Observe that the implementation checked only `stat().isFile()` and emitted schema `1.0` manifests without an implementation revision.
+  4. Run the deterministic systems over the 40-case development suite.
+
+- Expected behavior:
+  - The checklist baseline blocks missing or malformed required JSON while remaining blind to semantic and cross-artifact inconsistency.
+  - A paper-scale gate can distinguish current baseline semantics from earlier development runs.
+
+- Actual behavior:
+  - Missing files were blocked, but malformed required JSON was treated as present and promoted.
+  - A run before and after a baseline semantic change had the same unversioned protocol declaration.
+
+- Fresh vs existing session comparison:
+  - Fresh session: a new CLI run emitted schema `1.1`, the current protocol revision, 40-case coverage, and 160 hash-verified predictions.
+  - Existing session: earlier schema `1.0` development manifests remain readable but carry no current protocol revision and are rejected by paper-scale gates.
+  - Divergence: the prediction path is deterministic in both sessions; the intended difference is explicit evidence eligibility based on protocol provenance.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the baseline projected a documented structural check to a file-existence predicate, and the run manifest bound output hashes without binding the deterministic system protocol revision.
+
+- Code/test changes:
+  - The presence baseline now requires four fixed artifacts to be non-symlink regular files and parse as JSON, with separate missing and unparseable concerns.
+  - New deterministic runs use system-run manifest schema `1.1` and `promotion-system-protocol-v2`.
+  - Confirmatory and recovery gates reject unversioned deterministic evidence while the verifier can still inspect schema `1.0` development history.
+  - Added malformed/missing artifact, stale protocol, confirmatory, recovery, and development-export regressions.
+
+- Regression status:
+  - Targeted systems, confirmatory, recovery, and development-evidence regressions: 13/13 passed on 2026-07-17.
+  - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
+  - Full build: passed on 2026-07-17 with `npm run build`.
+  - Repository-wide CI: passed on 2026-07-17 with `npm test` (`214` test files, `2866` tests; web `14` tests).
+  - Harness validation and public-code sanitization: passed on 2026-07-17.
+  - Same-flow development CLI: passed with 40 cases, four deterministic systems, 160 predictions, schema `1.1`, and a hash-verified current protocol revision.
+  - Development score before protocol versioning also passed with complete 40/40 coverage per system; this remains instrumentation evidence only.
+
+- Follow-up risks:
+  - The presence baseline intentionally does not inspect schema meaning; semantic consistency belongs to the full artifact policy.
+  - Any future deterministic baseline semantic change must advance the public protocol revision before producing new evidence.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkSystems.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts`
+  - `src/core/benchmark/promotionBenchmarkRecovery.ts`
+  - `tests/promotionBenchmarkSystems.test.ts`
+  - `tests/promotionBenchmarkConfirmatoryGate.test.ts`
+  - `tests/promotionBenchmarkRecovery.test.ts`
+
+---
 
 ## Issue: LV-363
 

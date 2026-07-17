@@ -12,6 +12,7 @@ import {
   type PromotionBenchmarkPrediction
 } from "../src/core/benchmark/promotionBenchmark.js";
 import { evaluatePromotionBenchmarkRecovery } from "../src/core/benchmark/promotionBenchmarkRecovery.js";
+import { PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 
 const tempDirs: string[] = [];
@@ -309,7 +310,8 @@ async function writeSystemRunManifest(input: {
   caseCount: number;
 }): Promise<void> {
   await writeFile(path.join(input.workspace, input.fileName), JSON.stringify({
-    schema_version: "1.0",
+    schema_version: "1.1",
+    protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
     suite_id: input.suiteId,

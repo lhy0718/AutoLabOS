@@ -4,9 +4,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { scorePromotionBenchmarkFromFiles } from "../src/core/benchmark/promotionBenchmark.js";
+import {
+  hashPromotionArtifactTree,
+  scorePromotionBenchmarkFromFiles
+} from "../src/core/benchmark/promotionBenchmark.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
 import {
+  PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
   runPromotionBenchmarkSystems,
   verifyPromotionBenchmarkSystemRun
 } from "../src/core/benchmark/promotionBenchmarkSystems.js";
@@ -75,6 +79,10 @@ describe("promotion benchmark systems", () => {
       manifestPath: evaluated.manifest_path,
       suitePath: built.suite_path,
       predictionsPath: evaluated.predictions_path
+    });
+    expect(verifiedRun).toMatchObject({
+      schema_version: "1.1",
+      protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION
     });
     expect(verifiedRun.systems.map((system) => system.protocol)).toEqual([
       "ungated",
@@ -148,6 +156,80 @@ describe("promotion benchmark systems", () => {
       suitePath: built.suite_path,
       predictionsPath: evaluated.predictions_path
     })).rejects.toThrow("SHA-256 mismatch");
+  });
+
+  it("checks required artifact presence and JSON parseability without evaluating semantics", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-systems-parseability-"));
+    tempDirs.push(workspace);
+    await writeCleanBundle(path.join(workspace, "base-bundle"));
+    await writeJson(path.join(workspace, "recipe.json"), {
+      schema_version: "1.0",
+      suite_id: "presence-baseline-suite",
+      cases: [{
+        case_id: "case-structural-check",
+        base_bundle_id: "base-structural",
+        split: "test",
+        source_root: "base-bundle",
+        operations: [],
+        gold: { decision: "block", blocking_concerns: [], repair_owners: ["review"] }
+      }]
+    });
+    const built = await buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "suite"
+    });
+    const suiteManifest = JSON.parse(
+      await readFile(path.join(workspace, built.suite_path), "utf8")
+    ) as { cases: string[] };
+    const casePath = path.resolve(path.dirname(path.join(workspace, built.suite_path)), suiteManifest.cases[0]);
+    const caseManifest = JSON.parse(await readFile(casePath, "utf8")) as {
+      artifact_root: string;
+      artifact_sha256: string;
+    };
+    const artifactRoot = path.resolve(path.dirname(casePath), caseManifest.artifact_root);
+    await writeFile(path.join(artifactRoot, "review", "decision.json"), "{not-json\n", "utf8");
+    await rm(path.join(artifactRoot, "paper", "paper_readiness.json"));
+    caseManifest.artifact_sha256 = await hashPromotionArtifactTree(artifactRoot);
+    await writeJson(casePath, caseManifest);
+
+    const evaluated = await runPromotionBenchmarkSystems({
+      cwd: workspace,
+      suitePath: built.suite_path,
+      outDir: "predictions",
+      systems: ["presence-checklist"]
+    });
+    const [prediction] = (await readFile(path.join(workspace, evaluated.predictions_path), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        decision: string;
+        concerns: Array<{ code: string; evidence_refs: string[] }>;
+        repair_owners: string[];
+      });
+
+    expect(prediction).toEqual(expect.objectContaining({
+      decision: "block",
+      repair_owners: ["review"]
+    }));
+    expect(prediction.concerns).toEqual([
+      {
+        code: "required_artifact_missing",
+        severity: "blocking",
+        evidence_refs: ["paper/paper_readiness.json"]
+      },
+      {
+        code: "required_artifact_unparseable",
+        severity: "blocking",
+        evidence_refs: ["review/decision.json"]
+      }
+    ]);
+    await expect(verifyPromotionBenchmarkSystemRun({
+      cwd: workspace,
+      manifestPath: evaluated.manifest_path,
+      suitePath: built.suite_path,
+      predictionsPath: evaluated.predictions_path
+    })).resolves.toMatchObject({ prediction_count: 1 });
   });
 });
 

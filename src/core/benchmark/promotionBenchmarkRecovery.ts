@@ -13,6 +13,7 @@ import {
 } from "./promotionBenchmark.js";
 import { promotionVariantDefinitions } from "./promotionBenchmarkVariants.js";
 import {
+  PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
   verifyPromotionBenchmarkSystemRun,
   type PromotionBenchmarkSystemRunManifest
 } from "./promotionBenchmarkSystems.js";
@@ -373,6 +374,12 @@ function inspectSystemRunProtocol(
   prefix: string,
   issues: PromotionRecoveryIssue[]
 ): void {
+  if (manifest.protocol_revision !== PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION) {
+    issues.push({
+      code: prefix + "_system_protocol_revision_mismatch",
+      message: "Recovery predictions require the current deterministic system protocol revision."
+    });
+  }
   const system = manifest.systems.find((item) => item.system_id === systemId);
   if (!system || system.protocol !== "full_artifact_policy") {
     issues.push({

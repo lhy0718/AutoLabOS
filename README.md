@@ -550,6 +550,14 @@ candidate reuse, trace drift, artifact drift, or path escape prevents the
 paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
 not replace blind benchmark-case adjudication or make the suite paper-ready.
 
+Deterministic comparison runs emit system-run manifest schema `1.1` with
+`protocol_revision=promotion-system-protocol-v2`. The presence-checklist
+baseline requires the fixed result, run, review-decision, and readiness JSON
+artifacts to exist as regular files and parse as JSON, but it does not inspect
+their values or cross-artifact consistency. Confirmatory and recovery evidence
+rejects unversioned deterministic runs; schema `1.0` remains readable only for
+development-record compatibility.
+
 Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
 The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.

@@ -24,6 +24,9 @@ export const PROMOTION_BENCHMARK_SYSTEMS = [
   "artifact-audit"
 ] as const;
 
+export const PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION =
+  "promotion-system-protocol-v2";
+
 export type PromotionBenchmarkSystemName = typeof PROMOTION_BENCHMARK_SYSTEMS[number];
 
 export interface RunPromotionBenchmarkSystemsInput {
@@ -50,7 +53,8 @@ export type PromotionBenchmarkSystemProtocol =
   | "gate_ablation";
 
 export interface PromotionBenchmarkSystemRunManifest {
-  schema_version: "1.0";
+  schema_version: "1.0" | "1.1";
+  protocol_revision: typeof PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION | null;
   status: "completed";
   evidence_class: "deterministic_artifact_evaluation";
   suite_id: string;
@@ -133,7 +137,8 @@ export async function runPromotionBenchmarkSystems(
   await fs.writeFile(predictionsPath, predictionsText, "utf8");
   const manifestPath = path.join(outDir, "system-run-manifest.json");
   const manifest: PromotionBenchmarkSystemRunManifest = {
-    schema_version: "1.0",
+    schema_version: "1.1",
+    protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
     suite_id: loaded.suite.manifest.suite_id,
@@ -248,18 +253,42 @@ async function presenceChecklistPrediction(
 ): Promise<PromotionBenchmarkPrediction> {
   const startedAt = Date.now();
   const missing: string[] = [];
+  const unparseable: string[] = [];
   for (const relativePath of PRESENCE_CHECKLIST) {
-    if (!(await fileExists(path.join(artifactRoot, relativePath)))) missing.push(relativePath);
+    const artifactPath = path.join(artifactRoot, relativePath);
+    let bytes: Buffer;
+    try {
+      const stat = await fs.lstat(artifactPath);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        missing.push(relativePath);
+        continue;
+      }
+      bytes = await fs.readFile(artifactPath);
+    } catch {
+      missing.push(relativePath);
+      continue;
+    }
+    try {
+      JSON.parse(bytes.toString("utf8"));
+    } catch {
+      unparseable.push(relativePath);
+    }
   }
+  const concerns: PromotionBenchmarkPrediction["concerns"] = [
+    ...(missing.length > 0
+      ? [{ code: "required_artifact_missing", severity: "blocking" as const, evidence_refs: missing }]
+      : []),
+    ...(unparseable.length > 0
+      ? [{ code: "required_artifact_unparseable", severity: "blocking" as const, evidence_refs: unparseable }]
+      : [])
+  ];
   return {
     case_id: benchmarkCase.case_id,
     system_id: "presence-checklist",
     trial_id: trialId,
-    decision: missing.length > 0 ? "block" : "promote",
-    concerns: missing.length > 0
-      ? [{ code: "required_artifact_missing", severity: "blocking", evidence_refs: missing }]
-      : [],
-    repair_owners: missing.length > 0 ? ["review"] : [],
+    decision: concerns.length > 0 ? "block" : "promote",
+    concerns,
+    repair_owners: concerns.length > 0 ? ["review"] : [],
     latency_ms: Date.now() - startedAt,
     cost_usd: 0
   };
@@ -385,8 +414,12 @@ function systemDefinition(systemId: PromotionBenchmarkSystemName): {
 }
 
 function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunManifest {
+  const currentProtocol = isRecord(value) && value.schema_version === "1.1";
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
+      || (currentProtocol
+        ? value.protocol_revision !== PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION
+        : value.protocol_revision !== undefined)
       || value.status !== "completed"
       || value.evidence_class !== "deterministic_artifact_evaluation"
       || !portableIdentifier(value.suite_id)
@@ -406,6 +439,7 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
   }
   assertExactKeys(value, [
     "schema_version",
+    ...(currentProtocol ? ["protocol_revision"] : []),
     "status",
     "evidence_class",
     "suite_id",
@@ -443,7 +477,8 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
     throw new Error("System run manifest system identifiers or prediction count are invalid.");
   }
   return {
-    schema_version: "1.0",
+    schema_version: currentProtocol ? "1.1" : "1.0",
+    protocol_revision: currentProtocol ? PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION : null,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
     suite_id: value.suite_id,
@@ -512,14 +547,6 @@ function validTimestamp(value: unknown): value is string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    return (await fs.stat(filePath)).isFile();
-  } catch {
-    return false;
-  }
 }
 
 function portableRef(cwd: string, absolutePath: string): string {

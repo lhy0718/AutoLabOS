@@ -122,7 +122,9 @@ source does not enumerate case identifiers or encode case-specific metrics.
 
 - **Ungated:** trusts the incoming paper-ready state.
 - **Presence checklist:** checks required file presence and parseability but not
-  semantic consistency.
+  semantic consistency. The fixed surface is `result_table.json`,
+  `run_record.json`, `review/decision.json`, and
+  `paper/paper_readiness.json`; each must be a regular, parseable JSON file.
 - **Manuscript-only reviewer:** reviews the paper-facing text without run
   artifacts. Results from this condition are reportable only when produced by
   a real provider under a preserved protocol; Codex mock runs remain smoke
@@ -141,6 +143,13 @@ source does not enumerate case identifiers or encode case-specific metrics.
   consistency, execution-state, and review-transition policy.
 - **Ablations:** remove one of concern-to-action binding, claim ceiling, figure
   consistency, or execution-state validation while preserving all other inputs.
+
+Deterministic comparisons are bound to
+`promotion-system-protocol-v2` in system-run manifest schema `1.1`. This
+revision distinguishes the documented presence-plus-parseability baseline from
+earlier development manifests that checked existence only. Unversioned
+manifests remain inspectable as development history but are not admissible to
+the confirmatory or post-repair evidence gate.
 
 ## Metrics
 

@@ -23,6 +23,7 @@ import {
   type PromotionRecoveryReport
 } from "./promotionBenchmarkRecovery.js";
 import {
+  PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
   verifyPromotionBenchmarkSystemRun,
   type PromotionBenchmarkSystemRunManifest
 } from "./promotionBenchmarkSystems.js";
@@ -501,6 +502,14 @@ function inspectConfirmatoryEvidence(input: {
       "run_experiments"
     );
   } else {
+    if (input.systemRunManifest.protocol_revision !== PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION) {
+      addIssue(
+        input.issues,
+        "system_run_protocol_revision_mismatch",
+        "Paper-scale deterministic predictions require the current hash-verified system protocol revision.",
+        "run_experiments"
+      );
+    }
     const manifestSystemIds = input.systemRunManifest.systems.map((system) => system.system_id);
     if (!sameStringSet(manifestSystemIds, expectedBaseSystemIds)) {
       addIssue(
