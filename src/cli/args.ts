@@ -48,8 +48,8 @@ export type CliAction =
   | { kind: "governance-benchmark-export-promotion-trial-candidates"; recipePath: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-worksheet"; handoffRoot: string; annotatorId: string; outputPath: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-license-worksheet"; handoffRoot: string; reviewerId: string; outputPath: string }
-  | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; handoffRoot: string; annotationPath: string; outDir: string }
-  | { kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review"; handoffRoot: string; reviewPath: string; outDir: string }
+  | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; reviewerRoot: string; annotationPath: string; outDir: string }
+  | { kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review"; licenseRoot: string; reviewPath: string; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion-trial-candidate-review"; handoffRoot: string; annotationPaths: string[]; licenseReviewPath: string; resolutionPath?: string; outDir: string }
   | { kind: "governance-benchmark-project-promotion-source"; sourceRoot: string; recipePath: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-source-normalization"; sourceRoot: string; outDir: string }
@@ -473,53 +473,53 @@ export function resolveCliAction(args: string[]): CliAction {
       };
     }
     if (subcommand === "preflight-promotion-trial-candidate-annotation") {
-      let handoffRoot: string | undefined;
+      let reviewerRoot: string | undefined;
       let annotationPath: string | undefined;
       let outDir: string | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token !== "--handoff-root" && token !== "--annotation" && token !== "--out-dir") {
+        if (token !== "--reviewer-root" && token !== "--annotation" && token !== "--out-dir") {
           return { kind: "error", message: `Unsupported governance-benchmark preflight-promotion-trial-candidate-annotation argument: ${token}` };
         }
         const value = args[index + 1];
         if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
-        if (token === "--handoff-root") handoffRoot = value;
+        if (token === "--reviewer-root") reviewerRoot = value;
         else if (token === "--annotation") annotationPath = value;
         else outDir = value;
         index += 1;
       }
-      if (!handoffRoot || !annotationPath || !outDir) {
-        return { kind: "error", message: "Missing required arguments: --handoff-root, --annotation, and --out-dir are required." };
+      if (!reviewerRoot || !annotationPath || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --reviewer-root, --annotation, and --out-dir are required." };
       }
       return {
         kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation",
-        handoffRoot,
+        reviewerRoot,
         annotationPath,
         outDir
       };
     }
     if (subcommand === "preflight-promotion-trial-candidate-license-review") {
-      let handoffRoot: string | undefined;
+      let licenseRoot: string | undefined;
       let reviewPath: string | undefined;
       let outDir: string | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token !== "--handoff-root" && token !== "--review" && token !== "--out-dir") {
+        if (token !== "--license-root" && token !== "--review" && token !== "--out-dir") {
           return { kind: "error", message: `Unsupported governance-benchmark preflight-promotion-trial-candidate-license-review argument: ${token}` };
         }
         const value = args[index + 1];
         if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
-        if (token === "--handoff-root") handoffRoot = value;
+        if (token === "--license-root") licenseRoot = value;
         else if (token === "--review") reviewPath = value;
         else outDir = value;
         index += 1;
       }
-      if (!handoffRoot || !reviewPath || !outDir) {
-        return { kind: "error", message: "Missing required arguments: --handoff-root, --review, and --out-dir are required." };
+      if (!licenseRoot || !reviewPath || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --license-root, --review, and --out-dir are required." };
       }
       return {
         kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review",
-        handoffRoot,
+        licenseRoot,
         reviewPath,
         outDir
       };

@@ -724,14 +724,24 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction([
       "governance-benchmark",
       "preflight-promotion-trial-candidate-license-review",
-      "--handoff-root", "outputs/candidate-handoff",
+      "--license-root", "outputs/candidate-handoff/license",
       "--review", "reviews/license-review.json",
       "--out-dir", "reviews/license-preflight"
     ])).toEqual({
       kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review",
-      handoffRoot: "outputs/candidate-handoff",
+      licenseRoot: "outputs/candidate-handoff/license",
       reviewPath: "reviews/license-review.json",
       outDir: "reviews/license-preflight"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "preflight-promotion-trial-candidate-license-review",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--review", "reviews/license-review.json",
+      "--out-dir", "reviews/license-preflight"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Unsupported")
     });
   });
 
@@ -739,14 +749,24 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction([
       "governance-benchmark",
       "preflight-promotion-trial-candidate-annotation",
-      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--reviewer-root", "outputs/trial-candidate-handoff/reviewer",
       "--annotation", "inputs/review-a.json",
       "--out-dir", "outputs/review-a-preflight"
     ])).toEqual({
       kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation",
-      handoffRoot: "outputs/trial-candidate-handoff",
+      reviewerRoot: "outputs/trial-candidate-handoff/reviewer",
       annotationPath: "inputs/review-a.json",
       outDir: "outputs/review-a-preflight"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "preflight-promotion-trial-candidate-annotation",
+      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--annotation", "inputs/review-a.json",
+      "--out-dir", "outputs/review-a-preflight"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Unsupported")
     });
     expect(resolveCliAction([
       "governance-benchmark",

@@ -36,6 +36,8 @@ export const PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP = "controller/trial-candid
 export const PROMOTION_TRIAL_CANDIDATE_TASKS = "reviewer/candidate-tasks.jsonl";
 export const PROMOTION_TRIAL_CANDIDATE_GUIDE = "reviewer/REVIEWER_GUIDE.md";
 export const PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY = "trial-candidate-evidence.json";
+export const PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST = "reviewer-packet-manifest.json";
+export const PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST = "license-packet-manifest.json";
 
 const TRIALS_PER_BASE = 3;
 const MAX_SELECTED_ARTIFACT_BYTES = 16 * 1024 * 1024;
@@ -123,6 +125,38 @@ export interface PromotionTrialCandidateHandoffIssue {
 export interface PromotionTrialCandidateHandoffInspection {
   passed: boolean;
   manifest: PromotionTrialCandidateHandoffManifest | null;
+  issues: PromotionTrialCandidateHandoffIssue[];
+}
+
+export interface PromotionTrialCandidateReviewerPacketManifest {
+  schema_version: "1.0";
+  packet_role: "initial_candidate_review";
+  handoff_id: string;
+  candidate_count: number;
+  trials_per_candidate: 3;
+  trial_artifact_count: number;
+  files: Array<{ path: string; sha256: string }>;
+  evidence_boundary: string;
+}
+
+export interface PromotionTrialCandidateLicensePacketManifest {
+  schema_version: "1.0";
+  packet_role: "source_license_review";
+  handoff_id: string;
+  task_count: 1;
+  files: Array<{ path: string; sha256: string }>;
+  evidence_boundary: string;
+}
+
+export interface PromotionTrialCandidateReviewerPacketInspection {
+  passed: boolean;
+  manifest: PromotionTrialCandidateReviewerPacketManifest | null;
+  issues: PromotionTrialCandidateHandoffIssue[];
+}
+
+export interface PromotionTrialCandidateLicensePacketInspection {
+  passed: boolean;
+  manifest: PromotionTrialCandidateLicensePacketManifest | null;
   issues: PromotionTrialCandidateHandoffIssue[];
 }
 
@@ -370,6 +404,35 @@ export async function exportPromotionTrialCandidateHandoff(
     await fs.rm(sourceArchiveRoot, { recursive: true, force: true });
     await fs.writeFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_TASKS), `${taskLines.join("\n")}\n`, "utf8");
 
+    const reviewerPacketManifest: PromotionTrialCandidateReviewerPacketManifest = {
+      schema_version: "1.0",
+      packet_role: "initial_candidate_review",
+      handoff_id: recipe.handoff_id,
+      candidate_count: publicCandidates.length,
+      trials_per_candidate: TRIALS_PER_BASE,
+      trial_artifact_count: publicCandidates.length * TRIALS_PER_BASE,
+      files: await inventoryOutputs(reviewerRoot),
+      evidence_boundary: "This self-contained packet binds only opaque candidate-review tasks, runtime review contracts, and privacy-projected artifacts. It contains no source URL, source revision, source/operator grouping, controller map, peer annotation, license decision, confirmatory admission, or paper-readiness evidence."
+    };
+    await writeJsonFile(
+      path.join(reviewerRoot, PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST),
+      reviewerPacketManifest
+    );
+
+    const licenseRoot = path.join(stagingRoot, "license");
+    const licensePacketManifest: PromotionTrialCandidateLicensePacketManifest = {
+      schema_version: "1.0",
+      packet_role: "source_license_review",
+      handoff_id: recipe.handoff_id,
+      task_count: 1,
+      files: await inventoryOutputs(licenseRoot),
+      evidence_boundary: "This self-contained packet binds only one public source-license task and its runtime review contract. It contains no candidate artifact, candidate annotation, controller map, license decision, confirmatory admission, or paper-readiness evidence."
+    };
+    await writeJsonFile(
+      path.join(licenseRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST),
+      licensePacketManifest
+    );
+
     const controllerMap: ControllerMap = {
       schema_version: "1.0",
       handoff_id: recipe.handoff_id,
@@ -584,6 +647,22 @@ export async function inspectPromotionTrialCandidateHandoff(
   if (reviewerFiles.some((relativePath) => relativePath.startsWith("controller/"))) {
     issues.push({ code: "trial_candidate_handoff_controller_leak", message: "Controller data must not appear in the reviewer directory." });
   }
+  const reviewerPacketInspection = await inspectPromotionTrialCandidateReviewerPacket(reviewerRoot);
+  if (!reviewerPacketInspection.passed) {
+    issues.push(...reviewerPacketInspection.issues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      ...(issue.ref ? { ref: `reviewer/${issue.ref}` } : {})
+    })));
+  } else if (reviewerPacketInspection.manifest
+      && (reviewerPacketInspection.manifest.handoff_id !== manifest.handoff_id
+        || reviewerPacketInspection.manifest.candidate_count !== manifest.base_candidate_count
+        || reviewerPacketInspection.manifest.trial_artifact_count !== manifest.trial_artifact_count)) {
+    issues.push({
+      code: "trial_candidate_handoff_reviewer_packet_identity_mismatch",
+      message: "The self-contained reviewer packet does not describe the same handoff candidate set."
+    });
+  }
   try {
     const schema = JSON.parse(await fs.readFile(
       path.join(root, PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA),
@@ -627,6 +706,177 @@ export async function inspectPromotionTrialCandidateHandoff(
   } catch {
     issues.push({
       code: "trial_candidate_handoff_license_contract_invalid",
+      message: "The source-license task, schema, or guide is missing or does not match the runtime contract."
+    });
+  }
+  const licensePacketInspection = await inspectPromotionTrialCandidateLicensePacket(path.join(root, "license"));
+  if (!licensePacketInspection.passed) {
+    issues.push(...licensePacketInspection.issues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      ...(issue.ref ? { ref: `license/${issue.ref}` } : {})
+    })));
+  } else if (licensePacketInspection.manifest
+      && licensePacketInspection.manifest.handoff_id !== manifest.handoff_id) {
+    issues.push({
+      code: "trial_candidate_handoff_license_packet_identity_mismatch",
+      message: "The self-contained source-license packet does not describe the same handoff."
+    });
+  }
+  return { passed: issues.length === 0, manifest, issues };
+}
+
+export async function inspectPromotionTrialCandidateReviewerPacket(
+  reviewerRootPath: string
+): Promise<PromotionTrialCandidateReviewerPacketInspection> {
+  const reviewerRoot = path.resolve(reviewerRootPath);
+  const issues: PromotionTrialCandidateHandoffIssue[] = [];
+  let manifest: PromotionTrialCandidateReviewerPacketManifest;
+  try {
+    manifest = parseReviewerPacketManifest(JSON.parse(await fs.readFile(
+      path.join(reviewerRoot, PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST),
+      "utf8"
+    )) as unknown);
+  } catch {
+    return {
+      passed: false,
+      manifest: null,
+      issues: [{
+        code: "trial_candidate_reviewer_packet_manifest_unreadable",
+        message: "The self-contained reviewer packet manifest is missing or invalid."
+      }]
+    };
+  }
+
+  await inspectPacketInventory(
+    reviewerRoot,
+    PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST,
+    manifest.files,
+    "trial_candidate_reviewer_packet",
+    issues
+  );
+  const tasksFile = reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_TASKS);
+  const contractFiles = new Set([
+    tasksFile,
+    reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA),
+    reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA),
+    reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_GUIDE),
+    reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_RUBRIC)
+  ]);
+  try {
+    const tasks = parseReviewerTasks(await fs.readFile(path.join(reviewerRoot, tasksFile), "utf8"));
+    const artifactFiles = tasks.flatMap((task) => task.trial_ids.map((trialId) =>
+      `${task.artifact_root}/${trialId}/trace.json`));
+    const expectedFiles = new Set([...contractFiles, ...artifactFiles]);
+    const manifestFiles = new Set(manifest.files.map((item) => item.path));
+    if (tasks.length !== manifest.candidate_count
+        || artifactFiles.length !== manifest.trial_artifact_count
+        || expectedFiles.size !== manifestFiles.size
+        || [...expectedFiles].some((item) => !manifestFiles.has(item))) {
+      throw new Error("reviewer packet task inventory mismatch");
+    }
+    for (const artifactPath of artifactFiles) {
+      const bytes = await readContainedRegularFile(reviewerRoot, artifactPath);
+      JSON.parse(bytes.toString("utf8"));
+      assertPromotionArtifactPrivacySafe(artifactPath, bytes);
+    }
+  } catch {
+    issues.push({
+      code: "trial_candidate_reviewer_packet_payload_invalid",
+      message: "Reviewer tasks and privacy-projected artifacts must be complete, unique, readable, and exactly hash-bound."
+    });
+  }
+  try {
+    const schema = JSON.parse(await fs.readFile(path.join(
+      reviewerRoot,
+      reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA)
+    ), "utf8")) as unknown;
+    const resolutionSchema = JSON.parse(await fs.readFile(path.join(
+      reviewerRoot,
+      reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA)
+    ), "utf8")) as unknown;
+    const guide = await fs.readFile(path.join(
+      reviewerRoot,
+      reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_GUIDE)
+    ), "utf8");
+    const rubric = await fs.readFile(path.join(
+      reviewerRoot,
+      reviewerPacketPath(PROMOTION_TRIAL_CANDIDATE_RUBRIC)
+    ), "utf8");
+    if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
+        || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
+        || guide !== promotionTrialCandidateReviewerGuide()
+        || rubric !== promotionTrialCandidateReviewRubric()) throw new Error("mismatch");
+  } catch {
+    issues.push({
+      code: "trial_candidate_reviewer_packet_contract_invalid",
+      message: "The reviewer schemas, guide, or rubric are missing or do not match the runtime contract."
+    });
+  }
+  return { passed: issues.length === 0, manifest, issues };
+}
+
+export async function inspectPromotionTrialCandidateLicensePacket(
+  licenseRootPath: string
+): Promise<PromotionTrialCandidateLicensePacketInspection> {
+  const licenseRoot = path.resolve(licenseRootPath);
+  const issues: PromotionTrialCandidateHandoffIssue[] = [];
+  let manifest: PromotionTrialCandidateLicensePacketManifest;
+  try {
+    manifest = parseLicensePacketManifest(JSON.parse(await fs.readFile(
+      path.join(licenseRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST),
+      "utf8"
+    )) as unknown);
+  } catch {
+    return {
+      passed: false,
+      manifest: null,
+      issues: [{
+        code: "trial_candidate_license_packet_manifest_unreadable",
+        message: "The self-contained source-license packet manifest is missing or invalid."
+      }]
+    };
+  }
+
+  await inspectPacketInventory(
+    licenseRoot,
+    PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST,
+    manifest.files,
+    "trial_candidate_license_packet",
+    issues
+  );
+  const expectedFiles = new Set([
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE)
+  ]);
+  const manifestFiles = new Set(manifest.files.map((item) => item.path));
+  if (expectedFiles.size !== manifestFiles.size
+      || [...expectedFiles].some((item) => !manifestFiles.has(item))) {
+    issues.push({
+      code: "trial_candidate_license_packet_scope_invalid",
+      message: "The source-license packet may contain only its task, schema, guide, and packet manifest."
+    });
+  }
+  try {
+    const task = parseLicenseTask(JSON.parse(await fs.readFile(path.join(
+      licenseRoot,
+      licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)
+    ), "utf8")) as unknown);
+    const schema = JSON.parse(await fs.readFile(path.join(
+      licenseRoot,
+      licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA)
+    ), "utf8")) as unknown;
+    const guide = await fs.readFile(path.join(
+      licenseRoot,
+      licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE)
+    ), "utf8");
+    if (task.handoff_id !== manifest.handoff_id
+        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
+        || guide !== promotionTrialCandidateLicenseReviewerGuide()) throw new Error("mismatch");
+  } catch {
+    issues.push({
+      code: "trial_candidate_license_packet_contract_invalid",
       message: "The source-license task, schema, or guide is missing or does not match the runtime contract."
     });
   }
@@ -736,6 +986,83 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
     confirmatory_admitted: false,
     evidence_boundary: value.evidence_boundary
   };
+}
+
+function parseReviewerPacketManifest(value: unknown): PromotionTrialCandidateReviewerPacketManifest {
+  if (!isRecord(value)
+      || Object.keys(value).sort().join("\0") !== [
+        "candidate_count",
+        "evidence_boundary",
+        "files",
+        "handoff_id",
+        "packet_role",
+        "schema_version",
+        "trial_artifact_count",
+        "trials_per_candidate"
+      ].sort().join("\0")
+      || value.schema_version !== "1.0"
+      || value.packet_role !== "initial_candidate_review"
+      || !validId(value.handoff_id)
+      || !positiveInteger(value.candidate_count)
+      || value.trials_per_candidate !== TRIALS_PER_BASE
+      || value.trial_artifact_count !== value.candidate_count * TRIALS_PER_BASE
+      || !Array.isArray(value.files)
+      || !nonEmptyString(value.evidence_boundary)) {
+    throw new Error("Invalid trial-candidate reviewer packet manifest.");
+  }
+  return {
+    schema_version: "1.0",
+    packet_role: "initial_candidate_review",
+    handoff_id: value.handoff_id,
+    candidate_count: value.candidate_count,
+    trials_per_candidate: TRIALS_PER_BASE,
+    trial_artifact_count: value.trial_artifact_count,
+    files: parsePacketFiles(value.files, PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST),
+    evidence_boundary: value.evidence_boundary
+  };
+}
+
+function parseLicensePacketManifest(value: unknown): PromotionTrialCandidateLicensePacketManifest {
+  if (!isRecord(value)
+      || Object.keys(value).sort().join("\0") !== [
+        "evidence_boundary",
+        "files",
+        "handoff_id",
+        "packet_role",
+        "schema_version",
+        "task_count"
+      ].sort().join("\0")
+      || value.schema_version !== "1.0"
+      || value.packet_role !== "source_license_review"
+      || !validId(value.handoff_id)
+      || value.task_count !== 1
+      || !Array.isArray(value.files)
+      || !nonEmptyString(value.evidence_boundary)) {
+    throw new Error("Invalid trial-candidate source-license packet manifest.");
+  }
+  return {
+    schema_version: "1.0",
+    packet_role: "source_license_review",
+    handoff_id: value.handoff_id,
+    task_count: 1,
+    files: parsePacketFiles(value.files, PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST),
+    evidence_boundary: value.evidence_boundary
+  };
+}
+
+function parsePacketFiles(
+  value: unknown[],
+  packetManifestName: string
+): Array<{ path: string; sha256: string }> {
+  const files = value.map((item, index) => {
+    const output = parseOutput(item, index);
+    if (output.path === packetManifestName) throw new Error("Packet manifests cannot hash themselves.");
+    return output;
+  });
+  if (files.length === 0 || new Set(files.map((item) => item.path)).size !== files.length) {
+    throw new Error("Packet manifest files must be non-empty and unique.");
+  }
+  return files;
 }
 
 function parsePublicCandidate(value: unknown, index: number): PromotionTrialCandidateRecord {
@@ -1087,6 +1414,64 @@ async function inventoryOutputs(root: string): Promise<Array<{ path: string; sha
   })));
 }
 
+async function inspectPacketInventory(
+  packetRoot: string,
+  packetManifestName: string,
+  files: Array<{ path: string; sha256: string }>,
+  codePrefix: string,
+  issues: PromotionTrialCandidateHandoffIssue[]
+): Promise<void> {
+  const expected = new Set([packetManifestName, ...files.map((item) => item.path)]);
+  let observed: string[];
+  try {
+    observed = await listRegularFiles(packetRoot);
+  } catch {
+    issues.push({
+      code: `${codePrefix}_inventory_invalid`,
+      message: "The packet contains an unreadable, symbolic-link, or non-regular filesystem entry."
+    });
+    return;
+  }
+  for (const relativePath of observed) {
+    if (!expected.has(relativePath)) {
+      issues.push({
+        code: `${codePrefix}_untracked_file`,
+        message: "The packet contains a file that is not bound by its own manifest.",
+        ref: relativePath
+      });
+    }
+  }
+  for (const relativePath of expected) {
+    if (!observed.includes(relativePath)) {
+      issues.push({
+        code: `${codePrefix}_file_missing`,
+        message: "A packet-manifest-bound file is missing.",
+        ref: relativePath
+      });
+    }
+  }
+  for (const file of files) {
+    const observedHash = await hashContainedRegularFile(packetRoot, file.path).catch(() => null);
+    if (observedHash !== file.sha256) {
+      issues.push({
+        code: `${codePrefix}_hash_mismatch`,
+        message: "A packet file no longer matches its recorded hash.",
+        ref: file.path
+      });
+    }
+  }
+}
+
+function reviewerPacketPath(fullPath: string): string {
+  if (!fullPath.startsWith("reviewer/")) throw new Error("Reviewer contract path must use the reviewer prefix.");
+  return fullPath.slice("reviewer/".length);
+}
+
+function licensePacketPath(fullPath: string): string {
+  if (!fullPath.startsWith("license/")) throw new Error("License contract path must use the license prefix.");
+  return fullPath.slice("license/".length);
+}
+
 async function listRegularFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   async function visit(current: string): Promise<void> {
@@ -1244,6 +1629,10 @@ function unitInterval(value: unknown): value is number {
 
 function nonNegativeInteger(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function positiveInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) > 0;
 }
 
 function nonEmptyString(value: unknown): value is string {

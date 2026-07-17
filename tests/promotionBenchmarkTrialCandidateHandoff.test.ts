@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,8 +10,12 @@ import {
   PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP,
   PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY,
   PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST,
+  PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST,
   exportPromotionTrialCandidateHandoff,
-  inspectPromotionTrialCandidateHandoff
+  inspectPromotionTrialCandidateHandoff,
+  inspectPromotionTrialCandidateLicensePacket,
+  inspectPromotionTrialCandidateReviewerPacket
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS,
@@ -124,6 +128,16 @@ describe("promotion trial-candidate handoff", () => {
       path.join(workspace, result.manifest_path),
       "utf8"
     )) as Record<string, any>;
+    const reviewerPacketManifest = JSON.parse(await readFile(path.join(
+      workspace,
+      result.reviewer_dir,
+      PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST
+    ), "utf8")) as Record<string, any>;
+    const licensePacketManifest = JSON.parse(await readFile(path.join(
+      workspace,
+      result.license_reviewer_dir,
+      PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST
+    ), "utf8")) as Record<string, any>;
 
     expect(result).toMatchObject({
       base_candidate_count: 72,
@@ -157,6 +171,22 @@ describe("promotion trial-candidate handoff", () => {
     expect(manifest.largest_operator_group_share).toBeLessThanOrEqual(0.5);
     expect(JSON.stringify(manifest)).not.toContain("operator-a");
     expect(JSON.stringify(manifest)).not.toContain("family-a");
+    expect(reviewerPacketManifest).toMatchObject({
+      packet_role: "initial_candidate_review",
+      candidate_count: 72,
+      trials_per_candidate: 3,
+      trial_artifact_count: 216
+    });
+    expect(JSON.stringify(reviewerPacketManifest)).not.toMatch(
+      /source_url|source_revision|source_family|operator_group|controller_map/u
+    );
+    expect(licensePacketManifest).toMatchObject({
+      packet_role: "source_license_review",
+      task_count: 1
+    });
+    expect(JSON.stringify(licensePacketManifest)).not.toMatch(
+      /candidate_artifact|candidate_annotation|controller_map/u
+    );
     await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA))).resolves.toBeUndefined();
     await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA))).resolves.toBeUndefined();
     await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_RUBRIC))).resolves.toBeUndefined();
@@ -168,6 +198,14 @@ describe("promotion trial-candidate handoff", () => {
       passed: true,
       issues: []
     });
+    expect(await inspectPromotionTrialCandidateReviewerPacket(path.join(
+      workspace,
+      result.reviewer_dir
+    ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateLicensePacket(path.join(
+      workspace,
+      result.license_reviewer_dir
+    ))).toMatchObject({ passed: true, issues: [] });
     expect(JSON.parse(await readFile(path.join(workspace, result.evidence_summary_path), "utf8"))).toMatchObject({
       base_candidate_count: 72,
       trial_artifact_count: 216,
@@ -339,10 +377,15 @@ describe("promotion trial-candidate handoff", () => {
     const handoffRoot = path.join(workspace, "handoff");
     const annotationPath = path.join(workspace, "review-a.json");
     await writeHumanAnnotation(annotationPath, handoffRoot, "reviewer-a");
+    await cp(path.join(handoffRoot, "reviewer"), path.join(workspace, "isolated-reviewer-packet"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
 
     const result = await preflightPromotionTrialCandidateAnnotation({
       cwd: workspace,
-      handoffRoot: "handoff",
+      reviewerRoot: "isolated-reviewer-packet",
       annotationPath: "review-a.json",
       outDir: "review-a-preflight"
     });
@@ -384,7 +427,7 @@ describe("promotion trial-candidate handoff", () => {
 
     const preflight = await preflightPromotionTrialCandidateAnnotation({
       cwd: workspace,
-      handoffRoot: "handoff",
+      reviewerRoot: "handoff/reviewer",
       annotationPath: "reviews/reviewer-a/review-worksheet.json",
       outDir: "review-worksheet-preflight"
     });
@@ -419,7 +462,7 @@ describe("promotion trial-candidate handoff", () => {
 
     const incompletePreflight = await preflightPromotionTrialCandidateLicenseReview({
       cwd: workspace,
-      handoffRoot: "handoff",
+      licenseRoot: "handoff/license",
       reviewPath: result.output_path,
       outDir: "reviews/license/incomplete-preflight"
     });
@@ -436,9 +479,14 @@ describe("promotion trial-candidate handoff", () => {
       handoffRoot,
       "license-reviewer-preflight"
     );
+    await cp(path.join(handoffRoot, "license"), path.join(workspace, "isolated-license-packet"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
     const result = await preflightPromotionTrialCandidateLicenseReview({
       cwd: workspace,
-      handoffRoot: "handoff",
+      licenseRoot: "isolated-license-packet",
       reviewPath: "reviews/license/complete-review.json",
       outDir: "reviews/license/complete-preflight"
     });
@@ -463,7 +511,7 @@ describe("promotion trial-candidate handoff", () => {
     );
     const valid = await preflightPromotionTrialCandidateAnnotation({
       cwd: workspace,
-      handoffRoot: "handoff",
+      reviewerRoot: "handoff/reviewer",
       annotationPath: "review-positive.json",
       outDir: "review-positive-preflight"
     });
@@ -477,7 +525,7 @@ describe("promotion trial-candidate handoff", () => {
     );
     const invalid = await preflightPromotionTrialCandidateAnnotation({
       cwd: workspace,
-      handoffRoot: "handoff",
+      reviewerRoot: "handoff/reviewer",
       annotationPath: "review-invalid-pointer.json",
       outDir: "review-invalid-pointer-preflight"
     });
@@ -606,6 +654,57 @@ describe("promotion trial-candidate handoff", () => {
       resolved_disagreement_count: 1,
       resolver_id: "reviewer-d"
     });
+  });
+
+  it("fails closed when an isolated review packet is changed or extended", async () => {
+    const reviewerPacket = path.join(workspace, "tampered-reviewer-packet");
+    await cp(path.join(workspace, "handoff", "reviewer"), reviewerPacket, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const firstTask = JSON.parse((await readFile(
+      path.join(reviewerPacket, "candidate-tasks.jsonl"),
+      "utf8"
+    )).split(/\r?\n/u).filter(Boolean)[0]) as Record<string, any>;
+    const firstArtifact = path.join(
+      reviewerPacket,
+      firstTask.artifact_root,
+      firstTask.trial_ids[0],
+      "trace.json"
+    );
+    await writeFile(firstArtifact, "{}\n", "utf8");
+
+    const reviewerInspection = await inspectPromotionTrialCandidateReviewerPacket(reviewerPacket);
+    expect(reviewerInspection.passed).toBe(false);
+    expect(reviewerInspection.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_reviewer_packet_hash_mismatch"
+    );
+    await expect(preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      reviewerRoot: "tampered-reviewer-packet",
+      annotationPath: "review-a.json",
+      outDir: "tampered-reviewer-preflight"
+    })).rejects.toThrow("integrity-valid reviewer packet");
+
+    const licensePacket = path.join(workspace, "extended-license-packet");
+    await cp(path.join(workspace, "handoff", "license"), licensePacket, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    await writeFile(path.join(licensePacket, "untracked.json"), "{}\n", "utf8");
+    const licenseInspection = await inspectPromotionTrialCandidateLicensePacket(licensePacket);
+    expect(licenseInspection.passed).toBe(false);
+    expect(licenseInspection.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_license_packet_untracked_file"
+    );
+    await expect(preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      licenseRoot: "extended-license-packet",
+      reviewPath: "reviews/license/complete-review.json",
+      outDir: "extended-license-preflight"
+    })).rejects.toThrow("integrity-valid source-license packet");
   });
 
   it("detects adjudicated review output tampering", async () => {

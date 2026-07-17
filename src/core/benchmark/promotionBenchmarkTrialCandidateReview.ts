@@ -5,11 +5,17 @@ import path from "node:path";
 import { writeJsonFile } from "../../utils/fs.js";
 import { assertPromotionArtifactPrivacySafe } from "./promotionArtifactPrivacy.js";
 import {
+  inspectPromotionTrialCandidateLicensePacket,
+  inspectPromotionTrialCandidateReviewerPacket,
   inspectPromotionTrialCandidateHandoff,
   PROMOTION_TRIAL_CANDIDATE_GUIDE,
   PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST,
+  PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST,
   PROMOTION_TRIAL_CANDIDATE_TASKS,
-  type PromotionTrialCandidateHandoffManifest
+  type PromotionTrialCandidateHandoffManifest,
+  type PromotionTrialCandidateLicensePacketManifest,
+  type PromotionTrialCandidateReviewerPacketManifest
 } from "./promotionBenchmarkTrialCandidateHandoff.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
@@ -116,7 +122,7 @@ export interface PreparePromotionTrialCandidateLicenseReviewWorksheetResult {
 
 export interface PreflightPromotionTrialCandidateAnnotationInput {
   cwd: string;
-  handoffRoot: string;
+  reviewerRoot: string;
   annotationPath: string;
   outDir: string;
 }
@@ -137,7 +143,7 @@ export interface PromotionTrialCandidateAnnotationPreflightReport {
   annotation_count: number;
   positive_candidate_count: number;
   input_sha256: {
-    handoff_manifest: string;
+    reviewer_packet_manifest: string;
     tasks: string;
     schema: string;
     resolution_schema: string;
@@ -157,7 +163,7 @@ export interface PreflightPromotionTrialCandidateAnnotationResult {
 
 export interface PreflightPromotionTrialCandidateLicenseReviewInput {
   cwd: string;
-  handoffRoot: string;
+  licenseRoot: string;
   reviewPath: string;
   outDir: string;
 }
@@ -171,7 +177,7 @@ export interface PromotionTrialCandidateLicenseReviewPreflightReport {
   license_status: PromotionTrialCandidateLicenseStatus | null;
   evidence_reference_count: number;
   input_sha256: {
-    handoff_manifest: string;
+    license_packet_manifest: string;
     license_task: string;
     license_schema: string;
     license_guide: string;
@@ -390,23 +396,27 @@ export async function preflightPromotionTrialCandidateAnnotation(
   input: PreflightPromotionTrialCandidateAnnotationInput
 ): Promise<PreflightPromotionTrialCandidateAnnotationResult> {
   const cwd = path.resolve(input.cwd);
-  const handoffRoot = await resolveDirectoryInside(cwd, path.resolve(cwd, input.handoffRoot), "Trial-candidate handoff");
+  const reviewerRoot = await resolveDirectoryInside(
+    cwd,
+    path.resolve(cwd, input.reviewerRoot),
+    "Trial-candidate reviewer packet"
+  );
   const annotationPath = await resolveFileInside(cwd, path.resolve(cwd, input.annotationPath), "Trial-candidate annotation");
   const outDir = path.resolve(cwd, input.outDir);
   assertStrictlyInside(cwd, outDir, "Trial-candidate annotation preflight output");
-  if (isSameOrContainedPath(handoffRoot, outDir)) {
-    throw new Error("Trial-candidate annotation preflight output must stay outside the closed handoff.");
+  if (isSameOrContainedPath(reviewerRoot, outDir)) {
+    throw new Error("Trial-candidate annotation preflight output must stay outside the closed reviewer packet.");
   }
   await assertFreshOutput(outDir, "Trial-candidate annotation preflight output");
 
-  const { manifest, tasks } = await loadHandoffContract(handoffRoot);
+  const { manifest, tasks } = await loadReviewerPacketContract(reviewerRoot);
   const issues: PromotionTrialCandidateReviewIssue[] = [];
-  const validated = await readInitialAnnotation(annotationPath, manifest, tasks, handoffRoot, issues);
+  const validated = await readInitialAnnotation(annotationPath, manifest, tasks, reviewerRoot, issues);
   const annotation = validated.annotation;
   const positiveCandidateCount = annotation
     ? annotation.annotations.filter(allObservationsPositive).length
     : 0;
-  const contractPaths = reviewerContractPaths(handoffRoot);
+  const contractPaths = reviewerPacketContractPaths(reviewerRoot);
   const report: PromotionTrialCandidateAnnotationPreflightReport = {
     schema_version: "1.0",
     generated_at: new Date().toISOString(),
@@ -417,8 +427,11 @@ export async function preflightPromotionTrialCandidateAnnotation(
     annotation_count: annotation?.annotations.length || 0,
     positive_candidate_count: positiveCandidateCount,
     input_sha256: {
-      handoff_manifest: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)),
-      tasks: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_TASKS)),
+      reviewer_packet_manifest: await hashFile(path.join(
+        reviewerRoot,
+        PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST
+      )),
+      tasks: await hashFile(path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_TASKS))),
       schema: await hashFile(contractPaths.schema),
       resolution_schema: await hashFile(contractPaths.resolutionSchema),
       guide: await hashFile(contractPaths.guide),
@@ -444,19 +457,23 @@ export async function preflightPromotionTrialCandidateLicenseReview(
   input: PreflightPromotionTrialCandidateLicenseReviewInput
 ): Promise<PreflightPromotionTrialCandidateLicenseReviewResult> {
   const cwd = path.resolve(input.cwd);
-  const handoffRoot = await resolveDirectoryInside(cwd, path.resolve(cwd, input.handoffRoot), "Trial-candidate handoff");
+  const licenseRoot = await resolveDirectoryInside(
+    cwd,
+    path.resolve(cwd, input.licenseRoot),
+    "Trial-candidate source-license packet"
+  );
   const reviewPath = await resolveFileInside(cwd, path.resolve(cwd, input.reviewPath), "Trial-candidate source-license review");
   const outDir = path.resolve(cwd, input.outDir);
   assertStrictlyInside(cwd, outDir, "Trial-candidate source-license review preflight output");
-  if (isSameOrContainedPath(handoffRoot, outDir)) {
-    throw new Error("Trial-candidate source-license review preflight output must stay outside the closed handoff.");
+  if (isSameOrContainedPath(licenseRoot, outDir)) {
+    throw new Error("Trial-candidate source-license review preflight output must stay outside the closed source-license packet.");
   }
   await assertFreshOutput(outDir, "Trial-candidate source-license review preflight output");
 
-  const { manifest } = await loadHandoffContract(handoffRoot);
+  const { manifest } = await loadLicensePacketContract(licenseRoot);
   const issues: PromotionTrialCandidateReviewIssue[] = [];
   const review = await readLicenseReview(reviewPath, manifest, [], issues);
-  const contractPaths = reviewerContractPaths(handoffRoot);
+  const contractPaths = licensePacketContractPaths(licenseRoot);
   const report: PromotionTrialCandidateLicenseReviewPreflightReport = {
     schema_version: "1.0",
     generated_at: new Date().toISOString(),
@@ -466,8 +483,14 @@ export async function preflightPromotionTrialCandidateLicenseReview(
     license_status: review?.review.status || null,
     evidence_reference_count: review?.review.evidence_refs.length || 0,
     input_sha256: {
-      handoff_manifest: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)),
-      license_task: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)),
+      license_packet_manifest: await hashFile(path.join(
+        licenseRoot,
+        PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST
+      )),
+      license_task: await hashFile(path.join(
+        licenseRoot,
+        licensePacketFile(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)
+      )),
       license_schema: await hashFile(contractPaths.licenseSchema),
       license_guide: await hashFile(contractPaths.licenseGuide),
       review: await hashFile(reviewPath)
@@ -506,8 +529,9 @@ export async function adjudicatePromotionTrialCandidateReview(
   const issues: PromotionTrialCandidateReviewIssue[] = [];
   const initialPaths = await Promise.all(input.annotationPaths.map((item, index) =>
     resolveFileInside(cwd, path.resolve(cwd, item), `Trial-candidate annotation ${index + 1}`)));
+  const reviewerRoot = path.join(handoffRoot, "reviewer");
   const initialValidated = await Promise.all(initialPaths.map((annotationPath) =>
-    readInitialAnnotation(annotationPath, manifest, tasks, handoffRoot, issues)));
+    readInitialAnnotation(annotationPath, manifest, tasks, reviewerRoot, issues)));
   const initial = initialValidated.map((item) => item.annotation);
   const initialIds = initial.flatMap((item) => item ? [item.annotator_id] : []);
   if (initialIds.length !== 2 || new Set(initialIds).size !== 2) {
@@ -535,7 +559,7 @@ export async function adjudicatePromotionTrialCandidateReview(
         resolutionPath,
         manifest,
         tasks,
-        handoffRoot,
+        reviewerRoot,
         disagreementIds,
         initialIds,
         issues
@@ -739,6 +763,53 @@ export async function inspectPromotionTrialCandidateReviewAdjudication(
   return { passed: issues.length === 0, report, issues };
 }
 
+async function loadReviewerPacketContract(
+  reviewerRoot: string
+): Promise<{ manifest: PromotionTrialCandidateReviewerPacketManifest; tasks: ReviewerTask[] }> {
+  const inspection = await inspectPromotionTrialCandidateReviewerPacket(reviewerRoot);
+  if (!inspection.passed || !inspection.manifest) {
+    throw new Error(`Trial-candidate annotation preflight requires an integrity-valid reviewer packet: ${inspection.issues.map((item) => item.code).join(", ") || "unreadable"}.`);
+  }
+  const contract = reviewerPacketContractPaths(reviewerRoot);
+  const schema = JSON.parse(await fs.readFile(contract.schema, "utf8")) as unknown;
+  const resolutionSchema = JSON.parse(await fs.readFile(contract.resolutionSchema, "utf8")) as unknown;
+  const guide = await fs.readFile(contract.guide, "utf8");
+  const rubric = await fs.readFile(contract.rubric, "utf8");
+  if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
+      || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
+      || guide !== promotionTrialCandidateReviewerGuide()
+      || rubric !== promotionTrialCandidateReviewRubric()) {
+    throw new Error("Trial-candidate reviewer packet does not match the runtime review contract.");
+  }
+  const tasks = parseReviewerTasks(await fs.readFile(
+    path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_TASKS)),
+    "utf8"
+  ));
+  if (tasks.length !== inspection.manifest.candidate_count
+      || tasks.reduce((sum, task) => sum + task.trial_ids.length, 0)
+        !== inspection.manifest.trial_artifact_count) {
+    throw new Error("Trial-candidate reviewer packet task counts do not match its manifest.");
+  }
+  return { manifest: inspection.manifest, tasks };
+}
+
+async function loadLicensePacketContract(
+  licenseRoot: string
+): Promise<{ manifest: PromotionTrialCandidateLicensePacketManifest }> {
+  const inspection = await inspectPromotionTrialCandidateLicensePacket(licenseRoot);
+  if (!inspection.passed || !inspection.manifest) {
+    throw new Error(`Trial-candidate license preflight requires an integrity-valid source-license packet: ${inspection.issues.map((item) => item.code).join(", ") || "unreadable"}.`);
+  }
+  const contract = licensePacketContractPaths(licenseRoot);
+  const schema = JSON.parse(await fs.readFile(contract.licenseSchema, "utf8")) as unknown;
+  const guide = await fs.readFile(contract.licenseGuide, "utf8");
+  if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
+      || guide !== promotionTrialCandidateLicenseReviewerGuide()) {
+    throw new Error("Trial-candidate source-license packet does not match the runtime review contract.");
+  }
+  return { manifest: inspection.manifest };
+}
+
 async function loadHandoffContract(
   handoffRoot: string
 ): Promise<{ manifest: PromotionTrialCandidateHandoffManifest; tasks: ReviewerTask[] }> {
@@ -746,13 +817,14 @@ async function loadHandoffContract(
   if (!inspection.passed || !inspection.manifest) {
     throw new Error(`Trial-candidate review requires an integrity-valid handoff: ${inspection.issues.map((item) => item.code).join(", ") || "unreadable"}.`);
   }
-  const contract = reviewerContractPaths(handoffRoot);
-  const schema = JSON.parse(await fs.readFile(contract.schema, "utf8")) as unknown;
-  const resolutionSchema = JSON.parse(await fs.readFile(contract.resolutionSchema, "utf8")) as unknown;
-  const licenseSchema = JSON.parse(await fs.readFile(contract.licenseSchema, "utf8")) as unknown;
-  const guide = await fs.readFile(contract.guide, "utf8");
-  const licenseGuide = await fs.readFile(contract.licenseGuide, "utf8");
-  const rubric = await fs.readFile(contract.rubric, "utf8");
+  const reviewerContract = reviewerPacketContractPaths(path.join(handoffRoot, "reviewer"));
+  const licenseContract = licensePacketContractPaths(path.join(handoffRoot, "license"));
+  const schema = JSON.parse(await fs.readFile(reviewerContract.schema, "utf8")) as unknown;
+  const resolutionSchema = JSON.parse(await fs.readFile(reviewerContract.resolutionSchema, "utf8")) as unknown;
+  const licenseSchema = JSON.parse(await fs.readFile(licenseContract.licenseSchema, "utf8")) as unknown;
+  const guide = await fs.readFile(reviewerContract.guide, "utf8");
+  const licenseGuide = await fs.readFile(licenseContract.licenseGuide, "utf8");
+  const rubric = await fs.readFile(reviewerContract.rubric, "utf8");
   if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
       || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
       || JSON.stringify(licenseSchema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
@@ -783,9 +855,9 @@ async function loadHandoffContract(
 
 async function readInitialAnnotation(
   annotationPath: string,
-  manifest: PromotionTrialCandidateHandoffManifest,
+  manifest: Pick<PromotionTrialCandidateHandoffManifest, "handoff_id">,
   tasks: ReviewerTask[],
-  handoffRoot: string,
+  reviewerRoot: string,
   issues: PromotionTrialCandidateReviewIssue[]
 ): Promise<ValidatedInitialSet> {
   let bytes: Buffer;
@@ -805,15 +877,15 @@ async function readInitialAnnotation(
   if (annotation.handoff_id !== manifest.handoff_id) {
     issues.push({ code: "trial_candidate_annotation_handoff_mismatch", message: "Annotation handoff ID does not match the packet.", ref: annotation.annotator_id });
   }
-  await validateLabels(annotation.annotations, tasks, handoffRoot, issues, "annotation");
+  await validateLabels(annotation.annotations, tasks, reviewerRoot, issues, "annotation");
   return { annotation, bytes };
 }
 
 async function readResolution(
   resolutionPath: string,
-  manifest: PromotionTrialCandidateHandoffManifest,
+  manifest: Pick<PromotionTrialCandidateHandoffManifest, "handoff_id">,
   tasks: ReviewerTask[],
-  handoffRoot: string,
+  reviewerRoot: string,
   disagreementIds: Set<string>,
   initialIds: string[],
   issues: PromotionTrialCandidateReviewIssue[]
@@ -844,13 +916,13 @@ async function readResolution(
     issues.push({ code: "trial_candidate_resolution_coverage_invalid", message: "Resolution records must cover exactly the candidate disagreements." });
   }
   const disagreementTasks = tasks.filter((task) => disagreementIds.has(task.candidate_id));
-  await validateLabels(resolution.resolutions, disagreementTasks, handoffRoot, issues, "resolution");
+  await validateLabels(resolution.resolutions, disagreementTasks, reviewerRoot, issues, "resolution");
   return resolution;
 }
 
 async function readLicenseReview(
   reviewPath: string,
-  manifest: PromotionTrialCandidateHandoffManifest,
+  manifest: Pick<PromotionTrialCandidateHandoffManifest, "handoff_id">,
   excludedReviewerIds: string[],
   issues: PromotionTrialCandidateReviewIssue[]
 ): Promise<PromotionTrialCandidateLicenseReviewSet | null> {
@@ -882,7 +954,7 @@ async function readLicenseReview(
 async function validateLabels(
   labels: PromotionTrialCandidateHumanLabel[],
   tasks: ReviewerTask[],
-  handoffRoot: string,
+  reviewerRoot: string,
   issues: PromotionTrialCandidateReviewIssue[],
   context: "annotation" | "resolution"
 ): Promise<void> {
@@ -916,8 +988,7 @@ async function validateLabels(
       if (artifact === undefined) {
         try {
           artifact = JSON.parse(await fs.readFile(path.join(
-            handoffRoot,
-            "reviewer",
+            reviewerRoot,
             task.artifact_root,
             evidenceRef.trial_id,
             "trace.json"
@@ -1085,22 +1156,38 @@ function parseAdjudicationReport(value: unknown): PromotionTrialCandidateReviewA
   return report;
 }
 
-function reviewerContractPaths(handoffRoot: string): {
+function reviewerPacketContractPaths(reviewerRoot: string): {
   schema: string;
   resolutionSchema: string;
-  licenseSchema: string;
   guide: string;
-  licenseGuide: string;
   rubric: string;
 } {
   return {
-    schema: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA),
-    resolutionSchema: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA),
-    licenseSchema: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
-    guide: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_GUIDE),
-    licenseGuide: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE),
-    rubric: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_RUBRIC)
+    schema: path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA)),
+    resolutionSchema: path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA)),
+    guide: path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_GUIDE)),
+    rubric: path.join(reviewerRoot, reviewerPacketFile(PROMOTION_TRIAL_CANDIDATE_RUBRIC))
   };
+}
+
+function licensePacketContractPaths(licenseRoot: string): {
+  licenseSchema: string;
+  licenseGuide: string;
+} {
+  return {
+    licenseSchema: path.join(licenseRoot, licensePacketFile(PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA)),
+    licenseGuide: path.join(licenseRoot, licensePacketFile(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE))
+  };
+}
+
+function reviewerPacketFile(fullPath: string): string {
+  if (!fullPath.startsWith("reviewer/")) throw new Error("Reviewer contract path must use the reviewer prefix.");
+  return fullPath.slice("reviewer/".length);
+}
+
+function licensePacketFile(fullPath: string): string {
+  if (!fullPath.startsWith("license/")) throw new Error("License contract path must use the license prefix.");
+  return fullPath.slice("license/".length);
 }
 
 function jsonPointerExists(value: unknown, pointer: string): boolean {

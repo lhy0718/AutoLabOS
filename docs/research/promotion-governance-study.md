@@ -415,10 +415,16 @@ observable evidence fields and requires two independent human reviews, with a
 third human resolver only for categorical disagreements. A separate
 source-license packet exposes the exact public URL and revision to a distinct
 human reviewer without exposing candidate artifacts, candidate annotations, or
-the controller map. AutoLabOS validates these inputs but does not generate
-human labels or convert a review into a legal grant. The generated evidence
-record is
-`docs/research/evidence/promotion-trial-candidate-handoff-v5.json`.
+the controller map. The candidate and source-license directories now carry
+separate self-contained hash manifests. Candidate-review preflight accepts only
+the copied `reviewer/` packet and one annotation file; source-license preflight
+accepts only the copied `license/` packet and one review file. Neither preflight
+requires or reads the controller handoff. Both isolated paths were exercised
+with machine-prepared incomplete worksheets and failed closed before any human
+judgment was recorded. AutoLabOS validates submitted inputs but does not
+generate human labels or convert a review into a legal grant. The generated
+evidence record is
+`docs/research/evidence/promotion-trial-candidate-handoff-v6.json`.
 
 This result closes only the numerical trace-candidate floor. The source license
 has not received human review, the two independent candidate annotations have
