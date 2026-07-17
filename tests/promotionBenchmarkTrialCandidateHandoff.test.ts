@@ -56,6 +56,8 @@ import {
   freezePromotionConfirmatoryCorpus
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
 import {
+  PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
 
@@ -1156,10 +1158,22 @@ describe("promotion trial-candidate handoff", () => {
       intake_tier: "paper_scale",
       base_bundle_count: 72,
       case_count: 720,
+      upstream_evidence_file_count: expect.any(Number),
       candidate_review: {
         source_eligible_candidate_count: 72
       }
     });
+    expect(freezeInspection.provenance?.upstream_evidence_file_count).toBeGreaterThan(5);
+    expect(await inspectPromotionTrialCandidateHandoff(path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
+    ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateReviewAdjudication(path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+    ))).toMatchObject({ passed: true, issues: [] });
 
     const labelTamperedRoot = path.join(workspace, "label-tampered-adjudication");
     await cp(path.join(workspace, "source-eligible-adjudication"), labelTamperedRoot, {

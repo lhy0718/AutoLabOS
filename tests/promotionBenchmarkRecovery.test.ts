@@ -18,6 +18,17 @@ import {
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
 import { PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
+import {
+  PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
+  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
+import { PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 
 const tempDirs: string[] = [];
 
@@ -431,6 +442,16 @@ async function writeSuite(
   const confirmatoryFreezeProvenance = paperClaimEligible
     ? await writeConfirmatoryFreezeEvidence(workspace, suiteRoot, suiteId, cases)
     : null;
+  const sourceSuiteSnapshot = paperClaimEligible && confirmatoryFreezeProvenance
+    ? await writeSourceSuiteSnapshotEvidence({
+        workspace,
+        suiteRoot,
+        suiteId,
+        cases,
+        caseRefs,
+        confirmatoryFreezeProvenance
+      })
+    : null;
   await writeFile(path.join(workspace, suiteRoot, "suite.json"), JSON.stringify({
     schema_version: "1.0",
     suite_id: suiteId,
@@ -446,7 +467,8 @@ async function writeSuite(
     adjudication_provenance: {
       schema_version: "1.0",
       method: "independent_double_adjudication",
-      source_suite_snapshot_sha256: "1".repeat(64),
+      source_suite_snapshot_sha256: sourceSuiteSnapshot?.snapshotSha256 || "1".repeat(64),
+      ...(sourceSuiteSnapshot ? { source_suite_evidence: sourceSuiteSnapshot.evidence } : {}),
       private_annotation_map_ref: "adjudication/private-annotation-map.json",
       private_annotation_map_sha256: hashText(privateMapText),
       initial_annotation_refs: [
@@ -464,6 +486,80 @@ async function writeSuite(
     },
     cases: caseRefs
   }));
+}
+
+async function writeSourceSuiteSnapshotEvidence(input: {
+  workspace: string;
+  suiteRoot: string;
+  suiteId: string;
+  cases: PromotionBenchmarkCaseManifest[];
+  caseRefs: string[];
+  confirmatoryFreezeProvenance: Record<string, unknown>;
+}): Promise<{ snapshotSha256: string; evidence: Record<string, unknown> }> {
+  const sourceRoot = path.join(input.workspace, input.suiteRoot, "adjudication", "source-suite");
+  const caseEvidenceRoot = path.join(sourceRoot, "case-manifests");
+  await mkdir(caseEvidenceRoot, { recursive: true });
+  const caseBytesBySourceRef = new Map<string, Buffer>();
+  const caseManifests = [];
+  for (const [index, benchmarkCase] of input.cases.entries()) {
+    const sourceRef = input.caseRefs[index];
+    const evidenceRef = `adjudication/source-suite/case-manifests/${String(index + 1).padStart(6, "0")}.json`;
+    const sourceCase = {
+      ...benchmarkCase,
+      mutation_manifest: "../provenance/" + benchmarkCase.case_id + ".json",
+      gold: { decision: "needs_review", blocking_concerns: [], repair_owners: [] }
+    };
+    const bytes = Buffer.from(JSON.stringify(sourceCase));
+    await writeFile(path.join(input.workspace, input.suiteRoot, evidenceRef), bytes);
+    caseBytesBySourceRef.set(sourceRef, bytes);
+    caseManifests.push({
+      case_id: benchmarkCase.case_id,
+      source_ref: sourceRef,
+      evidence_ref: evidenceRef,
+      sha256: createHash("sha256").update(bytes).digest("hex")
+    });
+  }
+  const sourceManifest = {
+    schema_version: "1.0",
+    suite_id: input.suiteId,
+    evidence_class: "external_real_run",
+    paper_claim_eligible: false,
+    adjudication_status: "unreviewed",
+    mutation_isolation_status: "unreviewed",
+    execution_provenance_status: "artifact_verified",
+    source_diversity_status: "declared_stratified",
+    confirmatory_freeze_provenance: input.confirmatoryFreezeProvenance,
+    cases: input.caseRefs
+  };
+  const suiteBytes = Buffer.from(JSON.stringify(sourceManifest));
+  const suiteManifestRef = "adjudication/source-suite/suite.json";
+  await writeFile(path.join(input.workspace, input.suiteRoot, suiteManifestRef), suiteBytes);
+  const hash = createHash("sha256");
+  hash.update("suite_manifest\0");
+  hash.update(suiteBytes);
+  hash.update("\0");
+  for (const sourceRef of [...input.caseRefs].sort()) {
+    const bytes = caseBytesBySourceRef.get(sourceRef);
+    if (!bytes) throw new Error("Recovery source-suite fixture is missing a case manifest.");
+    hash.update("case_manifest\0" + sourceRef + "\0");
+    hash.update(bytes);
+    hash.update("\0");
+  }
+  for (const benchmarkCase of [...input.cases].sort((left, right) => left.case_id.localeCompare(right.case_id))) {
+    hash.update("artifact_tree\0" + benchmarkCase.case_id + "\0");
+    hash.update(benchmarkCase.artifact_sha256 || "");
+    hash.update("\0");
+  }
+  return {
+    snapshotSha256: hash.digest("hex"),
+    evidence: {
+      schema_version: "1.0",
+      method: "contained_source_suite_manifests",
+      suite_manifest_ref: suiteManifestRef,
+      suite_manifest_sha256: createHash("sha256").update(suiteBytes).digest("hex"),
+      case_manifests: caseManifests
+    }
+  };
 }
 
 async function writeConfirmatoryFreezeEvidence(
@@ -508,6 +604,40 @@ async function writeConfirmatoryFreezeEvidence(
   const recipeText = JSON.stringify(recipe);
   const recipeSha256 = hashText(recipeText);
   const sourceRevision = "recovery-source-revision";
+  const intakeText = JSON.stringify({
+    schema_version: "1.1",
+    intake_tier: "paper_scale",
+    study_id: suiteId
+  });
+  const handoffText = JSON.stringify({ schema_version: "1.0", handoff_id: "recovery-handoff" });
+  const reviewLabelsText = '{"schema_version":"1.0","candidate_id":"candidate-placeholder"}\n';
+  const reviewEvidenceText = JSON.stringify({ schema_version: "1.0", handoff_id: "recovery-handoff" });
+  const reviewReportText = JSON.stringify({ schema_version: "1.0", passed: true });
+  const upstreamFiles = [
+    { ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF, bytes: intakeText },
+    {
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT}/${PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST}`,
+      bytes: handoffText
+    },
+    {
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`,
+      bytes: reviewLabelsText
+    },
+    {
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`,
+      bytes: reviewEvidenceText
+    },
+    {
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`,
+      bytes: reviewReportText
+    }
+  ].sort((left, right) => left.ref.localeCompare(right.ref));
+  for (const item of upstreamFiles) {
+    const outputPath = path.join(freezeRoot, item.ref);
+    await mkdir(path.dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, item.bytes);
+  }
+  const upstreamInventory = upstreamFiles.map((item) => ({ ref: item.ref, sha256: hashText(item.bytes) }));
   const sourceBundles = [...sourceByBase.values()].map((benchmarkCase) => ({
     base_bundle_id: benchmarkCase.base_bundle_id,
     source_sha256: benchmarkCase.source_sha256,
@@ -535,16 +665,24 @@ async function writeConfirmatoryFreezeEvidence(
     mutation_isolation_status: "unreviewed",
     execution_provenance_status: "artifact_verified",
     source_diversity_status: "declared_stratified",
-    intake_manifest_sha256: hashText("recovery-intake"),
+    intake_manifest_sha256: hashText(intakeText),
+    upstream_evidence: {
+      schema_version: "1.0",
+      method: "contained_intake_review_evidence",
+      intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
+      candidate_handoff_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
+      candidate_review_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
+      files: upstreamInventory
+    },
     recipe_sha256: recipeSha256,
     base_bundle_count: sourceBundles.length,
     case_count: cases.length,
     candidate_review: {
       handoff_id: "recovery-handoff",
       source_revision: sourceRevision,
-      handoff_manifest_sha256: hashText("recovery-handoff"),
-      adjudicated_labels_sha256: hashText("recovery-labels"),
-      review_evidence_sha256: hashText("recovery-review-evidence"),
+      handoff_manifest_sha256: hashText(handoffText),
+      adjudicated_labels_sha256: hashText(reviewLabelsText),
+      review_evidence_sha256: hashText(reviewEvidenceText),
       source_eligible_candidate_count: sourceBundles.length
     },
     required_fault_families: REQUIRED_CONFIRMATORY_MUTATION_FAMILIES,
@@ -563,6 +701,8 @@ async function writeConfirmatoryFreezeEvidence(
     recipe_ref: "confirmatory-freeze/recipe.json",
     recipe_sha256: recipeSha256,
     intake_manifest_sha256: freezeManifest.intake_manifest_sha256,
+    upstream_evidence_inventory_sha256: hashText(JSON.stringify(upstreamInventory)),
+    upstream_evidence_file_count: upstreamInventory.length,
     base_bundle_count: sourceBundles.length,
     case_count: cases.length,
     candidate_review: freezeManifest.candidate_review

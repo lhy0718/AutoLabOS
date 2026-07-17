@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-010` Provenance receipts could not be independently recomputed from the paper-eligible suite — `RESOLVED`
   - `R-009` Confirmatory freeze evidence was not bound to suite construction - `RESOLVED`
   - `R-008` Paper eligibility could be self-asserted without adjudication provenance — `RESOLVED`
   - `R-007` Presence baseline semantics were not version-bound — `RESOLVED`
@@ -10883,6 +10884,77 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-010
+
+- Status: resolved; intake/review and pre-adjudication suite receipts are now backed by closed, suite-contained evidence that the loader independently recomputes
+- Validation target: a paper-eligible promotion suite must contain enough immutable upstream bytes to reproduce `intake_manifest_sha256`, candidate-review receipts, and `source_suite_snapshot_sha256` without access to an operator's original workspace.
+- Environment/session context: repository-owned provisional, 72-candidate paper-scale, adjudication, gate, and 72-base/720-case recovery fixtures; no human judgment, provider output, or empirical metric was invented by the repair.
+
+- Reproduction steps:
+  1. Freeze a paper-scale intake and inspect `frozen-intake-manifest.json`.
+  2. Observe that the manifest records hashes for the original intake, handoff manifest, adjudicated candidate labels, and review evidence while preserving none of those source bytes.
+  3. Adjudicate a suite and inspect `source_suite_snapshot_sha256`.
+  4. Observe that the adjudicated suite rewrites `suite.json` and case labels while preserving no original suite/case manifest bytes from which the snapshot receipt can be recomputed.
+
+- Expected behavior:
+  - Freeze output preserves the exact intake manifest and complete paper-scale handoff/review roots in a closed regular-file inventory.
+  - Builder publication carries the same upstream evidence into the suite and rejects missing, added, symlinked, or changed files.
+  - Adjudication preserves the original suite manifest and every pre-adjudication case manifest without duplicating artifact trees.
+  - Suite loading recomputes the source-suite snapshot from the preserved manifests and current unchanged artifact trees.
+  - Confirmatory review routes missing upstream or source-snapshot evidence to the responsible design/review node.
+
+- Actual behavior:
+  - R-008 and R-009 bound cryptographic receipts but left their source bytes outside the suite.
+  - A later verifier could confirm that a receipt string was well formed but could not independently reproduce it from the packaged artifacts.
+  - Recovery tests used an arbitrary 64-character snapshot placeholder because no contained reconstruction contract existed.
+
+- Fresh vs existing session comparison:
+  - Fresh session: new freezes contain `upstream-evidence/`; new adjudications contain `adjudication/source-suite/`; staged and loaded suites recompute all bound receipts.
+  - Existing session: development suites remain readable, while paper-scale freeze provenance without upstream inventory and paper-eligible adjudication provenance without source-suite evidence fail closed.
+  - Divergence: no UI refresh or resume issue is involved; the defect was missing persisted evidence across governed transitions.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: earlier provenance work treated snapshot and upstream hashes as sufficient authority, but did not retain the exact inputs required to audit those hashes outside the originating workspace.
+
+- Code/test changes:
+  - Freeze now copies the source intake manifest and, for paper scale, the complete candidate handoff and review roots under `upstream-evidence/`.
+  - A canonical sorted inventory binds every non-empty regular file by SHA-256 and reproduces the intake, handoff, labels, and review-evidence receipts.
+  - Builder carries the upstream directory into `confirmatory-freeze/`; loader enforces its exact top-level and recursive closure.
+  - Adjudication now preserves the original suite and case manifest bytes under `adjudication/source-suite/` and records a per-case source/evidence-ref inventory.
+  - Loader checks immutable case/artifact identity and recomputes the exact source-suite snapshot algorithm from contained bytes and current artifact trees.
+  - Gate checks now require both upstream freeze evidence and reproducible source-suite evidence.
+  - Recovery fixtures now generate real source-suite snapshots and closed upstream evidence instead of arbitrary hash placeholders.
+
+- Regression status:
+  - Targeted intake, 72-candidate handoff, adjudication, gate, recovery, and CLI regressions: 122/122 passed on 2026-07-17.
+  - The copied 72-candidate handoff and review roots both passed their original semantic inspectors after freezing.
+  - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
+  - Repository-wide CI: 214/214 test files and 2,871/2,871 core tests passed; 1/1 web test file and 14/14 web tests passed on 2026-07-17 with `npm test`.
+  - Build validation: passed on 2026-07-17 with `npm run build` (existing non-fatal esbuild allow-scripts warning only).
+  - Harness validation: 524/524 entries passed on 2026-07-17 with `npm run validate:harness`.
+  - Public-code sanitization: 3/3 passed on 2026-07-17 with `npx vitest run tests/publicCodeSanitization.test.ts`.
+
+- Follow-up risks:
+  - Closed bytes and pseudonymous role IDs still do not prove real-world reviewer identity, expertise, or independence.
+  - The exact intake manifest is controller-facing provenance and must pass a release privacy/path review before a public data package is published.
+  - Real v10 admission remains zero until independent human review, license approval, and canonical source curation are completed.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts`
+  - `src/core/benchmark/promotionBenchmarkBuilder.ts`
+  - `src/core/benchmark/promotionBenchmark.ts`
+  - `src/core/benchmark/promotionBenchmarkAdjudication.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts`
+  - `tests/promotionBenchmarkConfirmatoryIntake.test.ts`
+  - `tests/promotionBenchmarkTrialCandidateHandoff.test.ts`
+  - `tests/promotionBenchmarkAdjudication.test.ts`
+  - `tests/promotionBenchmarkConfirmatoryGate.test.ts`
+  - `tests/promotionBenchmarkRecovery.test.ts`
+
+---
 
 ## Issue: R-009
 
@@ -10936,7 +11008,7 @@ Path placeholders:
   - Public-code sanitization: 3/3 passed on 2026-07-17 with `npx vitest run tests/publicCodeSanitization.test.ts`.
 
 - Follow-up risks:
-  - The intake-manifest SHA remains a receipt; the original intake manifest and referenced review roots must be included in the final reproducibility package for independent recomputation.
+  - R-010 closes the intake/review receipt gap by preserving and revalidating the exact upstream evidence bytes inside each new freeze-bound suite.
   - Pseudonymous role IDs and hash-valid receipts do not establish real-world reviewer identity or independence.
   - The real v10 admission count remains zero because independent human review, license approval, and canonical source curation have not been completed.
 
@@ -11002,7 +11074,7 @@ Path placeholders:
   - Public-code sanitization: passed on 2026-07-17 with 3/3 tests.
 
 - Follow-up risks:
-  - The source-suite snapshot hash is a provenance receipt; the original provisional suite must still be included in the final reproducibility package so that receipt can be independently recomputed.
+  - R-010 closes the source-suite receipt gap by preserving original suite/case manifests and recomputing the snapshot against unchanged artifact trees during loading.
   - Initial annotation and private-map files are hash-bound and validated by the adjudication operation; the loader reparses accepted labels as the authoritative suite-facing judgment surface.
   - No real independent human annotations or provider evidence have been created by this repair.
 

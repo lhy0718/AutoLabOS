@@ -571,6 +571,15 @@ and exact mutation operations against each case's mutation manifest. A suite
 built without `--freeze-manifest` remains valid for development, but it cannot
 become paper-claim-eligible.
 
+The freeze also preserves the exact intake manifest and, for paper-scale input,
+the complete candidate handoff and review roots under `upstream-evidence/`.
+A sorted file inventory binds every non-empty regular file by SHA-256 and must
+reproduce the intake, handoff-manifest, adjudicated-label, and review-evidence
+receipts. The builder carries this closed directory into
+`confirmatory-freeze/upstream-evidence/`; missing files, added files, symlinks,
+or byte drift invalidate suite loading and route confirmatory work back to
+experiment design.
+
 A benchmark recipe cannot set `paper_claim_eligible=true`. Only the independent
 adjudication path may issue that state after all scale, diversity, execution,
 mutation-isolation, and label gates pass. Every completed adjudication copies
@@ -581,6 +590,11 @@ each file by a contained relative path and SHA-256, plus the source-suite
 snapshot. Suite loading rejects missing files, symlinks, hash drift, malformed
 label JSON Lines, incomplete case coverage, or a mismatch between accepted
 labels and case gold. Status strings alone are never paper-claim evidence.
+Adjudication additionally preserves the pre-adjudication `suite.json` and every
+original case manifest under `adjudication/source-suite/`. Loading combines
+those exact bytes with the unchanged current artifact trees and recomputes the
+source-suite snapshot hash, so the snapshot is independently verifiable without
+shipping a duplicate copy of every case artifact.
 
 Deterministic comparison runs emit system-run manifest schema `1.1` with
 `protocol_revision=promotion-system-protocol-v2`. The presence-checklist

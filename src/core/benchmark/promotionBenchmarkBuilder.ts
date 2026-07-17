@@ -20,6 +20,7 @@ import {
   PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT,
   PROMOTION_CONFIRMATORY_FREEZE_MANIFEST_REF,
   PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF,
+  PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
 import {
@@ -179,6 +180,17 @@ export async function buildPromotionBenchmarkSuite(
         recipePath,
         path.join(stagingRoot, PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF)
       );
+      if (freezeInspection.provenance.upstream_evidence_inventory_sha256) {
+        await fs.cp(
+          path.join(path.dirname(freezeManifestPath), PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT),
+          path.join(
+            stagingRoot,
+            PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT,
+            PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT
+          ),
+          { recursive: true, errorOnExist: true, force: false }
+        );
+      }
     }
     const stagedSuitePath = path.join(stagingRoot, "suite.json");
     await writeJsonFile(stagedSuitePath, {

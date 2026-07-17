@@ -544,6 +544,8 @@ function inspectConfirmatoryEvidence(input: {
   if (!freezeProvenance
       || freezeProvenance.intake_tier !== "paper_scale"
       || !freezeProvenance.candidate_review
+      || !freezeProvenance.upstream_evidence_inventory_sha256
+      || !freezeProvenance.upstream_evidence_file_count
       || freezeProvenance.case_count !== input.score.case_count
       || freezeProvenance.base_bundle_count !== countBaseBundles(input.loaded)
       || freezeProvenance.candidate_review.source_eligible_candidate_count
@@ -558,6 +560,8 @@ function inspectConfirmatoryEvidence(input: {
   const adjudicationProvenance = input.loaded?.manifest.adjudication_provenance;
   if (!adjudicationProvenance
       || adjudicationProvenance.case_count !== input.score.case_count
+      || !adjudicationProvenance.source_suite_evidence
+      || adjudicationProvenance.source_suite_evidence.case_manifests.length !== input.score.case_count
       || adjudicationProvenance.mutation_audit_report_sha256 === null) {
     addIssue(
       input.issues,

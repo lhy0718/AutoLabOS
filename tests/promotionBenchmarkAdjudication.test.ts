@@ -108,6 +108,15 @@ describe("promotion benchmark adjudication", () => {
       .toBe(createHash("sha256").update(labelsText).digest("hex"));
     expect(new Set(loaded.suite?.manifest.adjudication_provenance?.initial_annotation_sha256 ?? [])).toHaveLength(2);
     expect(result.report.adjudication_provenance).toEqual(loaded.suite?.manifest.adjudication_provenance);
+    const sourceSuiteEvidence = loaded.suite?.manifest.adjudication_provenance?.source_suite_evidence;
+    expect(sourceSuiteEvidence).toMatchObject({
+      method: "contained_source_suite_manifests",
+      case_manifests: expect.arrayContaining([
+        expect.objectContaining({ case_id: "case-clean" }),
+        expect.objectContaining({ case_id: "case-fault" })
+      ])
+    });
+    expect(sourceSuiteEvidence?.case_manifests).toHaveLength(2);
     expect(loaded.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold).toEqual({
       decision: "block",
       blocking_concerns: ["comparison_evidence_gap"],
@@ -132,6 +141,20 @@ describe("promotion benchmark adjudication", () => {
       expect.objectContaining({ target_node: "design_experiments", recommended_prompt_node: "design_experiments" }),
       expect.objectContaining({ target_node: "review", recommended_prompt_node: "review" })
     ]));
+
+    const sourceCaseEvidence = sourceSuiteEvidence?.case_manifests[0];
+    if (!sourceCaseEvidence) throw new Error("source case evidence missing");
+    const sourceCaseEvidencePath = path.join(workspace, "adjudicated", "suite", sourceCaseEvidence.evidence_ref);
+    const sourceCaseBytes = await readFile(sourceCaseEvidencePath);
+    const sourceCase = JSON.parse(sourceCaseBytes.toString("utf8"));
+    sourceCase.base_bundle_id = "changed-base";
+    await writeFile(sourceCaseEvidencePath, `${JSON.stringify(sourceCase, null, 2)}\n`, "utf8");
+    const sourceDrifted = await loadPromotionBenchmarkSuite(path.join(workspace, result.suite_path || "missing"));
+    expect(sourceDrifted.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "adjudication_evidence_hash_mismatch" }),
+      expect.objectContaining({ code: "source_suite_snapshot_case_mismatch" })
+    ]));
+    await writeFile(sourceCaseEvidencePath, sourceCaseBytes);
 
     await writeFile(
       path.join(workspace, "adjudicated", "suite", "adjudication", "adjudicated-labels.jsonl"),

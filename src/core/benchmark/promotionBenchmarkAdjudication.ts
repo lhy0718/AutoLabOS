@@ -13,6 +13,7 @@ import {
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkEvidenceClass,
   type PromotionBenchmarkExecutionProvenanceStatus,
+  type PromotionBenchmarkSourceSuiteEvidence,
   type PromotionDecision
 } from "./promotionBenchmark.js";
 import {
@@ -389,11 +390,24 @@ export async function adjudicatePromotionBenchmark(
   const resolutionRef = resolutionPath ? "adjudication/resolution.jsonl" : null;
   const mutationAuditReportRef = mutationAuditReportPath ? "adjudication/mutation-audit-report.json" : null;
   const adjudicatedLabelsRef = "adjudication/adjudicated-labels.jsonl";
+  const sourceSuiteEvidence: PromotionBenchmarkSourceSuiteEvidence = {
+    schema_version: "1.0",
+    method: "contained_source_suite_manifests",
+    suite_manifest_ref: "adjudication/source-suite/suite.json",
+    suite_manifest_sha256: await hashFile(suitePath),
+    case_manifests: await Promise.all(loaded.suite.manifest.cases.map(async (sourceRef, index) => ({
+      case_id: loaded.suite!.cases[index].case_id,
+      source_ref: sourceRef,
+      evidence_ref: `adjudication/source-suite/case-manifests/${String(index + 1).padStart(6, "0")}.json`,
+      sha256: await hashFile(path.resolve(loaded.suite!.suite_root, sourceRef))
+    })))
+  };
   const adjudicationProvenance: PromotionBenchmarkAdjudicationProvenance | null = passed && labelsText
     ? {
         schema_version: "1.0",
         method: "independent_double_adjudication",
         source_suite_snapshot_sha256: await hashPromotionBenchmarkSuiteSnapshot(suitePath),
+        source_suite_evidence: sourceSuiteEvidence,
         private_annotation_map_ref: privateAnnotationMapRef,
         private_annotation_map_sha256: await hashFile(privateMapPath),
         initial_annotation_refs: initialAnnotationRefs,
@@ -422,6 +436,19 @@ export async function adjudicatePromotionBenchmark(
       const adjudicationEvidenceRoot = path.join(copiedSuiteRoot, "adjudication");
       await fs.rm(adjudicationEvidenceRoot, { recursive: true, force: true });
       await fs.mkdir(adjudicationEvidenceRoot, { recursive: true });
+      await fs.mkdir(
+        path.join(copiedSuiteRoot, "adjudication", "source-suite", "case-manifests"),
+        { recursive: true }
+      );
+      await fs.copyFile(
+        suitePath,
+        path.join(copiedSuiteRoot, sourceSuiteEvidence.suite_manifest_ref)
+      );
+      await Promise.all(sourceSuiteEvidence.case_manifests.map((item) =>
+        fs.copyFile(
+          path.resolve(loaded.suite!.suite_root, item.source_ref),
+          path.join(copiedSuiteRoot, item.evidence_ref)
+        )));
       await fs.copyFile(privateMapPath, path.join(copiedSuiteRoot, privateAnnotationMapRef));
       await Promise.all(annotationPaths.map((annotationPath, index) =>
         fs.copyFile(annotationPath, path.join(copiedSuiteRoot, initialAnnotationRefs[index]))));

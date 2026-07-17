@@ -49,6 +49,12 @@ describe("promotion confirmatory intake", () => {
       mutation_isolation_status: string;
       execution_provenance_status: string;
       source_diversity_status: string;
+      upstream_evidence: {
+        intake_manifest_ref: string;
+        candidate_handoff_root_ref: string | null;
+        candidate_review_root_ref: string | null;
+        files: Array<{ ref: string; sha256: string }>;
+      };
       cases: Array<{
         case_id: string;
         base_bundle_id: string;
@@ -112,6 +118,17 @@ describe("promotion confirmatory intake", () => {
     expect(freezeManifest.recipe_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(freezeManifest.execution_provenance_status).toBe("artifact_verified");
     expect(freezeManifest.source_diversity_status).toBe("declared_stratified");
+    expect(freezeManifest.upstream_evidence).toEqual({
+      schema_version: "1.0",
+      method: "contained_intake_review_evidence",
+      intake_manifest_ref: "upstream-evidence/intake-manifest.json",
+      candidate_handoff_root_ref: null,
+      candidate_review_root_ref: null,
+      files: [{
+        ref: "upstream-evidence/intake-manifest.json",
+        sha256: freezeManifest.intake_manifest_sha256
+      }]
+    });
     expect(new Set(freezeManifest.source_bundles.map((item) => item.source_sha256))).toHaveProperty("size", 20);
     expect(new Set(freezeManifest.source_bundles.map((item) => item.source_family_id_sha256))).toHaveProperty("size", 4);
     expect(new Set(freezeManifest.source_bundles.map((item) => item.operator_group_id_sha256))).toHaveProperty("size", 4);
@@ -140,8 +157,36 @@ describe("promotion confirmatory intake", () => {
       intake_tier: "provisional",
       base_bundle_count: 20,
       case_count: 200,
-      candidate_review: null
+      candidate_review: null,
+      upstream_evidence_file_count: 1
     });
+    const suiteIntakePath = path.join(
+      workspace,
+      "suite",
+      "confirmatory-freeze",
+      "upstream-evidence",
+      "intake-manifest.json"
+    );
+    const suiteIntakeBytes = await readFile(suiteIntakePath);
+    await writeFile(suiteIntakePath, `${suiteIntakeBytes.toString("utf8")}\n`, "utf8");
+    const intakeTampered = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
+    expect(intakeTampered.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_upstream_hash_mismatch"
+    );
+    await writeFile(suiteIntakePath, suiteIntakeBytes);
+    const undeclaredUpstreamPath = path.join(
+      workspace,
+      "suite",
+      "confirmatory-freeze",
+      "upstream-evidence",
+      "undeclared.json"
+    );
+    await writeFile(undeclaredUpstreamPath, "{}", "utf8");
+    const upstreamExtended = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
+    expect(upstreamExtended.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_upstream_evidence_set_not_closed"
+    );
+    await rm(undeclaredUpstreamPath);
     const faultCase = recipe.cases.find((item) => item.mutation_family);
     if (!faultCase) throw new Error("Frozen fixture is missing a fault case.");
     const mutationPath = path.join(workspace, "suite", "provenance", faultCase.case_id + ".json");

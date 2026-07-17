@@ -163,9 +163,36 @@ describe("promotion confirmatory gate", () => {
     }));
   });
 
+  it("rejects adjudication provenance that cannot reproduce the source-suite snapshot", () => {
+    const fixture = makeAssessmentFixture(true);
+    delete fixture.loaded.manifest.adjudication_provenance?.source_suite_evidence;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "confirmatory_adjudication_provenance_missing",
+      target_node: "review"
+    }));
+  });
+
   it("routes missing paper-scale freeze provenance back to experiment design", () => {
     const fixture = makeAssessmentFixture(true);
     delete fixture.loaded.manifest.confirmatory_freeze_provenance;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "confirmatory_freeze_provenance_missing",
+      target_node: "design_experiments"
+    }));
+  });
+
+  it("routes a freeze without contained upstream evidence back to experiment design", () => {
+    const fixture = makeAssessmentFixture(true);
+    delete fixture.loaded.manifest.confirmatory_freeze_provenance?.upstream_evidence_inventory_sha256;
+    delete fixture.loaded.manifest.confirmatory_freeze_provenance?.upstream_evidence_file_count;
 
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
 
@@ -433,6 +460,8 @@ function confirmatoryFreezeProvenance(baseCount: number, caseCount: number) {
     recipe_ref: "confirmatory-freeze/recipe.json",
     recipe_sha256: "8".repeat(64),
     intake_manifest_sha256: "9".repeat(64),
+    upstream_evidence_inventory_sha256: "d".repeat(64),
+    upstream_evidence_file_count: 5,
     base_bundle_count: baseCount,
     case_count: caseCount,
     candidate_review: {
@@ -451,6 +480,18 @@ function adjudicationProvenance(caseCount: number) {
     schema_version: "1.0" as const,
     method: "independent_double_adjudication" as const,
     source_suite_snapshot_sha256: "1".repeat(64),
+    source_suite_evidence: {
+      schema_version: "1.0" as const,
+      method: "contained_source_suite_manifests" as const,
+      suite_manifest_ref: "adjudication/source-suite/suite.json",
+      suite_manifest_sha256: "0".repeat(64),
+      case_manifests: Array.from({ length: caseCount }, (_, index) => ({
+        case_id: `case-${index + 1}`,
+        source_ref: `cases/case-${index + 1}.json`,
+        evidence_ref: `adjudication/source-suite/case-manifests/${String(index + 1).padStart(6, "0")}.json`,
+        sha256: "f".repeat(64)
+      }))
+    },
     private_annotation_map_ref: "adjudication/private-annotation-map.json",
     private_annotation_map_sha256: "2".repeat(64),
     initial_annotation_refs: [

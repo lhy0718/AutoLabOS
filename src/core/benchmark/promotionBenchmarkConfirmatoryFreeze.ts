@@ -9,12 +9,25 @@ import {
   REQUIRED_CONFIRMATORY_MUTATION_FAMILIES
 } from "./promotionBenchmarkConfirmatoryContract.js";
 import { isSha256 } from "./promotionBenchmarkSourceDiversity.js";
+import { PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST } from "./promotionBenchmarkTrialCandidateHandoff.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE
+} from "./promotionBenchmarkTrialCandidateReview.js";
 
 export const PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT = "confirmatory-freeze";
 export const PROMOTION_CONFIRMATORY_FREEZE_MANIFEST_REF =
   `${PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT}/frozen-intake-manifest.json`;
 export const PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF =
   `${PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT}/recipe.json`;
+export const PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT = "upstream-evidence";
+export const PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF =
+  `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/intake-manifest.json`;
+export const PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT =
+  `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/candidate-handoff`;
+export const PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT =
+  `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/candidate-review`;
 export const MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES = 20;
 
 export type PromotionConfirmatoryFreezeTier = "provisional" | "paper_scale";
@@ -38,6 +51,8 @@ export interface PromotionConfirmatoryFreezeProvenance {
   recipe_ref: string;
   recipe_sha256: string;
   intake_manifest_sha256: string;
+  upstream_evidence_inventory_sha256?: string;
+  upstream_evidence_file_count?: number;
   base_bundle_count: number;
   case_count: number;
   candidate_review: PromotionConfirmatoryFreezeCandidateReviewReceipt | null;
@@ -80,6 +95,12 @@ export function parsePromotionConfirmatoryFreezeProvenance(
       || value.recipe_ref !== PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF
       || !isSha256(value.recipe_sha256)
       || !isSha256(value.intake_manifest_sha256)
+      || ((value.upstream_evidence_inventory_sha256 === undefined)
+        !== (value.upstream_evidence_file_count === undefined))
+      || (value.upstream_evidence_inventory_sha256 !== undefined
+        && (!isSha256(value.upstream_evidence_inventory_sha256)
+          || !Number.isInteger(value.upstream_evidence_file_count)
+          || (value.upstream_evidence_file_count as number) <= 0))
       || !Number.isInteger(value.base_bundle_count)
       || (value.base_bundle_count as number) <= 0
       || !Number.isInteger(value.case_count)
@@ -90,7 +111,9 @@ export function parsePromotionConfirmatoryFreezeProvenance(
     ? null
     : parseCandidateReviewReceipt(value.candidate_review);
   if ((value.intake_tier === "paper_scale" && !candidateReview)
-      || (value.intake_tier === "provisional" && value.candidate_review !== null)) {
+      || (value.intake_tier === "provisional" && value.candidate_review !== null)
+      || (value.intake_tier === "paper_scale"
+        && value.upstream_evidence_inventory_sha256 === undefined)) {
     return null;
   }
   return {
@@ -103,6 +126,12 @@ export function parsePromotionConfirmatoryFreezeProvenance(
     recipe_ref: value.recipe_ref,
     recipe_sha256: value.recipe_sha256,
     intake_manifest_sha256: value.intake_manifest_sha256,
+    ...(typeof value.upstream_evidence_inventory_sha256 === "string"
+      ? {
+          upstream_evidence_inventory_sha256: value.upstream_evidence_inventory_sha256,
+          upstream_evidence_file_count: value.upstream_evidence_file_count as number
+        }
+      : {}),
     base_bundle_count: value.base_bundle_count as number,
     case_count: value.case_count as number,
     candidate_review: candidateReview
@@ -152,6 +181,13 @@ export async function inspectPromotionConfirmatoryFreezeEvidence(input: {
   const baseBundleCount = freeze.base_bundle_count;
   const caseCount = freeze.case_count;
   const candidateReview = parseCandidateReviewReceipt(freeze.candidate_review);
+  const upstreamEvidence = await inspectUpstreamEvidence(
+    path.dirname(freezeManifestPath),
+    freeze,
+    tier,
+    candidateReview,
+    issues
+  );
   if (freeze.schema_version !== "1.1"
       || (tier !== "provisional" && tier !== "paper_scale")
       || !validId(freeze.study_id)
@@ -193,6 +229,12 @@ export async function inspectPromotionConfirmatoryFreezeEvidence(input: {
     issues.push({
       code: "confirmatory_freeze_candidate_review_invalid",
       message: "Paper-scale freezes require a complete candidate-review receipt; provisional freezes must not claim one."
+    });
+  }
+  if (tier === "paper_scale" && !upstreamEvidence) {
+    issues.push({
+      code: "confirmatory_freeze_upstream_evidence_missing",
+      message: "Paper-scale freezes require a closed copy of the intake, candidate handoff, and candidate review evidence."
     });
   }
   if (tier === "paper_scale" && candidateReview
@@ -254,12 +296,141 @@ export async function inspectPromotionConfirmatoryFreezeEvidence(input: {
         recipe_ref: PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF,
         recipe_sha256: recipeSha256,
         intake_manifest_sha256: freeze.intake_manifest_sha256 as string,
+        ...(upstreamEvidence
+          ? {
+              upstream_evidence_inventory_sha256: upstreamEvidence.inventory_sha256,
+              upstream_evidence_file_count: upstreamEvidence.file_count
+            }
+          : {}),
         base_bundle_count: baseBundleCount,
         case_count: caseCount,
         candidate_review: candidateReview
       }
     : null;
   return { passed: issues.length === 0, provenance, case_bindings: caseBindings, issues };
+}
+
+async function inspectUpstreamEvidence(
+  freezeRoot: string,
+  freeze: Record<string, unknown>,
+  tier: unknown,
+  candidateReview: PromotionConfirmatoryFreezeCandidateReviewReceipt | null,
+  issues: PromotionConfirmatoryFreezeIssue[]
+): Promise<{ inventory_sha256: string; file_count: number } | null> {
+  const value = freeze.upstream_evidence;
+  if (value === undefined) return null;
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || value.method !== "contained_intake_review_evidence"
+      || value.intake_manifest_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF
+      || (tier === "paper_scale"
+        ? value.candidate_handoff_root_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
+          || value.candidate_review_root_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+        : value.candidate_handoff_root_ref !== null || value.candidate_review_root_ref !== null)
+      || !Array.isArray(value.files)
+      || value.files.length === 0) {
+    issues.push({
+      code: "confirmatory_freeze_upstream_evidence_invalid",
+      message: "The freeze must declare a versioned upstream intake/review evidence inventory."
+    });
+    return null;
+  }
+  const files: Array<{ ref: string; sha256: string }> = [];
+  const seen = new Set<string>();
+  for (const item of value.files) {
+    if (!isRecord(item)
+        || !upstreamEvidenceRef(item.ref)
+        || !isSha256(item.sha256)
+        || seen.has(item.ref)) {
+      issues.push({
+        code: "confirmatory_freeze_upstream_inventory_invalid",
+        message: "Every upstream evidence file requires one unique safe relative path and SHA-256."
+      });
+      return null;
+    }
+    seen.add(item.ref);
+    files.push({ ref: item.ref, sha256: item.sha256 });
+  }
+  const sortedFiles = [...files].sort((left, right) => left.ref.localeCompare(right.ref));
+  if (JSON.stringify(files) !== JSON.stringify(sortedFiles)) {
+    issues.push({
+      code: "confirmatory_freeze_upstream_inventory_not_canonical",
+      message: "The upstream evidence inventory must be sorted by relative path."
+    });
+  }
+  const actualRefs = await listRegularFileRefs(
+    path.join(freezeRoot, PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT),
+    freezeRoot
+  );
+  if (!actualRefs || !sameStringSet(actualRefs, sortedFiles.map((item) => item.ref))) {
+    issues.push({
+      code: "confirmatory_freeze_upstream_evidence_set_not_closed",
+      message: "The upstream evidence directory must contain exactly the inventory-bound regular files."
+    });
+  }
+  for (const item of sortedFiles) {
+    const bytes = await readRegularFile(
+      path.join(freezeRoot, item.ref),
+      "confirmatory_freeze_upstream_file_invalid",
+      issues
+    );
+    if (bytes && sha256(bytes) !== item.sha256) {
+      issues.push({
+        code: "confirmatory_freeze_upstream_hash_mismatch",
+        message: "An upstream evidence file no longer matches its inventory SHA-256.",
+        ref: item.ref
+      });
+    }
+  }
+  const byRef = new Map(sortedFiles.map((item) => [item.ref, item.sha256]));
+  if (byRef.get(PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF) !== freeze.intake_manifest_sha256) {
+    issues.push({
+      code: "confirmatory_freeze_intake_manifest_receipt_mismatch",
+      message: "The contained intake manifest must reproduce intake_manifest_sha256."
+    });
+  }
+  if (tier === "paper_scale" && candidateReview) {
+    const handoffRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT}/${PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST}`;
+    const labelsRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`;
+    const reviewEvidenceRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`;
+    const reviewReportRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`;
+    if (byRef.get(handoffRef) !== candidateReview.handoff_manifest_sha256
+        || byRef.get(labelsRef) !== candidateReview.adjudicated_labels_sha256
+        || byRef.get(reviewEvidenceRef) !== candidateReview.review_evidence_sha256
+        || !byRef.has(reviewReportRef)) {
+      issues.push({
+        code: "confirmatory_freeze_candidate_review_receipt_mismatch",
+        message: "Contained handoff and review evidence must reproduce every candidate-review receipt."
+      });
+    }
+  }
+  const intakeBytes = await readRegularFile(
+    path.join(freezeRoot, PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF),
+    "confirmatory_freeze_upstream_intake_invalid",
+    issues
+  );
+  if (intakeBytes) {
+    try {
+      const intake = parseJsonRecord(intakeBytes);
+      const intakeTier = intake.schema_version === "1.0"
+        ? (intake.intake_tier ?? "provisional")
+        : intake.intake_tier;
+      if (intake.study_id !== freeze.study_id
+          || intakeTier !== tier
+          || (tier === "paper_scale" ? intake.schema_version !== "1.1" : intake.schema_version !== "1.0")) {
+        throw new Error("mismatch");
+      }
+    } catch {
+      issues.push({
+        code: "confirmatory_freeze_upstream_intake_mismatch",
+        message: "The contained intake manifest identity and tier must match the freeze."
+      });
+    }
+  }
+  return {
+    inventory_sha256: sha256(Buffer.from(JSON.stringify(sortedFiles))),
+    file_count: sortedFiles.length
+  };
 }
 
 function parseSourceBundles(
@@ -485,7 +656,36 @@ function validMutationOperations(value: unknown): value is unknown[] {
 function safeRelativePath(value: unknown): value is string {
   return nonEmptyString(value)
     && !path.isAbsolute(value)
+    && !value.includes("\\")
     && !value.split(/[\\/]/u).some((part) => part === ".." || part === "");
+}
+
+function upstreamEvidenceRef(value: unknown): value is string {
+  return typeof value === "string"
+    && value.startsWith(`${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/`)
+    && safeRelativePath(value);
+}
+
+async function listRegularFileRefs(root: string, relativeTo: string): Promise<string[] | null> {
+  const rootStat = await fs.lstat(root).catch(() => null);
+  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return null;
+  const refs: string[] = [];
+  const visit = async (current: string): Promise<boolean> => {
+    for (const entry of (await fs.readdir(current)).sort()) {
+      const child = path.join(current, entry);
+      const stat = await fs.lstat(child).catch(() => null);
+      if (!stat || stat.isSymbolicLink()) return false;
+      if (stat.isDirectory()) {
+        if (!await visit(child)) return false;
+      } else if (stat.isFile() && stat.size > 0) {
+        refs.push(path.relative(relativeTo, child).replace(/\\/gu, "/"));
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  return await visit(root) ? refs.sort() : null;
 }
 
 function sha256(value: Uint8Array): string {

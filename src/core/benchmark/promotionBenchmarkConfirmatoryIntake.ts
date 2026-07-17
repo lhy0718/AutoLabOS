@@ -35,7 +35,12 @@ import {
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
 } from "./promotionBenchmarkConfirmatoryContract.js";
 import {
-  MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES
+  MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES,
+  PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
+  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
+  inspectPromotionConfirmatoryFreezeEvidence
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST,
@@ -238,6 +243,12 @@ export async function freezePromotionConfirmatoryCorpus(
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
   try {
+    const upstreamEvidence = await copyConfirmatoryUpstreamEvidence({
+      stagingRoot,
+      manifestPath,
+      manifestRoot,
+      manifest
+    });
     const cases: PromotionBenchmarkRecipeCase[] = [];
     for (const source of prepared) {
       const copiedRoot = path.join(stagingRoot, "base-bundles", source.base_bundle_id);
@@ -287,6 +298,7 @@ export async function freezePromotionConfirmatoryCorpus(
       execution_provenance_status: "artifact_verified",
       source_diversity_status: "declared_stratified",
       intake_manifest_sha256: intakeManifestSha256,
+      upstream_evidence: upstreamEvidence,
       recipe_sha256: recipeSha256,
       base_bundle_count: prepared.length,
       case_count: cases.length,
@@ -323,6 +335,16 @@ export async function freezePromotionConfirmatoryCorpus(
       })),
       label_boundary: "All recipe labels are provisional needs_review values. Only blind independent adjudication may replace them."
     });
+    const selfInspection = await inspectPromotionConfirmatoryFreezeEvidence({
+      freezeManifestPath: path.join(stagingRoot, "frozen-intake-manifest.json"),
+      recipePath
+    });
+    if (!selfInspection.passed || !selfInspection.provenance) {
+      throw new Error(
+        "Frozen confirmatory corpus failed self-inspection: "
+        + selfInspection.issues.map((issue) => issue.code).join(", ")
+      );
+    }
     await fs.rename(stagingRoot, outDir);
   } catch (error) {
     await fs.rm(stagingRoot, { recursive: true, force: true });
@@ -337,6 +359,71 @@ export async function freezePromotionConfirmatoryCorpus(
     output_dir: portableRef(cwd, outDir),
     recipe_path: portableRef(cwd, path.join(outDir, "recipe.json")),
     freeze_manifest_path: portableRef(cwd, path.join(outDir, "frozen-intake-manifest.json"))
+  };
+}
+
+async function copyConfirmatoryUpstreamEvidence(input: {
+  stagingRoot: string;
+  manifestPath: string;
+  manifestRoot: string;
+  manifest: PromotionConfirmatoryIntakeManifest;
+}): Promise<{
+  schema_version: "1.0";
+  method: "contained_intake_review_evidence";
+  intake_manifest_ref: string;
+  candidate_handoff_root_ref: string | null;
+  candidate_review_root_ref: string | null;
+  files: Array<{ ref: string; sha256: string }>;
+}> {
+  const upstreamRoot = path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT);
+  await fs.mkdir(upstreamRoot, { recursive: true });
+  await fs.copyFile(input.manifestPath, path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF));
+  if (input.manifest.intake_tier === "paper_scale") {
+    if (!input.manifest.candidate_handoff_root || !input.manifest.candidate_review_root) {
+      throw new Error("Paper-scale confirmatory intake requires candidate evidence roots.");
+    }
+    await fs.cp(
+      path.resolve(input.manifestRoot, input.manifest.candidate_handoff_root),
+      path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT),
+      { recursive: true, errorOnExist: true, force: false }
+    );
+    await fs.cp(
+      path.resolve(input.manifestRoot, input.manifest.candidate_review_root),
+      path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT),
+      { recursive: true, errorOnExist: true, force: false }
+    );
+  }
+  const files: Array<{ ref: string; sha256: string }> = [];
+  const visit = async (current: string): Promise<void> => {
+    for (const entry of (await fs.readdir(current)).sort()) {
+      const child = path.join(current, entry);
+      const stat = await fs.lstat(child);
+      if (stat.isSymbolicLink()) throw new Error("Confirmatory upstream evidence cannot contain symlinks.");
+      if (stat.isDirectory()) {
+        await visit(child);
+      } else if (stat.isFile() && stat.size > 0) {
+        files.push({
+          ref: path.relative(input.stagingRoot, child).replace(/\\/gu, "/"),
+          sha256: sha256(await fs.readFile(child))
+        });
+      } else {
+        throw new Error("Confirmatory upstream evidence must contain only non-empty regular files.");
+      }
+    }
+  };
+  await visit(upstreamRoot);
+  files.sort((left, right) => left.ref.localeCompare(right.ref));
+  return {
+    schema_version: "1.0",
+    method: "contained_intake_review_evidence",
+    intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
+    candidate_handoff_root_ref: input.manifest.intake_tier === "paper_scale"
+      ? PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
+      : null,
+    candidate_review_root_ref: input.manifest.intake_tier === "paper_scale"
+      ? PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+      : null,
+    files
   };
 }
 

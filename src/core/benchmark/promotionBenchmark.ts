@@ -25,10 +25,26 @@ export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annota
 export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified";
 export type PromotionBenchmarkExecutionProvenanceStatus = "unverified" | "artifact_verified";
 
+export interface PromotionBenchmarkSourceSuiteCaseEvidence {
+  case_id: string;
+  source_ref: string;
+  evidence_ref: string;
+  sha256: string;
+}
+
+export interface PromotionBenchmarkSourceSuiteEvidence {
+  schema_version: "1.0";
+  method: "contained_source_suite_manifests";
+  suite_manifest_ref: string;
+  suite_manifest_sha256: string;
+  case_manifests: PromotionBenchmarkSourceSuiteCaseEvidence[];
+}
+
 export interface PromotionBenchmarkAdjudicationProvenance {
   schema_version: "1.0";
   method: "independent_double_adjudication";
   source_suite_snapshot_sha256: string;
+  source_suite_evidence?: PromotionBenchmarkSourceSuiteEvidence;
   private_annotation_map_ref: string;
   private_annotation_map_sha256: string;
   initial_annotation_refs: [string, string];
@@ -329,7 +345,14 @@ export async function loadPromotionBenchmarkSuite(
     );
   }
   if (manifest.adjudication_provenance) {
-    await validateAdjudicationEvidence(suiteRoot, manifest.adjudication_provenance, cases, issues);
+    await validateAdjudicationEvidence(
+      suiteRoot,
+      manifest,
+      manifest.adjudication_provenance,
+      cases,
+      caseArtifactRoots,
+      issues
+    );
   }
   if (manifest.source_diversity_status === "declared_stratified") {
     issues.push(...inspectPromotionSourceDiversity(cases).issues);
@@ -1112,10 +1135,12 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     return undefined;
   }
   if (value.paper_claim_eligible === true
-      && (!adjudicationProvenance || adjudicationProvenance.mutation_audit_report_sha256 === null)) {
+      && (!adjudicationProvenance
+        || adjudicationProvenance.mutation_audit_report_sha256 === null
+        || !adjudicationProvenance.source_suite_evidence)) {
     issues.push({
       code: "suite_paper_claim_provenance_missing",
-      message: "Paper-claim-eligible suites require hash-bound independent adjudication and mutation-audit provenance."
+      message: "Paper-claim-eligible suites require hash-bound independent adjudication, a contained source-suite snapshot, and mutation-audit provenance."
     });
     return undefined;
   }
@@ -1154,10 +1179,10 @@ async function validateConfirmatoryFreezeEvidence(
   caseManifestRefs: Record<string, string>,
   issues: PromotionBenchmarkValidationIssue[]
 ): Promise<void> {
-  if (!await hasClosedConfirmatoryFreezeEvidence(suiteRoot)) {
+  if (!await hasClosedConfirmatoryFreezeEvidence(suiteRoot, provenance)) {
     issues.push({
       code: "confirmatory_freeze_evidence_set_not_closed",
-      message: "The suite confirmatory-freeze directory must contain exactly the bound manifest and recipe as regular files."
+      message: "The suite confirmatory-freeze directory must contain exactly the bound manifest, recipe, and declared upstream evidence."
     });
   }
   const inspection = await inspectPromotionConfirmatoryFreezeEvidence({
@@ -1216,16 +1241,25 @@ async function validateConfirmatoryFreezeEvidence(
   }
 }
 
-async function hasClosedConfirmatoryFreezeEvidence(suiteRoot: string): Promise<boolean> {
+async function hasClosedConfirmatoryFreezeEvidence(
+  suiteRoot: string,
+  provenance: PromotionConfirmatoryFreezeProvenance
+): Promise<boolean> {
   const evidenceRoot = path.join(suiteRoot, "confirmatory-freeze");
   try {
     const rootStat = await fs.lstat(evidenceRoot);
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
     const entries = (await fs.readdir(evidenceRoot)).sort();
-    if (entries.join("\0") !== ["frozen-intake-manifest.json", "recipe.json"].join("\0")) return false;
+    const expectedEntries = [
+      "frozen-intake-manifest.json",
+      "recipe.json",
+      ...(provenance.upstream_evidence_inventory_sha256 ? ["upstream-evidence"] : [])
+    ].sort();
+    if (entries.join("\0") !== expectedEntries.join("\0")) return false;
     for (const entry of entries) {
       const stat = await fs.lstat(path.join(evidenceRoot, entry));
-      if (!stat.isFile() || stat.isSymbolicLink()) return false;
+      if (stat.isSymbolicLink()) return false;
+      if (entry === "upstream-evidence" ? !stat.isDirectory() : !stat.isFile()) return false;
     }
     return true;
   } catch {
@@ -1273,9 +1307,13 @@ async function mutationManifestMatchesFreezeBinding(
 }
 
 function parseAdjudicationProvenance(value: unknown): PromotionBenchmarkAdjudicationProvenance | undefined {
+  const sourceSuiteEvidence = isRecord(value)
+    ? parseSourceSuiteEvidence(value.source_suite_evidence)
+    : undefined;
   if (!isRecord(value)
       || value.schema_version !== "1.0"
       || value.method !== "independent_double_adjudication"
+      || (value.source_suite_evidence !== undefined && !sourceSuiteEvidence)
       || !isSha256(value.source_suite_snapshot_sha256)
       || !adjudicationEvidenceRef(value.private_annotation_map_ref)
       || !isSha256(value.private_annotation_map_sha256)
@@ -1290,13 +1328,15 @@ function parseAdjudicationProvenance(value: unknown): PromotionBenchmarkAdjudica
       || !isSha256(value.adjudicated_labels_sha256)
       || !adjudicationEvidenceRefsDistinct(value)
       || !Number.isInteger(value.case_count)
-      || (value.case_count as number) <= 0) {
+      || (value.case_count as number) <= 0
+      || (sourceSuiteEvidence && sourceSuiteEvidence.case_manifests.length !== value.case_count)) {
     return undefined;
   }
   return {
     schema_version: "1.0",
     method: "independent_double_adjudication",
     source_suite_snapshot_sha256: value.source_suite_snapshot_sha256,
+    ...(sourceSuiteEvidence ? { source_suite_evidence: sourceSuiteEvidence } : {}),
     private_annotation_map_ref: value.private_annotation_map_ref,
     private_annotation_map_sha256: value.private_annotation_map_sha256,
     initial_annotation_refs: [
@@ -1314,6 +1354,51 @@ function parseAdjudicationProvenance(value: unknown): PromotionBenchmarkAdjudica
     adjudicated_labels_ref: value.adjudicated_labels_ref,
     adjudicated_labels_sha256: value.adjudicated_labels_sha256,
     case_count: value.case_count as number
+  };
+}
+
+function parseSourceSuiteEvidence(value: unknown): PromotionBenchmarkSourceSuiteEvidence | undefined {
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || value.method !== "contained_source_suite_manifests"
+      || !sourceSuiteEvidenceRef(value.suite_manifest_ref)
+      || !isSha256(value.suite_manifest_sha256)
+      || !Array.isArray(value.case_manifests)
+      || value.case_manifests.length === 0) {
+    return undefined;
+  }
+  const caseManifests: PromotionBenchmarkSourceSuiteCaseEvidence[] = [];
+  const caseIds = new Set<string>();
+  const sourceRefs = new Set<string>();
+  const evidenceRefs = new Set<string>();
+  for (const item of value.case_manifests) {
+    if (!isRecord(item)
+        || !nonEmptyString(item.case_id)
+        || !safeRelativeRef(item.source_ref)
+        || !sourceSuiteEvidenceRef(item.evidence_ref)
+        || !isSha256(item.sha256)
+        || caseIds.has(item.case_id)
+        || sourceRefs.has(item.source_ref)
+        || evidenceRefs.has(item.evidence_ref)
+        || item.evidence_ref === value.suite_manifest_ref) {
+      return undefined;
+    }
+    caseIds.add(item.case_id);
+    sourceRefs.add(item.source_ref);
+    evidenceRefs.add(item.evidence_ref);
+    caseManifests.push({
+      case_id: item.case_id,
+      source_ref: item.source_ref,
+      evidence_ref: item.evidence_ref,
+      sha256: item.sha256
+    });
+  }
+  return {
+    schema_version: "1.0",
+    method: "contained_source_suite_manifests",
+    suite_manifest_ref: value.suite_manifest_ref,
+    suite_manifest_sha256: value.suite_manifest_sha256,
+    case_manifests: caseManifests
   };
 }
 
@@ -1336,7 +1421,14 @@ function adjudicationEvidenceRef(value: unknown): value is string {
 }
 
 function adjudicationEvidenceRefsDistinct(value: Record<string, unknown>): boolean {
+  const sourceSuiteEvidence = parseSourceSuiteEvidence(value.source_suite_evidence);
   const refs = [
+    ...(sourceSuiteEvidence
+      ? [
+          sourceSuiteEvidence.suite_manifest_ref,
+          ...sourceSuiteEvidence.case_manifests.map((item) => item.evidence_ref)
+        ]
+      : []),
     value.private_annotation_map_ref,
     ...(Array.isArray(value.initial_annotation_refs) ? value.initial_annotation_refs : []),
     ...(value.resolution_ref === null ? [] : [value.resolution_ref]),
@@ -1346,13 +1438,38 @@ function adjudicationEvidenceRefsDistinct(value: Record<string, unknown>): boole
   return refs.every(adjudicationEvidenceRef) && new Set(refs).size === refs.length;
 }
 
+function sourceSuiteEvidenceRef(value: unknown): value is string {
+  return typeof value === "string"
+    && value.startsWith("adjudication/source-suite/")
+    && safeRelativeRef(value);
+}
+
+function safeRelativeRef(value: unknown): value is string {
+  return nonEmptyString(value)
+    && !path.isAbsolute(value)
+    && !value.includes("\\")
+    && !value.split(/[\\/]/u).some((part) => part === ".." || part === "");
+}
+
 async function validateAdjudicationEvidence(
   suiteRoot: string,
+  manifest: PromotionBenchmarkSuiteManifest,
   provenance: PromotionBenchmarkAdjudicationProvenance,
   cases: PromotionBenchmarkCaseManifest[],
+  caseArtifactRoots: Record<string, string>,
   issues: PromotionBenchmarkValidationIssue[]
 ): Promise<void> {
   const evidence = [
+    ...(provenance.source_suite_evidence
+      ? [
+          [
+            provenance.source_suite_evidence.suite_manifest_ref,
+            provenance.source_suite_evidence.suite_manifest_sha256
+          ] as [string, string],
+          ...provenance.source_suite_evidence.case_manifests.map((item) =>
+            [item.evidence_ref, item.sha256] as [string, string])
+        ]
+      : []),
     [provenance.private_annotation_map_ref, provenance.private_annotation_map_sha256],
     ...provenance.initial_annotation_refs.map((ref, index) => [ref, provenance.initial_annotation_sha256[index]]),
     ...(provenance.resolution_ref && provenance.resolution_sha256
@@ -1391,6 +1508,16 @@ async function validateAdjudicationEvidence(
         ref
       });
     }
+  }
+  if (provenance.source_suite_evidence) {
+    await validateSourceSuiteSnapshotEvidence(
+      manifest,
+      provenance,
+      cases,
+      caseArtifactRoots,
+      bytesByRef,
+      issues
+    );
   }
   const labelsBytes = bytesByRef.get(provenance.adjudicated_labels_ref);
   if (!labelsBytes) return;
@@ -1438,6 +1565,133 @@ async function validateAdjudicationEvidence(
       ref: provenance.adjudicated_labels_ref
     });
   }
+}
+
+async function validateSourceSuiteSnapshotEvidence(
+  manifest: PromotionBenchmarkSuiteManifest,
+  provenance: PromotionBenchmarkAdjudicationProvenance,
+  cases: PromotionBenchmarkCaseManifest[],
+  caseArtifactRoots: Record<string, string>,
+  bytesByRef: Map<string, Buffer>,
+  issues: PromotionBenchmarkValidationIssue[]
+): Promise<void> {
+  const evidence = provenance.source_suite_evidence;
+  if (!evidence) return;
+  const suiteBytes = bytesByRef.get(evidence.suite_manifest_ref);
+  if (!suiteBytes) return;
+  let sourceManifest: Record<string, unknown>;
+  try {
+    sourceManifest = JSON.parse(suiteBytes.toString("utf8")) as Record<string, unknown>;
+  } catch {
+    issues.push({
+      code: "source_suite_snapshot_manifest_invalid",
+      message: "The contained source-suite manifest must be valid JSON.",
+      ref: evidence.suite_manifest_ref
+    });
+    return;
+  }
+  const sourceCaseRefs = stringArray(sourceManifest.cases);
+  const expectedSourceRefs = evidence.case_manifests.map((item) => item.source_ref);
+  if (!isRecord(sourceManifest)
+      || sourceManifest.schema_version !== "1.0"
+      || sourceManifest.suite_id !== manifest.suite_id
+      || sourceManifest.paper_claim_eligible === true
+      || !sourceCaseRefs
+      || !setsEqual(new Set(sourceCaseRefs), new Set(expectedSourceRefs))
+      || sourceCaseRefs.length !== evidence.case_manifests.length
+      || evidence.case_manifests.length !== cases.length
+      || evidence.case_manifests.length !== provenance.case_count) {
+    issues.push({
+      code: "source_suite_snapshot_manifest_mismatch",
+      message: "The contained source-suite manifest must bind the same suite and every pre-adjudication case exactly once.",
+      ref: evidence.suite_manifest_ref
+    });
+    return;
+  }
+
+  const currentCaseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase]));
+  const sourceCases: PromotionBenchmarkCaseManifest[] = [];
+  const sourceBytesByRef = new Map<string, Buffer>();
+  let sourceCasesValid = true;
+  for (const item of evidence.case_manifests) {
+    const bytes = bytesByRef.get(item.evidence_ref);
+    if (!bytes) {
+      sourceCasesValid = false;
+      continue;
+    }
+    sourceBytesByRef.set(item.source_ref, bytes);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(bytes.toString("utf8")) as unknown;
+    } catch {
+      sourceCasesValid = false;
+      continue;
+    }
+    const localIssues: PromotionBenchmarkValidationIssue[] = [];
+    const sourceCase = parseCaseManifest(raw, item.source_ref, localIssues);
+    const currentCase = currentCaseById.get(item.case_id);
+    if (!sourceCase
+        || localIssues.length > 0
+        || sourceCase.case_id !== item.case_id
+        || !currentCase
+        || !sameCaseIdentityAndArtifact(sourceCase, currentCase)) {
+      sourceCasesValid = false;
+      continue;
+    }
+    sourceCases.push(sourceCase);
+  }
+  if (!sourceCasesValid
+      || sourceCases.length !== cases.length
+      || new Set(sourceCases.map((item) => item.case_id)).size !== cases.length) {
+    issues.push({
+      code: "source_suite_snapshot_case_mismatch",
+      message: "Contained source-suite cases must preserve every current case identity and artifact binding before adjudication.",
+      ref: "adjudication/source-suite"
+    });
+    return;
+  }
+
+  const hash = createHash("sha256");
+  hash.update("suite_manifest\0");
+  hash.update(suiteBytes);
+  hash.update("\0");
+  for (const sourceRef of [...sourceCaseRefs].sort()) {
+    const bytes = sourceBytesByRef.get(sourceRef);
+    if (!bytes) return;
+    hash.update("case_manifest\0" + sourceRef.replace(/\\/gu, "/") + "\0");
+    hash.update(bytes);
+    hash.update("\0");
+  }
+  for (const sourceCase of [...sourceCases].sort((left, right) => left.case_id.localeCompare(right.case_id))) {
+    const artifactRoot = caseArtifactRoots[sourceCase.case_id];
+    if (!artifactRoot) return;
+    hash.update("artifact_tree\0" + sourceCase.case_id + "\0");
+    hash.update(await hashPromotionArtifactTree(artifactRoot));
+    hash.update("\0");
+  }
+  if (hash.digest("hex") !== provenance.source_suite_snapshot_sha256) {
+    issues.push({
+      code: "source_suite_snapshot_hash_mismatch",
+      message: "The contained pre-adjudication manifests and current artifact trees do not reproduce the source-suite snapshot receipt.",
+      ref: evidence.suite_manifest_ref
+    });
+  }
+}
+
+function sameCaseIdentityAndArtifact(
+  sourceCase: PromotionBenchmarkCaseManifest,
+  currentCase: PromotionBenchmarkCaseManifest
+): boolean {
+  return sourceCase.case_id === currentCase.case_id
+    && sourceCase.base_bundle_id === currentCase.base_bundle_id
+    && sourceCase.split === currentCase.split
+    && sourceCase.artifact_root === currentCase.artifact_root
+    && sourceCase.source_sha256 === currentCase.source_sha256
+    && sourceCase.source_family_id_sha256 === currentCase.source_family_id_sha256
+    && sourceCase.operator_group_id_sha256 === currentCase.operator_group_id_sha256
+    && sourceCase.artifact_sha256 === currentCase.artifact_sha256
+    && sourceCase.mutation_manifest === currentCase.mutation_manifest
+    && sourceCase.mutation_family === currentCase.mutation_family;
 }
 
 async function readContainedRegularFile(root: string, ref: string): Promise<Buffer | null> {

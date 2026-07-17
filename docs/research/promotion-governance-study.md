@@ -285,6 +285,15 @@ recorded in
   base/case counts, fault-family coverage, immutable case fields, and exact
   mutation operations. A general builder run without this evidence may produce
   a development suite but cannot satisfy paper eligibility.
+- Preserve the exact intake manifest and complete paper-scale candidate
+  handoff/review roots under a sorted, hash-bound upstream evidence inventory.
+  Recompute the intake, handoff-manifest, adjudicated-label, and review-evidence
+  receipts from those contained bytes; reject missing, added, symlinked, or
+  changed files before suite construction or confirmatory review.
+- Preserve the pre-adjudication suite manifest and every original case manifest
+  inside the adjudicated suite. Recompute the source-suite snapshot from those
+  exact bytes plus the unchanged case artifact trees instead of treating the
+  snapshot SHA as a non-reproducible receipt.
 - Treat the original confirmatory suite and post-repair suite as different
   evidence roles. The original must remain paper-claim-eligible and freeze-bound;
   the repaired suite is artifact-verified recovery evidence and must not be
