@@ -508,6 +508,48 @@ The normalization command requires distinct annotator IDs and exact agreement, o
 
 Confirmatory intake requires every projected, normalized, or native bundle to preserve a non-empty `SOURCE_LICENSE.txt`. A successful freeze writes `source_diversity_status=declared_stratified` and carries hashed source-family and operator-group identifiers through recipe, mutation provenance, case manifests, suite loading, adjudication, and scoring. Paper eligibility fails closed when fewer than three families or operator groups are present, one group covers more than half of the bases, or the declarations disappear or conflict across variants.
 
+Confirmatory intake has two non-interchangeable tiers. Schema `1.0` is always
+`provisional`: it requires at least 20 artifact-verified source bundles and
+cannot stand in for the paper-scale corpus. Schema `1.1` must declare
+`intake_tier=paper_scale`, a paired candidate handoff root, a passing
+double-human review root, and at least 72 candidate-bound canonical sources:
+
+```json
+{
+  "schema_version": "1.1",
+  "intake_tier": "paper_scale",
+  "study_id": "governance-study",
+  "candidate_handoff_root": "candidate-handoff",
+  "candidate_review_root": "candidate-review",
+  "sources": [
+    {
+      "source_id": "source-001",
+      "source_root": "canonical-sources/source-001",
+      "evidence_class": "external_real_run",
+      "source_family_id": "family-a",
+      "operator_group_id": "operator-a",
+      "source_revision": "pinned-revision",
+      "origin_kind": "native",
+      "distribution_scope": "redistributable",
+      "license_review_status": "human_verified",
+      "candidate_id": "candidate-001"
+    }
+  ]
+}
+```
+
+Each paper-scale source must contain `benchmark-curation.json` with
+`provenance_class=benchmark_curated`. The record binds all three primary and
+three comparator trace hashes, distinct human curator and verifier IDs,
+protocol versions, timestamps, intended clean readiness, the
+`paper_scale_candidate` evidence ceiling, and hashes for the result,
+execution, figure-audit, claim, citation, and readiness artifacts. Intake
+recomputes candidate-level source eligibility from adjudicated labels and
+cross-checks the review summary. Missing review, unresolved redistribution,
+candidate reuse, trace drift, artifact drift, or path escape prevents the
+paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
+not replace blind benchmark-case adjudication or make the suite paper-ready.
+
 Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
 The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.

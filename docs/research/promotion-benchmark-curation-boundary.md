@@ -107,6 +107,21 @@ metrics, and analysis plan must then be frozen before confirmatory outcomes are
 read. A failed gate causes explicit backtracking or downgrade, never cosmetic
 paper completion.
 
+The runtime now enforces this boundary through two intake tiers. Schema
+`1.0` is normalized to `provisional` and retains a 20-base development
+floor. Schema `1.1` is `paper_scale` only and requires an integrity-valid
+paired handoff, a revision-matched adjudication directory, redistribution
+permission, 72 source-eligible candidate IDs, and one
+`benchmark-curation.json` per canonical source. The curation record binds the
+six source traces, distinct curator and verifier IDs, protocol versions,
+timestamps, intended clean readiness, evidence ceiling, and the fixed
+artifact paths used by the mutation contract. Artifact bytes and real paths
+are rechecked before freeze.
+
+The end-to-end regression fixture reaches 72 canonical bases and 720 cases to
+verify this contract. It is synthetic system-validation evidence and does not
+count as a human review, a real corpus freeze, or a paper result.
+
 The current source comparison is recorded in
 `docs/research/evidence/promotion-source-portfolio-v2.json`. The v10 handoff
 passes the source-native trace and structural paired-comparison candidate

@@ -544,6 +544,17 @@ remain incomplete. The v10 recipe and evidence record are
 `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`. The
 confirmatory admission count remains zero.
 
+The implementation now separates the old 20-base provisional intake from a
+72-base paper-scale intake. The latter accepts only candidate IDs recovered
+from an integrity-valid paired handoff and recomputed as source-eligible from a
+hash-bound double-human adjudication. Every source must also carry a
+`benchmark_curated` record that binds all six source traces, distinct curator
+and verifier roles, protocol versions, timestamps, and the hashes of the
+canonical result, execution, figure, claim, citation, and readiness artifacts.
+A synthetic end-to-end regression reaches 72 bases and 720 cases; it validates
+the gate implementation only and does not alter the zero-admission status of
+the real v10 candidate set.
+
 The five-route public source comparison is frozen in
 `docs/research/evidence/promotion-source-portfolio-v2.json`. It retains two
 ungated corpora as holdout routes and excludes gated or non-redistributable raw

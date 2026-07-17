@@ -11,6 +11,7 @@ import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBen
 import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
+  MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES,
   MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES,
   MINIMUM_CONFIRMATORY_OPERATOR_GROUPS,
   MINIMUM_CONFIRMATORY_SOURCE_FAMILIES
@@ -85,6 +86,7 @@ describe("promotion confirmatory intake", () => {
 
     const freezeManifestText = await readFile(path.join(workspace, frozen.freeze_manifest_path), "utf8");
     const freezeManifest = JSON.parse(freezeManifestText) as {
+      intake_tier: string;
       intake_manifest_sha256: string;
       recipe_sha256: string;
       execution_provenance_status: string;
@@ -103,6 +105,7 @@ describe("promotion confirmatory intake", () => {
         copied_root: string;
       }>;
     };
+    expect(freezeManifest.intake_tier).toBe("provisional");
     expect(freezeManifest.source_bundles).toHaveLength(20);
     expect(freezeManifest.intake_manifest_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(freezeManifest.recipe_sha256).toMatch(/^[a-f0-9]{64}$/u);
@@ -168,6 +171,7 @@ describe("promotion confirmatory intake", () => {
 
     expect(result.report).toMatchObject({
       passed: false,
+      intake_tier: "provisional",
       source_count: 2,
       artifact_verified_source_count: 2,
       minimum_source_count: 20,
@@ -179,6 +183,55 @@ describe("promotion confirmatory intake", () => {
     expect(result.report.global_issues.map((issue) => issue.code)).toContain("confirmatory_source_count_minimum_not_met");
     expect(result.report.sources.every((source) => source.passed)).toBe(true);
   });
+
+  it("does not let a provisional-size inventory enter the paper-scale freeze path", async () => {
+    const workspace = await createWorkspace();
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
+    const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
+      schema_version: string;
+      intake_tier?: string;
+      candidate_handoff_root?: string;
+      candidate_review_root?: string;
+      sources: Array<Record<string, unknown>>;
+    };
+    manifest.schema_version = "1.1";
+    manifest.intake_tier = "paper_scale";
+    manifest.candidate_handoff_root = "candidate-handoff";
+    manifest.candidate_review_root = "candidate-review";
+    manifest.sources.forEach((source, index) => {
+      source.candidate_id = `candidate-${String(index + 1).padStart(2, "0")}`;
+    });
+    await writeJson(path.join(workspace, manifestPath), manifest);
+
+    const audit = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "paper-scale-audit"
+    });
+    expect(audit.report).toMatchObject({
+      passed: false,
+      intake_tier: "paper_scale",
+      source_count: MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES,
+      minimum_source_count: MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES,
+      candidate_handoff_verified: false,
+      candidate_review_verified: false,
+      canonical_curation_verified_source_count: 0
+    });
+    expect(audit.report.global_issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "confirmatory_paper_scale_handoff_invalid",
+      "confirmatory_paper_scale_review_invalid",
+      "confirmatory_source_count_minimum_not_met"
+    ]));
+    expect(audit.report.sources.every((source) =>
+      source.issues.some((issue) => issue.code === "confirmatory_candidate_evidence_unavailable")
+    )).toBe(true);
+
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath,
+      outDir: "paper-scale-frozen"
+    })).rejects.toThrow(`requires at least ${MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES} source bundles`);
+  }, 30_000);
 
   it("rejects duplicate source content even when source ids and paths differ", async () => {
     const workspace = await createWorkspace();

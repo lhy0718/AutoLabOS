@@ -13331,7 +13331,7 @@ Path placeholders:
 
 ## Issue: R-006
 
-- Status: in_progress; v10 trace and structural paired-comparison floors are integrity-valid, while human review and canonical curation remain open
+- Status: in_progress; v10 trace and structural paired-comparison floors are integrity-valid, and the paper-scale curation/freeze contract is implemented, while real human review and canonical source materialization remain open
 - Validation target: a confirmatory promotion benchmark must preserve source-native execution evidence while distinguishing it from curator-generated result tables, figures, claims, and readiness decisions.
 - Environment/session context: deterministic audit of the pinned v10 Parquet source and generated local candidate handoff; no human judgment, source row, outcome, or generated reviewer artifact was manually changed.
 
@@ -13355,6 +13355,8 @@ Path placeholders:
   - The reviewer packet contains two opaque three-row groups per task and zero exact controller-identity matches.
   - The source provides trajectories, outcomes, patches, and evaluation logs but no paper figure audit, claim-evidence map, or paper-readiness decision.
   - Structural pairing is complete, but no human comparability, license, canonical-curation, or confirmatory decision has been supplied.
+  - Schema 1.0 confirmatory intake is now fixed to the 20-base provisional tier. Schema 1.1 paper-scale intake requires 72 reviewed candidate IDs, redistribution permission, canonical curation provenance, and 720 frozen cases.
+  - A synthetic contract fixture passes the complete 72-base/720-case path. It is system-validation evidence only and does not change the real v10 admission count of zero.
 
 - Fresh vs existing session comparison:
   - Fresh session: the v10 exact-revision export and direct CLI rerun pass integrity inspection and produce identical hashes.
@@ -13373,11 +13375,18 @@ Path placeholders:
   - Defined separate `source_native`, `source_projected`, `benchmark_curated`, and `system_generated` provenance classes.
   - Added outcome-blind paired-operator selection, six-trace opaque reviewer tasks, fail-closed privacy preflight with whole-task backfill, and paired handoff inspection.
   - Separated source eligibility (execution completeness and comparability) from source-absent paper-artifact availability, and added semantic inspection for contradictory progression counts.
-  - Canonical-curation execution and independent human review remain pending.
+  - Added candidate-level adjudicated-label/summary cross-validation, including nested license-review consistency.
+  - Added a `benchmark_curated` contract that binds six source traces, distinct curator/verifier roles, protocol versions, timestamps, evidence ceiling, and nine hash-bound canonical artifacts.
+  - Added a schema 1.1 paper-scale intake that binds the paired handoff, review evidence, 72 distinct candidate IDs, canonical curation, and the 720-case freeze while keeping all benchmark labels provisional.
+  - Real v10 canonical-source materialization and independent human review remain pending.
 
 - Regression status:
-  - Targeted handoff regression: 25/25 passed on 2026-07-17.
-  - Build: passed on 2026-07-17.
+  - Targeted handoff and paper-scale freeze regression: 25/25 passed on 2026-07-17, including a 72-base/720-case synthetic contract path.
+  - Targeted curation and intake regression: 15/15 passed on 2026-07-17.
+  - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
+  - Full build: passed on 2026-07-17 with `npm run build`.
+  - Repository-wide CI: passed on 2026-07-17 with `npm test` (`214` test files, `2864` tests; web `14` tests).
+  - Harness validation and public-code sanitization: passed on 2026-07-17.
   - v10 handoff inspection: passed with 72 distinct source-native bases, 432 unique rows, and zero issues.
   - Same-flow CLI revalidation: passed with deterministic recipe and reviewer-tree hashes.
   - Re-validation result: pending for independent human review and canonical curation.

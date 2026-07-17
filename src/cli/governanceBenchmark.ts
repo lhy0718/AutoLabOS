@@ -729,6 +729,7 @@ export async function runPromotionConfirmatoryFreezeCli(
   process.stdout.write(
     [
       `Promotion confirmatory intake frozen: ${result.study_id}`,
+      `Intake tier: ${result.intake_tier}`,
       `Base bundles: ${result.base_bundle_count}`,
       `Cases: ${result.case_count}`,
       `Recipe: ${result.recipe_path}`,
@@ -746,6 +747,7 @@ export async function runPromotionConfirmatoryAuditCli(
   process.stdout.write(
     [
       `Promotion confirmatory intake audit ${result.report.passed ? "passed" : "failed"}: ${result.report.study_id}`,
+      `Intake tier: ${result.report.intake_tier}`,
       `Artifact-verified sources: ${result.report.artifact_verified_source_count}/${result.report.source_count}`,
       `Minimum sources: ${result.report.minimum_source_count}`,
       `Declared source families: ${result.report.declared_source_family_count}/${result.report.minimum_source_family_count} minimum`,

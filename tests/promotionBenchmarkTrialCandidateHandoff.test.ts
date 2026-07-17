@@ -18,13 +18,15 @@ import {
   exportPromotionTrialCandidateHandoff,
   inspectPromotionTrialCandidateHandoff,
   inspectPromotionTrialCandidateLicensePacket,
-  inspectPromotionTrialCandidateReviewerPacket
+  inspectPromotionTrialCandidateReviewerPacket,
+  type PromotionTrialCandidateRecord
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS,
   PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE,
   adjudicatePromotionTrialCandidateReview,
   inspectPromotionTrialCandidateReviewAdjudication,
+  loadPromotionTrialCandidateReviewAdmissionEvidence,
   preparePromotionTrialCandidateAnnotationWorksheet,
   preparePromotionTrialCandidateLicenseReviewWorksheet,
   preflightPromotionTrialCandidateAnnotation,
@@ -44,6 +46,15 @@ import {
   type PromotionTrialCandidateLicenseReviewSet
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewContract.js";
 import { projectPromotionReviewerArtifact } from "../src/core/benchmark/promotionArtifactPrivacy.js";
+import {
+  PROMOTION_CANONICAL_ARTIFACT_PATHS,
+  PROMOTION_CANONICAL_CURATION_RECORD,
+  type PromotionCanonicalCurationRecord
+} from "../src/core/benchmark/promotionBenchmarkCanonicalCuration.js";
+import {
+  auditPromotionConfirmatoryIntake,
+  freezePromotionConfirmatoryCorpus
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -993,7 +1004,7 @@ describe("promotion trial-candidate handoff", () => {
   });
 
   it("allows source-eligible reviews to progress to curation without inventing paper artifacts", async () => {
-    const handoffRoot = path.join(workspace, "handoff");
+    const handoffRoot = path.join(workspace, "parquet-paired-handoff");
     await writeHumanAnnotation(
       path.join(workspace, "source-eligible-a.json"),
       handoffRoot,
@@ -1018,7 +1029,7 @@ describe("promotion trial-candidate handoff", () => {
 
     const result = await adjudicatePromotionTrialCandidateReview({
       cwd: workspace,
-      handoffRoot: "handoff",
+      handoffRoot: "parquet-paired-handoff",
       annotationPaths: ["source-eligible-a.json", "source-eligible-b.json"],
       licenseReviewPath: "source-eligible-license.json",
       outDir: "source-eligible-adjudication"
@@ -1041,6 +1052,128 @@ describe("promotion trial-candidate handoff", () => {
     expect(await inspectPromotionTrialCandidateReviewAdjudication(
       path.join(workspace, "source-eligible-adjudication")
     )).toMatchObject({ passed: true, issues: [] });
+    const admission = await loadPromotionTrialCandidateReviewAdmissionEvidence(
+      path.join(workspace, "source-eligible-adjudication")
+    );
+    expect(admission).toMatchObject({
+      candidate_count: 72,
+      source_license_status: "redistribution_permitted",
+      candidate_review_progression_floor_met: true
+    });
+    expect(admission.source_eligible_candidate_ids).toHaveLength(72);
+    expect(new Set(admission.source_eligible_candidate_ids)).toHaveProperty("size", 72);
+
+    const handoffManifest = JSON.parse(await readFile(
+      path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
+      "utf8"
+    )) as {
+      handoff_id: string;
+      source_revision: string;
+      candidates: PromotionTrialCandidateRecord[];
+    };
+    const controllerMap = JSON.parse(await readFile(
+      path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP),
+      "utf8"
+    )) as {
+      candidates: Array<{
+        candidate_id: string;
+        source_family: string;
+        operator_group: string;
+      }>;
+    };
+    const controllerByCandidate = new Map(controllerMap.candidates.map((candidate) => [
+      candidate.candidate_id,
+      candidate
+    ]));
+    const intakeSources = [];
+    for (const [index, candidate] of handoffManifest.candidates.entries()) {
+      const controller = controllerByCandidate.get(candidate.candidate_id);
+      if (!controller) throw new Error("Controller fixture is missing a candidate.");
+      const sourceRoot = path.join(workspace, "canonical-sources", candidate.candidate_id);
+      await writeCanonicalConfirmatorySource({
+        root: sourceRoot,
+        ordinal: index + 1,
+        handoffId: handoffManifest.handoff_id,
+        sourceRevision: handoffManifest.source_revision,
+        candidate
+      });
+      intakeSources.push({
+        source_id: `source-${String(index + 1).padStart(2, "0")}`,
+        source_root: path.relative(workspace, sourceRoot).replace(/\\/gu, "/"),
+        evidence_class: "external_real_run",
+        source_family_id: controller.source_family,
+        operator_group_id: controller.operator_group,
+        source_revision: handoffManifest.source_revision,
+        origin_kind: "native",
+        distribution_scope: "redistributable",
+        license_review_status: "human_verified",
+        candidate_id: candidate.candidate_id
+      });
+    }
+    await writeJsonFile(path.join(workspace, "paper-scale-intake.json"), {
+      schema_version: "1.1",
+      intake_tier: "paper_scale",
+      study_id: "promotion-confirmatory-paper-scale",
+      candidate_handoff_root: "parquet-paired-handoff",
+      candidate_review_root: "source-eligible-adjudication",
+      sources: intakeSources
+    });
+    const intakeAudit = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath: "paper-scale-intake.json",
+      outDir: "paper-scale-intake-audit"
+    });
+    expect(intakeAudit.report).toMatchObject({
+      passed: true,
+      intake_tier: "paper_scale",
+      source_count: 72,
+      minimum_source_count: 72,
+      candidate_handoff_verified: true,
+      candidate_review_verified: true,
+      source_eligible_candidate_count: 72,
+      canonical_curation_verified_source_count: 72
+    });
+    const frozen = await freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath: "paper-scale-intake.json",
+      outDir: "paper-scale-frozen"
+    });
+    expect(frozen).toMatchObject({
+      intake_tier: "paper_scale",
+      base_bundle_count: 72,
+      case_count: 720
+    });
+
+    const labelTamperedRoot = path.join(workspace, "label-tampered-adjudication");
+    await cp(path.join(workspace, "source-eligible-adjudication"), labelTamperedRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const labelsPath = path.join(labelTamperedRoot, PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS);
+    const rows = (await readFile(labelsPath, "utf8")).split(/\r?\n/u).filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, any>);
+    rows[0].label.observations.execution_trace_completeness = "negative";
+    await writeFile(labelsPath, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+    const labelTamperedReportPath = path.join(
+      labelTamperedRoot,
+      "trial-candidate-review-adjudication.json"
+    );
+    const labelTamperedReport = JSON.parse(await readFile(labelTamperedReportPath, "utf8"));
+    labelTamperedReport.outputs.labels_sha256 = createHash("sha256")
+      .update(await readFile(labelsPath)).digest("hex");
+    await writeFile(
+      labelTamperedReportPath,
+      `${JSON.stringify(labelTamperedReport, null, 2)}\n`,
+      "utf8"
+    );
+    const labelTampered = await inspectPromotionTrialCandidateReviewAdjudication(
+      labelTamperedRoot
+    );
+    expect(labelTampered.passed).toBe(false);
+    expect(labelTampered.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_output_semantics_invalid"
+    );
 
     evidence.source_eligible_candidate_count = 0;
     await writeFile(
@@ -1065,7 +1198,7 @@ describe("promotion trial-candidate handoff", () => {
     expect(tampered.issues.map((issue) => issue.code)).toContain(
       "trial_candidate_review_output_semantics_invalid"
     );
-  });
+  }, 30_000);
 
   it("rejects reused reviewer identities and unresolved candidate disagreements", async () => {
     const handoffRoot = path.join(workspace, "handoff");
@@ -1383,4 +1516,143 @@ async function writeLicenseReview(
   };
   await writeFile(target, `${JSON.stringify(review, null, 2)}\n`, "utf8");
   return review;
+}
+
+async function writeCanonicalConfirmatorySource(input: {
+  root: string;
+  ordinal: number;
+  handoffId: string;
+  sourceRevision: string;
+  candidate: PromotionTrialCandidateRecord;
+}): Promise<void> {
+  const { root, ordinal, candidate } = input;
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, "SOURCE_LICENSE.txt"), "Permission is granted for fixture use.\n", "utf8");
+  await writeJsonFile(path.join(root, "result_table.json"), [{
+    primary: ordinal / 100,
+    comparator: (ordinal + 1) / 100
+  }]);
+  await writeJsonFile(path.join(root, "experiment_evidence.json"), {
+    trials: candidate.trials.map((trial) => ({ trial_id: trial.trial_id }))
+  });
+  await writeJsonFile(path.join(root, "run_config.json"), {
+    planned_budget: { trials: candidate.trials.length }
+  });
+  await writeJsonFile(path.join(root, "run_record.json"), {
+    status: "completed",
+    executed_budget: { trials: candidate.trials.length },
+    fixture_ordinal: ordinal
+  });
+  await writeJsonFile(path.join(root, "figure_audit", "figure_audit_summary.json"), {
+    severe_mismatch_count: 0,
+    review_block_required: false
+  });
+  const claim = {
+    claim_id: "claim-primary",
+    section_heading: "Results",
+    status: "verified",
+    artifact_refs: ["result_table.json"],
+    citation_refs: ["source-primary"]
+  };
+  await writeJsonFile(path.join(root, "paper", "claim_status_table.json"), { claims: [claim] });
+  await writeJsonFile(path.join(root, "paper", "claim_evidence_table.json"), { claims: [claim] });
+  await writeJsonFile(path.join(root, "paper", "evidence_links.json"), {
+    claims: [{
+      claim_id: claim.claim_id,
+      evidence_ids: ["evidence-primary"],
+      citation_paper_ids: ["source-primary"]
+    }]
+  });
+  await writeJsonFile(path.join(root, "checkpoint", "state.json"), { paper_ready: true });
+  await writeJsonFile(path.join(root, "design_contracts.json"), {
+    sota_ranking_claimed: false,
+    sota_evidence_present: false
+  });
+  await writeFile(
+    path.join(root, "events.jsonl"),
+    `${JSON.stringify({ event: "completed", ordinal })}\n`,
+    "utf8"
+  );
+  await writeJsonFile(path.join(root, "metrics.json"), {
+    completed_trials: candidate.trials.length,
+    ordinal
+  });
+  await writeJsonFile(path.join(root, "review", "decision.json"), {
+    outcome: "accept",
+    ordinal
+  });
+  await writeFile(path.join(root, "command.txt"), `runner --item ${ordinal}\n`, "utf8");
+  await writeFile(path.join(root, "execution.log"), `completed item ${ordinal}\n`, "utf8");
+  const evidenceArtifacts = [
+    { role: "run_config", path: "run_config.json" },
+    { role: "event_log", path: "events.jsonl" },
+    { role: "metrics", path: "metrics.json" },
+    { role: "review_decision", path: "review/decision.json" },
+    { role: "command", path: "command.txt" },
+    { role: "execution_log", path: "execution.log" }
+  ];
+  await writeJsonFile(path.join(root, "execution-evidence.json"), {
+    schema_version: "1.0",
+    evidence_class: "external_real_run",
+    run_id: `run-${String(ordinal).padStart(2, "0")}`,
+    execution_mode: "real_execution",
+    execution_status: "completed",
+    execution_backend: "local_runtime",
+    started_at: "2026-01-01T00:00:00.000Z",
+    completed_at: "2026-01-01T00:01:00.000Z",
+    exit_code: 0,
+    trial_ids: candidate.trials.map((trial) => trial.trial_id),
+    artifacts: await Promise.all(evidenceArtifacts.map(async (artifact) => ({
+      ...artifact,
+      sha256: createHash("sha256").update(await readFile(path.join(root, artifact.path))).digest("hex")
+    })))
+  });
+  const artifacts = await Promise.all(Object.entries(PROMOTION_CANONICAL_ARTIFACT_PATHS)
+    .map(async ([role, relativePath]) => ({
+      role,
+      path: relativePath,
+      sha256: createHash("sha256").update(await readFile(path.join(root, relativePath))).digest("hex")
+    })));
+  const curation: PromotionCanonicalCurationRecord = {
+    schema_version: "1.0",
+    provenance_class: "benchmark_curated",
+    handoff_id: input.handoffId,
+    candidate_id: candidate.candidate_id,
+    source_revision: input.sourceRevision,
+    base_candidate_sha256: candidate.base_candidate_sha256,
+    curation_status: "human_verified",
+    curator_id: "curator-a",
+    verifier_id: "verifier-b",
+    curated_at: "2026-01-02T00:00:00.000Z",
+    verified_at: "2026-01-03T00:00:00.000Z",
+    curator_protocol_version: "curation-protocol-1",
+    verifier_protocol_version: "verification-protocol-1",
+    derivation_mode: "deterministic",
+    intended_readiness: "promote",
+    evidence_ceiling: "paper_scale_candidate",
+    source_trials: [
+      ...candidate.trials.map((trial) => ({
+        group_id: "group-a" as const,
+        trial_id: trial.trial_id,
+        source_ref_sha256: trial.source_ref_sha256,
+        source_blob_sha256: trial.source_blob_sha256,
+        reviewer_blob_sha256: trial.reviewer_blob_sha256
+      })),
+      ...(candidate.comparator_trials || []).map((trial) => ({
+        group_id: "group-b" as const,
+        trial_id: trial.trial_id,
+        source_ref_sha256: trial.source_ref_sha256,
+        source_blob_sha256: trial.source_blob_sha256,
+        reviewer_blob_sha256: trial.reviewer_blob_sha256
+      }))
+    ],
+    artifacts: artifacts as PromotionCanonicalCurationRecord["artifacts"],
+    evidence_boundary: "This is a synthetic contract fixture and never paper evidence."
+  };
+  await writeJsonFile(path.join(root, PROMOTION_CANONICAL_CURATION_RECORD), curation);
+}
+
+async function writeJsonFile(target: string, value: unknown): Promise<void> {
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }

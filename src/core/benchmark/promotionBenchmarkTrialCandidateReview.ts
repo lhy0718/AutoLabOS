@@ -235,6 +235,17 @@ export interface PromotionTrialCandidateReviewEvidence {
   evidence_boundary: string;
 }
 
+export interface PromotionTrialCandidateReviewAdmissionEvidence {
+  handoff_id: string;
+  source_revision: string;
+  candidate_count: number;
+  source_license_status: PromotionTrialCandidateLicenseStatus;
+  candidate_review_progression_floor_met: boolean;
+  source_eligible_candidate_ids: string[];
+  labels_sha256: string;
+  evidence_sha256: string;
+}
+
 export interface PromotionTrialCandidateReviewAdjudicationReport {
   schema_version: "1.0";
   generated_at: string;
@@ -756,22 +767,23 @@ export async function inspectPromotionTrialCandidateReviewAdjudication(
       issues.push({ code: "trial_candidate_review_output_hash_mismatch", message: "A hash-bound adjudication output changed." });
     }
     try {
-      const rows = (await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS), "utf8"))
-        .split(/\r?\n/gu).filter(Boolean).map((line) => JSON.parse(line) as unknown);
-      const ids = rows.map((row) => isRecord(row) && validId(row.candidate_id) ? row.candidate_id : "");
-      if (rows.length !== report.task_count || new Set(ids).size !== rows.length || ids.includes("")) throw new Error("invalid");
-      const evidence = JSON.parse(await fs.readFile(
-        path.join(root, PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
-        "utf8"
-      )) as unknown;
-      if (!validReviewEvidenceSummary(evidence, report.handoff_id, report.task_count)) {
-        throw new Error("invalid");
-      }
+      await readReviewAdmissionArtifacts(root, report);
     } catch {
       issues.push({ code: "trial_candidate_review_output_semantics_invalid", message: "Adjudicated labels or evidence summary are structurally inconsistent." });
     }
   }
   return { passed: issues.length === 0, report, issues };
+}
+
+export async function loadPromotionTrialCandidateReviewAdmissionEvidence(
+  rootPath: string
+): Promise<PromotionTrialCandidateReviewAdmissionEvidence> {
+  const root = path.resolve(rootPath);
+  const inspection = await inspectPromotionTrialCandidateReviewAdjudication(root);
+  if (!inspection.passed || !inspection.report?.passed) {
+    throw new Error(`Trial-candidate review admission evidence is invalid: ${inspection.issues.map((item) => item.code).join(", ") || "adjudication_not_passed"}.`);
+  }
+  return readReviewAdmissionArtifacts(root, inspection.report);
 }
 
 async function loadReviewerPacketContract(
@@ -1296,6 +1308,98 @@ function sourceEligibilityObservationsPositive(
   );
 }
 
+async function readReviewAdmissionArtifacts(
+  root: string,
+  report: PromotionTrialCandidateReviewAdjudicationReport
+): Promise<PromotionTrialCandidateReviewAdmissionEvidence> {
+  const rows = (await fs.readFile(
+    path.join(root, PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS),
+    "utf8"
+  )).split(/\r?\n/gu).filter(Boolean).map((line) => parseAdjudicatedLabelRow(JSON.parse(line) as unknown));
+  const ids = rows.map((row) => row.candidate_id);
+  if (rows.length !== report.task_count || new Set(ids).size !== rows.length) {
+    throw new Error("Adjudicated label coverage is invalid.");
+  }
+  const rawEvidence = JSON.parse(await fs.readFile(
+    path.join(root, PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
+    "utf8"
+  )) as unknown;
+  if (!validReviewEvidenceSummary(rawEvidence, report.handoff_id, report.task_count)) {
+    throw new Error("Review evidence summary is invalid.");
+  }
+  const evidence = rawEvidence as unknown as PromotionTrialCandidateReviewEvidence;
+  const observationCounts = Object.fromEntries(PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.map((observation) => [
+    observation,
+    { positive: 0, negative: 0, uncertain: 0 }
+  ])) as PromotionTrialCandidateReviewEvidence["observation_counts"];
+  for (const row of rows) {
+    for (const observation of PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS) {
+      observationCounts[observation][row.observations[observation]] += 1;
+    }
+  }
+  const sourceEligibleCandidateIds = rows
+    .filter((row) => sourceEligibilityObservationsPositive({ observations: row.observations }))
+    .map((row) => row.candidate_id)
+    .sort();
+  const positiveCandidateCount = rows.filter((row) => allObservationsPositive({
+    observations: row.observations
+  })).length;
+  const redistributable = evidence.source_license_status === "redistribution_permitted";
+  if (JSON.stringify(observationCounts) !== JSON.stringify(evidence.observation_counts)
+      || positiveCandidateCount !== evidence.positive_candidate_count
+      || sourceEligibleCandidateIds.length !== evidence.source_eligible_candidate_count
+      || evidence.redistributable_positive_candidate_count !== (redistributable ? positiveCandidateCount : 0)
+      || evidence.redistributable_source_eligible_candidate_count
+        !== (redistributable ? sourceEligibleCandidateIds.length : 0)) {
+    throw new Error("Adjudicated labels do not match the review evidence summary.");
+  }
+  return {
+    handoff_id: evidence.handoff_id,
+    source_revision: evidence.source_revision,
+    candidate_count: evidence.candidate_count,
+    source_license_status: evidence.source_license_status,
+    candidate_review_progression_floor_met: evidence.candidate_review_progression_floor_met,
+    source_eligible_candidate_ids: sourceEligibleCandidateIds,
+    labels_sha256: report.outputs.labels_sha256 as string,
+    evidence_sha256: report.outputs.evidence_sha256 as string
+  };
+}
+
+function parseAdjudicatedLabelRow(value: unknown): {
+  candidate_id: string;
+  observations: Record<PromotionTrialCandidateObservation, PromotionTrialCandidateObservationValue>;
+} {
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || !validId(value.candidate_id)
+      || (value.adjudication_source !== "double_adjudication_consensus"
+        && value.adjudication_source !== "third_party_resolution")
+      || !Array.isArray(value.annotator_ids)
+      || value.annotator_ids.length < 2
+      || !value.annotator_ids.every(validId)
+      || new Set(value.annotator_ids).size !== value.annotator_ids.length
+      || !isRecord(value.label)
+      || value.label.candidate_id !== value.candidate_id
+      || !isRecord(value.label.observations)
+      || Object.keys(value.label.observations).sort().join("\0")
+        !== [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS].sort().join("\0")) {
+    throw new Error("Adjudicated label row is invalid.");
+  }
+  for (const observation of PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS) {
+    const observed = value.label.observations[observation];
+    if (observed !== "positive" && observed !== "negative" && observed !== "uncertain") {
+      throw new Error("Adjudicated label observation is invalid.");
+    }
+  }
+  return {
+    candidate_id: value.candidate_id,
+    observations: value.label.observations as Record<
+      PromotionTrialCandidateObservation,
+      PromotionTrialCandidateObservationValue
+    >
+  };
+}
+
 function validReviewEvidenceSummary(
   value: unknown,
   handoffId: string,
@@ -1304,7 +1408,24 @@ function validReviewEvidenceSummary(
   if (!isRecord(value)
       || value.schema_version !== "1.0"
       || value.handoff_id !== handoffId
+      || typeof value.source_revision !== "string"
+      || value.source_revision.trim().length === 0
       || value.candidate_count !== candidateCount
+      || value.double_human_annotation_completed !== true
+      || value.human_license_review_recorded !== true
+      || (value.source_license_status !== "redistribution_permitted"
+        && value.source_license_status !== "local_evaluation_only"
+        && value.source_license_status !== "redistribution_prohibited"
+        && value.source_license_status !== "uncertain")
+      || !isRecord(value.source_license_adjudication)
+      || !validId(value.source_license_adjudication.reviewer_id)
+      || !isRecord(value.source_license_adjudication.review)
+      || value.source_license_adjudication.review.status !== value.source_license_status
+      || !Array.isArray(value.source_license_adjudication.review.evidence_refs)
+      || !value.source_license_adjudication.review.evidence_refs.every((item) =>
+        typeof item === "string")
+      || typeof value.source_license_adjudication.review.rationale !== "string"
+      || value.source_license_adjudication.review.rationale.trim().length === 0
       || value.confirmatory_admitted !== false
       || !validCandidateCount(value.positive_candidate_count, candidateCount)
       || !validCandidateCount(value.redistributable_positive_candidate_count, candidateCount)
