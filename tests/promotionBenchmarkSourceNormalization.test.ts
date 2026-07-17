@@ -231,7 +231,7 @@ describe("promotion source normalization", () => {
 
   it("exports a closed multi-source reviewer batch without exposing controller maps", async () => {
     const workspace = await createProjectedWorkspace();
-    await exportPromotionSourceNormalizationPack({
+    const packA = await exportPromotionSourceNormalizationPack({
       cwd: workspace,
       sourceRoot: "projected",
       outDir: "pack-a"
@@ -242,6 +242,13 @@ describe("promotion source normalization", () => {
       sourceRoot: "projected-b",
       outDir: "pack-b"
     });
+    await writeFile(path.join(workspace, "pack-a", "annotator", "RUBRIC.md"), "# Stale rubric\n", "utf8");
+    await writeJsonLines(path.join(workspace, "pack-a", "annotator", "normalization-tasks.jsonl"), [{
+      schema_version: "1.0",
+      normalization_id: packA.normalization_id,
+      artifact_root: `artifacts/${packA.normalization_id}`,
+      required_output_fields: ["outdated_field"]
+    }]);
     await writeJson(path.join(workspace, "batch-recipe.json"), {
       schema_version: "1.0",
       batch_id: "review-batch-neutral",
@@ -264,7 +271,26 @@ describe("promotion source normalization", () => {
     expect(exported).toMatchObject({ batch_id: "review-batch-neutral", item_count: 2 });
     expect(inspection).toMatchObject({ passed: true, issues: [] });
     expect(tasks.map((task) => task.item_id)).toEqual(["source-item-001", "source-item-002"]);
+    expect(tasks[0].required_output_fields).toEqual(expect.arrayContaining(["observation_status", "rationale"]));
+    expect(tasks[0].required_output_fields).not.toContain("outdated_field");
     expect(new Set(tasks.map((task) => task.normalization_id)).size).toBe(2);
+    const annotationSchema = JSON.parse(await readFile(
+      path.join(workspace, exported.reviewer_dir, "annotation-schema.json"),
+      "utf8"
+    ));
+    expect(annotationSchema).toMatchObject({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      required: expect.arrayContaining(["observation_status", "rationale"])
+    });
+    expect(annotationSchema.allOf[0].then.properties).toMatchObject({
+      trial_ids: { minItems: 1 },
+      execution_artifacts: { minItems: 1 },
+      evidence_refs: { minItems: 1 }
+    });
+    expect(await readFile(
+      path.join(workspace, exported.reviewer_dir, "REVIEWER_GUIDE.md"),
+      "utf8"
+    )).toContain("observation_status=insufficient");
     expect(controllerMap.items.map((item: { source_root: string }) => item.source_root))
       .toEqual(["projected", "projected-b"]);
     await expect(access(path.join(workspace, exported.reviewer_dir, "private-normalization-map.json"))).rejects.toThrow();
@@ -378,6 +404,10 @@ describe("promotion source normalization", () => {
       validation_issues: [],
       materialization_findings: []
     });
+    expect(result.report.input_sha256).toMatchObject({
+      schema: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      guide: expect.stringMatching(/^[a-f0-9]{64}$/u)
+    });
     expect(result.report.evidence_boundary).toContain("does not expose the controller map");
     expect(await readFile(path.join(workspace, result.summary_path), "utf8")).not.toContain("source_root");
     await expect(preflightPromotionSourceNormalizationAnnotation({
@@ -386,6 +416,18 @@ describe("promotion source normalization", () => {
       annotationPath: "reviewer-a.jsonl",
       outDir: "review-batch/reviewer/preflight"
     })).rejects.toThrow("outside the closed reviewer directory");
+
+    await writeFile(
+      path.join(workspace, "review-batch", "reviewer", "REVIEWER_GUIDE.md"),
+      "# Altered reviewer instructions\n",
+      "utf8"
+    );
+    await expect(preflightPromotionSourceNormalizationAnnotation({
+      cwd: workspace,
+      reviewerRoot: "review-batch/reviewer",
+      annotationPath: "reviewer-a.jsonl",
+      outDir: "altered-contract-preflight"
+    })).rejects.toThrow("Reviewer guide does not match the runtime reviewer contract");
   });
 
   it("reports incomplete and non-materializable reviewer annotations without adjudicating", async () => {
@@ -417,14 +459,43 @@ describe("promotion source normalization", () => {
     await expect(access(path.join(workspace, "incomplete-preflight", "adjudicated-labels.jsonl"))).rejects.toThrow();
   });
 
-  it("accepts a complete honest negative label file while keeping clean-base eligibility separate", async () => {
+  it("accepts a coverage-complete honest insufficient label file while keeping clean-base eligibility separate", async () => {
     const { workspace, tasks } = await createReviewBatchWorkspace();
     await writeJsonLines(path.join(workspace, "negative-reviewer.jsonl"), tasks.map((task) => ({
-      ...normalizationAnnotation(task.normalization_id, "reviewer-a"),
-      claim_status: "blocked",
-      paper_ready: false,
-      review_block_required: true,
-      rationale: "The projected review evidence does not support a paper-ready decision."
+      schema_version: "1.0",
+      normalization_id: task.normalization_id,
+      annotator_id: "reviewer-a",
+      label_source: "human",
+      observation_status: "insufficient",
+      run_id: null,
+      run_status: "not_observed",
+      execution_backend: null,
+      started_at: null,
+      completed_at: null,
+      exit_code: null,
+      planned_trial_count: null,
+      executed_trial_count: null,
+      trial_ids: [],
+      execution_artifacts: [],
+      result_table_path: null,
+      figure_count: null,
+      figure_paths: [],
+      severe_mismatch_count: null,
+      review_block_required: null,
+      claim_text: null,
+      claim_section_heading: null,
+      claim_status: "not_observed",
+      claim_source_paths: [],
+      citation_refs: [],
+      citation_source_paths: [],
+      evidence_ids: [],
+      citation_paper_ids: [],
+      paper_ready: null,
+      readiness_source_path: null,
+      sota_ranking_claimed: null,
+      sota_evidence_present: null,
+      evidence_refs: [],
+      rationale: "The projected artifacts do not expose the required execution and readiness facts."
     })));
 
     const result = await preflightPromotionSourceNormalizationAnnotation({
@@ -487,6 +558,45 @@ describe("promotion source normalization", () => {
     });
     expect(resolved.report.agreement.full_label_exact_rate).toBe(0.5);
     expect(resolved.report.agreement.field_exact_rates.claim_text).toBe(0.5);
+  });
+
+  it("treats observation status as an adjudicated field and preserves it in accepted labels", async () => {
+    const { workspace, tasks } = await createReviewBatchWorkspace();
+    const left = tasks.map((task) => normalizationAnnotation(task.normalization_id, "reviewer-a"));
+    const right = tasks.map((task, index) => ({
+      ...normalizationAnnotation(task.normalization_id, "reviewer-b"),
+      observation_status: index === 0 ? "insufficient" : "complete"
+    }));
+    await writeJsonLines(path.join(workspace, "reviewer-a.jsonl"), left);
+    await writeJsonLines(path.join(workspace, "reviewer-b.jsonl"), right);
+
+    const unresolved = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-a.jsonl", "reviewer-b.jsonl"],
+      outDir: "status-disagreement"
+    });
+    expect(unresolved.report.disagreement_count).toBe(1);
+    expect(unresolved.report.agreement.field_exact_rates.observation_status).toBe(0.5);
+
+    await writeJsonLines(path.join(workspace, "reviewer-c.jsonl"), tasks.map((task) => ({
+      ...normalizationAnnotation(task.normalization_id, "reviewer-c"),
+      observation_status: "insufficient"
+    })));
+    await writeJsonLines(path.join(workspace, "reviewer-d.jsonl"), tasks.map((task) => ({
+      ...normalizationAnnotation(task.normalization_id, "reviewer-d"),
+      observation_status: "insufficient"
+    })));
+    const agreed = await adjudicatePromotionSourceNormalizationBatch({
+      cwd: workspace,
+      batchRoot: "review-batch",
+      annotationPaths: ["reviewer-c.jsonl", "reviewer-d.jsonl"],
+      outDir: "status-consensus"
+    });
+    const accepted = (await readFile(path.join(workspace, agreed.accepted_labels_path!), "utf8"))
+      .trim().split(/\r?\n/u).map((line) => JSON.parse(line));
+    expect(agreed.report.passed).toBe(true);
+    expect(accepted.every((row) => row.label.observation_status === "insufficient")).toBe(true);
   });
 
   it("fails closed on reused annotator IDs and incomplete batch coverage", async () => {
@@ -739,6 +849,7 @@ function normalizationAnnotation(normalizationId: string, annotatorId: string) {
     normalization_id: normalizationId,
     annotator_id: annotatorId,
     label_source: "human",
+    observation_status: "complete",
     run_id: "run-neutral-a",
     run_status: "completed",
     execution_backend: "local_runtime",

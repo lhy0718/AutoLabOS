@@ -5,7 +5,11 @@ import { promises as fs } from "node:fs";
 import { writeJsonFile } from "../../utils/fs.js";
 import {
   parsePromotionSourceNormalizationAnnotation,
+  PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA,
+  PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE,
+  promotionSourceNormalizationAnnotationSchema,
   promotionSourceNormalizationOutputFields,
+  promotionSourceNormalizationReviewerGuide,
   validatePromotionSourceNormalizationAcceptedLabel,
   validatePromotionSourceNormalizationResultTable,
   type PromotionSourceNormalizationAnnotation
@@ -39,6 +43,8 @@ export interface PromotionSourceNormalizationAnnotationPreflightReport {
   input_sha256: {
     tasks: string;
     rubric: string;
+    schema: string;
+    guide: string;
     annotations: string;
   };
   validation_issues: PromotionSourceNormalizationAnnotationPreflightIssue[];
@@ -77,9 +83,22 @@ export async function preflightPromotionSourceNormalizationAnnotation(
     "Reviewer tasks"
   );
   const rubricPath = await resolveFileInside(reviewerRoot, path.join(reviewerRoot, "RUBRIC.md"), "Reviewer rubric");
+  const schemaPath = await resolveFileInside(
+    reviewerRoot,
+    path.join(reviewerRoot, PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA),
+    "Reviewer annotation schema"
+  );
+  const guidePath = await resolveFileInside(
+    reviewerRoot,
+    path.join(reviewerRoot, PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE),
+    "Reviewer guide"
+  );
   const tasksText = await fs.readFile(tasksPath, "utf8");
   const rubricText = await fs.readFile(rubricPath, "utf8");
+  const schemaText = await fs.readFile(schemaPath, "utf8");
+  const guideText = await fs.readFile(guidePath, "utf8");
   if (!rubricText.trim()) throw new Error("Reviewer rubric must be non-empty.");
+  assertReviewerContract(schemaText, guideText);
   const tasks = parseReviewerTasks(tasksText);
   const issues: PromotionSourceNormalizationAnnotationPreflightIssue[] = [];
   const annotationText = await fs.readFile(annotationPath, "utf8");
@@ -164,11 +183,13 @@ export async function preflightPromotionSourceNormalizationAnnotation(
     input_sha256: {
       tasks: sha256(tasksText),
       rubric: sha256(rubricText),
+      schema: sha256(schemaText),
+      guide: sha256(guideText),
       annotations: sha256(annotationText)
     },
     validation_issues: issues,
     materialization_findings: materializationFindings,
-    evidence_boundary: "This reviewer-side preflight verifies one annotation file's schema, opaque-task coverage, and annotator consistency. Materialization findings are non-blocking for honest negative labels and only forecast clean-base eligibility. The preflight does not expose the controller map, compare reviewers, adjudicate labels, or prove human identity, independence, expertise, or source validity."
+    evidence_boundary: "This reviewer-side preflight verifies the distributed schema and guide, one annotation file's runtime schema, opaque-task coverage, and annotator consistency. Materialization findings are non-blocking for honest negative labels and only forecast clean-base eligibility. The preflight does not expose the controller map, compare reviewers, adjudicate labels, or prove human identity, independence, expertise, or source validity."
   };
   await fs.mkdir(outDir, { recursive: true });
   const reportPath = path.join(outDir, PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_PREFLIGHT_REPORT);
@@ -180,6 +201,21 @@ export async function preflightPromotionSourceNormalizationAnnotation(
     report_path: portableRef(cwd, reportPath),
     summary_path: portableRef(cwd, summaryPath)
   };
+}
+
+function assertReviewerContract(schemaText: string, guideText: string): void {
+  let schema: unknown;
+  try {
+    schema = JSON.parse(schemaText) as unknown;
+  } catch {
+    throw new Error("Reviewer annotation schema must be valid JSON.");
+  }
+  if (JSON.stringify(schema) !== JSON.stringify(promotionSourceNormalizationAnnotationSchema())) {
+    throw new Error("Reviewer annotation schema does not match the runtime annotation contract.");
+  }
+  if (guideText !== promotionSourceNormalizationReviewerGuide()) {
+    throw new Error("Reviewer guide does not match the runtime reviewer contract.");
+  }
 }
 
 function parseReviewerTasks(raw: string): ReviewerTask[] {

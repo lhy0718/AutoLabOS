@@ -8,6 +8,7 @@ import { validatePromotionMutationCompatibility } from "./promotionBenchmarkBuil
 import {
   inspectPromotionExecutionEvidence,
   preparePromotionExecutionEvidence,
+  PROMOTION_EXECUTION_BACKENDS,
   PROMOTION_EXECUTION_EVIDENCE_ROLES,
   type PromotionExecutionBackend,
   type PromotionExecutionEvidenceRole
@@ -22,6 +23,8 @@ import {
 import { promotionVariantDefinitions } from "./promotionBenchmarkVariants.js";
 
 export const PROMOTION_SOURCE_NORMALIZATION_MANIFEST = "source-normalization.json";
+export const PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA = "annotation-schema.json";
+export const PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE = "REVIEWER_GUIDE.md";
 
 export interface ExportPromotionSourceNormalizationPackInput {
   cwd: string;
@@ -36,6 +39,8 @@ export interface ExportPromotionSourceNormalizationPackResult {
   tasks_path: string;
   private_map_path: string;
   rubric_path: string;
+  schema_path: string;
+  guide_path: string;
 }
 
 export interface PromotionSourceNormalizationArtifactSelection {
@@ -74,6 +79,37 @@ export interface PromotionSourceNormalizationLabel {
   evidence_refs: string[];
 }
 
+export interface PromotionSourceNormalizationObservation {
+  run_id: string | null;
+  run_status: "completed" | "failed" | "partial" | "not_observed";
+  execution_backend: PromotionExecutionBackend | null;
+  started_at: string | null;
+  completed_at: string | null;
+  exit_code: number | null;
+  planned_trial_count: number | null;
+  executed_trial_count: number | null;
+  trial_ids: string[];
+  execution_artifacts: PromotionSourceNormalizationArtifactSelection[];
+  result_table_path: string | null;
+  figure_count: number | null;
+  figure_paths: string[];
+  severe_mismatch_count: number | null;
+  review_block_required: boolean | null;
+  claim_text: string | null;
+  claim_section_heading: string | null;
+  claim_status: "verified" | "blocked" | "not_observed";
+  claim_source_paths: string[];
+  citation_refs: string[];
+  citation_source_paths: string[];
+  evidence_ids: string[];
+  citation_paper_ids: string[];
+  paper_ready: boolean | null;
+  readiness_source_path: string | null;
+  sota_ranking_claimed: boolean | null;
+  sota_evidence_present: boolean | null;
+  evidence_refs: string[];
+}
+
 export const PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS = [
   "run_id",
   "run_status",
@@ -103,15 +139,29 @@ export const PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS = [
   "sota_ranking_claimed",
   "sota_evidence_present",
   "evidence_refs"
-] as const satisfies readonly (keyof PromotionSourceNormalizationLabel)[];
+] as const satisfies readonly (keyof PromotionSourceNormalizationObservation)[];
 
-export interface PromotionSourceNormalizationAnnotation extends PromotionSourceNormalizationLabel {
+interface PromotionSourceNormalizationAnnotationMetadata {
   schema_version: "1.0";
   normalization_id: string;
   annotator_id: string;
   label_source: "human";
   rationale: string;
 }
+
+export type PromotionSourceNormalizationAnnotation = PromotionSourceNormalizationAnnotationMetadata & (
+  | ({ observation_status: "complete" } & PromotionSourceNormalizationLabel)
+  | ({ observation_status: "insufficient" } & PromotionSourceNormalizationObservation)
+);
+
+export type PromotionSourceNormalizationAdjudicatedLabel =
+  | ({ observation_status: "complete" } & PromotionSourceNormalizationLabel)
+  | ({ observation_status: "insufficient" } & PromotionSourceNormalizationObservation);
+
+export type PromotionSourceNormalizationAcceptedAnnotation =
+  PromotionSourceNormalizationAnnotationMetadata
+  & { observation_status: "complete" }
+  & PromotionSourceNormalizationLabel;
 
 interface PromotionSourceNormalizationPrivateMap {
   schema_version: "1.0";
@@ -234,7 +284,20 @@ export async function exportPromotionSourceNormalizationPack(
       required_output_fields: promotionSourceNormalizationOutputFields()
     })}\n`, "utf8");
     await writeJsonFile(path.join(stagingRoot, "private-normalization-map.json"), privateMap);
-    await fs.writeFile(path.join(stagingRoot, "annotator", "RUBRIC.md"), normalizationRubric(), "utf8");
+    await fs.writeFile(
+      path.join(stagingRoot, "annotator", "RUBRIC.md"),
+      promotionSourceNormalizationRubric(),
+      "utf8"
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, "annotator", PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA),
+      promotionSourceNormalizationAnnotationSchema()
+    );
+    await fs.writeFile(
+      path.join(stagingRoot, "annotator", PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE),
+      promotionSourceNormalizationReviewerGuide(),
+      "utf8"
+    );
     await fs.rename(stagingRoot, outDir);
   } catch (error) {
     await fs.rm(stagingRoot, { recursive: true, force: true });
@@ -247,7 +310,9 @@ export async function exportPromotionSourceNormalizationPack(
     annotator_dir: portableRef(cwd, path.join(outDir, "annotator")),
     tasks_path: portableRef(cwd, path.join(outDir, "annotator", "normalization-tasks.jsonl")),
     private_map_path: portableRef(cwd, path.join(outDir, "private-normalization-map.json")),
-    rubric_path: portableRef(cwd, path.join(outDir, "annotator", "RUBRIC.md"))
+    rubric_path: portableRef(cwd, path.join(outDir, "annotator", "RUBRIC.md")),
+    schema_path: portableRef(cwd, path.join(outDir, "annotator", PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA)),
+    guide_path: portableRef(cwd, path.join(outDir, "annotator", PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE))
   };
 }
 
@@ -505,7 +570,7 @@ export async function inspectPromotionSourceNormalization(
 async function writeCanonicalEnvelope(
   root: string,
   normalizationId: string,
-  annotation: PromotionSourceNormalizationAnnotation
+  annotation: PromotionSourceNormalizationAcceptedAnnotation
 ): Promise<void> {
   const claimId = `claim-${sha256Text(normalizationId).slice(0, 16)}`;
   const claim = {
@@ -637,8 +702,11 @@ async function validateAdjudicationTrace(
 export function validatePromotionSourceNormalizationAcceptedLabel(
   annotation: PromotionSourceNormalizationAnnotation,
   projectedPaths: string[]
-): void {
+): asserts annotation is PromotionSourceNormalizationAcceptedAnnotation {
   const selectedPaths = new Set(projectedPaths);
+  if (annotation.observation_status !== "complete") {
+    throw new Error("Only complete source observations can become clean promotion bases.");
+  }
   if (annotation.run_status !== "completed" || annotation.exit_code !== 0) {
     throw new Error("Only source-grounded completed runs with exit_code=0 can become clean promotion bases.");
   }
@@ -736,17 +804,20 @@ async function readAnnotation(filePath: string, normalizationId: string): Promis
 
 function parseAnnotation(value: unknown): PromotionSourceNormalizationAnnotation {
   if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.normalization_id)
-      || !validId(value.annotator_id) || value.label_source !== "human" || !nonEmptyString(value.rationale)) {
+      || !validId(value.annotator_id) || value.label_source !== "human" || !nonEmptyString(value.rationale)
+      || (value.observation_status !== "complete" && value.observation_status !== "insufficient")) {
     throw new Error("Source-normalization annotation metadata is invalid.");
   }
-  return {
+  const metadata: PromotionSourceNormalizationAnnotationMetadata = {
     schema_version: "1.0",
     normalization_id: value.normalization_id,
     annotator_id: value.annotator_id,
     label_source: "human",
-    rationale: value.rationale,
-    ...parseLabel(value)
+    rationale: value.rationale
   };
+  return value.observation_status === "complete"
+    ? { ...metadata, observation_status: "complete", ...parseLabel(value) }
+    : { ...metadata, observation_status: "insufficient", ...parseObservation(value) };
 }
 
 export function parsePromotionSourceNormalizationAnnotation(
@@ -761,7 +832,8 @@ function parseLabel(value: unknown): PromotionSourceNormalizationLabel {
       || !isExecutionBackend(value.execution_backend) || !timestampString(value.started_at) || !timestampString(value.completed_at)
       || !nonNegativeInteger(value.exit_code) || !nonNegativeInteger(value.planned_trial_count)
       || !nonNegativeInteger(value.executed_trial_count) || !validIdArray(value.trial_ids)
-      || !Array.isArray(value.execution_artifacts) || !safeRelativePath(value.result_table_path)
+      || !Array.isArray(value.execution_artifacts) || value.execution_artifacts.length === 0
+      || !safeRelativePath(value.result_table_path)
       || !nonNegativeInteger(value.figure_count) || !safePathArray(value.figure_paths)
       || !nonNegativeInteger(value.severe_mismatch_count)
       || typeof value.review_block_required !== "boolean" || !nonEmptyString(value.claim_text)
@@ -773,6 +845,75 @@ function parseLabel(value: unknown): PromotionSourceNormalizationLabel {
       || typeof value.sota_ranking_claimed !== "boolean" || typeof value.sota_evidence_present !== "boolean"
       || !safePathArray(value.evidence_refs)) {
     throw new Error("Source-normalization label is invalid or incomplete.");
+  }
+  const executionArtifacts = value.execution_artifacts.map((artifact, index) => {
+    if (!isRecord(artifact) || !isExecutionEvidenceRole(artifact.role) || !safeRelativePath(artifact.path)) {
+      throw new Error(`Invalid source-normalization execution artifact at index ${index + 1}.`);
+    }
+    return { role: artifact.role, path: artifact.path };
+  }).sort((left, right) => left.role.localeCompare(right.role));
+  return {
+    run_id: value.run_id,
+    run_status: value.run_status,
+    execution_backend: value.execution_backend,
+    started_at: value.started_at,
+    completed_at: value.completed_at,
+    exit_code: value.exit_code,
+    planned_trial_count: value.planned_trial_count,
+    executed_trial_count: value.executed_trial_count,
+    trial_ids: [...value.trial_ids].sort(),
+    execution_artifacts: executionArtifacts,
+    result_table_path: value.result_table_path,
+    figure_count: value.figure_count,
+    figure_paths: [...value.figure_paths].sort(),
+    severe_mismatch_count: value.severe_mismatch_count,
+    review_block_required: value.review_block_required,
+    claim_text: value.claim_text,
+    claim_section_heading: value.claim_section_heading,
+    claim_status: value.claim_status,
+    claim_source_paths: [...value.claim_source_paths].sort(),
+    citation_refs: [...value.citation_refs].sort(),
+    citation_source_paths: [...value.citation_source_paths].sort(),
+    evidence_ids: [...value.evidence_ids].sort(),
+    citation_paper_ids: [...value.citation_paper_ids].sort(),
+    paper_ready: value.paper_ready,
+    readiness_source_path: value.readiness_source_path,
+    sota_ranking_claimed: value.sota_ranking_claimed,
+    sota_evidence_present: value.sota_evidence_present,
+    evidence_refs: [...value.evidence_refs].sort()
+  };
+}
+
+function parseObservation(value: unknown): PromotionSourceNormalizationObservation {
+  if (!isRecord(value)
+      || !nullableValidId(value.run_id)
+      || (value.run_status !== "completed" && value.run_status !== "failed"
+        && value.run_status !== "partial" && value.run_status !== "not_observed")
+      || (value.execution_backend !== null && !isExecutionBackend(value.execution_backend))
+      || !nullableTimestamp(value.started_at) || !nullableTimestamp(value.completed_at)
+      || !nullableNonNegativeInteger(value.exit_code)
+      || !nullableNonNegativeInteger(value.planned_trial_count)
+      || !nullableNonNegativeInteger(value.executed_trial_count)
+      || !validIdArrayAllowEmpty(value.trial_ids)
+      || !Array.isArray(value.execution_artifacts)
+      || !nullableSafeRelativePath(value.result_table_path)
+      || !nullableNonNegativeInteger(value.figure_count) || !safePathArrayAllowEmpty(value.figure_paths)
+      || !nullableNonNegativeInteger(value.severe_mismatch_count)
+      || (value.review_block_required !== null && typeof value.review_block_required !== "boolean")
+      || !nullableNonEmptyString(value.claim_text) || !nullableNonEmptyString(value.claim_section_heading)
+      || (value.claim_status !== "verified" && value.claim_status !== "blocked"
+        && value.claim_status !== "not_observed")
+      || !safePathArrayAllowEmpty(value.claim_source_paths)
+      || !nonEmptyStringArrayAllowEmpty(value.citation_refs)
+      || !safePathArrayAllowEmpty(value.citation_source_paths)
+      || !validIdArrayAllowEmpty(value.evidence_ids)
+      || !validIdArrayAllowEmpty(value.citation_paper_ids)
+      || (value.paper_ready !== null && typeof value.paper_ready !== "boolean")
+      || !nullableSafeRelativePath(value.readiness_source_path)
+      || (value.sota_ranking_claimed !== null && typeof value.sota_ranking_claimed !== "boolean")
+      || (value.sota_evidence_present !== null && typeof value.sota_evidence_present !== "boolean")
+      || !safePathArrayAllowEmpty(value.evidence_refs)) {
+    throw new Error("Source-normalization observation is invalid or incomplete.");
   }
   const executionArtifacts = value.execution_artifacts.map((artifact, index) => {
     if (!isRecord(artifact) || !isExecutionEvidenceRole(artifact.role) || !safeRelativePath(artifact.path)) {
@@ -908,19 +1049,29 @@ function labelFrom(value: PromotionSourceNormalizationLabel): PromotionSourceNor
   return parseLabel(value);
 }
 
-function labelsEqual(left: PromotionSourceNormalizationLabel, right: PromotionSourceNormalizationLabel): boolean {
-  return JSON.stringify(labelFrom(left)) === JSON.stringify(labelFrom(right));
+type ComparableSourceNormalizationObservation = PromotionSourceNormalizationObservation & {
+  observation_status?: "complete" | "insufficient";
+};
+
+function labelsEqual(
+  left: ComparableSourceNormalizationObservation,
+  right: ComparableSourceNormalizationObservation
+): boolean {
+  if ((left.observation_status || "complete") !== (right.observation_status || "complete")) return false;
+  return JSON.stringify(parseObservation(left)) === JSON.stringify(parseObservation(right));
 }
 
 export function promotionSourceNormalizationLabelFrom(
-  value: PromotionSourceNormalizationLabel
-): PromotionSourceNormalizationLabel {
-  return labelFrom(value);
+  value: PromotionSourceNormalizationAnnotation
+): PromotionSourceNormalizationAdjudicatedLabel {
+  return value.observation_status === "complete"
+    ? { observation_status: "complete", ...parseLabel(value) }
+    : { observation_status: "insufficient", ...parseObservation(value) };
 }
 
 export function promotionSourceNormalizationLabelsEqual(
-  left: PromotionSourceNormalizationLabel,
-  right: PromotionSourceNormalizationLabel
+  left: ComparableSourceNormalizationObservation,
+  right: ComparableSourceNormalizationObservation
 ): boolean {
   return labelsEqual(left, right);
 }
@@ -973,7 +1124,7 @@ async function hashContainedRegularFile(root: string, relativePath: string): Pro
 
 export function promotionSourceNormalizationOutputFields(): string[] {
   return [
-    "schema_version", "normalization_id", "annotator_id", "label_source", "run_id", "run_status",
+    "schema_version", "normalization_id", "annotator_id", "label_source", "observation_status", "run_id", "run_status",
     "execution_backend", "started_at", "completed_at", "exit_code", "planned_trial_count",
     "executed_trial_count", "trial_ids", "execution_artifacts", "result_table_path", "figure_count", "figure_paths",
     "severe_mismatch_count", "review_block_required", "claim_text", "claim_section_heading", "claim_status", "claim_source_paths",
@@ -982,7 +1133,142 @@ export function promotionSourceNormalizationOutputFields(): string[] {
   ];
 }
 
-function normalizationRubric(): string {
+export function promotionSourceNormalizationAnnotationSchema(): Record<string, unknown> {
+  const id = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" };
+  const pathValue = {
+    type: "string",
+    minLength: 1,
+    pattern: "^(?!/)(?!.*\\\\)(?!.*(?:^|/)\\.\\.?(?:/|$)).+$"
+  };
+  const nullable = (schema: Record<string, unknown>): Record<string, unknown> => ({
+    anyOf: [schema, { type: "null" }]
+  });
+  const uniqueArray = (items: Record<string, unknown>): Record<string, unknown> => ({
+    type: "array",
+    items,
+    uniqueItems: true
+  });
+  const requiredArray = (items: Record<string, unknown>): Record<string, unknown> => ({
+    ...uniqueArray(items),
+    minItems: 1
+  });
+  const nonNegativeInteger = { type: "integer", minimum: 0 };
+  const nullableBoolean = { type: ["boolean", "null"] };
+  const timestamp = {
+    type: "string",
+    format: "date-time",
+    pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"
+  };
+  const artifactSelection = {
+    type: "object",
+    additionalProperties: false,
+    required: ["role", "path"],
+    properties: {
+      role: { enum: [...PROMOTION_EXECUTION_EVIDENCE_ROLES] },
+      path: pathValue
+    }
+  };
+  const properties: Record<string, unknown> = {
+    schema_version: { const: "1.0" },
+    normalization_id: id,
+    annotator_id: id,
+    label_source: { const: "human" },
+    observation_status: { enum: ["complete", "insufficient"] },
+    run_id: nullable(id),
+    run_status: { enum: ["completed", "failed", "partial", "not_observed"] },
+    execution_backend: { enum: [...PROMOTION_EXECUTION_BACKENDS, null] },
+    started_at: nullable(timestamp),
+    completed_at: nullable(timestamp),
+    exit_code: nullable(nonNegativeInteger),
+    planned_trial_count: nullable(nonNegativeInteger),
+    executed_trial_count: nullable(nonNegativeInteger),
+    trial_ids: uniqueArray(id),
+    execution_artifacts: uniqueArray(artifactSelection),
+    result_table_path: nullable(pathValue),
+    figure_count: nullable(nonNegativeInteger),
+    figure_paths: uniqueArray(pathValue),
+    severe_mismatch_count: nullable(nonNegativeInteger),
+    review_block_required: nullableBoolean,
+    claim_text: nullable({ type: "string", minLength: 1 }),
+    claim_section_heading: nullable({ type: "string", minLength: 1 }),
+    claim_status: { enum: ["verified", "blocked", "not_observed"] },
+    claim_source_paths: uniqueArray(pathValue),
+    citation_refs: uniqueArray({ type: "string", minLength: 1 }),
+    citation_source_paths: uniqueArray(pathValue),
+    evidence_ids: uniqueArray(id),
+    citation_paper_ids: uniqueArray(id),
+    paper_ready: nullableBoolean,
+    readiness_source_path: nullable(pathValue),
+    sota_ranking_claimed: nullableBoolean,
+    sota_evidence_present: nullableBoolean,
+    evidence_refs: uniqueArray(pathValue),
+    rationale: { type: "string", minLength: 1 }
+  };
+  const strictNonNullProperties = {
+    run_id: id,
+    run_status: { enum: ["completed", "failed", "partial"] },
+    execution_backend: { enum: [...PROMOTION_EXECUTION_BACKENDS] },
+    started_at: timestamp,
+    completed_at: timestamp,
+    exit_code: nonNegativeInteger,
+    planned_trial_count: nonNegativeInteger,
+    executed_trial_count: nonNegativeInteger,
+    trial_ids: requiredArray(id),
+    execution_artifacts: requiredArray(artifactSelection),
+    result_table_path: pathValue,
+    figure_count: nonNegativeInteger,
+    figure_paths: requiredArray(pathValue),
+    severe_mismatch_count: nonNegativeInteger,
+    review_block_required: { type: "boolean" },
+    claim_text: { type: "string", minLength: 1 },
+    claim_section_heading: { type: "string", minLength: 1 },
+    claim_status: { enum: ["verified", "blocked"] },
+    claim_source_paths: requiredArray(pathValue),
+    citation_refs: requiredArray({ type: "string", minLength: 1 }),
+    citation_source_paths: requiredArray(pathValue),
+    evidence_ids: requiredArray(id),
+    citation_paper_ids: requiredArray(id),
+    paper_ready: { type: "boolean" },
+    readiness_source_path: pathValue,
+    sota_ranking_claimed: { type: "boolean" },
+    sota_evidence_present: { type: "boolean" },
+    evidence_refs: requiredArray(pathValue)
+  };
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    title: "Promotion Source Normalization Annotation",
+    type: "object",
+    additionalProperties: false,
+    required: promotionSourceNormalizationOutputFields(),
+    properties,
+    allOf: [{
+      if: { properties: { observation_status: { const: "complete" } }, required: ["observation_status"] },
+      then: { properties: strictNonNullProperties }
+    }]
+  };
+}
+
+export function promotionSourceNormalizationReviewerGuide(): string {
+  return `# Reviewer Guide
+
+Create one JSON Lines file with exactly one record for every row in \`normalization-tasks.jsonl\`. Use one pseudonymous \`annotator_id\` throughout the file and validate it against \`annotation-schema.json\`.
+
+For each task, inspect only its declared \`artifact_root\`. Record \`observation_status=complete\` only when every required field is directly supported by projected files. Otherwise record \`observation_status=insufficient\`, use \`null\` for unavailable scalar fields, and use empty arrays for unavailable collections. Do not invent timestamps, paths, identifiers, counts, backend values, or success states.
+
+Keep the two initial reviews independent. Do not distribute the batch's controller directory, inspect a peer label file, or reuse an annotator ID. Run the reviewer-side preflight before returning a label file:
+
+\`\`\`sh
+autolabos governance-benchmark preflight-promotion-source-normalization-annotation \\
+  --reviewer-root <reviewer-directory> \\
+  --annotation <labels.jsonl> \\
+  --out-dir <new-preflight-output>
+\`\`\`
+
+A passing preflight verifies schema and task coverage only. It does not establish reviewer identity, independence, expertise, agreement, or clean-base eligibility.
+`;
+}
+
+export function promotionSourceNormalizationRubric(): string {
   return `# Source Normalization Rubric
 
 Annotate only facts that can be located in the supplied projected artifact tree. Do not infer successful execution from prose, filenames, or a paper PDF alone.
@@ -993,7 +1279,8 @@ Annotate only facts that can be located in the supplied projected artifact tree.
 - Set paper_ready=true only when the source itself contains a completed-run record, baseline/comparator result table, consistent figure evidence, linked claim evidence, and an explicit readiness decision.
 - Put every selected result, execution, figure, claim, citation, and readiness file in evidence_refs. All paths must be relative to the supplied artifact root.
 - Two annotators work independently. Do not inspect another annotator's record before submission.
-- Use null-free, complete JSON. If a required fact is unavailable, record a non-passing value; the materializer will fail closed.
+- Use observation_status=complete only when every required fact is directly supported. Use observation_status=insufficient when required facts are missing; record unavailable scalar fields as null and unavailable collections as empty arrays. Never invent sentinel timestamps, paths, identifiers, counts, or backend values.
+- Every JSON record must contain every field listed by its task. The reviewer preflight accepts complete honest insufficient observations while clean-base materialization remains fail-closed.
 `;
 }
 
@@ -1028,6 +1315,10 @@ function safePathArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every(safeRelativePath) && new Set(value).size === value.length;
 }
 
+function safePathArrayAllowEmpty(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(safeRelativePath) && new Set(value).size === value.length;
+}
+
 function validId(value: unknown): value is string {
   return typeof value === "string" && /^[a-z0-9][a-z0-9._-]*$/iu.test(value);
 }
@@ -1036,8 +1327,36 @@ function validIdArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every(validId) && new Set(value).size === value.length;
 }
 
+function validIdArrayAllowEmpty(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(validId) && new Set(value).size === value.length;
+}
+
 function nonEmptyStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every(nonEmptyString) && new Set(value).size === value.length;
+}
+
+function nonEmptyStringArrayAllowEmpty(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(nonEmptyString) && new Set(value).size === value.length;
+}
+
+function nullableValidId(value: unknown): value is string | null {
+  return value === null || validId(value);
+}
+
+function nullableTimestamp(value: unknown): value is string | null {
+  return value === null || timestampString(value);
+}
+
+function nullableNonNegativeInteger(value: unknown): value is number | null {
+  return value === null || nonNegativeInteger(value);
+}
+
+function nullableSafeRelativePath(value: unknown): value is string | null {
+  return value === null || safeRelativePath(value);
+}
+
+function nullableNonEmptyString(value: unknown): value is string | null {
+  return value === null || nonEmptyString(value);
 }
 
 function nonNegativeInteger(value: unknown): value is number {

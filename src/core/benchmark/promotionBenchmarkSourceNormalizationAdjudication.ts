@@ -14,8 +14,8 @@ import {
   PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS,
   promotionSourceNormalizationLabelFrom,
   promotionSourceNormalizationLabelsEqual,
+  type PromotionSourceNormalizationAdjudicatedLabel,
   type PromotionSourceNormalizationAnnotation,
-  type PromotionSourceNormalizationLabel
 } from "./promotionBenchmarkSourceNormalization.js";
 
 export const PROMOTION_SOURCE_NORMALIZATION_BATCH_ADJUDICATION_REPORT =
@@ -97,7 +97,7 @@ interface AcceptedAnnotation {
   source: "double_adjudication_consensus" | "third_party_resolution";
   initial: [PromotionSourceNormalizationAnnotation, PromotionSourceNormalizationAnnotation];
   resolution: PromotionSourceNormalizationAnnotation | null;
-  label: PromotionSourceNormalizationLabel;
+  label: PromotionSourceNormalizationAdjudicatedLabel;
   annotator_ids: string[];
 }
 
@@ -401,7 +401,8 @@ async function readAnnotationFile(
 function agreementMetrics(
   pairs: ReadonlyArray<readonly [PromotionSourceNormalizationAnnotation, PromotionSourceNormalizationAnnotation]>
 ): PromotionSourceNormalizationBatchAgreement {
-  const fieldExactRates = Object.fromEntries(PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS.map((field) => [
+  const agreementFields = ["observation_status", ...PROMOTION_SOURCE_NORMALIZATION_LABEL_FIELDS] as const;
+  const fieldExactRates = Object.fromEntries(agreementFields.map((field) => [
     field,
     pairs.length === 0 ? null : pairs.filter(([left, right]) =>
       JSON.stringify(left[field]) === JSON.stringify(right[field])).length / pairs.length

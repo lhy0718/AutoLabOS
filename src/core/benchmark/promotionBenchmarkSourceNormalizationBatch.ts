@@ -5,6 +5,14 @@ import { promises as fs } from "node:fs";
 import { writeJsonFile } from "../../utils/fs.js";
 import { hashPromotionArtifactTree } from "./promotionBenchmark.js";
 import {
+  PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA,
+  PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE,
+  promotionSourceNormalizationAnnotationSchema,
+  promotionSourceNormalizationOutputFields,
+  promotionSourceNormalizationReviewerGuide,
+  promotionSourceNormalizationRubric
+} from "./promotionBenchmarkSourceNormalization.js";
+import {
   inspectPromotionSourceProjection,
   PROMOTION_SOURCE_PROJECTION_MANIFEST
 } from "./promotionBenchmarkSourceProjection.js";
@@ -130,8 +138,6 @@ export async function exportPromotionSourceNormalizationBatch(
     task: NormalizationTask;
     sourceRoot: string;
     artifactRoot: string;
-    rubricPath: string;
-    rubricSha256: string;
   }> = [];
   for (const item of recipe.items) {
     const sourceRoot = path.resolve(cwd, item.source_root);
@@ -165,25 +171,20 @@ export async function exportPromotionSourceNormalizationBatch(
     if (!artifactProjection.integrity_passed || artifactHash !== sourceHash) {
       throw new Error(`Reviewer artifact copy no longer matches its projected source for ${item.item_id}.`);
     }
-    const rubricPath = path.join(packRoot, "annotator", "RUBRIC.md");
     prepared.push({
       recipe: item,
       privateMap,
       task,
       sourceRoot,
-      artifactRoot,
-      rubricPath,
-      rubricSha256: await hashFile(rubricPath)
+      artifactRoot
     });
   }
 
   assertUnique(prepared.map((item) => item.privateMap.normalization_id), "normalization IDs");
   assertUnique(prepared.map((item) => item.privateMap.source_artifact_sha256), "source artifact hashes");
   assertUnique(prepared.map((item) => item.privateMap.source_projection_manifest_sha256), "source projection manifest hashes");
-  const rubricHashes = new Set(prepared.map((item) => item.rubricSha256));
-  if (rubricHashes.size !== 1) {
-    throw new Error("Every source-normalization pack in a review batch must use the same rubric.");
-  }
+  const rubric = promotionSourceNormalizationRubric();
+  const rubricSha256 = sha256(Buffer.from(rubric, "utf8"));
 
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
@@ -191,7 +192,16 @@ export async function exportPromotionSourceNormalizationBatch(
     const reviewerRoot = path.join(stagingRoot, "reviewer");
     const reviewerArtifactsRoot = path.join(reviewerRoot, "artifacts");
     await fs.mkdir(reviewerArtifactsRoot, { recursive: true });
-    await fs.copyFile(prepared[0].rubricPath, path.join(reviewerRoot, "RUBRIC.md"));
+    await fs.writeFile(path.join(reviewerRoot, "RUBRIC.md"), rubric, "utf8");
+    await writeJsonFile(
+      path.join(reviewerRoot, PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA),
+      promotionSourceNormalizationAnnotationSchema()
+    );
+    await fs.writeFile(
+      path.join(reviewerRoot, PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE),
+      promotionSourceNormalizationReviewerGuide(),
+      "utf8"
+    );
 
     const reviewerTasks = prepared
       .map((item) => JSON.stringify({
@@ -199,7 +209,7 @@ export async function exportPromotionSourceNormalizationBatch(
         item_id: item.recipe.item_id,
         normalization_id: item.privateMap.normalization_id,
         artifact_root: `artifacts/${item.privateMap.normalization_id}`,
-        required_output_fields: item.task.required_output_fields
+        required_output_fields: promotionSourceNormalizationOutputFields()
       }))
       .join("\n") + "\n";
     const reviewerTasksPath = path.join(reviewerRoot, "normalization-tasks.jsonl");
@@ -234,7 +244,7 @@ export async function exportPromotionSourceNormalizationBatch(
       schema_version: "1.0",
       batch_id: recipe.batch_id,
       item_count: prepared.length,
-      rubric_sha256: prepared[0].rubricSha256,
+      rubric_sha256: rubricSha256,
       reviewer_tasks_path: "reviewer/normalization-tasks.jsonl",
       controller_map_path: PROMOTION_SOURCE_NORMALIZATION_BATCH_MAP,
       items: prepared.map((item) => ({
@@ -333,6 +343,18 @@ export async function inspectPromotionSourceNormalizationBatch(
       });
     }
   }
+  for (const reviewerFile of [
+    `reviewer/${PROMOTION_SOURCE_NORMALIZATION_ANNOTATION_SCHEMA}`,
+    `reviewer/${PROMOTION_SOURCE_NORMALIZATION_REVIEWER_GUIDE}`
+  ]) {
+    if (!manifest.outputs.some((output) => output.path === reviewerFile)) {
+      issues.push({
+        code: "source_normalization_batch_reviewer_contract_missing",
+        message: "The reviewer JSON Schema and guide must be hash-bound batch outputs.",
+        ref: reviewerFile
+      });
+    }
+  }
 
   let controllerMap: ControllerBatchMap | null = null;
   try {
@@ -370,7 +392,10 @@ export async function inspectPromotionSourceNormalizationBatch(
     for (const task of tasks) {
       const item = manifest.items.find((candidate) => candidate.normalization_id === task.normalization_id);
       if (!item || task.item_id !== item.item_id
-          || task.artifact_root !== `artifacts/${task.normalization_id}`) throw new Error("mismatch");
+          || task.artifact_root !== `artifacts/${task.normalization_id}`
+          || task.required_output_fields.join("\0") !== promotionSourceNormalizationOutputFields().join("\0")) {
+        throw new Error("mismatch");
+      }
       const artifactRoot = path.join(root, "reviewer", task.artifact_root);
       const artifactHash = await hashPromotionArtifactTree(artifactRoot);
       if (artifactHash !== item.reviewer_artifact_sha256) throw new Error("mismatch");

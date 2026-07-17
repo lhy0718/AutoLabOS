@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "audit_id": "promotion-review-handoff-v2-20260717",
+  "generated_at": "2026-07-17T09:12:24+09:00",
+  "source_acquisition_evidence": "docs/research/evidence/promotion-source-acquisition-v3.json",
+  "batch": {
+    "batch_id": "source-normalization-review-batch-v2",
+    "local_output_root": "outputs/promotion-governance/source-normalization-review-batch-v2",
+    "item_count": 20,
+    "reviewer_output_count": 344,
+    "total_manifest_output_count": 345,
+    "reviewer_size_bytes": 159135380,
+    "batch_manifest_sha256": "64603dc4bc6a401f923ffcad68c5cec1cc2f5b477d9fb361f27044e4fc410019",
+    "reviewer_tasks_sha256": "1b339a8661e19b44393a2fba62475dcb54811f0fab2c79635edaa2868633b4e0",
+    "rubric_sha256": "089e2267cb5f84ad99992571596272834bbe1b7ce8f2825db747eb560bf8bd2c",
+    "annotation_schema_sha256": "6da8b8724549bbcfada29fc839c4c686aac4b1124231c105686a8530305cf255",
+    "reviewer_guide_sha256": "7ce974c85b7773a13fc2dd3a1c3a5ed612014c37b50cd67a8f71b8d605df2d38",
+    "inspection_passed": true,
+    "inspection_issues": [],
+    "controller_or_private_files_in_reviewer": 0,
+    "annotation_files_in_reviewer": 0,
+    "human_annotations": 0,
+    "accepted_normalizations": 0,
+    "confirmatory_admissions": 0
+  },
+  "contract": {
+    "observation_status_values": ["complete", "insufficient"],
+    "unavailable_scalar_encoding": "null",
+    "unavailable_collection_encoding": "empty_array",
+    "complete_observation_requires_nonempty_evidence_arrays": true,
+    "preflight_hashes_schema_and_guide": true,
+    "observation_status_is_adjudicated": true,
+    "accepted_labels_preserve_observation_status": true
+  },
+  "superseded_handoff": {
+    "batch_id": "source-normalization-review-batch-v1",
+    "retained_as_historical_acquisition_evidence": true,
+    "passes_current_inspector": false,
+    "current_issue_codes": [
+      "source_normalization_batch_reviewer_contract_missing",
+      "source_normalization_batch_reviewer_payload_invalid"
+    ]
+  },
+  "next_required_evidence": [
+    "two independent coverage-complete human annotation files",
+    "third-party resolutions for every initial disagreement",
+    "passing materialization of source-grounded clean bases",
+    "human license and privacy review before reviewer-batch distribution",
+    "three complete external provider trials for the manuscript-only comparator"
+  ],
+  "evidence_boundary": "This record establishes a closed, hash-bound, reviewer-ready local handoff contract for 20 opaque source tasks. It does not establish human review, reviewer identity or independence, label validity, redistribution permission, accepted normalization, clean-base eligibility, confirmatory execution, or paper-scale empirical results."
+}

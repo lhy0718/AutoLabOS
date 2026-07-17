@@ -319,17 +319,26 @@ real-world operator identities. The frozen hashes, selection rules, exclusions,
 and evidence ceiling are recorded in
 `docs/research/evidence/promotion-source-acquisition-v3.json`.
 
-The 20 annotation packs were subsequently assembled into one closed reviewer
-batch containing 20 opaque tasks and 343 hash-bound outputs. Its reviewer
-directory occupies 159,120,555 bytes. Self-inspection reproduced the manifest,
-task, common-rubric, and reviewer-artifact-tree hashes and found neither the
-current machine path nor the controller-private map in the reviewer directory.
-The artifact copies preserve source-native upstream paths exactly because
-changing those bytes would invalidate the source evidence; this is an
+The 20 annotation packs were subsequently reassembled into the v2 closed
+reviewer handoff containing 20 opaque tasks and 344 hash-bound reviewer
+outputs. Its reviewer directory occupies 159,135,380 bytes. The batch now
+binds a runtime-owned JSON Schema and reviewer guide in addition to the common
+rubric and projected artifacts. The schema distinguishes complete observations
+from insufficient source evidence; the latter uses null scalar fields and empty
+collections rather than fabricated sentinel values. Reviewer preflight rejects
+altered contract files and records their hashes. Self-inspection reproduced all
+manifest and output hashes and found neither a controller-private map nor a
+label file in the reviewer directory. The earlier v1 handoff now fails the v2
+contract because it lacks the schema and guide and exposes the stale field
+contract; it remains historical acquisition evidence rather than a distributable
+review packet. The artifact copies preserve source-native upstream paths exactly
+because changing those bytes would invalidate the source evidence; this is an
 additional reason to keep the batch local until license and privacy review are
-complete. No human annotation has been imported, and the closed packaging does
-not establish reviewer independence, accepted normalization, clean execution
-evidence, or confirmatory eligibility.
+complete. No human annotation has been imported. The closed packaging therefore
+does not establish reviewer independence, accepted normalization, clean
+execution evidence, or confirmatory eligibility. Exact hashes and the remaining
+evidence boundary are recorded in
+`docs/research/evidence/promotion-review-handoff-v2.json`.
 
 ### Confirmatory Decision Boundary
 
