@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "public-trace-candidate-handoff-v7",
+  "source_url": "https://github.com/q-hwang/MLAgentBench_logs",
+  "source_revision": "c64f182c348d85de6eff735eaa21b7e1c4976545",
+  "path_scope": "final_exp_logs",
+  "path_pattern": "^final_exp_logs/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/env_log/trace\\.json$",
+  "required_base_count": 72,
+  "trials_per_base": 3,
+  "artifact_format": "json",
+  "selection_policy": "Lexical Git-tree path selection followed by balanced operator and source-family round robin before artifact-content inspection. Duplicate Git objects are excluded before grouping. Privacy failure aborts the handoff without candidate replacement.",
+  "materialization_mode": "verified_https_blobs",
+  "artifact_url_template": "https://raw.githubusercontent.com/q-hwang/MLAgentBench_logs/{revision}/{path}"
+}

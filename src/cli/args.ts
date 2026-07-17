@@ -45,7 +45,7 @@ export type CliAction =
   | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; mutationAuditReportPath?: string; outDir: string }
   | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
   | { kind: "governance-benchmark-audit-promotion-source-expansion"; inventoryPath: string; outDir: string }
-  | { kind: "governance-benchmark-export-promotion-trial-candidates"; recipePath: string; outDir: string }
+  | { kind: "governance-benchmark-export-promotion-trial-candidates"; recipePath: string; repositoryRoot: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-worksheet"; handoffRoot: string; annotatorId: string; outputPath: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-license-worksheet"; handoffRoot: string; reviewerId: string; outputPath: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; reviewerRoot: string; annotationPath: string; outDir: string }
@@ -403,22 +403,29 @@ export function resolveCliAction(args: string[]): CliAction {
     }
     if (subcommand === "export-promotion-trial-candidates") {
       let recipePath: string | undefined;
+      let repositoryRoot: string | undefined;
       let outDir: string | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token !== "--recipe" && token !== "--out-dir") {
+        if (token !== "--recipe" && token !== "--repository-root" && token !== "--out-dir") {
           return { kind: "error", message: `Unsupported governance-benchmark export-promotion-trial-candidates argument: ${token}` };
         }
         const value = args[index + 1];
         if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
         if (token === "--recipe") recipePath = value;
+        else if (token === "--repository-root") repositoryRoot = value;
         else outDir = value;
         index += 1;
       }
-      if (!recipePath || !outDir) {
-        return { kind: "error", message: "Missing required arguments: --recipe and --out-dir are required." };
+      if (!recipePath || !repositoryRoot || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --recipe, --repository-root, and --out-dir are required." };
       }
-      return { kind: "governance-benchmark-export-promotion-trial-candidates", recipePath, outDir };
+      return {
+        kind: "governance-benchmark-export-promotion-trial-candidates",
+        recipePath,
+        repositoryRoot,
+        outDir
+      };
     }
     if (subcommand === "prepare-promotion-trial-candidate-worksheet") {
       let handoffRoot: string | undefined;

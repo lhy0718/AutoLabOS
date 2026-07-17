@@ -528,6 +528,7 @@ export async function runPromotionTrialCandidateHandoffExportCli(
       `Reviewer packet: ${result.reviewer_dir}`,
       `License-review packet: ${result.license_reviewer_dir}`,
       `Controller map: ${result.controller_map_path}`,
+      `Portable source recipe: ${result.source_recipe_path}`,
       `Manifest: ${result.manifest_path}`,
       `Evidence summary: ${result.evidence_summary_path}`,
       "Evidence boundary: revision-bound three-trial candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"

@@ -36,6 +36,7 @@ export const PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP = "controller/trial-candid
 export const PROMOTION_TRIAL_CANDIDATE_TASKS = "reviewer/candidate-tasks.jsonl";
 export const PROMOTION_TRIAL_CANDIDATE_GUIDE = "reviewer/REVIEWER_GUIDE.md";
 export const PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY = "trial-candidate-evidence.json";
+export const PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE = "trial-candidate-source-recipe.json";
 export const PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST = "reviewer-packet-manifest.json";
 export const PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST = "license-packet-manifest.json";
 
@@ -50,6 +51,7 @@ const EMPTY_GIT_BLOB_SHA1 = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
 export interface ExportPromotionTrialCandidateHandoffInput {
   cwd: string;
   recipePath: string;
+  repositoryRoot: string;
   outDir: string;
   fetchImpl?: typeof fetch;
 }
@@ -62,6 +64,7 @@ export interface ExportPromotionTrialCandidateHandoffResult {
   reviewer_dir: string;
   license_reviewer_dir: string;
   controller_map_path: string;
+  source_recipe_path: string;
   manifest_path: string;
   evidence_summary_path: string;
 }
@@ -91,6 +94,7 @@ export interface PromotionTrialCandidateHandoffManifest {
   selection_pre_content: true;
   source_materialization: "git_archive" | "verified_https_blobs";
   recipe_sha256: string;
+  source_recipe_path: string;
   matched_trial_artifact_count: number;
   empty_blob_exclusion_count: number;
   duplicate_blob_exclusion_count: number;
@@ -196,7 +200,6 @@ interface PromotionTrialCandidateRecipe {
   handoff_id: string;
   source_url: string;
   source_revision: string;
-  repository_root: string;
   path_scope: string;
   path_pattern: string;
   required_base_count: number;
@@ -259,13 +262,16 @@ export async function exportPromotionTrialCandidateHandoff(
   const cwd = path.resolve(input.cwd);
   const recipePath = path.resolve(cwd, input.recipePath);
   const outDir = path.resolve(cwd, input.outDir);
+  if (!nonEmptyString(input.repositoryRoot)) {
+    throw new Error("Promotion trial-candidate export requires a separate local repository root.");
+  }
   if (await pathExists(outDir)) {
     throw new Error(`Promotion trial-candidate handoff already exists: ${portableRef(cwd, outDir)}`);
   }
 
   const recipeBytes = await fs.readFile(recipePath);
   const recipe = parseRecipe(JSON.parse(recipeBytes.toString("utf8")) as unknown);
-  const repositoryRoot = path.resolve(cwd, recipe.repository_root);
+  const repositoryRoot = path.resolve(cwd, input.repositoryRoot);
   await assertPinnedRepository(repositoryRoot, recipe.source_url, recipe.source_revision);
   const discovery = await discoverCandidates(repositoryRoot, recipe);
   const selection = selectBalancedBases(discovery.candidates, recipe.required_base_count);
@@ -281,6 +287,11 @@ export async function exportPromotionTrialCandidateHandoff(
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
   try {
+    await writeJsonFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE), recipe);
+    const recipeSha256 = await hashContainedRegularFile(
+      stagingRoot,
+      PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE
+    );
     const sourceArchiveRoot = path.join(stagingRoot, ".source-archive");
     await materializeSelectedArtifacts(
       repositoryRoot,
@@ -491,7 +502,8 @@ export async function exportPromotionTrialCandidateHandoff(
       selection_policy: recipe.selection_policy,
       selection_pre_content: true,
       source_materialization: recipe.materialization_mode,
-      recipe_sha256: sha256(recipeBytes),
+      recipe_sha256: recipeSha256,
+      source_recipe_path: PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE,
       matched_trial_artifact_count: discovery.matchedTrialArtifactCount,
       empty_blob_exclusion_count: discovery.emptyBlobExclusionCount,
       duplicate_blob_exclusion_count: selection.duplicateBlobExclusionCount,
@@ -536,6 +548,7 @@ export async function exportPromotionTrialCandidateHandoff(
     reviewer_dir: portableRef(cwd, path.join(outDir, "reviewer")),
     license_reviewer_dir: portableRef(cwd, path.join(outDir, "license")),
     controller_map_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP)),
+    source_recipe_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE)),
     manifest_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)),
     evidence_summary_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY))
   };
@@ -579,6 +592,27 @@ export async function inspectPromotionTrialCandidateHandoff(
     if (observedHash !== output.sha256) {
       issues.push({ code: "trial_candidate_handoff_output_hash_mismatch", message: "A handoff output hash changed.", ref: output.path });
     }
+  }
+  try {
+    const recipe = parseRecipe(JSON.parse(await fs.readFile(
+      path.join(root, manifest.source_recipe_path),
+      "utf8"
+    )) as unknown);
+    const recipeHash = await hashContainedRegularFile(root, manifest.source_recipe_path);
+    if (recipeHash !== manifest.recipe_sha256
+        || recipe.handoff_id !== manifest.handoff_id
+        || recipe.source_url !== manifest.source_url
+        || recipe.source_revision !== manifest.source_revision
+        || recipe.selection_policy !== manifest.selection_policy
+        || recipe.materialization_mode !== manifest.source_materialization
+        || recipe.required_base_count !== manifest.required_base_candidate_count
+        || recipe.trials_per_base !== manifest.trials_per_base) throw new Error("mismatch");
+  } catch {
+    issues.push({
+      code: "trial_candidate_handoff_source_recipe_invalid",
+      message: "The portable source recipe is missing, changed, machine-bound, or inconsistent with the handoff manifest.",
+      ref: manifest.source_recipe_path
+    });
   }
   if (manifest.base_candidate_count !== manifest.candidates.length
       || manifest.trial_artifact_count !== manifest.candidates.reduce((sum, candidate) => sum + candidate.trials.length, 0)) {
@@ -886,7 +920,21 @@ export async function inspectPromotionTrialCandidateLicensePacket(
 function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
   if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.handoff_id)
       || !validHttpsUrl(value.source_url) || !sha1String(value.source_revision)
-      || !nonEmptyString(value.repository_root) || !safeRelativePath(value.path_scope)
+      || Object.keys(value).some((key) => ![
+        "schema_version",
+        "handoff_id",
+        "source_url",
+        "source_revision",
+        "path_scope",
+        "path_pattern",
+        "required_base_count",
+        "trials_per_base",
+        "artifact_format",
+        "selection_policy",
+        "materialization_mode",
+        "artifact_url_template"
+      ].includes(key))
+      || !safeRelativePath(value.path_scope)
       || !nonEmptyString(value.path_pattern)
       || value.required_base_count !== MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
       || value.trials_per_base !== TRIALS_PER_BASE || value.artifact_format !== "json"
@@ -909,12 +957,14 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
   if (materializationMode === "verified_https_blobs" && !validArtifactUrlTemplate(value.artifact_url_template)) {
     throw new Error("Verified HTTPS materialization requires an HTTPS artifact_url_template with one {revision} and one {path} placeholder.");
   }
+  if (materializationMode === "git_archive" && value.artifact_url_template !== undefined) {
+    throw new Error("Git-archive materialization must not declare an artifact_url_template.");
+  }
   return {
     schema_version: "1.0",
     handoff_id: value.handoff_id,
     source_url: value.source_url,
     source_revision: value.source_revision,
-    repository_root: value.repository_root,
     path_scope: value.path_scope,
     path_pattern: value.path_pattern,
     required_base_count: value.required_base_count,
@@ -934,6 +984,7 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
       || !nonEmptyString(value.selection_policy) || value.selection_pre_content !== true
       || (value.source_materialization !== "git_archive" && value.source_materialization !== "verified_https_blobs")
       || !sha256String(value.recipe_sha256) || !nonNegativeInteger(value.matched_trial_artifact_count)
+      || value.source_recipe_path !== PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE
       || !nonNegativeInteger(value.empty_blob_exclusion_count) || !nonNegativeInteger(value.duplicate_blob_exclusion_count)
       || !nonNegativeInteger(value.unique_eligible_trial_artifact_count)
       || !Number.isSafeInteger(value.required_base_candidate_count)
@@ -962,6 +1013,7 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
     selection_pre_content: true,
     source_materialization: value.source_materialization,
     recipe_sha256: value.recipe_sha256,
+    source_recipe_path: PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE,
     matched_trial_artifact_count: value.matched_trial_artifact_count,
     empty_blob_exclusion_count: value.empty_blob_exclusion_count,
     duplicate_blob_exclusion_count: value.duplicate_blob_exclusion_count,

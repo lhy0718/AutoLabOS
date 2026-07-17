@@ -12,6 +12,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST,
   PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST,
+  PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE,
   exportPromotionTrialCandidateHandoff,
   inspectPromotionTrialCandidateHandoff,
   inspectPromotionTrialCandidateLicensePacket,
@@ -114,7 +115,6 @@ describe("promotion trial-candidate handoff", () => {
   it("exports a balanced 72-base, three-trial opaque reviewer handoff", async () => {
     const recipePath = path.join(workspace, "recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
@@ -122,6 +122,7 @@ describe("promotion trial-candidate handoff", () => {
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "recipe.json",
+      repositoryRoot,
       outDir: "handoff"
     });
     const manifest = JSON.parse(await readFile(
@@ -138,6 +139,10 @@ describe("promotion trial-candidate handoff", () => {
       result.license_reviewer_dir,
       PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST
     ), "utf8")) as Record<string, any>;
+    const portableRecipeText = await readFile(path.join(
+      workspace,
+      result.source_recipe_path
+    ), "utf8");
 
     expect(result).toMatchObject({
       base_candidate_count: 72,
@@ -145,6 +150,7 @@ describe("promotion trial-candidate handoff", () => {
       reviewer_dir: "handoff/reviewer",
       license_reviewer_dir: "handoff/license",
       controller_map_path: `handoff/${PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP}`,
+      source_recipe_path: `handoff/${PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE}`,
       evidence_summary_path: `handoff/${PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY}`
     });
     expect(manifest).toMatchObject({
@@ -169,8 +175,15 @@ describe("promotion trial-candidate handoff", () => {
     });
     expect(manifest.largest_source_family_share).toBeLessThanOrEqual(0.5);
     expect(manifest.largest_operator_group_share).toBeLessThanOrEqual(0.5);
+    expect(manifest.source_recipe_path).toBe(PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE);
+    expect(manifest.outputs).toContainEqual({
+      path: PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE,
+      sha256: manifest.recipe_sha256
+    });
     expect(JSON.stringify(manifest)).not.toContain("operator-a");
     expect(JSON.stringify(manifest)).not.toContain("family-a");
+    expect(portableRecipeText).not.toContain("repository_root");
+    expect(portableRecipeText).not.toContain(repositoryRoot);
     expect(reviewerPacketManifest).toMatchObject({
       packet_role: "initial_candidate_review",
       candidate_count: 72,
@@ -218,7 +231,6 @@ describe("promotion trial-candidate handoff", () => {
   it("rejects a source route with fewer than three operator groups", async () => {
     const recipePath = path.join(workspace, "two-operator-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision,
       pathPattern: "^records/(?<operator>operator-[ab])/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
@@ -226,6 +238,7 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "two-operator-recipe.json",
+      repositoryRoot,
       outDir: "invalid-handoff"
     })).rejects.toThrow("at least three source families and three operator groups");
   });
@@ -233,7 +246,6 @@ describe("promotion trial-candidate handoff", () => {
   it("rejects a recipe whose source URL does not match the Git origin", async () => {
     const recipePath = path.join(workspace, "wrong-origin-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       sourceUrl: "https://example.org/different-repository"
@@ -242,14 +254,64 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "wrong-origin-recipe.json",
+      repositoryRoot,
       outDir: "wrong-origin-handoff"
     })).rejects.toThrow("does not match the repository origin");
+  });
+
+  it("rejects machine-local repository paths inside a portable source recipe", async () => {
+    const recipePath = path.join(workspace, "machine-bound-recipe.json");
+    await writeRecipe(recipePath, {
+      revision,
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+    });
+    const recipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, unknown>;
+    recipe.repository_root = repositoryRoot;
+    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8");
+
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "machine-bound-recipe.json",
+      repositoryRoot,
+      outDir: "machine-bound-handoff"
+    })).rejects.toThrow("portable source metadata");
+  });
+
+  it("requires the machine-local clone as a separate runtime input", async () => {
+    const recipePath = path.join(workspace, "missing-runtime-root-recipe.json");
+    await writeRecipe(recipePath, {
+      revision,
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+    });
+
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "missing-runtime-root-recipe.json",
+      repositoryRoot: "",
+      outDir: "missing-runtime-root-handoff"
+    })).rejects.toThrow("separate local repository root");
+  });
+
+  it("rejects an artifact URL template for Git-archive materialization", async () => {
+    const recipePath = path.join(workspace, "git-archive-url-recipe.json");
+    await writeRecipe(recipePath, {
+      revision,
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
+      materializationMode: "git_archive",
+      artifactUrlTemplate: "https://example.org/{revision}/{path}"
+    });
+
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "git-archive-url-recipe.json",
+      repositoryRoot,
+      outDir: "git-archive-url-handoff"
+    })).rejects.toThrow("must not declare an artifact_url_template");
   });
 
   it("materializes HTTPS blobs only when their bytes match the selected Git objects", async () => {
     const recipePath = path.join(workspace, "https-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       materializationMode: "verified_https_blobs",
@@ -266,6 +328,7 @@ describe("promotion trial-candidate handoff", () => {
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "https-recipe.json",
+      repositoryRoot,
       outDir: "https-handoff",
       fetchImpl
     });
@@ -283,7 +346,6 @@ describe("promotion trial-candidate handoff", () => {
   it("rejects HTTPS artifact bytes that do not match the selected Git object", async () => {
     const recipePath = path.join(workspace, "https-mismatch-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       materializationMode: "verified_https_blobs",
@@ -294,6 +356,7 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "https-mismatch-recipe.json",
+      repositoryRoot,
       outDir: "https-mismatch-handoff",
       fetchImpl
     })).rejects.toThrow("does not match its Git object ID");
@@ -302,7 +365,6 @@ describe("promotion trial-candidate handoff", () => {
   it("fails closed when a preselected trace contains a credential-like JSON field", async () => {
     const recipePath = path.join(workspace, "credential-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision: credentialRevision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
@@ -310,6 +372,7 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "credential-recipe.json",
+      repositoryRoot,
       outDir: "credential-handoff"
     })).rejects.toThrow("credential-like");
     await expect(access(path.join(workspace, "credential-handoff"))).rejects.toThrow();
@@ -318,7 +381,6 @@ describe("promotion trial-candidate handoff", () => {
   it("keeps the preselected trace while deterministically redacting a private machine path", async () => {
     const recipePath = path.join(workspace, "private-path-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision: privatePathRevision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
@@ -326,6 +388,7 @@ describe("promotion trial-candidate handoff", () => {
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "private-path-recipe.json",
+      repositoryRoot,
       outDir: "private-path-handoff"
     });
     const manifest = JSON.parse(await readFile(path.join(workspace, result.manifest_path), "utf8")) as Record<string, any>;
@@ -351,7 +414,6 @@ describe("promotion trial-candidate handoff", () => {
   it("excludes empty Git blobs before content inspection and accounts for them", async () => {
     const recipePath = path.join(workspace, "empty-blob-recipe.json");
     await writeRecipe(recipePath, {
-      repositoryRoot,
       revision: emptyRevision,
       pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
@@ -359,6 +421,7 @@ describe("promotion trial-candidate handoff", () => {
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "empty-blob-recipe.json",
+      repositoryRoot,
       outDir: "empty-blob-handoff"
     });
     const manifest = JSON.parse(await readFile(path.join(workspace, result.manifest_path), "utf8"));
@@ -725,6 +788,27 @@ describe("promotion trial-candidate handoff", () => {
     ]));
   });
 
+  it("detects portable source recipe tampering", async () => {
+    const handoffRoot = path.join(workspace, "tampered-source-recipe-handoff");
+    await cp(path.join(workspace, "handoff"), handoffRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const recipePath = path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE);
+    const recipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, unknown>;
+    recipe.selection_policy = "changed-after-export";
+    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8");
+
+    const inspection = await inspectPromotionTrialCandidateHandoff(handoffRoot);
+
+    expect(inspection.passed).toBe(false);
+    expect(inspection.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "trial_candidate_handoff_output_hash_mismatch",
+      "trial_candidate_handoff_source_recipe_invalid"
+    ]));
+  });
+
   it("detects reviewer artifact tampering", async () => {
     const handoffRoot = path.join(workspace, "handoff");
     const manifest = JSON.parse(await readFile(
@@ -748,7 +832,6 @@ describe("promotion trial-candidate handoff", () => {
 async function writeRecipe(
   target: string,
   input: {
-    repositoryRoot: string;
     revision: string;
     pathPattern: string;
     sourceUrl?: string;
@@ -761,7 +844,6 @@ async function writeRecipe(
     handoff_id: "candidate-handoff-neutral",
     source_url: input.sourceUrl || "https://example.org/source-repository",
     source_revision: input.revision,
-    repository_root: input.repositoryRoot,
     path_scope: "records",
     path_pattern: input.pathPattern,
     required_base_count: 72,

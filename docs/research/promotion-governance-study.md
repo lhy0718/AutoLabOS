@@ -423,8 +423,12 @@ requires or reads the controller handoff. Both isolated paths were exercised
 with machine-prepared incomplete worksheets and failed closed before any human
 judgment was recorded. AutoLabOS validates submitted inputs but does not
 generate human labels or convert a review into a legal grant. The generated
-evidence record is
-`docs/research/evidence/promotion-trial-candidate-handoff-v6.json`.
+handoff also preserves its normalized source-selection recipe as a hash-bound
+output. The portable input is
+`docs/research/evidence/promotion-trial-candidate-source-v7.json`; the
+machine-local pinned clone path is supplied separately at execution time and is
+not part of the recipe or its hash. The generated evidence record is
+`docs/research/evidence/promotion-trial-candidate-handoff-v7.json`.
 
 This result closes only the numerical trace-candidate floor. The source license
 has not received human review, the two independent candidate annotations have
