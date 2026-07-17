@@ -354,7 +354,10 @@ export async function adjudicatePromotionBenchmark(
     source_diversity_status: loaded.suite.manifest.source_diversity_status,
     cases: adjudicatedCases,
     adjudication_complete: passed,
-    mutation_isolation_verified: mutationIsolationVerified
+    mutation_isolation_verified: mutationIsolationVerified,
+    confirmatory_freeze_verified:
+      loaded.suite.manifest.confirmatory_freeze_provenance?.intake_tier === "paper_scale"
+      && Boolean(loaded.suite.manifest.confirmatory_freeze_provenance.candidate_review)
   });
   const labelRows = passed
     ? privateMap.entries.map((entry) => {
@@ -559,7 +562,8 @@ function adjudicationRepairTarget(code: string): "run_experiments" | "design_exp
       || code === "operator_group_share_exceeded"
       || code === "paired_fault_family_coverage_incomplete"
       || code === "clean_control_outcome_coverage_incomplete"
-      || code === "mutation_isolation_not_double_verified") {
+      || code === "mutation_isolation_not_double_verified"
+      || code === "confirmatory_freeze_not_verified") {
     return "design_experiments";
   }
   return "review";
@@ -572,6 +576,7 @@ export function evaluatePromotionAdjudicationEligibility(input: {
   cases: PromotionBenchmarkCaseManifest[];
   adjudication_complete: boolean;
   mutation_isolation_verified: boolean;
+  confirmatory_freeze_verified?: boolean;
 }): PromotionAdjudicationEligibility {
   const blockers: PromotionEligibilityBlocker[] = [];
   const baseIds = [...new Set(input.cases.map((benchmarkCase) => benchmarkCase.base_bundle_id))];
@@ -583,6 +588,12 @@ export function evaluatePromotionAdjudicationEligibility(input: {
     blockers.push({
       code: "mutation_isolation_double_audit_incomplete",
       message: "Every mutated case requires two independent isolation audits with no confounded mutation."
+    });
+  }
+  if (!input.confirmatory_freeze_verified) {
+    blockers.push({
+      code: "confirmatory_freeze_not_verified",
+      message: "Paper eligibility requires a hash-bound paper-scale confirmatory freeze and candidate-review receipt."
     });
   }
   if (input.evidence_class !== "external_real_run") {

@@ -50,6 +50,7 @@ describe("promotion confirmatory intake", () => {
       execution_provenance_status: string;
       source_diversity_status: string;
       cases: Array<{
+        case_id: string;
         base_bundle_id: string;
         split: string;
         source_family_id_sha256: string;
@@ -127,11 +128,42 @@ describe("promotion confirmatory intake", () => {
     const built = await buildPromotionBenchmarkSuite({
       cwd: workspace,
       recipePath: frozen.recipe_path,
+      freezeManifestPath: frozen.freeze_manifest_path,
       outDir: "suite"
     });
     const loaded = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
     expect(loaded.issues).toEqual([]);
     expect(loaded.suite?.cases).toHaveLength(200);
+    expect(loaded.suite?.manifest.confirmatory_freeze_provenance).toMatchObject({
+      method: "verified_confirmatory_freeze",
+      study_id: "promotion-confirmatory-test",
+      intake_tier: "provisional",
+      base_bundle_count: 20,
+      case_count: 200,
+      candidate_review: null
+    });
+    const faultCase = recipe.cases.find((item) => item.mutation_family);
+    if (!faultCase) throw new Error("Frozen fixture is missing a fault case.");
+    const mutationPath = path.join(workspace, "suite", "provenance", faultCase.case_id + ".json");
+    const mutationText = await readFile(mutationPath, "utf8");
+    const mutation = JSON.parse(mutationText) as {
+      operations: Array<{ operation: { path: string } }>;
+    };
+    mutation.operations[0].operation.path = "different-artifact.json";
+    await writeFile(mutationPath, JSON.stringify(mutation), "utf8");
+    const mutationTampered = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
+    expect(mutationTampered.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_case_binding_mismatch"
+    );
+    await writeFile(mutationPath, mutationText, "utf8");
+
+    const undeclaredEvidencePath = path.join(workspace, "suite", "confirmatory-freeze", "undeclared.json");
+    await writeFile(undeclaredEvidencePath, "{}", "utf8");
+    const undeclaredEvidence = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
+    expect(undeclaredEvidence.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_evidence_set_not_closed"
+    );
+    await rm(undeclaredEvidencePath);
     const eligibility = evaluatePromotionAdjudicationEligibility({
       evidence_class: loaded.suite?.manifest.evidence_class,
       execution_provenance_status: loaded.suite?.manifest.execution_provenance_status,
@@ -143,8 +175,29 @@ describe("promotion confirmatory intake", () => {
     expect(eligibility.paper_claim_eligible).toBe(false);
     expect(eligibility.blockers.map((blocker) => blocker.code)).toEqual(expect.arrayContaining([
       "double_adjudication_incomplete",
+      "confirmatory_freeze_not_verified",
       "clean_control_outcome_coverage_incomplete"
     ]));
+
+    const mismatchedFreezePath = path.join(workspace, "frozen", "mismatched-freeze.json");
+    await writeFile(
+      mismatchedFreezePath,
+      JSON.stringify({ ...freezeManifest, recipe_sha256: "0".repeat(64) }),
+      "utf8"
+    );
+    await expect(buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: frozen.recipe_path,
+      freezeManifestPath: mismatchedFreezePath,
+      outDir: "mismatched-suite"
+    })).rejects.toThrow("confirmatory_freeze_manifest_contract_invalid");
+
+    const copiedRecipePath = path.join(workspace, "suite", "confirmatory-freeze", "recipe.json");
+    await writeFile(copiedRecipePath, recipeText + "\n", "utf8");
+    const tampered = await loadPromotionBenchmarkSuite(path.join(workspace, built.suite_path));
+    expect(tampered.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_manifest_contract_invalid"
+    );
   }, 30_000);
 
   it("rejects an intake below the base-bundle minimum without creating output", async () => {

@@ -278,6 +278,17 @@ recorded in
   exactly once and match the case gold values. The source-suite snapshot hash
   remains a receipt for the pre-adjudication suite; status fields alone do not
   establish lineage.
+- Require paper-scale suite construction to receive the exact
+  `frozen-intake-manifest.json` alongside its hash-bound recipe. Preserve both
+  files inside a closed suite-local evidence directory and bind the study,
+  intake tier, candidate-review receipt, source execution/curation receipts,
+  base/case counts, fault-family coverage, immutable case fields, and exact
+  mutation operations. A general builder run without this evidence may produce
+  a development suite but cannot satisfy paper eligibility.
+- Treat the original confirmatory suite and post-repair suite as different
+  evidence roles. The original must remain paper-claim-eligible and freeze-bound;
+  the repaired suite is artifact-verified recovery evidence and must not be
+  promoted as an independently frozen paper claim.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
   independent adjudication importer may replace labels or change eligibility.
 

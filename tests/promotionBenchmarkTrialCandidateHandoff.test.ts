@@ -55,6 +55,9 @@ import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
+import {
+  inspectPromotionConfirmatoryFreezeEvidence
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1142,6 +1145,20 @@ describe("promotion trial-candidate handoff", () => {
       intake_tier: "paper_scale",
       base_bundle_count: 72,
       case_count: 720
+    });
+    const freezeInspection = await inspectPromotionConfirmatoryFreezeEvidence({
+      freezeManifestPath: path.join(workspace, frozen.freeze_manifest_path),
+      recipePath: path.join(workspace, frozen.recipe_path)
+    });
+    expect(freezeInspection.issues).toEqual([]);
+    expect(freezeInspection.provenance).toMatchObject({
+      method: "verified_confirmatory_freeze",
+      intake_tier: "paper_scale",
+      base_bundle_count: 72,
+      case_count: 720,
+      candidate_review: {
+        source_eligible_candidate_count: 72
+      }
     });
 
     const labelTamperedRoot = path.join(workspace, "label-tampered-adjudication");

@@ -12,6 +12,10 @@ import {
   type PromotionBenchmarkPrediction
 } from "../src/core/benchmark/promotionBenchmark.js";
 import { evaluatePromotionBenchmarkRecovery } from "../src/core/benchmark/promotionBenchmarkRecovery.js";
+import {
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  REQUIRED_CONFIRMATORY_MUTATION_FAMILIES
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
 import { PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 
@@ -30,14 +34,15 @@ describe("promotion benchmark recovery", () => {
       outDir: "recovery-output"
     });
 
+    expect(result.report.issues).toEqual([]);
     expect(result.report).toMatchObject({
       passed: true,
-      original_base_bundle_count: 3,
-      clean_control_base_bundle_count: 3,
+      original_base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+      clean_control_base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       fault_repair_pair_count: 9,
       successful_recovery_count: 9,
       successful_recovery_rate: 1,
-      clean_control_pair_count: 3,
+      clean_control_pair_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       clean_control_regression_count: 0,
       clean_control_regression_rate: 0,
       missing_fault_families: []
@@ -179,8 +184,17 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     }
   }
 
-  await writeSuite(workspace, "original", "confirmatory-study", originalCases);
-  await writeSuite(workspace, "repaired", "confirmatory-study-repaired", repairedCases);
+  await completePaperScaleOriginalFixture({
+    workspace,
+    originalCases,
+    repairedCases,
+    originalPredictions,
+    repairedPredictions,
+    pairs,
+    variants
+  });
+  await writeSuite(workspace, "original", "confirmatory-study", originalCases, true);
+  await writeSuite(workspace, "repaired", "confirmatory-study-repaired", repairedCases, false);
   await writePredictions(path.join(workspace, "original-predictions.jsonl"), originalPredictions);
   await writePredictions(path.join(workspace, "repaired-predictions.jsonl"), repairedPredictions);
   await writeSystemRunManifest({
@@ -214,6 +228,98 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     pairs
   }));
   return { workspace };
+}
+
+async function completePaperScaleOriginalFixture(input: {
+  workspace: string;
+  originalCases: PromotionBenchmarkCaseManifest[];
+  repairedCases: PromotionBenchmarkCaseManifest[];
+  originalPredictions: PromotionBenchmarkPrediction[];
+  repairedPredictions: PromotionBenchmarkPrediction[];
+  pairs: Array<Record<string, unknown>>;
+  variants: ReturnType<typeof promotionVariantDefinitions>;
+}
+): Promise<void> {
+  for (
+    let baseIndex = 0;
+    baseIndex < MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES;
+    baseIndex += 1
+  ) {
+    const baseId = "base-" + baseIndex;
+    const sourceSha = sha256("source-" + baseIndex);
+    const familySha = sha256("family-" + baseIndex);
+    const operatorSha = sha256("operator-" + baseIndex);
+    const existing = input.originalCases.filter((benchmarkCase) => benchmarkCase.base_bundle_id === baseId);
+    const artifact = await writeCaseArtifact(
+      input.workspace,
+      "original",
+      "paper-scale-base-" + baseIndex,
+      { base_id: baseId, state: "frozen-source" }
+    );
+    if (!existing.some((benchmarkCase) => !benchmarkCase.mutation_family)) {
+      const clean = makeCase({
+        caseId: "paper-scale-clean-" + baseIndex,
+        baseId,
+        artifactRoot: artifact.root,
+        artifactSha: artifact.sha,
+        sourceSha,
+        familySha,
+        operatorSha,
+        gold: input.variants[0].gold
+      });
+      input.originalCases.push(clean);
+      input.originalPredictions.push(predictionFromGold(clean, "original-trial"));
+    }
+    for (const family of REQUIRED_CONFIRMATORY_MUTATION_FAMILIES) {
+      if (existing.some((benchmarkCase) => benchmarkCase.mutation_family === family)) continue;
+      const variant = input.variants.find((item) => item.mutation_family === family);
+      if (!variant) throw new Error("Missing recovery fixture variant: " + family);
+      const fault = makeCase({
+        caseId: `paper-scale-fault-${baseIndex}-${family}`,
+        baseId,
+        artifactRoot: artifact.root,
+        artifactSha: artifact.sha,
+        sourceSha,
+        familySha,
+        operatorSha,
+        mutationFamily: family,
+        gold: variant.gold
+      });
+      input.originalCases.push(fault);
+      input.originalPredictions.push(predictionFromGold(fault, "original-trial"));
+    }
+    if (!input.repairedCases.some((benchmarkCase) => benchmarkCase.base_bundle_id === baseId
+      && !benchmarkCase.mutation_family)) {
+      const repairedArtifact = await writeCaseArtifact(
+        input.workspace,
+        "repaired",
+        "paper-scale-repaired-clean-" + baseIndex,
+        { base_id: baseId, state: "frozen-source" }
+      );
+      const repairedClean = makeCase({
+        caseId: "paper-scale-repaired-clean-" + baseIndex,
+        baseId,
+        artifactRoot: repairedArtifact.root,
+        artifactSha: repairedArtifact.sha,
+        sourceSha,
+        familySha,
+        operatorSha,
+        gold: input.variants[0].gold
+      });
+      input.repairedCases.push(repairedClean);
+      input.repairedPredictions.push(predictionFromGold(repairedClean, "repaired-trial"));
+      const originalClean = input.originalCases.find((benchmarkCase) =>
+        benchmarkCase.base_bundle_id === baseId && !benchmarkCase.mutation_family);
+      if (!originalClean) throw new Error("Missing paper-scale original clean control.");
+      input.pairs.push({
+        pair_kind: "clean_control",
+        source_case_id: originalClean.case_id,
+        source_trial_id: "original-trial",
+        repaired_case_id: repairedClean.case_id,
+        repaired_trial_id: "repaired-trial"
+      });
+    }
+  }
 }
 
 async function writeCaseArtifact(
@@ -259,15 +365,52 @@ async function writeSuite(
   workspace: string,
   suiteRoot: string,
   suiteId: string,
-  cases: PromotionBenchmarkCaseManifest[]
+  cases: PromotionBenchmarkCaseManifest[],
+  paperClaimEligible: boolean
 ): Promise<void> {
   const caseDir = path.join(workspace, suiteRoot, "cases");
   await mkdir(caseDir, { recursive: true });
   const caseRefs: string[] = [];
+  const operationByFamily = new Map(promotionVariantDefinitions().flatMap((variant) =>
+    variant.mutation_family ? [[variant.mutation_family, variant.operations] as const] : []));
   for (const benchmarkCase of cases) {
     const ref = "cases/" + benchmarkCase.case_id + ".json";
     caseRefs.push(ref);
-    await writeFile(path.join(workspace, suiteRoot, ref), JSON.stringify(benchmarkCase));
+    const caseForWrite = paperClaimEligible
+      ? {
+          ...benchmarkCase,
+          mutation_manifest: "../provenance/" + benchmarkCase.case_id + ".json"
+        }
+      : benchmarkCase;
+    if (paperClaimEligible) {
+      const operations = benchmarkCase.mutation_family
+        ? operationByFamily.get(benchmarkCase.mutation_family) || []
+        : [];
+      const mutationPath = path.join(
+        workspace,
+        suiteRoot,
+        "provenance",
+        benchmarkCase.case_id + ".json"
+      );
+      await mkdir(path.dirname(mutationPath), { recursive: true });
+      await writeFile(mutationPath, JSON.stringify({
+        schema_version: "1.0",
+        case_id: benchmarkCase.case_id,
+        base_bundle_id: benchmarkCase.base_bundle_id,
+        source_sha256: benchmarkCase.source_sha256,
+        source_family_id_sha256: benchmarkCase.source_family_id_sha256,
+        operator_group_id_sha256: benchmarkCase.operator_group_id_sha256,
+        artifact_sha256: benchmarkCase.artifact_sha256,
+        ...(benchmarkCase.mutation_family ? { mutation_family: benchmarkCase.mutation_family } : {}),
+        operations: operations.map((operation, index) => ({
+          index: index + 1,
+          operation,
+          before_sha256: null,
+          after_sha256: null
+        }))
+      }));
+    }
+    await writeFile(path.join(workspace, suiteRoot, ref), JSON.stringify(caseForWrite));
   }
   const adjudicationRoot = path.join(workspace, suiteRoot, "adjudication");
   await mkdir(adjudicationRoot, { recursive: true });
@@ -285,15 +428,21 @@ async function writeSuite(
   await writeFile(path.join(adjudicationRoot, "initial-annotation-2.jsonl"), annotationTwoText);
   await writeFile(path.join(adjudicationRoot, "mutation-audit-report.json"), mutationAuditText);
   await writeFile(path.join(adjudicationRoot, "adjudicated-labels.jsonl"), labelsText);
+  const confirmatoryFreezeProvenance = paperClaimEligible
+    ? await writeConfirmatoryFreezeEvidence(workspace, suiteRoot, suiteId, cases)
+    : null;
   await writeFile(path.join(workspace, suiteRoot, "suite.json"), JSON.stringify({
     schema_version: "1.0",
     suite_id: suiteId,
     evidence_class: "external_real_run",
-    paper_claim_eligible: true,
+    paper_claim_eligible: paperClaimEligible,
     adjudication_status: "double_adjudicated",
     mutation_isolation_status: "double_verified",
     execution_provenance_status: "artifact_verified",
     source_diversity_status: "declared_stratified",
+    ...(confirmatoryFreezeProvenance
+      ? { confirmatory_freeze_provenance: confirmatoryFreezeProvenance }
+      : {}),
     adjudication_provenance: {
       schema_version: "1.0",
       method: "independent_double_adjudication",
@@ -315,6 +464,109 @@ async function writeSuite(
     },
     cases: caseRefs
   }));
+}
+
+async function writeConfirmatoryFreezeEvidence(
+  workspace: string,
+  suiteRoot: string,
+  suiteId: string,
+  cases: PromotionBenchmarkCaseManifest[]
+): Promise<Record<string, unknown>> {
+  const freezeRoot = path.join(workspace, suiteRoot, "confirmatory-freeze");
+  await mkdir(freezeRoot, { recursive: true });
+  const sourceByBase = new Map<string, PromotionBenchmarkCaseManifest>();
+  const operationByFamily = new Map(promotionVariantDefinitions().flatMap((variant) =>
+    variant.mutation_family ? [[variant.mutation_family, variant.operations] as const] : []));
+  for (const benchmarkCase of cases) {
+    if (!sourceByBase.has(benchmarkCase.base_bundle_id)) {
+      sourceByBase.set(benchmarkCase.base_bundle_id, benchmarkCase);
+    }
+  }
+  const recipe = {
+    schema_version: "1.0",
+    suite_id: suiteId,
+    evidence_class: "external_real_run",
+    paper_claim_eligible: false,
+    adjudication_status: "unreviewed",
+    mutation_isolation_status: "unreviewed",
+    execution_provenance_status: "artifact_verified",
+    source_diversity_status: "declared_stratified",
+    cases: cases.map((benchmarkCase) => ({
+      case_id: benchmarkCase.case_id,
+      base_bundle_id: benchmarkCase.base_bundle_id,
+      split: "test",
+      source_root: "base-bundles/" + benchmarkCase.base_bundle_id,
+      source_family_id_sha256: benchmarkCase.source_family_id_sha256,
+      operator_group_id_sha256: benchmarkCase.operator_group_id_sha256,
+      ...(benchmarkCase.mutation_family ? { mutation_family: benchmarkCase.mutation_family } : {}),
+      operations: benchmarkCase.mutation_family
+        ? operationByFamily.get(benchmarkCase.mutation_family) || []
+        : [],
+      gold: { decision: "needs_review", blocking_concerns: [], repair_owners: [] }
+    }))
+  };
+  const recipeText = JSON.stringify(recipe);
+  const recipeSha256 = hashText(recipeText);
+  const sourceRevision = "recovery-source-revision";
+  const sourceBundles = [...sourceByBase.values()].map((benchmarkCase) => ({
+    base_bundle_id: benchmarkCase.base_bundle_id,
+    source_sha256: benchmarkCase.source_sha256,
+    source_family_id_sha256: benchmarkCase.source_family_id_sha256,
+    operator_group_id_sha256: benchmarkCase.operator_group_id_sha256,
+    source_revision: sourceRevision,
+    origin_kind: "native",
+    candidate_id: "candidate-" + benchmarkCase.base_bundle_id,
+    canonical_curation_record_sha256: hashText("curation-" + benchmarkCase.base_bundle_id),
+    run_id_sha256: hashText("run-" + benchmarkCase.base_bundle_id),
+    execution_fingerprint: hashText("execution-" + benchmarkCase.base_bundle_id),
+    evidence_manifest_sha256: hashText("evidence-" + benchmarkCase.base_bundle_id),
+    license_sha256: hashText("license-" + benchmarkCase.base_bundle_id),
+    evidence_artifact_count: 1,
+    evidence_roles: ["run_record"],
+    copied_root: "base-bundles/" + benchmarkCase.base_bundle_id
+  }));
+  const freezeManifest = {
+    schema_version: "1.1",
+    study_id: suiteId,
+    intake_tier: "paper_scale",
+    evidence_class: "external_real_run",
+    paper_claim_eligible: false,
+    adjudication_status: "unreviewed",
+    mutation_isolation_status: "unreviewed",
+    execution_provenance_status: "artifact_verified",
+    source_diversity_status: "declared_stratified",
+    intake_manifest_sha256: hashText("recovery-intake"),
+    recipe_sha256: recipeSha256,
+    base_bundle_count: sourceBundles.length,
+    case_count: cases.length,
+    candidate_review: {
+      handoff_id: "recovery-handoff",
+      source_revision: sourceRevision,
+      handoff_manifest_sha256: hashText("recovery-handoff"),
+      adjudicated_labels_sha256: hashText("recovery-labels"),
+      review_evidence_sha256: hashText("recovery-review-evidence"),
+      source_eligible_candidate_count: sourceBundles.length
+    },
+    required_fault_families: REQUIRED_CONFIRMATORY_MUTATION_FAMILIES,
+    source_bundles: sourceBundles
+  };
+  const freezeText = JSON.stringify(freezeManifest);
+  await writeFile(path.join(freezeRoot, "recipe.json"), recipeText);
+  await writeFile(path.join(freezeRoot, "frozen-intake-manifest.json"), freezeText);
+  return {
+    schema_version: "1.0",
+    method: "verified_confirmatory_freeze",
+    study_id: suiteId,
+    intake_tier: "paper_scale",
+    freeze_manifest_ref: "confirmatory-freeze/frozen-intake-manifest.json",
+    freeze_manifest_sha256: hashText(freezeText),
+    recipe_ref: "confirmatory-freeze/recipe.json",
+    recipe_sha256: recipeSha256,
+    intake_manifest_sha256: freezeManifest.intake_manifest_sha256,
+    base_bundle_count: sourceBundles.length,
+    case_count: cases.length,
+    candidate_review: freezeManifest.candidate_review
+  };
 }
 
 function hashText(value: string): string {

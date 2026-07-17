@@ -278,11 +278,14 @@ describe("resolveCliAction", () => {
       "build-promotion",
       "--recipe",
       "benchmarks/promotion/recipe.json",
+      "--freeze-manifest",
+      "benchmarks/promotion/frozen-intake-manifest.json",
       "--out-dir",
       "outputs/promotion-suite"
     ])).toEqual({
       kind: "governance-benchmark-build-promotion",
       recipePath: "benchmarks/promotion/recipe.json",
+      freezeManifestPath: "benchmarks/promotion/frozen-intake-manifest.json",
       outDir: "outputs/promotion-suite"
     });
   });

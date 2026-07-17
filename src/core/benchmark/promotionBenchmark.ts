@@ -10,6 +10,11 @@ import {
   type PromotionBenchmarkSourceDiversityStatus
 } from "./promotionBenchmarkSourceDiversity.js";
 import { PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY } from "./promotionBenchmarkConfirmatoryContract.js";
+import {
+  inspectPromotionConfirmatoryFreezeEvidence,
+  parsePromotionConfirmatoryFreezeProvenance,
+  type PromotionConfirmatoryFreezeProvenance
+} from "./promotionBenchmarkConfirmatoryFreeze.js";
 
 export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "block"] as const;
 
@@ -46,6 +51,7 @@ export interface PromotionBenchmarkSuiteManifest {
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
+  confirmatory_freeze_provenance?: PromotionConfirmatoryFreezeProvenance;
   adjudication_provenance?: PromotionBenchmarkAdjudicationProvenance;
   cases: string[];
 }
@@ -231,6 +237,7 @@ export async function loadPromotionBenchmarkSuite(
 
   const cases: PromotionBenchmarkCaseManifest[] = [];
   const caseArtifactRoots: Record<string, string> = {};
+  const caseManifestRefs: Record<string, string> = {};
   const seenCaseIds = new Set<string>();
   for (const caseRef of manifest.cases) {
     const casePath = resolveContainedPath(suiteRoot, caseRef);
@@ -281,6 +288,7 @@ export async function loadPromotionBenchmarkSuite(
       }
     }
     caseArtifactRoots[benchmarkCase.case_id] = artifactRoot;
+    caseManifestRefs[benchmarkCase.case_id] = caseRef;
     cases.push(benchmarkCase);
   }
 
@@ -309,6 +317,16 @@ export async function loadPromotionBenchmarkSuite(
         splitBySourceHash.set(benchmarkCase.source_sha256, benchmarkCase.split);
       }
     }
+  }
+  if (manifest.confirmatory_freeze_provenance) {
+    await validateConfirmatoryFreezeEvidence(
+      suiteRoot,
+      manifest,
+      manifest.confirmatory_freeze_provenance,
+      cases,
+      caseManifestRefs,
+      issues
+    );
   }
   if (manifest.adjudication_provenance) {
     await validateAdjudicationEvidence(suiteRoot, manifest.adjudication_provenance, cases, issues);
@@ -1072,6 +1090,16 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     });
     return undefined;
   }
+  const confirmatoryFreezeProvenance = value.confirmatory_freeze_provenance === undefined
+    ? undefined
+    : parsePromotionConfirmatoryFreezeProvenance(value.confirmatory_freeze_provenance) || undefined;
+  if (value.confirmatory_freeze_provenance !== undefined && !confirmatoryFreezeProvenance) {
+    issues.push({
+      code: "suite_confirmatory_freeze_provenance_invalid",
+      message: "Suite confirmatory_freeze_provenance must bind a valid frozen intake manifest and recipe."
+    });
+    return undefined;
+  }
   if (value.paper_claim_eligible === true
       && (value.adjudication_status !== "double_adjudicated"
         || value.mutation_isolation_status !== "double_verified"
@@ -1091,6 +1119,16 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     });
     return undefined;
   }
+  if (value.paper_claim_eligible === true
+      && (!confirmatoryFreezeProvenance
+        || confirmatoryFreezeProvenance.intake_tier !== "paper_scale"
+        || !confirmatoryFreezeProvenance.candidate_review)) {
+    issues.push({
+      code: "suite_paper_claim_freeze_provenance_missing",
+      message: "Paper-claim-eligible suites require a hash-bound paper-scale confirmatory freeze."
+    });
+    return undefined;
+  }
   return {
     schema_version: "1.0",
     suite_id: value.suite_id,
@@ -1100,9 +1138,138 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
     ...(value.source_diversity_status ? { source_diversity_status: value.source_diversity_status } : {}),
+    ...(confirmatoryFreezeProvenance
+      ? { confirmatory_freeze_provenance: confirmatoryFreezeProvenance }
+      : {}),
     ...(adjudicationProvenance ? { adjudication_provenance: adjudicationProvenance } : {}),
     cases: stringArray(value.cases) || []
   };
+}
+
+async function validateConfirmatoryFreezeEvidence(
+  suiteRoot: string,
+  manifest: PromotionBenchmarkSuiteManifest,
+  provenance: PromotionConfirmatoryFreezeProvenance,
+  cases: PromotionBenchmarkCaseManifest[],
+  caseManifestRefs: Record<string, string>,
+  issues: PromotionBenchmarkValidationIssue[]
+): Promise<void> {
+  if (!await hasClosedConfirmatoryFreezeEvidence(suiteRoot)) {
+    issues.push({
+      code: "confirmatory_freeze_evidence_set_not_closed",
+      message: "The suite confirmatory-freeze directory must contain exactly the bound manifest and recipe as regular files."
+    });
+  }
+  const inspection = await inspectPromotionConfirmatoryFreezeEvidence({
+    freezeManifestPath: path.join(suiteRoot, provenance.freeze_manifest_ref),
+    recipePath: path.join(suiteRoot, provenance.recipe_ref)
+  });
+  if (!inspection.passed || !inspection.provenance) {
+    issues.push(...inspection.issues.map((issue) => ({
+      code: issue.code,
+      message: issue.message,
+      ...(issue.ref ? { ref: issue.ref } : {})
+    })));
+    return;
+  }
+  if (JSON.stringify(inspection.provenance) !== JSON.stringify(provenance)) {
+    issues.push({
+      code: "confirmatory_freeze_provenance_mismatch",
+      message: "Suite confirmatory freeze provenance does not match the contained evidence bytes."
+    });
+  }
+  if (provenance.study_id !== manifest.suite_id
+      || provenance.case_count !== cases.length
+      || new Set(cases.map((benchmarkCase) => benchmarkCase.base_bundle_id)).size
+        !== provenance.base_bundle_count) {
+    issues.push({
+      code: "confirmatory_freeze_suite_identity_mismatch",
+      message: "Suite identity, base count, and case count must match the contained confirmatory freeze."
+    });
+  }
+  const bindingByCase = new Map(inspection.case_bindings.map((binding) => [binding.case_id, binding]));
+  let bindingMismatch = bindingByCase.size !== cases.length;
+  for (const benchmarkCase of cases) {
+    const binding = bindingByCase.get(benchmarkCase.case_id);
+    if (!binding
+        || benchmarkCase.base_bundle_id !== binding.base_bundle_id
+        || benchmarkCase.split !== binding.split
+        || benchmarkCase.source_sha256 !== binding.source_sha256
+        || benchmarkCase.source_family_id_sha256 !== binding.source_family_id_sha256
+        || benchmarkCase.operator_group_id_sha256 !== binding.operator_group_id_sha256
+        || benchmarkCase.mutation_family !== binding.mutation_family
+        || !await mutationManifestMatchesFreezeBinding(
+          suiteRoot,
+          caseManifestRefs[benchmarkCase.case_id],
+          benchmarkCase,
+          binding.operations
+        )) {
+      bindingMismatch = true;
+      break;
+    }
+  }
+  if (bindingMismatch) {
+    issues.push({
+      code: "confirmatory_freeze_case_binding_mismatch",
+      message: "Every suite case must preserve the immutable case and source bindings from the frozen recipe."
+    });
+  }
+}
+
+async function hasClosedConfirmatoryFreezeEvidence(suiteRoot: string): Promise<boolean> {
+  const evidenceRoot = path.join(suiteRoot, "confirmatory-freeze");
+  try {
+    const rootStat = await fs.lstat(evidenceRoot);
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
+    const entries = (await fs.readdir(evidenceRoot)).sort();
+    if (entries.join("\0") !== ["frozen-intake-manifest.json", "recipe.json"].join("\0")) return false;
+    for (const entry of entries) {
+      const stat = await fs.lstat(path.join(evidenceRoot, entry));
+      if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function mutationManifestMatchesFreezeBinding(
+  suiteRoot: string,
+  caseRef: string | undefined,
+  benchmarkCase: PromotionBenchmarkCaseManifest,
+  expectedOperations: unknown[]
+): Promise<boolean> {
+  if (!caseRef || !benchmarkCase.mutation_manifest) return false;
+  const casePath = resolveContainedPath(suiteRoot, caseRef);
+  if (!casePath) return false;
+  const mutationPath = path.resolve(path.dirname(casePath), benchmarkCase.mutation_manifest);
+  if (!isContainedPath(suiteRoot, mutationPath)) return false;
+  try {
+    const stat = await fs.lstat(mutationPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) return false;
+    const value = JSON.parse(await fs.readFile(mutationPath, "utf8")) as unknown;
+    if (!isRecord(value)
+        || value.schema_version !== "1.0"
+        || value.case_id !== benchmarkCase.case_id
+        || value.base_bundle_id !== benchmarkCase.base_bundle_id
+        || value.source_sha256 !== benchmarkCase.source_sha256
+        || value.source_family_id_sha256 !== benchmarkCase.source_family_id_sha256
+        || value.operator_group_id_sha256 !== benchmarkCase.operator_group_id_sha256
+        || value.artifact_sha256 !== benchmarkCase.artifact_sha256
+        || value.mutation_family !== benchmarkCase.mutation_family
+        || !Array.isArray(value.operations)
+        || value.operations.length !== expectedOperations.length) {
+      return false;
+    }
+    const actualOperations = value.operations.map((record, index) => {
+      if (!isRecord(record) || record.index !== index + 1 || !isRecord(record.operation)) return null;
+      return record.operation;
+    });
+    return actualOperations.every((operation) => operation !== null)
+      && JSON.stringify(actualOperations) === JSON.stringify(expectedOperations);
+  } catch {
+    return false;
+  }
 }
 
 function parseAdjudicationProvenance(value: unknown): PromotionBenchmarkAdjudicationProvenance | undefined {

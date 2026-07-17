@@ -97,7 +97,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
     "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
-    "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--out-dir outputs/governance-benchmark/promotion-suite]",
+    "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--freeze-manifest <frozen-intake-manifest.json>] [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
     "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai --model <id> --reasoning <effort> --system <id> --trial <id> --out-dir <new-output-dir>",
     "  autolabos governance-benchmark aggregate-promotion-provider-runs --suite <suite.json> --run-manifest <trial-a/provider-run-manifest.json> --run-manifest <trial-b/provider-run-manifest.json> --run-manifest <trial-c/provider-run-manifest.json> --out-dir <new-output-dir>",
@@ -533,6 +533,7 @@ async function main(): Promise<void> {
     await runPromotionBenchmarkBuildCli({
       cwd: process.cwd(),
       recipePath: action.recipePath,
+      freezeManifestPath: action.freezeManifestPath,
       outDir: action.outDir
     });
     return;

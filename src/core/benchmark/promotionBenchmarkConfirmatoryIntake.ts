@@ -35,6 +35,9 @@ import {
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
 } from "./promotionBenchmarkConfirmatoryContract.js";
 import {
+  MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES
+} from "./promotionBenchmarkConfirmatoryFreeze.js";
+import {
   PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST,
   inspectPromotionTrialCandidateHandoff,
   type PromotionTrialCandidateRecord
@@ -43,7 +46,8 @@ import {
   loadPromotionTrialCandidateReviewAdmissionEvidence
 } from "./promotionBenchmarkTrialCandidateReview.js";
 
-export const MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES = 20;
+export const MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES =
+  MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES;
 export const MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES =
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES;
 export const MINIMUM_CONFIRMATORY_SOURCE_FAMILIES = MINIMUM_PROMOTION_SOURCE_FAMILIES;

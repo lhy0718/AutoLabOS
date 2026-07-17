@@ -550,6 +550,27 @@ candidate reuse, trace drift, artifact drift, or path escape prevents the
 paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
 not replace blind benchmark-case adjudication or make the suite paper-ready.
 
+Bind the frozen intake explicitly when building the suite:
+
+```sh
+autolabos governance-benchmark freeze-promotion-confirmatory \
+  --manifest <confirmatory-intake.json> \
+  --out-dir <frozen-intake>
+autolabos governance-benchmark build-promotion \
+  --recipe <frozen-intake/recipe.json> \
+  --freeze-manifest <frozen-intake/frozen-intake-manifest.json> \
+  --out-dir <promotion-suite>
+```
+
+The builder validates the two co-located files before creating output, then
+copies them into the suite's closed `confirmatory-freeze/` directory and binds
+their hashes, study identity, intake tier, base/case counts, and candidate-review
+receipt in `suite.json`. Suite loading independently rechecks the source
+receipts, clean-plus-nine-family recipe coverage, immutable case/source fields,
+and exact mutation operations against each case's mutation manifest. A suite
+built without `--freeze-manifest` remains valid for development, but it cannot
+become paper-claim-eligible.
+
 A benchmark recipe cannot set `paper_claim_eligible=true`. Only the independent
 adjudication path may issue that state after all scale, diversity, execution,
 mutation-isolation, and label gates pass. Every completed adjudication copies
@@ -669,6 +690,11 @@ regression rates are then derived from the referenced raw predictions. Both
 prediction files must be backed by deterministic system-run manifests emitted
 by `run-promotion-systems`; the evaluator rechecks paths, SHA-256 digests,
 protocol declarations, trial coverage, and case counts before scoring recovery.
+The original suite must retain paper-claim eligibility and its paper-scale
+freeze provenance. The repaired suite is post-repair execution evidence, not a
+second independently frozen paper claim; it must remain external-real,
+double-adjudicated, and artifact-verified but does not independently require
+`paper_claim_eligible=true`.
 
 Run the final evidence gate with non-provider system predictions, the three
 fresh provider run manifests, and the recovery manifest:

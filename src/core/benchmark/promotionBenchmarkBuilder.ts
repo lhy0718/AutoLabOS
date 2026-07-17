@@ -6,6 +6,7 @@ import { writeJsonFile } from "../../utils/fs.js";
 import {
   PROMOTION_DECISIONS,
   hashPromotionArtifactTree,
+  loadPromotionBenchmarkSuite,
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkAdjudicationStatus,
   type PromotionBenchmarkEvidenceClass,
@@ -15,6 +16,12 @@ import {
   type PromotionDecision
 } from "./promotionBenchmark.js";
 import { inspectPromotionExecutionEvidence } from "./promotionBenchmarkExecutionEvidence.js";
+import {
+  PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT,
+  PROMOTION_CONFIRMATORY_FREEZE_MANIFEST_REF,
+  PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF,
+  inspectPromotionConfirmatoryFreezeEvidence
+} from "./promotionBenchmarkConfirmatoryFreeze.js";
 import {
   inspectPromotionSourceDiversity,
   isPromotionSourceDiversityStatus,
@@ -77,6 +84,7 @@ export interface PromotionMutationManifest {
 export interface BuildPromotionBenchmarkInput {
   cwd: string;
   recipePath: string;
+  freezeManifestPath?: string;
   outDir: string;
 }
 
@@ -96,6 +104,18 @@ export async function buildPromotionBenchmarkSuite(
   const recipeRoot = path.dirname(recipePath);
   const outDir = path.resolve(cwd, input.outDir);
   const recipe = parseRecipe(JSON.parse(await fs.readFile(recipePath, "utf8")));
+  const freezeManifestPath = input.freezeManifestPath
+    ? path.resolve(cwd, input.freezeManifestPath)
+    : null;
+  const freezeInspection = freezeManifestPath
+    ? await inspectPromotionConfirmatoryFreezeEvidence({ freezeManifestPath, recipePath })
+    : null;
+  if (freezeInspection && (!freezeInspection.passed || !freezeInspection.provenance)) {
+    throw new Error(
+      "Promotion confirmatory freeze evidence is invalid: "
+      + freezeInspection.issues.map((issue) => issue.code).join(", ")
+    );
+  }
   await validateRecipeSources(recipe, recipeRoot);
   if (await pathExists(outDir)) {
     throw new Error(`Promotion benchmark output already exists: ${portableRef(cwd, outDir)}`);
@@ -149,7 +169,19 @@ export async function buildPromotionBenchmarkSuite(
       await writeJsonFile(path.join(stagingRoot, caseRef), caseManifest);
       caseRefs.push(caseRef);
     }
-    await writeJsonFile(path.join(stagingRoot, "suite.json"), {
+    if (freezeManifestPath && freezeInspection?.provenance) {
+      await fs.mkdir(path.join(stagingRoot, PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT), { recursive: true });
+      await fs.copyFile(
+        freezeManifestPath,
+        path.join(stagingRoot, PROMOTION_CONFIRMATORY_FREEZE_MANIFEST_REF)
+      );
+      await fs.copyFile(
+        recipePath,
+        path.join(stagingRoot, PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF)
+      );
+    }
+    const stagedSuitePath = path.join(stagingRoot, "suite.json");
+    await writeJsonFile(stagedSuitePath, {
       schema_version: "1.0",
       suite_id: recipe.suite_id,
       ...(recipe.evidence_class ? { evidence_class: recipe.evidence_class } : {}),
@@ -158,8 +190,20 @@ export async function buildPromotionBenchmarkSuite(
       ...(recipe.mutation_isolation_status ? { mutation_isolation_status: recipe.mutation_isolation_status } : {}),
       ...(recipe.execution_provenance_status ? { execution_provenance_status: recipe.execution_provenance_status } : {}),
       ...(recipe.source_diversity_status ? { source_diversity_status: recipe.source_diversity_status } : {}),
+      ...(freezeInspection?.provenance
+        ? { confirmatory_freeze_provenance: freezeInspection.provenance }
+        : {}),
       cases: caseRefs
     });
+    if (freezeInspection?.provenance) {
+      const staged = await loadPromotionBenchmarkSuite(stagedSuitePath);
+      if (!staged.suite || staged.issues.length > 0) {
+        throw new Error(
+          "Staged freeze-bound promotion suite is invalid: "
+          + staged.issues.map((issue) => issue.code).join(", ")
+        );
+      }
+    }
     await fs.rename(stagingRoot, outDir);
   } catch (error) {
     await fs.rm(stagingRoot, { recursive: true, force: true });

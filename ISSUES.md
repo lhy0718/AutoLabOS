@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-009` Confirmatory freeze evidence was not bound to suite construction - `RESOLVED`
   - `R-008` Paper eligibility could be self-asserted without adjudication provenance — `RESOLVED`
   - `R-007` Presence baseline semantics were not version-bound — `RESOLVED`
   - `R-006` Source-native traces lack complete paired-comparison and curation provenance — `IN_PROGRESS`
@@ -10882,6 +10883,76 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-009
+
+- Status: resolved; confirmatory freeze evidence is explicitly supplied, suite-contained, hash-bound, and revalidated before publication and paper-scale gating
+- Validation target: a paper-eligible promotion suite must prove that its immutable cases were built from the exact reviewed paper-scale freeze, rather than merely reproducing the freeze's status strings, counts, or family labels.
+- Environment/session context: repository-owned domain-neutral provisional and paper-scale freeze fixtures, including the 72-base/720-case paired-candidate path; no human judgment, source outcome, or generated metric was manually substituted.
+
+- Reproduction steps:
+  1. Freeze a valid confirmatory intake and observe that it emits `recipe.json` and `frozen-intake-manifest.json` with a recipe hash.
+  2. Build a suite from the recipe without supplying or preserving the freeze manifest.
+  3. Inspect the resulting suite manifest and confirm that it contains no freeze receipt, intake tier, candidate-review receipt, or source-inventory lineage.
+  4. Present an otherwise status-complete suite to adjudication or the confirmatory gate, or alter a mutation manifest after suite construction.
+
+- Expected behavior:
+  - Paper-scale construction explicitly receives the exact co-located freeze manifest and recipe.
+  - The builder rejects invalid, mismatched, or changed freeze evidence before creating output.
+  - A freeze-bound suite contains a closed copy of both files and binds their hashes, study identity, intake tier, review receipt, source inventory, and base/case counts.
+  - Suite loading cross-checks every immutable case/source field and exact mutation operation against the contained recipe and mutation manifests.
+  - Adjudication and the confirmatory gate route missing paper-scale freeze provenance back to `design_experiments`.
+
+- Actual behavior:
+  - The freeze manifest was written beside the recipe but the general builder consumed only the recipe.
+  - The suite did not preserve the freeze files or their relationship to the generated case manifests.
+  - Eligibility and confirmatory assessment trusted scale and completion projections without an independently reloadable freeze-to-suite lineage.
+  - Recovery applied paper-claim eligibility symmetrically to the original benchmark and the post-repair suite even though the latter is a different evidence role.
+
+- Fresh vs existing session comparison:
+  - Fresh session: explicit `--freeze-manifest` construction validates the input pair, emits a closed suite-local evidence set, and passes staging reload before atomic publication.
+  - Existing session: suites without freeze provenance remain readable for development when they do not claim paper eligibility, but paper-eligible historical manifests fail closed.
+  - Divergence: no UI refresh or resume difference is involved; the persisted suite previously omitted the authority record that justified its confirmatory construction.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: confirmatory freeze was treated as a preparatory side artifact rather than persisted transition evidence, so later stages could observe derived status fields without the inputs that authorized them.
+
+- Code/test changes:
+  - Added a versioned freeze-evidence inspector for the manifest/recipe pair, source execution and curation receipts, paper-scale candidate review, scale floors, and clean-plus-nine-family coverage.
+  - Added optional `build-promotion --freeze-manifest`; the builder copies both files into `confirmatory-freeze/`, records provenance, and reloads the staged suite before rename.
+  - Added loader checks for a closed evidence set, evidence-byte hashes, study/base/case identity, immutable case bindings, and exact recipe-to-mutation-manifest operations.
+  - Added `confirmatory_freeze_not_verified` and `confirmatory_freeze_provenance_missing` blockers routed to `design_experiments`.
+  - Kept development suites buildable without freeze evidence while preventing them from acquiring paper eligibility.
+  - Required paper eligibility only for the original recovery suite; repaired suites remain external-real, double-adjudicated, artifact-verified post-repair evidence.
+  - Expanded recovery coverage to a real 72-base/720-case original contract with all 72 clean-control reruns.
+
+- Regression status:
+  - Targeted builder, intake, adjudication, gate, recovery, handoff, and CLI regressions: 127/127 passed on 2026-07-17.
+  - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
+  - Repository-wide CI: 214/214 test files and 2,869/2,869 core tests passed; 1/1 web test file and 14/14 web tests passed on 2026-07-17 with `npm test`.
+  - Build validation: passed on 2026-07-17 with `npm run build` (existing non-fatal esbuild allow-scripts warning only).
+  - Harness validation: 523/523 entries passed on 2026-07-17 with `npm run validate:harness`.
+  - Public-code sanitization: 3/3 passed on 2026-07-17 with `npx vitest run tests/publicCodeSanitization.test.ts`.
+
+- Follow-up risks:
+  - The intake-manifest SHA remains a receipt; the original intake manifest and referenced review roots must be included in the final reproducibility package for independent recomputation.
+  - Pseudonymous role IDs and hash-valid receipts do not establish real-world reviewer identity or independence.
+  - The real v10 admission count remains zero because independent human review, license approval, and canonical source curation have not been completed.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts`
+  - `src/core/benchmark/promotionBenchmarkBuilder.ts`
+  - `src/core/benchmark/promotionBenchmark.ts`
+  - `src/core/benchmark/promotionBenchmarkAdjudication.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts`
+  - `src/core/benchmark/promotionBenchmarkRecovery.ts`
+  - `tests/promotionBenchmarkConfirmatoryIntake.test.ts`
+  - `tests/promotionBenchmarkRecovery.test.ts`
+  - `tests/promotionBenchmarkTrialCandidateHandoff.test.ts`
+
+---
 
 ## Issue: R-008
 

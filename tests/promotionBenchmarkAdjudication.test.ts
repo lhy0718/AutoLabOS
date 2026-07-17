@@ -468,7 +468,8 @@ describe("promotion benchmark adjudication", () => {
       source_diversity_status: "declared_stratified",
       cases,
       adjudication_complete: true,
-      mutation_isolation_verified: true
+      mutation_isolation_verified: true,
+      confirmatory_freeze_verified: true
     })).toMatchObject({
       paper_claim_eligible: true,
       base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
@@ -477,6 +478,14 @@ describe("promotion benchmark adjudication", () => {
       operator_group_count: 4,
       blockers: []
     });
+    expect(evaluatePromotionAdjudicationEligibility({
+      evidence_class: "external_real_run",
+      execution_provenance_status: "artifact_verified",
+      source_diversity_status: "declared_stratified",
+      cases,
+      adjudication_complete: true,
+      mutation_isolation_verified: true
+    }).blockers.map((blocker) => blocker.code)).toContain("confirmatory_freeze_not_verified");
     expect(evaluatePromotionAdjudicationEligibility({
       evidence_class: "synthetic_development",
       execution_provenance_status: "artifact_verified",

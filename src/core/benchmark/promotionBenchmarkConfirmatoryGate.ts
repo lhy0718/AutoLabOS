@@ -540,6 +540,21 @@ function inspectConfirmatoryEvidence(input: {
   if (!input.score.passed) {
     addIssue(input.issues, "score_validation_failed", "Promotion benchmark score validation failed.", "run_experiments");
   }
+  const freezeProvenance = input.loaded?.manifest.confirmatory_freeze_provenance;
+  if (!freezeProvenance
+      || freezeProvenance.intake_tier !== "paper_scale"
+      || !freezeProvenance.candidate_review
+      || freezeProvenance.case_count !== input.score.case_count
+      || freezeProvenance.base_bundle_count !== countBaseBundles(input.loaded)
+      || freezeProvenance.candidate_review.source_eligible_candidate_count
+        !== freezeProvenance.base_bundle_count) {
+    addIssue(
+      input.issues,
+      "confirmatory_freeze_provenance_missing",
+      "Confirmatory evidence requires a hash-bound paper-scale freeze covering every suite base and case.",
+      "design_experiments"
+    );
+  }
   const adjudicationProvenance = input.loaded?.manifest.adjudication_provenance;
   if (!adjudicationProvenance
       || adjudicationProvenance.case_count !== input.score.case_count

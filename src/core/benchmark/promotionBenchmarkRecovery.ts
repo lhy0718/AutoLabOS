@@ -176,8 +176,8 @@ export async function evaluatePromotionBenchmarkRecovery(
   appendLoadIssues(issues, repairedLoaded.issues, "repaired");
   appendLoadIssues(issues, originalPredictionLoad.issues, "original");
   appendLoadIssues(issues, repairedPredictionLoad.issues, "repaired");
-  inspectSuiteEligibility(originalLoaded.suite, "original", issues);
-  inspectSuiteEligibility(repairedLoaded.suite, "repaired", issues);
+  inspectSuiteEligibility(originalLoaded.suite, "original", issues, true);
+  inspectSuiteEligibility(repairedLoaded.suite, "repaired", issues, false);
   inspectSystemRunProtocol(originalSystemRun, manifest.system_id, "original", issues);
   inspectSystemRunProtocol(repairedSystemRun, manifest.system_id, "repaired", issues);
   if (originalLoaded.suite?.manifest.suite_id !== manifest.study_id) {
@@ -351,13 +351,14 @@ function appendLoadIssues(
 function inspectSuiteEligibility(
   suite: LoadedPromotionBenchmarkSuite | undefined,
   prefix: string,
-  issues: PromotionRecoveryIssue[]
+  issues: PromotionRecoveryIssue[],
+  requirePaperClaimEligibility: boolean
 ): void {
   if (!suite) return;
   if (suite.manifest.evidence_class !== "external_real_run") {
     issues.push({ code: prefix + "_external_real_run_required", message: "Recovery requires external real-run suites." });
   }
-  if (suite.manifest.paper_claim_eligible !== true) {
+  if (requirePaperClaimEligibility && suite.manifest.paper_claim_eligible !== true) {
     issues.push({ code: prefix + "_paper_claim_eligibility_required", message: "Recovery requires paper-claim-eligible suites." });
   }
   if (suite.manifest.adjudication_status !== "double_adjudicated") {

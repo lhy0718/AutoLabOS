@@ -33,7 +33,7 @@ export type CliAction =
   | { kind: "governance-benchmark-dry-run"; seedPath: string; taskId?: string; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-batch"; seedsRoot: string; taskIds: string[]; outDir?: string; conditions: GovernanceBenchmarkConditionName[] }
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
-  | { kind: "governance-benchmark-build-promotion"; recipePath: string; outDir: string }
+  | { kind: "governance-benchmark-build-promotion"; recipePath: string; freezeManifestPath?: string; outDir: string }
   | { kind: "governance-benchmark-run-promotion"; suitePath: string; systems: PromotionBenchmarkSystemName[]; trialId?: string; outDir?: string }
   | { kind: "governance-benchmark-run-promotion-provider"; suitePath: string; provider: "openai"; model: string; reasoningEffort: string; systemId: string; trialId: string; outDir: string }
   | { kind: "governance-benchmark-aggregate-promotion-provider-runs"; suitePath: string; runManifestPaths: string[]; outDir: string }
@@ -862,13 +862,15 @@ export function resolveCliAction(args: string[]): CliAction {
     }
     if (subcommand === "build-promotion") {
       let recipePath: string | undefined;
+      let freezeManifestPath: string | undefined;
       let outDir = "outputs/governance-benchmark/promotion-suite";
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token === "--recipe" || token === "--out-dir") {
+        if (token === "--recipe" || token === "--freeze-manifest" || token === "--out-dir") {
           const value = args[index + 1];
           if (!value) return { kind: "error", message: `Missing value for ${token}.` };
           if (token === "--recipe") recipePath = value;
+          else if (token === "--freeze-manifest") freezeManifestPath = value;
           else outDir = value;
           index += 1;
           continue;
@@ -876,7 +878,12 @@ export function resolveCliAction(args: string[]): CliAction {
         return { kind: "error", message: `Unsupported governance-benchmark build-promotion argument: ${token}` };
       }
       if (!recipePath) return { kind: "error", message: "Missing required argument: --recipe <recipe.json>." };
-      return { kind: "governance-benchmark-build-promotion", recipePath, outDir };
+      return {
+        kind: "governance-benchmark-build-promotion",
+        recipePath,
+        ...(freezeManifestPath ? { freezeManifestPath } : {}),
+        outDir
+      };
     }
     if (subcommand === "run-promotion") {
       let suitePath: string | undefined;

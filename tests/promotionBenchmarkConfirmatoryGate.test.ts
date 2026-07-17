@@ -163,6 +163,19 @@ describe("promotion confirmatory gate", () => {
     }));
   });
 
+  it("routes missing paper-scale freeze provenance back to experiment design", () => {
+    const fixture = makeAssessmentFixture(true);
+    delete fixture.loaded.manifest.confirmatory_freeze_provenance;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "confirmatory_freeze_provenance_missing",
+      target_node: "design_experiments"
+    }));
+  });
+
   it("keeps complete null or mixed evidence publishable while lowering the claim class", () => {
     const fixture = makeAssessmentFixture(false);
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
@@ -311,6 +324,10 @@ function makeAssessmentFixture(h1Supported: boolean): {
       mutation_isolation_status: "double_verified",
       execution_provenance_status: "artifact_verified",
       source_diversity_status: "declared_stratified",
+      confirmatory_freeze_provenance: confirmatoryFreezeProvenance(
+        CONFIRMATORY_BASE_COUNT,
+        CONFIRMATORY_CASE_COUNT
+      ),
       adjudication_provenance: adjudicationProvenance(CONFIRMATORY_CASE_COUNT),
       cases: cases.map((item) => "cases/" + item.case_id + ".json")
     },
@@ -402,6 +419,30 @@ function makeAssessmentFixture(h1Supported: boolean): {
     suiteSnapshotSha256,
     inputPredictionsSha256,
     systemRunManifestSha256
+  };
+}
+
+function confirmatoryFreezeProvenance(baseCount: number, caseCount: number) {
+  return {
+    schema_version: "1.0" as const,
+    method: "verified_confirmatory_freeze" as const,
+    study_id: "confirmatory-fixture",
+    intake_tier: "paper_scale" as const,
+    freeze_manifest_ref: "confirmatory-freeze/frozen-intake-manifest.json",
+    freeze_manifest_sha256: "7".repeat(64),
+    recipe_ref: "confirmatory-freeze/recipe.json",
+    recipe_sha256: "8".repeat(64),
+    intake_manifest_sha256: "9".repeat(64),
+    base_bundle_count: baseCount,
+    case_count: caseCount,
+    candidate_review: {
+      handoff_id: "fixture-handoff",
+      source_revision: "fixture-revision",
+      handoff_manifest_sha256: "a".repeat(64),
+      adjudicated_labels_sha256: "b".repeat(64),
+      review_evidence_sha256: "c".repeat(64),
+      source_eligible_candidate_count: baseCount
+    }
   };
 }
 
