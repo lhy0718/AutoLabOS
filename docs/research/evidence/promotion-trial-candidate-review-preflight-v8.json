@@ -33,7 +33,21 @@
     "evidence_reference_count": 0,
     "validation_issue": "trial_candidate_license_review_file_invalid"
   },
+  "adjudication": {
+    "passed": false,
+    "task_count": 72,
+    "accepted_label_count": 0,
+    "initial_annotator_ids": [],
+    "license_reviewer_id": null,
+    "labels_emitted": false,
+    "evidence_summary_emitted": false,
+    "validation_issues": [
+      "trial_candidate_annotation_file_invalid",
+      "trial_candidate_review_initial_annotators_not_independent",
+      "trial_candidate_license_review_file_invalid"
+    ]
+  },
   "human_review_completed": false,
   "confirmatory_admitted": false,
-  "evidence_boundary": "This audit records machine-prepared incomplete worksheets and their expected fail-closed preflight outcomes. It contains no human annotation, license conclusion, legal grant, reviewer-independence evidence, candidate adjudication, or confirmatory admission."
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets and their expected fail-closed preflight and zero-admission adjudication outcomes. It contains no human annotation, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, or confirmatory admission."
 }

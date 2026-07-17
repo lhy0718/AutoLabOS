@@ -444,9 +444,10 @@ worksheet were generated from the closed v8 handoff. Each worksheet sets its
 human and independence attestations to false and leaves every judgment empty.
 Reviewer preflight rejected both files with zero accepted annotations; license
 preflight rejected the license file with an unresolved reviewer, unresolved
-status, and zero evidence references. These failures confirm the input boundary
-without creating human evidence. Packet-manifest and worksheet hashes are
-recorded in
+status, and zero evidence references. Joint adjudication then accepted zero of
+72 labels and emitted neither labels nor an evidence summary. These failures
+confirm the input and promotion boundaries without creating human evidence.
+Packet-manifest and worksheet hashes are recorded in
 `docs/research/evidence/promotion-trial-candidate-review-preflight-v8.json`.
 
 The portable source recipe is
