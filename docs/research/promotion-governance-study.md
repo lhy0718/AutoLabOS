@@ -409,15 +409,22 @@ covering 18 source families and 10 operator groups. The largest family share is
 All 216 selected artifacts were retrieved over HTTPS and verified against their
 Git object identifiers. Reviewer projection replaced 288 private machine-path
 occurrences while preserving separate raw-source and reviewer-artifact hashes.
-The reviewer tree passed the closed-file, hash, candidate-uniqueness,
-privacy, and controller-separation checks. The generated evidence record is
-`docs/research/evidence/promotion-trial-candidate-handoff-v2.json`.
+The candidate-review tree passed the closed-file, hash, candidate-uniqueness,
+privacy, and controller-separation checks. Its annotation schema covers six
+observable evidence fields and requires two independent human reviews, with a
+third human resolver only for categorical disagreements. A separate
+source-license packet exposes the exact public URL and revision to a distinct
+human reviewer without exposing candidate artifacts, candidate annotations, or
+the controller map. AutoLabOS validates these inputs but does not generate
+human labels or convert a review into a legal grant. The generated evidence
+record is
+`docs/research/evidence/promotion-trial-candidate-handoff-v5.json`.
 
 This result closes only the numerical trace-candidate floor. The source license
-has not received human review, two independent normalizations have not been
-completed, comparison results and explicit readiness artifacts have not been
-verified, and no candidate has entered the frozen confirmatory corpus. The
-paper-scale admission count therefore remains zero.
+has not received human review, the two independent candidate annotations have
+not been completed, comparison results and explicit readiness artifacts have
+not been verified, and no candidate has entered the frozen confirmatory corpus.
+The paper-scale admission count therefore remains zero.
 
 ### Confirmatory Decision Boundary
 

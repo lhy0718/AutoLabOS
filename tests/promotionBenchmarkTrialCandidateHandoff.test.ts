@@ -13,6 +13,25 @@ import {
   exportPromotionTrialCandidateHandoff,
   inspectPromotionTrialCandidateHandoff
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE,
+  adjudicatePromotionTrialCandidateReview,
+  inspectPromotionTrialCandidateReviewAdjudication,
+  preflightPromotionTrialCandidateAnnotation
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK,
+  PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
+  PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_RUBRIC,
+  type PromotionTrialCandidateHumanLabel,
+  type PromotionTrialCandidateInitialAnnotationSet,
+  type PromotionTrialCandidateLicenseReviewSet
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewContract.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -106,6 +125,7 @@ describe("promotion trial-candidate handoff", () => {
       base_candidate_count: 72,
       trial_artifact_count: 216,
       reviewer_dir: "handoff/reviewer",
+      license_reviewer_dir: "handoff/license",
       controller_map_path: `handoff/${PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP}`,
       evidence_summary_path: `handoff/${PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY}`
     });
@@ -133,6 +153,12 @@ describe("promotion trial-candidate handoff", () => {
     expect(manifest.largest_operator_group_share).toBeLessThanOrEqual(0.5);
     expect(JSON.stringify(manifest)).not.toContain("operator-a");
     expect(JSON.stringify(manifest)).not.toContain("family-a");
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA))).resolves.toBeUndefined();
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA))).resolves.toBeUndefined();
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_RUBRIC))).resolves.toBeUndefined();
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK))).resolves.toBeUndefined();
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA))).resolves.toBeUndefined();
+    await expect(access(path.join(workspace, "handoff", PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE))).resolves.toBeUndefined();
     await expect(access(path.join(workspace, "handoff/reviewer/controller"))).rejects.toThrow();
     expect(await inspectPromotionTrialCandidateHandoff(path.join(workspace, "handoff"))).toMatchObject({
       passed: true,
@@ -141,9 +167,9 @@ describe("promotion trial-candidate handoff", () => {
     expect(JSON.parse(await readFile(path.join(workspace, result.evidence_summary_path), "utf8"))).toMatchObject({
       base_candidate_count: 72,
       trial_artifact_count: 216,
-      independent_human_normalization_completed: false,
+      independent_candidate_review_completed: false,
       confirmatory_admitted: false,
-      remaining_blockers: expect.arrayContaining(["human_license_review", "independent_double_normalization"])
+      remaining_blockers: expect.arrayContaining(["human_license_review", "independent_double_candidate_review"])
     });
   }, 30_000);
 
@@ -305,6 +331,201 @@ describe("promotion trial-candidate handoff", () => {
     });
   });
 
+  it("preflights exact human task coverage without promoting negative labels", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    const annotationPath = path.join(workspace, "review-a.json");
+    await writeHumanAnnotation(annotationPath, handoffRoot, "reviewer-a");
+
+    const result = await preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPath: "review-a.json",
+      outDir: "review-a-preflight"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      annotator_id: "reviewer-a",
+      task_count: 72,
+      annotation_count: 72,
+      positive_candidate_count: 0,
+      validation_issues: []
+    });
+  });
+
+  it("requires observation-specific citations and existing JSON Pointers for positive labels", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    await writeHumanAnnotation(
+      path.join(workspace, "review-positive.json"),
+      handoffRoot,
+      "reviewer-positive",
+      { firstCandidatePositive: true }
+    );
+    const valid = await preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPath: "review-positive.json",
+      outDir: "review-positive-preflight"
+    });
+    expect(valid.report).toMatchObject({ passed: true, positive_candidate_count: 1 });
+
+    await writeHumanAnnotation(
+      path.join(workspace, "review-invalid-pointer.json"),
+      handoffRoot,
+      "reviewer-invalid-pointer",
+      { firstCandidatePositive: true, invalidPointer: true }
+    );
+    const invalid = await preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPath: "review-invalid-pointer.json",
+      outDir: "review-invalid-pointer-preflight"
+    });
+    expect(invalid.report.passed).toBe(false);
+    expect(invalid.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_annotation_json_pointer_missing"
+    );
+  });
+
+  it("adjudicates two independent negative reviews without confirmatory admission", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    const secondPath = path.join(workspace, "review-b.json");
+    await writeHumanAnnotation(secondPath, handoffRoot, "reviewer-b");
+    await writeLicenseReview(path.join(workspace, "license-review.json"), handoffRoot, "reviewer-license");
+
+    const result = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["review-a.json", "review-b.json"],
+      licenseReviewPath: "license-review.json",
+      outDir: "review-adjudication"
+    });
+    const evidence = JSON.parse(await readFile(
+      path.join(workspace, "review-adjudication", PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
+      "utf8"
+    ));
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      accepted_label_count: 72,
+      disagreement_count: 0,
+      initial_annotator_ids: ["reviewer-a", "reviewer-b"],
+      license_reviewer_id: "reviewer-license"
+    });
+    expect(evidence).toMatchObject({
+      double_human_annotation_completed: true,
+      human_license_review_recorded: true,
+      source_license_status: "uncertain",
+      source_license_adjudication: {
+        reviewer_id: "reviewer-license",
+        review: { status: "uncertain" }
+      },
+      positive_candidate_count: 0,
+      redistributable_positive_candidate_count: 0,
+      candidate_review_progression_floor_met: false,
+      confirmatory_admitted: false
+    });
+    expect(await inspectPromotionTrialCandidateReviewAdjudication(
+      path.join(workspace, "review-adjudication")
+    )).toMatchObject({ passed: true, issues: [] });
+  });
+
+  it("rejects reused reviewer identities and unresolved candidate disagreements", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    const duplicateReviewerPath = path.join(workspace, "review-duplicate.json");
+    await writeHumanAnnotation(duplicateReviewerPath, handoffRoot, "reviewer-a");
+    const duplicate = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["review-a.json", "review-duplicate.json"],
+      licenseReviewPath: "license-review.json",
+      outDir: "duplicate-reviewer-adjudication"
+    });
+    expect(duplicate.report.passed).toBe(false);
+    expect(duplicate.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_initial_annotators_not_independent"
+    );
+
+    await writeLicenseReview(path.join(workspace, "reused-license-review.json"), handoffRoot, "reviewer-a");
+    const reusedLicenseReviewer = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["review-a.json", "review-b.json"],
+      licenseReviewPath: "reused-license-review.json",
+      outDir: "reused-license-reviewer-adjudication"
+    });
+    expect(reusedLicenseReviewer.report.passed).toBe(false);
+    expect(reusedLicenseReviewer.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_license_reviewer_not_independent"
+    );
+
+    const disagreementPath = path.join(workspace, "review-disagreement.json");
+    const disagreement = await writeHumanAnnotation(
+      disagreementPath,
+      handoffRoot,
+      "reviewer-c",
+      { firstCandidateObservation: "uncertain" }
+    );
+    const unresolved = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["review-a.json", "review-disagreement.json"],
+      licenseReviewPath: "license-review.json",
+      outDir: "unresolved-review-adjudication"
+    });
+    expect(unresolved.report.passed).toBe(false);
+    expect(unresolved.report.disagreement_count).toBe(1);
+    expect(unresolved.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_disagreement_unresolved"
+    );
+
+    const resolutionPath = path.join(workspace, "review-resolution.json");
+    await writeFile(resolutionPath, `${JSON.stringify({
+      schema_version: "1.0",
+      handoff_id: disagreement.handoff_id,
+      resolver_id: "reviewer-d",
+      label_source: "human",
+      review_role: "resolver",
+      independence_attestation: {
+        completed_by_human: true,
+        controller_map_unseen: true
+      },
+      resolutions: [disagreement.annotations[0]]
+    }, null, 2)}\n`, "utf8");
+    const resolved = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["review-a.json", "review-disagreement.json"],
+      licenseReviewPath: "license-review.json",
+      resolutionPath: "review-resolution.json",
+      outDir: "resolved-review-adjudication"
+    });
+    expect(resolved.report).toMatchObject({
+      passed: true,
+      disagreement_count: 1,
+      resolved_disagreement_count: 1,
+      resolver_id: "reviewer-d"
+    });
+  });
+
+  it("detects adjudicated review output tampering", async () => {
+    await writeFile(
+      path.join(workspace, "review-adjudication", PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS),
+      "{}\n",
+      "utf8"
+    );
+
+    const inspection = await inspectPromotionTrialCandidateReviewAdjudication(
+      path.join(workspace, "review-adjudication")
+    );
+
+    expect(inspection.passed).toBe(false);
+    expect(inspection.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "trial_candidate_review_output_hash_mismatch",
+      "trial_candidate_review_output_semantics_invalid"
+    ]));
+  });
+
   it("detects reviewer artifact tampering", async () => {
     const handoffRoot = path.join(workspace, "handoff");
     const manifest = JSON.parse(await readFile(
@@ -356,4 +577,86 @@ async function writeRecipe(
 async function runGit(cwd: string, args: string[]): Promise<string> {
   const result = await execFileAsync("git", args, { cwd, encoding: "utf8" });
   return result.stdout;
+}
+
+async function writeHumanAnnotation(
+  target: string,
+  handoffRoot: string,
+  annotatorId: string,
+  options: {
+    firstCandidateObservation?: "negative" | "uncertain";
+    firstCandidatePositive?: boolean;
+    invalidPointer?: boolean;
+  } = {}
+): Promise<PromotionTrialCandidateInitialAnnotationSet> {
+  const manifest = JSON.parse(await readFile(
+    path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
+    "utf8"
+  )) as Record<string, any>;
+  const annotations: PromotionTrialCandidateHumanLabel[] = manifest.candidates.map(
+    (candidate: Record<string, any>, index: number) => ({
+      candidate_id: candidate.candidate_id,
+      observations: Object.fromEntries(PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.map((field) => [
+        field,
+        index === 0 && options.firstCandidatePositive
+          ? "positive"
+          : index === 0 && field === "execution_trace_completeness" && options.firstCandidateObservation
+          ? options.firstCandidateObservation
+          : "negative"
+      ])) as PromotionTrialCandidateHumanLabel["observations"],
+      evidence_refs: index === 0 && options.firstCandidatePositive
+        ? candidate.trials.map((trial: Record<string, any>, trialIndex: number) => ({
+            trial_id: trial.trial_id,
+            observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS],
+            json_pointers: [options.invalidPointer && trialIndex === 0 ? "/missing" : ""]
+          }))
+        : [],
+      rationale: "The neutral contract fixture does not include the required governed evidence artifact."
+    })
+  );
+  const annotation: PromotionTrialCandidateInitialAnnotationSet = {
+    schema_version: "1.0",
+    handoff_id: manifest.handoff_id,
+    annotator_id: annotatorId,
+    label_source: "human",
+    review_role: "initial",
+    independence_attestation: {
+      completed_by_human: true,
+      peer_annotations_unseen: true,
+      controller_map_unseen: true
+    },
+    annotations
+  };
+  await writeFile(target, `${JSON.stringify(annotation, null, 2)}\n`, "utf8");
+  return annotation;
+}
+
+async function writeLicenseReview(
+  target: string,
+  handoffRoot: string,
+  reviewerId: string
+): Promise<PromotionTrialCandidateLicenseReviewSet> {
+  const manifest = JSON.parse(await readFile(
+    path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
+    "utf8"
+  )) as Record<string, any>;
+  const review: PromotionTrialCandidateLicenseReviewSet = {
+    schema_version: "1.0",
+    handoff_id: manifest.handoff_id,
+    reviewer_id: reviewerId,
+    label_source: "human",
+    review_role: "source_license",
+    independence_attestation: {
+      completed_by_human: true,
+      candidate_annotations_unseen: true,
+      controller_map_unseen: true
+    },
+    review: {
+      status: "uncertain",
+      evidence_refs: [],
+      rationale: "The neutral contract fixture does not establish redistribution permission."
+    }
+  };
+  await writeFile(target, `${JSON.stringify(review, null, 2)}\n`, "utf8");
+  return review;
 }

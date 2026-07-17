@@ -72,6 +72,12 @@ import {
   type ExportPromotionTrialCandidateHandoffInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
 import {
+  adjudicatePromotionTrialCandidateReview,
+  preflightPromotionTrialCandidateAnnotation,
+  type AdjudicatePromotionTrialCandidateReviewInput,
+  type PreflightPromotionTrialCandidateAnnotationInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
+import {
   exportPromotionSourceNormalizationPack,
   normalizePromotionSource,
   type ExportPromotionSourceNormalizationPackInput,
@@ -494,12 +500,50 @@ export async function runPromotionTrialCandidateHandoffExportCli(
       `Base candidates: ${result.base_candidate_count}`,
       `Trial artifacts: ${result.trial_artifact_count}`,
       `Reviewer packet: ${result.reviewer_dir}`,
+      `License-review packet: ${result.license_reviewer_dir}`,
       `Controller map: ${result.controller_map_path}`,
       `Manifest: ${result.manifest_path}`,
       `Evidence summary: ${result.evidence_summary_path}`,
       "Evidence boundary: revision-bound three-trial candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionTrialCandidateAnnotationPreflightCli(
+  input: PreflightPromotionTrialCandidateAnnotationInput
+): Promise<void> {
+  const result = await preflightPromotionTrialCandidateAnnotation(input);
+  process.stdout.write(
+    [
+      `Promotion trial-candidate annotation preflight ${result.report.passed ? "passed" : "failed"}`,
+      `Annotator: ${result.report.annotator_id || "unresolved"}`,
+      `Coverage: ${result.report.annotation_count}/${result.report.task_count}`,
+      `All-positive candidates: ${result.report.positive_candidate_count}/${result.report.task_count}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`,
+      "Evidence boundary: one candidate-review file only; no reviewer comparison, source-license assessment, or confirmatory admission"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateReviewAdjudicationCli(
+  input: AdjudicatePromotionTrialCandidateReviewInput
+): Promise<void> {
+  const result = await adjudicatePromotionTrialCandidateReview(input);
+  process.stdout.write(
+    [
+      `Promotion trial-candidate review adjudication ${result.report.passed ? "passed" : "failed"}`,
+      `Accepted labels: ${result.report.accepted_label_count}/${result.report.task_count}`,
+      `Disagreements: ${result.report.disagreement_count}`,
+      `Resolved disagreements: ${result.report.resolved_disagreement_count}`,
+      `License reviewer: ${result.report.license_reviewer_id || "unresolved"}`,
+      `Report: ${result.report_path}`,
+      `Evidence summary: ${result.evidence_path || "not emitted"}`,
+      "Evidence boundary: adjudicated candidate review remains separate from canonical normalization and confirmatory admission"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationPackExportCli(

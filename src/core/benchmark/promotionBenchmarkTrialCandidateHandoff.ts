@@ -15,6 +15,21 @@ import {
   MINIMUM_PROMOTION_OPERATOR_GROUPS,
   MINIMUM_PROMOTION_SOURCE_FAMILIES
 } from "./promotionBenchmarkSourceDiversity.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK,
+  PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
+  PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_RUBRIC,
+  promotionTrialCandidateAnnotationSchema,
+  promotionTrialCandidateLicenseReviewerGuide,
+  promotionTrialCandidateLicenseReviewSchema,
+  promotionTrialCandidateResolutionSchema,
+  promotionTrialCandidateReviewerGuide,
+  promotionTrialCandidateReviewRubric
+} from "./promotionBenchmarkTrialCandidateReviewContract.js";
 
 export const PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST = "trial-candidate-handoff.json";
 export const PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP = "controller/trial-candidate-map.json";
@@ -43,6 +58,7 @@ export interface ExportPromotionTrialCandidateHandoffResult {
   trial_artifact_count: number;
   output_dir: string;
   reviewer_dir: string;
+  license_reviewer_dir: string;
   controller_map_path: string;
   manifest_path: string;
   evidence_summary_path: string;
@@ -135,7 +151,7 @@ export interface PromotionTrialCandidateEvidenceSummary {
   paper_scale_trace_floor_met: boolean;
   distribution_scope: "local_evaluation_only";
   source_license_status: "unreviewed";
-  independent_human_normalization_completed: false;
+  independent_candidate_review_completed: false;
   confirmatory_admitted: false;
   remaining_blockers: string[];
   evidence_boundary: string;
@@ -242,7 +258,43 @@ export async function exportPromotionTrialCandidateHandoff(
 
     const reviewerRoot = path.join(stagingRoot, "reviewer");
     await fs.mkdir(path.join(reviewerRoot, "artifacts"), { recursive: true });
-    await fs.writeFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_GUIDE), reviewerGuide(), "utf8");
+    await fs.writeFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_GUIDE),
+      promotionTrialCandidateReviewerGuide(),
+      "utf8"
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA),
+      promotionTrialCandidateAnnotationSchema()
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA),
+      promotionTrialCandidateResolutionSchema()
+    );
+    await fs.writeFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_RUBRIC),
+      promotionTrialCandidateReviewRubric(),
+      "utf8"
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+      {
+        schema_version: "1.0",
+        handoff_id: recipe.handoff_id,
+        source_url: recipe.source_url,
+        source_revision: recipe.source_revision,
+        required_decision: "distribution_scope"
+      }
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
+      promotionTrialCandidateLicenseReviewSchema()
+    );
+    await fs.writeFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE),
+      promotionTrialCandidateLicenseReviewerGuide(),
+      "utf8"
+    );
     const publicCandidates: PromotionTrialCandidateRecord[] = [];
     const controllerCandidates: ControllerMap["candidates"] = [];
     const taskLines: string[] = [];
@@ -312,15 +364,7 @@ export async function exportPromotionTrialCandidateHandoff(
         candidate_id: candidateId,
         artifact_root: `artifacts/${candidateId}`,
         trial_ids: publicTrials.map((trial) => trial.trial_id),
-        required_observations: [
-          "execution_trace_completeness",
-          "repeated_trial_comparability",
-          "comparison_result_availability",
-          "explicit_readiness_availability",
-          "figure_audit_availability",
-          "claim_evidence_link_availability",
-          "license_and_redistribution_status"
-        ]
+        required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
       }));
     }
     await fs.rm(sourceArchiveRoot, { recursive: true, force: true });
@@ -362,11 +406,11 @@ export async function exportPromotionTrialCandidateHandoff(
       paper_scale_trace_floor_met: publicCandidates.length >= MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       distribution_scope: "local_evaluation_only",
       source_license_status: "unreviewed",
-      independent_human_normalization_completed: false,
+      independent_candidate_review_completed: false,
       confirmatory_admitted: false,
       remaining_blockers: [
         "human_license_review",
-        "independent_double_normalization",
+        "independent_double_candidate_review",
         "comparison_result_verification",
         "readiness_figure_and_claim_link_review",
         "confirmatory_intake_freeze"
@@ -427,6 +471,7 @@ export async function exportPromotionTrialCandidateHandoff(
     trial_artifact_count: selected.length * recipe.trials_per_base,
     output_dir: portableRef(cwd, outDir),
     reviewer_dir: portableRef(cwd, path.join(outDir, "reviewer")),
+    license_reviewer_dir: portableRef(cwd, path.join(outDir, "license")),
     controller_map_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP)),
     manifest_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)),
     evidence_summary_path: portableRef(cwd, path.join(outDir, PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY))
@@ -492,6 +537,24 @@ export async function inspectPromotionTrialCandidateHandoff(
   if (new Set(candidateIds).size !== candidateIds.length || new Set(candidateHashes).size !== candidateHashes.length) {
     issues.push({ code: "trial_candidate_handoff_candidate_duplicate", message: "Candidate IDs and hashes must be unique." });
   }
+  try {
+    const tasks = parseReviewerTasks(await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_TASKS), "utf8"));
+    if (tasks.length !== manifest.candidates.length) throw new Error("count mismatch");
+    const taskById = new Map(tasks.map((task) => [task.candidate_id, task]));
+    for (const candidate of manifest.candidates) {
+      const task = taskById.get(candidate.candidate_id);
+      if (!task
+          || task.artifact_root !== `artifacts/${candidate.candidate_id}`
+          || task.trial_ids.join("\0") !== candidate.trials.map((trial) => trial.trial_id).join("\0")) {
+        throw new Error("identity mismatch");
+      }
+    }
+  } catch {
+    issues.push({
+      code: "trial_candidate_handoff_reviewer_tasks_invalid",
+      message: "The reviewer task file is missing, duplicated, or inconsistent with the runtime review contract."
+    });
+  }
   for (const candidate of manifest.candidates) {
     if (candidate.trials.length !== TRIALS_PER_BASE) {
       issues.push({ code: "trial_candidate_handoff_trial_count_invalid", message: "Every candidate requires exactly three trials.", ref: candidate.candidate_id });
@@ -520,6 +583,52 @@ export async function inspectPromotionTrialCandidateHandoff(
   const reviewerFiles: string[] = await listRegularFiles(reviewerRoot).catch((): string[] => []);
   if (reviewerFiles.some((relativePath) => relativePath.startsWith("controller/"))) {
     issues.push({ code: "trial_candidate_handoff_controller_leak", message: "Controller data must not appear in the reviewer directory." });
+  }
+  try {
+    const schema = JSON.parse(await fs.readFile(
+      path.join(root, PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA),
+      "utf8"
+    )) as unknown;
+    const resolutionSchema = JSON.parse(await fs.readFile(
+      path.join(root, PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA),
+      "utf8"
+    )) as unknown;
+    const guide = await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_GUIDE), "utf8");
+    const rubric = await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_RUBRIC), "utf8");
+    if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
+        || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
+        || guide !== promotionTrialCandidateReviewerGuide()
+        || rubric !== promotionTrialCandidateReviewRubric()) {
+      throw new Error("mismatch");
+    }
+  } catch {
+    issues.push({
+      code: "trial_candidate_handoff_reviewer_contract_invalid",
+      message: "The reviewer schema, guide, or rubric is missing or does not match the runtime contract."
+    });
+  }
+  try {
+    const task = parseLicenseTask(JSON.parse(await fs.readFile(
+      path.join(root, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+      "utf8"
+    )) as unknown);
+    const schema = JSON.parse(await fs.readFile(
+      path.join(root, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
+      "utf8"
+    )) as unknown;
+    const guide = await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE), "utf8");
+    if (task.handoff_id !== manifest.handoff_id
+        || task.source_url !== manifest.source_url
+        || task.source_revision !== manifest.source_revision
+        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
+        || guide !== promotionTrialCandidateLicenseReviewerGuide()) {
+      throw new Error("mismatch");
+    }
+  } catch {
+    issues.push({
+      code: "trial_candidate_handoff_license_contract_invalid",
+      message: "The source-license task, schema, or guide is missing or does not match the runtime contract."
+    });
   }
   return { passed: issues.length === 0, manifest, issues };
 }
@@ -664,6 +773,60 @@ function parseOutput(value: unknown, index: number): { path: string; sha256: str
     throw new Error(`Invalid trial-candidate output at index ${index + 1}.`);
   }
   return { path: value.path, sha256: value.sha256 };
+}
+
+function parseReviewerTasks(raw: string): Array<{
+  candidate_id: string;
+  artifact_root: string;
+  trial_ids: string[];
+}> {
+  const tasks = raw.split(/\r?\n/gu).filter(Boolean).map((line, index) => {
+    const value = JSON.parse(line) as unknown;
+    if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.candidate_id)
+        || value.artifact_root !== `artifacts/${value.candidate_id}`
+        || !Array.isArray(value.trial_ids) || value.trial_ids.length !== TRIALS_PER_BASE
+        || new Set(value.trial_ids).size !== TRIALS_PER_BASE || !value.trial_ids.every(validId)
+        || !Array.isArray(value.required_observations)
+        || value.required_observations.join("\0") !== PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.join("\0")) {
+      throw new Error(`Invalid reviewer task at line ${index + 1}.`);
+    }
+    return {
+      candidate_id: value.candidate_id,
+      artifact_root: value.artifact_root,
+      trial_ids: value.trial_ids as string[]
+    };
+  });
+  if (tasks.length === 0 || new Set(tasks.map((task) => task.candidate_id)).size !== tasks.length) {
+    throw new Error("Reviewer tasks must be non-empty and unique.");
+  }
+  return tasks;
+}
+
+function parseLicenseTask(value: unknown): {
+  handoff_id: string;
+  source_url: string;
+  source_revision: string;
+} {
+  if (!isRecord(value)
+      || Object.keys(value).sort().join("\0") !== [
+        "handoff_id",
+        "required_decision",
+        "schema_version",
+        "source_revision",
+        "source_url"
+      ].join("\0")
+      || value.schema_version !== "1.0"
+      || !validId(value.handoff_id)
+      || !validHttpsUrl(value.source_url)
+      || !sha1String(value.source_revision)
+      || value.required_decision !== "distribution_scope") {
+    throw new Error("Invalid trial-candidate source-license task.");
+  }
+  return {
+    handoff_id: value.handoff_id,
+    source_url: value.source_url,
+    source_revision: value.source_revision
+  };
 }
 
 async function assertPinnedRepository(repositoryRoot: string, sourceUrl: string, revision: string): Promise<void> {
@@ -960,19 +1123,6 @@ async function hasSymbolicLinkComponent(root: string, relativePath: string): Pro
     if ((await fs.lstat(current)).isSymbolicLink()) return true;
   }
   return false;
-}
-
-function reviewerGuide(): string {
-  return [
-    "# Trial Candidate Review Guide",
-    "",
-    "Review only the opaque candidate artifacts and candidate-tasks.jsonl in this directory.",
-    "Each candidate contains three revision-bound source traces selected before content inspection.",
-    "Reviewer artifacts may replace private machine paths with <private-path>; the controller manifest keeps separate hashes for raw source bytes and reviewer bytes plus an explicit redaction count.",
-    "Record unavailable evidence as unavailable; do not infer execution completion, result comparability, readiness, figure review, claim links, licensing, or redistribution rights from filenames or task descriptions.",
-    "This packet is a local candidate-triage handoff, not a confirmatory benchmark or a license grant.",
-    ""
-  ].join("\n");
 }
 
 async function runProcess(command: string, args: readonly string[]): Promise<Buffer> {

@@ -657,6 +657,38 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports trial-candidate human annotation preflight and adjudication", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "preflight-promotion-trial-candidate-annotation",
+      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--annotation", "inputs/review-a.json",
+      "--out-dir", "outputs/review-a-preflight"
+    ])).toEqual({
+      kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation",
+      handoffRoot: "outputs/trial-candidate-handoff",
+      annotationPath: "inputs/review-a.json",
+      outDir: "outputs/review-a-preflight"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "adjudicate-promotion-trial-candidate-review",
+      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--annotation", "inputs/review-a.json",
+      "--annotation", "inputs/review-b.json",
+      "--license-review", "inputs/license-review.json",
+      "--resolution", "inputs/resolution.json",
+      "--out-dir", "outputs/review-adjudication"
+    ])).toEqual({
+      kind: "governance-benchmark-adjudicate-promotion-trial-candidate-review",
+      handoffRoot: "outputs/trial-candidate-handoff",
+      annotationPaths: ["inputs/review-a.json", "inputs/review-b.json"],
+      licenseReviewPath: "inputs/license-review.json",
+      resolutionPath: "inputs/resolution.json",
+      outDir: "outputs/review-adjudication"
+    });
+  });
+
   it("supports blind source-normalization pack export and double-annotation materialization", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -817,6 +849,30 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--out-dir")
+    });
+  });
+
+  it("requires exactly two initial trial-candidate reviews and a separate license review", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "adjudicate-promotion-trial-candidate-review",
+      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--annotation", "inputs/review-a.json",
+      "--out-dir", "outputs/review-adjudication"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two --annotation")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "adjudicate-promotion-trial-candidate-review",
+      "--handoff-root", "outputs/trial-candidate-handoff",
+      "--annotation", "inputs/review-a.json",
+      "--annotation", "inputs/review-b.json",
+      "--out-dir", "outputs/review-adjudication"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--license-review")
     });
   });
 
