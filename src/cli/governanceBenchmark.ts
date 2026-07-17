@@ -64,6 +64,10 @@ import {
   type ProjectPromotionSourceInput
 } from "../core/benchmark/promotionBenchmarkSourceProjection.js";
 import {
+  auditPromotionSourceExpansion,
+  type AuditPromotionSourceExpansionInput
+} from "../core/benchmark/promotionBenchmarkSourceExpansionAudit.js";
+import {
   exportPromotionSourceNormalizationPack,
   normalizePromotionSource,
   type ExportPromotionSourceNormalizationPackInput,
@@ -455,6 +459,25 @@ export async function runPromotionSourceProjectionCli(
       "Evidence boundary: deterministic byte selection and JSON-pointer extraction only; execution, operator identity, licensing, and scientific validity are not inferred"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionSourceExpansionAuditCli(
+  input: AuditPromotionSourceExpansionInput
+): Promise<void> {
+  const result = await auditPromotionSourceExpansion(input);
+  process.stdout.write(
+    [
+      `Promotion source expansion audit ${result.report.paper_scale_source_ready ? "passed" : "failed"}: ${result.report.study_id}`,
+      `Exact confirmatory admissions: ${result.report.exact_confirmatory_admitted_count}/${result.report.required_base_bundle_count}`,
+      `Remaining base-bundle gap: ${result.report.remaining_base_bundle_gap}`,
+      `Admitted source families: ${result.report.admitted_source_family_count}`,
+      `Admitted operator groups: ${result.report.admitted_operator_group_count}`,
+      `Upstream rechecks: ${result.report.node_recommendations.map((item) => item.node).join(", ") || "none"}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`
+    ].join("\n") + "\n"
+  );
+  if (!result.report.paper_scale_source_ready) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationPackExportCli(

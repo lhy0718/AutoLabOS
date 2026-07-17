@@ -631,6 +631,19 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports promotion source-expansion audit", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-source-expansion",
+      "--inventory", "inputs/source-expansion.json",
+      "--out-dir", "outputs/source-expansion-audit"
+    ])).toEqual({
+      kind: "governance-benchmark-audit-promotion-source-expansion",
+      inventoryPath: "inputs/source-expansion.json",
+      outDir: "outputs/source-expansion-audit"
+    });
+  });
+
   it("supports blind source-normalization pack export and double-annotation materialization", () => {
     expect(resolveCliAction([
       "governance-benchmark",

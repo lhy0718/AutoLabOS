@@ -363,6 +363,36 @@ The v2 handoff remains a seed batch for validating independent review
 mechanics. It is 52 base bundles below the final 72-base paper-eligibility
 floor and cannot by itself support a confirmatory suite.
 
+### Source Expansion Evidence Ladder
+
+The 2026-07-17 expansion audit widened the route search beyond the three seed
+families while preserving distinct evidence classes. At pinned revisions, the
+audited routes expose 98 exactly counted candidate artifacts, a conservative
+lower bound of 422 additional public execution traces, and a separate report
+of 40 papers whose individual corpus bytes were not acquired. The exact
+candidate layer includes the current projections, 52 generated experiment-task
+records, and eight showcase paper PDFs. Those objects are not interchangeable:
+generated tasks are not executed results, traces are not complete paper-ready
+base bundles, PDFs are not raw run provenance, and a reported corpus size is
+not a hash-bound corpus.
+
+The evidence ladder currently establishes an exact-or-lower-bound source-hash
+floor of 502 artifacts and an execution-trace floor of 429. It establishes
+only 20 repeated-trial candidates and 20 machine-readable comparison-result
+candidates. It establishes zero explicit readiness decisions, zero
+source-grounded figure audits, zero claim-to-evidence maps, zero completed
+human license reviews, zero double-human normalizations, and zero confirmatory
+admissions. Consequently, the source search is no longer the immediate scale
+bottleneck, but normalization and evidence completeness remain entirely open;
+the exact 72-base admission gap is unchanged.
+
+The machine-readable inventory is
+`docs/research/evidence/promotion-source-expansion-v1.json`. The
+`audit-promotion-source-expansion` command recomputes the stage ladder and
+returns `blocked_for_paper_scale` until exact admission, family/operator
+diversity, and concentration limits all pass. Its current upstream targets are
+`run_experiments`, `analyze_results`, `review`, and `design_experiments`.
+
 ### Confirmatory Decision Boundary
 
 The implementation now separates benchmark score validity from paper-scale
