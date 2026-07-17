@@ -380,15 +380,17 @@ The evidence ladder currently establishes an exact-or-lower-bound source-hash
 floor of 502 artifacts and an execution-trace floor of 429. It establishes
 only 20 previously projected candidates with repeated result records and 20
 machine-readable comparison-result candidates. The v8 revision-bound handoff
-below adds 72 candidates whose three trials share an explicit source-native
-sample identifier. Human comparability review is still incomplete, so these
-groupings do not advance the confirmatory repeated-trial evidence stage.
+below initially exposed 72 operator-conditioned candidate groups whose three
+trials share an explicit source-native sample identifier. A later task-level
+audit found only 37 distinct source-native bases after excluding operator
+identity; 35 groups duplicated a base under another operator. Human
+comparability review is also incomplete, so these groupings do not advance the
+confirmatory repeated-trial evidence stage.
 The ladder establishes zero explicit readiness decisions, zero
 source-grounded figure audits, zero claim-to-evidence maps, zero completed
 human license reviews, zero double-human normalizations, and zero confirmatory
-admissions. Consequently, the source search is no longer the immediate scale
-bottleneck, but normalization and evidence completeness remain entirely open;
-the exact 72-base admission gap is unchanged.
+admissions. Consequently, source-native task scale, normalization, and evidence
+completeness all remain open; the exact 72-base admission gap is unchanged.
 
 The machine-readable inventory is
 `docs/research/evidence/promotion-source-expansion-v1.json`. The
@@ -423,18 +425,22 @@ legal decision produced by AutoLabOS. The 2,424 rows expose three model-defined
 operator groups, ten task-domain groups, and a source-native sample identifier.
 Selection resolves operator, family, and base from declared JSON pointers,
 retains the first three lexical rows for each exact group, and balances 72
-distinct bases before predictions, costs, or automatic-judge outputs are
-inspected. The resulting 216 rows contain exactly three distinct source rows per
-base. The largest family share is 0.1111 and the largest operator share is
-0.3333.
+operator-conditioned candidate groups before predictions, costs, or
+automatic-judge outputs are inspected. The resulting 216 rows contain exactly
+three distinct source rows per candidate group. However, operator was part of
+the selection identity: grouping by source family and source-native base while
+excluding operator yields only 37 distinct tasks and 35 duplicate groups. The
+largest nominal family share is 0.1111 and the largest nominal operator share
+is 0.3333.
 
 The Parquet file hashes and row locators anchor the original source. Source and
 reviewer JSON projections receive separate hashes. Recipe-authorized reviewer
 projection removed fourteen credential-like, private-path, or reviewer-identity
 occurrences; a packet-wide scan found no remaining model identifier, source
-identity, credential pattern, or private machine path. The handoff, reviewer
-packet, and license packet all passed independent runtime inspection. The
-reviewer artifact tree hash is
+identity, credential pattern, or private machine path. The reviewer and license
+packets passed their isolated runtime inspections. The original handoff also
+passed the earlier inspector, but the strengthened inspector now returns
+`trial_candidate_handoff_source_base_duplicate`. The reviewer artifact tree hash is
 `0903701a0989d9f36f852e3c43bd879b3a9cdf9b03016fe15b2a6387b9691606`.
 Automatic-judge fields remain observable trace content only and are not labels,
 human judgments, or eligibility evidence.
@@ -451,10 +457,10 @@ Packet-manifest and worksheet hashes are recorded in
 `docs/research/evidence/promotion-trial-candidate-review-preflight-v8.json`.
 
 The portable source recipe is
-`docs/research/evidence/promotion-trial-candidate-source-v8.json`; the exact
-generated evidence record is
-`docs/research/evidence/promotion-trial-candidate-handoff-v8.json`. This closes
-only the numerical and structural trace-candidate floor. The three operator
+`docs/research/evidence/promotion-trial-candidate-source-v8.json`; the historical
+generated counts and retrospective source-base audit are recorded in
+`docs/research/evidence/promotion-trial-candidate-handoff-v8.json`. This does
+not close the numerical or structural trace-candidate floor. The three operator
 groups are model identities from one rollout harness, and the ten families are
 domains within one benchmark rather than ten independent research systems. The
 source license has not received human review, two independent candidate reviews

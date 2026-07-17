@@ -10821,6 +10821,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-005` Operator-conditioned groups overcount source-native bases — `MITIGATED`
   - `R-004` Deterministic bounded fallback masquerading as adapter evidence — `MITIGATED_FOR_CURRENT_RUN`
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
   - `R-002` Scientific gate warnings surfacing — `MITIGATED`
@@ -13227,6 +13228,58 @@ Path placeholders:
   - every `result_rows[*].execution_backend: "deterministic_bounded_local_execution"`
   - `total_training_seconds_reported: 0`
   - `cuda_max_memory_allocated_bytes: 0`
+
+---
+
+## Issue: R-005
+
+- Status: repair implemented; targeted regression, build, and same-artifact reinspection passed on 2026-07-17
+- Validation target: a paper-scale trial-candidate handoff must contain at least 72 globally distinct source-native task bases, not 72 operator-conditioned group identities.
+- Environment/session context: deterministic inspection of the persisted v8 candidate handoff and domain-neutral Git/Parquet fixtures; no live TUI session, human label, or generated trial result was modified.
+
+- Reproduction steps:
+  1. Inspect the controller map from the v8 trial-candidate handoff.
+  2. Count nominal candidates using `(operator, source family, source-native base)`.
+  3. Recount task-level bases using `(source family, source-native base)` while excluding operator identity.
+  4. Re-run the handoff inspector after strengthening the source-base contract.
+
+- Expected behavior:
+  - Selection should retain at most one operator-conditioned candidate for each source-native task base.
+  - The inspector should reject historical or tampered handoffs that reuse a source-native task under another operator.
+
+- Actual behavior:
+  - The historical handoff contained 72 nominal candidate groups and 216 trial rows.
+  - Excluding operator identity left only 37 distinct source-native task bases; 35 candidate groups duplicated a task under another operator.
+  - The earlier inspector checked candidate IDs and content hashes but did not cross-check controller grouping identities or task-level uniqueness.
+
+- Fresh vs existing session comparison:
+  - Fresh session: expanded domain-neutral fixtures with 80 task-level bases select 72 unique bases and pass the strengthened inspector.
+  - Existing session: the persisted v8 handoff is rejected because its 72 operator-conditioned groups collapse to 37 task-level bases.
+  - Divergence: no refresh or resume divergence is involved; the difference is expected fail-closed behavior after strengthening the candidate identity contract.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: selection identity included operator, family, and base, so outputs from different operators on the same source task were counted as distinct statistical bases.
+
+- Code/test changes:
+  - Selection now enforces global uniqueness over source family plus source-native base before counting a candidate.
+  - Handoff inspection now parses the controller map, cross-checks public family/operator hashes and trial IDs, and emits `trial_candidate_handoff_source_base_duplicate` on task reuse.
+  - Git and Parquet fixtures now contain at least 72 real task-level bases; a Parquet regression collapses base IDs across operators and confirms fail-closed rejection.
+  - The v8 research record now reports 37 source-native bases and no longer claims the paper-scale trace floor.
+
+- Regression status:
+  - Targeted test: `npx vitest run tests/promotionBenchmarkTrialCandidateHandoff.test.ts` passed with 24 tests.
+  - Build: `npm run build` passed.
+  - Same-artifact reinspection: the historical v8 handoff now fails with exactly `trial_candidate_handoff_source_base_duplicate`.
+
+- Follow-up risks:
+  - The source-native 72-base floor remains unmet; no human review or confirmatory intake should begin from v8.
+  - Future source routes must distinguish task identity from operator identity before outcome inspection and selection.
+
+- Evidence/artifacts:
+  - `docs/research/evidence/promotion-trial-candidate-handoff-v8.json`
+  - `docs/research/promotion-governance-study.md`
+  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v8/controller/trial-candidate-map.json`
 
 ---
 

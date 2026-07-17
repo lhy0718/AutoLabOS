@@ -66,7 +66,7 @@ describe("promotion trial-candidate handoff", () => {
     await writeFile(path.join(gitSourceRoot, "LICENSE"), "Permission is granted for fixture use.\n", "utf8");
     for (let operatorIndex = 0; operatorIndex < 3; operatorIndex += 1) {
       for (let familyIndex = 0; familyIndex < 4; familyIndex += 1) {
-        for (let baseIndex = 0; baseIndex < 7; baseIndex += 1) {
+        for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
           for (let trialIndex = 0; trialIndex < 3; trialIndex += 1) {
             const relativePath = [
               "records",
@@ -172,10 +172,10 @@ describe("promotion trial-candidate handoff", () => {
       status: "candidate_handoff_ready",
       selection_pre_content: true,
       source_materialization: "git_archive",
-      matched_trial_artifact_count: 252,
+      matched_trial_artifact_count: 720,
       empty_blob_exclusion_count: 0,
       duplicate_blob_exclusion_count: 0,
-      unique_eligible_trial_artifact_count: 252,
+      unique_eligible_trial_artifact_count: 720,
       base_candidate_count: 72,
       trials_per_base: 3,
       trial_artifact_count: 216,
@@ -457,10 +457,10 @@ describe("promotion trial-candidate handoff", () => {
     const manifest = JSON.parse(await readFile(path.join(workspace, result.manifest_path), "utf8"));
 
     expect(manifest).toMatchObject({
-      matched_trial_artifact_count: 252,
+      matched_trial_artifact_count: 720,
       empty_blob_exclusion_count: 1,
       duplicate_blob_exclusion_count: 0,
-      unique_eligible_trial_artifact_count: 251,
+      unique_eligible_trial_artifact_count: 719,
       base_candidate_count: 72,
       trial_artifact_count: 216
     });
@@ -480,13 +480,14 @@ describe("promotion trial-candidate handoff", () => {
     for (let operatorIndex = 0; operatorIndex < 3; operatorIndex += 1) {
       const rows: Array<Record<string, string>> = [];
       for (let familyIndex = 0; familyIndex < 4; familyIndex += 1) {
-        for (let baseIndex = 0; baseIndex < 7; baseIndex += 1) {
+        for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
           for (let trialIndex = 0; trialIndex < 3; trialIndex += 1) {
             rows.push({
               metadata: JSON.stringify({ operator: `operator-${operatorIndex}` }),
               instance: JSON.stringify({
                 domain: `family-${familyIndex}`,
-                sample_id: `base-${baseIndex}`
+                sample_id: `base-${baseIndex}`,
+                shared_id: `base-${baseIndex % 6}`
               }),
               prediction: `observation-${baseIndex}-${trialIndex}`,
               termination: "answer",
@@ -570,8 +571,8 @@ describe("promotion trial-candidate handoff", () => {
 
     expect(manifest).toMatchObject({
       source_materialization: "huggingface_parquet",
-      matched_trial_artifact_count: 252,
-      unique_eligible_trial_artifact_count: 252,
+      matched_trial_artifact_count: 720,
+      unique_eligible_trial_artifact_count: 720,
       base_candidate_count: 72,
       source_family_count: 4,
       operator_group_count: 3,
@@ -580,7 +581,7 @@ describe("promotion trial-candidate handoff", () => {
       privacy_redaction_count: 2
     });
     expect(new Set(controller.candidates.map((candidate: Record<string, any>) =>
-      candidate.operator_group + ":" + candidate.base_group)).size).toBeGreaterThan(1);
+      candidate.source_family + ":" + candidate.base_group)).size).toBe(72);
     expect(controller.candidates.every((candidate: Record<string, any>) =>
       candidate.trials.length === 3
       && new Set(candidate.trials.map((trial: Record<string, any>) =>
@@ -598,6 +599,18 @@ describe("promotion trial-candidate handoff", () => {
       workspace,
       result.license_reviewer_dir
     ))).toMatchObject({ passed: true, issues: [] });
+
+    const duplicateRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    duplicateRecipe.handoff_id = "candidate-handoff-parquet-duplicate-source";
+    duplicateRecipe.base_pointer = "/instance/shared_id";
+    const duplicateRecipePath = path.join(workspace, "parquet-duplicate-recipe.json");
+    await writeFile(duplicateRecipePath, `${JSON.stringify(duplicateRecipe, null, 2)}\n`, "utf8");
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-duplicate-recipe.json",
+      sourceRoot,
+      outDir: "parquet-duplicate-handoff"
+    })).rejects.toThrow("globally distinct source-native balanced three-trial bases");
   });
 
   it("preflights exact human task coverage without promoting negative labels", async () => {

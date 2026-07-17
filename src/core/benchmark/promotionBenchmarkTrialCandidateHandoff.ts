@@ -685,6 +685,46 @@ export async function inspectPromotionTrialCandidateHandoff(
   if (new Set(candidateIds).size !== candidateIds.length || new Set(candidateHashes).size !== candidateHashes.length) {
     issues.push({ code: "trial_candidate_handoff_candidate_duplicate", message: "Candidate IDs and hashes must be unique." });
   }
+  let controllerMap: ControllerMap | null = null;
+  try {
+    controllerMap = parseControllerMap(JSON.parse(await fs.readFile(
+      path.join(root, manifest.controller_map_path),
+      "utf8"
+    )) as unknown);
+    if (controllerMap.handoff_id !== manifest.handoff_id
+        || controllerMap.source_url !== manifest.source_url
+        || controllerMap.source_revision !== manifest.source_revision
+        || controllerMap.candidates.length !== manifest.candidates.length) {
+      throw new Error("controller identity mismatch");
+    }
+    const publicById = new Map(manifest.candidates.map((candidate) => [candidate.candidate_id, candidate]));
+    for (const candidate of controllerMap.candidates) {
+      const publicCandidate = publicById.get(candidate.candidate_id);
+      if (!publicCandidate
+          || publicCandidate.source_family_id_sha256 !== sha256Text(candidate.source_family)
+          || publicCandidate.operator_group_id_sha256 !== sha256Text(candidate.operator_group)
+          || publicCandidate.trials.map((trial) => trial.trial_id).join("\0")
+            !== candidate.trials.map((trial) => trial.trial_id).join("\0")) {
+        throw new Error("controller candidate mismatch");
+      }
+    }
+  } catch {
+    issues.push({
+      code: "trial_candidate_handoff_controller_map_invalid",
+      message: "The controller map is missing, malformed, or inconsistent with the public candidate manifest.",
+      ref: manifest.controller_map_path
+    });
+  }
+  if (controllerMap) {
+    const sourceBaseKeys = controllerMap.candidates.map((candidate) =>
+      candidate.source_family + "\0" + candidate.base_group);
+    if (new Set(sourceBaseKeys).size !== sourceBaseKeys.length) {
+      issues.push({
+        code: "trial_candidate_handoff_source_base_duplicate",
+        message: "Candidates must represent globally distinct source-native bases after excluding operator identity."
+      });
+    }
+  }
   try {
     const tasks = parseReviewerTasks(await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_TASKS), "utf8"));
     if (tasks.length !== manifest.candidates.length) throw new Error("count mismatch");
@@ -1088,6 +1128,63 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     ...(materializationMode === "verified_https_blobs"
       ? { artifact_url_template: value.artifact_url_template as string }
       : {})
+  };
+}
+
+function parseControllerMap(value: unknown): ControllerMap {
+  if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.handoff_id)
+      || !validHttpsUrl(value.source_url) || !sha1String(value.source_revision)
+      || !Array.isArray(value.candidates) || value.candidates.length === 0
+      || !nonEmptyString(value.evidence_boundary)) {
+    throw new Error("Invalid trial-candidate controller map.");
+  }
+  const candidates = value.candidates.map((candidate, candidateIndex) => {
+    if (!isRecord(candidate) || !validId(candidate.candidate_id)
+        || !boundedLabel(candidate.source_family) || !boundedLabel(candidate.operator_group)
+        || !boundedLabel(candidate.base_group) || !Array.isArray(candidate.trials)
+        || candidate.trials.length !== TRIALS_PER_BASE) {
+      throw new Error(`Invalid controller candidate at index ${candidateIndex + 1}.`);
+    }
+    const trials = candidate.trials.map((trial, trialIndex) => {
+      if (!isRecord(trial) || !validId(trial.trial_id) || !boundedLabel(trial.source_trial)
+          || !nonEmptyString(trial.source_path) || trial.source_path.length > 4096
+          || trial.source_path.includes("\\") || !nonEmptyString(trial.source_ref_id)
+          || (trial.source_ref_algorithm !== "git_blob_sha1"
+            && trial.source_ref_algorithm !== "parquet_row_sha256")
+          || (trial.source_ref_algorithm === "git_blob_sha1" && !sha1String(trial.source_ref_id))
+          || (trial.source_ref_algorithm === "parquet_row_sha256" && !sha256String(trial.source_ref_id))) {
+        throw new Error(`Invalid controller trial at candidate ${candidateIndex + 1}, trial ${trialIndex + 1}.`);
+      }
+      return {
+        trial_id: trial.trial_id,
+        source_trial: trial.source_trial,
+        source_path: trial.source_path,
+        source_ref_id: trial.source_ref_id,
+        source_ref_algorithm: trial.source_ref_algorithm
+      };
+    });
+    if (new Set(trials.map((trial) => trial.trial_id)).size !== trials.length
+        || new Set(trials.map((trial) => trial.source_path)).size !== trials.length) {
+      throw new Error(`Controller candidate trials must be unique: ${candidate.candidate_id}.`);
+    }
+    return {
+      candidate_id: candidate.candidate_id,
+      source_family: candidate.source_family,
+      operator_group: candidate.operator_group,
+      base_group: candidate.base_group,
+      trials
+    };
+  });
+  if (new Set(candidates.map((candidate) => candidate.candidate_id)).size !== candidates.length) {
+    throw new Error("Controller candidate IDs must be unique.");
+  }
+  return {
+    schema_version: "1.0",
+    handoff_id: value.handoff_id,
+    source_url: value.source_url,
+    source_revision: value.source_revision,
+    candidates,
+    evidence_boundary: value.evidence_boundary
   };
 }
 
@@ -1538,6 +1635,7 @@ function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requir
   const familyCounts = new Map<string, number>();
   const selected: PlannedBase[] = [];
   const seenBaseHashes = new Set<string>();
+  const seenSourceBaseKeys = new Set<string>();
   const maximumGroupCount = Math.floor(requiredCount * MAXIMUM_PROMOTION_GROUP_SHARE);
   while (selected.length < requiredCount) {
     const eligible = pools.filter((pool) => pool.bases.length > 0
@@ -1552,13 +1650,16 @@ function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requir
     const pool = eligible[0];
     const candidate = pool.bases.shift()!;
     if (seenBaseHashes.has(candidate.identity_sha256)) continue;
+    const sourceBaseKey = candidate.source_family + "\0" + candidate.base_group;
+    if (seenSourceBaseKeys.has(sourceBaseKey)) continue;
     seenBaseHashes.add(candidate.identity_sha256);
+    seenSourceBaseKeys.add(sourceBaseKey);
     selected.push(candidate);
     operatorCounts.set(candidate.operator_group, (operatorCounts.get(candidate.operator_group) || 0) + 1);
     familyCounts.set(candidate.source_family, (familyCounts.get(candidate.source_family) || 0) + 1);
   }
   if (selected.length !== requiredCount) {
-    throw new Error(`Unable to select ${requiredCount} distinct balanced three-trial bases; selected ${selected.length}.`);
+    throw new Error(`Unable to select ${requiredCount} globally distinct source-native balanced three-trial bases; selected ${selected.length}.`);
   }
   return {
     bases: selected,
