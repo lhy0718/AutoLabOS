@@ -384,6 +384,10 @@ autolabos governance-benchmark audit-promotion-source-expansion \
   --inventory <source-inventory.json> \
   --out-dir <new-audit-dir>
 
+autolabos governance-benchmark export-promotion-trial-candidates \
+  --recipe <source-recipe.json> \
+  --out-dir <new-handoff-dir>
+
 autolabos governance-benchmark project-promotion-source \
   --source-root <raw-source> \
   --recipe <projection.json> \
@@ -391,6 +395,8 @@ autolabos governance-benchmark project-promotion-source \
 ```
 
 The source-expansion audit keeps exact artifact counts, bounded lower bounds, reported aggregate claims, and unestablished observations separate at every stage. Generated research tasks, execution traces, manuscript PDFs, and repository claims can establish source capacity, but none count as confirmatory admissions. Paper-scale source readiness requires at least 72 exactly admitted, source-diverse base bundles after source binding, real execution evidence, repeated trials, comparison results, figure and claim-evidence checks, human license review, and two independent human normalizations. A blocked audit exits nonzero and names the workflow nodes that need more evidence.
+
+The trial-candidate exporter accepts a pinned HTTPS Git origin and revision, an anchored path pattern with `operator`, `family`, and `trial` captures, and exactly three trials per base candidate. Selection is lexical and group-balanced before artifact inspection. Empty and duplicate Git blobs are excluded with explicit accounting. Materialized bytes must match their Git object IDs; credential-like content fails closed, while private machine paths are replaced only in reviewer artifacts with separate raw/reviewer hashes and redaction counts. Distribute only the `reviewer/` directory for annotation. The controller map, generated evidence summary, and handoff manifest remain outside that directory. A 72-base candidate handoff satisfies only the trace-candidate floor; it does not establish redistribution permission, human normalization, confirmatory admission, or paper readiness.
 
 Projection recipes support byte-for-byte file copies and JSON-pointer extraction only. They cannot add literal evidence values. The projector records source/output hashes, rejects path escape, symlinks, credential-like paths or values, preserves the selected source license, and rejects files added outside the closed output manifest. A generated bundle is marked confirmatory-ready only when the canonical mutation contract, hash-bound real-execution evidence, redistribution declaration, and human license review all pass.
 

@@ -644,6 +644,19 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports revision-bound promotion trial-candidate handoff export", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-trial-candidates",
+      "--recipe", "inputs/trial-candidate-source.json",
+      "--out-dir", "outputs/trial-candidate-handoff"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-trial-candidates",
+      recipePath: "inputs/trial-candidate-source.json",
+      outDir: "outputs/trial-candidate-handoff"
+    });
+  });
+
   it("supports blind source-normalization pack export and double-annotation materialization", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -793,6 +806,17 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("--recipe")
+    });
+  });
+
+  it("requires recipe and output paths for promotion trial-candidate handoff export", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-trial-candidates",
+      "--recipe", "inputs/trial-candidate-source.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--out-dir")
     });
   });
 

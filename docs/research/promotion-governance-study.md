@@ -378,8 +378,11 @@ not a hash-bound corpus.
 
 The evidence ladder currently establishes an exact-or-lower-bound source-hash
 floor of 502 artifacts and an execution-trace floor of 429. It establishes
-only 20 repeated-trial candidates and 20 machine-readable comparison-result
-candidates. It establishes zero explicit readiness decisions, zero
+only 20 previously projected candidates with repeated result records and 20
+machine-readable comparison-result candidates. The revision-bound handoff
+below adds 72 three-trace grouping candidates, but comparability is not yet
+verified, so those groupings do not advance the repeated-trial evidence stage.
+The ladder establishes zero explicit readiness decisions, zero
 source-grounded figure audits, zero claim-to-evidence maps, zero completed
 human license reviews, zero double-human normalizations, and zero confirmatory
 admissions. Consequently, the source search is no longer the immediate scale
@@ -392,6 +395,29 @@ The machine-readable inventory is
 returns `blocked_for_paper_scale` until exact admission, family/operator
 diversity, and concentration limits all pass. Its current upstream targets are
 `run_experiments`, `analyze_results`, `review`, and `design_experiments`.
+
+### Revision-Bound Trial Candidates
+
+The source-capacity audit led to a revision-bound candidate handoff rather than
+direct confirmatory admission. The pinned source tree contained 2,361 matching
+trace artifacts. Pre-content structural checks excluded one empty blob and 624
+duplicate Git objects, leaving 1,736 unique eligible artifacts. Lexical,
+group-balanced selection produced 72 base candidates with three trials each,
+covering 18 source families and 10 operator groups. The largest family share is
+0.0694 and the largest operator share is 0.1111.
+
+All 216 selected artifacts were retrieved over HTTPS and verified against their
+Git object identifiers. Reviewer projection replaced 288 private machine-path
+occurrences while preserving separate raw-source and reviewer-artifact hashes.
+The reviewer tree passed the closed-file, hash, candidate-uniqueness,
+privacy, and controller-separation checks. The generated evidence record is
+`docs/research/evidence/promotion-trial-candidate-handoff-v2.json`.
+
+This result closes only the numerical trace-candidate floor. The source license
+has not received human review, two independent normalizations have not been
+completed, comparison results and explicit readiness artifacts have not been
+verified, and no candidate has entered the frozen confirmatory corpus. The
+paper-scale admission count therefore remains zero.
 
 ### Confirmatory Decision Boundary
 

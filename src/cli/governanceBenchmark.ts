@@ -68,6 +68,10 @@ import {
   type AuditPromotionSourceExpansionInput
 } from "../core/benchmark/promotionBenchmarkSourceExpansionAudit.js";
 import {
+  exportPromotionTrialCandidateHandoff,
+  type ExportPromotionTrialCandidateHandoffInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
+import {
   exportPromotionSourceNormalizationPack,
   normalizePromotionSource,
   type ExportPromotionSourceNormalizationPackInput,
@@ -478,6 +482,24 @@ export async function runPromotionSourceExpansionAuditCli(
     ].join("\n") + "\n"
   );
   if (!result.report.paper_scale_source_ready) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateHandoffExportCli(
+  input: ExportPromotionTrialCandidateHandoffInput
+): Promise<void> {
+  const result = await exportPromotionTrialCandidateHandoff(input);
+  process.stdout.write(
+    [
+      `Promotion trial-candidate handoff prepared: ${result.handoff_id}`,
+      `Base candidates: ${result.base_candidate_count}`,
+      `Trial artifacts: ${result.trial_artifact_count}`,
+      `Reviewer packet: ${result.reviewer_dir}`,
+      `Controller map: ${result.controller_map_path}`,
+      `Manifest: ${result.manifest_path}`,
+      `Evidence summary: ${result.evidence_summary_path}`,
+      "Evidence boundary: revision-bound three-trial candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionSourceNormalizationPackExportCli(

@@ -25,6 +25,7 @@ import {
   runPromotionProviderAggregationCli,
   runSyntheticPromotionCorpusCli,
   runPromotionSourceExpansionAuditCli,
+  runPromotionTrialCandidateHandoffExportCli,
   runPromotionSourceProjectionCli,
   runPromotionSourceNormalizationPackExportCli,
   runPromotionSourceNormalizationBatchExportCli,
@@ -71,6 +72,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
+    "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <source-recipe.json> --out-dir <new-handoff-dir>",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
@@ -316,6 +318,15 @@ async function main(): Promise<void> {
     await runPromotionSourceExpansionAuditCli({
       cwd: process.cwd(),
       inventoryPath: action.inventoryPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-promotion-trial-candidates") {
+    await runPromotionTrialCandidateHandoffExportCli({
+      cwd: process.cwd(),
+      recipePath: action.recipePath,
       outDir: action.outDir
     });
     return;

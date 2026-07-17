@@ -4,6 +4,7 @@ import { constants as fsConstants, promises as fs } from "node:fs";
 
 import { writeJsonFile } from "../../utils/fs.js";
 import { hashPromotionArtifactTree } from "./promotionBenchmark.js";
+import { assertPromotionArtifactPrivacySafe } from "./promotionArtifactPrivacy.js";
 import { validatePromotionMutationCompatibility } from "./promotionBenchmarkBuilder.js";
 import { inspectPromotionExecutionEvidence } from "./promotionBenchmarkExecutionEvidence.js";
 import { promotionVariantDefinitions } from "./promotionBenchmarkVariants.js";
@@ -92,14 +93,6 @@ export interface PromotionSourceProjectionInspection {
   manifest: PromotionSourceProjectionManifest | null;
   issues: PromotionSourceProjectionIssue[];
 }
-
-const MAX_SCANNABLE_TEXT_BYTES = 64 * 1024 * 1024;
-const SENSITIVE_PATH_PATTERN = /(?:^|\/)(?:\.env(?:\..*)?|.*api[-_]?keys?.*|.*credentials?.*|.*private[-_]?keys?.*|.*secrets?.*|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:pem|p12|pfx|key))$/iu;
-const SECRET_TEXT_PATTERNS = [
-  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u,
-  /\bAKIA[0-9A-Z]{16}\b/u,
-  /\b(?:api[-_]?key|access[-_]?token|auth[-_]?token|client[-_]?secret|password)\s*[:=]\s*["']?[A-Za-z0-9_+\/=.-]{16,}/iu
-] as const;
 
 export async function projectPromotionSource(
   input: ProjectPromotionSourceInput
@@ -385,16 +378,13 @@ async function planProjection(
 
 async function loadSelectedSourceFile(sourceRoot: string, relativePath: string): Promise<SelectedSourceFile> {
   if (!safeRelativePath(relativePath)) throw new Error("Projection source paths must be portable and relative.");
-  if (SENSITIVE_PATH_PATTERN.test(relativePath.replace(/\\/gu, "/"))) {
-    throw new Error(`Projection source path is sensitive and cannot be selected: ${relativePath}`);
-  }
   const absolutePath = resolveContainedPath(sourceRoot, relativePath);
   if (!absolutePath) throw new Error("Projection source path escapes the raw source tree.");
   await assertNoSymlinkPath(sourceRoot, relativePath);
   const stat = await fs.stat(absolutePath);
   if (!stat.isFile() || stat.size === 0) throw new Error(`Projection source must be a non-empty regular file: ${relativePath}`);
   const bytes = await fs.readFile(absolutePath);
-  scanSelectedBytes(relativePath, bytes);
+  assertPromotionArtifactPrivacySafe(relativePath, bytes);
   return { absolutePath, relativePath, bytes, sha256: sha256(bytes) };
 }
 
@@ -417,18 +407,6 @@ async function listRegularFiles(root: string): Promise<string[]> {
   };
   await visit(root);
   return files;
-}
-
-function scanSelectedBytes(relativePath: string, bytes: Uint8Array): void {
-  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
-  if (sample.includes(0)) return;
-  if (bytes.length > MAX_SCANNABLE_TEXT_BYTES) {
-    throw new Error(`Selected text file is too large for a complete secret scan: ${relativePath}`);
-  }
-  const text = Buffer.from(bytes).toString("utf8");
-  if (SECRET_TEXT_PATTERNS.some((pattern) => pattern.test(text))) {
-    throw new Error(`Selected source file contains a credential-like value and cannot be projected: ${relativePath}`);
-  }
 }
 
 function parseProjectionRecipe(value: unknown): PromotionSourceProjectionRecipe {
