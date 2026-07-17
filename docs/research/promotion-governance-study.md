@@ -468,6 +468,46 @@ have not been completed, comparison results and readiness artifacts have not
 been verified, and no candidate has entered the frozen confirmatory corpus. The
 paper-scale admission count therefore remains zero.
 
+The v9 route replaces the undersized trace source with the pinned, ungated
+[SWE-agent trajectories](https://huggingface.co/datasets/nebius/SWE-agent-trajectories)
+revision `68195a1450865274106246d0d0296a1d6807b88e`. The official dataset
+metadata declares CC BY 4.0, 80,036 executed trajectories, source-native task
+IDs, three operator identities, binary outcomes, complete interaction traces,
+generated patches, and evaluation logs. The source bytes contain 3,591 tasks;
+4,130 task-operator groups have at least three rows, covering 3,504 distinct
+tasks. These counts were computed from the pinned Parquet identity and outcome
+columns. They do not replace human license review or establish that every row
+is an independent stochastic repeat.
+
+The portable v9 recipe derives a repository family from each task ID using a
+declared `prefix_before_last` transform, keeps the complete task ID as the base,
+and selects before reading outcomes, patches, logs, or trajectories. The
+generated handoff contains 72 distinct task bases, 72 repository families, 216
+rows, and 24 selected bases per operator. Its largest family and operator shares
+are 0.0139 and 0.3333. Runtime inspection passes, all twelve Parquet hashes and
+the README hash match the official revision, and an independent exact-string
+scan finds zero controller source, family, base, or operator identities in the
+216 reviewer artifacts. The reviewer packet occupies approximately 20 MB and
+records 204 privacy redactions.
+
+This closes only the source-native three-row trace floor. A pre-content audit
+of the selected task IDs finds a second three-row operator group for 48 bases;
+24 bases have only the selected operator. Therefore v9 does not yet provide 72
+source-grounded paired comparisons. The source also does not contain paper
+figures, claim-to-evidence maps, or paper-readiness decisions. AutoLabOS must
+not reinterpret those absent artifacts as source observations. A future
+canonical benchmark-curation stage may derive controlled positive envelopes
+only under a separate provenance class, after a paired-comparator contract and
+independent human review are complete. Such envelopes would support a
+controlled governance benchmark, not a claim about naturally occurring paper
+quality.
+
+The v9 recipe and generated evidence record are
+`docs/research/evidence/promotion-trial-candidate-source-v9.json` and
+`docs/research/evidence/promotion-trial-candidate-handoff-v9.json`. No v9 item
+has been human approved, canonically curated, or admitted to confirmatory
+evaluation. The paper-scale admission count remains zero.
+
 ### Exploratory Instrument Check
 
 A deterministic development run exercised the complete local instrument on

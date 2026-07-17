@@ -483,10 +483,13 @@ describe("promotion trial-candidate handoff", () => {
         for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
           for (let trialIndex = 0; trialIndex < 3; trialIndex += 1) {
             rows.push({
+              operator: `operator-${operatorIndex}`,
+              source_key: `family-${familyIndex}-base-${baseIndex}`,
               metadata: JSON.stringify({ operator: `operator-${operatorIndex}` }),
               instance: JSON.stringify({
                 domain: `family-${familyIndex}`,
                 sample_id: `base-${baseIndex}`,
+                source_key: `family-${familyIndex}-base-${baseIndex}`,
                 shared_id: `base-${baseIndex % 6}`
               }),
               prediction: `observation-${baseIndex}-${trialIndex}`,
@@ -509,7 +512,7 @@ describe("promotion trial-candidate handoff", () => {
       const fileName = `operator-${operatorIndex}.parquet`;
       const bytes = new Uint8Array(parquetWriteBuffer({
         columnData: [
-          "metadata", "instance", "prediction", "termination", "messages", "auto_judge"
+          "operator", "source_key", "metadata", "instance", "prediction", "termination", "messages", "auto_judge"
         ].map((name) => ({
           name,
           data: rows.map((row) => row[name]),
@@ -540,12 +543,16 @@ describe("promotion trial-candidate handoff", () => {
         sha256: createHash("sha256").update(licenseText).digest("hex")
       }],
       parquet_sources: parquetSources,
-      columns: ["metadata", "instance", "prediction", "termination", "messages", "auto_judge"],
+      columns: ["operator", "source_key", "metadata", "instance", "prediction", "termination", "messages", "auto_judge"],
       json_columns: ["metadata", "instance", "messages", "auto_judge"],
       reviewer_columns: ["prediction", "termination", "messages", "auto_judge"],
       operator_pointer: "/metadata/operator",
-      family_pointer: "/instance/domain",
-      base_pointer: "/instance/sample_id"
+      family_pointer: "/instance/source_key",
+      family_value_transform: {
+        operation: "prefix_before_last",
+        delimiter: "-base-"
+      },
+      base_pointer: "/instance/source_key"
     }, null, 2)}\n`, "utf8");
 
     const result = await exportPromotionTrialCandidateHandoff({
@@ -599,6 +606,41 @@ describe("promotion trial-candidate handoff", () => {
       workspace,
       result.license_reviewer_dir
     ))).toMatchObject({ passed: true, issues: [] });
+
+    const nativeColumnRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    nativeColumnRecipe.handoff_id = "candidate-handoff-parquet-native-columns";
+    nativeColumnRecipe.json_columns = [];
+    nativeColumnRecipe.operator_pointer = "/operator";
+    nativeColumnRecipe.family_pointer = "/source_key";
+    nativeColumnRecipe.base_pointer = "/source_key";
+    const nativeColumnRecipePath = path.join(workspace, "parquet-native-column-recipe.json");
+    await writeFile(nativeColumnRecipePath, `${JSON.stringify(nativeColumnRecipe, null, 2)}\n`, "utf8");
+    const nativeColumnResult = await exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-native-column-recipe.json",
+      sourceRoot,
+      outDir: "parquet-native-column-handoff"
+    });
+    expect(await inspectPromotionTrialCandidateHandoff(path.join(
+      workspace,
+      nativeColumnResult.output_dir
+    ))).toMatchObject({ passed: true, issues: [] });
+
+    const malformedTransformRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    malformedTransformRecipe.handoff_id = "candidate-handoff-parquet-malformed-transform";
+    malformedTransformRecipe.family_value_transform.delimiter = "";
+    const malformedTransformRecipePath = path.join(workspace, "parquet-malformed-transform-recipe.json");
+    await writeFile(
+      malformedTransformRecipePath,
+      `${JSON.stringify(malformedTransformRecipe, null, 2)}\n`,
+      "utf8"
+    );
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-malformed-transform-recipe.json",
+      sourceRoot,
+      outDir: "parquet-malformed-transform-handoff"
+    })).rejects.toThrow("valid grouping pointers");
 
     const duplicateRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
     duplicateRecipe.handoff_id = "candidate-handoff-parquet-duplicate-source";

@@ -1,0 +1,96 @@
+{
+  "schema_version": "1.1",
+  "handoff_id": "public-execution-trace-candidate-handoff-v9",
+  "source_url": "https://huggingface.co/datasets/nebius/SWE-agent-trajectories",
+  "source_revision": "68195a1450865274106246d0d0296a1d6807b88e",
+  "required_base_count": 72,
+  "trials_per_base": 3,
+  "artifact_format": "json",
+  "selection_policy": "Validate the pinned source and license hashes, derive each source family from the repository prefix of the source-native task ID, group by operator, repository family, and complete task ID, retain the first three lexical rows per exact group, then select 72 globally distinct task bases by balanced operator-family round robin before reading success labels, patches, evaluation logs, or trajectory content.",
+  "license_evidence": [
+    {
+      "path": "README.md",
+      "sha256": "81cbf0ee9f00e45aff9eb90ebe7f59e714ca7135b9b78a90d5227f866021f564"
+    }
+  ],
+  "materialization_mode": "huggingface_parquet",
+  "credential_projection": "redact_values",
+  "reviewer_identity_redactions": [
+    "https://huggingface.co/datasets/nebius/SWE-agent-trajectories",
+    "nebius/SWE-agent-trajectories"
+  ],
+  "parquet_sources": [
+    {
+      "path": "data/train-00000-of-00012.parquet",
+      "sha256": "5a395e8c7bb8ddc4b8f4d268506b3a0e2cf9b5ec3922600117322fe788067a13"
+    },
+    {
+      "path": "data/train-00001-of-00012.parquet",
+      "sha256": "fca106cce0f09891c2fadc032fb304da9ae5a7c31d2a39eb7ec70a7bdd4a9882"
+    },
+    {
+      "path": "data/train-00002-of-00012.parquet",
+      "sha256": "fc28c2ab014c6c90d72026dda9cf8753e37b4b7b128c05c4232980cdcc99f3f7"
+    },
+    {
+      "path": "data/train-00003-of-00012.parquet",
+      "sha256": "b6a4e13118de1792b383c077bf6023881a9ff5d4c171a75e767ffb5ad7c037c5"
+    },
+    {
+      "path": "data/train-00004-of-00012.parquet",
+      "sha256": "d1a8d8d3bafbfd589d32a42d4b0a321f107d9aab170e3dc2f749b0f252a958c5"
+    },
+    {
+      "path": "data/train-00005-of-00012.parquet",
+      "sha256": "c507212cd721512240a1bb87a8554bb7b429a9c03649c1473eb3d9e4673e6aca"
+    },
+    {
+      "path": "data/train-00006-of-00012.parquet",
+      "sha256": "fcad81ec5704cb2dc8502a70a1a6cd86a7032227d8de7a613d904636ee53337c"
+    },
+    {
+      "path": "data/train-00007-of-00012.parquet",
+      "sha256": "65547ce464ae1bbff550eacfcfec251ee1cb9b439744389a66bb97a8d5aa1cdb"
+    },
+    {
+      "path": "data/train-00008-of-00012.parquet",
+      "sha256": "bfbd9a58fc9494b49ebd73d5f5e6836a72ae557cbc7ee59d2b2e3f91e3d44027"
+    },
+    {
+      "path": "data/train-00009-of-00012.parquet",
+      "sha256": "8b4c45d8811f0fbbbc5fc46157312ddccb010c439d9e18289ae3ca3e5387ff09"
+    },
+    {
+      "path": "data/train-00010-of-00012.parquet",
+      "sha256": "419e02daa099343e73d45d298b64e574ee012398ebbe19e5798526e5f1336b12"
+    },
+    {
+      "path": "data/train-00011-of-00012.parquet",
+      "sha256": "7c3ccb843bab5457e29a82d9a36a3d59b8e1778c1d97324643c5f85a0d3f9492"
+    }
+  ],
+  "columns": [
+    "instance_id",
+    "model_name",
+    "target",
+    "trajectory",
+    "exit_status",
+    "generated_patch",
+    "eval_logs"
+  ],
+  "json_columns": [],
+  "reviewer_columns": [
+    "target",
+    "trajectory",
+    "exit_status",
+    "generated_patch",
+    "eval_logs"
+  ],
+  "operator_pointer": "/model_name",
+  "family_pointer": "/instance_id",
+  "family_value_transform": {
+    "operation": "prefix_before_last",
+    "delimiter": "-"
+  },
+  "base_pointer": "/instance_id"
+}

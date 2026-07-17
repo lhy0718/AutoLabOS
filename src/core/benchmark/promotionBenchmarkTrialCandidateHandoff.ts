@@ -233,8 +233,14 @@ interface PromotionTrialCandidateParquetRecipe extends PromotionTrialCandidateRe
   reviewer_columns: string[];
   operator_pointer: string;
   family_pointer: string;
+  family_value_transform?: PromotionGroupingValueTransform;
   base_pointer: string;
   trial_pointer?: string;
+}
+
+interface PromotionGroupingValueTransform {
+  operation: "prefix_before_last";
+  delimiter: string;
 }
 
 type PromotionTrialCandidateRecipe =
@@ -1046,19 +1052,21 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
       "required_base_count", "trials_per_base", "artifact_format",
       "selection_policy", "materialization_mode", "license_evidence",
       "parquet_sources", "columns", "json_columns", "reviewer_columns",
-      "operator_pointer", "family_pointer", "base_pointer", "trial_pointer",
+      "operator_pointer", "family_pointer", "family_value_transform", "base_pointer", "trial_pointer",
       "credential_projection", "reviewer_identity_redactions"
     ]);
     if (Object.keys(value).some((key) => !allowedKeys.has(key))
         || !validHuggingFaceDatasetUrl(value.source_url)
         || !validParquetSourceList(value.parquet_sources)
         || !validUniqueStringList(value.columns)
-        || !validUniqueStringList(value.json_columns)
+        || !validUniqueStringListAllowEmpty(value.json_columns)
         || !validUniqueStringList(value.reviewer_columns)
         || !(value.json_columns as string[]).every((column) => (value.columns as string[]).includes(column))
         || !(value.reviewer_columns as string[]).every((column) => (value.columns as string[]).includes(column))
         || !validGroupingPointer(value.operator_pointer, value.columns)
         || !validGroupingPointer(value.family_pointer, value.columns)
+        || (value.family_value_transform !== undefined
+          && !validGroupingValueTransform(value.family_value_transform))
         || !validGroupingPointer(value.base_pointer, value.columns)
         || (value.credential_projection !== undefined
           && value.credential_projection !== "redact_values")
@@ -1079,6 +1087,9 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
       reviewer_columns: [...value.reviewer_columns],
       operator_pointer: value.operator_pointer,
       family_pointer: value.family_pointer,
+      ...(value.family_value_transform === undefined
+        ? {}
+        : { family_value_transform: { ...value.family_value_transform } }),
       base_pointer: value.base_pointer,
       ...(value.credential_projection === undefined
         ? {}
@@ -1557,7 +1568,10 @@ async function discoverParquetCandidates(
     for (const [rowIndex, row] of rows.entries()) {
       const decoded = decodeParquetRow(row, recipe.json_columns);
       const operator = groupingLabel(resolveJsonPointer(decoded, recipe.operator_pointer));
-      const family = groupingLabel(resolveJsonPointer(decoded, recipe.family_pointer));
+      const family = transformedGroupingLabel(
+        resolveJsonPointer(decoded, recipe.family_pointer),
+        recipe.family_value_transform
+      );
       const base = groupingLabel(resolveJsonPointer(decoded, recipe.base_pointer));
       const trial = recipe.trial_pointer
         ? groupingLabel(resolveJsonPointer(decoded, recipe.trial_pointer))
@@ -2206,6 +2220,14 @@ function validUniqueStringList(value: unknown): value is string[] {
     && new Set(value).size === value.length;
 }
 
+function validUniqueStringListAllowEmpty(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.length <= 64
+    && value.every((item) =>
+      typeof item === "string" && item.length > 0 && item.length <= 128 && !item.includes("\0"))
+    && new Set(value).size === value.length;
+}
+
 function validReviewerIdentityRedactions(value: unknown): value is string[] {
   return Array.isArray(value)
     && value.length > 0
@@ -2225,6 +2247,27 @@ function validGroupingPointer(pointer: unknown, columns: unknown): pointer is st
       || !/^\/(?:[^~/]|~[01])+(?:\/(?:[^~/]|~[01])+)*$/u.test(pointer)
       || !validUniqueStringList(columns)) return false;
   return columns.includes(topLevelPointerToken(pointer));
+}
+
+function validGroupingValueTransform(value: unknown): value is PromotionGroupingValueTransform {
+  return isRecord(value)
+    && Object.keys(value).length === 2
+    && value.operation === "prefix_before_last"
+    && typeof value.delimiter === "string"
+    && value.delimiter.length > 0
+    && value.delimiter.length <= 32
+    && !/[\u0000-\u001f\u007f]/u.test(value.delimiter);
+}
+
+function transformedGroupingLabel(
+  value: unknown,
+  transform?: PromotionGroupingValueTransform
+): string | null {
+  const label = groupingLabel(value);
+  if (!label || !transform) return label;
+  const delimiterIndex = label.lastIndexOf(transform.delimiter);
+  if (delimiterIndex <= 0 || delimiterIndex + transform.delimiter.length >= label.length) return null;
+  return groupingLabel(label.slice(0, delimiterIndex));
 }
 
 function validArtifactUrlTemplate(value: unknown): value is string {

@@ -10821,6 +10821,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-006` Source-native traces lack complete paired-comparison and curation provenance — `IN_PROGRESS`
   - `R-005` Operator-conditioned groups overcount source-native bases — `MITIGATED`
   - `R-004` Deterministic bounded fallback masquerading as adapter evidence — `MITIGATED_FOR_CURRENT_RUN`
   - `R-001` Result-table discipline and claim→evidence linkage — `MITIGATED`
@@ -13280,6 +13281,65 @@ Path placeholders:
   - `docs/research/evidence/promotion-trial-candidate-handoff-v8.json`
   - `docs/research/promotion-governance-study.md`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v8/controller/trial-candidate-map.json`
+
+---
+
+## Issue: R-006
+
+- Status: in_progress; v9 trace floor is integrity-valid, while paired-comparison and canonical-curation contracts remain open
+- Validation target: a confirmatory promotion benchmark must preserve source-native execution evidence while distinguishing it from curator-generated result tables, figures, claims, and readiness decisions.
+- Environment/session context: deterministic audit of the pinned v9 Parquet source and generated local candidate handoff; no human judgment, source row, outcome, or generated reviewer artifact was manually changed.
+
+- Reproduction steps:
+  1. Materialize the exact public source revision and verify the README and twelve Parquet SHA-256 values.
+  2. Export 72 outcome-blind task-level bases with three rows each and balanced operator selection.
+  3. Recount source-native task IDs independently of operator identity.
+  4. For each selected task, count operator groups that contain at least three source rows.
+  5. Compare the source fields with the paper-ready artifact surface required by confirmatory intake.
+
+- Expected behavior:
+  - Every selected base is a distinct source-native task and contains three hash-bound execution rows.
+  - Every clean comparison base has a source-grounded comparator with adequate repeated rows.
+  - Source observations and curator-generated canonical artifacts use different provenance classes.
+  - Missing paper figures, claim links, or readiness decisions cannot be described as source-native evidence.
+
+- Actual behavior:
+  - v9 contains 72 distinct task bases, 216 rows, 72 repository families, and three equally represented operators.
+  - Only 48 selected tasks expose a second operator group with at least three rows; 24 expose only the selected operator.
+  - The source provides trajectories, outcomes, patches, and evaluation logs but no paper figure audit, claim-evidence map, or paper-readiness decision.
+  - The current source-normalization contract correctly rejects such sources, while no separate canonical-curation provenance contract exists yet.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the v9 exact-revision export passes integrity inspection and the independent task-level recount.
+  - Existing session: the historical v8 export is rejected by the strengthened inspector because operator-conditioned groups collapse to 37 tasks.
+  - Divergence: no refresh or resume divergence is involved; v9 resolves task-level scale but exposes the next paired-comparison and provenance boundary.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the current handoff projects one operator-conditioned three-row group per task, and the downstream contracts have no separate representation for source-grounded paired comparison versus benchmark-curated paper artifacts.
+
+- Code/test changes:
+  - Added global task-level uniqueness enforcement and controller-map inspection under R-005.
+  - Added a bounded `prefix_before_last` family transform and support for Parquet sources without JSON-string columns.
+  - Added a hash-bound v9 source recipe and exact evidence record.
+  - Paired-comparator selection and canonical-curation provenance remain pending.
+
+- Regression status:
+  - Targeted handoff regression: 24/24 passed on 2026-07-17.
+  - Build: passed on 2026-07-17.
+  - v9 handoff inspection: passed with 72 distinct source-native bases and zero issues.
+  - Re-validation result: pending for the paired-comparator and curation contracts.
+
+- Follow-up risks:
+  - Treating a generated table, figure, claim, or readiness decision as source-native would invalidate the benchmark's evidence claims.
+  - Selecting comparator availability or task inclusion after reading outcomes would introduce leakage.
+  - Dataset-level CC BY metadata does not by itself resolve underlying repository or model-output terms.
+
+- Evidence/artifacts:
+  - `docs/research/evidence/promotion-trial-candidate-source-v9.json`
+  - `docs/research/evidence/promotion-trial-candidate-handoff-v9.json`
+  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/trial-candidate-handoff.json`
+  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/controller/trial-candidate-map.json`
 
 ---
 
