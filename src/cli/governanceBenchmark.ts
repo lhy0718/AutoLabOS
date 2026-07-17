@@ -73,8 +73,10 @@ import {
 } from "../core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
 import {
   adjudicatePromotionTrialCandidateReview,
+  preparePromotionTrialCandidateAnnotationWorksheet,
   preflightPromotionTrialCandidateAnnotation,
   type AdjudicatePromotionTrialCandidateReviewInput,
+  type PreparePromotionTrialCandidateAnnotationWorksheetInput,
   type PreflightPromotionTrialCandidateAnnotationInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
@@ -545,6 +547,22 @@ export async function runPromotionTrialCandidateAnnotationPreflightCli(
     ].join("\n") + "\n"
   );
   if (!result.report.passed) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateAnnotationWorksheetCli(
+  input: PreparePromotionTrialCandidateAnnotationWorksheetInput
+): Promise<void> {
+  const result = await preparePromotionTrialCandidateAnnotationWorksheet(input);
+  process.stdout.write(
+    [
+      "Unlabeled trial-candidate annotation worksheet prepared",
+      `Handoff: ${result.handoff_id}`,
+      `Annotator ID: ${result.annotator_id}`,
+      `Tasks: ${result.task_count}`,
+      `Output: ${result.output_path}`,
+      "Status: incomplete by construction; human review and attestation are required before preflight"
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionTrialCandidateReviewAdjudicationCli(

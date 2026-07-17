@@ -26,6 +26,7 @@ import {
   runSyntheticPromotionCorpusCli,
   runPromotionSourceExpansionAuditCli,
   runPromotionTrialCandidateHandoffExportCli,
+  runPromotionTrialCandidateAnnotationWorksheetCli,
   runPromotionTrialCandidateAnnotationPreflightCli,
   runPromotionTrialCandidateReviewAdjudicationCli,
   runPromotionSourceProjectionCli,
@@ -77,6 +78,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
     "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <source-recipe.json> --out-dir <new-handoff-dir>",
+    "  autolabos governance-benchmark prepare-promotion-trial-candidate-worksheet --handoff-root <handoff> --annotator-id <pseudonym> --output <annotation.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --handoff-root <handoff> --annotation <review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark adjudicate-promotion-trial-candidate-review --handoff-root <handoff> --annotation <review-a.json> --annotation <review-b.json> --license-review <license-review.json> [--resolution <resolution.json>] --out-dir <adjudication>",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
@@ -334,6 +336,16 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       recipePath: action.recipePath,
       outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-prepare-promotion-trial-candidate-worksheet") {
+    await runPromotionTrialCandidateAnnotationWorksheetCli({
+      cwd: process.cwd(),
+      handoffRoot: action.handoffRoot,
+      annotatorId: action.annotatorId,
+      outputPath: action.outputPath
     });
     return;
   }

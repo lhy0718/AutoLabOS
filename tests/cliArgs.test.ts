@@ -690,6 +690,21 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports unlabeled trial-candidate annotation worksheet preparation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-worksheet",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--annotator-id", "reviewer-alpha",
+      "--output", "reviews/review-a.json"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-trial-candidate-worksheet",
+      handoffRoot: "outputs/candidate-handoff",
+      annotatorId: "reviewer-alpha",
+      outputPath: "reviews/review-a.json"
+    });
+  });
+
   it("supports trial-candidate human annotation preflight and adjudication", () => {
     expect(resolveCliAction([
       "governance-benchmark",

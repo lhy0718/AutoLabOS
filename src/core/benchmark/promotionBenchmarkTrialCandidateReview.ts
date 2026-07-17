@@ -47,6 +47,39 @@ export const PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS =
 export const PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE =
   "trial-candidate-review-evidence.json";
 
+export interface PreparePromotionTrialCandidateAnnotationWorksheetInput {
+  cwd: string;
+  handoffRoot: string;
+  annotatorId: string;
+  outputPath: string;
+}
+
+export interface PromotionTrialCandidateAnnotationWorksheet {
+  schema_version: "1.0";
+  handoff_id: string;
+  annotator_id: string;
+  label_source: "human";
+  review_role: "initial";
+  independence_attestation: {
+    completed_by_human: false;
+    peer_annotations_unseen: false;
+    controller_map_unseen: false;
+  };
+  annotations: Array<{
+    candidate_id: string;
+    observations: Record<PromotionTrialCandidateObservation, null>;
+    evidence_refs: [];
+    rationale: "";
+  }>;
+}
+
+export interface PreparePromotionTrialCandidateAnnotationWorksheetResult {
+  handoff_id: string;
+  annotator_id: string;
+  task_count: number;
+  output_path: string;
+}
+
 export interface PreflightPromotionTrialCandidateAnnotationInput {
   cwd: string;
   handoffRoot: string;
@@ -182,6 +215,60 @@ interface AcceptedLabel {
   initial: [PromotionTrialCandidateHumanLabel, PromotionTrialCandidateHumanLabel];
   resolution: PromotionTrialCandidateHumanLabel | null;
   annotator_ids: string[];
+}
+
+export async function preparePromotionTrialCandidateAnnotationWorksheet(
+  input: PreparePromotionTrialCandidateAnnotationWorksheetInput
+): Promise<PreparePromotionTrialCandidateAnnotationWorksheetResult> {
+  const cwd = path.resolve(input.cwd);
+  const handoffRoot = await resolveDirectoryInside(
+    cwd,
+    path.resolve(cwd, input.handoffRoot),
+    "Trial-candidate handoff"
+  );
+  if (!validId(input.annotatorId)) {
+    throw new Error("Trial-candidate worksheet requires a portable pseudonymous annotator ID.");
+  }
+  const outputPath = path.resolve(cwd, input.outputPath);
+  assertStrictlyInside(cwd, outputPath, "Trial-candidate annotation worksheet output");
+  if (isSameOrContainedPath(handoffRoot, outputPath)) {
+    throw new Error("Trial-candidate annotation worksheet output must stay outside the closed handoff.");
+  }
+  await prepareFreshFileOutputInside(
+    cwd,
+    outputPath,
+    "Trial-candidate annotation worksheet output"
+  );
+
+  const { manifest, tasks } = await loadHandoffContract(handoffRoot);
+  const observations = Object.fromEntries(
+    PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.map((field) => [field, null])
+  ) as Record<PromotionTrialCandidateObservation, null>;
+  const worksheet: PromotionTrialCandidateAnnotationWorksheet = {
+    schema_version: "1.0",
+    handoff_id: manifest.handoff_id,
+    annotator_id: input.annotatorId,
+    label_source: "human",
+    review_role: "initial",
+    independence_attestation: {
+      completed_by_human: false,
+      peer_annotations_unseen: false,
+      controller_map_unseen: false
+    },
+    annotations: tasks.map((task) => ({
+      candidate_id: task.candidate_id,
+      observations: { ...observations },
+      evidence_refs: [],
+      rationale: ""
+    }))
+  };
+  await writeJsonFile(outputPath, worksheet);
+  return {
+    handoff_id: manifest.handoff_id,
+    annotator_id: input.annotatorId,
+    task_count: tasks.length,
+    output_path: portableRef(cwd, outputPath)
+  };
 }
 
 export async function preflightPromotionTrialCandidateAnnotation(
@@ -938,6 +1025,28 @@ function sha256(value: Uint8Array): string {
 
 async function assertFreshOutput(outDir: string, label: string): Promise<void> {
   if (await pathExists(outDir)) throw new Error(`${label} already exists: ${outDir}`);
+}
+
+async function prepareFreshFileOutputInside(
+  root: string,
+  outputPath: string,
+  label: string
+): Promise<void> {
+  assertStrictlyInside(root, outputPath, label);
+  await assertFreshOutput(outputPath, label);
+
+  let existingAncestor = path.dirname(outputPath);
+  while (!(await pathExists(existingAncestor))) {
+    const parent = path.dirname(existingAncestor);
+    if (parent === existingAncestor) throw new Error(`${label} has no existing workspace ancestor.`);
+    existingAncestor = parent;
+  }
+  const resolvedAncestor = await fs.realpath(existingAncestor);
+  if (resolvedAncestor !== root) assertStrictlyInside(root, resolvedAncestor, `${label} parent`);
+
+  await fs.mkdir(path.dirname(outputPath), { recursive: true });
+  const resolvedParent = await fs.realpath(path.dirname(outputPath));
+  if (resolvedParent !== root) assertStrictlyInside(root, resolvedParent, `${label} parent`);
 }
 
 async function resolveDirectoryInside(root: string, candidate: string, label: string): Promise<string> {

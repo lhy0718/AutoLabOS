@@ -18,6 +18,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE,
   adjudicatePromotionTrialCandidateReview,
   inspectPromotionTrialCandidateReviewAdjudication,
+  preparePromotionTrialCandidateAnnotationWorksheet,
   preflightPromotionTrialCandidateAnnotation
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
@@ -351,6 +352,43 @@ describe("promotion trial-candidate handoff", () => {
       positive_candidate_count: 0,
       validation_issues: []
     });
+  });
+
+  it("prepares an unlabeled worksheet that cannot pass human annotation preflight", async () => {
+    const result = await preparePromotionTrialCandidateAnnotationWorksheet({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotatorId: "reviewer-worksheet",
+      outputPath: "reviews/reviewer-a/review-worksheet.json"
+    });
+    const worksheet = JSON.parse(await readFile(
+      path.join(workspace, result.output_path),
+      "utf8"
+    )) as Record<string, any>;
+
+    expect(result).toMatchObject({ task_count: 72, annotator_id: "reviewer-worksheet" });
+    expect(worksheet.independence_attestation).toEqual({
+      completed_by_human: false,
+      peer_annotations_unseen: false,
+      controller_map_unseen: false
+    });
+    expect(worksheet.annotations).toHaveLength(72);
+    expect(worksheet.annotations.every((annotation: Record<string, any>) =>
+      Object.values(annotation.observations).every((value) => value === null)
+      && annotation.evidence_refs.length === 0
+      && annotation.rationale === ""
+    )).toBe(true);
+
+    const preflight = await preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPath: "reviews/reviewer-a/review-worksheet.json",
+      outDir: "review-worksheet-preflight"
+    });
+    expect(preflight.report.passed).toBe(false);
+    expect(preflight.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_annotation_file_invalid"
+    );
   });
 
   it("requires observation-specific citations and existing JSON Pointers for positive labels", async () => {
