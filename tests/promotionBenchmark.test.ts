@@ -9,6 +9,12 @@ import {
   loadPromotionBenchmarkSuite,
   scorePromotionBenchmarkFromFiles
 } from "../src/core/benchmark/promotionBenchmark.js";
+import {
+  MINIMUM_PROMOTION_CLEAN_SUCCESS_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES,
+  PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
 
 const tempDirs: string[] = [];
 
@@ -59,21 +65,25 @@ describe("promotion benchmark", () => {
       bootstrap_replicates: 5000,
       exploratory_only: true
     });
-    expect(result.report.systems.find((system) => system.system_id === "governed")).toMatchObject({
+    const governed = result.report.systems.find((system) => system.system_id === "governed");
+    expect(governed).toMatchObject({
       coverage_rate: 1,
       exact_decision_accuracy: 1,
       false_paper_ready_rate: 0,
-      false_paper_ready_cluster_bootstrap_95_ci: [0, 0],
       concern_acceptance_conflict_rate: 0,
-      concern_acceptance_conflict_cluster_bootstrap_95_ci: [0, 0],
       clean_case_promotion_accuracy: 1,
       clean_case_promotion_accuracy_cluster_bootstrap_95_ci: null,
       blocker_precision: 1,
       blocker_recall: 1,
       repair_owner_exact_match_accuracy: 1,
-      repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: [1, 1],
       trace_coverage: 1
     });
+    expect(governed?.false_paper_ready_cluster_bootstrap_95_ci?.[0]).toBe(0);
+    expect(governed?.false_paper_ready_cluster_bootstrap_95_ci?.[1])
+      .toBeCloseTo(1 - Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / 2));
+    expect(governed?.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci?.[0])
+      .toBeCloseTo(Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / 2));
+    expect(governed?.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci?.[1]).toBe(1);
     const checklist = result.report.systems.find((system) => system.system_id === "checklist");
     expect(checklist?.false_paper_ready_rate).toBe(0.5);
     expect(checklist?.concern_acceptance_conflict_rate).toBe(1);
@@ -101,6 +111,58 @@ describe("promotion benchmark", () => {
     expect(markdown).toContain("clean_control");
     expect(markdown).toContain("## Clustered Metric Uncertainty");
     expect(markdown).toContain("## Paired Repair-Owner Analysis");
+  });
+
+  it("does not turn twenty all-zero clusters into a zero-width confidence interval", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-boundary-"));
+    tempDirs.push(workspace);
+    const cases = Array.from({ length: 20 }, (_, index) =>
+      caseManifest(
+        "case-" + index,
+        "base-" + index,
+        "test",
+        "block",
+        ["execution_gap"],
+        ["run_experiments"]
+      ));
+    await writeSuite(workspace, cases);
+    const predictions = cases.map((benchmarkCase) =>
+      prediction(
+        "artifact-policy",
+        String(benchmarkCase.case_id),
+        "block",
+        [blocking("execution_gap")],
+        ["run_experiments"]
+      ));
+    await writeFile(
+      path.join(workspace, "predictions.jsonl"),
+      predictions.map((row) => JSON.stringify(row)).join("\n") + "\n"
+    );
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+    const metrics = result.report.systems[0];
+    const exactUpperBoundary = 1 - Math.pow(
+      PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY,
+      1 / 20
+    );
+
+    expect(MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES).toBe(72);
+    expect(MINIMUM_PROMOTION_CLEAN_SUCCESS_BASE_BUNDLES).toBe(36);
+    expect(MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES).toBe(720);
+    expect(metrics.false_paper_ready_rate).toBe(0);
+    expect(metrics.false_paper_ready_cluster_bootstrap_95_ci).toEqual([
+      0,
+      exactUpperBoundary
+    ]);
+    expect(metrics.concern_acceptance_conflict_rate).toBe(0);
+    expect(metrics.concern_acceptance_conflict_cluster_bootstrap_95_ci?.[1])
+      .toBeCloseTo(exactUpperBoundary);
+    expect(exactUpperBoundary).toBeGreaterThan(0.05);
   });
 
   it("reports source-family strata and leave-one-family-out comparisons", async () => {

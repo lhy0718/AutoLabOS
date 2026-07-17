@@ -9,6 +9,7 @@ import {
   isSha256,
   type PromotionBenchmarkSourceDiversityStatus
 } from "./promotionBenchmarkSourceDiversity.js";
+import { PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY } from "./promotionBenchmarkConfirmatoryContract.js";
 
 export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "block"] as const;
 
@@ -781,7 +782,14 @@ function clusteredDifferenceStats(
     bootstrap.push(sum / count);
   }
   bootstrap.sort((left, right) => left - right);
-  return { delta, ci: [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)], p };
+  return {
+    delta,
+    ci: [
+      quantile(bootstrap, PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY),
+      quantile(bootstrap, 1 - PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY)
+    ],
+    p
+  };
 }
 
 function clusteredMeanInterval(
@@ -806,7 +814,24 @@ function clusteredMeanInterval(
     bootstrap.push(sum / count);
   }
   bootstrap.sort((left, right) => left - right);
-  return [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)];
+  const percentileInterval: [number, number] = [
+    quantile(bootstrap, PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY),
+    quantile(bootstrap, 1 - PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY)
+  ];
+  // Binary percentile intervals otherwise collapse to zero width at the boundary.
+  if (rows.every((row) => row.value === 0)) {
+    return [
+      0,
+      1 - Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / clusters.length)
+    ];
+  }
+  if (rows.every((row) => row.value === 1)) {
+    return [
+      Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / clusters.length),
+      1
+    ];
+  }
+  return percentileInterval;
 }
 
 function exactPairedSignTest(values: number[]): number | null {
@@ -875,7 +900,7 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     "",
     "## Clustered Metric Uncertainty",
     "",
-    "Intervals use base_bundle_id as the resampling cluster.",
+    "Intervals use base_bundle_id as the resampling cluster; all-zero and all-one binary outcomes use a two-sided exact boundary guard.",
     "",
     "| System | False promotion 95% CI | Concern-conflict 95% CI | Clean promotion 95% CI | Repair owner 95% CI |",
     "| --- | ---: | ---: | ---: | ---: |",

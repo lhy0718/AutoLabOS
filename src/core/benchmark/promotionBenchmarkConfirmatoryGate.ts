@@ -28,6 +28,12 @@ import {
 } from "./promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "./promotionBenchmarkVariants.js";
 import { buildPromotionNodeStrengtheningRecommendations } from "./promotionBenchmarkMetaHarness.js";
+import {
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES,
+  PROMOTION_CONFIRMATORY_MAXIMUM_CONFLICT_RATE,
+  PROMOTION_CONFIRMATORY_MINIMUM_CLEAN_PROMOTION_ACCURACY
+} from "./promotionBenchmarkConfirmatoryContract.js";
 
 export interface PromotionConfirmatorySystemRoles {
   ungated: string;
@@ -144,12 +150,8 @@ export interface PromotionConfirmatoryAssessment {
   claim_class: PromotionConfirmatoryGateReport["claim_class"];
 }
 
-const MINIMUM_CASE_COUNT = 200;
-const MINIMUM_BASE_BUNDLE_COUNT = 20;
 const MINIMUM_SOURCE_FAMILY_COUNT = 3;
 const H1_MINIMUM_FALSE_PROMOTION_REDUCTION = 0.20;
-const H2_MAXIMUM_CONFLICT_RATE = 0.05;
-const H3_MINIMUM_CLEAN_PROMOTION_ACCURACY = 0.90;
 const H4_MINIMUM_REPAIR_OWNER_ADVANTAGE = 0.15;
 
 export async function evaluatePromotionConfirmatoryGate(
@@ -542,12 +544,24 @@ function inspectConfirmatoryEvidence(input: {
       "review"
     );
   }
-  if (input.score.case_count < MINIMUM_CASE_COUNT) {
-    addIssue(input.issues, "minimum_case_count_not_met", "Confirmatory evaluation requires at least 200 cases.", "design_experiments");
+  if (input.score.case_count < MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES) {
+    addIssue(
+      input.issues,
+      "minimum_case_count_not_met",
+      "Confirmatory evaluation requires at least "
+        + MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES + " cases.",
+      "design_experiments"
+    );
   }
   const baseCount = countBaseBundles(input.loaded);
-  if (baseCount < MINIMUM_BASE_BUNDLE_COUNT) {
-    addIssue(input.issues, "minimum_base_bundle_count_not_met", "Confirmatory evaluation requires at least 20 base bundles.", "design_experiments");
+  if (baseCount < MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES) {
+    addIssue(
+      input.issues,
+      "minimum_base_bundle_count_not_met",
+      "Confirmatory evaluation requires at least "
+        + MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES + " base bundles.",
+      "design_experiments"
+    );
   }
   inspectCaseMatrix(input.loaded, input.issues);
   if (input.score.source_family_analysis.availability !== "complete"
@@ -723,7 +737,7 @@ function evaluateHypotheses(
       id: "H2" as const,
       value: full?.concern_acceptance_conflict_rate ?? null,
       ci: full?.concern_acceptance_conflict_cluster_bootstrap_95_ci ?? null,
-      threshold: H2_MAXIMUM_CONFLICT_RATE,
+      threshold: PROMOTION_CONFIRMATORY_MAXIMUM_CONFLICT_RATE,
       direction: "at_most" as const,
       comparison: roles.full
     },
@@ -731,7 +745,7 @@ function evaluateHypotheses(
       id: "H3" as const,
       value: full?.clean_case_promotion_accuracy ?? null,
       ci: full?.clean_case_promotion_accuracy_cluster_bootstrap_95_ci ?? null,
-      threshold: H3_MINIMUM_CLEAN_PROMOTION_ACCURACY,
+      threshold: PROMOTION_CONFIRMATORY_MINIMUM_CLEAN_PROMOTION_ACCURACY,
       direction: "at_least" as const,
       comparison: roles.full
     },

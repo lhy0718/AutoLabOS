@@ -28,7 +28,7 @@ import {
   MINIMUM_PROMOTION_SOURCE_FAMILIES
 } from "./promotionBenchmarkSourceDiversity.js";
 
-export const MINIMUM_CONFIRMATORY_BASE_BUNDLES = 20;
+export const MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES = 20;
 export const MINIMUM_CONFIRMATORY_SOURCE_FAMILIES = MINIMUM_PROMOTION_SOURCE_FAMILIES;
 export const MINIMUM_CONFIRMATORY_OPERATOR_GROUPS = MINIMUM_PROMOTION_OPERATOR_GROUPS;
 export const MAXIMUM_CONFIRMATORY_GROUP_SHARE = MAXIMUM_PROMOTION_GROUP_SHARE;
@@ -150,8 +150,8 @@ export async function freezePromotionConfirmatoryCorpus(
   const manifest = parseIntakeManifest(JSON.parse(manifestBytes.toString("utf8")) as unknown);
   const intakeManifestSha256 = sha256(manifestBytes);
   if (await pathExists(outDir)) throw new Error(`Promotion confirmatory output already exists: ${portableRef(cwd, outDir)}`);
-  if (manifest.sources.length < MINIMUM_CONFIRMATORY_BASE_BUNDLES) {
-    throw new Error(`Promotion confirmatory intake requires at least ${MINIMUM_CONFIRMATORY_BASE_BUNDLES} source bundles.`);
+  if (manifest.sources.length < MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES) {
+    throw new Error(`Promotion confirmatory intake requires at least ${MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES} source bundles.`);
   }
   for (const source of manifest.sources) {
     const sourceRoot = path.resolve(manifestRoot, source.source_root);
@@ -422,10 +422,10 @@ async function inspectConfirmatorySources(
   for (const candidate of candidates) candidate.audit.passed = candidate.audit.issues.length === 0;
 
   const globalIssues: PromotionExecutionEvidenceIssue[] = [];
-  if (manifest.sources.length < MINIMUM_CONFIRMATORY_BASE_BUNDLES) {
+  if (manifest.sources.length < MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES) {
     globalIssues.push({
       code: "confirmatory_source_count_minimum_not_met",
-      message: `Expected at least ${MINIMUM_CONFIRMATORY_BASE_BUNDLES} source bundles; observed ${manifest.sources.length}.`
+      message: `Expected at least ${MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES} source bundles; observed ${manifest.sources.length}.`
     });
   }
   const sourceFamilyCounts = countBy(manifest.sources, (source) => source.source_family_id);
@@ -465,7 +465,7 @@ async function inspectConfirmatorySources(
     study_id: manifest.study_id,
     passed: globalIssues.length === 0 && prepared.length === manifest.sources.length,
     source_count: manifest.sources.length,
-    minimum_source_count: MINIMUM_CONFIRMATORY_BASE_BUNDLES,
+    minimum_source_count: MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES,
     declared_source_family_count: sourceFamilyCounts.size,
     minimum_source_family_count: MINIMUM_CONFIRMATORY_SOURCE_FAMILIES,
     largest_source_family_count: largestSourceFamilyCount,

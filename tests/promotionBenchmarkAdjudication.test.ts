@@ -18,6 +18,10 @@ import {
 } from "../src/core/benchmark/promotionBenchmark.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
 import {
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
+import {
   exportPromotionMutationAuditPack,
   verifyPromotionMutationAudit
 } from "../src/core/benchmark/promotionBenchmarkMutationAudit.js";
@@ -408,7 +412,11 @@ describe("promotion benchmark adjudication", () => {
 
   it("promotes eligibility only at the frozen external, held-out, paired scale floor", () => {
     const cases: PromotionBenchmarkCaseManifest[] = [];
-    for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
+    for (
+      let baseIndex = 0;
+      baseIndex < MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES;
+      baseIndex += 1
+    ) {
       const baseBundleId = `base-${baseIndex + 1}`;
       const sourceHash = baseIndex.toString(16).padStart(64, "0");
       const sourceFamilyHash = hashId(`source-family-${(baseIndex % 4) + 1}`);
@@ -430,8 +438,8 @@ describe("promotion benchmark adjudication", () => {
       mutation_isolation_verified: true
     })).toMatchObject({
       paper_claim_eligible: true,
-      base_bundle_count: 20,
-      case_count: 200,
+      base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+      case_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES,
       source_family_count: 4,
       operator_group_count: 4,
       blockers: []

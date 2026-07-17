@@ -11,7 +11,7 @@ import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBen
 import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
-  MINIMUM_CONFIRMATORY_BASE_BUNDLES,
+  MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES,
   MINIMUM_CONFIRMATORY_OPERATOR_GROUPS,
   MINIMUM_CONFIRMATORY_SOURCE_FAMILIES
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
@@ -26,7 +26,7 @@ afterEach(async () => {
 describe("promotion confirmatory intake", () => {
   it("freezes source-distinct external bundles into a provisional held-out corpus", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
 
     const frozen = await freezePromotionConfirmatoryCorpus({
       cwd: workspace,
@@ -146,7 +146,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects an intake below the base-bundle minimum without creating output", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES - 1);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES - 1);
 
     await expect(freezePromotionConfirmatoryCorpus({
       cwd: workspace,
@@ -182,7 +182,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects duplicate source content even when source ids and paths differ", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     const duplicateRoot = path.join(workspace, "sources", "bundle-duplicate");
     await copyDirectory(path.join(workspace, "sources", "bundle-01"), duplicateRoot);
     const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
@@ -206,7 +206,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects bundles that cannot support every required fault mutation", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     await rm(path.join(workspace, "sources", "bundle-20", "checkpoint", "state.json"));
 
     await expect(freezePromotionConfirmatoryCorpus({
@@ -219,7 +219,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects a hash-distinct inventory concentrated in one declared family and operator group", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
       sources: Array<{ source_family_id: string; operator_group_id: string }>;
     };
@@ -251,7 +251,7 @@ describe("promotion confirmatory intake", () => {
 
   it("requires projected sources to carry a matching confirmatory-ready projection manifest", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     const manifest = JSON.parse(await readFile(path.join(workspace, manifestPath), "utf8")) as {
       sources: Array<{ origin_kind: string }>;
     };
@@ -270,7 +270,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects a source when a hash-bound execution artifact changes after manifest creation", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     await writeJson(path.join(workspace, "sources", "bundle-20", "metrics.json"), { changed: true });
 
     await expect(freezePromotionConfirmatoryCorpus({
@@ -282,7 +282,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects a native source without preserved license evidence", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     await rm(path.join(workspace, "sources", "bundle-01", "SOURCE_LICENSE.txt"));
 
     const result = await auditPromotionConfirmatoryIntake({
@@ -303,7 +303,7 @@ describe("promotion confirmatory intake", () => {
 
   it("does not overwrite an existing frozen corpus", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
     await mkdir(path.join(workspace, "frozen"));
     await writeFile(path.join(workspace, "frozen", "sentinel.txt"), "keep\n", "utf8");
 
@@ -317,7 +317,7 @@ describe("promotion confirmatory intake", () => {
 
   it("rejects output paths inside a source bundle before staging begins", async () => {
     const workspace = await createWorkspace();
-    const manifestPath = await writeIntake(workspace, MINIMUM_CONFIRMATORY_BASE_BUNDLES);
+    const manifestPath = await writeIntake(workspace, MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES);
 
     await expect(freezePromotionConfirmatoryCorpus({
       cwd: workspace,

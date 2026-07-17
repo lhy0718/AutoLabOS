@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.0",
+  "audit_id": "promotion-confirmatory-scale-v1",
+  "generated_at": "2026-07-17T01:03:07Z",
+  "inference_unit": "base_bundle_id",
+  "confidence_level": 0.95,
+  "two_sided_tail_probability": 0.025,
+  "preregistered_thresholds": {
+    "maximum_concern_acceptance_conflict_rate": 0.05,
+    "minimum_clean_case_promotion_accuracy": 0.9
+  },
+  "derivations": {
+    "all_zero_conflict_minimum": "ceil(log(0.025) / log(1 - 0.05))",
+    "all_success_clean_minimum": "ceil(log(0.025) / log(0.90))",
+    "variants_per_base": "nine fault-family variants plus one clean control"
+  },
+  "derived_contract": {
+    "minimum_all_zero_conflict_base_bundles": 72,
+    "minimum_all_success_clean_base_bundles": 36,
+    "variants_per_base": 10,
+    "minimum_paper_eligible_base_bundles": 72,
+    "minimum_paper_eligible_cases": 720
+  },
+  "superseded_floor": {
+    "base_bundles": 20,
+    "cases": 200,
+    "all_zero_conflict_upper_95_boundary": 0.16843347098308536,
+    "all_success_clean_lower_95_boundary": 0.8315665290169146,
+    "assessment": "insufficient_for_preregistered_interval_support"
+  },
+  "implementation_contract": {
+    "source_intake_floor_remains_provisional": 20,
+    "adjudication_paper_eligibility_floor": 72,
+    "confirmatory_gate_floor": 72,
+    "missing_scale_routes_to": "design_experiments"
+  },
+  "evidence_ceiling": "A priori design calculation only; this is not empirical benchmark evidence."
+}

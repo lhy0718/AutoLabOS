@@ -21,18 +21,13 @@ import {
   validateVerifiedPromotionMutationAuditReport,
   type PromotionMutationAuditIssue
 } from "./promotionBenchmarkMutationAudit.js";
+import {
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES,
+  REQUIRED_CONFIRMATORY_MUTATION_FAMILIES
+} from "./promotionBenchmarkConfirmatoryContract.js";
 
-export const REQUIRED_CONFIRMATORY_MUTATION_FAMILIES = [
-  "comparison_evidence_gap",
-  "repeated_run_provenance_gap",
-  "hidden_failed_execution",
-  "executed_budget_mismatch",
-  "result_figure_conflict",
-  "claim_evidence_conflict",
-  "citation_support_mismatch",
-  "stale_persisted_state",
-  "unsupported_claim_strength"
-] as const;
+export { REQUIRED_CONFIRMATORY_MUTATION_FAMILIES } from "./promotionBenchmarkConfirmatoryContract.js";
 
 export interface ExportPromotionAnnotationPackInput {
   cwd: string;
@@ -552,11 +547,17 @@ export function evaluatePromotionAdjudicationEligibility(input: {
   if (input.cases.some((benchmarkCase) => benchmarkCase.split !== "test")) {
     blockers.push({ code: "held_out_test_split_required", message: "Every confirmatory case must belong to the held-out test split." });
   }
-  if (baseIds.length < 20) {
-    blockers.push({ code: "base_bundle_minimum_not_met", message: `Expected at least 20 base bundles; observed ${baseIds.length}.` });
+  if (baseIds.length < MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES) {
+    blockers.push({
+      code: "base_bundle_minimum_not_met",
+      message: `Expected at least ${MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES} base bundles; observed ${baseIds.length}.`
+    });
   }
-  if (input.cases.length < 200) {
-    blockers.push({ code: "held_out_case_minimum_not_met", message: `Expected at least 200 cases; observed ${input.cases.length}.` });
+  if (input.cases.length < MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES) {
+    blockers.push({
+      code: "held_out_case_minimum_not_met",
+      message: `Expected at least ${MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES} cases; observed ${input.cases.length}.`
+    });
   }
   const cleanDecisions = new Set(input.cases
     .filter((benchmarkCase) => !benchmarkCase.mutation_family)

@@ -173,13 +173,22 @@ significance. Synthetic development suites are always marked exploratory.
 
 Confirmatory support is interval-based rather than point-estimate-based. H1 and
 H4 use direction-normalized paired differences, while H2 and H3 use
-base-bundle-clustered system intervals. An at-least hypothesis is supported
+base-bundle-clustered system intervals. All-zero and all-one binary system
+outcomes use a two-sided exact boundary guard because a percentile bootstrap
+would otherwise collapse to a zero-width interval. An at-least hypothesis is
+supported
 only when the 95 percent interval lower bound reaches its preregistered
 threshold; an at-most hypothesis is supported only when the upper bound is no
 greater than its threshold. A point estimate that clears the threshold while
 its interval crosses the threshold is recorded as not supported. Missing
 intervals make the corresponding hypothesis not evaluable and block
 paper-scale progression, whereas a complete null or negative result does not.
+For example, zero events across 20 independent base bundles still has an upper
+95 percent boundary of about 16.8 percent, so it cannot support H2's 5 percent
+ceiling. Seventy-two all-zero base bundles are required to move that boundary
+to 5 percent or below. The calculation and superseded 20-base diagnostic are
+recorded in
+`docs/research/evidence/promotion-confirmatory-scale-audit.json`.
 
 ## Leakage And Validity Controls
 
@@ -189,7 +198,7 @@ paper-scale progression, whereas a complete null or negative result does not.
 - Separate mutation implementation from policy implementation and test that a
   mutation does not introduce undeclared faults.
 - Include clean positive, clean null, and clean negative controls.
-- Freeze at least 20 source-hash-distinct canonical bundles before building the
+- Freeze at least 72 source-hash-distinct canonical bundles before building the
   confirmatory suite. Require at least three declared source-system families
   and three declared operator groups, and allow neither a family nor an
   operator group to contribute more than half of the bases. These declarations
@@ -249,7 +258,7 @@ paper-scale progression, whereas a complete null or negative result does not.
   pseudonymous IDs do not prove real-world identity.
 - Let the adjudication importer set paper eligibility only after the external
   real-run, artifact-verified provenance, held-out split, source-hash
-  uniqueness, declared family/operator diversity, 20-base, 200-case, and
+  uniqueness, declared family/operator diversity, 72-base, 720-case, and
   clean-plus-nine-family paired-coverage gates pass and mutation isolation is
   `double_verified`.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
@@ -350,6 +359,10 @@ execution evidence, or confirmatory eligibility. Exact hashes and the remaining
 evidence boundary are recorded in
 `docs/research/evidence/promotion-review-handoff-v2.json`.
 
+The v2 handoff remains a seed batch for validating independent review
+mechanics. It is 52 base bundles below the final 72-base paper-eligibility
+floor and cannot by itself support a confirmatory suite.
+
 ### Confirmatory Decision Boundary
 
 The implementation now separates benchmark score validity from paper-scale
@@ -377,11 +390,10 @@ empirical claims exist yet.
 
 ## Minimum Publishable Experiment
 
-- At least 20 source-hash-distinct base bundles covering positive, null, and
+- At least 72 source-hash-distinct base bundles covering positive, null, and
   negative outcomes, drawn from at least three declared source families and
-  three declared operator groups with no group above 50 percent; 30 bases are
-  preferred for the final submission.
-- At least 200 held-out cases total. At the 20-base floor, each base contributes
+  three declared operator groups with no group above 50 percent.
+- At least 720 held-out cases total. At the 72-base floor, each base contributes
   one clean control and one variant from every required fault family.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded
   comparisons.

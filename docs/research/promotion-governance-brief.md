@@ -41,7 +41,7 @@ null, and negative research outcomes.
 4. Implement ungated, presence-checklist, manuscript-only, full-policy, and
    ablation conditions.
 5. Run a development pilot and repair benchmark validity failures.
-6. Collect at least 20 source-hash-distinct real-run bundles across at least
+6. Collect at least 72 source-hash-distinct real-run bundles across at least
    three declared source families and three declared operator groups, cap every
    family and group at half of the sample, verify hash-bound execution
    provenance and preserved license evidence, and freeze them with an
@@ -120,11 +120,10 @@ on clean research bundles?
   an upstream repair owner.
 - Protocol: paired clean/counterfactual evaluation with base-bundle-disjoint
   development and test splits.
-- Minimum scale: 20 source-hash-distinct base bundles from at least three
+- Minimum scale: 72 source-hash-distinct base bundles from at least three
   declared source families and three declared operator groups, with no family
-  or group above 50 percent; at least 200 counterfactual variants across nine
-  blocking fault families and all clean controls. Thirty bases are preferred
-  for submission.
+  or group above 50 percent; at least 720 held-out cases across nine blocking
+  fault families and all clean controls.
 - Limitation: mutation-based cases approximate real research failures and must
   be separated from naturally occurring live-run evidence in reporting.
 
@@ -140,7 +139,7 @@ on clean research bundles?
 
 ## Minimum Acceptable Evidence
 
-- At least 20 source-hash-distinct base bundles and 200 held-out cases, split by
+- At least 72 source-hash-distinct base bundles and 720 held-out cases, split by
   base bundle, with a clean control and all nine required fault-family variants
   per base.
 - At least three declared source families and three declared operator groups,
@@ -194,7 +193,7 @@ on clean research bundles?
 
 - Without a real manuscript-only provider comparison or independent held-out
   label adjudication: `research_memo`.
-- With complete deterministic comparisons but fewer than 20 base bundles or 200
+- With complete deterministic comparisons but fewer than 72 base bundles or 720
   variants: `blocked_for_paper_scale`.
 - With only internal dry-run or smoke evidence: `system_validation_note`.
 - A failed primary hypothesis remains publishable only as a bounded negative

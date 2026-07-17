@@ -452,7 +452,7 @@ Confirmatory intake requires every projected, normalized, or native bundle to pr
 
 Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
-The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
+The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
 
 ### Fresh Provider Execution
 
@@ -550,7 +550,7 @@ autolabos governance-benchmark gate-promotion-confirmatory \
 The base prediction file must not contain the manuscript-only system. The gate
 revalidates and aggregates the three provider runs itself, merges only the
 verified provider predictions, recomputes the benchmark score, checks the
-20-base/200-case/family-stratification and ablation contracts, verifies
+72-base/720-case/family-stratification and ablation contracts, verifies
 post-repair evidence, and evaluates H1--H4. Evidence completeness and
 hypothesis support are separate: a complete null or negative result may remain
 a `paper_scale_candidate` with a lower claim class, while missing or invalid

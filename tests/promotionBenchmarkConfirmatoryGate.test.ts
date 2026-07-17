@@ -19,8 +19,15 @@ import type { PromotionProviderAggregateManifest } from "../src/core/benchmark/p
 import type { PromotionRecoveryReport } from "../src/core/benchmark/promotionBenchmarkRecovery.js";
 import type { PromotionBenchmarkSystemRunManifest } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
+import {
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES
+} from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
 
 const tempDirs: string[] = [];
+const CONFIRMATORY_BASE_COUNT = MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES;
+const CONFIRMATORY_CASE_COUNT = MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES;
+const CONFIRMATORY_FAULT_CASE_COUNT = CONFIRMATORY_CASE_COUNT - CONFIRMATORY_BASE_COUNT;
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -232,7 +239,7 @@ function makeAssessmentFixture(h1Supported: boolean): {
   };
   const variants = promotionVariantDefinitions();
   const cases: PromotionBenchmarkCaseManifest[] = [];
-  for (let baseIndex = 0; baseIndex < 20; baseIndex += 1) {
+  for (let baseIndex = 0; baseIndex < CONFIRMATORY_BASE_COUNT; baseIndex += 1) {
     for (const [variantIndex, variant] of variants.entries()) {
       cases.push({
         schema_version: "1.0",
@@ -293,8 +300,8 @@ function makeAssessmentFixture(h1Supported: boolean): {
     prediction_ref: "predictions.jsonl",
     passed: true,
     validation_issues: [],
-    case_count: 200,
-    prediction_count: 1400,
+    case_count: CONFIRMATORY_CASE_COUNT,
+    prediction_count: CONFIRMATORY_CASE_COUNT * 7,
     systems,
     source_family_analysis: {
       availability: "complete",
@@ -302,14 +309,14 @@ function makeAssessmentFixture(h1Supported: boolean): {
       family_count: 3,
       families: [0, 1, 2].map((index) => ({
         source_family_id_sha256: repeatedHash(index + 101),
-        base_bundle_count: index === 2 ? 6 : 7,
-        case_count: index === 2 ? 60 : 70,
+        base_bundle_count: CONFIRMATORY_BASE_COUNT / 3,
+        case_count: CONFIRMATORY_CASE_COUNT / 3,
         systems
       })),
       leave_one_family_out: [0, 1, 2].map((index) => ({
         omitted_source_family_id_sha256: repeatedHash(index + 101),
-        remaining_base_bundle_count: index === 2 ? 14 : 13,
-        remaining_case_count: index === 2 ? 140 : 130,
+        remaining_base_bundle_count: CONFIRMATORY_BASE_COUNT * 2 / 3,
+        remaining_case_count: CONFIRMATORY_CASE_COUNT * 2 / 3,
         comparisons: [paired]
       }))
     },
@@ -377,19 +384,19 @@ function systemMetrics(
   return {
     system_id: systemId,
     trial_count: trialCount,
-    prediction_count: 200 * trialCount,
-    covered_case_count: 200,
-    expected_case_count: 200,
+    prediction_count: CONFIRMATORY_CASE_COUNT * trialCount,
+    covered_case_count: CONFIRMATORY_CASE_COUNT,
+    expected_case_count: CONFIRMATORY_CASE_COUNT,
     coverage_rate: 1,
     exact_decision_accuracy: 0.80,
     macro_decision_f1: 0.80,
-    false_paper_ready_count: Math.round(falsePromotionRate * 180),
+    false_paper_ready_count: Math.round(falsePromotionRate * CONFIRMATORY_FAULT_CASE_COUNT),
     false_paper_ready_rate: falsePromotionRate,
     false_paper_ready_cluster_bootstrap_95_ci: boundedInterval(falsePromotionRate, 0.02),
-    concern_acceptance_conflict_count: Math.round(conflictRate * 200),
+    concern_acceptance_conflict_count: Math.round(conflictRate * CONFIRMATORY_CASE_COUNT),
     concern_acceptance_conflict_rate: conflictRate,
     concern_acceptance_conflict_cluster_bootstrap_95_ci: boundedInterval(conflictRate, 0.01),
-    clean_case_count: 20,
+    clean_case_count: CONFIRMATORY_BASE_COUNT,
     clean_case_promotion_accuracy: cleanAccuracy,
     clean_case_promotion_accuracy_cluster_bootstrap_95_ci: boundedInterval(cleanAccuracy, 0.02),
     blocker_precision: 0.80,
@@ -418,16 +425,16 @@ function pairedComparison(
   return {
     system_a: full,
     system_b: checklist,
-    common_case_count: 200,
-    common_base_bundle_count: 20,
+    common_case_count: CONFIRMATORY_CASE_COUNT,
+    common_base_bundle_count: CONFIRMATORY_BASE_COUNT,
     decision_accuracy_delta: delta,
     decision_accuracy_cluster_bootstrap_95_ci: [0.10, 0.40],
     decision_accuracy_exact_paired_sign_test_p: 0.01,
-    false_paper_ready_common_case_count: 180,
+    false_paper_ready_common_case_count: CONFIRMATORY_FAULT_CASE_COUNT,
     false_paper_ready_rate_delta: -delta,
     false_paper_ready_cluster_bootstrap_95_ci: [-delta - 0.05, -delta + 0.05],
     false_paper_ready_exact_paired_sign_test_p: 0.01,
-    repair_owner_common_case_count: 180,
+    repair_owner_common_case_count: CONFIRMATORY_FAULT_CASE_COUNT,
     repair_owner_exact_match_accuracy_delta: 0.60,
     repair_owner_cluster_bootstrap_95_ci: [0.55, 0.65],
     repair_owner_exact_paired_sign_test_p: 0.01
