@@ -270,6 +270,14 @@ recorded in
   uniqueness, declared family/operator diversity, 72-base, 720-case, and
   clean-plus-nine-family paired-coverage gates pass and mutation isolation is
   `double_verified`.
+- Forbid a benchmark recipe from self-asserting paper eligibility. A completed
+  adjudication must preserve contained copies and SHA-256 bindings for the
+  private annotation map, both initial human label files, any third-party
+  resolution, the mutation-audit report, and the accepted labels. Suite loading
+  must recheck those files and require accepted labels to cover every case
+  exactly once and match the case gold values. The source-suite snapshot hash
+  remains a receipt for the pre-adjudication suite; status fields alone do not
+  establish lineage.
 - Keep every frozen recipe label at provisional `needs_review`; only the blind
   independent adjudication importer may replace labels or change eligibility.
 

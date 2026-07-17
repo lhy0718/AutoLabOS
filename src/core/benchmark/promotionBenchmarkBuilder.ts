@@ -274,6 +274,11 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
   if (value.paper_claim_eligible !== undefined && typeof value.paper_claim_eligible !== "boolean") {
     throw new Error("Promotion benchmark recipe paper_claim_eligible must be boolean.");
   }
+  if (value.paper_claim_eligible === true) {
+    throw new Error(
+      "Promotion benchmark recipes cannot self-assert paper-claim eligibility; use independent adjudication over a provisional suite."
+    );
+  }
   if (value.adjudication_status !== undefined && !isAdjudicationStatus(value.adjudication_status)) {
     throw new Error("Promotion benchmark recipe adjudication_status is invalid.");
   }
@@ -288,13 +293,6 @@ function parseRecipe(value: unknown): PromotionBenchmarkRecipe {
   }
   if (value.execution_provenance_status === "artifact_verified" && value.evidence_class !== "external_real_run") {
     throw new Error("Artifact-verified execution provenance requires evidence_class=external_real_run.");
-  }
-  if (value.paper_claim_eligible === true
-      && (value.adjudication_status !== "double_adjudicated"
-        || value.mutation_isolation_status !== "double_verified"
-        || value.execution_provenance_status !== "artifact_verified"
-        || value.source_diversity_status !== "declared_stratified")) {
-    throw new Error("Paper-claim-eligible promotion suites must have artifact-verified execution provenance, declared source stratification, double adjudication, and double-verified mutation isolation.");
   }
   if (value.source_diversity_status === "declared_stratified") {
     const diversity = inspectPromotionSourceDiversity(cases);

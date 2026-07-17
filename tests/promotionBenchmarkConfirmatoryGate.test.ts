@@ -150,6 +150,19 @@ describe("promotion confirmatory gate", () => {
     }));
   });
 
+  it("rejects a paper-eligible suite without hash-bound adjudication provenance", () => {
+    const fixture = makeAssessmentFixture(true);
+    delete fixture.loaded.manifest.adjudication_provenance;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "confirmatory_adjudication_provenance_missing",
+      target_node: "review"
+    }));
+  });
+
   it("keeps complete null or mixed evidence publishable while lowering the claim class", () => {
     const fixture = makeAssessmentFixture(false);
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
@@ -298,6 +311,7 @@ function makeAssessmentFixture(h1Supported: boolean): {
       mutation_isolation_status: "double_verified",
       execution_provenance_status: "artifact_verified",
       source_diversity_status: "declared_stratified",
+      adjudication_provenance: adjudicationProvenance(CONFIRMATORY_CASE_COUNT),
       cases: cases.map((item) => "cases/" + item.case_id + ".json")
     },
     cases,
@@ -388,6 +402,28 @@ function makeAssessmentFixture(h1Supported: boolean): {
     suiteSnapshotSha256,
     inputPredictionsSha256,
     systemRunManifestSha256
+  };
+}
+
+function adjudicationProvenance(caseCount: number) {
+  return {
+    schema_version: "1.0" as const,
+    method: "independent_double_adjudication" as const,
+    source_suite_snapshot_sha256: "1".repeat(64),
+    private_annotation_map_ref: "adjudication/private-annotation-map.json",
+    private_annotation_map_sha256: "2".repeat(64),
+    initial_annotation_refs: [
+      "adjudication/initial-annotation-1.jsonl",
+      "adjudication/initial-annotation-2.jsonl"
+    ] as [string, string],
+    initial_annotation_sha256: ["3".repeat(64), "4".repeat(64)] as [string, string],
+    resolution_ref: null,
+    resolution_sha256: null,
+    mutation_audit_report_ref: "adjudication/mutation-audit-report.json",
+    mutation_audit_report_sha256: "5".repeat(64),
+    adjudicated_labels_ref: "adjudication/adjudicated-labels.jsonl",
+    adjudicated_labels_sha256: "6".repeat(64),
+    case_count: caseCount
   };
 }
 

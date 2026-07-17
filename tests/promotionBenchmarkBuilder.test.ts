@@ -95,7 +95,7 @@ describe("promotion benchmark builder", () => {
     expect(tampered.issues.map((issue) => issue.code)).toContain("artifact_hash_mismatch");
   });
 
-  it("rejects paper-claim eligibility without double adjudication and double-verified mutation isolation", async () => {
+  it("rejects paper-claim eligibility asserted directly by a benchmark recipe", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-builder-adjudication-"));
     tempDirs.push(workspace);
     await mkdir(path.join(workspace, "bundle"), { recursive: true });
@@ -113,39 +113,39 @@ describe("promotion benchmark builder", () => {
       cwd: workspace,
       recipePath: "recipe.json",
       outDir: "generated-suite"
-    })).rejects.toThrow("artifact-verified execution provenance");
+    })).rejects.toThrow("cannot self-assert paper-claim eligibility");
+  });
 
-    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
+  it("rejects a hand-authored paper-eligible suite without adjudication provenance", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-builder-claim-provenance-"));
+    tempDirs.push(workspace);
+    await mkdir(path.join(workspace, "suite", "cases"), { recursive: true });
+    await writeFile(path.join(workspace, "suite", "suite.json"), JSON.stringify({
       schema_version: "1.0",
-      suite_id: "claim-suite",
-      evidence_class: "external_real_run",
-      paper_claim_eligible: true,
-      adjudication_status: "double_adjudicated",
-      mutation_isolation_status: "unreviewed",
-      execution_provenance_status: "artifact_verified",
-      cases: [recipeCase("case-a", "base-a", "test", "bundle")]
-    }));
-    await expect(buildPromotionBenchmarkSuite({
-      cwd: workspace,
-      recipePath: "recipe.json",
-      outDir: "generated-suite"
-    })).rejects.toThrow("double-verified mutation isolation");
-
-    await writeFile(path.join(workspace, "recipe.json"), JSON.stringify({
-      schema_version: "1.0",
-      suite_id: "claim-suite",
+      suite_id: "hand-authored-claim-suite",
       evidence_class: "external_real_run",
       paper_claim_eligible: true,
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "double_verified",
       execution_provenance_status: "artifact_verified",
-      cases: [recipeCase("case-a", "base-a", "test", "bundle")]
+      source_diversity_status: "declared_stratified",
+      cases: ["cases/case-a.json"]
     }));
-    await expect(buildPromotionBenchmarkSuite({
-      cwd: workspace,
-      recipePath: "recipe.json",
-      outDir: "generated-suite"
-    })).rejects.toThrow("declared source stratification");
+    await writeFile(path.join(workspace, "suite", "cases", "case-a.json"), JSON.stringify({
+      schema_version: "1.0",
+      case_id: "case-a",
+      base_bundle_id: "base-a",
+      split: "test",
+      artifact_root: "../artifacts/case-a",
+      gold: { decision: "promote", blocking_concerns: [], repair_owners: [] }
+    }));
+
+    const loaded = await loadPromotionBenchmarkSuite(path.join(workspace, "suite", "suite.json"));
+
+    expect(loaded.suite).toBeUndefined();
+    expect(loaded.issues).toContainEqual(expect.objectContaining({
+      code: "suite_paper_claim_provenance_missing"
+    }));
   });
 
   it("rejects a hand-authored artifact-verified status without execution evidence", async () => {

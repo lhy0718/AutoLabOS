@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-008` Paper eligibility could be self-asserted without adjudication provenance — `RESOLVED`
   - `R-007` Presence baseline semantics were not version-bound — `RESOLVED`
   - `R-006` Source-native traces lack complete paired-comparison and curation provenance — `IN_PROGRESS`
   - `R-005` Operator-conditioned groups overcount source-native bases — `MITIGATED`
@@ -10881,6 +10882,70 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-008
+
+- Status: resolved; paper eligibility is adjudication-owned, hash-bound, and fail-closed under loader and confirmatory review
+- Validation target: a benchmark suite may become eligible for paper claims only through independently validated double adjudication whose complete evidence set is preserved inside the suite and bound by cryptographic provenance.
+- Environment/session context: repository-owned domain-neutral fixtures exercising recipe parsing, suite construction, adjudication, loading, confirmatory gating, and recovery; no human judgment, benchmark label, or generated metric was manually substituted.
+
+- Reproduction steps:
+  1. Set `paper_claim_eligible=true` in an otherwise structurally valid benchmark recipe, or hand-author a suite manifest with paper-ready status strings.
+  2. Build or load the suite without a suite-contained copy of the private annotation map, two initial annotations, mutation audit, and accepted labels.
+  3. Present the resulting suite to the confirmatory gate.
+  4. Tamper with an accepted-label file or add an undeclared file under the adjudication evidence directory.
+
+- Expected behavior:
+  - Recipes and hand-authored manifests cannot self-assert paper eligibility.
+  - Only the independent adjudication operation can elevate a provisional suite after validating two distinct annotation streams and a completed mutation audit.
+  - The elevated suite contains a closed `adjudication/` evidence set, binds every declared file by SHA-256, and matches accepted labels against every canonical case.
+  - The loader and confirmatory gate reject missing, unsafe, stale, undeclared, hash-drifted, incomplete, or case-mismatched adjudication evidence.
+
+- Actual behavior:
+  - A recipe could request `paper_claim_eligible=true` when status fields appeared complete, allowing eligibility to originate in untrusted construction input.
+  - A paper-eligible suite manifest did not require adjudication provenance.
+  - Adjudication wrote accepted labels and reports outside the suite, so later loading could not prove which annotation and mutation-audit evidence produced the persisted eligibility decision.
+
+- Fresh vs existing session comparison:
+  - Fresh session: recipe self-assertion is rejected, the adjudication operation emits a self-contained hash-bound suite, and label or closed-set tampering fails loading and confirmatory review.
+  - Existing session: an earlier paper-eligible manifest without adjudication provenance remains inspectable as historical data but is rejected from paper-scale use.
+  - Divergence: no refresh or resume divergence is involved; persisted status strings previously carried authority that now belongs only to verified adjudication provenance.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: paper eligibility was persisted as a trusted boolean and completion-status projection without preserving the independently validated inputs and output labels that authorized that state transition.
+
+- Code/test changes:
+  - Reject `paper_claim_eligible=true` in all general benchmark recipes; independent adjudication is the sole elevation path.
+  - Add a versioned adjudication-provenance manifest containing the source-suite receipt, private-map hash, two distinct initial-annotation hashes, optional resolution hash, required mutation-audit hash, accepted-label hash, and case count.
+  - Copy the complete declared adjudication evidence into a closed suite-local directory while removing inherited stale evidence.
+  - Validate safe paths, regular files, non-symlink containment, exact closed-set membership, SHA-256 values, complete case coverage, and label-to-suite agreement during suite loading.
+  - Require verified adjudication provenance again at the confirmatory review gate and exercise the same contract in recovery fixtures.
+
+- Regression status:
+  - Targeted builder, adjudication, confirmatory, recovery, and deterministic-system regressions: 28/28 passed on 2026-07-17.
+  - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
+  - Full build: passed on 2026-07-17 with `npm run build`.
+  - Repository-wide CI: passed on 2026-07-17 with `npm test` (`214` test files, `2868` tests; web `14` tests).
+  - Harness validation: passed on 2026-07-17 after checking 522 issue entries with zero structural violations.
+  - Public-code sanitization: passed on 2026-07-17 with 3/3 tests.
+
+- Follow-up risks:
+  - The source-suite snapshot hash is a provenance receipt; the original provisional suite must still be included in the final reproducibility package so that receipt can be independently recomputed.
+  - Initial annotation and private-map files are hash-bound and validated by the adjudication operation; the loader reparses accepted labels as the authoritative suite-facing judgment surface.
+  - No real independent human annotations or provider evidence have been created by this repair.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmark.ts`
+  - `src/core/benchmark/promotionBenchmarkAdjudication.ts`
+  - `src/core/benchmark/promotionBenchmarkBuilder.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts`
+  - `tests/promotionBenchmarkAdjudication.test.ts`
+  - `tests/promotionBenchmarkBuilder.test.ts`
+  - `tests/promotionBenchmarkConfirmatoryGate.test.ts`
+  - `tests/promotionBenchmarkRecovery.test.ts`
+
+---
 
 ## Issue: R-007
 

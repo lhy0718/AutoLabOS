@@ -20,6 +20,23 @@ export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annota
 export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified";
 export type PromotionBenchmarkExecutionProvenanceStatus = "unverified" | "artifact_verified";
 
+export interface PromotionBenchmarkAdjudicationProvenance {
+  schema_version: "1.0";
+  method: "independent_double_adjudication";
+  source_suite_snapshot_sha256: string;
+  private_annotation_map_ref: string;
+  private_annotation_map_sha256: string;
+  initial_annotation_refs: [string, string];
+  initial_annotation_sha256: [string, string];
+  resolution_ref: string | null;
+  resolution_sha256: string | null;
+  mutation_audit_report_ref: string | null;
+  mutation_audit_report_sha256: string | null;
+  adjudicated_labels_ref: string;
+  adjudicated_labels_sha256: string;
+  case_count: number;
+}
+
 export interface PromotionBenchmarkSuiteManifest {
   schema_version: "1.0";
   suite_id: string;
@@ -29,6 +46,7 @@ export interface PromotionBenchmarkSuiteManifest {
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
+  adjudication_provenance?: PromotionBenchmarkAdjudicationProvenance;
   cases: string[];
 }
 
@@ -291,6 +309,9 @@ export async function loadPromotionBenchmarkSuite(
         splitBySourceHash.set(benchmarkCase.source_sha256, benchmarkCase.split);
       }
     }
+  }
+  if (manifest.adjudication_provenance) {
+    await validateAdjudicationEvidence(suiteRoot, manifest.adjudication_provenance, cases, issues);
   }
   if (manifest.source_diversity_status === "declared_stratified") {
     issues.push(...inspectPromotionSourceDiversity(cases).issues);
@@ -1041,6 +1062,16 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({ code: "suite_source_diversity_status_invalid", message: "Suite source_diversity_status is invalid." });
     return undefined;
   }
+  const adjudicationProvenance = value.adjudication_provenance === undefined
+    ? undefined
+    : parseAdjudicationProvenance(value.adjudication_provenance);
+  if (value.adjudication_provenance !== undefined && !adjudicationProvenance) {
+    issues.push({
+      code: "suite_adjudication_provenance_invalid",
+      message: "Suite adjudication_provenance must bind the source suite, two independent annotations, labels, and mutation audit inputs."
+    });
+    return undefined;
+  }
   if (value.paper_claim_eligible === true
       && (value.adjudication_status !== "double_adjudicated"
         || value.mutation_isolation_status !== "double_verified"
@@ -1049,6 +1080,14 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({
       code: "suite_paper_claim_eligibility_unverified",
       message: "Paper-claim-eligible suites require artifact-verified execution provenance, declared source stratification, double adjudication, and double-verified mutation isolation."
+    });
+    return undefined;
+  }
+  if (value.paper_claim_eligible === true
+      && (!adjudicationProvenance || adjudicationProvenance.mutation_audit_report_sha256 === null)) {
+    issues.push({
+      code: "suite_paper_claim_provenance_missing",
+      message: "Paper-claim-eligible suites require hash-bound independent adjudication and mutation-audit provenance."
     });
     return undefined;
   }
@@ -1061,8 +1100,221 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
     ...(value.source_diversity_status ? { source_diversity_status: value.source_diversity_status } : {}),
+    ...(adjudicationProvenance ? { adjudication_provenance: adjudicationProvenance } : {}),
     cases: stringArray(value.cases) || []
   };
+}
+
+function parseAdjudicationProvenance(value: unknown): PromotionBenchmarkAdjudicationProvenance | undefined {
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || value.method !== "independent_double_adjudication"
+      || !isSha256(value.source_suite_snapshot_sha256)
+      || !adjudicationEvidenceRef(value.private_annotation_map_ref)
+      || !isSha256(value.private_annotation_map_sha256)
+      || !twoDistinctAdjudicationRefs(value.initial_annotation_refs)
+      || !Array.isArray(value.initial_annotation_sha256)
+      || value.initial_annotation_sha256.length !== 2
+      || !value.initial_annotation_sha256.every(isSha256)
+      || new Set(value.initial_annotation_sha256).size !== 2
+      || !nullableRefHashPair(value.resolution_ref, value.resolution_sha256)
+      || !nullableRefHashPair(value.mutation_audit_report_ref, value.mutation_audit_report_sha256)
+      || !adjudicationEvidenceRef(value.adjudicated_labels_ref)
+      || !isSha256(value.adjudicated_labels_sha256)
+      || !adjudicationEvidenceRefsDistinct(value)
+      || !Number.isInteger(value.case_count)
+      || (value.case_count as number) <= 0) {
+    return undefined;
+  }
+  return {
+    schema_version: "1.0",
+    method: "independent_double_adjudication",
+    source_suite_snapshot_sha256: value.source_suite_snapshot_sha256,
+    private_annotation_map_ref: value.private_annotation_map_ref,
+    private_annotation_map_sha256: value.private_annotation_map_sha256,
+    initial_annotation_refs: [
+      value.initial_annotation_refs[0] as string,
+      value.initial_annotation_refs[1] as string
+    ],
+    initial_annotation_sha256: [
+      value.initial_annotation_sha256[0] as string,
+      value.initial_annotation_sha256[1] as string
+    ],
+    resolution_ref: value.resolution_ref as string | null,
+    resolution_sha256: value.resolution_sha256 as string | null,
+    mutation_audit_report_ref: value.mutation_audit_report_ref as string | null,
+    mutation_audit_report_sha256: value.mutation_audit_report_sha256 as string | null,
+    adjudicated_labels_ref: value.adjudicated_labels_ref,
+    adjudicated_labels_sha256: value.adjudicated_labels_sha256,
+    case_count: value.case_count as number
+  };
+}
+
+function twoDistinctAdjudicationRefs(value: unknown): value is [string, string] {
+  return Array.isArray(value)
+    && value.length === 2
+    && value.every(adjudicationEvidenceRef)
+    && new Set(value).size === 2;
+}
+
+function nullableRefHashPair(ref: unknown, hash: unknown): boolean {
+  return (ref === null && hash === null) || (adjudicationEvidenceRef(ref) && isSha256(hash));
+}
+
+function adjudicationEvidenceRef(value: unknown): value is string {
+  return nonEmptyString(value)
+    && !path.isAbsolute(value)
+    && value.startsWith("adjudication/")
+    && !value.split(/[\\/]/u).some((part) => part === ".." || part === "");
+}
+
+function adjudicationEvidenceRefsDistinct(value: Record<string, unknown>): boolean {
+  const refs = [
+    value.private_annotation_map_ref,
+    ...(Array.isArray(value.initial_annotation_refs) ? value.initial_annotation_refs : []),
+    ...(value.resolution_ref === null ? [] : [value.resolution_ref]),
+    ...(value.mutation_audit_report_ref === null ? [] : [value.mutation_audit_report_ref]),
+    value.adjudicated_labels_ref
+  ];
+  return refs.every(adjudicationEvidenceRef) && new Set(refs).size === refs.length;
+}
+
+async function validateAdjudicationEvidence(
+  suiteRoot: string,
+  provenance: PromotionBenchmarkAdjudicationProvenance,
+  cases: PromotionBenchmarkCaseManifest[],
+  issues: PromotionBenchmarkValidationIssue[]
+): Promise<void> {
+  const evidence = [
+    [provenance.private_annotation_map_ref, provenance.private_annotation_map_sha256],
+    ...provenance.initial_annotation_refs.map((ref, index) => [ref, provenance.initial_annotation_sha256[index]]),
+    ...(provenance.resolution_ref && provenance.resolution_sha256
+      ? [[provenance.resolution_ref, provenance.resolution_sha256]]
+      : []),
+    ...(provenance.mutation_audit_report_ref && provenance.mutation_audit_report_sha256
+      ? [[provenance.mutation_audit_report_ref, provenance.mutation_audit_report_sha256]]
+      : []),
+    [provenance.adjudicated_labels_ref, provenance.adjudicated_labels_sha256]
+  ] as Array<[string, string]>;
+  const expectedRefs = new Set(evidence.map(([ref]) => ref));
+  const actualRefs = await listAdjudicationEvidenceRefs(suiteRoot);
+  if (!actualRefs || !setsEqual(expectedRefs, new Set(actualRefs))) {
+    issues.push({
+      code: "adjudication_evidence_set_not_closed",
+      message: "The suite adjudication directory must contain exactly the manifest-bound evidence files and no symlinks.",
+      ref: "adjudication"
+    });
+  }
+  const bytesByRef = new Map<string, Buffer>();
+  for (const [ref, expectedSha256] of evidence) {
+    const bytes = await readContainedRegularFile(suiteRoot, ref);
+    if (!bytes) {
+      issues.push({
+        code: "adjudication_evidence_missing_or_unsafe",
+        message: "Adjudication evidence must be a non-symlink regular file inside the suite.",
+        ref
+      });
+      continue;
+    }
+    bytesByRef.set(ref, bytes);
+    if (createHash("sha256").update(bytes).digest("hex") !== expectedSha256) {
+      issues.push({
+        code: "adjudication_evidence_hash_mismatch",
+        message: "Adjudication evidence SHA-256 does not match the suite provenance.",
+        ref
+      });
+    }
+  }
+  const labelsBytes = bytesByRef.get(provenance.adjudicated_labels_ref);
+  if (!labelsBytes) return;
+  let rows: unknown[];
+  try {
+    const text = labelsBytes.toString("utf8");
+    const lines = text.split(/\r?\n/u).filter((line) => line.length > 0);
+    rows = lines.map((line) => JSON.parse(line) as unknown);
+  } catch {
+    issues.push({
+      code: "adjudicated_labels_invalid",
+      message: "Adjudicated labels must be valid JSON Lines records.",
+      ref: provenance.adjudicated_labels_ref
+    });
+    return;
+  }
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase]));
+  const seen = new Set<string>();
+  let labelsValid = rows.length === provenance.case_count && rows.length === cases.length;
+  for (const row of rows) {
+    const blockingConcerns = isRecord(row) ? stringArray(row.blocking_concerns) : undefined;
+    const repairOwners = isRecord(row) ? stringArray(row.repair_owners) : undefined;
+    if (!isRecord(row)
+        || !nonEmptyString(row.case_id)
+        || seen.has(row.case_id)
+        || !isPromotionDecision(row.decision)
+        || !blockingConcerns
+        || !repairOwners) {
+      labelsValid = false;
+      continue;
+    }
+    seen.add(row.case_id);
+    const benchmarkCase = caseById.get(row.case_id);
+    if (!benchmarkCase
+        || benchmarkCase.gold.decision !== row.decision
+        || !sameStringArray(benchmarkCase.gold.blocking_concerns, blockingConcerns)
+        || !sameStringArray(benchmarkCase.gold.repair_owners, repairOwners)) {
+      labelsValid = false;
+    }
+  }
+  if (!labelsValid || seen.size !== cases.length) {
+    issues.push({
+      code: "adjudicated_labels_case_mismatch",
+      message: "Hash-bound adjudicated labels must cover every suite case exactly once and match each case gold label.",
+      ref: provenance.adjudicated_labels_ref
+    });
+  }
+}
+
+async function readContainedRegularFile(root: string, ref: string): Promise<Buffer | null> {
+  let current = path.resolve(root);
+  const rootStat = await fs.lstat(current).catch(() => null);
+  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return null;
+  for (const part of ref.split(/[\\/]/u)) {
+    current = path.join(current, part);
+    const stat = await fs.lstat(current).catch(() => null);
+    if (!stat) return null;
+    if (stat.isSymbolicLink()) return null;
+  }
+  try {
+    return (await fs.lstat(current)).isFile() ? await fs.readFile(current) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function listAdjudicationEvidenceRefs(suiteRoot: string): Promise<string[] | null> {
+  const evidenceRoot = path.join(suiteRoot, "adjudication");
+  const rootStat = await fs.lstat(evidenceRoot).catch(() => null);
+  if (!rootStat || rootStat.isSymbolicLink() || !rootStat.isDirectory()) return null;
+  const refs: string[] = [];
+  const visit = async (current: string): Promise<boolean> => {
+    for (const entry of await fs.readdir(current)) {
+      const child = path.join(current, entry);
+      const stat = await fs.lstat(child).catch(() => null);
+      if (!stat || stat.isSymbolicLink()) return false;
+      if (stat.isDirectory()) {
+        if (!await visit(child)) return false;
+      } else if (stat.isFile()) {
+        refs.push(path.relative(suiteRoot, child).replace(/\\/gu, "/"));
+      } else {
+        return false;
+      }
+    }
+    return true;
+  };
+  return await visit(evidenceRoot) ? refs.sort() : null;
+}
+
+function sameStringArray(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function parseCaseManifest(

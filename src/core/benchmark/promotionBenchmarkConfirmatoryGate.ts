@@ -540,6 +540,17 @@ function inspectConfirmatoryEvidence(input: {
   if (!input.score.passed) {
     addIssue(input.issues, "score_validation_failed", "Promotion benchmark score validation failed.", "run_experiments");
   }
+  const adjudicationProvenance = input.loaded?.manifest.adjudication_provenance;
+  if (!adjudicationProvenance
+      || adjudicationProvenance.case_count !== input.score.case_count
+      || adjudicationProvenance.mutation_audit_report_sha256 === null) {
+    addIssue(
+      input.issues,
+      "confirmatory_adjudication_provenance_missing",
+      "Confirmatory evidence requires hash-bound source-suite, double-annotation, adjudicated-label, and mutation-audit provenance.",
+      "review"
+    );
+  }
   if (input.score.evidence_class !== "external_real_run"
       || !input.score.paper_claim_eligible
       || input.score.adjudication_status !== "double_adjudicated"

@@ -550,6 +550,17 @@ candidate reuse, trace drift, artifact drift, or path escape prevents the
 paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
 not replace blind benchmark-case adjudication or make the suite paper-ready.
 
+A benchmark recipe cannot set `paper_claim_eligible=true`. Only the independent
+adjudication path may issue that state after all scale, diversity, execution,
+mutation-isolation, and label gates pass. Every completed adjudication copies
+the private annotation map, both initial human label files, any independent
+resolution, the mutation-audit report, and the accepted labels into the
+adjudicated suite's closed `adjudication/` directory. The suite manifest binds
+each file by a contained relative path and SHA-256, plus the source-suite
+snapshot. Suite loading rejects missing files, symlinks, hash drift, malformed
+label JSON Lines, incomplete case coverage, or a mismatch between accepted
+labels and case gold. Status strings alone are never paper-claim evidence.
+
 Deterministic comparison runs emit system-run manifest schema `1.1` with
 `protocol_revision=promotion-system-protocol-v2`. The presence-checklist
 baseline requires the fixed result, run, review-decision, and readiness JSON
@@ -682,7 +693,8 @@ autolabos governance-benchmark gate-promotion-confirmatory \
 The base prediction file must not contain the manuscript-only system. The gate
 revalidates and aggregates the three provider runs itself, merges only the
 verified provider predictions, recomputes the benchmark score, checks the
-72-base/720-case/family-stratification and ablation contracts, verifies
+72-base/720-case/family-stratification and ablation contracts, requires the
+self-contained hash-bound adjudication provenance, verifies
 post-repair evidence, and evaluates H1--H4. Evidence completeness and
 hypothesis support are separate: a complete null or negative result may remain
 a `paper_scale_candidate` with a lower claim class, while missing or invalid

@@ -95,8 +95,19 @@ describe("promotion benchmark adjudication", () => {
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "unreviewed",
       execution_provenance_status: "artifact_verified",
-      paper_claim_eligible: false
+      paper_claim_eligible: false,
+      adjudication_provenance: {
+        method: "independent_double_adjudication",
+        case_count: 2,
+        resolution_sha256: null,
+        mutation_audit_report_sha256: null
+      }
     });
+    const labelsText = await readFile(path.join(workspace, "adjudicated", "adjudicated-labels.jsonl"), "utf8");
+    expect(loaded.suite?.manifest.adjudication_provenance?.adjudicated_labels_sha256)
+      .toBe(createHash("sha256").update(labelsText).digest("hex"));
+    expect(new Set(loaded.suite?.manifest.adjudication_provenance?.initial_annotation_sha256 ?? [])).toHaveLength(2);
+    expect(result.report.adjudication_provenance).toEqual(loaded.suite?.manifest.adjudication_provenance);
     expect(loaded.suite?.cases.find((benchmarkCase) => benchmarkCase.case_id === "case-fault")?.gold).toEqual({
       decision: "block",
       blocking_concerns: ["comparison_evidence_gap"],
@@ -120,6 +131,23 @@ describe("promotion benchmark adjudication", () => {
     expect(promptTargets.targets).toEqual(expect.arrayContaining([
       expect.objectContaining({ target_node: "design_experiments", recommended_prompt_node: "design_experiments" }),
       expect.objectContaining({ target_node: "review", recommended_prompt_node: "review" })
+    ]));
+
+    await writeFile(
+      path.join(workspace, "adjudicated", "suite", "adjudication", "adjudicated-labels.jsonl"),
+      labelsText.replace('"decision":"block"', '"decision":"promote"'),
+      "utf8"
+    );
+    await writeFile(
+      path.join(workspace, "adjudicated", "suite", "adjudication", "undeclared.txt"),
+      "not manifest-bound\n",
+      "utf8"
+    );
+    const drifted = await loadPromotionBenchmarkSuite(path.join(workspace, result.suite_path || "missing"));
+    expect(drifted.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "adjudication_evidence_set_not_closed" }),
+      expect.objectContaining({ code: "adjudication_evidence_hash_mismatch" }),
+      expect.objectContaining({ code: "adjudicated_labels_case_mismatch" })
     ]));
   });
 
@@ -278,7 +306,12 @@ describe("promotion benchmark adjudication", () => {
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "double_verified",
       execution_provenance_status: "artifact_verified",
-      paper_claim_eligible: false
+      paper_claim_eligible: false,
+      adjudication_provenance: {
+        mutation_audit_report_sha256: createHash("sha256")
+          .update(await readFile(path.join(workspace, mutationVerification.report_path)))
+          .digest("hex")
+      }
     });
 
     await writeMutationAudits(workspace, "mutation-overlap-a.jsonl", mutationTasks, "annotator-alpha");

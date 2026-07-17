@@ -7,7 +7,9 @@ import { GRAPH_NODE_ORDER } from "../../types.js";
 import {
   PROMOTION_DECISIONS,
   hashPromotionArtifactTree,
+  hashPromotionBenchmarkSuiteSnapshot,
   loadPromotionBenchmarkSuite,
+  type PromotionBenchmarkAdjudicationProvenance,
   type PromotionBenchmarkCaseManifest,
   type PromotionBenchmarkEvidenceClass,
   type PromotionBenchmarkExecutionProvenanceStatus,
@@ -119,6 +121,7 @@ export interface PromotionAdjudicationReport {
     report_path: string | null;
     validation_issues: PromotionMutationAuditIssue[];
   };
+  adjudication_provenance: PromotionBenchmarkAdjudicationProvenance | null;
   eligibility: PromotionAdjudicationEligibility;
   adjudicated_suite_path: string | null;
 }
@@ -226,6 +229,11 @@ export async function adjudicatePromotionBenchmark(
   const cwd = path.resolve(input.cwd);
   const suitePath = path.resolve(cwd, input.suitePath);
   const privateMapPath = path.resolve(cwd, input.privateMapPath);
+  const annotationPaths = input.annotationPaths.map((annotationPath) => path.resolve(cwd, annotationPath));
+  const resolutionPath = input.resolutionPath ? path.resolve(cwd, input.resolutionPath) : null;
+  const mutationAuditReportPath = input.mutationAuditReportPath
+    ? path.resolve(cwd, input.mutationAuditReportPath)
+    : null;
   const outDir = path.resolve(cwd, input.outDir);
   if (await pathExists(outDir)) throw new Error(`Promotion adjudication output already exists: ${portableRef(cwd, outDir)}`);
   if (input.annotationPaths.length !== 2) throw new Error("Promotion adjudication requires exactly two independent annotation files.");
@@ -251,8 +259,8 @@ export async function adjudicatePromotionBenchmark(
     issues
   );
 
-  const annotationSets = await Promise.all(input.annotationPaths.map(async (annotationPath) =>
-    readAnnotationFile(path.resolve(cwd, annotationPath), privateMap, issues)));
+  const annotationSets = await Promise.all(annotationPaths.map(async (annotationPath) =>
+    readAnnotationFile(annotationPath, privateMap, issues)));
   const adjudicatorIds = annotationSets.map((set) => set.adjudicator_id).filter(nonEmptyString);
   if (new Set(adjudicatorIds).size !== 2) {
     issues.push({ code: "initial_adjudicators_not_independent", message: "Initial annotation files must use two distinct adjudicator IDs." });
@@ -265,8 +273,8 @@ export async function adjudicatePromotionBenchmark(
     const right = second.get(entry.annotation_id);
     return Boolean(left && right && !labelsEqual(left, right));
   });
-  const resolution = input.resolutionPath
-    ? await readAnnotationFile(path.resolve(cwd, input.resolutionPath), privateMap, issues, new Set(disagreements.map((entry) => entry.annotation_id)))
+  const resolution = resolutionPath
+    ? await readAnnotationFile(resolutionPath, privateMap, issues, new Set(disagreements.map((entry) => entry.annotation_id)))
     : { adjudicator_id: "", records: new Map<string, PromotionAnnotationRecord>() };
   if (resolution.adjudicator_id && new Set(adjudicatorIds).has(resolution.adjudicator_id)) {
     issues.push({ code: "resolver_not_independent", message: "Resolver ID must differ from both initial adjudicator IDs." });
@@ -310,9 +318,9 @@ export async function adjudicatePromotionBenchmark(
     return left && right ? [[left, right] as const] : [];
   });
   const passed = issues.length === 0 && accepted.size === loaded.suite.cases.length;
-  const mutationIsolationValidation = input.mutationAuditReportPath
+  const mutationIsolationValidation = mutationAuditReportPath
     ? await validateVerifiedPromotionMutationAuditReport({
-        reportPath: path.resolve(cwd, input.mutationAuditReportPath),
+        reportPath: mutationAuditReportPath,
         suitePath,
         suiteId: loaded.suite.manifest.suite_id,
         cases: loaded.suite.cases
@@ -348,30 +356,8 @@ export async function adjudicatePromotionBenchmark(
     adjudication_complete: passed,
     mutation_isolation_verified: mutationIsolationVerified
   });
-
-  await fs.mkdir(path.dirname(outDir), { recursive: true });
-  const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
-  let suiteOutputPath: string | null = null;
-  let labelsOutputPath: string | null = null;
-  try {
-    if (passed) {
-      const copiedSuiteRoot = path.join(stagingRoot, "suite");
-      await fs.cp(loaded.suite.suite_root, copiedSuiteRoot, { recursive: true, errorOnExist: true, force: false });
-      for (const [index, caseRef] of loaded.suite.manifest.cases.entries()) {
-        const benchmarkCase = loaded.suite.cases[index];
-        const adjudicated = accepted.get(benchmarkCase.case_id);
-        if (!adjudicated) throw new Error(`Accepted label missing for ${benchmarkCase.case_id}.`);
-        await writeJsonFile(path.join(copiedSuiteRoot, caseRef), { ...benchmarkCase, gold: adjudicated.label });
-      }
-      const evidenceClass = resolvedEvidenceClass(loaded.suite.manifest.evidence_class);
-      await writeJsonFile(path.join(copiedSuiteRoot, "suite.json"), {
-        ...loaded.suite.manifest,
-        evidence_class: evidenceClass,
-        adjudication_status: "double_adjudicated",
-        mutation_isolation_status: mutationIsolationVerified ? "double_verified" : "unreviewed",
-        paper_claim_eligible: eligibility.paper_claim_eligible
-      });
-      const labelRows = privateMap.entries.map((entry) => {
+  const labelRows = passed
+    ? privateMap.entries.map((entry) => {
         const adjudicated = accepted.get(entry.case_id);
         if (!adjudicated) throw new Error(`Accepted label missing for ${entry.case_id}.`);
         const left = first.get(entry.annotation_id);
@@ -386,8 +372,79 @@ export async function adjudicatePromotionBenchmark(
           initial_annotations: [left, right],
           resolution: resolution.records.get(entry.annotation_id) || null
         });
+      })
+    : [];
+  const labelsText = passed ? `${labelRows.join("\n")}\n` : null;
+  const initialAnnotationSha256 = passed
+    ? await Promise.all(annotationPaths.map(hashFile))
+    : [];
+  const privateAnnotationMapRef = "adjudication/private-annotation-map.json";
+  const initialAnnotationRefs = [
+    "adjudication/initial-annotation-1.jsonl",
+    "adjudication/initial-annotation-2.jsonl"
+  ] as [string, string];
+  const resolutionRef = resolutionPath ? "adjudication/resolution.jsonl" : null;
+  const mutationAuditReportRef = mutationAuditReportPath ? "adjudication/mutation-audit-report.json" : null;
+  const adjudicatedLabelsRef = "adjudication/adjudicated-labels.jsonl";
+  const adjudicationProvenance: PromotionBenchmarkAdjudicationProvenance | null = passed && labelsText
+    ? {
+        schema_version: "1.0",
+        method: "independent_double_adjudication",
+        source_suite_snapshot_sha256: await hashPromotionBenchmarkSuiteSnapshot(suitePath),
+        private_annotation_map_ref: privateAnnotationMapRef,
+        private_annotation_map_sha256: await hashFile(privateMapPath),
+        initial_annotation_refs: initialAnnotationRefs,
+        initial_annotation_sha256: [initialAnnotationSha256[0], initialAnnotationSha256[1]],
+        resolution_ref: resolutionRef,
+        resolution_sha256: resolutionPath ? await hashFile(resolutionPath) : null,
+        mutation_audit_report_ref: mutationAuditReportRef,
+        mutation_audit_report_sha256: mutationAuditReportPath ? await hashFile(mutationAuditReportPath) : null,
+        adjudicated_labels_ref: adjudicatedLabelsRef,
+        adjudicated_labels_sha256: createHash("sha256").update(labelsText).digest("hex"),
+        case_count: loaded.suite.cases.length
+      }
+    : null;
+
+  await fs.mkdir(path.dirname(outDir), { recursive: true });
+  const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
+  let suiteOutputPath: string | null = null;
+  let labelsOutputPath: string | null = null;
+  try {
+    if (passed) {
+      if (!adjudicationProvenance || !labelsText) {
+        throw new Error("Adjudication provenance was not generated for a completed adjudication.");
+      }
+      const copiedSuiteRoot = path.join(stagingRoot, "suite");
+      await fs.cp(loaded.suite.suite_root, copiedSuiteRoot, { recursive: true, errorOnExist: true, force: false });
+      const adjudicationEvidenceRoot = path.join(copiedSuiteRoot, "adjudication");
+      await fs.rm(adjudicationEvidenceRoot, { recursive: true, force: true });
+      await fs.mkdir(adjudicationEvidenceRoot, { recursive: true });
+      await fs.copyFile(privateMapPath, path.join(copiedSuiteRoot, privateAnnotationMapRef));
+      await Promise.all(annotationPaths.map((annotationPath, index) =>
+        fs.copyFile(annotationPath, path.join(copiedSuiteRoot, initialAnnotationRefs[index]))));
+      if (resolutionPath && resolutionRef) {
+        await fs.copyFile(resolutionPath, path.join(copiedSuiteRoot, resolutionRef));
+      }
+      if (mutationAuditReportPath && mutationAuditReportRef) {
+        await fs.copyFile(mutationAuditReportPath, path.join(copiedSuiteRoot, mutationAuditReportRef));
+      }
+      await fs.writeFile(path.join(copiedSuiteRoot, adjudicatedLabelsRef), labelsText, "utf8");
+      for (const [index, caseRef] of loaded.suite.manifest.cases.entries()) {
+        const benchmarkCase = loaded.suite.cases[index];
+        const adjudicated = accepted.get(benchmarkCase.case_id);
+        if (!adjudicated) throw new Error(`Accepted label missing for ${benchmarkCase.case_id}.`);
+        await writeJsonFile(path.join(copiedSuiteRoot, caseRef), { ...benchmarkCase, gold: adjudicated.label });
+      }
+      const evidenceClass = resolvedEvidenceClass(loaded.suite.manifest.evidence_class);
+      await writeJsonFile(path.join(copiedSuiteRoot, "suite.json"), {
+        ...loaded.suite.manifest,
+        evidence_class: evidenceClass,
+        adjudication_status: "double_adjudicated",
+        mutation_isolation_status: mutationIsolationVerified ? "double_verified" : "unreviewed",
+        paper_claim_eligible: eligibility.paper_claim_eligible,
+        adjudication_provenance: adjudicationProvenance
       });
-      await fs.writeFile(path.join(stagingRoot, "adjudicated-labels.jsonl"), `${labelRows.join("\n")}\n`, "utf8");
+      await fs.writeFile(path.join(stagingRoot, "adjudicated-labels.jsonl"), labelsText, "utf8");
       suiteOutputPath = portableRef(cwd, path.join(outDir, "suite", "suite.json"));
       labelsOutputPath = portableRef(cwd, path.join(outDir, "adjudicated-labels.jsonl"));
     }
@@ -409,11 +466,12 @@ export async function adjudicatePromotionBenchmark(
       source_diversity_status: loaded.suite.manifest.source_diversity_status || "unspecified",
       mutation_isolation: {
         status: mutationIsolationVerified ? "double_verified" : "unreviewed",
-        report_path: input.mutationAuditReportPath
-          ? portableRef(cwd, path.resolve(cwd, input.mutationAuditReportPath))
+        report_path: mutationAuditReportPath
+          ? portableRef(cwd, mutationAuditReportPath)
           : null,
         validation_issues: mutationIsolationIssues
       },
+      adjudication_provenance: adjudicationProvenance,
       eligibility,
       adjudicated_suite_path: suiteOutputPath
     };

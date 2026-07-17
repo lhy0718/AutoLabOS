@@ -269,6 +269,22 @@ async function writeSuite(
     caseRefs.push(ref);
     await writeFile(path.join(workspace, suiteRoot, ref), JSON.stringify(benchmarkCase));
   }
+  const adjudicationRoot = path.join(workspace, suiteRoot, "adjudication");
+  await mkdir(adjudicationRoot, { recursive: true });
+  const privateMapText = '{"schema_version":"1.0","entries":[]}\n';
+  const annotationOneText = '{"schema_version":"1.0","adjudicator_id":"reviewer-one"}\n';
+  const annotationTwoText = '{"schema_version":"1.0","adjudicator_id":"reviewer-two"}\n';
+  const mutationAuditText = '{"schema_version":"1.0","status":"double_verified"}\n';
+  const labelsText = cases.map((benchmarkCase) => JSON.stringify({
+    schema_version: "1.0",
+    case_id: benchmarkCase.case_id,
+    ...benchmarkCase.gold
+  })).join("\n") + "\n";
+  await writeFile(path.join(adjudicationRoot, "private-annotation-map.json"), privateMapText);
+  await writeFile(path.join(adjudicationRoot, "initial-annotation-1.jsonl"), annotationOneText);
+  await writeFile(path.join(adjudicationRoot, "initial-annotation-2.jsonl"), annotationTwoText);
+  await writeFile(path.join(adjudicationRoot, "mutation-audit-report.json"), mutationAuditText);
+  await writeFile(path.join(adjudicationRoot, "adjudicated-labels.jsonl"), labelsText);
   await writeFile(path.join(workspace, suiteRoot, "suite.json"), JSON.stringify({
     schema_version: "1.0",
     suite_id: suiteId,
@@ -278,8 +294,31 @@ async function writeSuite(
     mutation_isolation_status: "double_verified",
     execution_provenance_status: "artifact_verified",
     source_diversity_status: "declared_stratified",
+    adjudication_provenance: {
+      schema_version: "1.0",
+      method: "independent_double_adjudication",
+      source_suite_snapshot_sha256: "1".repeat(64),
+      private_annotation_map_ref: "adjudication/private-annotation-map.json",
+      private_annotation_map_sha256: hashText(privateMapText),
+      initial_annotation_refs: [
+        "adjudication/initial-annotation-1.jsonl",
+        "adjudication/initial-annotation-2.jsonl"
+      ],
+      initial_annotation_sha256: [hashText(annotationOneText), hashText(annotationTwoText)],
+      resolution_ref: null,
+      resolution_sha256: null,
+      mutation_audit_report_ref: "adjudication/mutation-audit-report.json",
+      mutation_audit_report_sha256: hashText(mutationAuditText),
+      adjudicated_labels_ref: "adjudication/adjudicated-labels.jsonl",
+      adjudicated_labels_sha256: hashText(labelsText),
+      case_count: cases.length
+    },
     cases: caseRefs
   }));
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function predictionFromGold(
