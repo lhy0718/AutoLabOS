@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
+import { asyncBufferFromFile, parquetMetadataAsync, parquetReadObjects } from "hyparquet";
+
 import { writeJsonFile } from "../../utils/fs.js";
 import { hashPromotionArtifactTree } from "./promotionBenchmark.js";
 import {
@@ -47,11 +49,17 @@ const PROCESS_TIMEOUT_MS = 300_000;
 const FETCH_TIMEOUT_MS = 60_000;
 const FETCH_CONCURRENCY = 8;
 const EMPTY_GIT_BLOB_SHA1 = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391";
+const MAX_PARQUET_SOURCE_BYTES = 512 * 1024 * 1024;
+
+type PromotionTrialCandidateMaterialization =
+  | "git_archive"
+  | "verified_https_blobs"
+  | "huggingface_parquet";
 
 export interface ExportPromotionTrialCandidateHandoffInput {
   cwd: string;
   recipePath: string;
-  repositoryRoot: string;
+  sourceRoot: string;
   outDir: string;
   fetchImpl?: typeof fetch;
 }
@@ -92,7 +100,7 @@ export interface PromotionTrialCandidateHandoffManifest {
   source_revision: string;
   selection_policy: string;
   selection_pre_content: true;
-  source_materialization: "git_archive" | "verified_https_blobs";
+  source_materialization: PromotionTrialCandidateMaterialization;
   recipe_sha256: string;
   source_recipe_path: string;
   matched_trial_artifact_count: number;
@@ -169,7 +177,7 @@ export interface PromotionTrialCandidateEvidenceSummary {
   handoff_id: string;
   source_url: string;
   source_revision: string;
-  source_materialization: "git_archive" | "verified_https_blobs";
+  source_materialization: PromotionTrialCandidateMaterialization;
   selection_pre_content: true;
   matched_trial_artifact_count: number;
   empty_blob_exclusion_count: number;
@@ -195,38 +203,68 @@ export interface PromotionTrialCandidateEvidenceSummary {
   evidence_boundary: string;
 }
 
-interface PromotionTrialCandidateRecipe {
-  schema_version: "1.0";
+interface PromotionTrialCandidateRecipeCommon {
+  schema_version: "1.1";
   handoff_id: string;
   source_url: string;
   source_revision: string;
-  path_scope: string;
-  path_pattern: string;
   required_base_count: number;
   trials_per_base: 3;
   artifact_format: "json";
   selection_policy: string;
+  materialization_mode: PromotionTrialCandidateMaterialization;
+  license_evidence: Array<{ path: string; sha256: string }>;
+}
+
+interface PromotionTrialCandidateGitRecipe extends PromotionTrialCandidateRecipeCommon {
   materialization_mode: "git_archive" | "verified_https_blobs";
+  path_scope: string;
+  path_pattern: string;
   artifact_url_template?: string;
 }
 
-interface GitTrialCandidate {
+interface PromotionTrialCandidateParquetRecipe extends PromotionTrialCandidateRecipeCommon {
+  materialization_mode: "huggingface_parquet";
+  credential_projection?: "redact_values";
+  reviewer_identity_redactions?: string[];
+  parquet_sources: Array<{ path: string; sha256: string }>;
+  columns: string[];
+  json_columns: string[];
+  reviewer_columns: string[];
+  operator_pointer: string;
+  family_pointer: string;
+  base_pointer: string;
+  trial_pointer?: string;
+}
+
+type PromotionTrialCandidateRecipe =
+  | PromotionTrialCandidateGitRecipe
+  | PromotionTrialCandidateParquetRecipe;
+
+interface SourceTrialCandidate {
   source_path: string;
-  object_id: string;
+  source_ref_id: string;
+  source_ref_algorithm: "git_blob_sha1" | "parquet_row_sha256";
   operator_group: string;
   source_family: string;
+  base_group: string;
   trial: string;
+  parquet_path?: string;
+  parquet_sha256?: string;
+  row_index?: number;
+  reviewer_privacy_redaction_count?: number;
 }
 
 interface PlannedBase {
   operator_group: string;
   source_family: string;
+  base_group: string;
   identity_sha256: string;
-  trials: GitTrialCandidate[];
+  trials: SourceTrialCandidate[];
 }
 
 interface CandidateDiscovery {
-  candidates: GitTrialCandidate[];
+  candidates: SourceTrialCandidate[];
   matchedTrialArtifactCount: number;
   emptyBlobExclusionCount: number;
 }
@@ -246,11 +284,13 @@ interface ControllerMap {
     candidate_id: string;
     source_family: string;
     operator_group: string;
+    base_group: string;
     trials: Array<{
       trial_id: string;
       source_trial: string;
       source_path: string;
-      git_object_id: string;
+      source_ref_id: string;
+      source_ref_algorithm: "git_blob_sha1" | "parquet_row_sha256";
     }>;
   }>;
   evidence_boundary: string;
@@ -262,8 +302,8 @@ export async function exportPromotionTrialCandidateHandoff(
   const cwd = path.resolve(input.cwd);
   const recipePath = path.resolve(cwd, input.recipePath);
   const outDir = path.resolve(cwd, input.outDir);
-  if (!nonEmptyString(input.repositoryRoot)) {
-    throw new Error("Promotion trial-candidate export requires a separate local repository root.");
+  if (!nonEmptyString(input.sourceRoot)) {
+    throw new Error("Promotion trial-candidate export requires a separate local source root.");
   }
   if (await pathExists(outDir)) {
     throw new Error(`Promotion trial-candidate handoff already exists: ${portableRef(cwd, outDir)}`);
@@ -271,9 +311,9 @@ export async function exportPromotionTrialCandidateHandoff(
 
   const recipeBytes = await fs.readFile(recipePath);
   const recipe = parseRecipe(JSON.parse(recipeBytes.toString("utf8")) as unknown);
-  const repositoryRoot = path.resolve(cwd, input.repositoryRoot);
-  await assertPinnedRepository(repositoryRoot, recipe.source_url, recipe.source_revision);
-  const discovery = await discoverCandidates(repositoryRoot, recipe);
+  const sourceRoot = path.resolve(cwd, input.sourceRoot);
+  await assertSourceRoot(sourceRoot, recipe);
+  const discovery = await discoverCandidates(sourceRoot, recipe);
   const selection = selectBalancedBases(discovery.candidates, recipe.required_base_count);
   const selected = selection.bases;
   const diversity = summarizeDiversity(selected);
@@ -294,7 +334,7 @@ export async function exportPromotionTrialCandidateHandoff(
     );
     const sourceArchiveRoot = path.join(stagingRoot, ".source-archive");
     await materializeSelectedArtifacts(
-      repositoryRoot,
+      sourceRoot,
       recipe,
       selected.flatMap((base) => base.trials),
       sourceArchiveRoot,
@@ -328,9 +368,21 @@ export async function exportPromotionTrialCandidateHandoff(
         handoff_id: recipe.handoff_id,
         source_url: recipe.source_url,
         source_revision: recipe.source_revision,
+        evidence_files: licenseEvidencePacketEntries(recipe),
         required_decision: "distribution_scope"
       }
     );
+    for (const [index, evidence] of recipe.license_evidence.entries()) {
+      const source = resolveContainedFile(sourceRoot, evidence.path);
+      if (!source) throw new Error("Source-license evidence escaped the source root: " + evidence.path);
+      const target = path.join(
+        stagingRoot,
+        "license",
+        licenseEvidencePacketEntries(recipe)[index].path
+      );
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(source, target);
+    }
     await writeJsonFile(
       path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
       promotionTrialCandidateLicenseReviewSchema()
@@ -350,23 +402,20 @@ export async function exportPromotionTrialCandidateHandoff(
       const publicTrials: PromotionTrialCandidateRecord["trials"] = [];
       const controllerTrials: ControllerMap["candidates"][number]["trials"] = [];
       for (const trial of base.trials) {
-        const sourceFile = resolveContainedFile(sourceArchiveRoot, trial.source_path);
-        if (!sourceFile) throw new Error(`Selected Git path escaped the source archive: ${trial.source_path}`);
-        const stat = await fs.lstat(sourceFile);
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > MAX_SELECTED_ARTIFACT_BYTES) {
-          throw new Error(`Selected trial artifact must be a bounded non-empty regular file: ${trial.source_path}`);
-        }
-        const bytes = await fs.readFile(sourceFile);
-        if (gitBlobSha1(bytes) !== trial.object_id) {
-          throw new Error(`Selected trial artifact does not match its Git object ID: ${trial.source_path}`);
-        }
+        const materialized = await readMaterializedTrial(sourceArchiveRoot, trial);
+        const bytes = materialized.sourceBytes;
         try {
           JSON.parse(bytes.toString("utf8"));
         } catch {
           throw new Error(`Selected trial artifact is not valid JSON: ${trial.source_path}`);
         }
-        const reviewerArtifact = projectPromotionReviewerArtifact(trial.source_path, bytes);
-        privacyRedactionCount += reviewerArtifact.privacy_redaction_count;
+        const reviewerArtifact = projectPromotionReviewerArtifact(
+          trial.source_path,
+          materialized.reviewerInputBytes
+        );
+        const trialPrivacyRedactionCount = (trial.reviewer_privacy_redaction_count || 0)
+          + reviewerArtifact.privacy_redaction_count;
+        privacyRedactionCount += trialPrivacyRedactionCount;
         const trialId = `trial-${sha256Text(trial.source_path).slice(0, 16)}`;
         const artifactPath = `reviewer/artifacts/${candidateId}/${trialId}/trace.json`;
         const target = path.join(stagingRoot, artifactPath);
@@ -377,14 +426,15 @@ export async function exportPromotionTrialCandidateHandoff(
           source_ref_sha256: sha256Text(trial.source_path),
           source_blob_sha256: sha256(bytes),
           reviewer_blob_sha256: sha256(reviewerArtifact.bytes),
-          privacy_redaction_count: reviewerArtifact.privacy_redaction_count,
+          privacy_redaction_count: trialPrivacyRedactionCount,
           artifact_path: artifactPath.replace(/^reviewer\//u, "")
         });
         controllerTrials.push({
           trial_id: trialId,
           source_trial: trial.trial,
           source_path: trial.source_path,
-          git_object_id: trial.object_id
+          source_ref_id: trial.source_ref_id,
+          source_ref_algorithm: trial.source_ref_algorithm
         });
       }
       const baseCandidateSha256 = sha256Text(publicTrials
@@ -402,6 +452,7 @@ export async function exportPromotionTrialCandidateHandoff(
         candidate_id: candidateId,
         source_family: base.source_family,
         operator_group: base.operator_group,
+        base_group: base.base_group,
         trials: controllerTrials
       });
       taskLines.push(JSON.stringify({
@@ -450,7 +501,7 @@ export async function exportPromotionTrialCandidateHandoff(
       source_url: recipe.source_url,
       source_revision: recipe.source_revision,
       candidates: controllerCandidates,
-      evidence_boundary: "This controller-only map reconnects opaque candidates to public Git paths and group labels. It must not be distributed with the reviewer directory."
+      evidence_boundary: "This controller-only map reconnects opaque candidates to source locations and explicit operator, family, and base groups. It must not be distributed with the reviewer directory."
     };
     await writeJsonFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP), controllerMap);
 
@@ -526,7 +577,7 @@ export async function exportPromotionTrialCandidateHandoff(
       distribution_scope: "local_evaluation_only",
       source_license_status: "unreviewed",
       confirmatory_admitted: false,
-      evidence_boundary: "This handoff binds three source-revision trial artifacts per candidate after outcome-blind path selection and verifies every raw byte sequence against its Git object ID. Credential-like content fails closed; private machine paths are deterministically replaced in reviewer artifacts and raw/reviewer hashes remain separate. It establishes a trace-candidate floor only, not comparable results, paper readiness, licensing, human annotation, operator independence, or confirmatory admission."
+      evidence_boundary: "This handoff binds three source-revision trial artifacts per candidate after outcome-blind selection. Git bytes are verified against object IDs; Parquet row locators are anchored to verified file hashes and materialized through the declared deterministic privacy projection. Credential-like content fails closed unless the recipe explicitly selects value redaction, private machine paths are always replaced, and source/reviewer hashes remain separate. This establishes a trace-candidate floor only, not comparable results, paper readiness, licensing, human annotation, operator independence, or confirmatory admission."
     };
     await writeJsonFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST), manifest);
     const inspection = await inspectPromotionTrialCandidateHandoff(stagingRoot);
@@ -879,21 +930,9 @@ export async function inspectPromotionTrialCandidateLicensePacket(
     "trial_candidate_license_packet",
     issues
   );
-  const expectedFiles = new Set([
-    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
-    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
-    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE)
-  ]);
-  const manifestFiles = new Set(manifest.files.map((item) => item.path));
-  if (expectedFiles.size !== manifestFiles.size
-      || [...expectedFiles].some((item) => !manifestFiles.has(item))) {
-    issues.push({
-      code: "trial_candidate_license_packet_scope_invalid",
-      message: "The source-license packet may contain only its task, schema, guide, and packet manifest."
-    });
-  }
+  let task: ReturnType<typeof parseLicenseTask> | null = null;
   try {
-    const task = parseLicenseTask(JSON.parse(await fs.readFile(path.join(
+    task = parseLicenseTask(JSON.parse(await fs.readFile(path.join(
       licenseRoot,
       licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)
     ), "utf8")) as unknown);
@@ -914,46 +953,127 @@ export async function inspectPromotionTrialCandidateLicensePacket(
       message: "The source-license task, schema, or guide is missing or does not match the runtime contract."
     });
   }
+  const expectedFiles = new Set([
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
+    licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE),
+    ...(task?.evidence_files.map((item) => item.path) || [])
+  ]);
+  const manifestFiles = new Map(manifest.files.map((item) => [item.path, item.sha256]));
+  if (expectedFiles.size !== manifestFiles.size
+      || [...expectedFiles].some((item) => !manifestFiles.has(item))
+      || task?.evidence_files.some((item) => manifestFiles.get(item.path) !== item.sha256)) {
+    issues.push({
+      code: "trial_candidate_license_packet_scope_invalid",
+      message: "The source-license packet may contain only its task-declared evidence, schema, guide, and packet manifest."
+    });
+  }
   return { passed: issues.length === 0, manifest, issues };
 }
 
 function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
-  if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.handoff_id)
+  if (isRecord(value) && Object.keys(value).some((key) => /(?:^|_)root$/u.test(key))) {
+    throw new Error("Portable trial-candidate source metadata must not contain machine-local source paths.");
+  }
+  if (!isRecord(value) || value.schema_version !== "1.1" || !validId(value.handoff_id)
       || !validHttpsUrl(value.source_url) || !sha1String(value.source_revision)
-      || Object.keys(value).some((key) => ![
-        "schema_version",
-        "handoff_id",
-        "source_url",
-        "source_revision",
-        "path_scope",
-        "path_pattern",
-        "required_base_count",
-        "trials_per_base",
-        "artifact_format",
-        "selection_policy",
-        "materialization_mode",
-        "artifact_url_template"
-      ].includes(key))
-      || !safeRelativePath(value.path_scope)
-      || !nonEmptyString(value.path_pattern)
       || value.required_base_count !== MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
       || value.trials_per_base !== TRIALS_PER_BASE || value.artifact_format !== "json"
       || !nonEmptyString(value.selection_policy)
-      || (value.materialization_mode !== undefined
-        && value.materialization_mode !== "git_archive"
-        && value.materialization_mode !== "verified_https_blobs")) {
-    throw new Error(`Trial-candidate handoff recipe requires ${MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES} bases, three JSON trials per base, and complete portable source metadata.`);
+      || !validSourceEvidenceList(value.license_evidence)
+      || (value.materialization_mode !== "git_archive"
+        && value.materialization_mode !== "verified_https_blobs"
+        && value.materialization_mode !== "huggingface_parquet")) {
+    throw new Error("Trial-candidate handoff recipe requires the paper-scale base count, three JSON trials per base, and complete portable source metadata.");
+  }
+  const common = {
+    schema_version: "1.1" as const,
+    handoff_id: value.handoff_id,
+    source_url: value.source_url,
+    source_revision: value.source_revision,
+    required_base_count: value.required_base_count,
+    trials_per_base: TRIALS_PER_BASE as 3,
+    artifact_format: "json" as const,
+    selection_policy: value.selection_policy,
+    license_evidence: value.license_evidence.map((item: Record<string, any>) => ({
+      path: item.path as string,
+      sha256: item.sha256 as string
+    }))
+  };
+  if (value.materialization_mode === "huggingface_parquet") {
+    const allowedKeys = new Set([
+      "schema_version", "handoff_id", "source_url", "source_revision",
+      "required_base_count", "trials_per_base", "artifact_format",
+      "selection_policy", "materialization_mode", "license_evidence",
+      "parquet_sources", "columns", "json_columns", "reviewer_columns",
+      "operator_pointer", "family_pointer", "base_pointer", "trial_pointer",
+      "credential_projection", "reviewer_identity_redactions"
+    ]);
+    if (Object.keys(value).some((key) => !allowedKeys.has(key))
+        || !validHuggingFaceDatasetUrl(value.source_url)
+        || !validParquetSourceList(value.parquet_sources)
+        || !validUniqueStringList(value.columns)
+        || !validUniqueStringList(value.json_columns)
+        || !validUniqueStringList(value.reviewer_columns)
+        || !(value.json_columns as string[]).every((column) => (value.columns as string[]).includes(column))
+        || !(value.reviewer_columns as string[]).every((column) => (value.columns as string[]).includes(column))
+        || !validGroupingPointer(value.operator_pointer, value.columns)
+        || !validGroupingPointer(value.family_pointer, value.columns)
+        || !validGroupingPointer(value.base_pointer, value.columns)
+        || (value.credential_projection !== undefined
+          && value.credential_projection !== "redact_values")
+        || (value.reviewer_identity_redactions !== undefined
+          && !validReviewerIdentityRedactions(value.reviewer_identity_redactions))
+        || (value.trial_pointer !== undefined && !validGroupingPointer(value.trial_pointer, value.columns))) {
+      throw new Error("Hugging Face Parquet recipes require hash-bound files, explicit columns, reviewer projection, and valid grouping pointers.");
+    }
+    return {
+      ...common,
+      materialization_mode: "huggingface_parquet",
+      parquet_sources: value.parquet_sources.map((item: Record<string, any>) => ({
+        path: item.path as string,
+        sha256: item.sha256 as string
+      })),
+      columns: [...value.columns],
+      json_columns: [...value.json_columns],
+      reviewer_columns: [...value.reviewer_columns],
+      operator_pointer: value.operator_pointer,
+      family_pointer: value.family_pointer,
+      base_pointer: value.base_pointer,
+      ...(value.credential_projection === undefined
+        ? {}
+        : { credential_projection: value.credential_projection }),
+      ...(value.reviewer_identity_redactions === undefined
+        ? {}
+        : {
+            reviewer_identity_redactions: [...value.reviewer_identity_redactions]
+              .sort((left, right) => right.length - left.length || left.localeCompare(right))
+          }),
+      ...(value.trial_pointer === undefined ? {} : { trial_pointer: value.trial_pointer })
+    };
+  }
+  const allowedKeys = new Set([
+    "schema_version", "handoff_id", "source_url", "source_revision",
+    "path_scope", "path_pattern", "required_base_count", "trials_per_base",
+    "artifact_format", "selection_policy", "materialization_mode",
+    "artifact_url_template", "license_evidence"
+  ]);
+  if (Object.keys(value).some((key) => !allowedKeys.has(key))
+      || !safeRelativePath(value.path_scope)
+      || !nonEmptyString(value.path_pattern)) {
+    throw new Error("Git trial-candidate recipes require a path scope and an anchored path pattern.");
   }
   try {
     new RegExp(value.path_pattern, "u");
     if (!value.path_pattern.startsWith("^") || !value.path_pattern.endsWith("$")
         || !/\(\?<operator>/.test(value.path_pattern)
         || !/\(\?<family>/.test(value.path_pattern)
+        || !/\(\?<base>/.test(value.path_pattern)
         || !/\(\?<trial>/.test(value.path_pattern)) throw new Error("missing named captures");
   } catch {
-    throw new Error("Trial-candidate path_pattern must be an anchored regular expression with operator, family, and trial named captures.");
+    throw new Error("Trial-candidate path_pattern must be anchored and include operator, family, base, and trial named captures.");
   }
-  const materializationMode = value.materialization_mode || "git_archive";
+  const materializationMode = value.materialization_mode;
   if (materializationMode === "verified_https_blobs" && !validArtifactUrlTemplate(value.artifact_url_template)) {
     throw new Error("Verified HTTPS materialization requires an HTTPS artifact_url_template with one {revision} and one {path} placeholder.");
   }
@@ -961,16 +1081,9 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     throw new Error("Git-archive materialization must not declare an artifact_url_template.");
   }
   return {
-    schema_version: "1.0",
-    handoff_id: value.handoff_id,
-    source_url: value.source_url,
-    source_revision: value.source_revision,
+    ...common,
     path_scope: value.path_scope,
     path_pattern: value.path_pattern,
-    required_base_count: value.required_base_count,
-    trials_per_base: TRIALS_PER_BASE,
-    artifact_format: "json",
-    selection_policy: value.selection_policy,
     materialization_mode: materializationMode,
     ...(materializationMode === "verified_https_blobs"
       ? { artifact_url_template: value.artifact_url_template as string }
@@ -982,7 +1095,9 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
   if (!isRecord(value) || value.schema_version !== "1.0" || value.status !== "candidate_handoff_ready"
       || !validId(value.handoff_id) || !validHttpsUrl(value.source_url) || !sha1String(value.source_revision)
       || !nonEmptyString(value.selection_policy) || value.selection_pre_content !== true
-      || (value.source_materialization !== "git_archive" && value.source_materialization !== "verified_https_blobs")
+      || (value.source_materialization !== "git_archive"
+        && value.source_materialization !== "verified_https_blobs"
+        && value.source_materialization !== "huggingface_parquet")
       || !sha256String(value.recipe_sha256) || !nonNegativeInteger(value.matched_trial_artifact_count)
       || value.source_recipe_path !== PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE
       || !nonNegativeInteger(value.empty_blob_exclusion_count) || !nonNegativeInteger(value.duplicate_blob_exclusion_count)
@@ -1185,9 +1300,11 @@ function parseLicenseTask(value: unknown): {
   handoff_id: string;
   source_url: string;
   source_revision: string;
+  evidence_files: Array<{ path: string; sha256: string }>;
 } {
   if (!isRecord(value)
       || Object.keys(value).sort().join("\0") !== [
+        "evidence_files",
         "handoff_id",
         "required_decision",
         "schema_version",
@@ -1198,27 +1315,68 @@ function parseLicenseTask(value: unknown): {
       || !validId(value.handoff_id)
       || !validHttpsUrl(value.source_url)
       || !sha1String(value.source_revision)
+      || !validSourceEvidenceList(value.evidence_files)
       || value.required_decision !== "distribution_scope") {
     throw new Error("Invalid trial-candidate source-license task.");
   }
   return {
     handoff_id: value.handoff_id,
     source_url: value.source_url,
-    source_revision: value.source_revision
+    source_revision: value.source_revision,
+    evidence_files: value.evidence_files
   };
 }
 
-async function assertPinnedRepository(repositoryRoot: string, sourceUrl: string, revision: string): Promise<void> {
-  const stat = await fs.lstat(repositoryRoot).catch(() => null);
-  if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("Trial-candidate repository_root must be a regular directory.");
-  const origin = (await runProcess("git", ["-C", repositoryRoot, "remote", "get-url", "origin"]))
+async function assertPinnedGitSource(gitSourceRoot: string, sourceUrl: string, revision: string): Promise<void> {
+  const stat = await fs.lstat(gitSourceRoot).catch(() => null);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("Trial-candidate Git source root must be a regular directory.");
+  const origin = (await runProcess("git", ["-C", gitSourceRoot, "remote", "get-url", "origin"]))
     .toString("utf8").trim();
   if (canonicalGitUrl(origin) !== canonicalGitUrl(sourceUrl)) {
     throw new Error("Trial-candidate source_url does not match the repository origin.");
   }
-  const resolved = (await runProcess("git", ["-C", repositoryRoot, "rev-parse", "--verify", `${revision}^{commit}`]))
+  const resolved = (await runProcess("git", ["-C", gitSourceRoot, "rev-parse", "--verify", `${revision}^{commit}`]))
     .toString("utf8").trim();
   if (resolved !== revision) throw new Error("Trial-candidate source revision did not resolve to the exact declared commit.");
+}
+
+async function assertSourceRoot(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateRecipe
+): Promise<void> {
+  const stat = await fs.lstat(sourceRoot).catch(() => null);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error("Trial-candidate source root must be a regular directory.");
+  }
+  for (const evidence of recipe.license_evidence) {
+    await assertHashBoundSourceFile(sourceRoot, evidence.path, evidence.sha256, MAX_SELECTED_ARTIFACT_BYTES);
+  }
+  if (recipe.materialization_mode !== "huggingface_parquet") {
+    await assertPinnedGitSource(sourceRoot, recipe.source_url, recipe.source_revision);
+    return;
+  }
+  for (const source of recipe.parquet_sources) {
+    await assertHashBoundSourceFile(sourceRoot, source.path, source.sha256, MAX_PARQUET_SOURCE_BYTES);
+  }
+}
+
+async function assertHashBoundSourceFile(
+  sourceRoot: string,
+  relativePath: string,
+  expectedSha256: string,
+  maximumBytes: number
+): Promise<void> {
+  const target = resolveContainedFile(sourceRoot, relativePath);
+  if (!target || await hasSymbolicLinkComponent(sourceRoot, relativePath)) {
+    throw new Error("Hash-bound source file escaped the source root or traversed a symbolic link.");
+  }
+  const stat = await fs.lstat(target);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > maximumBytes) {
+    throw new Error("Hash-bound source file must be a bounded non-empty regular file.");
+  }
+  if (sha256(await fs.readFile(target)) !== expectedSha256) {
+    throw new Error("Hash-bound source file does not match the recipe SHA-256.");
+  }
 }
 
 function canonicalGitUrl(value: string): string | null {
@@ -1233,14 +1391,17 @@ function canonicalGitUrl(value: string): string | null {
 }
 
 async function discoverCandidates(
-  repositoryRoot: string,
+  sourceRoot: string,
   recipe: PromotionTrialCandidateRecipe
 ): Promise<CandidateDiscovery> {
+  if (recipe.materialization_mode === "huggingface_parquet") {
+    return discoverParquetCandidates(sourceRoot, recipe);
+  }
   const output = await runProcess("git", [
-    "-C", repositoryRoot, "ls-tree", "-r", "-z", "--full-tree", recipe.source_revision, "--", recipe.path_scope
+    "-C", sourceRoot, "ls-tree", "-r", "-z", "--full-tree", recipe.source_revision, "--", recipe.path_scope
   ]);
   const pattern = new RegExp(recipe.path_pattern, "u");
-  const candidates: GitTrialCandidate[] = [];
+  const candidates: SourceTrialCandidate[] = [];
   let matchedTrialArtifactCount = 0;
   let emptyBlobExclusionCount = 0;
   for (const rawRecord of output.toString("utf8").split("\0")) {
@@ -1253,7 +1414,8 @@ async function discoverCandidates(
         || metadata[1] !== "blob" || !sha1String(metadata[2])) continue;
     const match = pattern.exec(sourcePath);
     const groups = match?.groups;
-    if (!groups || !boundedLabel(groups.operator) || !boundedLabel(groups.family) || !boundedLabel(groups.trial)) continue;
+    if (!groups || !boundedLabel(groups.operator) || !boundedLabel(groups.family)
+        || !boundedLabel(groups.base) || !boundedLabel(groups.trial)) continue;
     matchedTrialArtifactCount += 1;
     if (metadata[2] === EMPTY_GIT_BLOB_SHA1) {
       emptyBlobExclusionCount += 1;
@@ -1261,9 +1423,11 @@ async function discoverCandidates(
     }
     candidates.push({
       source_path: sourcePath,
-      object_id: metadata[2],
+      source_ref_id: metadata[2],
+      source_ref_algorithm: "git_blob_sha1",
       operator_group: groups.operator,
       source_family: groups.family,
+      base_group: groups.base,
       trial: groups.trial
     });
   }
@@ -1275,31 +1439,91 @@ async function discoverCandidates(
   };
 }
 
-function selectBalancedBases(candidates: readonly GitTrialCandidate[], requiredCount: number): CandidateSelection {
-  const uniqueCandidates: GitTrialCandidate[] = [];
+async function discoverParquetCandidates(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateParquetRecipe
+): Promise<CandidateDiscovery> {
+  const candidates: SourceTrialCandidate[] = [];
+  let matchedTrialArtifactCount = 0;
+  for (const source of [...recipe.parquet_sources].sort((left, right) => left.path.localeCompare(right.path))) {
+    const sourceFile = resolveContainedFile(sourceRoot, source.path);
+    if (!sourceFile) throw new Error("Parquet source path escaped the source root.");
+    const file = await asyncBufferFromFile(sourceFile);
+    const groupingColumns = [...new Set([
+      topLevelPointerToken(recipe.operator_pointer),
+      topLevelPointerToken(recipe.family_pointer),
+      topLevelPointerToken(recipe.base_pointer),
+      ...(recipe.trial_pointer ? [topLevelPointerToken(recipe.trial_pointer)] : [])
+    ])];
+    const rows = await parquetReadObjects({ file, columns: groupingColumns });
+    matchedTrialArtifactCount += rows.length;
+    for (const [rowIndex, row] of rows.entries()) {
+      const decoded = decodeParquetRow(row, recipe.json_columns);
+      const operator = groupingLabel(resolveJsonPointer(decoded, recipe.operator_pointer));
+      const family = groupingLabel(resolveJsonPointer(decoded, recipe.family_pointer));
+      const base = groupingLabel(resolveJsonPointer(decoded, recipe.base_pointer));
+      const trial = recipe.trial_pointer
+        ? groupingLabel(resolveJsonPointer(decoded, recipe.trial_pointer))
+        : String(rowIndex).padStart(10, "0");
+      if (!operator || !family || !base || !trial) {
+        throw new Error("Parquet grouping pointer did not resolve to a bounded scalar value.");
+      }
+      const sourcePath = source.path + "#row=" + rowIndex;
+      candidates.push({
+        source_path: sourcePath,
+        source_ref_id: sha256Text(source.sha256 + ":" + rowIndex),
+        source_ref_algorithm: "parquet_row_sha256",
+        operator_group: operator,
+        source_family: family,
+        base_group: base,
+        trial,
+        parquet_path: source.path,
+        parquet_sha256: source.sha256,
+        row_index: rowIndex
+      });
+    }
+  }
+  if (candidates.length === 0) throw new Error("Trial-candidate recipe matched no Parquet rows.");
+  return {
+    candidates: candidates.sort((left, right) => left.source_path.localeCompare(right.source_path)),
+    matchedTrialArtifactCount,
+    emptyBlobExclusionCount: 0
+  };
+}
+
+function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requiredCount: number): CandidateSelection {
+  const uniqueCandidates: SourceTrialCandidate[] = [];
   const seenObjects = new Set<string>();
   for (const candidate of candidates) {
-    if (seenObjects.has(candidate.object_id)) continue;
-    seenObjects.add(candidate.object_id);
+    const deduplicationKey = candidate.source_ref_algorithm + ":" + candidate.source_ref_id;
+    if (seenObjects.has(deduplicationKey)) continue;
+    seenObjects.add(deduplicationKey);
     uniqueCandidates.push(candidate);
   }
-  const grouped = new Map<string, GitTrialCandidate[]>();
+  const grouped = new Map<string, SourceTrialCandidate[]>();
   for (const candidate of uniqueCandidates) {
-    const key = `${candidate.operator_group}\0${candidate.source_family}`;
+    const key = candidate.operator_group + "\0" + candidate.source_family + "\0" + candidate.base_group;
     const bucket = grouped.get(key) || [];
     bucket.push(candidate);
     grouped.set(key, bucket);
   }
   const pools = [...grouped.entries()].map(([key, trials]) => {
-    const [operatorGroup, sourceFamily] = key.split("\0");
+    const [operatorGroup, sourceFamily, baseGroup] = key.split("\0");
     const bases: PlannedBase[] = [];
     const ordered = [...trials].sort((left, right) => left.source_path.localeCompare(right.source_path));
-    for (let index = 0; index + TRIALS_PER_BASE <= ordered.length; index += TRIALS_PER_BASE) {
-      const selectedTrials = ordered.slice(index, index + TRIALS_PER_BASE);
+    if (ordered.length >= TRIALS_PER_BASE) {
+      const selectedTrials = ordered.slice(0, TRIALS_PER_BASE);
       bases.push({
         operator_group: operatorGroup,
         source_family: sourceFamily,
-        identity_sha256: sha256Text(selectedTrials.map((trial) => `${trial.object_id}:${trial.source_path}`).join("\n")),
+        base_group: baseGroup,
+        identity_sha256: sha256Text([
+          operatorGroup,
+          sourceFamily,
+          baseGroup,
+          ...selectedTrials.map((trial) =>
+            trial.source_ref_algorithm + ":" + trial.source_ref_id + ":" + trial.source_path)
+        ].join("\n")),
         trials: selectedTrials
       });
     }
@@ -1360,9 +1584,9 @@ function summarizeDiversity(bases: readonly PlannedBase[]): {
 }
 
 async function materializeSelectedArtifacts(
-  repositoryRoot: string,
+  sourceRoot: string,
   recipe: PromotionTrialCandidateRecipe,
-  trials: readonly GitTrialCandidate[],
+  trials: readonly SourceTrialCandidate[],
   outputRoot: string,
   fetchImpl: typeof fetch
 ): Promise<void> {
@@ -1373,17 +1597,21 @@ async function materializeSelectedArtifacts(
     await materializeVerifiedHttpsBlobs(recipe, trials, outputRoot, fetchImpl);
     return;
   }
+  if (recipe.materialization_mode === "huggingface_parquet") {
+    await materializeParquetRows(sourceRoot, recipe, trials, outputRoot);
+    return;
+  }
   const archivePath = path.join(path.dirname(outputRoot), ".selected-source.tar");
   await runProcess("git", [
-    "-C", repositoryRoot, "archive", "--format=tar", `--output=${archivePath}`, recipe.source_revision, "--", ...uniquePaths
+    "-C", sourceRoot, "archive", "--format=tar", `--output=${archivePath}`, recipe.source_revision, "--", ...uniquePaths
   ]);
   await runProcess("tar", ["-xf", archivePath, "-C", outputRoot]);
   await fs.rm(archivePath, { force: true });
 }
 
 async function materializeVerifiedHttpsBlobs(
-  recipe: PromotionTrialCandidateRecipe,
-  trials: readonly GitTrialCandidate[],
+  recipe: PromotionTrialCandidateGitRecipe,
+  trials: readonly SourceTrialCandidate[],
   outputRoot: string,
   fetchImpl: typeof fetch
 ): Promise<void> {
@@ -1413,7 +1641,7 @@ async function materializeVerifiedHttpsBlobs(
       } finally {
         clearTimeout(timeout);
       }
-      if (gitBlobSha1(bytes) !== trial.object_id) {
+      if (gitBlobSha1(bytes) !== trial.source_ref_id) {
         throw new Error(`Fetched trial artifact does not match its Git object ID: ${trial.source_path}`);
       }
       const target = resolveContainedFile(outputRoot, trial.source_path);
@@ -1424,6 +1652,190 @@ async function materializeVerifiedHttpsBlobs(
     const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failure) throw failure.reason;
   }
+}
+
+async function materializeParquetRows(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateParquetRecipe,
+  trials: readonly SourceTrialCandidate[],
+  outputRoot: string
+): Promise<void> {
+  const byFile = new Map<string, SourceTrialCandidate[]>();
+  for (const trial of trials) {
+    if (!trial.parquet_path || trial.parquet_sha256 === undefined || trial.row_index === undefined) {
+      throw new Error("Selected Parquet trial is missing its source locator.");
+    }
+    const bucket = byFile.get(trial.parquet_path) || [];
+    bucket.push(trial);
+    byFile.set(trial.parquet_path, bucket);
+  }
+  for (const [parquetPath, fileTrials] of [...byFile.entries()].sort()) {
+    const sourceFile = resolveContainedFile(sourceRoot, parquetPath);
+    if (!sourceFile) throw new Error("Selected Parquet file escaped the source root.");
+    const file = await asyncBufferFromFile(sourceFile);
+    const metadata = await parquetMetadataAsync(file);
+    for (const trial of [...fileTrials].sort((left, right) => left.row_index! - right.row_index!)) {
+      const rows = await parquetReadObjects({
+        file,
+        metadata,
+        columns: recipe.columns,
+        rowStart: trial.row_index,
+        rowEnd: trial.row_index! + 1
+      });
+      if (rows.length !== 1) throw new Error("Selected Parquet row could not be materialized exactly once.");
+      const decoded = decodeParquetRow(rows[0], recipe.json_columns);
+      const unprojectedSourceBytes = canonicalJsonBytes({
+        schema_version: "1.0",
+        source: {
+          parquet_path: trial.parquet_path,
+          parquet_sha256: trial.parquet_sha256,
+          row_index: trial.row_index
+        },
+        record: selectColumns(decoded, recipe.columns)
+      });
+      const unprojectedReviewerBytes = canonicalJsonBytes({
+        schema_version: "1.0",
+        record: selectColumns(decoded, recipe.reviewer_columns)
+      });
+      const sourceProjectionOptions = recipe.credential_projection === "redact_values"
+        ? { redactCredentialLikeValues: true }
+        : {};
+      const reviewerProjectionOptions = {
+        ...sourceProjectionOptions,
+        redactLiterals: recipe.reviewer_identity_redactions || []
+      };
+      const sourceArtifact = projectPromotionReviewerArtifact(
+        trial.source_path,
+        unprojectedSourceBytes,
+        sourceProjectionOptions
+      );
+      const reviewerArtifact = projectPromotionReviewerArtifact(
+        trial.source_path,
+        unprojectedReviewerBytes,
+        reviewerProjectionOptions
+      );
+      const sourceBytes = sourceArtifact.bytes;
+      const reviewerBytes = reviewerArtifact.bytes;
+      if (sourceBytes.length > MAX_SELECTED_ARTIFACT_BYTES || reviewerBytes.length > MAX_SELECTED_ARTIFACT_BYTES) {
+        throw new Error("Selected Parquet row exceeds the bounded artifact size.");
+      }
+      trial.source_ref_id = sha256(sourceBytes);
+      trial.reviewer_privacy_redaction_count = reviewerArtifact.privacy_redaction_count;
+      const paths = parquetMaterializedPaths(trial);
+      const sourceTarget = resolveContainedFile(outputRoot, paths.source);
+      const reviewerTarget = resolveContainedFile(outputRoot, paths.reviewer);
+      if (!sourceTarget || !reviewerTarget) throw new Error("Parquet row materialization path escaped its root.");
+      await fs.mkdir(path.dirname(sourceTarget), { recursive: true });
+      await fs.writeFile(sourceTarget, sourceBytes, { flag: "wx" });
+      await fs.writeFile(reviewerTarget, reviewerBytes, { flag: "wx" });
+    }
+  }
+}
+
+async function readMaterializedTrial(
+  sourceArchiveRoot: string,
+  trial: SourceTrialCandidate
+): Promise<{ sourceBytes: Buffer; reviewerInputBytes: Buffer }> {
+  const paths = trial.source_ref_algorithm === "parquet_row_sha256"
+    ? parquetMaterializedPaths(trial)
+    : { source: trial.source_path, reviewer: trial.source_path };
+  const sourceFile = resolveContainedFile(sourceArchiveRoot, paths.source);
+  const reviewerFile = resolveContainedFile(sourceArchiveRoot, paths.reviewer);
+  if (!sourceFile || !reviewerFile) throw new Error("Selected trial escaped the source archive.");
+  const sourceStat = await fs.lstat(sourceFile);
+  const reviewerStat = await fs.lstat(reviewerFile);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink() || sourceStat.size <= 0
+      || sourceStat.size > MAX_SELECTED_ARTIFACT_BYTES
+      || !reviewerStat.isFile() || reviewerStat.isSymbolicLink() || reviewerStat.size <= 0
+      || reviewerStat.size > MAX_SELECTED_ARTIFACT_BYTES) {
+    throw new Error("Selected trial artifact must be a bounded non-empty regular file.");
+  }
+  const sourceBytes = await fs.readFile(sourceFile);
+  const reviewerInputBytes = paths.source === paths.reviewer
+    ? sourceBytes
+    : await fs.readFile(reviewerFile);
+  const observedRef = trial.source_ref_algorithm === "git_blob_sha1"
+    ? gitBlobSha1(sourceBytes)
+    : sha256(sourceBytes);
+  if (observedRef !== trial.source_ref_id) {
+    throw new Error("Selected trial artifact does not match its source reference.");
+  }
+  return { sourceBytes, reviewerInputBytes };
+}
+
+function parquetMaterializedPaths(
+  trial: SourceTrialCandidate
+): { source: string; reviewer: string } {
+  const identity = sha256Text(trial.source_path);
+  return {
+    source: "parquet-rows/" + identity + "/source.json",
+    reviewer: "parquet-rows/" + identity + "/reviewer.json"
+  };
+}
+
+function licenseEvidencePacketEntries(
+  recipe: PromotionTrialCandidateRecipe
+): Array<{ path: string; sha256: string }> {
+  return recipe.license_evidence.map((evidence, index) => ({
+    path: "source-evidence/" + String(index + 1).padStart(2, "0") + "-" + path.basename(evidence.path),
+    sha256: evidence.sha256
+  }));
+}
+
+function decodeParquetRow(
+  row: Record<string, any>,
+  jsonColumns: readonly string[]
+): Record<string, any> {
+  const decoded: Record<string, any> = { ...row };
+  for (const column of jsonColumns) {
+    if (!(column in decoded)) continue;
+    if (typeof decoded[column] !== "string") {
+      throw new Error("Configured Parquet JSON column is not a string.");
+    }
+    let value: unknown = decoded[column];
+    for (let depth = 0; depth < 2 && typeof value === "string"; depth += 1) {
+      try {
+        value = JSON.parse(value);
+      } catch {
+        throw new Error("Configured Parquet JSON column contains invalid JSON.");
+      }
+    }
+    decoded[column] = value;
+  }
+  return decoded;
+}
+
+function resolveJsonPointer(value: unknown, pointer: string): unknown {
+  let current = value;
+  for (const rawToken of pointer.slice(1).split("/")) {
+    const token = rawToken.replace(/~1/gu, "/").replace(/~0/gu, "~");
+    if (!isRecord(current) && !Array.isArray(current)) return undefined;
+    current = (current as Record<string, any>)[token];
+  }
+  return current;
+}
+
+function topLevelPointerToken(pointer: string): string {
+  return pointer.slice(1).split("/")[0].replace(/~1/gu, "/").replace(/~0/gu, "~");
+}
+
+function groupingLabel(value: unknown): string | null {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "boolean") return String(value);
+  if (!boundedLabel(value)) return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function selectColumns(
+  row: Record<string, any>,
+  columns: readonly string[]
+): Record<string, any> {
+  return Object.fromEntries(columns.map((column) => [column, row[column]]));
+}
+
+function canonicalJsonBytes(value: unknown): Buffer {
+  return Buffer.from(JSON.stringify(value, null, 2) + "\n", "utf8");
 }
 
 async function readBoundedResponse(response: Response, sourcePath: string): Promise<Buffer> {
@@ -1648,6 +2060,70 @@ function validHttpsUrl(value: unknown): value is string {
   } catch {
     return false;
   }
+}
+
+function validHuggingFaceDatasetUrl(value: unknown): value is string {
+  if (!validHttpsUrl(value)) return false;
+  const parsed = new URL(value);
+  return parsed.hostname.toLowerCase() === "huggingface.co"
+    && /^\/datasets\/[^/]+\/[^/]+\/?$/u.test(parsed.pathname)
+    && !parsed.username
+    && !parsed.password
+    && !parsed.search
+    && !parsed.hash;
+}
+
+function validSourceEvidenceList(
+  value: unknown
+): value is Array<{ path: string; sha256: string }> {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 16) return false;
+  const paths = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)
+        || Object.keys(item).sort().join("\0") !== "path\0sha256"
+        || !safeRelativePath(item.path)
+        || !sha256String(item.sha256)
+        || paths.has(item.path)) return false;
+    paths.add(item.path);
+  }
+  return true;
+}
+
+function validParquetSourceList(
+  value: unknown
+): value is Array<{ path: string; sha256: string }> {
+  return validSourceEvidenceList(value)
+    && value.every((item) => item.path.toLowerCase().endsWith(".parquet"));
+}
+
+function validUniqueStringList(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= 64
+    && value.every((item) =>
+      typeof item === "string" && item.length > 0 && item.length <= 128 && !item.includes("\0"))
+    && new Set(value).size === value.length;
+}
+
+function validReviewerIdentityRedactions(value: unknown): value is string[] {
+  return Array.isArray(value)
+    && value.length > 0
+    && value.length <= 32
+    && value.every((item) =>
+      typeof item === "string"
+      && item.trim() === item
+      && item.length >= 8
+      && item.length <= 512
+      && !item.includes("\0")
+      && item !== "<reviewer-identity>")
+    && new Set(value).size === value.length;
+}
+
+function validGroupingPointer(pointer: unknown, columns: unknown): pointer is string {
+  if (typeof pointer !== "string"
+      || !/^\/(?:[^~/]|~[01])+(?:\/(?:[^~/]|~[01])+)*$/u.test(pointer)
+      || !validUniqueStringList(columns)) return false;
+  return columns.includes(topLevelPointerToken(pointer));
 }
 
 function validArtifactUrlTemplate(value: unknown): value is string {

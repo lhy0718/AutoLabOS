@@ -379,9 +379,10 @@ not a hash-bound corpus.
 The evidence ladder currently establishes an exact-or-lower-bound source-hash
 floor of 502 artifacts and an execution-trace floor of 429. It establishes
 only 20 previously projected candidates with repeated result records and 20
-machine-readable comparison-result candidates. The revision-bound handoff
-below adds 72 three-trace grouping candidates, but comparability is not yet
-verified, so those groupings do not advance the repeated-trial evidence stage.
+machine-readable comparison-result candidates. The v8 revision-bound handoff
+below adds 72 candidates whose three trials share an explicit source-native
+sample identifier. Human comparability review is still incomplete, so these
+groupings do not advance the confirmatory repeated-trial evidence stage.
 The ladder establishes zero explicit readiness decisions, zero
 source-grounded figure audits, zero claim-to-evidence maps, zero completed
 human license reviews, zero double-human normalizations, and zero confirmatory
@@ -398,43 +399,67 @@ diversity, and concentration limits all pass. Its current upstream targets are
 
 ### Revision-Bound Trial Candidates
 
-The source-capacity audit led to a revision-bound candidate handoff rather than
-direct confirmatory admission. The pinned source tree contained 2,361 matching
-trace artifacts. Pre-content structural checks excluded one empty blob and 624
-duplicate Git objects, leaving 1,736 unique eligible artifacts. Lexical,
-group-balanced selection produced 72 base candidates with three trials each,
-covering 18 source families and 10 operator groups. The largest family share is
-0.0694 and the largest operator share is 0.1111.
-
-All 216 selected artifacts were retrieved over HTTPS and verified against their
-Git object identifiers. Reviewer projection replaced 288 private machine-path
-occurrences while preserving separate raw-source and reviewer-artifact hashes.
-The candidate-review tree passed the closed-file, hash, candidate-uniqueness,
-privacy, and controller-separation checks. Its annotation schema covers six
-observable evidence fields and requires two independent human reviews, with a
-third human resolver only for categorical disagreements. A separate
-source-license packet exposes the exact public URL and revision to a distinct
-human reviewer without exposing candidate artifacts, candidate annotations, or
-the controller map. The candidate and source-license directories now carry
-separate self-contained hash manifests. Candidate-review preflight accepts only
-the copied `reviewer/` packet and one annotation file; source-license preflight
-accepts only the copied `license/` packet and one review file. Neither preflight
-requires or reads the controller handoff. Both isolated paths were exercised
-with machine-prepared incomplete worksheets and failed closed before any human
-judgment was recorded. AutoLabOS validates submitted inputs but does not
-generate human labels or convert a review into a legal grant. The generated
-handoff also preserves its normalized source-selection recipe as a hash-bound
-output. The portable input is
-`docs/research/evidence/promotion-trial-candidate-source-v7.json`; the
-machine-local pinned clone path is supplied separately at execution time and is
-not part of the recipe or its hash. The generated evidence record is
+The v7 Git handoff is retained as source-capacity and system-validation evidence,
+not repeated-trial evidence. Its recipe grouped paths by operator and family but
+did not capture a source-native base identifier. The earlier exporter therefore
+formed nominal bases from consecutive eligible traces, which cannot establish
+that the three traces are repeated executions of the same task. The pinned
+repository also exposed no repository-level license; licenses under vendored
+packages did not establish redistribution rights for the trace corpus. Its
+2,361 matched paths, 1,736 unique blobs, 216 downloaded artifacts, and 288 path
+redactions still exercise retrieval, hashing, privacy projection, packet
+separation, and fail-closed review mechanics. They do not satisfy the source
+contract for confirmatory research. The historical recipe and generated record
+remain at
+`docs/research/evidence/promotion-trial-candidate-source-v7.json` and
 `docs/research/evidence/promotion-trial-candidate-handoff-v7.json`.
 
-This result closes only the numerical trace-candidate floor. The source license
-has not received human review, the two independent candidate annotations have
-not been completed, comparison results and explicit readiness artifacts have
-not been verified, and no candidate has entered the frozen confirmatory corpus.
-The paper-scale admission count therefore remains zero.
+The replacement v8 route uses the pinned
+[researchrubrics-react](https://huggingface.co/datasets/yoonsanglee/researchrubrics-react)
+dataset revision `a81ac0d8ef324b3a8f705624de3fc99f75e45fd8`. The dataset
+card declares an MIT license, and the recipe binds the card and all three
+Parquet files by SHA-256. License metadata is evidence for human review, not a
+legal decision produced by AutoLabOS. The 2,424 rows expose three model-defined
+operator groups, ten task-domain groups, and a source-native sample identifier.
+Selection resolves operator, family, and base from declared JSON pointers,
+retains the first three lexical rows for each exact group, and balances 72
+distinct bases before predictions, costs, or automatic-judge outputs are
+inspected. The resulting 216 rows contain exactly three distinct source rows per
+base. The largest family share is 0.1111 and the largest operator share is
+0.3333.
+
+The Parquet file hashes and row locators anchor the original source. Source and
+reviewer JSON projections receive separate hashes. Recipe-authorized reviewer
+projection removed fourteen credential-like, private-path, or reviewer-identity
+occurrences; a packet-wide scan found no remaining model identifier, source
+identity, credential pattern, or private machine path. The handoff, reviewer
+packet, and license packet all passed independent runtime inspection. The
+reviewer artifact tree hash is
+`0903701a0989d9f36f852e3c43bd879b3a9cdf9b03016fe15b2a6387b9691606`.
+Automatic-judge fields remain observable trace content only and are not labels,
+human judgments, or eligibility evidence.
+
+Two unassigned 72-task reviewer worksheets and one unassigned source-license
+worksheet were generated from the closed v8 handoff. Each worksheet sets its
+human and independence attestations to false and leaves every judgment empty.
+Reviewer preflight rejected both files with zero accepted annotations; license
+preflight rejected the license file with an unresolved reviewer, unresolved
+status, and zero evidence references. These failures confirm the input boundary
+without creating human evidence. Packet-manifest and worksheet hashes are
+recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v8.json`.
+
+The portable source recipe is
+`docs/research/evidence/promotion-trial-candidate-source-v8.json`; the exact
+generated evidence record is
+`docs/research/evidence/promotion-trial-candidate-handoff-v8.json`. This closes
+only the numerical and structural trace-candidate floor. The three operator
+groups are model identities from one rollout harness, and the ten families are
+domains within one benchmark rather than ten independent research systems. The
+source license has not received human review, two independent candidate reviews
+have not been completed, comparison results and readiness artifacts have not
+been verified, and no candidate has entered the frozen confirmatory corpus. The
+paper-scale admission count therefore remains zero.
 
 ### Exploratory Instrument Check
 

@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "public-research-rollout-candidate-handoff-v8",
+  "reviewer_packet_manifest_sha256": "5a46395bddbc6af3549f2cf5c3cf09fa4aa3ae187cfeae991b2dad1f248fb287",
+  "license_packet_manifest_sha256": "a53309af652c07c60041038e38ccd06e2069ed5a22c0387ed73c15d121202abe",
+  "reviewer_worksheets": [
+    {
+      "slot_id": "worksheet-slot-a",
+      "sha256": "aae377039f63d1fbb138d259785de5197ca6b42311663f1b0e389e6e2745f3e8",
+      "task_count": 72,
+      "completed_by_human": false,
+      "preflight_passed": false,
+      "annotation_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    },
+    {
+      "slot_id": "worksheet-slot-b",
+      "sha256": "03845506e8ffb6dc7a88922a37ffa3dfcbe8bd048e0da1fefa04fb63d69e6263",
+      "task_count": 72,
+      "completed_by_human": false,
+      "preflight_passed": false,
+      "annotation_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    }
+  ],
+  "license_worksheet": {
+    "slot_id": "license-worksheet-slot",
+    "sha256": "cd83b2c9404540fe89d23a2e3d02a6b8f7c461f90f29d078c5bd724b4a1fffde",
+    "completed_by_human": false,
+    "preflight_passed": false,
+    "reviewer_id": null,
+    "license_status": null,
+    "evidence_reference_count": 0,
+    "validation_issue": "trial_candidate_license_review_file_invalid"
+  },
+  "human_review_completed": false,
+  "confirmatory_admitted": false,
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets and their expected fail-closed preflight outcomes. It contains no human annotation, license conclusion, legal grant, reviewer-independence evidence, candidate adjudication, or confirmatory admission."
+}

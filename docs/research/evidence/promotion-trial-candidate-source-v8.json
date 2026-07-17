@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.1",
+  "handoff_id": "public-research-rollout-candidate-handoff-v8",
+  "source_url": "https://huggingface.co/datasets/yoonsanglee/researchrubrics-react",
+  "source_revision": "a81ac0d8ef324b3a8f705624de3fc99f75e45fd8",
+  "required_base_count": 72,
+  "trials_per_base": 3,
+  "artifact_format": "json",
+  "selection_policy": "Validate all declared source and license hashes, resolve operator, family, and base groups from declared JSON pointers, retain the first three lexical rows per exact group, then select 72 distinct bases by balanced operator-family round robin before inspecting predictions, costs, or judge outcomes.",
+  "license_evidence": [
+    {
+      "path": "README.md",
+      "sha256": "ef6bed0da50fd0b5fa04b570b3c6482b22d8e67322e8fdbef865b76ab0029f7a"
+    }
+  ],
+  "materialization_mode": "huggingface_parquet",
+  "parquet_sources": [
+    {
+      "path": "GLM-4.7-Flash.parquet",
+      "sha256": "86fad00f7b84304194129b8311d6c413ab173846bc98d899706e70cfad788046"
+    },
+    {
+      "path": "MiniMax-M2.5.parquet",
+      "sha256": "3751bfa41dcaa72911081526fb0d9cadfbd6229df35b0ca9bf043ac4882c7360"
+    },
+    {
+      "path": "Qwen3.5-122B-A10B.parquet",
+      "sha256": "744f83a39806d061a767f76a56268a547f348847868ae4d20efcc1f5ac910770"
+    }
+  ],
+  "columns": [
+    "metadata",
+    "question",
+    "instance",
+    "prediction",
+    "termination",
+    "time",
+    "cost",
+    "messages",
+    "debug_data",
+    "auto_judge"
+  ],
+  "json_columns": [
+    "metadata",
+    "instance",
+    "cost",
+    "messages",
+    "debug_data",
+    "auto_judge"
+  ],
+  "reviewer_columns": [
+    "question",
+    "prediction",
+    "termination",
+    "cost",
+    "messages",
+    "debug_data",
+    "auto_judge"
+  ],
+  "operator_pointer": "/metadata/model",
+  "family_pointer": "/instance/domain",
+  "base_pointer": "/instance/sample_id",
+  "credential_projection": "redact_values",
+  "reviewer_identity_redactions": [
+    "https://huggingface.co/datasets/ScaleAI/researchrubrics",
+    "ScaleAI/researchrubrics"
+  ]
+}

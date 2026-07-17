@@ -682,12 +682,12 @@ describe("resolveCliAction", () => {
       "governance-benchmark",
       "export-promotion-trial-candidates",
       "--recipe", "inputs/trial-candidate-source.json",
-      "--repository-root", "inputs/pinned-source-clone",
+      "--source-root", "inputs/pinned-source",
       "--out-dir", "outputs/trial-candidate-handoff"
     ])).toEqual({
       kind: "governance-benchmark-export-promotion-trial-candidates",
       recipePath: "inputs/trial-candidate-source.json",
-      repositoryRoot: "inputs/pinned-source-clone",
+      sourceRoot: "inputs/pinned-source",
       outDir: "outputs/trial-candidate-handoff"
     });
   });
@@ -941,14 +941,14 @@ describe("resolveCliAction", () => {
     });
   });
 
-  it("requires a portable recipe, local clone, and output path for trial-candidate export", () => {
+  it("requires a portable recipe, local source, and output path for trial-candidate export", () => {
     expect(resolveCliAction([
       "governance-benchmark",
       "export-promotion-trial-candidates",
       "--recipe", "inputs/trial-candidate-source.json"
     ])).toMatchObject({
       kind: "error",
-      message: expect.stringContaining("--repository-root")
+      message: expect.stringContaining("--source-root")
     });
   });
 

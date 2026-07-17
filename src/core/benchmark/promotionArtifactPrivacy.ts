@@ -30,6 +30,29 @@ const SECRET_TEXT_PATTERNS = [
   /\b(?:api[-_]?key|access[-_]?token|refresh[-_]?token|auth[-_]?token|client[-_]?secret|password|private[-_]?key|credential|secret)\s*[:=]\s*["']?[A-Za-z0-9_+\/=.-]{8,}/iu
 ] as const;
 
+const CREDENTIAL_REDACTION_PATTERNS: ReadonlyArray<{
+  pattern: RegExp;
+  replacement: string | ((substring: string, prefix?: string) => string);
+}> = [
+  {
+    pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/gu,
+    replacement: "<credential-like-value>"
+  },
+  { pattern: /\bAKIA[0-9A-Z]{16}\b/gu, replacement: "<credential-like-value>" },
+  { pattern: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/gu, replacement: "<credential-like-value>" },
+  { pattern: /\bsk-[A-Za-z0-9_-]{16,}\b/gu, replacement: "<credential-like-value>" },
+  { pattern: /\bBearer\s+[A-Za-z0-9._~+\/-]{16,}/giu, replacement: "Bearer <credential-like-value>" },
+  {
+    pattern: /(\b(?:api[-_]?key|access[-_]?token|refresh[-_]?token|auth[-_]?token|client[-_]?secret|password|private[-_]?key|credential|secret)\s*[:=]\s*["']?)[A-Za-z0-9_+\/=.-]{8,}/giu,
+    replacement: (_match, prefix = "") => `${prefix}<credential-like-value>`
+  }
+];
+
+export interface PromotionArtifactProjectionOptions {
+  redactCredentialLikeValues?: boolean;
+  redactLiterals?: readonly string[];
+}
+
 export function assertPromotionArtifactPrivacySafe(relativePath: string, bytes: Uint8Array): void {
   const text = inspectCredentialSafety(relativePath, bytes);
   if (text !== null && containsPrivateMachinePath(relativePath, text)) {
@@ -39,9 +62,12 @@ export function assertPromotionArtifactPrivacySafe(relativePath: string, bytes: 
 
 export function projectPromotionReviewerArtifact(
   relativePath: string,
-  bytes: Uint8Array
+  bytes: Uint8Array,
+  options: PromotionArtifactProjectionOptions = {}
 ): { bytes: Uint8Array; privacy_redaction_count: number } {
-  const text = inspectCredentialSafety(relativePath, bytes);
+  const text = options.redactCredentialLikeValues
+    ? inspectTextShape(relativePath, bytes)
+    : inspectCredentialSafety(relativePath, bytes);
   if (text === null) throw new Error(`Reviewer artifact must be UTF-8 text: ${relativePath}`);
   let parsed: unknown;
   try {
@@ -50,25 +76,26 @@ export function projectPromotionReviewerArtifact(
     throw new Error(`Reviewer artifact must be valid JSON: ${relativePath}`);
   }
   const state = { nodes: 0, redactions: 0 };
-  const projected = redactPrivatePathsInJson(parsed, state, 0);
-  if (state.redactions === 0) return { bytes, privacy_redaction_count: 0 };
+  const projected = projectPrivacySafeJson(
+    parsed,
+    state,
+    0,
+    options.redactCredentialLikeValues === true,
+    options.redactLiterals || []
+  );
+  const projectedBytes = state.redactions === 0
+    ? bytes
+    : Buffer.from(`${JSON.stringify(projected, null, 2)}\n`, "utf8");
+  inspectCredentialSafety(relativePath, projectedBytes);
   return {
-    bytes: Buffer.from(`${JSON.stringify(projected, null, 2)}\n`, "utf8"),
+    bytes: projectedBytes,
     privacy_redaction_count: state.redactions
   };
 }
 
 function inspectCredentialSafety(relativePath: string, bytes: Uint8Array): string | null {
-  const portablePath = relativePath.replace(/\\/gu, "/");
-  if (!relativePath || path.isAbsolute(relativePath) || SENSITIVE_PATH_PATTERN.test(portablePath)) {
-    throw new Error(`Selected source path is sensitive and cannot be included: ${relativePath}`);
-  }
-  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
-  if (sample.includes(0)) return null;
-  if (bytes.length > MAX_SCANNABLE_TEXT_BYTES) {
-    throw new Error(`Selected text file is too large for a complete privacy scan: ${relativePath}`);
-  }
-  const text = Buffer.from(bytes).toString("utf8");
+  const text = inspectTextShape(relativePath, bytes);
+  if (text === null) return null;
   if (SECRET_TEXT_PATTERNS.some((pattern) => pattern.test(text))) {
     throw new Error(`Selected source file contains a credential-like value and cannot be included: ${relativePath}`);
   }
@@ -85,32 +112,109 @@ function inspectCredentialSafety(relativePath: string, bytes: Uint8Array): strin
   return text;
 }
 
-function redactPrivatePathsInJson(
+function inspectTextShape(relativePath: string, bytes: Uint8Array): string | null {
+  const portablePath = relativePath.replace(/\\/gu, "/");
+  if (!relativePath || path.isAbsolute(relativePath) || SENSITIVE_PATH_PATTERN.test(portablePath)) {
+    throw new Error(`Selected source path is sensitive and cannot be included: ${relativePath}`);
+  }
+  const sample = bytes.subarray(0, Math.min(bytes.length, 8192));
+  if (sample.includes(0)) return null;
+  if (bytes.length > MAX_SCANNABLE_TEXT_BYTES) {
+    throw new Error(`Selected text file is too large for a complete privacy scan: ${relativePath}`);
+  }
+  const text = Buffer.from(bytes).toString("utf8");
+  return text;
+}
+
+function projectPrivacySafeJson(
   value: unknown,
   state: { nodes: number; redactions: number },
-  depth: number
+  depth: number,
+  redactCredentialLikeValues: boolean,
+  redactLiterals: readonly string[]
 ): unknown {
   state.nodes += 1;
   if (state.nodes > MAX_JSON_NODES || depth > MAX_JSON_DEPTH) {
     throw new Error("Selected source file is too deeply nested for a complete privacy projection.");
   }
   if (typeof value === "string") {
-    return redactPrivatePathsInString(value, state);
+    return projectString(value, state, redactCredentialLikeValues, redactLiterals);
   }
   if (Array.isArray(value)) {
-    return value.map((entry) => redactPrivatePathsInJson(entry, state, depth + 1));
+    return value.map((entry) => projectPrivacySafeJson(
+      entry,
+      state,
+      depth + 1,
+      redactCredentialLikeValues,
+      redactLiterals
+    ));
   }
   if (!value || typeof value !== "object") return value;
   const projected: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-    const baseKey = redactPrivatePathsInString(key, state);
+    const baseKey = projectString(key, state, redactCredentialLikeValues, redactLiterals);
     let projectedKey = baseKey;
     let collision = 2;
     while (Object.prototype.hasOwnProperty.call(projected, projectedKey)) {
       projectedKey = `${baseKey}#${collision}`;
       collision += 1;
     }
-    projected[projectedKey] = redactPrivatePathsInJson(entry, state, depth + 1);
+    if (redactCredentialLikeValues && SENSITIVE_FIELD_PATTERN.test(key) && hasSensitiveValue(entry)) {
+      state.redactions += 1;
+      projected[projectedKey] = null;
+      continue;
+    }
+    projected[projectedKey] = projectPrivacySafeJson(
+      entry,
+      state,
+      depth + 1,
+      redactCredentialLikeValues,
+      redactLiterals
+    );
+  }
+  return projected;
+}
+
+function projectString(
+  value: string,
+  state: { redactions: number },
+  redactCredentialLikeValues: boolean,
+  redactLiterals: readonly string[]
+): string {
+  const identitySafe = redactConfiguredLiteralsInString(value, state, redactLiterals);
+  const credentialSafe = redactCredentialLikeValues
+    ? redactCredentialLikeValuesInString(identitySafe, state)
+    : identitySafe;
+  return redactPrivatePathsInString(credentialSafe, state);
+}
+
+function redactConfiguredLiteralsInString(
+  value: string,
+  state: { redactions: number },
+  literals: readonly string[]
+): string {
+  let projected = value;
+  for (const literal of literals) {
+    const occurrences = projected.split(literal).length - 1;
+    if (occurrences === 0) continue;
+    state.redactions += occurrences;
+    projected = projected.split(literal).join("<reviewer-identity>");
+  }
+  return projected;
+}
+
+function redactCredentialLikeValuesInString(
+  value: string,
+  state: { redactions: number }
+): string {
+  let projected = value;
+  for (const { pattern, replacement } of CREDENTIAL_REDACTION_PATTERNS) {
+    projected = projected.replace(pattern, (...args: string[]) => {
+      state.redactions += 1;
+      return typeof replacement === "string"
+        ? replacement
+        : replacement(args[0], args[1]);
+    });
   }
   return projected;
 }

@@ -79,7 +79,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
     "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
-    "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <portable-source-recipe.json> --repository-root <pinned-local-clone> --out-dir <new-handoff-dir>",
+    "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <portable-source-recipe.json> --source-root <hash-bound-local-source> --out-dir <new-handoff-dir>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-worksheet --handoff-root <handoff> --annotator-id <pseudonym> --output <annotation.json>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet --handoff-root <handoff> --reviewer-id <pseudonym> --output <license-review.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root <handoff/reviewer> --annotation <review.json> --out-dir <preflight-output>",
@@ -339,7 +339,7 @@ async function main(): Promise<void> {
     await runPromotionTrialCandidateHandoffExportCli({
       cwd: process.cwd(),
       recipePath: action.recipePath,
-      repositoryRoot: action.repositoryRoot,
+      sourceRoot: action.sourceRoot,
       outDir: action.outDir
     });
     return;

@@ -1,10 +1,12 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parquetWriteBuffer } from "hyparquet-writer";
 
 import {
   PROMOTION_TRIAL_CANDIDATE_CONTROLLER_MAP,
@@ -41,12 +43,13 @@ import {
   type PromotionTrialCandidateInitialAnnotationSet,
   type PromotionTrialCandidateLicenseReviewSet
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewContract.js";
+import { projectPromotionReviewerArtifact } from "../src/core/benchmark/promotionArtifactPrivacy.js";
 
 const execFileAsync = promisify(execFile);
 
 describe("promotion trial-candidate handoff", () => {
   let workspace = "";
-  let repositoryRoot = "";
+  let gitSourceRoot = "";
   let revision = "";
   let credentialRevision = "";
   let privatePathRevision = "";
@@ -54,43 +57,55 @@ describe("promotion trial-candidate handoff", () => {
 
   beforeAll(async () => {
     workspace = await mkdtemp(path.join(os.tmpdir(), "trial-candidate-handoff-"));
-    repositoryRoot = path.join(workspace, "source-repository");
-    await mkdir(repositoryRoot, { recursive: true });
-    await runGit(repositoryRoot, ["init"]);
-    await runGit(repositoryRoot, ["config", "user.email", "fixture@example.org"]);
-    await runGit(repositoryRoot, ["config", "user.name", "Fixture Author"]);
-    await runGit(repositoryRoot, ["remote", "add", "origin", "https://example.org/source-repository.git"]);
+    gitSourceRoot = path.join(workspace, "source-repository");
+    await mkdir(gitSourceRoot, { recursive: true });
+    await runGit(gitSourceRoot, ["init"]);
+    await runGit(gitSourceRoot, ["config", "user.email", "fixture@example.org"]);
+    await runGit(gitSourceRoot, ["config", "user.name", "Fixture Author"]);
+    await runGit(gitSourceRoot, ["remote", "add", "origin", "https://example.org/source-repository.git"]);
+    await writeFile(path.join(gitSourceRoot, "LICENSE"), "Permission is granted for fixture use.\n", "utf8");
     for (let operatorIndex = 0; operatorIndex < 3; operatorIndex += 1) {
       for (let familyIndex = 0; familyIndex < 4; familyIndex += 1) {
-        for (let trialIndex = 0; trialIndex < 21; trialIndex += 1) {
-          const relativePath = [
-            "records",
-            `operator-${String.fromCharCode(97 + operatorIndex)}`,
-            `family-${String.fromCharCode(97 + familyIndex)}`,
-            `run-${trialIndex.toString().padStart(2, "0")}`,
-            "trace.json"
-          ].join("/");
-          const target = path.join(repositoryRoot, relativePath);
-          await mkdir(path.dirname(target), { recursive: true });
-          await writeFile(target, `${JSON.stringify({
-            event: "completed",
-            record_id: `${operatorIndex}-${familyIndex}-${trialIndex}`,
-            ...(operatorIndex === 0 && familyIndex === 0 && trialIndex === 0
-              ? { snippet: "load resource as f:\n- continue" }
-              : {})
-          })}\n`, "utf8");
+        for (let baseIndex = 0; baseIndex < 7; baseIndex += 1) {
+          for (let trialIndex = 0; trialIndex < 3; trialIndex += 1) {
+            const relativePath = [
+              "records",
+              `operator-${String.fromCharCode(97 + operatorIndex)}`,
+              `family-${String.fromCharCode(97 + familyIndex)}`,
+              `base-${baseIndex.toString().padStart(2, "0")}`,
+              `trial-${trialIndex.toString().padStart(2, "0")}`,
+              "trace.json"
+            ].join("/");
+            const target = path.join(gitSourceRoot, relativePath);
+            await mkdir(path.dirname(target), { recursive: true });
+            await writeFile(target, `${JSON.stringify({
+              event: "completed",
+              record_id: `${operatorIndex}-${familyIndex}-${baseIndex}-${trialIndex}`,
+              ...(operatorIndex === 0 && familyIndex === 0 && baseIndex === 0 && trialIndex === 0
+                ? { snippet: "load resource as f:\n- continue" }
+                : {})
+            })}\n`, "utf8");
+          }
         }
       }
     }
-    await runGit(repositoryRoot, ["add", "records"]);
-    await runGit(repositoryRoot, ["commit", "-m", "add neutral trial records"]);
-    revision = (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).trim();
+    await runGit(gitSourceRoot, ["add", "LICENSE", "records"]);
+    await runGit(gitSourceRoot, ["commit", "-m", "add neutral trial records"]);
+    revision = (await runGit(gitSourceRoot, ["rev-parse", "HEAD"])).trim();
 
-    const firstTrace = path.join(repositoryRoot, "records", "operator-a", "family-a", "run-00", "trace.json");
+    const firstTrace = path.join(
+      gitSourceRoot,
+      "records",
+      "operator-a",
+      "family-a",
+      "base-00",
+      "trial-00",
+      "trace.json"
+    );
     await writeFile(firstTrace, `${JSON.stringify({ event: "completed", api_key: "short-secret" })}\n`, "utf8");
-    await runGit(repositoryRoot, ["add", "records"]);
-    await runGit(repositoryRoot, ["commit", "-m", "add credential contamination fixture"]);
-    credentialRevision = (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).trim();
+    await runGit(gitSourceRoot, ["add", "records"]);
+    await runGit(gitSourceRoot, ["commit", "-m", "add credential contamination fixture"]);
+    credentialRevision = (await runGit(gitSourceRoot, ["rev-parse", "HEAD"])).trim();
 
     const privatePath = ["", "home", "example", "private-workspace", "record.json"].join("/");
     await writeFile(firstTrace, `${JSON.stringify({
@@ -98,14 +113,14 @@ describe("promotion trial-candidate handoff", () => {
       artifact_path: privatePath,
       locations: { [privatePath]: "observed" }
     })}\n`, "utf8");
-    await runGit(repositoryRoot, ["add", "records"]);
-    await runGit(repositoryRoot, ["commit", "-m", "add private path contamination fixture"]);
-    privatePathRevision = (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).trim();
+    await runGit(gitSourceRoot, ["add", "records"]);
+    await runGit(gitSourceRoot, ["commit", "-m", "add private path contamination fixture"]);
+    privatePathRevision = (await runGit(gitSourceRoot, ["rev-parse", "HEAD"])).trim();
 
     await writeFile(firstTrace, "", "utf8");
-    await runGit(repositoryRoot, ["add", "records"]);
-    await runGit(repositoryRoot, ["commit", "-m", "add empty trace fixture"]);
-    emptyRevision = (await runGit(repositoryRoot, ["rev-parse", "HEAD"])).trim();
+    await runGit(gitSourceRoot, ["add", "records"]);
+    await runGit(gitSourceRoot, ["commit", "-m", "add empty trace fixture"]);
+    emptyRevision = (await runGit(gitSourceRoot, ["rev-parse", "HEAD"])).trim();
   }, 30_000);
 
   afterAll(async () => {
@@ -116,13 +131,13 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "handoff"
     });
     const manifest = JSON.parse(await readFile(
@@ -182,8 +197,8 @@ describe("promotion trial-candidate handoff", () => {
     });
     expect(JSON.stringify(manifest)).not.toContain("operator-a");
     expect(JSON.stringify(manifest)).not.toContain("family-a");
-    expect(portableRecipeText).not.toContain("repository_root");
-    expect(portableRecipeText).not.toContain(repositoryRoot);
+    expect(portableRecipeText).not.toContain(["repository", "root"].join("_"));
+    expect(portableRecipeText).not.toContain(gitSourceRoot);
     expect(reviewerPacketManifest).toMatchObject({
       packet_role: "initial_candidate_review",
       candidate_count: 72,
@@ -232,13 +247,13 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "two-operator-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>operator-[ab])/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>operator-[ab])/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "two-operator-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "invalid-handoff"
     })).rejects.toThrow("at least three source families and three operator groups");
   });
@@ -247,14 +262,14 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "wrong-origin-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       sourceUrl: "https://example.org/different-repository"
     });
 
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "wrong-origin-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "wrong-origin-handoff"
     })).rejects.toThrow("does not match the repository origin");
   });
@@ -263,40 +278,40 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "machine-bound-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
     const recipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, unknown>;
-    recipe.repository_root = repositoryRoot;
+    recipe[["repository", "root"].join("_")] = gitSourceRoot;
     await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8");
 
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "machine-bound-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "machine-bound-handoff"
-    })).rejects.toThrow("portable source metadata");
+    })).rejects.toThrow("machine-local source paths");
   });
 
   it("requires the machine-local clone as a separate runtime input", async () => {
     const recipePath = path.join(workspace, "missing-runtime-root-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "missing-runtime-root-recipe.json",
-      repositoryRoot: "",
+      sourceRoot: "",
       outDir: "missing-runtime-root-handoff"
-    })).rejects.toThrow("separate local repository root");
+    })).rejects.toThrow("separate local source root");
   });
 
   it("rejects an artifact URL template for Git-archive materialization", async () => {
     const recipePath = path.join(workspace, "git-archive-url-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       materializationMode: "git_archive",
       artifactUrlTemplate: "https://example.org/{revision}/{path}"
     });
@@ -304,7 +319,7 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "git-archive-url-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "git-archive-url-handoff"
     })).rejects.toThrow("must not declare an artifact_url_template");
   });
@@ -313,7 +328,7 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "https-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       materializationMode: "verified_https_blobs",
       artifactUrlTemplate: "https://example.org/raw/{revision}/{path}"
     });
@@ -321,14 +336,14 @@ describe("promotion trial-candidate handoff", () => {
       const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
       const prefix = `/raw/${revision}/`;
       const sourcePath = url.pathname.slice(prefix.length).split("/").map(decodeURIComponent).join("/");
-      const bytes = await runGit(repositoryRoot, ["show", `${revision}:${sourcePath}`]);
+      const bytes = await runGit(gitSourceRoot, ["show", `${revision}:${sourcePath}`]);
       return new Response(bytes, { status: 200 });
     }) as typeof fetch;
 
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "https-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "https-handoff",
       fetchImpl
     });
@@ -347,7 +362,7 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "https-mismatch-recipe.json");
     await writeRecipe(recipePath, {
       revision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$",
       materializationMode: "verified_https_blobs",
       artifactUrlTemplate: "https://example.org/raw/{revision}/{path}"
     });
@@ -356,7 +371,7 @@ describe("promotion trial-candidate handoff", () => {
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "https-mismatch-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "https-mismatch-handoff",
       fetchImpl
     })).rejects.toThrow("does not match its Git object ID");
@@ -366,29 +381,44 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "credential-recipe.json");
     await writeRecipe(recipePath, {
       revision: credentialRevision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     await expect(exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "credential-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "credential-handoff"
     })).rejects.toThrow("credential-like");
     await expect(access(path.join(workspace, "credential-handoff"))).rejects.toThrow();
+  });
+
+  it("keeps credential projection fail-closed when no redaction pattern can complete", () => {
+    const incompletePrivateMaterial = [
+      "-----BEGIN",
+      "PRIVATE",
+      "KEY-----"
+    ].join(" ");
+    const bytes = Buffer.from(`${JSON.stringify({ content: incompletePrivateMaterial })}\n`, "utf8");
+
+    expect(() => projectPromotionReviewerArtifact(
+      "trace.json",
+      bytes,
+      { redactCredentialLikeValues: true }
+    )).toThrow("credential-like");
   });
 
   it("keeps the preselected trace while deterministically redacting a private machine path", async () => {
     const recipePath = path.join(workspace, "private-path-recipe.json");
     await writeRecipe(recipePath, {
       revision: privatePathRevision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "private-path-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "private-path-handoff"
     });
     const manifest = JSON.parse(await readFile(path.join(workspace, result.manifest_path), "utf8")) as Record<string, any>;
@@ -415,13 +445,13 @@ describe("promotion trial-candidate handoff", () => {
     const recipePath = path.join(workspace, "empty-blob-recipe.json");
     await writeRecipe(recipePath, {
       revision: emptyRevision,
-      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
     });
 
     const result = await exportPromotionTrialCandidateHandoff({
       cwd: workspace,
       recipePath: "empty-blob-recipe.json",
-      repositoryRoot,
+      sourceRoot: gitSourceRoot,
       outDir: "empty-blob-handoff"
     });
     const manifest = JSON.parse(await readFile(path.join(workspace, result.manifest_path), "utf8"));
@@ -434,6 +464,140 @@ describe("promotion trial-candidate handoff", () => {
       base_candidate_count: 72,
       trial_artifact_count: 216
     });
+  });
+
+  it("exports explicit same-base trials from hash-bound Parquet row sources", async () => {
+    const sourceRoot = path.join(workspace, "parquet-source");
+    await mkdir(sourceRoot, { recursive: true });
+    const licenseText = "---\nlicense: mit\n---\n# Neutral rollout fixture\n";
+    const credentialAssignment = [
+      ["api", "key"].join("_"),
+      ["fixture", "credential", "value"].join("-")
+    ].join("=");
+    const reviewerIdentity = "https://huggingface.co/datasets/source-org/rollout-corpus";
+    await writeFile(path.join(sourceRoot, "README.md"), licenseText, "utf8");
+    const parquetSources: Array<{ path: string; sha256: string }> = [];
+    for (let operatorIndex = 0; operatorIndex < 3; operatorIndex += 1) {
+      const rows: Array<Record<string, string>> = [];
+      for (let familyIndex = 0; familyIndex < 4; familyIndex += 1) {
+        for (let baseIndex = 0; baseIndex < 7; baseIndex += 1) {
+          for (let trialIndex = 0; trialIndex < 3; trialIndex += 1) {
+            rows.push({
+              metadata: JSON.stringify({ operator: `operator-${operatorIndex}` }),
+              instance: JSON.stringify({
+                domain: `family-${familyIndex}`,
+                sample_id: `base-${baseIndex}`
+              }),
+              prediction: `observation-${baseIndex}-${trialIndex}`,
+              termination: "answer",
+              messages: JSON.stringify([
+                { role: "user", content: `task-${baseIndex}` },
+                { role: "assistant", content: `observation-${baseIndex}-${trialIndex}` },
+                ...(operatorIndex === 0 && familyIndex === 0 && baseIndex === 0 && trialIndex === 0
+                  ? [
+                      { role: "tool", content: credentialAssignment },
+                      { role: "tool", content: reviewerIdentity }
+                    ]
+                  : [])
+              ]),
+              auto_judge: JSON.stringify({ observed_score: trialIndex / 10 })
+            });
+          }
+        }
+      }
+      const fileName = `operator-${operatorIndex}.parquet`;
+      const bytes = new Uint8Array(parquetWriteBuffer({
+        columnData: [
+          "metadata", "instance", "prediction", "termination", "messages", "auto_judge"
+        ].map((name) => ({
+          name,
+          data: rows.map((row) => row[name]),
+          type: "STRING" as const
+        }))
+      }));
+      await writeFile(path.join(sourceRoot, fileName), bytes);
+      parquetSources.push({
+        path: fileName,
+        sha256: createHash("sha256").update(bytes).digest("hex")
+      });
+    }
+    const recipePath = path.join(workspace, "parquet-recipe.json");
+    await writeFile(recipePath, `${JSON.stringify({
+      schema_version: "1.1",
+      handoff_id: "candidate-handoff-parquet",
+      source_url: "https://huggingface.co/datasets/example-org/neutral-rollouts",
+      source_revision: "a".repeat(40),
+      required_base_count: 72,
+      trials_per_base: 3,
+      artifact_format: "json",
+      selection_policy: "Lexical row selection with explicit same-base grouping and balanced operator-family traversal before outcome inspection.",
+      materialization_mode: "huggingface_parquet",
+      credential_projection: "redact_values",
+      reviewer_identity_redactions: [reviewerIdentity],
+      license_evidence: [{
+        path: "README.md",
+        sha256: createHash("sha256").update(licenseText).digest("hex")
+      }],
+      parquet_sources: parquetSources,
+      columns: ["metadata", "instance", "prediction", "termination", "messages", "auto_judge"],
+      json_columns: ["metadata", "instance", "messages", "auto_judge"],
+      reviewer_columns: ["prediction", "termination", "messages", "auto_judge"],
+      operator_pointer: "/metadata/operator",
+      family_pointer: "/instance/domain",
+      base_pointer: "/instance/sample_id"
+    }, null, 2)}\n`, "utf8");
+
+    const result = await exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-recipe.json",
+      sourceRoot,
+      outDir: "parquet-handoff"
+    });
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, result.manifest_path),
+      "utf8"
+    )) as Record<string, any>;
+    const controller = JSON.parse(await readFile(
+      path.join(workspace, result.controller_map_path),
+      "utf8"
+    )) as Record<string, any>;
+    const reviewerFiles = await Promise.all(manifest.candidates
+      .flatMap((candidate: Record<string, any>) => candidate.trials)
+      .map((trial: Record<string, any>) => readFile(
+        path.join(workspace, result.reviewer_dir, trial.artifact_path),
+        "utf8"
+      )));
+
+    expect(manifest).toMatchObject({
+      source_materialization: "huggingface_parquet",
+      matched_trial_artifact_count: 252,
+      unique_eligible_trial_artifact_count: 252,
+      base_candidate_count: 72,
+      source_family_count: 4,
+      operator_group_count: 3,
+      trial_artifact_count: 216,
+      privacy_projection_applied: true,
+      privacy_redaction_count: 2
+    });
+    expect(new Set(controller.candidates.map((candidate: Record<string, any>) =>
+      candidate.operator_group + ":" + candidate.base_group)).size).toBeGreaterThan(1);
+    expect(controller.candidates.every((candidate: Record<string, any>) =>
+      candidate.trials.length === 3
+      && new Set(candidate.trials.map((trial: Record<string, any>) =>
+        trial.source_ref_algorithm)).size === 1)).toBe(true);
+    expect(reviewerFiles.join("\n")).not.toMatch(/operator-[0-9]|family-[0-9]|parquet_path/u);
+    expect(reviewerFiles.join("\n")).not.toContain(credentialAssignment);
+    expect(reviewerFiles.join("\n")).not.toContain(reviewerIdentity);
+    expect(reviewerFiles.join("\n")).toContain("<credential-like-value>");
+    expect(reviewerFiles.join("\n")).toContain("<reviewer-identity>");
+    expect(await inspectPromotionTrialCandidateHandoff(path.join(
+      workspace,
+      "parquet-handoff"
+    ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateLicensePacket(path.join(
+      workspace,
+      result.license_reviewer_dir
+    ))).toMatchObject({ passed: true, issues: [] });
   });
 
   it("preflights exact human task coverage without promoting negative labels", async () => {
@@ -839,8 +1003,9 @@ async function writeRecipe(
     artifactUrlTemplate?: string;
   }
 ): Promise<void> {
+  const licenseBytes = await readFile(path.join(path.dirname(target), "source-repository", "LICENSE"));
   await writeFile(target, `${JSON.stringify({
-    schema_version: "1.0",
+    schema_version: "1.1",
     handoff_id: "candidate-handoff-neutral",
     source_url: input.sourceUrl || "https://example.org/source-repository",
     source_revision: input.revision,
@@ -850,7 +1015,11 @@ async function writeRecipe(
     trials_per_base: 3,
     artifact_format: "json",
     selection_policy: "Lexical path selection followed by balanced operator and source-family round robin before artifact-content inspection.",
-    ...(input.materializationMode ? { materialization_mode: input.materializationMode } : {}),
+    materialization_mode: input.materializationMode || "git_archive",
+    license_evidence: [{
+      path: "LICENSE",
+      sha256: createHash("sha256").update(licenseBytes).digest("hex")
+    }],
     ...(input.artifactUrlTemplate ? { artifact_url_template: input.artifactUrlTemplate } : {})
   }, null, 2)}\n`, "utf8");
 }
