@@ -581,6 +581,19 @@ remain incomplete. The v10 recipe and evidence record are
 `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`. The
 confirmatory admission count remains zero.
 
+Two 72-task reviewer worksheets and one source-license worksheet have now been
+prepared from the closed v10 packets. They retain distinct unassigned role
+slots, null observations and decisions, empty rationales, and false human and
+independence attestations. The two annotation preflights therefore report
+zero coverage and zero source-eligible candidates, while the license preflight
+reports an unresolved decision with no evidence references. Combining these
+three incomplete inputs in adjudication emits neither accepted labels nor an
+evidence summary and leaves the accepted count at zero. Their hashes and exact
+fail-closed outcomes are recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`.
+This establishes reviewer handoff readiness only; it is not human-review or
+license evidence.
+
 The implementation now separates the old 20-base provisional intake from a
 72-base paper-scale intake. The latter accepts only candidate IDs recovered
 from an integrity-valid paired handoff and recomputed as source-eligible from a

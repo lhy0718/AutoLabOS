@@ -13624,6 +13624,7 @@ Path placeholders:
   - Structural pairing is complete, but no human comparability, license, canonical-curation, or confirmatory decision has been supplied.
   - Schema 1.0 confirmatory intake is now fixed to the 20-base provisional tier. Schema 1.1 paper-scale intake requires 72 reviewed candidate IDs, redistribution permission, canonical curation provenance, and 720 frozen cases.
   - A synthetic contract fixture passes the complete 72-base/720-case path. It is system-validation evidence only and does not change the real v10 admission count of zero.
+  - Two unassigned 72-task reviewer worksheets and one unassigned source-license worksheet now exist outside the closed v10 handoff. Their preflights fail with zero annotation coverage and unresolved license status, and combined adjudication emits zero accepted labels and no evidence summary.
 
 - Fresh vs existing session comparison:
   - Fresh session: the v10 exact-revision export and direct CLI rerun pass integrity inspection and produce identical hashes.
@@ -13645,6 +13646,7 @@ Path placeholders:
   - Added candidate-level adjudicated-label/summary cross-validation, including nested license-review consistency.
   - Added a `benchmark_curated` contract that binds six source traces, distinct curator/verifier roles, protocol versions, timestamps, evidence ceiling, and nine hash-bound canonical artifacts.
   - Added a schema 1.1 paper-scale intake that binds the paired handoff, review evidence, 72 distinct candidate IDs, canonical curation, and the 720-case freeze while keeping all benchmark labels provisional.
+  - Prepared hash-bound v10 reviewer and license worksheets without filling any observation, decision, rationale, or attestation, then recorded the expected fail-closed preflight and zero-admission adjudication receipts.
   - Real v10 canonical-source materialization and independent human review remain pending.
 
 - Regression status:
@@ -13652,11 +13654,12 @@ Path placeholders:
   - Targeted curation and intake regression: 15/15 passed on 2026-07-17.
   - TypeScript validation: passed on 2026-07-17 with `npx tsc -p tsconfig.json --noEmit`.
   - Full build: passed on 2026-07-17 with `npm run build`.
-  - Repository-wide CI: passed on 2026-07-17 with `npm test` (`214` test files, `2864` tests; web `14` tests).
+  - Repository-wide CI: passed on 2026-07-17 with `npm test` (`214` test files, `2,871` core tests; web `14` tests).
   - Harness validation and public-code sanitization: passed on 2026-07-17.
   - v10 handoff inspection: passed with 72 distinct source-native bases, 432 unique rows, and zero issues.
   - Same-flow CLI revalidation: passed with deterministic recipe and reviewer-tree hashes.
-  - Re-validation result: pending for independent human review and canonical curation.
+  - v10 review preparation: two annotation preflights failed closed at 0/72 coverage, the source-license preflight remained unresolved, and combined adjudication produced 0/72 accepted labels with no label or evidence-summary output.
+  - Re-validation result: reviewer handoff preparation complete; independent human review and canonical curation remain pending.
 
 - Follow-up risks:
   - Treating a generated table, figure, claim, or readiness decision as source-native would invalidate the benchmark's evidence claims.
@@ -13668,6 +13671,7 @@ Path placeholders:
   - `docs/research/evidence/promotion-trial-candidate-handoff-v9.json`
   - `docs/research/evidence/promotion-trial-candidate-source-v10.json`
   - `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`
+  - `docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`
   - `docs/research/evidence/promotion-source-portfolio-v2.json`
   - `docs/research/promotion-benchmark-curation-boundary.md`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v10/trial-candidate-handoff.json`

@@ -1,0 +1,57 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "public-execution-trace-candidate-handoff-v10",
+  "handoff_manifest_sha256": "a4dd7db0394eba96f321aa6dc03261ffc7eeaa60bebccd33281f3fb69ccc66d1",
+  "reviewer_packet_manifest_sha256": "107fe3e611f4ed52724b319b65fa38e1675f676782e7ef6760962c58b17f356c",
+  "license_packet_manifest_sha256": "a156ec3c5cfeccf18c29de2b75811a5e0beefe5256060a64e157743031ba53d3",
+  "reviewer_worksheets": [
+    {
+      "slot_id": "reviewer-slot-a-v10",
+      "sha256": "0acd11561658a554cdb4cf4a323f186254708350c3d62d8e837f77132757bc40",
+      "task_count": 72,
+      "completed_by_human": false,
+      "preflight_passed": false,
+      "annotation_count": 0,
+      "source_eligible_candidate_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    },
+    {
+      "slot_id": "reviewer-slot-b-v10",
+      "sha256": "c09f81f107d2d53d5895cb639cbb581372f1f2f62f55361447377d957b9d55bf",
+      "task_count": 72,
+      "completed_by_human": false,
+      "preflight_passed": false,
+      "annotation_count": 0,
+      "source_eligible_candidate_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    }
+  ],
+  "license_worksheet": {
+    "slot_id": "license-reviewer-slot-v10",
+    "sha256": "d3dfb194bbe950ae9019038af45dd5750831d0083e79a6524693db4ddd57cf69",
+    "completed_by_human": false,
+    "preflight_passed": false,
+    "reviewer_id": null,
+    "license_status": null,
+    "evidence_reference_count": 0,
+    "validation_issue": "trial_candidate_license_review_file_invalid"
+  },
+  "adjudication": {
+    "passed": false,
+    "task_count": 72,
+    "accepted_label_count": 0,
+    "initial_annotator_ids": [],
+    "license_reviewer_id": null,
+    "labels_emitted": false,
+    "evidence_summary_emitted": false,
+    "validation_issues": [
+      "trial_candidate_annotation_file_invalid",
+      "trial_candidate_annotation_file_invalid",
+      "trial_candidate_review_initial_annotators_not_independent",
+      "trial_candidate_license_review_file_invalid"
+    ]
+  },
+  "human_review_completed": false,
+  "confirmatory_admitted": false,
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets and their expected fail-closed preflight and zero-admission adjudication outcomes. It contains no human annotation, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
+}
