@@ -403,6 +403,11 @@ autolabos governance-benchmark preflight-promotion-trial-candidate-annotation \
   --annotation <review-a.json> \
   --out-dir <preflight-a>
 
+autolabos governance-benchmark preflight-promotion-trial-candidate-license-review \
+  --handoff-root <new-handoff-dir> \
+  --review <license-review.json> \
+  --out-dir <license-preflight>
+
 autolabos governance-benchmark adjudicate-promotion-trial-candidate-review \
   --handoff-root <new-handoff-dir> \
   --annotation <review-a.json> \
@@ -430,7 +435,10 @@ inside the closed handoff directory.
 The source-license worksheet is equally fail-closed: its decision starts as
 `null`, its evidence and rationale are empty, and all attestations are `false`.
 Give it only to the distinct source-license reviewer and keep it separate from
-candidate annotations and the controller map.
+candidate annotations and the controller map. That reviewer can run the
+license-review preflight without exposing either candidate review; the report
+checks the hash-bound task, schema, guide, and one review file but cannot grant
+permission or establish legal authority.
 
 Projection recipes support byte-for-byte file copies and JSON-pointer extraction only. They cannot add literal evidence values. The projector records source/output hashes, rejects path escape, symlinks, credential-like paths or values, preserves the selected source license, and rejects files added outside the closed output manifest. A generated bundle is marked confirmatory-ready only when the canonical mutation contract, hash-bound real-execution evidence, redistribution declaration, and human license review all pass.
 

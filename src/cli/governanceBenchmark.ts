@@ -76,10 +76,12 @@ import {
   preparePromotionTrialCandidateAnnotationWorksheet,
   preparePromotionTrialCandidateLicenseReviewWorksheet,
   preflightPromotionTrialCandidateAnnotation,
+  preflightPromotionTrialCandidateLicenseReview,
   type AdjudicatePromotionTrialCandidateReviewInput,
   type PreparePromotionTrialCandidateAnnotationWorksheetInput,
   type PreparePromotionTrialCandidateLicenseReviewWorksheetInput,
-  type PreflightPromotionTrialCandidateAnnotationInput
+  type PreflightPromotionTrialCandidateAnnotationInput,
+  type PreflightPromotionTrialCandidateLicenseReviewInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
   exportPromotionSourceNormalizationPack,
@@ -546,6 +548,24 @@ export async function runPromotionTrialCandidateAnnotationPreflightCli(
       `Report: ${result.report_path}`,
       `Summary: ${result.summary_path}`,
       "Evidence boundary: one candidate-review file only; no reviewer comparison, source-license assessment, or confirmatory admission"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateLicenseReviewPreflightCli(
+  input: PreflightPromotionTrialCandidateLicenseReviewInput
+): Promise<void> {
+  const result = await preflightPromotionTrialCandidateLicenseReview(input);
+  process.stdout.write(
+    [
+      `Promotion trial-candidate source-license review preflight ${result.report.passed ? "passed" : "failed"}`,
+      `Reviewer: ${result.report.reviewer_id || "unresolved"}`,
+      `License status: ${result.report.license_status || "unresolved"}`,
+      `Evidence references: ${result.report.evidence_reference_count}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`,
+      `Evidence boundary: ${result.report.evidence_boundary}`
     ].join("\n") + "\n"
   );
   if (!result.report.passed) process.exitCode = 1;

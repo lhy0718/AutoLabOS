@@ -29,6 +29,7 @@ import {
   runPromotionTrialCandidateAnnotationWorksheetCli,
   runPromotionTrialCandidateLicenseReviewWorksheetCli,
   runPromotionTrialCandidateAnnotationPreflightCli,
+  runPromotionTrialCandidateLicenseReviewPreflightCli,
   runPromotionTrialCandidateReviewAdjudicationCli,
   runPromotionSourceProjectionCli,
   runPromotionSourceNormalizationPackExportCli,
@@ -82,6 +83,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-worksheet --handoff-root <handoff> --annotator-id <pseudonym> --output <annotation.json>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet --handoff-root <handoff> --reviewer-id <pseudonym> --output <license-review.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --handoff-root <handoff> --annotation <review.json> --out-dir <preflight-output>",
+    "  autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --handoff-root <handoff> --review <license-review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark adjudicate-promotion-trial-candidate-review --handoff-root <handoff> --annotation <review-a.json> --annotation <review-b.json> --license-review <license-review.json> [--resolution <resolution.json>] --out-dir <adjudication>",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
@@ -367,6 +369,16 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       handoffRoot: action.handoffRoot,
       annotationPath: action.annotationPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-preflight-promotion-trial-candidate-license-review") {
+    await runPromotionTrialCandidateLicenseReviewPreflightCli({
+      cwd: process.cwd(),
+      handoffRoot: action.handoffRoot,
+      reviewPath: action.reviewPath,
       outDir: action.outDir
     });
     return;

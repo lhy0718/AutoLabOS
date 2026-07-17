@@ -20,7 +20,8 @@ import {
   inspectPromotionTrialCandidateReviewAdjudication,
   preparePromotionTrialCandidateAnnotationWorksheet,
   preparePromotionTrialCandidateLicenseReviewWorksheet,
-  preflightPromotionTrialCandidateAnnotation
+  preflightPromotionTrialCandidateAnnotation,
+  preflightPromotionTrialCandidateLicenseReview
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
@@ -415,6 +416,41 @@ describe("promotion trial-candidate handoff", () => {
     expect(() => parsePromotionTrialCandidateLicenseReviewSet(worksheet)).toThrow(
       "Trial-candidate source-license review set is invalid."
     );
+
+    const incompletePreflight = await preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      reviewPath: result.output_path,
+      outDir: "reviews/license/incomplete-preflight"
+    });
+    expect(incompletePreflight.report.passed).toBe(false);
+    expect(incompletePreflight.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_license_review_file_invalid"
+    );
+  });
+
+  it("preflights one complete source-license review without candidate annotations", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    await writeLicenseReview(
+      path.join(workspace, "reviews", "license", "complete-review.json"),
+      handoffRoot,
+      "license-reviewer-preflight"
+    );
+    const result = await preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      reviewPath: "reviews/license/complete-review.json",
+      outDir: "reviews/license/complete-preflight"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: true,
+      reviewer_id: "license-reviewer-preflight",
+      license_status: "uncertain",
+      evidence_reference_count: 0,
+      validation_issues: []
+    });
+    expect(Object.values(result.report.input_sha256).every((value) => /^[a-f0-9]{64}$/u.test(value))).toBe(true);
   });
 
   it("requires observation-specific citations and existing JSON Pointers for positive labels", async () => {

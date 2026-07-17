@@ -720,6 +720,21 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports isolated trial-candidate source-license review preflight", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "preflight-promotion-trial-candidate-license-review",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--review", "reviews/license-review.json",
+      "--out-dir", "reviews/license-preflight"
+    ])).toEqual({
+      kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review",
+      handoffRoot: "outputs/candidate-handoff",
+      reviewPath: "reviews/license-review.json",
+      outDir: "reviews/license-preflight"
+    });
+  });
+
   it("supports trial-candidate human annotation preflight and adjudication", () => {
     expect(resolveCliAction([
       "governance-benchmark",

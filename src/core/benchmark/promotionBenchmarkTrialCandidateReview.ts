@@ -15,6 +15,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK,
   PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
   PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
@@ -40,6 +41,8 @@ import {
 
 export const PROMOTION_TRIAL_CANDIDATE_ANNOTATION_PREFLIGHT_REPORT =
   "trial-candidate-annotation-preflight.json";
+export const PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_PREFLIGHT_REPORT =
+  "trial-candidate-license-review-preflight.json";
 export const PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT =
   "trial-candidate-review-adjudication.json";
 export const PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS =
@@ -148,6 +151,38 @@ export interface PromotionTrialCandidateAnnotationPreflightReport {
 
 export interface PreflightPromotionTrialCandidateAnnotationResult {
   report: PromotionTrialCandidateAnnotationPreflightReport;
+  report_path: string;
+  summary_path: string;
+}
+
+export interface PreflightPromotionTrialCandidateLicenseReviewInput {
+  cwd: string;
+  handoffRoot: string;
+  reviewPath: string;
+  outDir: string;
+}
+
+export interface PromotionTrialCandidateLicenseReviewPreflightReport {
+  schema_version: "1.0";
+  generated_at: string;
+  handoff_id: string;
+  passed: boolean;
+  reviewer_id: string | null;
+  license_status: PromotionTrialCandidateLicenseStatus | null;
+  evidence_reference_count: number;
+  input_sha256: {
+    handoff_manifest: string;
+    license_task: string;
+    license_schema: string;
+    license_guide: string;
+    review: string;
+  };
+  validation_issues: PromotionTrialCandidateReviewIssue[];
+  evidence_boundary: string;
+}
+
+export interface PreflightPromotionTrialCandidateLicenseReviewResult {
+  report: PromotionTrialCandidateLicenseReviewPreflightReport;
   report_path: string;
   summary_path: string;
 }
@@ -398,6 +433,53 @@ export async function preflightPromotionTrialCandidateAnnotation(
   const summaryPath = path.join(outDir, "trial-candidate-annotation-preflight.md");
   await writeJsonFile(reportPath, report);
   await fs.writeFile(summaryPath, renderPreflightSummary(report, path.basename(annotationPath)), "utf8");
+  return {
+    report,
+    report_path: portableRef(cwd, reportPath),
+    summary_path: portableRef(cwd, summaryPath)
+  };
+}
+
+export async function preflightPromotionTrialCandidateLicenseReview(
+  input: PreflightPromotionTrialCandidateLicenseReviewInput
+): Promise<PreflightPromotionTrialCandidateLicenseReviewResult> {
+  const cwd = path.resolve(input.cwd);
+  const handoffRoot = await resolveDirectoryInside(cwd, path.resolve(cwd, input.handoffRoot), "Trial-candidate handoff");
+  const reviewPath = await resolveFileInside(cwd, path.resolve(cwd, input.reviewPath), "Trial-candidate source-license review");
+  const outDir = path.resolve(cwd, input.outDir);
+  assertStrictlyInside(cwd, outDir, "Trial-candidate source-license review preflight output");
+  if (isSameOrContainedPath(handoffRoot, outDir)) {
+    throw new Error("Trial-candidate source-license review preflight output must stay outside the closed handoff.");
+  }
+  await assertFreshOutput(outDir, "Trial-candidate source-license review preflight output");
+
+  const { manifest } = await loadHandoffContract(handoffRoot);
+  const issues: PromotionTrialCandidateReviewIssue[] = [];
+  const review = await readLicenseReview(reviewPath, manifest, [], issues);
+  const contractPaths = reviewerContractPaths(handoffRoot);
+  const report: PromotionTrialCandidateLicenseReviewPreflightReport = {
+    schema_version: "1.0",
+    generated_at: new Date().toISOString(),
+    handoff_id: manifest.handoff_id,
+    passed: issues.length === 0 && Boolean(review),
+    reviewer_id: review?.reviewer_id || null,
+    license_status: review?.review.status || null,
+    evidence_reference_count: review?.review.evidence_refs.length || 0,
+    input_sha256: {
+      handoff_manifest: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)),
+      license_task: await hashFile(path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)),
+      license_schema: await hashFile(contractPaths.licenseSchema),
+      license_guide: await hashFile(contractPaths.licenseGuide),
+      review: await hashFile(reviewPath)
+    },
+    validation_issues: issues,
+    evidence_boundary: "This preflight validates the hash-bound source-license task and contract plus one human-attested source-license review file. It does not inspect candidate artifacts or annotations, establish reviewer identity or legal authority, grant redistribution rights, verify the legal conclusion, or admit confirmatory evidence."
+  };
+  await fs.mkdir(outDir, { recursive: true });
+  const reportPath = path.join(outDir, PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_PREFLIGHT_REPORT);
+  const summaryPath = path.join(outDir, "trial-candidate-license-review-preflight.md");
+  await writeJsonFile(reportPath, report);
+  await fs.writeFile(summaryPath, renderLicenseReviewPreflightSummary(report, path.basename(reviewPath)), "utf8");
   return {
     report,
     report_path: portableRef(cwd, reportPath),
@@ -1065,6 +1147,32 @@ function renderPreflightSummary(
     `- Annotator ID: ${report.annotator_id || "unresolved"}`,
     `- Task coverage: ${report.annotation_count}/${report.task_count}`,
     `- All-positive candidates: ${report.positive_candidate_count}/${report.task_count}`,
+    "",
+    "## Validation Issues",
+    "",
+    ...(report.validation_issues.length > 0
+      ? report.validation_issues.map((item) => `- ${item.code}${item.ref ? ` (${item.ref})` : ""}: ${item.message}`)
+      : ["- None."]),
+    "",
+    "## Evidence Boundary",
+    "",
+    report.evidence_boundary,
+    ""
+  ].join("\n");
+}
+
+function renderLicenseReviewPreflightSummary(
+  report: PromotionTrialCandidateLicenseReviewPreflightReport,
+  reviewName: string
+): string {
+  return [
+    "# Trial Candidate Source-License Review Preflight",
+    "",
+    `- Status: ${report.passed ? "passed" : "failed"}`,
+    `- Review file: ${reviewName}`,
+    `- Reviewer ID: ${report.reviewer_id || "unresolved"}`,
+    `- License status: ${report.license_status || "unresolved"}`,
+    `- Evidence references: ${report.evidence_reference_count}`,
     "",
     "## Validation Issues",
     "",
