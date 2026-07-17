@@ -135,6 +135,63 @@ describe("promotion confirmatory gate", () => {
     expect(assessment.claim_class).toBe("mixed_or_weak_signal");
     expect(assessment.hypotheses.find((item) => item.hypothesis_id === "H1")?.status).toBe("not_supported");
   });
+
+  it("does not support a point-threshold result when its clustered interval crosses the threshold", () => {
+    const fixture = makeAssessmentFixture(true);
+    const comparison = fixture.score.paired_analysis.comparisons[0];
+    comparison.false_paper_ready_cluster_bootstrap_95_ci = [-0.30, -0.10];
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+    const h1 = assessment.hypotheses.find((item) => item.hypothesis_id === "H1");
+
+    expect(assessment.blockers).toEqual([]);
+    expect(assessment.readiness).toBe("paper_scale_candidate");
+    expect(assessment.claim_class).toBe("mixed_or_weak_signal");
+    expect(h1).toMatchObject({
+      status: "not_supported",
+      observed_value: 0.30,
+      confidence_interval_95: [0.10, 0.30],
+      point_threshold_met: true,
+      decision_rule: "lower_bound_at_least_threshold"
+    });
+  });
+
+  it("uses the upper interval bound for an at-most hypothesis", () => {
+    const fixture = makeAssessmentFixture(true);
+    const full = fixture.score.systems.find((system) => system.system_id === fixture.roles.full);
+    if (!full) throw new Error("Full-policy fixture is missing.");
+    full.concern_acceptance_conflict_cluster_bootstrap_95_ci = [0, 0.08];
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+    const h2 = assessment.hypotheses.find((item) => item.hypothesis_id === "H2");
+
+    expect(assessment.blockers).toEqual([]);
+    expect(h2).toMatchObject({
+      status: "not_supported",
+      observed_value: 0.01,
+      confidence_interval_95: [0, 0.08],
+      point_threshold_met: true,
+      decision_rule: "upper_bound_at_most_threshold"
+    });
+  });
+
+  it("blocks paper-scale progression when a preregistered clustered interval is absent", () => {
+    const fixture = makeAssessmentFixture(true);
+    const full = fixture.score.systems.find((system) => system.system_id === fixture.roles.full);
+    if (!full) throw new Error("Full-policy fixture is missing.");
+    full.clean_case_promotion_accuracy_cluster_bootstrap_95_ci = null;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.claim_class).toBe("not_evaluable");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "hypothesis_clustered_interval_not_evaluable",
+      evidence_ref: "H3",
+      target_node: "analyze_results"
+    }));
+    expect(assessment.hypotheses.find((item) => item.hypothesis_id === "H3")?.status).toBe("not_evaluable");
+  });
 });
 
 function prediction(
@@ -200,7 +257,7 @@ function makeAssessmentFixture(h1Supported: boolean): {
   const systems = [
     systemMetrics(roles.ungated, 1, 0.90, 0, 1, 0.10),
     systemMetrics(roles.checklist, 1, checklistFalsePromotion, 0, 1, 0.20),
-    systemMetrics(roles.manuscript, 3, 0.45, 0.08, 0.90, 0.20),
+    systemMetrics(roles.manuscript, 3, 0.45, 0.08, 0.90, 0.15),
     systemMetrics(roles.full, 1, 0.20, 0.01, 0.95, 0.80),
     systemMetrics(roles.ablations[0], 1, 0.40, 0.20, 1, 0.50)
   ];
@@ -328,14 +385,18 @@ function systemMetrics(
     macro_decision_f1: 0.80,
     false_paper_ready_count: Math.round(falsePromotionRate * 180),
     false_paper_ready_rate: falsePromotionRate,
+    false_paper_ready_cluster_bootstrap_95_ci: boundedInterval(falsePromotionRate, 0.02),
     concern_acceptance_conflict_count: Math.round(conflictRate * 200),
     concern_acceptance_conflict_rate: conflictRate,
+    concern_acceptance_conflict_cluster_bootstrap_95_ci: boundedInterval(conflictRate, 0.01),
     clean_case_count: 20,
     clean_case_promotion_accuracy: cleanAccuracy,
+    clean_case_promotion_accuracy_cluster_bootstrap_95_ci: boundedInterval(cleanAccuracy, 0.02),
     blocker_precision: 0.80,
     blocker_recall: 0.80,
     blocker_f1: 0.80,
     repair_owner_exact_match_accuracy: repairAccuracy,
+    repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: boundedInterval(repairAccuracy, 0.02),
     trace_coverage: 1,
     mean_latency_ms: 1,
     total_cost_usd: 0,
@@ -355,18 +416,26 @@ function pairedComparison(
   delta: number
 ): PromotionBenchmarkPairedComparison {
   return {
-    system_a: checklist,
-    system_b: full,
+    system_a: full,
+    system_b: checklist,
     common_case_count: 200,
     common_base_bundle_count: 20,
-    decision_accuracy_delta: -delta,
-    decision_accuracy_cluster_bootstrap_95_ci: [-0.40, -0.10],
+    decision_accuracy_delta: delta,
+    decision_accuracy_cluster_bootstrap_95_ci: [0.10, 0.40],
     decision_accuracy_exact_paired_sign_test_p: 0.01,
     false_paper_ready_common_case_count: 180,
-    false_paper_ready_rate_delta: delta,
-    false_paper_ready_cluster_bootstrap_95_ci: [delta - 0.05, delta + 0.05],
-    false_paper_ready_exact_paired_sign_test_p: 0.01
+    false_paper_ready_rate_delta: -delta,
+    false_paper_ready_cluster_bootstrap_95_ci: [-delta - 0.05, -delta + 0.05],
+    false_paper_ready_exact_paired_sign_test_p: 0.01,
+    repair_owner_common_case_count: 180,
+    repair_owner_exact_match_accuracy_delta: 0.60,
+    repair_owner_cluster_bootstrap_95_ci: [0.55, 0.65],
+    repair_owner_exact_paired_sign_test_p: 0.01
   };
+}
+
+function boundedInterval(value: number, margin: number): [number, number] {
+  return [Math.max(0, value - margin), Math.min(1, value + margin)];
 }
 
 function repeatedHash(value: number): string {

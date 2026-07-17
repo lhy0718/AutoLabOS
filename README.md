@@ -452,6 +452,8 @@ Confirmatory intake requires every projected, normalized, or native bundle to pr
 
 Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
+The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
+
 ### Fresh Provider Execution
 
 Run the manuscript-only comparator through a configured OpenAI Responses API key without manually constructing response files:

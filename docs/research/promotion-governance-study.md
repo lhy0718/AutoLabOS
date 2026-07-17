@@ -171,6 +171,16 @@ additionally be reported for a frozen single-trial binary comparison when its
 assumptions are met. Effect sizes and raw counts are reported regardless of
 significance. Synthetic development suites are always marked exploratory.
 
+Confirmatory support is interval-based rather than point-estimate-based. H1 and
+H4 use direction-normalized paired differences, while H2 and H3 use
+base-bundle-clustered system intervals. An at-least hypothesis is supported
+only when the 95 percent interval lower bound reaches its preregistered
+threshold; an at-most hypothesis is supported only when the upper bound is no
+greater than its threshold. A point estimate that clears the threshold while
+its interval crosses the threshold is recorded as not supported. Missing
+intervals make the corresponding hypothesis not evaluable and block
+paper-scale progression, whereas a complete null or negative result does not.
+
 ## Leakage And Validity Controls
 
 - Split by base bundle, not by mutated variant, so paired siblings cannot cross

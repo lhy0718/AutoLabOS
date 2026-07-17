@@ -63,11 +63,15 @@ describe("promotion benchmark", () => {
       coverage_rate: 1,
       exact_decision_accuracy: 1,
       false_paper_ready_rate: 0,
+      false_paper_ready_cluster_bootstrap_95_ci: [0, 0],
       concern_acceptance_conflict_rate: 0,
+      concern_acceptance_conflict_cluster_bootstrap_95_ci: [0, 0],
       clean_case_promotion_accuracy: 1,
+      clean_case_promotion_accuracy_cluster_bootstrap_95_ci: null,
       blocker_precision: 1,
       blocker_recall: 1,
       repair_owner_exact_match_accuracy: 1,
+      repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: [1, 1],
       trace_coverage: 1
     });
     const checklist = result.report.systems.find((system) => system.system_id === "checklist");
@@ -78,7 +82,10 @@ describe("promotion benchmark", () => {
       system_b: "governed",
       common_case_count: 3,
       decision_accuracy_delta: -2 / 3,
-      false_paper_ready_rate_delta: 0.5
+      false_paper_ready_rate_delta: 0.5,
+      repair_owner_common_case_count: 2,
+      repair_owner_exact_match_accuracy_delta: -1,
+      repair_owner_cluster_bootstrap_95_ci: [-1, -1]
     }));
     expect(JSON.parse(await readFile(path.join(workspace, "score", "promotion-score.json"), "utf8"))).toMatchObject({
       suite_id: "portable-suite",
@@ -92,6 +99,8 @@ describe("promotion benchmark", () => {
     expect(markdown).toContain("Availability: unavailable");
     expect(markdown).toContain("## Mutation Families");
     expect(markdown).toContain("clean_control");
+    expect(markdown).toContain("## Clustered Metric Uncertainty");
+    expect(markdown).toContain("## Paired Repair-Owner Analysis");
   });
 
   it("reports source-family strata and leave-one-family-out comparisons", async () => {

@@ -55,7 +55,11 @@ export interface PromotionConfirmatoryHypothesisResult {
   hypothesis_id: "H1" | "H2" | "H3" | "H4";
   status: PromotionHypothesisStatus;
   observed_value: number | null;
+  confidence_interval_95: [number, number] | null;
   threshold: number;
+  decision_rule: "lower_bound_at_least_threshold" | "upper_bound_at_most_threshold";
+  point_threshold_met: boolean | null;
+  inference_unit: "base_bundle_id";
   comparison: string;
   interpretation: string;
 }
@@ -679,32 +683,79 @@ function evaluateHypotheses(
   issues: PromotionConfirmatoryGateIssue[]
 ): PromotionConfirmatoryHypothesisResult[] {
   const systems = new Map(report.systems.map((system) => [system.system_id, system]));
-  const checklist = systems.get(roles.checklist);
   const full = systems.get(roles.full);
-  const baselineSystems = [roles.ungated, roles.checklist, roles.manuscript]
-    .map((systemId) => systems.get(systemId));
-  const h1Value = numericDifference(checklist?.false_paper_ready_rate, full?.false_paper_ready_rate);
-  const h2Value = full?.concern_acceptance_conflict_rate ?? null;
-  const h3Value = full?.clean_case_promotion_accuracy ?? null;
-  const baselineRepairValues = baselineSystems.map((system) => system?.repair_owner_exact_match_accuracy ?? null);
-  const strongestBaseline = baselineRepairValues.every((value) => value !== null)
-    ? Math.max(...baselineRepairValues as number[])
-    : null;
-  const h4Value = strongestBaseline === null || full?.repair_owner_exact_match_accuracy === null
-    || full?.repair_owner_exact_match_accuracy === undefined
-    ? null
-    : full.repair_owner_exact_match_accuracy - strongestBaseline;
-  const paired = findComparison(report.paired_analysis.comparisons, roles.checklist, roles.full);
-  if (!paired || paired.false_paper_ready_cluster_bootstrap_95_ci === null) {
-    addIssue(
-      issues,
-      "h1_clustered_comparison_not_evaluable",
-      "H1 requires a checklist-versus-full paired clustered bootstrap comparison.",
-      "analyze_results"
-    );
+  const h1Comparison = findComparison(report.paired_analysis.comparisons, roles.checklist, roles.full);
+  const h1 = orientPairedMetric(
+    h1Comparison,
+    roles.checklist,
+    roles.full,
+    "false_paper_ready_rate_delta",
+    "false_paper_ready_cluster_bootstrap_95_ci"
+  );
+  const strongestBaseline = [roles.ungated, roles.checklist, roles.manuscript]
+    .map((systemId) => systems.get(systemId))
+    .filter((system): system is PromotionBenchmarkSystemMetrics =>
+      system?.repair_owner_exact_match_accuracy !== null
+      && system?.repair_owner_exact_match_accuracy !== undefined)
+    .sort((left, right) =>
+      (right.repair_owner_exact_match_accuracy as number) - (left.repair_owner_exact_match_accuracy as number)
+      || left.system_id.localeCompare(right.system_id))[0];
+  const h4Comparison = strongestBaseline
+    ? findComparison(report.paired_analysis.comparisons, roles.full, strongestBaseline.system_id)
+    : undefined;
+  const h4 = orientPairedMetric(
+    h4Comparison,
+    roles.full,
+    strongestBaseline?.system_id,
+    "repair_owner_exact_match_accuracy_delta",
+    "repair_owner_cluster_bootstrap_95_ci"
+  );
+  const inputs = [
+    {
+      id: "H1" as const,
+      value: h1.value,
+      ci: h1.ci,
+      threshold: H1_MINIMUM_FALSE_PROMOTION_REDUCTION,
+      direction: "at_least" as const,
+      comparison: roles.checklist + " minus " + roles.full
+    },
+    {
+      id: "H2" as const,
+      value: full?.concern_acceptance_conflict_rate ?? null,
+      ci: full?.concern_acceptance_conflict_cluster_bootstrap_95_ci ?? null,
+      threshold: H2_MAXIMUM_CONFLICT_RATE,
+      direction: "at_most" as const,
+      comparison: roles.full
+    },
+    {
+      id: "H3" as const,
+      value: full?.clean_case_promotion_accuracy ?? null,
+      ci: full?.clean_case_promotion_accuracy_cluster_bootstrap_95_ci ?? null,
+      threshold: H3_MINIMUM_CLEAN_PROMOTION_ACCURACY,
+      direction: "at_least" as const,
+      comparison: roles.full
+    },
+    {
+      id: "H4" as const,
+      value: h4.value,
+      ci: h4.ci,
+      threshold: H4_MINIMUM_REPAIR_OWNER_ADVANTAGE,
+      direction: "at_least" as const,
+      comparison: roles.full + " minus " + (strongestBaseline?.system_id || "strongest non-governed baseline")
+    }
+  ];
+  for (const input of inputs) {
+    if (input.value === null || input.ci === null) {
+      addIssue(
+        issues,
+        "hypothesis_clustered_interval_not_evaluable",
+        input.id + " requires a base-bundle clustered 95% confidence interval for its preregistered metric.",
+        "analyze_results",
+        input.id
+      );
+    }
   }
-  const values = [h1Value, h2Value, h3Value, h4Value];
-  if (values.some((value) => value === null)) {
+  if (inputs.some((input) => input.value === null)) {
     addIssue(
       issues,
       "hypothesis_metric_not_evaluable",
@@ -712,36 +763,72 @@ function evaluateHypotheses(
       "analyze_results"
     );
   }
-  return [
-    hypothesis("H1", h1Value, H1_MINIMUM_FALSE_PROMOTION_REDUCTION, "at_least", roles.checklist + " minus " + roles.full),
-    hypothesis("H2", h2Value, H2_MAXIMUM_CONFLICT_RATE, "at_most", roles.full),
-    hypothesis("H3", h3Value, H3_MINIMUM_CLEAN_PROMOTION_ACCURACY, "at_least", roles.full),
-    hypothesis("H4", h4Value, H4_MINIMUM_REPAIR_OWNER_ADVANTAGE, "at_least", roles.full + " minus strongest non-governed baseline")
-  ];
+  return inputs.map((input) => hypothesis(
+    input.id,
+    input.value,
+    input.ci,
+    input.threshold,
+    input.direction,
+    input.comparison
+  ));
 }
 
 function hypothesis(
   id: "H1" | "H2" | "H3" | "H4",
   value: number | null,
+  ci: [number, number] | null,
   threshold: number,
   direction: "at_least" | "at_most",
   comparison: string
 ): PromotionConfirmatoryHypothesisResult {
-  const status: PromotionHypothesisStatus = value === null
+  const pointThresholdMet = value === null
+    ? null
+    : direction === "at_least" ? value >= threshold : value <= threshold;
+  const status: PromotionHypothesisStatus = value === null || ci === null
     ? "not_evaluable"
     : direction === "at_least"
-      ? value >= threshold ? "supported" : "not_supported"
-      : value <= threshold ? "supported" : "not_supported";
+      ? ci[0] >= threshold ? "supported" : "not_supported"
+      : ci[1] <= threshold ? "supported" : "not_supported";
+  const decisionRule = direction === "at_least"
+    ? "lower_bound_at_least_threshold"
+    : "upper_bound_at_most_threshold";
   return {
     hypothesis_id: id,
     status,
     observed_value: value,
+    confidence_interval_95: ci,
     threshold,
+    decision_rule: decisionRule,
+    point_threshold_met: pointThresholdMet,
+    inference_unit: "base_bundle_id",
     comparison,
-    interpretation: value === null
-      ? "The required metric was unavailable."
-      : "Observed " + value.toFixed(4) + "; preregistered threshold " + direction.replace("_", " ") + " " + threshold.toFixed(4) + "."
+    interpretation: value === null || ci === null
+      ? "The required point estimate or clustered confidence interval was unavailable."
+      : "Observed " + value.toFixed(4)
+        + " with clustered 95% CI [" + ci[0].toFixed(4) + ", " + ci[1].toFixed(4) + "]; "
+        + "support requires the " + (direction === "at_least" ? "lower" : "upper")
+        + " bound to be " + direction.replace("_", " ") + " " + threshold.toFixed(4) + "."
   };
+}
+
+function orientPairedMetric(
+  comparison: PromotionBenchmarkPairedComparison | undefined,
+  left: string,
+  right: string | undefined,
+  valueKey: "false_paper_ready_rate_delta" | "repair_owner_exact_match_accuracy_delta",
+  ciKey: "false_paper_ready_cluster_bootstrap_95_ci" | "repair_owner_cluster_bootstrap_95_ci"
+): { value: number | null; ci: [number, number] | null } {
+  if (!comparison || !right) return { value: null, ci: null };
+  const value = comparison[valueKey];
+  const ci = comparison[ciKey];
+  if (value === null || ci === null) return { value: null, ci: null };
+  if (comparison.system_a === left && comparison.system_b === right) {
+    return { value, ci };
+  }
+  if (comparison.system_a === right && comparison.system_b === left) {
+    return { value: -value, ci: [-ci[1], -ci[0]] };
+  }
+  return { value: null, ci: null };
 }
 
 function claimClass(
@@ -765,10 +852,6 @@ function findComparison(
 
 function countBaseBundles(suite: LoadedPromotionBenchmarkSuite | undefined): number {
   return new Set((suite?.cases || []).map((item) => item.base_bundle_id)).size;
-}
-
-function numericDifference(left: number | null | undefined, right: number | null | undefined): number | null {
-  return typeof left === "number" && typeof right === "number" ? left - right : null;
 }
 
 function sameStringSet(left: string[], right: string[]): boolean {

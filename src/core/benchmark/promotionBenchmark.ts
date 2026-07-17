@@ -92,14 +92,18 @@ export interface PromotionBenchmarkSystemMetrics {
   macro_decision_f1: number;
   false_paper_ready_count: number;
   false_paper_ready_rate: number | null;
+  false_paper_ready_cluster_bootstrap_95_ci: [number, number] | null;
   concern_acceptance_conflict_count: number;
   concern_acceptance_conflict_rate: number | null;
+  concern_acceptance_conflict_cluster_bootstrap_95_ci: [number, number] | null;
   clean_case_count: number;
   clean_case_promotion_accuracy: number | null;
+  clean_case_promotion_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
   blocker_precision: number | null;
   blocker_recall: number | null;
   blocker_f1: number | null;
   repair_owner_exact_match_accuracy: number | null;
+  repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
   trace_coverage: number | null;
   mean_latency_ms: number | null;
   total_cost_usd: number | null;
@@ -119,6 +123,10 @@ export interface PromotionBenchmarkPairedComparison {
   false_paper_ready_rate_delta: number | null;
   false_paper_ready_cluster_bootstrap_95_ci: [number, number] | null;
   false_paper_ready_exact_paired_sign_test_p: number | null;
+  repair_owner_common_case_count: number;
+  repair_owner_exact_match_accuracy_delta: number | null;
+  repair_owner_cluster_bootstrap_95_ci: [number, number] | null;
+  repair_owner_exact_paired_sign_test_p: number | null;
 }
 
 export interface PromotionBenchmarkMutationFamilyMetrics {
@@ -466,6 +474,11 @@ function scoreSystem(
   const precision = ratioOrNull(blockerTp, blockerTp + blockerFp);
   const recall = ratioOrNull(blockerTp, blockerTp + blockerFn);
   const coveredCases = new Set(predictions.map((prediction) => prediction.case_id)).size;
+  const intervalFor = (metric: PromotionBenchmarkBinaryMetric): [number, number] | null =>
+    clusteredMeanInterval(
+      metricObservationRows(predictions, cases, metric),
+      systemId + "\u0000" + metric + "\u0000" + cases.map((item) => item.case_id).join("\u0000")
+    );
   return {
     system_id: systemId,
     trial_count: new Set(predictions.map((prediction) => prediction.trial_id)).size,
@@ -477,14 +490,18 @@ function scoreSystem(
     macro_decision_f1: macroF1(confusion),
     false_paper_ready_count: falsePromotions,
     false_paper_ready_rate: ratioOrNull(falsePromotions, nonPromotable),
+    false_paper_ready_cluster_bootstrap_95_ci: intervalFor("false_paper_ready"),
     concern_acceptance_conflict_count: conflicts,
     concern_acceptance_conflict_rate: ratioOrNull(conflicts, withBlockingConcern),
+    concern_acceptance_conflict_cluster_bootstrap_95_ci: intervalFor("concern_acceptance_conflict"),
     clean_case_count: clean,
     clean_case_promotion_accuracy: ratioOrNull(cleanPromotions, clean),
+    clean_case_promotion_accuracy_cluster_bootstrap_95_ci: intervalFor("clean_case_promotion"),
     blocker_precision: precision,
     blocker_recall: recall,
     blocker_f1: harmonicMean(precision, recall),
     repair_owner_exact_match_accuracy: ratioOrNull(repairExact, repairCases),
+    repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: intervalFor("repair_owner_exact_match"),
     trace_coverage: ratioOrNull(tracedConcernCount, concernCount),
     mean_latency_ms: meanOrNull(latencies),
     total_cost_usd: costs.length > 0 ? costs.reduce((sum, value) => sum + value, 0) : null,
@@ -555,10 +572,17 @@ function scorePairedComparisons(
       const falsePromotionA = aggregateCaseMetric(rowsBySystem.get(systemA) || [], cases, "false_paper_ready");
       const falsePromotionB = aggregateCaseMetric(rowsBySystem.get(systemB) || [], cases, "false_paper_ready");
       const falsePromotionDiffs = pairedCaseDifferences(falsePromotionA, falsePromotionB, cases);
+      const repairOwnerA = aggregateCaseMetric(rowsBySystem.get(systemA) || [], cases, "repair_owner_exact_match");
+      const repairOwnerB = aggregateCaseMetric(rowsBySystem.get(systemB) || [], cases, "repair_owner_exact_match");
+      const repairOwnerDiffs = pairedCaseDifferences(repairOwnerA, repairOwnerB, cases);
       const decisionStats = clusteredDifferenceStats(decisionDiffs, `${suiteId}\u0000${systemA}\u0000${systemB}\u0000decision`);
       const falsePromotionStats = clusteredDifferenceStats(
         falsePromotionDiffs,
         `${suiteId}\u0000${systemA}\u0000${systemB}\u0000false-promotion`
+      );
+      const repairOwnerStats = clusteredDifferenceStats(
+        repairOwnerDiffs,
+        suiteId + "\u0000" + systemA + "\u0000" + systemB + "\u0000repair-owner"
       );
       comparisons.push({
         system_a: systemA,
@@ -571,7 +595,11 @@ function scorePairedComparisons(
         false_paper_ready_common_case_count: falsePromotionDiffs.length,
         false_paper_ready_rate_delta: falsePromotionStats.delta,
         false_paper_ready_cluster_bootstrap_95_ci: falsePromotionStats.ci,
-        false_paper_ready_exact_paired_sign_test_p: falsePromotionStats.p
+        false_paper_ready_exact_paired_sign_test_p: falsePromotionStats.p,
+        repair_owner_common_case_count: repairOwnerDiffs.length,
+        repair_owner_exact_match_accuracy_delta: repairOwnerStats.delta,
+        repair_owner_cluster_bootstrap_95_ci: repairOwnerStats.ci,
+        repair_owner_exact_paired_sign_test_p: repairOwnerStats.p
       });
     }
   }
@@ -651,22 +679,65 @@ function unavailableSourceFamilyAnalysis(): PromotionBenchmarkSourceFamilyAnalys
   };
 }
 
+type PromotionBenchmarkBinaryMetric =
+  | "decision_accuracy"
+  | "false_paper_ready"
+  | "concern_acceptance_conflict"
+  | "clean_case_promotion"
+  | "repair_owner_exact_match";
+
 function aggregateCaseMetric(
   predictions: PromotionBenchmarkPrediction[],
   cases: PromotionBenchmarkCaseManifest[],
-  metric: "decision_accuracy" | "false_paper_ready"
+  metric: PromotionBenchmarkBinaryMetric
 ): Map<string, number> {
   const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
   const values = new Map<string, number[]>();
   for (const prediction of predictions) {
     const benchmarkCase = caseById.get(prediction.case_id);
-    if (!benchmarkCase || (metric === "false_paper_ready" && benchmarkCase.gold.decision === "promote")) continue;
-    const value = metric === "decision_accuracy"
-      ? Number(prediction.decision === benchmarkCase.gold.decision)
-      : Number(prediction.decision === "promote");
+    if (!benchmarkCase) continue;
+    const value = metricObservation(prediction, benchmarkCase, metric);
+    if (value === null) continue;
     values.set(prediction.case_id, [...(values.get(prediction.case_id) || []), value]);
   }
   return new Map([...values.entries()].map(([caseId, rows]) => [caseId, rows.reduce((sum, value) => sum + value, 0) / rows.length]));
+}
+
+function metricObservationRows(
+  predictions: PromotionBenchmarkPrediction[],
+  cases: PromotionBenchmarkCaseManifest[],
+  metric: PromotionBenchmarkBinaryMetric
+): Array<{ base_bundle_id: string; value: number }> {
+  const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
+  return predictions.flatMap((prediction) => {
+    const benchmarkCase = caseById.get(prediction.case_id);
+    if (!benchmarkCase) return [];
+    const value = metricObservation(prediction, benchmarkCase, metric);
+    return value === null ? [] : [{ base_bundle_id: benchmarkCase.base_bundle_id, value }];
+  });
+}
+
+function metricObservation(
+  prediction: PromotionBenchmarkPrediction,
+  benchmarkCase: PromotionBenchmarkCaseManifest,
+  metric: PromotionBenchmarkBinaryMetric
+): number | null {
+  if (metric === "decision_accuracy") {
+    return Number(prediction.decision === benchmarkCase.gold.decision);
+  }
+  if (metric === "false_paper_ready") {
+    return benchmarkCase.gold.decision === "promote" ? null : Number(prediction.decision === "promote");
+  }
+  if (metric === "concern_acceptance_conflict") {
+    const hasBlockingConcern = prediction.concerns.some((concern) => concern.severity === "blocking");
+    return hasBlockingConcern ? Number(prediction.decision === "promote") : null;
+  }
+  if (metric === "clean_case_promotion") {
+    return benchmarkCase.gold.decision === "promote" ? Number(prediction.decision === "promote") : null;
+  }
+  return benchmarkCase.gold.repair_owners.length === 0
+    ? null
+    : Number(setsEqual(new Set(benchmarkCase.gold.repair_owners), new Set(prediction.repair_owners)));
 }
 
 function pairedCaseDifferences(
@@ -711,6 +782,31 @@ function clusteredDifferenceStats(
   }
   bootstrap.sort((left, right) => left - right);
   return { delta, ci: [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)], p };
+}
+
+function clusteredMeanInterval(
+  rows: Array<{ base_bundle_id: string; value: number }>,
+  seedMaterial: string
+): [number, number] | null {
+  if (rows.length === 0) return null;
+  const clusters = [...groupBy(rows, (row) => row.base_bundle_id).values()];
+  if (clusters.length < 2) return null;
+  const random = deterministicRandom(seedMaterial);
+  const bootstrap: number[] = [];
+  for (let replicate = 0; replicate < CLUSTER_BOOTSTRAP_REPLICATES; replicate += 1) {
+    let sum = 0;
+    let count = 0;
+    for (let draw = 0; draw < clusters.length; draw += 1) {
+      const cluster = clusters[Math.floor(random() * clusters.length)];
+      for (const row of cluster) {
+        sum += row.value;
+        count += 1;
+      }
+    }
+    bootstrap.push(sum / count);
+  }
+  bootstrap.sort((left, right) => left - right);
+  return [quantile(bootstrap, 0.025), quantile(bootstrap, 0.975)];
 }
 
 function exactPairedSignTest(values: number[]): number | null {
@@ -777,6 +873,20 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
       formatMetric(system.trace_coverage)
     ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
     "",
+    "## Clustered Metric Uncertainty",
+    "",
+    "Intervals use base_bundle_id as the resampling cluster.",
+    "",
+    "| System | False promotion 95% CI | Concern-conflict 95% CI | Clean promotion 95% CI | Repair owner 95% CI |",
+    "| --- | ---: | ---: | ---: | ---: |",
+    ...report.systems.map((system) => [
+      system.system_id,
+      formatInterval(system.false_paper_ready_cluster_bootstrap_95_ci),
+      formatInterval(system.concern_acceptance_conflict_cluster_bootstrap_95_ci),
+      formatInterval(system.clean_case_promotion_accuracy_cluster_bootstrap_95_ci),
+      formatInterval(system.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci)
+    ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
+    "",
     "## Mutation Families",
     ""
   ];
@@ -839,6 +949,19 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     }
   }
   lines.push(
+    "## Paired Repair-Owner Analysis",
+    "",
+    "| System A | System B | Common cases | Repair-owner delta | Repair-owner 95% CI | Sign-test p |",
+    "| --- | --- | ---: | ---: | ---: | ---: |",
+    ...report.paired_analysis.comparisons.map((comparison) => [
+      comparison.system_a,
+      comparison.system_b,
+      String(comparison.repair_owner_common_case_count),
+      formatMetric(comparison.repair_owner_exact_match_accuracy_delta),
+      formatInterval(comparison.repair_owner_cluster_bootstrap_95_ci),
+      formatMetric(comparison.repair_owner_exact_paired_sign_test_p)
+    ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
+    "",
     "## Paired Analysis",
     "",
     `Inference unit: ${report.paired_analysis.inference_unit}. Bootstrap replicates: ${report.paired_analysis.bootstrap_replicates}. Exploratory only: ${report.paired_analysis.exploratory_only}.`,
