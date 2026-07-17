@@ -517,7 +517,7 @@ export function App() {
     }
   }
 
-  if (!bootstrap) {
+  if (!bootstrap || !setupSeeded) {
     return (
       <div className="loading-shell" role="status" aria-live="polite">
         <section className="loading-card">

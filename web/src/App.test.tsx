@@ -289,6 +289,8 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Initial setup")).toBeInTheDocument();
+      expect(screen.getByLabelText("Project name")).toHaveValue("AutoLabOS");
+      expect(screen.getByLabelText("Primary provider")).toHaveValue("codex_chatgpt_only");
     });
 
     fireEvent.change(screen.getByLabelText("Primary provider"), {
