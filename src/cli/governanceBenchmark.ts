@@ -74,9 +74,11 @@ import {
 import {
   adjudicatePromotionTrialCandidateReview,
   preparePromotionTrialCandidateAnnotationWorksheet,
+  preparePromotionTrialCandidateLicenseReviewWorksheet,
   preflightPromotionTrialCandidateAnnotation,
   type AdjudicatePromotionTrialCandidateReviewInput,
   type PreparePromotionTrialCandidateAnnotationWorksheetInput,
+  type PreparePromotionTrialCandidateLicenseReviewWorksheetInput,
   type PreflightPromotionTrialCandidateAnnotationInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
@@ -561,6 +563,21 @@ export async function runPromotionTrialCandidateAnnotationWorksheetCli(
       `Tasks: ${result.task_count}`,
       `Output: ${result.output_path}`,
       "Status: incomplete by construction; human review and attestation are required before preflight"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateLicenseReviewWorksheetCli(
+  input: PreparePromotionTrialCandidateLicenseReviewWorksheetInput
+): Promise<void> {
+  const result = await preparePromotionTrialCandidateLicenseReviewWorksheet(input);
+  process.stdout.write(
+    [
+      "Unreviewed trial-candidate source-license worksheet prepared",
+      `Handoff: ${result.handoff_id}`,
+      `Reviewer ID: ${result.reviewer_id}`,
+      `Output: ${result.output_path}`,
+      "Status: incomplete by construction; human source-license review and attestation are required before adjudication"
     ].join("\n") + "\n"
   );
 }

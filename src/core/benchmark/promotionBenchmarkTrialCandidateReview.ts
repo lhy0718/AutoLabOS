@@ -80,6 +80,37 @@ export interface PreparePromotionTrialCandidateAnnotationWorksheetResult {
   output_path: string;
 }
 
+export interface PreparePromotionTrialCandidateLicenseReviewWorksheetInput {
+  cwd: string;
+  handoffRoot: string;
+  reviewerId: string;
+  outputPath: string;
+}
+
+export interface PromotionTrialCandidateLicenseReviewWorksheet {
+  schema_version: "1.0";
+  handoff_id: string;
+  reviewer_id: string;
+  label_source: "human";
+  review_role: "source_license";
+  independence_attestation: {
+    completed_by_human: false;
+    candidate_annotations_unseen: false;
+    controller_map_unseen: false;
+  };
+  review: {
+    status: null;
+    evidence_refs: [];
+    rationale: "";
+  };
+}
+
+export interface PreparePromotionTrialCandidateLicenseReviewWorksheetResult {
+  handoff_id: string;
+  reviewer_id: string;
+  output_path: string;
+}
+
 export interface PreflightPromotionTrialCandidateAnnotationInput {
   cwd: string;
   handoffRoot: string;
@@ -267,6 +298,55 @@ export async function preparePromotionTrialCandidateAnnotationWorksheet(
     handoff_id: manifest.handoff_id,
     annotator_id: input.annotatorId,
     task_count: tasks.length,
+    output_path: portableRef(cwd, outputPath)
+  };
+}
+
+export async function preparePromotionTrialCandidateLicenseReviewWorksheet(
+  input: PreparePromotionTrialCandidateLicenseReviewWorksheetInput
+): Promise<PreparePromotionTrialCandidateLicenseReviewWorksheetResult> {
+  const cwd = path.resolve(input.cwd);
+  const handoffRoot = await resolveDirectoryInside(
+    cwd,
+    path.resolve(cwd, input.handoffRoot),
+    "Trial-candidate handoff"
+  );
+  if (!validId(input.reviewerId)) {
+    throw new Error("Trial-candidate license worksheet requires a portable pseudonymous reviewer ID.");
+  }
+  const outputPath = path.resolve(cwd, input.outputPath);
+  assertStrictlyInside(cwd, outputPath, "Trial-candidate license review worksheet output");
+  if (isSameOrContainedPath(handoffRoot, outputPath)) {
+    throw new Error("Trial-candidate license review worksheet output must stay outside the closed handoff.");
+  }
+  await prepareFreshFileOutputInside(
+    cwd,
+    outputPath,
+    "Trial-candidate license review worksheet output"
+  );
+
+  const { manifest } = await loadHandoffContract(handoffRoot);
+  const worksheet: PromotionTrialCandidateLicenseReviewWorksheet = {
+    schema_version: "1.0",
+    handoff_id: manifest.handoff_id,
+    reviewer_id: input.reviewerId,
+    label_source: "human",
+    review_role: "source_license",
+    independence_attestation: {
+      completed_by_human: false,
+      candidate_annotations_unseen: false,
+      controller_map_unseen: false
+    },
+    review: {
+      status: null,
+      evidence_refs: [],
+      rationale: ""
+    }
+  };
+  await writeJsonFile(outputPath, worksheet);
+  return {
+    handoff_id: manifest.handoff_id,
+    reviewer_id: input.reviewerId,
     output_path: portableRef(cwd, outputPath)
   };
 }

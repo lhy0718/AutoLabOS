@@ -19,6 +19,7 @@ import {
   adjudicatePromotionTrialCandidateReview,
   inspectPromotionTrialCandidateReviewAdjudication,
   preparePromotionTrialCandidateAnnotationWorksheet,
+  preparePromotionTrialCandidateLicenseReviewWorksheet,
   preflightPromotionTrialCandidateAnnotation
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
@@ -29,6 +30,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
   PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
+  parsePromotionTrialCandidateLicenseReviewSet,
   type PromotionTrialCandidateHumanLabel,
   type PromotionTrialCandidateInitialAnnotationSet,
   type PromotionTrialCandidateLicenseReviewSet
@@ -388,6 +390,30 @@ describe("promotion trial-candidate handoff", () => {
     expect(preflight.report.passed).toBe(false);
     expect(preflight.report.validation_issues.map((issue) => issue.code)).toContain(
       "trial_candidate_annotation_file_invalid"
+    );
+  });
+
+  it("prepares an undecided source-license worksheet that cannot pass human review parsing", async () => {
+    const result = await preparePromotionTrialCandidateLicenseReviewWorksheet({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      reviewerId: "license-reviewer-worksheet",
+      outputPath: "reviews/license/license-review.json"
+    });
+    const worksheet = JSON.parse(await readFile(
+      path.join(workspace, result.output_path),
+      "utf8"
+    )) as Record<string, any>;
+
+    expect(result).toMatchObject({ reviewer_id: "license-reviewer-worksheet" });
+    expect(worksheet.independence_attestation).toEqual({
+      completed_by_human: false,
+      candidate_annotations_unseen: false,
+      controller_map_unseen: false
+    });
+    expect(worksheet.review).toEqual({ status: null, evidence_refs: [], rationale: "" });
+    expect(() => parsePromotionTrialCandidateLicenseReviewSet(worksheet)).toThrow(
+      "Trial-candidate source-license review set is invalid."
     );
   });
 

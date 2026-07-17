@@ -705,6 +705,21 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports unreviewed trial-candidate source-license worksheet preparation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-license-worksheet",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--reviewer-id", "license-reviewer-alpha",
+      "--output", "reviews/license-review.json"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-trial-candidate-license-worksheet",
+      handoffRoot: "outputs/candidate-handoff",
+      reviewerId: "license-reviewer-alpha",
+      outputPath: "reviews/license-review.json"
+    });
+  });
+
   it("supports trial-candidate human annotation preflight and adjudication", () => {
     expect(resolveCliAction([
       "governance-benchmark",
