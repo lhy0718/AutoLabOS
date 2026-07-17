@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-15
+Last updated: 2026-07-17
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,51 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-611
+
+- Status: resolved; focused and full regressions, build, harness, and same-flow Parquet export pass
+- Validation target: long-running CLI operations must keep the Node process alive until promise-only source adapters finish and the command emits its final artifacts or error.
+- Environment/session context: direct `tsx` execution of the public trial-candidate export against a hash-bound local Parquet source; no source row or generated artifact was manually altered.
+- Reproduction steps:
+  1. Invoke `governance-benchmark export-promotion-trial-candidates` with a valid portable recipe, local Parquet source root, and new output directory.
+  2. Let the command enter asynchronous row discovery and materialization.
+  3. Observe the process lifetime, exit code, stdout, and output directory.
+- Expected behavior:
+  - The process remains alive until export and inspection complete.
+  - Success prints the handoff paths and counts; failure prints a bounded fatal error and returns a nonzero exit status.
+- Actual behavior:
+  - The direct CLI exited with code zero before the pending promise completed, printed no result, and created no complete handoff.
+  - Calling the same exporter under a temporary referenced timer completed normally, isolating the defect to process-lifetime ownership at the CLI entrypoint.
+- Fresh vs existing session comparison:
+  - Fresh session: direct source CLI invocation reproduced the silent early exit.
+  - Existing session: the same source and recipe completed under a temporary runner that explicitly held a referenced event-loop handle.
+  - Divergence: no persisted-state divergence was involved; the runtime differed only in process-lifetime ownership.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: `main().catch(...)` did not own a referenced Node handle while a supported promise-only adapter was pending, so Node could exit before the promise settled.
+- Code/test changes:
+  - Added `runWithProcessLifetime(...)` to hold one referenced timer for the duration of CLI work and release it on both resolution and rejection.
+  - Routed the main CLI through the lifecycle wrapper without changing command behavior.
+  - Generalized the handoff evidence-boundary output so it covers both single-group and paired-group recipes.
+  - Added focused timer-release regressions for successful and failed asynchronous work.
+- Regression status:
+  - CLI lifecycle and handoff tests: 27/27 pass on 2026-07-17.
+  - TypeScript validation: pass on 2026-07-17.
+  - Production build and harness validation: pass on 2026-07-17.
+  - Full repository suite: 213 files and 2860 tests pass; web 14/14 pass on 2026-07-17.
+  - Same-flow CLI revalidation: pass with 72 bases and 432 trial artifacts on 2026-07-17.
+  - Determinism check: the initial and direct-CLI reruns have identical recipe and reviewer-tree hashes, 380 redactions, one privacy-unsafe base exclusion, and zero inspector issues.
+- Follow-up risks:
+  - Every CLI completion path must release the referenced timer so short commands terminate normally.
+  - Source adapters must still fail closed on integrity, privacy, or output-inspection errors; process-lifetime ownership must not convert failures into success.
+- Evidence/artifacts:
+  - `src/cli/processLifetime.ts`
+  - `tests/cliProcessLifetime.test.ts`
+  - `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`
+  - `<temporary-output>/trial-candidate-handoff.json`
 
 ---
 
@@ -13286,37 +13331,39 @@ Path placeholders:
 
 ## Issue: R-006
 
-- Status: in_progress; v9 trace floor is integrity-valid, while paired-comparison and canonical-curation contracts remain open
+- Status: in_progress; v10 trace and structural paired-comparison floors are integrity-valid, while human review and canonical curation remain open
 - Validation target: a confirmatory promotion benchmark must preserve source-native execution evidence while distinguishing it from curator-generated result tables, figures, claims, and readiness decisions.
-- Environment/session context: deterministic audit of the pinned v9 Parquet source and generated local candidate handoff; no human judgment, source row, outcome, or generated reviewer artifact was manually changed.
+- Environment/session context: deterministic audit of the pinned v10 Parquet source and generated local candidate handoff; no human judgment, source row, outcome, or generated reviewer artifact was manually changed.
 
 - Reproduction steps:
   1. Materialize the exact public source revision and verify the README and twelve Parquet SHA-256 values.
-  2. Export 72 outcome-blind task-level bases with three rows each and balanced operator selection.
-  3. Recount source-native task IDs independently of operator identity.
-  4. For each selected task, count operator groups that contain at least three source rows.
+  2. Export 72 outcome-blind task-level bases with two different operator groups and three rows per group.
+  3. Recount source-native task IDs, operator pairs, row locators, and hashes independently.
+  4. Verify balanced primary and comparator operator selection and opaque reviewer grouping.
   5. Compare the source fields with the paper-ready artifact surface required by confirmatory intake.
 
 - Expected behavior:
-  - Every selected base is a distinct source-native task and contains three hash-bound execution rows.
+  - Every selected base is a distinct source-native task and contains two different three-row, hash-bound execution groups.
   - Every clean comparison base has a source-grounded comparator with adequate repeated rows.
   - Source observations and curator-generated canonical artifacts use different provenance classes.
   - Missing paper figures, claim links, or readiness decisions cannot be described as source-native evidence.
 
 - Actual behavior:
-  - v9 contains 72 distinct task bases, 216 rows, 72 repository families, and three equally represented operators.
-  - Only 48 selected tasks expose a second operator group with at least three rows; 24 expose only the selected operator.
+  - v10 contains 72 distinct task bases, 432 rows, 72 repository families, and balanced 24/24/24 primary and comparator operator groups.
+  - Every selected task contains two different three-row operator groups; all 432 source paths, source-row hashes, and public trial IDs are distinct.
+  - One privacy-unsafe task was excluded in full and deterministically backfilled without using semantic outcomes or trace content for ranking; only the declared mechanical privacy projection inspected selected bytes.
+  - The reviewer packet contains two opaque three-row groups per task and zero exact controller-identity matches.
   - The source provides trajectories, outcomes, patches, and evaluation logs but no paper figure audit, claim-evidence map, or paper-readiness decision.
-  - The current source-normalization contract correctly rejects such sources, while no separate canonical-curation provenance contract exists yet.
+  - Structural pairing is complete, but no human comparability, license, canonical-curation, or confirmatory decision has been supplied.
 
 - Fresh vs existing session comparison:
-  - Fresh session: the v9 exact-revision export passes integrity inspection and the independent task-level recount.
+  - Fresh session: the v10 exact-revision export and direct CLI rerun pass integrity inspection and produce identical hashes.
   - Existing session: the historical v8 export is rejected by the strengthened inspector because operator-conditioned groups collapse to 37 tasks.
-  - Divergence: no refresh or resume divergence is involved; v9 resolves task-level scale but exposes the next paired-comparison and provenance boundary.
+  - Divergence: no refresh or resume divergence is involved; v10 resolves the structural paired-candidate floor and exposes the human-review and curation boundary.
 
 - Root cause hypothesis:
   - Type: `in_memory_projection_bug`
-  - Hypothesis: the current handoff projects one operator-conditioned three-row group per task, and the downstream contracts have no separate representation for source-grounded paired comparison versus benchmark-curated paper artifacts.
+  - Hypothesis: the prior handoff projected one operator-conditioned three-row group per task; the paired contract now separates two source groups from later benchmark-curated paper artifacts, while human review remains intentionally external.
 
 - Code/test changes:
   - Added global task-level uniqueness enforcement and controller-map inspection under R-005.
@@ -13324,13 +13371,16 @@ Path placeholders:
   - Added a hash-bound v9 source recipe and exact evidence record.
   - Compared five official source routes under one access, repeat, outcome, and redistribution rubric.
   - Defined separate `source_native`, `source_projected`, `benchmark_curated`, and `system_generated` provenance classes.
-  - Paired-comparator selection and canonical-curation provenance remain pending.
+  - Added outcome-blind paired-operator selection, six-trace opaque reviewer tasks, fail-closed privacy preflight with whole-task backfill, and paired handoff inspection.
+  - Separated source eligibility (execution completeness and comparability) from source-absent paper-artifact availability, and added semantic inspection for contradictory progression counts.
+  - Canonical-curation execution and independent human review remain pending.
 
 - Regression status:
-  - Targeted handoff regression: 24/24 passed on 2026-07-17.
+  - Targeted handoff regression: 25/25 passed on 2026-07-17.
   - Build: passed on 2026-07-17.
-  - v9 handoff inspection: passed with 72 distinct source-native bases and zero issues.
-  - Re-validation result: pending for the paired-comparator and curation contracts.
+  - v10 handoff inspection: passed with 72 distinct source-native bases, 432 unique rows, and zero issues.
+  - Same-flow CLI revalidation: passed with deterministic recipe and reviewer-tree hashes.
+  - Re-validation result: pending for independent human review and canonical curation.
 
 - Follow-up risks:
   - Treating a generated table, figure, claim, or readiness decision as source-native would invalidate the benchmark's evidence claims.
@@ -13340,10 +13390,12 @@ Path placeholders:
 - Evidence/artifacts:
   - `docs/research/evidence/promotion-trial-candidate-source-v9.json`
   - `docs/research/evidence/promotion-trial-candidate-handoff-v9.json`
+  - `docs/research/evidence/promotion-trial-candidate-source-v10.json`
+  - `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`
   - `docs/research/evidence/promotion-source-portfolio-v2.json`
   - `docs/research/promotion-benchmark-curation-boundary.md`
-  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/trial-candidate-handoff.json`
-  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v9/controller/trial-candidate-map.json`
+  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v10/trial-candidate-handoff.json`
+  - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v10/controller/trial-candidate-map.json`
 
 ---
 

@@ -531,7 +531,7 @@ export async function runPromotionTrialCandidateHandoffExportCli(
       `Portable source recipe: ${result.source_recipe_path}`,
       `Manifest: ${result.manifest_path}`,
       `Evidence summary: ${result.evidence_summary_path}`,
-      "Evidence boundary: revision-bound three-trial candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"
+      "Evidence boundary: revision-bound source-trace candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"
     ].join("\n") + "\n"
   );
 }
@@ -545,7 +545,8 @@ export async function runPromotionTrialCandidateAnnotationPreflightCli(
       `Promotion trial-candidate annotation preflight ${result.report.passed ? "passed" : "failed"}`,
       `Annotator: ${result.report.annotator_id || "unresolved"}`,
       `Coverage: ${result.report.annotation_count}/${result.report.task_count}`,
-      `All-positive candidates: ${result.report.positive_candidate_count}/${result.report.task_count}`,
+      `Source-eligible candidates: ${result.report.source_eligible_candidate_count}/${result.report.task_count}`,
+      `All-artifact-positive candidates: ${result.report.positive_candidate_count}/${result.report.task_count}`,
       `Report: ${result.report_path}`,
       `Summary: ${result.summary_path}`,
       "Evidence boundary: one candidate-review file only; no reviewer comparison, source-license assessment, or confirmatory admission"

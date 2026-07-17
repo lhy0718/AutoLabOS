@@ -14,6 +14,11 @@ export const PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS = [
   "claim_evidence_link_availability"
 ] as const;
 
+export const PROMOTION_TRIAL_CANDIDATE_SOURCE_ELIGIBILITY_OBSERVATIONS = [
+  "execution_trace_completeness",
+  "repeated_trial_comparability"
+] as const satisfies readonly PromotionTrialCandidateObservation[];
+
 export type PromotionTrialCandidateObservation =
   typeof PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS[number];
 
@@ -403,7 +408,30 @@ export function promotionTrialCandidateLicenseReviewSchema(): Record<string, unk
   };
 }
 
-export function promotionTrialCandidateReviewRubric(): string {
+export function promotionTrialCandidateReviewRubric(pairedOperator = false): string {
+  if (pairedOperator) {
+    return [
+      "# Paired Trial Candidate Review Rubric",
+      "",
+      "Use only the opaque reviewer artifacts. Do not inspect the controller map, source group labels, peer annotations, or downstream outcomes.",
+      "",
+      "Each candidate contains two opaque groups, `group-a` and `group-b`, with three traces in each group. The group names do not identify a source operator or preferred system.",
+      "",
+      "For every observation, record `positive` only when the trace artifacts contain direct evidence, `negative` when direct evidence shows the requirement is absent or violated, and `uncertain` when the packet cannot support either conclusion.",
+      "",
+      "- `execution_trace_completeness`: all six traces contain enough ordered execution evidence to audit the runs.",
+      "- `repeated_trial_comparability`: the three traces within each group and the two groups describe the same governed object under comparable conditions.",
+      "- `comparison_result_availability`: a machine-readable result explicitly compares the two groups or another declared baseline/comparator.",
+      "- `explicit_readiness_availability`: an explicit paper-readiness or blocked decision is present.",
+      "- `figure_audit_availability`: a source-grounded figure audit is present.",
+      "- `claim_evidence_link_availability`: explicit claim-to-evidence links are present.",
+      "",
+      "A positive completeness or comparability label must cite all six trial IDs. Every other positive label must cite at least one trial. Evidence references use trial IDs plus JSON Pointers; an empty pointer identifies the whole JSON document.",
+      "",
+      "The annotation file must be completed by a human without peer annotations or the controller map. Pseudonymous IDs and attestations support process checking but do not prove real-world identity or expertise.",
+      ""
+    ].join("\n");
+  }
   return [
     "# Trial Candidate Review Rubric",
     "",
@@ -425,7 +453,22 @@ export function promotionTrialCandidateReviewRubric(): string {
   ].join("\n");
 }
 
-export function promotionTrialCandidateReviewerGuide(): string {
+export function promotionTrialCandidateReviewerGuide(pairedOperator = false): string {
+  if (pairedOperator) {
+    return [
+      "# Paired Trial Candidate Review Guide",
+      "",
+      "Review only `candidate-tasks.jsonl`, the two JSON Schemas, `RUBRIC.md`, and the opaque artifacts in this directory.",
+      "Each candidate contains two anonymous source-operator groups with three revision-bound traces per group, selected before content inspection.",
+      "Use `trial_groups` to distinguish `group-a` from `group-b`; do not infer source identity, quality ordering, or preferred status from the group names.",
+      "Reviewer artifacts may replace private machine paths with `<private-path>`; raw and reviewer hashes remain separate in the controller manifest.",
+      "Create one JSON annotation set that validates against `annotation-schema.json`. Use one stable pseudonymous annotator ID across the file.",
+      "Record unavailable evidence as negative or uncertain according to the rubric. Do not infer completion, comparability, readiness, figure review, or claim links from filenames or task descriptions.",
+      "Do not read another reviewer's file before submitting the initial annotation set. A distinct resolver uses `resolution-schema.json` only after disagreements are identified.",
+      "This packet is a local paired-candidate triage handoff, not proof of independent stochastic repeats, a confirmatory benchmark, a license grant, or paper-readiness evidence.",
+      ""
+    ].join("\n");
+  }
   return [
     "# Trial Candidate Review Guide",
     "",

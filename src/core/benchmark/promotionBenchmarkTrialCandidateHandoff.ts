@@ -43,6 +43,7 @@ export const PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST = "reviewer-pack
 export const PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST = "license-packet-manifest.json";
 
 const TRIALS_PER_BASE = 3;
+const PAIRED_OPERATOR_GROUPS_PER_BASE = 2;
 const MAX_SELECTED_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const MAX_GIT_OUTPUT_BYTES = 256 * 1024 * 1024;
 const PROCESS_TIMEOUT_MS = 300_000;
@@ -90,6 +91,15 @@ export interface PromotionTrialCandidateRecord {
     privacy_redaction_count: number;
     artifact_path: string;
   }>;
+  comparator_operator_group_id_sha256?: string;
+  comparator_trials?: Array<{
+    trial_id: string;
+    source_ref_sha256: string;
+    source_blob_sha256: string;
+    reviewer_blob_sha256: string;
+    privacy_redaction_count: number;
+    artifact_path: string;
+  }>;
 }
 
 export interface PromotionTrialCandidateHandoffManifest {
@@ -107,6 +117,8 @@ export interface PromotionTrialCandidateHandoffManifest {
   empty_blob_exclusion_count: number;
   duplicate_blob_exclusion_count: number;
   unique_eligible_trial_artifact_count: number;
+  privacy_preflight_applied?: true;
+  privacy_unsafe_base_exclusion_count?: number;
   required_base_candidate_count: number;
   base_candidate_count: number;
   trials_per_base: number;
@@ -115,6 +127,12 @@ export interface PromotionTrialCandidateHandoffManifest {
   operator_group_count: number;
   largest_source_family_share: number;
   largest_operator_group_share: number;
+  comparison_mode?: "paired_operator";
+  operator_groups_per_base?: 2;
+  trials_per_operator_group?: 3;
+  comparator_operator_group_count?: number;
+  largest_comparator_operator_group_share?: number;
+  paired_comparison_floor_met?: boolean;
   paper_scale_trace_floor_met: boolean;
   privacy_projection_applied: boolean;
   privacy_redaction_count: number;
@@ -145,8 +163,11 @@ export interface PromotionTrialCandidateReviewerPacketManifest {
   packet_role: "initial_candidate_review";
   handoff_id: string;
   candidate_count: number;
-  trials_per_candidate: 3;
+  trials_per_candidate: number;
   trial_artifact_count: number;
+  comparison_mode?: "paired_operator";
+  groups_per_candidate?: 2;
+  trials_per_group?: 3;
   files: Array<{ path: string; sha256: string }>;
   evidence_boundary: string;
 }
@@ -183,6 +204,8 @@ export interface PromotionTrialCandidateEvidenceSummary {
   empty_blob_exclusion_count: number;
   duplicate_blob_exclusion_count: number;
   unique_eligible_trial_artifact_count: number;
+  privacy_preflight_applied?: true;
+  privacy_unsafe_base_exclusion_count?: number;
   required_base_candidate_count: number;
   base_candidate_count: number;
   trials_per_base: number;
@@ -191,6 +214,12 @@ export interface PromotionTrialCandidateEvidenceSummary {
   operator_group_count: number;
   largest_source_family_share: number;
   largest_operator_group_share: number;
+  comparison_mode?: "paired_operator";
+  operator_groups_per_base?: 2;
+  trials_per_operator_group?: 3;
+  comparator_operator_group_count?: number;
+  largest_comparator_operator_group_share?: number;
+  paired_comparison_floor_met?: boolean;
   privacy_projection_applied: boolean;
   privacy_redaction_count: number;
   reviewer_artifact_tree_sha256: string;
@@ -214,6 +243,13 @@ interface PromotionTrialCandidateRecipeCommon {
   selection_policy: string;
   materialization_mode: PromotionTrialCandidateMaterialization;
   license_evidence: Array<{ path: string; sha256: string }>;
+  comparison_policy?: PromotionTrialCandidateComparisonPolicy;
+}
+
+interface PromotionTrialCandidateComparisonPolicy {
+  mode: "paired_operator";
+  groups_per_base: 2;
+  trials_per_group: 3;
 }
 
 interface PromotionTrialCandidateGitRecipe extends PromotionTrialCandidateRecipeCommon {
@@ -267,6 +303,10 @@ interface PlannedBase {
   base_group: string;
   identity_sha256: string;
   trials: SourceTrialCandidate[];
+  comparator?: {
+    operator_group: string;
+    trials: SourceTrialCandidate[];
+  };
 }
 
 interface CandidateDiscovery {
@@ -279,6 +319,7 @@ interface CandidateSelection {
   bases: PlannedBase[];
   duplicateBlobExclusionCount: number;
   uniqueEligibleTrialArtifactCount: number;
+  privacyUnsafeBaseExclusionCount: number;
 }
 
 interface ControllerMap {
@@ -292,6 +333,14 @@ interface ControllerMap {
     operator_group: string;
     base_group: string;
     trials: Array<{
+      trial_id: string;
+      source_trial: string;
+      source_path: string;
+      source_ref_id: string;
+      source_ref_algorithm: "git_blob_sha1" | "parquet_row_sha256";
+    }>;
+    comparator_operator_group?: string;
+    comparator_trials?: Array<{
       trial_id: string;
       source_trial: string;
       source_path: string;
@@ -320,13 +369,26 @@ export async function exportPromotionTrialCandidateHandoff(
   const sourceRoot = path.resolve(cwd, input.sourceRoot);
   await assertSourceRoot(sourceRoot, recipe);
   const discovery = await discoverCandidates(sourceRoot, recipe);
-  const selection = selectBalancedBases(discovery.candidates, recipe.required_base_count);
+  const selection = await selectPrivacySafeBalancedBases(
+    sourceRoot,
+    recipe,
+    discovery.candidates,
+    recipe.required_base_count
+  );
   const selected = selection.bases;
   const diversity = summarizeDiversity(selected);
+  const pairedComparison = recipe.comparison_policy !== undefined;
+  const comparatorDiversity = summarizeComparatorDiversity(selected);
+  const selectedTrialArtifactCount = selected.reduce(
+    (sum, base) => sum + base.trials.length + (base.comparator?.trials.length || 0),
+    0
+  );
   if (diversity.sourceFamilyCount < MINIMUM_PROMOTION_SOURCE_FAMILIES
       || diversity.operatorGroupCount < MINIMUM_PROMOTION_OPERATOR_GROUPS
       || diversity.largestSourceFamilyShare > MAXIMUM_PROMOTION_GROUP_SHARE
-      || diversity.largestOperatorGroupShare > MAXIMUM_PROMOTION_GROUP_SHARE) {
+      || diversity.largestOperatorGroupShare > MAXIMUM_PROMOTION_GROUP_SHARE
+      || (pairedComparison && (comparatorDiversity.operatorGroupCount < MINIMUM_PROMOTION_OPERATOR_GROUPS
+        || comparatorDiversity.largestOperatorGroupShare > MAXIMUM_PROMOTION_GROUP_SHARE))) {
     throw new Error("Selected trial candidates do not satisfy the source/operator diversity contract.");
   }
 
@@ -342,7 +404,10 @@ export async function exportPromotionTrialCandidateHandoff(
     await materializeSelectedArtifacts(
       sourceRoot,
       recipe,
-      selected.flatMap((base) => base.trials),
+      selected.flatMap((base) => [
+        ...base.trials,
+        ...(base.comparator?.trials || [])
+      ]),
       sourceArchiveRoot,
       input.fetchImpl || fetch
     );
@@ -351,7 +416,7 @@ export async function exportPromotionTrialCandidateHandoff(
     await fs.mkdir(path.join(reviewerRoot, "artifacts"), { recursive: true });
     await fs.writeFile(
       path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_GUIDE),
-      promotionTrialCandidateReviewerGuide(),
+      promotionTrialCandidateReviewerGuide(pairedComparison),
       "utf8"
     );
     await writeJsonFile(
@@ -364,7 +429,7 @@ export async function exportPromotionTrialCandidateHandoff(
     );
     await fs.writeFile(
       path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_RUBRIC),
-      promotionTrialCandidateReviewRubric(),
+      promotionTrialCandidateReviewRubric(pairedComparison),
       "utf8"
     );
     await writeJsonFile(
@@ -405,45 +470,60 @@ export async function exportPromotionTrialCandidateHandoff(
 
     for (const base of selected) {
       const candidateId = `candidate-${base.identity_sha256.slice(0, 24)}`;
-      const publicTrials: PromotionTrialCandidateRecord["trials"] = [];
-      const controllerTrials: ControllerMap["candidates"][number]["trials"] = [];
-      for (const trial of base.trials) {
-        const materialized = await readMaterializedTrial(sourceArchiveRoot, trial);
-        const bytes = materialized.sourceBytes;
-        try {
-          JSON.parse(bytes.toString("utf8"));
-        } catch {
-          throw new Error(`Selected trial artifact is not valid JSON: ${trial.source_path}`);
+      const publicTrialGroups: PromotionTrialCandidateRecord["trials"][] = [];
+      const controllerTrialGroups: ControllerMap["candidates"][number]["trials"][] = [];
+      const sourceTrialGroups = [
+        base.trials,
+        ...(base.comparator ? [base.comparator.trials] : [])
+      ];
+      for (const sourceTrials of sourceTrialGroups) {
+        const publicTrials: PromotionTrialCandidateRecord["trials"] = [];
+        const controllerTrials: ControllerMap["candidates"][number]["trials"] = [];
+        for (const trial of sourceTrials) {
+          const materialized = await readMaterializedTrial(sourceArchiveRoot, trial);
+          const bytes = materialized.sourceBytes;
+          try {
+            JSON.parse(bytes.toString("utf8"));
+          } catch {
+            throw new Error(`Selected trial artifact is not valid JSON: ${trial.source_path}`);
+          }
+          const reviewerArtifact = projectPromotionReviewerArtifact(
+            trial.source_path,
+            materialized.reviewerInputBytes
+          );
+          const trialPrivacyRedactionCount = (trial.reviewer_privacy_redaction_count || 0)
+            + reviewerArtifact.privacy_redaction_count;
+          privacyRedactionCount += trialPrivacyRedactionCount;
+          const trialId = `trial-${sha256Text(trial.source_path).slice(0, 16)}`;
+          const artifactPath = `reviewer/artifacts/${candidateId}/${trialId}/trace.json`;
+          const target = path.join(stagingRoot, artifactPath);
+          await fs.mkdir(path.dirname(target), { recursive: true });
+          await fs.writeFile(target, reviewerArtifact.bytes);
+          publicTrials.push({
+            trial_id: trialId,
+            source_ref_sha256: sha256Text(trial.source_path),
+            source_blob_sha256: sha256(bytes),
+            reviewer_blob_sha256: sha256(reviewerArtifact.bytes),
+            privacy_redaction_count: trialPrivacyRedactionCount,
+            artifact_path: artifactPath.replace(/^reviewer\//u, "")
+          });
+          controllerTrials.push({
+            trial_id: trialId,
+            source_trial: trial.trial,
+            source_path: trial.source_path,
+            source_ref_id: trial.source_ref_id,
+            source_ref_algorithm: trial.source_ref_algorithm
+          });
         }
-        const reviewerArtifact = projectPromotionReviewerArtifact(
-          trial.source_path,
-          materialized.reviewerInputBytes
-        );
-        const trialPrivacyRedactionCount = (trial.reviewer_privacy_redaction_count || 0)
-          + reviewerArtifact.privacy_redaction_count;
-        privacyRedactionCount += trialPrivacyRedactionCount;
-        const trialId = `trial-${sha256Text(trial.source_path).slice(0, 16)}`;
-        const artifactPath = `reviewer/artifacts/${candidateId}/${trialId}/trace.json`;
-        const target = path.join(stagingRoot, artifactPath);
-        await fs.mkdir(path.dirname(target), { recursive: true });
-        await fs.writeFile(target, reviewerArtifact.bytes);
-        publicTrials.push({
-          trial_id: trialId,
-          source_ref_sha256: sha256Text(trial.source_path),
-          source_blob_sha256: sha256(bytes),
-          reviewer_blob_sha256: sha256(reviewerArtifact.bytes),
-          privacy_redaction_count: trialPrivacyRedactionCount,
-          artifact_path: artifactPath.replace(/^reviewer\//u, "")
-        });
-        controllerTrials.push({
-          trial_id: trialId,
-          source_trial: trial.trial,
-          source_path: trial.source_path,
-          source_ref_id: trial.source_ref_id,
-          source_ref_algorithm: trial.source_ref_algorithm
-        });
+        publicTrialGroups.push(publicTrials);
+        controllerTrialGroups.push(controllerTrials);
       }
-      const baseCandidateSha256 = sha256Text(publicTrials
+      const publicTrials = publicTrialGroups[0];
+      const comparatorPublicTrials = publicTrialGroups[1];
+      const controllerTrials = controllerTrialGroups[0];
+      const comparatorControllerTrials = controllerTrialGroups[1];
+      const allPublicTrials = publicTrialGroups.flat();
+      const baseCandidateSha256 = sha256Text(allPublicTrials
         .map((trial) => `${trial.source_ref_sha256}:${trial.source_blob_sha256}`)
         .sort()
         .join("\n"));
@@ -452,22 +532,46 @@ export async function exportPromotionTrialCandidateHandoff(
         base_candidate_sha256: baseCandidateSha256,
         source_family_id_sha256: sha256Text(base.source_family),
         operator_group_id_sha256: sha256Text(base.operator_group),
-        trials: publicTrials
+        trials: publicTrials,
+        ...(base.comparator && comparatorPublicTrials
+          ? {
+              comparator_operator_group_id_sha256: sha256Text(base.comparator.operator_group),
+              comparator_trials: comparatorPublicTrials
+            }
+          : {})
       });
       controllerCandidates.push({
         candidate_id: candidateId,
         source_family: base.source_family,
         operator_group: base.operator_group,
         base_group: base.base_group,
-        trials: controllerTrials
+        trials: controllerTrials,
+        ...(base.comparator && comparatorControllerTrials
+          ? {
+              comparator_operator_group: base.comparator.operator_group,
+              comparator_trials: comparatorControllerTrials
+            }
+          : {})
       });
-      taskLines.push(JSON.stringify({
-        schema_version: "1.0",
-        candidate_id: candidateId,
-        artifact_root: `artifacts/${candidateId}`,
-        trial_ids: publicTrials.map((trial) => trial.trial_id),
-        required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
-      }));
+      taskLines.push(JSON.stringify(base.comparator && comparatorPublicTrials
+        ? {
+            schema_version: "1.1",
+            candidate_id: candidateId,
+            artifact_root: `artifacts/${candidateId}`,
+            trial_ids: allPublicTrials.map((trial) => trial.trial_id),
+            trial_groups: [
+              { group_id: "group-a", trial_ids: publicTrials.map((trial) => trial.trial_id) },
+              { group_id: "group-b", trial_ids: comparatorPublicTrials.map((trial) => trial.trial_id) }
+            ],
+            required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
+          }
+        : {
+            schema_version: "1.0",
+            candidate_id: candidateId,
+            artifact_root: `artifacts/${candidateId}`,
+            trial_ids: publicTrials.map((trial) => trial.trial_id),
+            required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
+          }));
     }
     await fs.rm(sourceArchiveRoot, { recursive: true, force: true });
     await fs.writeFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_TASKS), `${taskLines.join("\n")}\n`, "utf8");
@@ -477,8 +581,17 @@ export async function exportPromotionTrialCandidateHandoff(
       packet_role: "initial_candidate_review",
       handoff_id: recipe.handoff_id,
       candidate_count: publicCandidates.length,
-      trials_per_candidate: TRIALS_PER_BASE,
-      trial_artifact_count: publicCandidates.length * TRIALS_PER_BASE,
+      trials_per_candidate: pairedComparison
+        ? TRIALS_PER_BASE * PAIRED_OPERATOR_GROUPS_PER_BASE
+        : TRIALS_PER_BASE,
+      trial_artifact_count: selectedTrialArtifactCount,
+      ...(pairedComparison
+        ? {
+            comparison_mode: "paired_operator" as const,
+            groups_per_candidate: PAIRED_OPERATOR_GROUPS_PER_BASE as 2,
+            trials_per_group: TRIALS_PER_BASE as 3
+          }
+        : {}),
       files: await inventoryOutputs(reviewerRoot),
       evidence_boundary: "This self-contained packet binds only opaque candidate-review tasks, runtime review contracts, and privacy-projected artifacts. It contains no source URL, source revision, source/operator grouping, controller map, peer annotation, license decision, confirmatory admission, or paper-readiness evidence."
     };
@@ -523,14 +636,31 @@ export async function exportPromotionTrialCandidateHandoff(
       empty_blob_exclusion_count: discovery.emptyBlobExclusionCount,
       duplicate_blob_exclusion_count: selection.duplicateBlobExclusionCount,
       unique_eligible_trial_artifact_count: selection.uniqueEligibleTrialArtifactCount,
+      ...(recipe.materialization_mode === "huggingface_parquet"
+        ? {
+            privacy_preflight_applied: true as const,
+            privacy_unsafe_base_exclusion_count: selection.privacyUnsafeBaseExclusionCount
+          }
+        : {}),
       required_base_candidate_count: recipe.required_base_count,
       base_candidate_count: publicCandidates.length,
       trials_per_base: recipe.trials_per_base,
-      trial_artifact_count: publicCandidates.length * recipe.trials_per_base,
+      trial_artifact_count: selectedTrialArtifactCount,
       source_family_count: diversity.sourceFamilyCount,
       operator_group_count: diversity.operatorGroupCount,
       largest_source_family_share: diversity.largestSourceFamilyShare,
       largest_operator_group_share: diversity.largestOperatorGroupShare,
+      ...(pairedComparison
+        ? {
+            comparison_mode: "paired_operator" as const,
+            operator_groups_per_base: PAIRED_OPERATOR_GROUPS_PER_BASE as 2,
+            trials_per_operator_group: TRIALS_PER_BASE as 3,
+            comparator_operator_group_count: comparatorDiversity.operatorGroupCount,
+            largest_comparator_operator_group_share: comparatorDiversity.largestOperatorGroupShare,
+            paired_comparison_floor_met: selected.length
+              >= MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
+          }
+        : {}),
       privacy_projection_applied: privacyRedactionCount > 0,
       privacy_redaction_count: privacyRedactionCount,
       reviewer_artifact_tree_sha256: reviewerArtifactTreeSha256,
@@ -541,12 +671,15 @@ export async function exportPromotionTrialCandidateHandoff(
       confirmatory_admitted: false,
       remaining_blockers: [
         "human_license_review",
+        "underlying_source_terms_review",
         "independent_double_candidate_review",
-        "comparison_result_verification",
-        "readiness_figure_and_claim_link_review",
+        "human_trial_comparability_review",
+        "canonical_curation_provenance",
         "confirmatory_intake_freeze"
       ],
-      evidence_boundary: "This generated summary establishes only a revision-bound, privacy-projected, three-trial candidate handoff. It is not a redistributable corpus, a human annotation result, a confirmatory admission, or paper-readiness evidence."
+      evidence_boundary: pairedComparison
+        ? "This generated summary establishes only a revision-bound, privacy-projected candidate handoff with two opaque source operator groups and three trials per group. It is not a redistributable corpus, proof of independent stochastic repeats, a human annotation result, a confirmatory admission, or paper-readiness evidence."
+        : "This generated summary establishes only a revision-bound, privacy-projected, three-trial candidate handoff. It is not a redistributable corpus, a human annotation result, a confirmatory admission, or paper-readiness evidence."
     };
     await writeJsonFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_EVIDENCE_SUMMARY), evidenceSummary);
     const outputs = await inventoryOutputs(stagingRoot);
@@ -565,14 +698,31 @@ export async function exportPromotionTrialCandidateHandoff(
       empty_blob_exclusion_count: discovery.emptyBlobExclusionCount,
       duplicate_blob_exclusion_count: selection.duplicateBlobExclusionCount,
       unique_eligible_trial_artifact_count: selection.uniqueEligibleTrialArtifactCount,
+      ...(recipe.materialization_mode === "huggingface_parquet"
+        ? {
+            privacy_preflight_applied: true as const,
+            privacy_unsafe_base_exclusion_count: selection.privacyUnsafeBaseExclusionCount
+          }
+        : {}),
       required_base_candidate_count: recipe.required_base_count,
       base_candidate_count: publicCandidates.length,
       trials_per_base: recipe.trials_per_base,
-      trial_artifact_count: publicCandidates.length * recipe.trials_per_base,
+      trial_artifact_count: selectedTrialArtifactCount,
       source_family_count: diversity.sourceFamilyCount,
       operator_group_count: diversity.operatorGroupCount,
       largest_source_family_share: diversity.largestSourceFamilyShare,
       largest_operator_group_share: diversity.largestOperatorGroupShare,
+      ...(pairedComparison
+        ? {
+            comparison_mode: "paired_operator" as const,
+            operator_groups_per_base: PAIRED_OPERATOR_GROUPS_PER_BASE as 2,
+            trials_per_operator_group: TRIALS_PER_BASE as 3,
+            comparator_operator_group_count: comparatorDiversity.operatorGroupCount,
+            largest_comparator_operator_group_share: comparatorDiversity.largestOperatorGroupShare,
+            paired_comparison_floor_met: selected.length
+              >= MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
+          }
+        : {}),
       paper_scale_trace_floor_met: publicCandidates.length >= MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       privacy_projection_applied: privacyRedactionCount > 0,
       privacy_redaction_count: privacyRedactionCount,
@@ -583,7 +733,9 @@ export async function exportPromotionTrialCandidateHandoff(
       distribution_scope: "local_evaluation_only",
       source_license_status: "unreviewed",
       confirmatory_admitted: false,
-      evidence_boundary: "This handoff binds three source-revision trial artifacts per candidate after outcome-blind selection. Git bytes are verified against object IDs; Parquet row locators are anchored to verified file hashes and materialized through the declared deterministic privacy projection. Credential-like content fails closed unless the recipe explicitly selects value redaction, private machine paths are always replaced, and source/reviewer hashes remain separate. This establishes a trace-candidate floor only, not comparable results, paper readiness, licensing, human annotation, operator independence, or confirmatory admission."
+      evidence_boundary: pairedComparison
+        ? "This handoff binds two different source operator groups with three source-revision trial artifacts per group after outcome-blind selection. Git bytes are verified against object IDs; Parquet row locators are anchored to verified file hashes and materialized through the declared deterministic privacy projection. Credential-like content fails closed unless the recipe explicitly selects value redaction, private machine paths are always replaced, and source/reviewer hashes remain separate. This establishes a paired trace-candidate floor only, not independent stochastic sampling, verified comparable results, paper readiness, licensing, human annotation, or confirmatory admission."
+        : "This handoff binds three source-revision trial artifacts per candidate after outcome-blind selection. Git bytes are verified against object IDs; Parquet row locators are anchored to verified file hashes and materialized through the declared deterministic privacy projection. Credential-like content fails closed unless the recipe explicitly selects value redaction, private machine paths are always replaced, and source/reviewer hashes remain separate. This establishes a trace-candidate floor only, not comparable results, paper readiness, licensing, human annotation, operator independence, or confirmatory admission."
     };
     await writeJsonFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST), manifest);
     const inspection = await inspectPromotionTrialCandidateHandoff(stagingRoot);
@@ -600,7 +752,7 @@ export async function exportPromotionTrialCandidateHandoff(
   return {
     handoff_id: recipe.handoff_id,
     base_candidate_count: selected.length,
-    trial_artifact_count: selected.length * recipe.trials_per_base,
+    trial_artifact_count: selectedTrialArtifactCount,
     output_dir: portableRef(cwd, outDir),
     reviewer_dir: portableRef(cwd, path.join(outDir, "reviewer")),
     license_reviewer_dir: portableRef(cwd, path.join(outDir, "license")),
@@ -663,7 +815,9 @@ export async function inspectPromotionTrialCandidateHandoff(
         || recipe.selection_policy !== manifest.selection_policy
         || recipe.materialization_mode !== manifest.source_materialization
         || recipe.required_base_count !== manifest.required_base_candidate_count
-        || recipe.trials_per_base !== manifest.trials_per_base) throw new Error("mismatch");
+        || recipe.trials_per_base !== manifest.trials_per_base
+        || Boolean(recipe.comparison_policy)
+          !== (manifest.comparison_mode === "paired_operator")) throw new Error("mismatch");
   } catch {
     issues.push({
       code: "trial_candidate_handoff_source_recipe_invalid",
@@ -672,7 +826,8 @@ export async function inspectPromotionTrialCandidateHandoff(
     });
   }
   if (manifest.base_candidate_count !== manifest.candidates.length
-      || manifest.trial_artifact_count !== manifest.candidates.reduce((sum, candidate) => sum + candidate.trials.length, 0)) {
+      || manifest.trial_artifact_count !== manifest.candidates.reduce((sum, candidate) =>
+        sum + allPublicCandidateTrials(candidate).length, 0)) {
     issues.push({ code: "trial_candidate_handoff_count_mismatch", message: "Manifest candidate or trial counts are inconsistent." });
   }
   if (manifest.matched_trial_artifact_count !== manifest.empty_blob_exclusion_count
@@ -681,7 +836,8 @@ export async function inspectPromotionTrialCandidateHandoff(
     issues.push({ code: "trial_candidate_handoff_selection_accounting_invalid", message: "Structural exclusion and eligibility counts are inconsistent." });
   }
   const observedPrivacyRedactions = manifest.candidates.reduce((sum, candidate) =>
-    sum + candidate.trials.reduce((trialSum, trial) => trialSum + trial.privacy_redaction_count, 0), 0);
+    sum + allPublicCandidateTrials(candidate).reduce((trialSum, trial) =>
+      trialSum + trial.privacy_redaction_count, 0), 0);
   if (manifest.privacy_redaction_count !== observedPrivacyRedactions
       || manifest.privacy_projection_applied !== (observedPrivacyRedactions > 0)) {
     issues.push({ code: "trial_candidate_handoff_privacy_count_mismatch", message: "Manifest privacy projection accounting is inconsistent." });
@@ -710,7 +866,13 @@ export async function inspectPromotionTrialCandidateHandoff(
           || publicCandidate.source_family_id_sha256 !== sha256Text(candidate.source_family)
           || publicCandidate.operator_group_id_sha256 !== sha256Text(candidate.operator_group)
           || publicCandidate.trials.map((trial) => trial.trial_id).join("\0")
-            !== candidate.trials.map((trial) => trial.trial_id).join("\0")) {
+            !== candidate.trials.map((trial) => trial.trial_id).join("\0")
+          || publicCandidate.comparator_operator_group_id_sha256
+            !== (candidate.comparator_operator_group
+              ? sha256Text(candidate.comparator_operator_group)
+              : undefined)
+          || (publicCandidate.comparator_trials || []).map((trial) => trial.trial_id).join("\0")
+            !== (candidate.comparator_trials || []).map((trial) => trial.trial_id).join("\0")) {
         throw new Error("controller candidate mismatch");
       }
     }
@@ -730,6 +892,22 @@ export async function inspectPromotionTrialCandidateHandoff(
         message: "Candidates must represent globally distinct source-native bases after excluding operator identity."
       });
     }
+    if (manifest.comparison_mode === "paired_operator") {
+      const comparatorOperators = countLabels(controllerMap.candidates.map((candidate) =>
+        candidate.comparator_operator_group || ""));
+      const largestComparatorShare = Math.max(...comparatorOperators.values())
+        / controllerMap.candidates.length;
+      if (comparatorOperators.has("")
+          || comparatorOperators.size !== manifest.comparator_operator_group_count
+          || largestComparatorShare !== manifest.largest_comparator_operator_group_share
+          || manifest.paired_comparison_floor_met
+            !== (manifest.base_candidate_count >= MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES)) {
+        issues.push({
+          code: "trial_candidate_handoff_comparator_diversity_invalid",
+          message: "Paired comparator coverage, diversity, or floor accounting is inconsistent."
+        });
+      }
+    }
   }
   try {
     const tasks = parseReviewerTasks(await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_TASKS), "utf8"));
@@ -739,7 +917,10 @@ export async function inspectPromotionTrialCandidateHandoff(
       const task = taskById.get(candidate.candidate_id);
       if (!task
           || task.artifact_root !== `artifacts/${candidate.candidate_id}`
-          || task.trial_ids.join("\0") !== candidate.trials.map((trial) => trial.trial_id).join("\0")) {
+          || task.trial_ids.join("\0")
+            !== allPublicCandidateTrials(candidate).map((trial) => trial.trial_id).join("\0")
+          || Boolean(task.trial_groups)
+            !== (manifest.comparison_mode === "paired_operator")) {
         throw new Error("identity mismatch");
       }
     }
@@ -753,7 +934,18 @@ export async function inspectPromotionTrialCandidateHandoff(
     if (candidate.trials.length !== TRIALS_PER_BASE) {
       issues.push({ code: "trial_candidate_handoff_trial_count_invalid", message: "Every candidate requires exactly three trials.", ref: candidate.candidate_id });
     }
-    for (const trial of candidate.trials) {
+    if (manifest.comparison_mode === "paired_operator"
+        && candidate.comparator_trials?.length !== TRIALS_PER_BASE) {
+      issues.push({ code: "trial_candidate_handoff_comparator_trial_count_invalid", message: "Every paired candidate requires exactly three comparator trials.", ref: candidate.candidate_id });
+    }
+    const expectedBaseHash = sha256Text(allPublicCandidateTrials(candidate)
+      .map((trial) => `${trial.source_ref_sha256}:${trial.source_blob_sha256}`)
+      .sort()
+      .join("\n"));
+    if (expectedBaseHash !== candidate.base_candidate_sha256) {
+      issues.push({ code: "trial_candidate_handoff_base_hash_mismatch", message: "A candidate base hash does not bind all declared trial groups.", ref: candidate.candidate_id });
+    }
+    for (const trial of allPublicCandidateTrials(candidate)) {
       const artifactPath = `reviewer/${trial.artifact_path}`;
       const artifactHash = await hashContainedRegularFile(root, artifactPath).catch(() => null);
       if (artifactHash !== trial.reviewer_blob_sha256) {
@@ -788,7 +980,9 @@ export async function inspectPromotionTrialCandidateHandoff(
   } else if (reviewerPacketInspection.manifest
       && (reviewerPacketInspection.manifest.handoff_id !== manifest.handoff_id
         || reviewerPacketInspection.manifest.candidate_count !== manifest.base_candidate_count
-        || reviewerPacketInspection.manifest.trial_artifact_count !== manifest.trial_artifact_count)) {
+        || reviewerPacketInspection.manifest.trial_artifact_count !== manifest.trial_artifact_count
+        || (reviewerPacketInspection.manifest.comparison_mode === "paired_operator")
+          !== (manifest.comparison_mode === "paired_operator"))) {
     issues.push({
       code: "trial_candidate_handoff_reviewer_packet_identity_mismatch",
       message: "The self-contained reviewer packet does not describe the same handoff candidate set."
@@ -807,8 +1001,8 @@ export async function inspectPromotionTrialCandidateHandoff(
     const rubric = await fs.readFile(path.join(root, PROMOTION_TRIAL_CANDIDATE_RUBRIC), "utf8");
     if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
         || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
-        || guide !== promotionTrialCandidateReviewerGuide()
-        || rubric !== promotionTrialCandidateReviewRubric()) {
+        || guide !== promotionTrialCandidateReviewerGuide(manifest.comparison_mode === "paired_operator")
+        || rubric !== promotionTrialCandidateReviewRubric(manifest.comparison_mode === "paired_operator")) {
       throw new Error("mismatch");
     }
   } catch {
@@ -936,8 +1130,10 @@ export async function inspectPromotionTrialCandidateReviewerPacket(
     ), "utf8");
     if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
         || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
-        || guide !== promotionTrialCandidateReviewerGuide()
-        || rubric !== promotionTrialCandidateReviewRubric()) throw new Error("mismatch");
+        || guide !== promotionTrialCandidateReviewerGuide(manifest.comparison_mode === "paired_operator")
+        || rubric !== promotionTrialCandidateReviewRubric(manifest.comparison_mode === "paired_operator")) {
+      throw new Error("mismatch");
+    }
   } catch {
     issues.push({
       code: "trial_candidate_reviewer_packet_contract_invalid",
@@ -1044,7 +1240,10 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     license_evidence: value.license_evidence.map((item: Record<string, any>) => ({
       path: item.path as string,
       sha256: item.sha256 as string
-    }))
+    })),
+    ...(value.comparison_policy === undefined
+      ? {}
+      : { comparison_policy: parseComparisonPolicy(value.comparison_policy) })
   };
   if (value.materialization_mode === "huggingface_parquet") {
     const allowedKeys = new Set([
@@ -1053,7 +1252,7 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
       "selection_policy", "materialization_mode", "license_evidence",
       "parquet_sources", "columns", "json_columns", "reviewer_columns",
       "operator_pointer", "family_pointer", "family_value_transform", "base_pointer", "trial_pointer",
-      "credential_projection", "reviewer_identity_redactions"
+      "credential_projection", "reviewer_identity_redactions", "comparison_policy"
     ]);
     if (Object.keys(value).some((key) => !allowedKeys.has(key))
         || !validHuggingFaceDatasetUrl(value.source_url)
@@ -1107,7 +1306,7 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     "schema_version", "handoff_id", "source_url", "source_revision",
     "path_scope", "path_pattern", "required_base_count", "trials_per_base",
     "artifact_format", "selection_policy", "materialization_mode",
-    "artifact_url_template", "license_evidence"
+    "artifact_url_template", "license_evidence", "comparison_policy"
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key))
       || !safeRelativePath(value.path_scope)
@@ -1139,6 +1338,23 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     ...(materializationMode === "verified_https_blobs"
       ? { artifact_url_template: value.artifact_url_template as string }
       : {})
+  };
+}
+
+function parseComparisonPolicy(value: unknown): PromotionTrialCandidateComparisonPolicy {
+  if (!isRecord(value)
+      || Object.keys(value).sort().join("\0") !== [
+        "groups_per_base", "mode", "trials_per_group"
+      ].sort().join("\0")
+      || value.mode !== "paired_operator"
+      || value.groups_per_base !== PAIRED_OPERATOR_GROUPS_PER_BASE
+      || value.trials_per_group !== TRIALS_PER_BASE) {
+    throw new Error("Paired comparison policy requires two operator groups and three trials per group.");
+  }
+  return {
+    mode: "paired_operator",
+    groups_per_base: PAIRED_OPERATOR_GROUPS_PER_BASE,
+    trials_per_group: TRIALS_PER_BASE
   };
 }
 
@@ -1178,12 +1394,53 @@ function parseControllerMap(value: unknown): ControllerMap {
         || new Set(trials.map((trial) => trial.source_path)).size !== trials.length) {
       throw new Error(`Controller candidate trials must be unique: ${candidate.candidate_id}.`);
     }
+    const hasComparator = candidate.comparator_operator_group !== undefined
+      || candidate.comparator_trials !== undefined;
+    if (hasComparator && (!boundedLabel(candidate.comparator_operator_group)
+        || candidate.comparator_operator_group === candidate.operator_group
+        || !Array.isArray(candidate.comparator_trials)
+        || candidate.comparator_trials.length !== TRIALS_PER_BASE)) {
+      throw new Error(`Invalid controller comparator at candidate ${candidateIndex + 1}.`);
+    }
+    const comparatorTrials = hasComparator
+      ? candidate.comparator_trials!.map((trial: unknown, trialIndex: number) => {
+          if (!isRecord(trial) || !validId(trial.trial_id) || !boundedLabel(trial.source_trial)
+              || !nonEmptyString(trial.source_path) || trial.source_path.length > 4096
+              || trial.source_path.includes("\\") || !nonEmptyString(trial.source_ref_id)
+              || (trial.source_ref_algorithm !== "git_blob_sha1"
+                && trial.source_ref_algorithm !== "parquet_row_sha256")
+              || (trial.source_ref_algorithm === "git_blob_sha1" && !sha1String(trial.source_ref_id))
+              || (trial.source_ref_algorithm === "parquet_row_sha256" && !sha256String(trial.source_ref_id))) {
+            throw new Error(`Invalid controller comparator trial at candidate ${candidateIndex + 1}, trial ${trialIndex + 1}.`);
+          }
+          return {
+            trial_id: trial.trial_id,
+            source_trial: trial.source_trial,
+            source_path: trial.source_path,
+            source_ref_id: trial.source_ref_id,
+            source_ref_algorithm: trial.source_ref_algorithm
+          };
+        })
+      : [];
+    const allTrials = [...trials, ...comparatorTrials];
+    if (new Set(allTrials.map((trial) => trial.trial_id)).size !== allTrials.length
+        || new Set(allTrials.map((trial) => trial.source_path)).size !== allTrials.length
+        || new Set(allTrials.map((trial) =>
+          trial.source_ref_algorithm + ":" + trial.source_ref_id)).size !== allTrials.length) {
+      throw new Error(`Controller primary and comparator trials must be disjoint: ${candidate.candidate_id}.`);
+    }
     return {
       candidate_id: candidate.candidate_id,
       source_family: candidate.source_family,
       operator_group: candidate.operator_group,
       base_group: candidate.base_group,
-      trials
+      trials,
+      ...(hasComparator
+        ? {
+            comparator_operator_group: candidate.comparator_operator_group as string,
+            comparator_trials: comparatorTrials
+          }
+        : {})
     };
   });
   if (new Set(candidates.map((candidate) => candidate.candidate_id)).size !== candidates.length) {
@@ -1210,11 +1467,13 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
       || value.source_recipe_path !== PROMOTION_TRIAL_CANDIDATE_SOURCE_RECIPE
       || !nonNegativeInteger(value.empty_blob_exclusion_count) || !nonNegativeInteger(value.duplicate_blob_exclusion_count)
       || !nonNegativeInteger(value.unique_eligible_trial_artifact_count)
+      || !validPrivacyPreflightFields(value)
       || !Number.isSafeInteger(value.required_base_candidate_count)
       || !Number.isSafeInteger(value.base_candidate_count) || value.trials_per_base !== TRIALS_PER_BASE
       || !Number.isSafeInteger(value.trial_artifact_count) || !Number.isSafeInteger(value.source_family_count)
       || !Number.isSafeInteger(value.operator_group_count) || !unitInterval(value.largest_source_family_share)
       || !unitInterval(value.largest_operator_group_share) || typeof value.paper_scale_trace_floor_met !== "boolean"
+      || !validHandoffComparisonFields(value)
       || typeof value.privacy_projection_applied !== "boolean"
       || !nonNegativeInteger(value.privacy_redaction_count)
       || !sha256String(value.reviewer_artifact_tree_sha256)
@@ -1226,6 +1485,12 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
   }
   const candidates = value.candidates.map(parsePublicCandidate);
   const outputs = value.outputs.map(parseOutput);
+  const pairedComparison = value.comparison_mode === "paired_operator";
+  if (candidates.some((candidate) => Boolean(candidate.comparator_trials) !== pairedComparison)
+      || (pairedComparison && candidates.some((candidate) =>
+        candidate.comparator_operator_group_id_sha256 === candidate.operator_group_id_sha256))) {
+    throw new Error("Trial-candidate comparator coverage is inconsistent with the handoff mode.");
+  }
   return {
     schema_version: "1.0",
     handoff_id: value.handoff_id,
@@ -1241,6 +1506,12 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
     empty_blob_exclusion_count: value.empty_blob_exclusion_count,
     duplicate_blob_exclusion_count: value.duplicate_blob_exclusion_count,
     unique_eligible_trial_artifact_count: value.unique_eligible_trial_artifact_count,
+    ...(value.privacy_preflight_applied === true
+      ? {
+          privacy_preflight_applied: true as const,
+          privacy_unsafe_base_exclusion_count: value.privacy_unsafe_base_exclusion_count
+        }
+      : {}),
     required_base_candidate_count: value.required_base_candidate_count,
     base_candidate_count: value.base_candidate_count,
     trials_per_base: TRIALS_PER_BASE,
@@ -1249,6 +1520,16 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
     operator_group_count: value.operator_group_count,
     largest_source_family_share: value.largest_source_family_share,
     largest_operator_group_share: value.largest_operator_group_share,
+    ...(pairedComparison
+      ? {
+          comparison_mode: "paired_operator" as const,
+          operator_groups_per_base: PAIRED_OPERATOR_GROUPS_PER_BASE as 2,
+          trials_per_operator_group: TRIALS_PER_BASE as 3,
+          comparator_operator_group_count: value.comparator_operator_group_count,
+          largest_comparator_operator_group_share: value.largest_comparator_operator_group_share,
+          paired_comparison_floor_met: value.paired_comparison_floor_met
+        }
+      : {}),
     paper_scale_trace_floor_met: value.paper_scale_trace_floor_met,
     privacy_projection_applied: value.privacy_projection_applied,
     privacy_redaction_count: value.privacy_redaction_count,
@@ -1263,24 +1544,57 @@ function parseHandoffManifest(value: unknown): PromotionTrialCandidateHandoffMan
   };
 }
 
+function validHandoffComparisonFields(value: Record<string, any>): boolean {
+  const fields = [
+    value.comparison_mode,
+    value.operator_groups_per_base,
+    value.trials_per_operator_group,
+    value.comparator_operator_group_count,
+    value.largest_comparator_operator_group_share,
+    value.paired_comparison_floor_met
+  ];
+  if (fields.every((field) => field === undefined)) return true;
+  return value.comparison_mode === "paired_operator"
+    && value.operator_groups_per_base === PAIRED_OPERATOR_GROUPS_PER_BASE
+    && value.trials_per_operator_group === TRIALS_PER_BASE
+    && positiveInteger(value.comparator_operator_group_count)
+    && unitInterval(value.largest_comparator_operator_group_share)
+    && typeof value.paired_comparison_floor_met === "boolean";
+}
+
+function validPrivacyPreflightFields(value: Record<string, any>): boolean {
+  if (value.privacy_preflight_applied === undefined
+      && value.privacy_unsafe_base_exclusion_count === undefined) return true;
+  return value.privacy_preflight_applied === true
+    && nonNegativeInteger(value.privacy_unsafe_base_exclusion_count);
+}
+
 function parseReviewerPacketManifest(value: unknown): PromotionTrialCandidateReviewerPacketManifest {
+  const pairedComparison = isRecord(value) && value.comparison_mode === "paired_operator";
+  const expectedKeys = [
+    "candidate_count",
+    "evidence_boundary",
+    "files",
+    "handoff_id",
+    "packet_role",
+    "schema_version",
+    "trial_artifact_count",
+    "trials_per_candidate",
+    ...(pairedComparison ? ["comparison_mode", "groups_per_candidate", "trials_per_group"] : [])
+  ];
+  const expectedTrialsPerCandidate = pairedComparison
+    ? TRIALS_PER_BASE * PAIRED_OPERATOR_GROUPS_PER_BASE
+    : TRIALS_PER_BASE;
   if (!isRecord(value)
-      || Object.keys(value).sort().join("\0") !== [
-        "candidate_count",
-        "evidence_boundary",
-        "files",
-        "handoff_id",
-        "packet_role",
-        "schema_version",
-        "trial_artifact_count",
-        "trials_per_candidate"
-      ].sort().join("\0")
+      || Object.keys(value).sort().join("\0") !== expectedKeys.sort().join("\0")
       || value.schema_version !== "1.0"
       || value.packet_role !== "initial_candidate_review"
       || !validId(value.handoff_id)
       || !positiveInteger(value.candidate_count)
-      || value.trials_per_candidate !== TRIALS_PER_BASE
-      || value.trial_artifact_count !== value.candidate_count * TRIALS_PER_BASE
+      || value.trials_per_candidate !== expectedTrialsPerCandidate
+      || value.trial_artifact_count !== value.candidate_count * expectedTrialsPerCandidate
+      || (pairedComparison && (value.groups_per_candidate !== PAIRED_OPERATOR_GROUPS_PER_BASE
+        || value.trials_per_group !== TRIALS_PER_BASE))
       || !Array.isArray(value.files)
       || !nonEmptyString(value.evidence_boundary)) {
     throw new Error("Invalid trial-candidate reviewer packet manifest.");
@@ -1290,8 +1604,15 @@ function parseReviewerPacketManifest(value: unknown): PromotionTrialCandidateRev
     packet_role: "initial_candidate_review",
     handoff_id: value.handoff_id,
     candidate_count: value.candidate_count,
-    trials_per_candidate: TRIALS_PER_BASE,
+    trials_per_candidate: expectedTrialsPerCandidate,
     trial_artifact_count: value.trial_artifact_count,
+    ...(pairedComparison
+      ? {
+          comparison_mode: "paired_operator" as const,
+          groups_per_candidate: PAIRED_OPERATOR_GROUPS_PER_BASE as 2,
+          trials_per_group: TRIALS_PER_BASE as 3
+        }
+      : {}),
     files: parsePacketFiles(value.files, PROMOTION_TRIAL_CANDIDATE_REVIEWER_PACKET_MANIFEST),
     evidence_boundary: value.evidence_boundary
   };
@@ -1361,13 +1682,55 @@ function parsePublicCandidate(value: unknown, index: number): PromotionTrialCand
       artifact_path: trial.artifact_path
     };
   });
+  const hasComparator = value.comparator_operator_group_id_sha256 !== undefined
+    || value.comparator_trials !== undefined;
+  if (hasComparator && (!sha256String(value.comparator_operator_group_id_sha256)
+      || !Array.isArray(value.comparator_trials)
+      || value.comparator_trials.length !== TRIALS_PER_BASE)) {
+    throw new Error(`Invalid trial-candidate comparator at index ${index + 1}.`);
+  }
+  const comparatorTrials = hasComparator
+    ? value.comparator_trials!.map((trial: unknown, trialIndex: number) => {
+        if (!isRecord(trial) || !validId(trial.trial_id) || !sha256String(trial.source_ref_sha256)
+            || !sha256String(trial.source_blob_sha256) || !sha256String(trial.reviewer_blob_sha256)
+            || !nonNegativeInteger(trial.privacy_redaction_count) || !safeRelativePath(trial.artifact_path)) {
+          throw new Error(`Invalid trial-candidate comparator trial at index ${index + 1}:${trialIndex + 1}.`);
+        }
+        return {
+          trial_id: trial.trial_id,
+          source_ref_sha256: trial.source_ref_sha256,
+          source_blob_sha256: trial.source_blob_sha256,
+          reviewer_blob_sha256: trial.reviewer_blob_sha256,
+          privacy_redaction_count: trial.privacy_redaction_count,
+          artifact_path: trial.artifact_path
+        };
+      })
+    : [];
+  const allTrials = [...trials, ...comparatorTrials];
+  if (new Set(allTrials.map((trial) => trial.trial_id)).size !== allTrials.length
+      || new Set(allTrials.map((trial) => trial.source_ref_sha256)).size !== allTrials.length
+      || new Set(allTrials.map((trial) => trial.artifact_path)).size !== allTrials.length) {
+    throw new Error(`Trial-candidate primary and comparator records must be disjoint at index ${index + 1}.`);
+  }
   return {
     candidate_id: value.candidate_id,
     base_candidate_sha256: value.base_candidate_sha256,
     source_family_id_sha256: value.source_family_id_sha256,
     operator_group_id_sha256: value.operator_group_id_sha256,
-    trials
+    trials,
+    ...(hasComparator
+      ? {
+          comparator_operator_group_id_sha256: value.comparator_operator_group_id_sha256 as string,
+          comparator_trials: comparatorTrials
+        }
+      : {})
   };
+}
+
+function allPublicCandidateTrials(
+  candidate: PromotionTrialCandidateRecord
+): PromotionTrialCandidateRecord["trials"] {
+  return [...candidate.trials, ...(candidate.comparator_trials || [])];
 }
 
 function parseOutput(value: unknown, index: number): { path: string; sha256: string } {
@@ -1381,27 +1744,66 @@ function parseReviewerTasks(raw: string): Array<{
   candidate_id: string;
   artifact_root: string;
   trial_ids: string[];
+  trial_groups?: Array<{ group_id: "group-a" | "group-b"; trial_ids: string[] }>;
 }> {
   const tasks = raw.split(/\r?\n/gu).filter(Boolean).map((line, index) => {
     const value = JSON.parse(line) as unknown;
-    if (!isRecord(value) || value.schema_version !== "1.0" || !validId(value.candidate_id)
+    const pairedComparison = isRecord(value) && value.schema_version === "1.1";
+    const expectedTrialCount = pairedComparison
+      ? TRIALS_PER_BASE * PAIRED_OPERATOR_GROUPS_PER_BASE
+      : TRIALS_PER_BASE;
+    if (!isRecord(value) || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
+        || !validId(value.candidate_id)
         || value.artifact_root !== `artifacts/${value.candidate_id}`
-        || !Array.isArray(value.trial_ids) || value.trial_ids.length !== TRIALS_PER_BASE
-        || new Set(value.trial_ids).size !== TRIALS_PER_BASE || !value.trial_ids.every(validId)
+        || !Array.isArray(value.trial_ids) || value.trial_ids.length !== expectedTrialCount
+        || new Set(value.trial_ids).size !== expectedTrialCount || !value.trial_ids.every(validId)
         || !Array.isArray(value.required_observations)
         || value.required_observations.join("\0") !== PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.join("\0")) {
+      throw new Error(`Invalid reviewer task at line ${index + 1}.`);
+    }
+    const trialGroups = pairedComparison
+      ? parseReviewerTrialGroups(value.trial_groups, value.trial_ids)
+      : undefined;
+    if (!pairedComparison && value.trial_groups !== undefined) {
       throw new Error(`Invalid reviewer task at line ${index + 1}.`);
     }
     return {
       candidate_id: value.candidate_id,
       artifact_root: value.artifact_root,
-      trial_ids: value.trial_ids as string[]
+      trial_ids: value.trial_ids as string[],
+      ...(trialGroups ? { trial_groups: trialGroups } : {})
     };
   });
   if (tasks.length === 0 || new Set(tasks.map((task) => task.candidate_id)).size !== tasks.length) {
     throw new Error("Reviewer tasks must be non-empty and unique.");
   }
   return tasks;
+}
+
+function parseReviewerTrialGroups(
+  value: unknown,
+  trialIds: unknown[]
+): Array<{ group_id: "group-a" | "group-b"; trial_ids: string[] }> {
+  if (!Array.isArray(value) || value.length !== PAIRED_OPERATOR_GROUPS_PER_BASE) {
+    throw new Error("Paired reviewer tasks require exactly two trial groups.");
+  }
+  const groups = value.map((group, index) => {
+    const expectedGroupId: "group-a" | "group-b" = index === 0 ? "group-a" : "group-b";
+    if (!isRecord(group) || group.group_id !== expectedGroupId
+        || !Array.isArray(group.trial_ids) || group.trial_ids.length !== TRIALS_PER_BASE
+        || new Set(group.trial_ids).size !== TRIALS_PER_BASE
+        || !group.trial_ids.every(validId)) {
+      throw new Error("Paired reviewer task trial groups are invalid.");
+    }
+    return {
+      group_id: expectedGroupId,
+      trial_ids: group.trial_ids as string[]
+    };
+  });
+  if (groups.flatMap((group) => group.trial_ids).join("\0") !== trialIds.join("\0")) {
+    throw new Error("Paired reviewer task groups must partition the declared trial IDs.");
+  }
+  return groups;
 }
 
 function parseLicenseTask(value: unknown): {
@@ -1602,7 +2004,52 @@ async function discoverParquetCandidates(
   };
 }
 
-function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requiredCount: number): CandidateSelection {
+async function selectPrivacySafeBalancedBases(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateRecipe,
+  candidates: readonly SourceTrialCandidate[],
+  requiredCount: number
+): Promise<CandidateSelection> {
+  const excludedSourceBaseKeys = new Set<string>();
+  while (true) {
+    const selection = selectBalancedBases(
+      candidates,
+      requiredCount,
+      recipe.comparison_policy,
+      excludedSourceBaseKeys
+    );
+    if (recipe.materialization_mode !== "huggingface_parquet") {
+      return { ...selection, privacyUnsafeBaseExclusionCount: 0 };
+    }
+    const unsafeSourceBaseKeys = await preflightParquetCandidatePrivacy(
+      sourceRoot,
+      recipe,
+      selection.bases
+    );
+    const newUnsafeKeys = [...unsafeSourceBaseKeys]
+      .filter((key) => !excludedSourceBaseKeys.has(key));
+    if (newUnsafeKeys.length === 0) {
+      return {
+        ...selection,
+        privacyUnsafeBaseExclusionCount: excludedSourceBaseKeys.size
+      };
+    }
+    for (const key of newUnsafeKeys) excludedSourceBaseKeys.add(key);
+    if (excludedSourceBaseKeys.size > candidates.length) {
+      throw new Error("Privacy preflight exhausted the bounded trial-candidate source pool.");
+    }
+  }
+}
+
+function selectBalancedBases(
+  candidates: readonly SourceTrialCandidate[],
+  requiredCount: number,
+  comparisonPolicy?: PromotionTrialCandidateComparisonPolicy,
+  excludedSourceBaseKeys: ReadonlySet<string> = new Set()
+): CandidateSelection {
+  if (comparisonPolicy) {
+    return selectBalancedPairedBases(candidates, requiredCount, excludedSourceBaseKeys);
+  }
   const uniqueCandidates: SourceTrialCandidate[] = [];
   const seenObjects = new Set<string>();
   for (const candidate of candidates) {
@@ -1622,7 +2069,8 @@ function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requir
     const [operatorGroup, sourceFamily, baseGroup] = key.split("\0");
     const bases: PlannedBase[] = [];
     const ordered = [...trials].sort((left, right) => left.source_path.localeCompare(right.source_path));
-    if (ordered.length >= TRIALS_PER_BASE) {
+    if (ordered.length >= TRIALS_PER_BASE
+        && !excludedSourceBaseKeys.has(sourceFamily + "\0" + baseGroup)) {
       const selectedTrials = ordered.slice(0, TRIALS_PER_BASE);
       bases.push({
         operator_group: operatorGroup,
@@ -1678,8 +2126,131 @@ function selectBalancedBases(candidates: readonly SourceTrialCandidate[], requir
   return {
     bases: selected,
     duplicateBlobExclusionCount: candidates.length - uniqueCandidates.length,
-    uniqueEligibleTrialArtifactCount: uniqueCandidates.length
+    uniqueEligibleTrialArtifactCount: uniqueCandidates.length,
+    privacyUnsafeBaseExclusionCount: 0
   };
+}
+
+function selectBalancedPairedBases(
+  candidates: readonly SourceTrialCandidate[],
+  requiredCount: number,
+  excludedSourceBaseKeys: ReadonlySet<string>
+): CandidateSelection {
+  const uniqueCandidates: SourceTrialCandidate[] = [];
+  const seenObjects = new Set<string>();
+  for (const candidate of candidates) {
+    const deduplicationKey = candidate.source_ref_algorithm + ":" + candidate.source_ref_id;
+    if (seenObjects.has(deduplicationKey)) continue;
+    seenObjects.add(deduplicationKey);
+    uniqueCandidates.push(candidate);
+  }
+
+  const trialsByOperatorBase = new Map<string, SourceTrialCandidate[]>();
+  for (const candidate of uniqueCandidates) {
+    const key = candidate.operator_group + "\0" + candidate.source_family + "\0" + candidate.base_group;
+    const bucket = trialsByOperatorBase.get(key) || [];
+    bucket.push(candidate);
+    trialsByOperatorBase.set(key, bucket);
+  }
+  const groupsBySourceBase = new Map<string, PlannedBase[]>();
+  for (const [key, trials] of trialsByOperatorBase) {
+    const [operatorGroup, sourceFamily, baseGroup] = key.split("\0");
+    const ordered = [...trials].sort((left, right) => left.source_path.localeCompare(right.source_path));
+    if (ordered.length < TRIALS_PER_BASE) continue;
+    const group: PlannedBase = {
+      operator_group: operatorGroup,
+      source_family: sourceFamily,
+      base_group: baseGroup,
+      identity_sha256: "",
+      trials: ordered.slice(0, TRIALS_PER_BASE)
+    };
+    const sourceBaseKey = sourceFamily + "\0" + baseGroup;
+    if (excludedSourceBaseKeys.has(sourceBaseKey)) continue;
+    const sourceGroups = groupsBySourceBase.get(sourceBaseKey) || [];
+    sourceGroups.push(group);
+    groupsBySourceBase.set(sourceBaseKey, sourceGroups);
+  }
+
+  const options: PlannedBase[] = [];
+  for (const sourceGroups of groupsBySourceBase.values()) {
+    const orderedGroups = [...sourceGroups].sort((left, right) =>
+      left.operator_group.localeCompare(right.operator_group));
+    if (orderedGroups.length < PAIRED_OPERATOR_GROUPS_PER_BASE) continue;
+    for (const primary of orderedGroups) {
+      for (const comparator of orderedGroups) {
+        if (primary.operator_group === comparator.operator_group) continue;
+        options.push({
+          operator_group: primary.operator_group,
+          source_family: primary.source_family,
+          base_group: primary.base_group,
+          identity_sha256: sha256Text([
+            "primary", primary.operator_group,
+            ...primary.trials.map(sourceTrialIdentity),
+            "comparator", comparator.operator_group,
+            ...comparator.trials.map(sourceTrialIdentity)
+          ].join("\n")),
+          trials: primary.trials,
+          comparator: {
+            operator_group: comparator.operator_group,
+            trials: comparator.trials
+          }
+        });
+      }
+    }
+  }
+
+  if (new Set(options.map((option) => option.operator_group)).size < MINIMUM_PROMOTION_OPERATOR_GROUPS
+      || new Set(options.map((option) => option.comparator!.operator_group)).size < MINIMUM_PROMOTION_OPERATOR_GROUPS
+      || new Set(options.map((option) => option.source_family)).size < MINIMUM_PROMOTION_SOURCE_FAMILIES) {
+    throw new Error("Paired trial candidates require at least three source families and three primary and comparator operator groups before selection.");
+  }
+
+  const primaryCounts = new Map<string, number>();
+  const comparatorCounts = new Map<string, number>();
+  const familyCounts = new Map<string, number>();
+  const seenSourceBaseKeys = new Set<string>();
+  const selected: PlannedBase[] = [];
+  const maximumGroupCount = Math.floor(requiredCount * MAXIMUM_PROMOTION_GROUP_SHARE);
+  while (selected.length < requiredCount) {
+    const eligible = options.filter((option) => {
+      const sourceBaseKey = option.source_family + "\0" + option.base_group;
+      return !seenSourceBaseKeys.has(sourceBaseKey)
+        && (primaryCounts.get(option.operator_group) || 0) < maximumGroupCount
+        && (comparatorCounts.get(option.comparator!.operator_group) || 0) < maximumGroupCount
+        && (familyCounts.get(option.source_family) || 0) < maximumGroupCount;
+    }).sort((left, right) =>
+      ((primaryCounts.get(left.operator_group) || 0) - (primaryCounts.get(right.operator_group) || 0))
+      || ((comparatorCounts.get(left.comparator!.operator_group) || 0)
+        - (comparatorCounts.get(right.comparator!.operator_group) || 0))
+      || ((familyCounts.get(left.source_family) || 0) - (familyCounts.get(right.source_family) || 0))
+      || left.operator_group.localeCompare(right.operator_group)
+      || left.comparator!.operator_group.localeCompare(right.comparator!.operator_group)
+      || left.source_family.localeCompare(right.source_family)
+      || left.base_group.localeCompare(right.base_group));
+    if (eligible.length === 0) break;
+    const candidate = eligible[0];
+    selected.push(candidate);
+    seenSourceBaseKeys.add(candidate.source_family + "\0" + candidate.base_group);
+    primaryCounts.set(candidate.operator_group, (primaryCounts.get(candidate.operator_group) || 0) + 1);
+    comparatorCounts.set(
+      candidate.comparator!.operator_group,
+      (comparatorCounts.get(candidate.comparator!.operator_group) || 0) + 1
+    );
+    familyCounts.set(candidate.source_family, (familyCounts.get(candidate.source_family) || 0) + 1);
+  }
+  if (selected.length !== requiredCount) {
+    throw new Error(`Unable to select ${requiredCount} globally distinct source-native balanced paired-operator bases; selected ${selected.length}.`);
+  }
+  return {
+    bases: selected,
+    duplicateBlobExclusionCount: candidates.length - uniqueCandidates.length,
+    uniqueEligibleTrialArtifactCount: uniqueCandidates.length,
+    privacyUnsafeBaseExclusionCount: 0
+  };
+}
+
+function sourceTrialIdentity(trial: SourceTrialCandidate): string {
+  return trial.source_ref_algorithm + ":" + trial.source_ref_id + ":" + trial.source_path;
 }
 
 function summarizeDiversity(bases: readonly PlannedBase[]): {
@@ -1695,6 +2266,22 @@ function summarizeDiversity(bases: readonly PlannedBase[]): {
     operatorGroupCount: operators.size,
     largestSourceFamilyShare: Math.max(...families.values()) / bases.length,
     largestOperatorGroupShare: Math.max(...operators.values()) / bases.length
+  };
+}
+
+function summarizeComparatorDiversity(bases: readonly PlannedBase[]): {
+  operatorGroupCount: number;
+  largestOperatorGroupShare: number;
+} {
+  const comparatorLabels = bases.flatMap((base) =>
+    base.comparator ? [base.comparator.operator_group] : []);
+  if (comparatorLabels.length === 0) {
+    return { operatorGroupCount: 0, largestOperatorGroupShare: 0 };
+  }
+  const operators = countLabels(comparatorLabels);
+  return {
+    operatorGroupCount: operators.size,
+    largestOperatorGroupShare: Math.max(...operators.values()) / comparatorLabels.length
   };
 }
 
@@ -1769,12 +2356,45 @@ async function materializeVerifiedHttpsBlobs(
   }
 }
 
-async function materializeParquetRows(
+class TrialCandidatePrivacyProjectionError extends Error {}
+
+async function preflightParquetCandidatePrivacy(
   sourceRoot: string,
   recipe: PromotionTrialCandidateParquetRecipe,
-  trials: readonly SourceTrialCandidate[],
-  outputRoot: string
-): Promise<void> {
+  bases: readonly PlannedBase[]
+): Promise<Set<string>> {
+  const unsafeSourceBaseKeys = new Set<string>();
+  const baseKeyBySourcePath = new Map<string, string>();
+  const trials = bases.flatMap((base) => {
+    const sourceBaseKey = base.source_family + "\0" + base.base_group;
+    const baseTrials = [...base.trials, ...(base.comparator?.trials || [])];
+    for (const trial of baseTrials) baseKeyBySourcePath.set(trial.source_path, sourceBaseKey);
+    return baseTrials;
+  });
+  const byFile = groupParquetTrialsByFile(trials);
+  for (const [parquetPath, fileTrials] of [...byFile.entries()].sort()) {
+    const sourceFile = resolveContainedFile(sourceRoot, parquetPath);
+    if (!sourceFile) throw new Error("Selected Parquet file escaped the source root.");
+    const file = await asyncBufferFromFile(sourceFile);
+    const metadata = await parquetMetadataAsync(file);
+    for (const trial of [...fileTrials].sort((left, right) => left.row_index! - right.row_index!)) {
+      const sourceBaseKey = baseKeyBySourcePath.get(trial.source_path);
+      if (!sourceBaseKey) throw new Error("Privacy preflight lost a selected source-base identity.");
+      if (unsafeSourceBaseKeys.has(sourceBaseKey)) continue;
+      try {
+        await projectParquetTrialArtifacts(file, metadata, recipe, trial);
+      } catch (error) {
+        if (!(error instanceof TrialCandidatePrivacyProjectionError)) throw error;
+        unsafeSourceBaseKeys.add(sourceBaseKey);
+      }
+    }
+  }
+  return unsafeSourceBaseKeys;
+}
+
+function groupParquetTrialsByFile(
+  trials: readonly SourceTrialCandidate[]
+): Map<string, SourceTrialCandidate[]> {
   const byFile = new Map<string, SourceTrialCandidate[]>();
   for (const trial of trials) {
     if (!trial.parquet_path || trial.parquet_sha256 === undefined || trial.row_index === undefined) {
@@ -1784,58 +2404,89 @@ async function materializeParquetRows(
     bucket.push(trial);
     byFile.set(trial.parquet_path, bucket);
   }
+  return byFile;
+}
+
+async function projectParquetTrialArtifacts(
+  file: Awaited<ReturnType<typeof asyncBufferFromFile>>,
+  metadata: Awaited<ReturnType<typeof parquetMetadataAsync>>,
+  recipe: PromotionTrialCandidateParquetRecipe,
+  trial: SourceTrialCandidate
+): Promise<{ sourceBytes: Uint8Array; reviewerBytes: Uint8Array; reviewerRedactionCount: number }> {
+  const rows = await parquetReadObjects({
+    file,
+    metadata,
+    columns: recipe.columns,
+    rowStart: trial.row_index,
+    rowEnd: trial.row_index! + 1
+  });
+  if (rows.length !== 1) throw new Error("Selected Parquet row could not be materialized exactly once.");
+  const decoded = decodeParquetRow(rows[0], recipe.json_columns);
+  const unprojectedSourceBytes = canonicalJsonBytes({
+    schema_version: "1.0",
+    source: {
+      parquet_path: trial.parquet_path,
+      parquet_sha256: trial.parquet_sha256,
+      row_index: trial.row_index
+    },
+    record: selectColumns(decoded, recipe.columns)
+  });
+  const unprojectedReviewerBytes = canonicalJsonBytes({
+    schema_version: "1.0",
+    record: selectColumns(decoded, recipe.reviewer_columns)
+  });
+  const sourceProjectionOptions = recipe.credential_projection === "redact_values"
+    ? { redactCredentialLikeValues: true }
+    : {};
+  const reviewerProjectionOptions = {
+    ...sourceProjectionOptions,
+    redactLiterals: recipe.reviewer_identity_redactions || []
+  };
+  try {
+    const sourceArtifact = projectPromotionReviewerArtifact(
+      trial.source_path,
+      unprojectedSourceBytes,
+      sourceProjectionOptions
+    );
+    const reviewerArtifact = projectPromotionReviewerArtifact(
+      trial.source_path,
+      unprojectedReviewerBytes,
+      reviewerProjectionOptions
+    );
+    if (sourceArtifact.bytes.length > MAX_SELECTED_ARTIFACT_BYTES
+        || reviewerArtifact.bytes.length > MAX_SELECTED_ARTIFACT_BYTES) {
+      throw new Error("Selected Parquet row exceeds the bounded artifact size.");
+    }
+    return {
+      sourceBytes: sourceArtifact.bytes,
+      reviewerBytes: reviewerArtifact.bytes,
+      reviewerRedactionCount: reviewerArtifact.privacy_redaction_count
+    };
+  } catch (error) {
+    throw new TrialCandidatePrivacyProjectionError(
+      error instanceof Error ? error.message : String(error)
+    );
+  }
+}
+
+async function materializeParquetRows(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateParquetRecipe,
+  trials: readonly SourceTrialCandidate[],
+  outputRoot: string
+): Promise<void> {
+  const byFile = groupParquetTrialsByFile(trials);
   for (const [parquetPath, fileTrials] of [...byFile.entries()].sort()) {
     const sourceFile = resolveContainedFile(sourceRoot, parquetPath);
     if (!sourceFile) throw new Error("Selected Parquet file escaped the source root.");
     const file = await asyncBufferFromFile(sourceFile);
     const metadata = await parquetMetadataAsync(file);
     for (const trial of [...fileTrials].sort((left, right) => left.row_index! - right.row_index!)) {
-      const rows = await parquetReadObjects({
-        file,
-        metadata,
-        columns: recipe.columns,
-        rowStart: trial.row_index,
-        rowEnd: trial.row_index! + 1
-      });
-      if (rows.length !== 1) throw new Error("Selected Parquet row could not be materialized exactly once.");
-      const decoded = decodeParquetRow(rows[0], recipe.json_columns);
-      const unprojectedSourceBytes = canonicalJsonBytes({
-        schema_version: "1.0",
-        source: {
-          parquet_path: trial.parquet_path,
-          parquet_sha256: trial.parquet_sha256,
-          row_index: trial.row_index
-        },
-        record: selectColumns(decoded, recipe.columns)
-      });
-      const unprojectedReviewerBytes = canonicalJsonBytes({
-        schema_version: "1.0",
-        record: selectColumns(decoded, recipe.reviewer_columns)
-      });
-      const sourceProjectionOptions = recipe.credential_projection === "redact_values"
-        ? { redactCredentialLikeValues: true }
-        : {};
-      const reviewerProjectionOptions = {
-        ...sourceProjectionOptions,
-        redactLiterals: recipe.reviewer_identity_redactions || []
-      };
-      const sourceArtifact = projectPromotionReviewerArtifact(
-        trial.source_path,
-        unprojectedSourceBytes,
-        sourceProjectionOptions
-      );
-      const reviewerArtifact = projectPromotionReviewerArtifact(
-        trial.source_path,
-        unprojectedReviewerBytes,
-        reviewerProjectionOptions
-      );
-      const sourceBytes = sourceArtifact.bytes;
-      const reviewerBytes = reviewerArtifact.bytes;
-      if (sourceBytes.length > MAX_SELECTED_ARTIFACT_BYTES || reviewerBytes.length > MAX_SELECTED_ARTIFACT_BYTES) {
-        throw new Error("Selected Parquet row exceeds the bounded artifact size.");
-      }
+      const projected = await projectParquetTrialArtifacts(file, metadata, recipe, trial);
+      const sourceBytes = projected.sourceBytes;
+      const reviewerBytes = projected.reviewerBytes;
       trial.source_ref_id = sha256(sourceBytes);
-      trial.reviewer_privacy_redaction_count = reviewerArtifact.privacy_redaction_count;
+      trial.reviewer_privacy_redaction_count = projected.reviewerRedactionCount;
       const paths = parquetMaterializedPaths(trial);
       const sourceTarget = resolveContainedFile(outputRoot, paths.source);
       const reviewerTarget = resolveContainedFile(outputRoot, paths.reviewer);

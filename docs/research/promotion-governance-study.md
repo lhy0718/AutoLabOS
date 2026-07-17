@@ -383,14 +383,17 @@ machine-readable comparison-result candidates. The v8 revision-bound handoff
 below initially exposed 72 operator-conditioned candidate groups whose three
 trials share an explicit source-native sample identifier. A later task-level
 audit found only 37 distinct source-native bases after excluding operator
-identity; 35 groups duplicated a base under another operator. Human
-comparability review is also incomplete, so these groupings do not advance the
-confirmatory repeated-trial evidence stage.
+identity; 35 groups duplicated a base under another operator. The v10 handoff
+now separately establishes 72 distinct source-native tasks with two different
+operator groups and three disjoint rows per group. Human comparability review
+is still incomplete, so this closes the structural paired-candidate floor but
+does not create admitted confirmatory evidence.
 The ladder establishes zero explicit readiness decisions, zero
 source-grounded figure audits, zero claim-to-evidence maps, zero completed
 human license reviews, zero double-human normalizations, and zero confirmatory
-admissions. Consequently, source-native task scale, normalization, and evidence
-completeness all remain open; the exact 72-base admission gap is unchanged.
+admissions. Consequently, source-native task and structural pair scale are now
+closed, while human normalization and evidence completeness remain open; the
+exact 72-base admission gap is unchanged.
 
 The machine-readable inventory is
 `docs/research/evidence/promotion-source-expansion-v1.json`. The
@@ -507,6 +510,39 @@ The v9 recipe and generated evidence record are
 `docs/research/evidence/promotion-trial-candidate-handoff-v9.json`. No v9 item
 has been human approved, canonically curated, or admitted to confirmatory
 evaluation. The paper-scale admission count remains zero.
+
+The v10 route upgrades the source contract by fixing eligibility, ordering, and
+balancing before semantic inspection of outcomes, patches, logs, or
+trajectories. It retains only source-native tasks with at least two eligible
+three-row operator groups, forms a pair with different operator identities and
+disjoint rows, and balances primary operator, comparator operator, and
+repository family. A later mechanical privacy preflight reads selected bytes
+only to apply the declared fail-closed projection and may exclude a complete
+task before the same ordering rule backfills it. The generated handoff contains
+72 distinct tasks, 72 repository families, and 432 rows. Primary and comparator
+operator-group counts are each balanced 24/24/24; no pair reuses an operator,
+source path, source-row hash, or public trial ID.
+
+The declared privacy projection is applied as a mechanical preflight. One
+selected task failed the fail-closed projection and was excluded in full; the
+same outcome-blind traversal then backfilled the batch to 72 tasks. The final
+packet records 380 redactions, 438 reviewer-side files, 34,345,592 bytes, and
+no empty files. An exact-string scan over 147 controller identities found zero
+matches in the reviewer packet. Runtime inspection reports zero issues. A
+same-flow CLI rerun reproduced the canonical generated-recipe hash
+`a1dd066c1a69fd2ed12e26913ea6ad93ed1d9cdeedd6621b0e519174341feac5`
+and reviewer tree hash
+`8eac031b59e170fc018344862f8007acddf7a668f7e94d0cadc2120b02ea384e`.
+
+This closes the source-native trace and structural paired-comparison candidate
+floors only. Different source operator labels do not prove independent
+stochastic sampling, and automated integrity checks do not establish human
+comparability or redistribution approval. Two independent candidate reviews,
+human license review, canonical clean-control curation, and confirmatory freeze
+remain incomplete. The v10 recipe and evidence record are
+`docs/research/evidence/promotion-trial-candidate-source-v10.json` and
+`docs/research/evidence/promotion-trial-candidate-handoff-v10.json`. The
+confirmatory admission count remains zero.
 
 The five-route public source comparison is frozen in
 `docs/research/evidence/promotion-source-portfolio-v2.json`. It retains two

@@ -23,6 +23,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK,
   PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
+  PROMOTION_TRIAL_CANDIDATE_SOURCE_ELIGIBILITY_OBSERVATIONS,
   PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
   parsePromotionTrialCandidateInitialAnnotationSet,
@@ -55,6 +56,9 @@ export const PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS =
   "adjudicated-candidate-labels.jsonl";
 export const PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE =
   "trial-candidate-review-evidence.json";
+
+const TRIALS_PER_REVIEW_GROUP = 3;
+const PAIRED_REVIEW_GROUP_COUNT = 2;
 
 export interface PreparePromotionTrialCandidateAnnotationWorksheetInput {
   cwd: string;
@@ -141,6 +145,7 @@ export interface PromotionTrialCandidateAnnotationPreflightReport {
   annotator_id: string | null;
   task_count: number;
   annotation_count: number;
+  source_eligible_candidate_count: number;
   positive_candidate_count: number;
   input_sha256: {
     reviewer_packet_manifest: string;
@@ -222,6 +227,8 @@ export interface PromotionTrialCandidateReviewEvidence {
   observation_counts: Record<PromotionTrialCandidateObservation, Record<PromotionTrialCandidateObservationValue, number>>;
   positive_candidate_count: number;
   redistributable_positive_candidate_count: number;
+  source_eligible_candidate_count: number;
+  redistributable_source_eligible_candidate_count: number;
   candidate_review_progression_floor_met: boolean;
   confirmatory_admitted: false;
   remaining_blockers: string[];
@@ -266,10 +273,11 @@ export interface AdjudicatePromotionTrialCandidateReviewResult {
 }
 
 interface ReviewerTask {
-  schema_version: "1.0";
+  schema_version: "1.0" | "1.1";
   candidate_id: string;
   artifact_root: string;
   trial_ids: string[];
+  trial_groups?: Array<{ group_id: "group-a" | "group-b"; trial_ids: string[] }>;
   required_observations: PromotionTrialCandidateObservation[];
 }
 
@@ -416,6 +424,9 @@ export async function preflightPromotionTrialCandidateAnnotation(
   const positiveCandidateCount = annotation
     ? annotation.annotations.filter(allObservationsPositive).length
     : 0;
+  const sourceEligibleCandidateCount = annotation
+    ? annotation.annotations.filter(sourceEligibilityObservationsPositive).length
+    : 0;
   const contractPaths = reviewerPacketContractPaths(reviewerRoot);
   const report: PromotionTrialCandidateAnnotationPreflightReport = {
     schema_version: "1.0",
@@ -425,6 +436,7 @@ export async function preflightPromotionTrialCandidateAnnotation(
     annotator_id: annotation?.annotator_id || null,
     task_count: tasks.length,
     annotation_count: annotation?.annotations.length || 0,
+    source_eligible_candidate_count: sourceEligibleCandidateCount,
     positive_candidate_count: positiveCandidateCount,
     input_sha256: {
       reviewer_packet_manifest: await hashFile(path.join(
@@ -752,10 +764,9 @@ export async function inspectPromotionTrialCandidateReviewAdjudication(
         path.join(root, PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
         "utf8"
       )) as unknown;
-      if (!isRecord(evidence)
-          || evidence.handoff_id !== report.handoff_id
-          || evidence.candidate_count !== report.task_count
-          || evidence.confirmatory_admitted !== false) throw new Error("invalid");
+      if (!validReviewEvidenceSummary(evidence, report.handoff_id, report.task_count)) {
+        throw new Error("invalid");
+      }
     } catch {
       issues.push({ code: "trial_candidate_review_output_semantics_invalid", message: "Adjudicated labels or evidence summary are structurally inconsistent." });
     }
@@ -777,8 +788,12 @@ async function loadReviewerPacketContract(
   const rubric = await fs.readFile(contract.rubric, "utf8");
   if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
       || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
-      || guide !== promotionTrialCandidateReviewerGuide()
-      || rubric !== promotionTrialCandidateReviewRubric()) {
+      || guide !== promotionTrialCandidateReviewerGuide(
+        inspection.manifest.comparison_mode === "paired_operator"
+      )
+      || rubric !== promotionTrialCandidateReviewRubric(
+        inspection.manifest.comparison_mode === "paired_operator"
+      )) {
     throw new Error("Trial-candidate reviewer packet does not match the runtime review contract.");
   }
   const tasks = parseReviewerTasks(await fs.readFile(
@@ -828,9 +843,13 @@ async function loadHandoffContract(
   if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
       || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
       || JSON.stringify(licenseSchema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
-      || guide !== promotionTrialCandidateReviewerGuide()
+      || guide !== promotionTrialCandidateReviewerGuide(
+        inspection.manifest.comparison_mode === "paired_operator"
+      )
       || licenseGuide !== promotionTrialCandidateLicenseReviewerGuide()
-      || rubric !== promotionTrialCandidateReviewRubric()) {
+      || rubric !== promotionTrialCandidateReviewRubric(
+        inspection.manifest.comparison_mode === "paired_operator"
+      )) {
     throw new Error("Trial-candidate reviewer contract does not match the runtime contract.");
   }
   const tasks = parseReviewerTasks(await fs.readFile(
@@ -846,7 +865,12 @@ async function loadHandoffContract(
     const candidate = inspection.manifest.candidates.find((item) => item.candidate_id === task.candidate_id);
     if (!candidate
         || task.artifact_root !== `artifacts/${task.candidate_id}`
-        || task.trial_ids.join("\0") !== candidate.trials.map((item) => item.trial_id).join("\0")) {
+        || task.trial_ids.join("\0") !== [
+          ...candidate.trials,
+          ...(candidate.comparator_trials || [])
+        ].map((item) => item.trial_id).join("\0")
+        || Boolean(task.trial_groups)
+          !== (inspection.manifest.comparison_mode === "paired_operator")) {
       throw new Error(`Trial-candidate reviewer task does not match the manifest: ${task.candidate_id}.`);
     }
   }
@@ -1032,6 +1056,7 @@ function buildReviewEvidence(
     uncertain: 0
   }])) as PromotionTrialCandidateReviewEvidence["observation_counts"];
   let positiveCandidateCount = 0;
+  let sourceEligibleCandidateCount = 0;
   for (const task of tasks) {
     const item = accepted.get(task.candidate_id);
     if (!item) throw new Error(`Accepted label missing while building evidence: ${task.candidate_id}`);
@@ -1039,14 +1064,18 @@ function buildReviewEvidence(
       counts[field][item.label.observations[field]] += 1;
     }
     if (allObservationsPositive(item.label)) positiveCandidateCount += 1;
+    if (sourceEligibilityObservationsPositive(item.label)) sourceEligibleCandidateCount += 1;
   }
   const redistributablePositiveCandidateCount = license.review.status === "redistribution_permitted"
     ? positiveCandidateCount
     : 0;
-  const floorMet = redistributablePositiveCandidateCount >= manifest.required_base_candidate_count;
+  const redistributableSourceEligibleCandidateCount = license.review.status === "redistribution_permitted"
+    ? sourceEligibleCandidateCount
+    : 0;
+  const floorMet = redistributableSourceEligibleCandidateCount >= manifest.required_base_candidate_count;
   const remainingBlockers = [
     ...(license.review.status === "redistribution_permitted" ? [] : ["redistribution_permission_unresolved"]),
-    ...(positiveCandidateCount === tasks.length ? [] : ["candidate_evidence_requirements_unmet"]),
+    ...(sourceEligibleCandidateCount === tasks.length ? [] : ["candidate_source_requirements_unmet"]),
     "canonical_source_projection",
     "confirmatory_intake_freeze"
   ];
@@ -1065,10 +1094,12 @@ function buildReviewEvidence(
     observation_counts: counts,
     positive_candidate_count: positiveCandidateCount,
     redistributable_positive_candidate_count: redistributablePositiveCandidateCount,
+    source_eligible_candidate_count: sourceEligibleCandidateCount,
+    redistributable_source_eligible_candidate_count: redistributableSourceEligibleCandidateCount,
     candidate_review_progression_floor_met: floorMet,
     confirmatory_admitted: false,
     remaining_blockers: remainingBlockers,
-    evidence_boundary: "This summary records double-human categorical review and adjudication over revision-bound trace candidates plus a separate human source-license assessment. It preserves negative and uncertain findings and never converts a reviewer assessment into canonical normalization, a legal grant, confirmatory admission, or paper-readiness evidence."
+    evidence_boundary: "This summary records double-human categorical review and adjudication over revision-bound trace candidates plus a separate human source-license assessment. Source eligibility requires positive execution completeness and repeated-trial comparability; source-absent paper artifacts remain separate availability observations for later canonical curation. The summary preserves negative and uncertain findings and never converts a reviewer assessment into canonical normalization, a legal grant, confirmatory admission, or paper-readiness evidence."
   };
 }
 
@@ -1102,23 +1133,34 @@ function parseReviewerTasks(raw: string): ReviewerTask[] {
     } catch {
       throw new Error(`Trial-candidate task line ${index + 1} is not valid JSON.`);
     }
+    const pairedComparison = isRecord(value) && value.schema_version === "1.1";
+    const expectedTrialCount = pairedComparison
+      ? TRIALS_PER_REVIEW_GROUP * PAIRED_REVIEW_GROUP_COUNT
+      : TRIALS_PER_REVIEW_GROUP;
     if (!isRecord(value)
-        || value.schema_version !== "1.0"
+        || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
         || !validId(value.candidate_id)
         || value.artifact_root !== `artifacts/${value.candidate_id}`
         || !Array.isArray(value.trial_ids)
-        || value.trial_ids.length !== 3
-        || new Set(value.trial_ids).size !== 3
+        || value.trial_ids.length !== expectedTrialCount
+        || new Set(value.trial_ids).size !== expectedTrialCount
         || !value.trial_ids.every(validId)
         || !Array.isArray(value.required_observations)
         || value.required_observations.join("\0") !== PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.join("\0")) {
       throw new Error(`Trial-candidate task line ${index + 1} has an invalid review contract.`);
     }
+    const trialGroups = pairedComparison
+      ? parseReviewerTrialGroups(value.trial_groups, value.trial_ids)
+      : undefined;
+    if (!pairedComparison && value.trial_groups !== undefined) {
+      throw new Error(`Trial-candidate task line ${index + 1} has an invalid review contract.`);
+    }
     return {
-      schema_version: "1.0" as const,
+      schema_version: pairedComparison ? "1.1" as const : "1.0" as const,
       candidate_id: value.candidate_id,
       artifact_root: value.artifact_root,
       trial_ids: value.trial_ids as string[],
+      ...(trialGroups ? { trial_groups: trialGroups } : {}),
       required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
     };
   });
@@ -1126,6 +1168,30 @@ function parseReviewerTasks(raw: string): ReviewerTask[] {
     throw new Error("Trial-candidate reviewer tasks must be non-empty and unique.");
   }
   return tasks;
+}
+
+function parseReviewerTrialGroups(
+  value: unknown,
+  trialIds: unknown[]
+): Array<{ group_id: "group-a" | "group-b"; trial_ids: string[] }> {
+  if (!Array.isArray(value) || value.length !== PAIRED_REVIEW_GROUP_COUNT) {
+    throw new Error("Paired reviewer tasks require exactly two trial groups.");
+  }
+  const groups = value.map((group, index) => {
+    const expectedGroupId: "group-a" | "group-b" = index === 0 ? "group-a" : "group-b";
+    if (!isRecord(group) || group.group_id !== expectedGroupId
+        || !Array.isArray(group.trial_ids)
+        || group.trial_ids.length !== TRIALS_PER_REVIEW_GROUP
+        || new Set(group.trial_ids).size !== TRIALS_PER_REVIEW_GROUP
+        || !group.trial_ids.every(validId)) {
+      throw new Error("Paired reviewer task trial groups are invalid.");
+    }
+    return { group_id: expectedGroupId, trial_ids: group.trial_ids as string[] };
+  });
+  if (groups.flatMap((group) => group.trial_ids).join("\0") !== trialIds.join("\0")) {
+    throw new Error("Paired reviewer task groups must partition the declared trial IDs.");
+  }
+  return groups;
 }
 
 function parseAdjudicationReport(value: unknown): PromotionTrialCandidateReviewAdjudicationReport {
@@ -1222,6 +1288,74 @@ function allObservationsPositive(
   return PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.every((field) => label.observations[field] === "positive");
 }
 
+function sourceEligibilityObservationsPositive(
+  label: Pick<PromotionTrialCandidateHumanLabel, "observations">
+): boolean {
+  return PROMOTION_TRIAL_CANDIDATE_SOURCE_ELIGIBILITY_OBSERVATIONS.every(
+    (field) => label.observations[field] === "positive"
+  );
+}
+
+function validReviewEvidenceSummary(
+  value: unknown,
+  handoffId: string,
+  candidateCount: number
+): boolean {
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || value.handoff_id !== handoffId
+      || value.candidate_count !== candidateCount
+      || value.confirmatory_admitted !== false
+      || !validCandidateCount(value.positive_candidate_count, candidateCount)
+      || !validCandidateCount(value.redistributable_positive_candidate_count, candidateCount)
+      || !validCandidateCount(value.source_eligible_candidate_count, candidateCount)
+      || !validCandidateCount(value.redistributable_source_eligible_candidate_count, candidateCount)
+      || typeof value.candidate_review_progression_floor_met !== "boolean"
+      || !Array.isArray(value.remaining_blockers)
+      || value.remaining_blockers.some((item) => typeof item !== "string")
+      || new Set(value.remaining_blockers).size !== value.remaining_blockers.length
+      || value.positive_candidate_count > value.source_eligible_candidate_count
+      || value.redistributable_positive_candidate_count > value.positive_candidate_count
+      || value.redistributable_source_eligible_candidate_count > value.source_eligible_candidate_count
+      || !isRecord(value.observation_counts)) {
+    return false;
+  }
+  for (const observation of PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS) {
+    const counts = value.observation_counts[observation];
+    if (!isRecord(counts)
+        || Object.keys(counts).sort().join("\0") !== "negative\0positive\0uncertain"
+        || ![counts.positive, counts.negative, counts.uncertain]
+          .every((count) => validCandidateCount(count, candidateCount))
+        || counts.positive + counts.negative + counts.uncertain !== candidateCount) {
+      return false;
+    }
+  }
+  const redistributable = value.source_license_status === "redistribution_permitted";
+  if ((redistributable
+        && (value.redistributable_positive_candidate_count !== value.positive_candidate_count
+          || value.redistributable_source_eligible_candidate_count !== value.source_eligible_candidate_count))
+      || (!redistributable
+        && (value.redistributable_positive_candidate_count !== 0
+          || value.redistributable_source_eligible_candidate_count !== 0))) {
+    return false;
+  }
+  const expectedFloor = value.redistributable_source_eligible_candidate_count >= candidateCount;
+  const expectedBlockers = [
+    ...(redistributable ? [] : ["redistribution_permission_unresolved"]),
+    ...(value.source_eligible_candidate_count === candidateCount
+      ? []
+      : ["candidate_source_requirements_unmet"]),
+    "canonical_source_projection",
+    "confirmatory_intake_freeze"
+  ];
+  return value.candidate_review_progression_floor_met === expectedFloor
+    && value.remaining_blockers.join("\0") === expectedBlockers.join("\0");
+}
+
+function validCandidateCount(value: unknown, maximum: number): value is number {
+  return Number.isInteger(value) && Number(value) >= 0 && Number(value) <= maximum;
+}
+
 function renderPreflightSummary(
   report: PromotionTrialCandidateAnnotationPreflightReport,
   annotationName: string
@@ -1233,6 +1367,7 @@ function renderPreflightSummary(
     `- Annotation file: ${annotationName}`,
     `- Annotator ID: ${report.annotator_id || "unresolved"}`,
     `- Task coverage: ${report.annotation_count}/${report.task_count}`,
+    `- Source-eligible candidates: ${report.source_eligible_candidate_count}/${report.task_count}`,
     `- All-positive candidates: ${report.positive_candidate_count}/${report.task_count}`,
     "",
     "## Validation Issues",

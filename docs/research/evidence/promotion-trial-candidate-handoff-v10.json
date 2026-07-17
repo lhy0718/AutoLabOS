@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "study_id": "promotion-governance-study",
+  "handoff_id": "public-execution-trace-candidate-handoff-v10",
+  "source_url": "https://huggingface.co/datasets/nebius/SWE-agent-trajectories",
+  "source_revision": "68195a1450865274106246d0d0296a1d6807b88e",
+  "source_access": {
+    "private": false,
+    "gated": false,
+    "declared_dataset_license": "cc-by-4.0",
+    "human_license_reviewed": false
+  },
+  "source_corpus_audit": {
+    "row_count": 80036,
+    "source_native_task_count": 3591,
+    "task_operator_group_count": 4219,
+    "task_operator_groups_with_at_least_three_trials": 4130,
+    "distinct_tasks_with_at_least_one_three_trial_operator_group": 3504,
+    "operator_group_count": 3
+  },
+  "comparison_contract": {
+    "mode": "paired_operator",
+    "operator_groups_per_base": 2,
+    "trials_per_operator_group": 3,
+    "same_source_native_task_required": true,
+    "different_operator_required": true,
+    "disjoint_source_rows_required": true,
+    "selection_pre_semantic_content": true,
+    "mechanical_privacy_preflight_may_exclude_complete_task": true
+  },
+  "selection": {
+    "selected_base_count": 72,
+    "distinct_source_native_base_count": 72,
+    "selected_trial_count": 432,
+    "distinct_source_path_count": 432,
+    "distinct_source_ref_count": 432,
+    "distinct_trial_id_count": 432,
+    "selected_source_family_count": 72,
+    "primary_operator_group_count": 3,
+    "comparator_operator_group_count": 3,
+    "primary_operator_group_sizes": [24, 24, 24],
+    "comparator_operator_group_sizes": [24, 24, 24],
+    "same_operator_pair_count": 0,
+    "largest_source_family_share": 0.013888888888888888,
+    "largest_primary_operator_group_share": 0.3333333333333333,
+    "largest_comparator_operator_group_share": 0.3333333333333333,
+    "privacy_preflight_applied": true,
+    "privacy_unsafe_base_exclusion_count": 1,
+    "deterministic_outcome_blind_backfill_applied": true
+  },
+  "reviewer_packet": {
+    "task_count": 72,
+    "task_schema_version": "1.1",
+    "opaque_groups_per_task": 2,
+    "trials_per_group": 3,
+    "reviewer_file_count": 438,
+    "reviewer_packet_bytes": 34345592,
+    "largest_reviewer_packet_file_bytes": 487979,
+    "empty_file_count": 0,
+    "exact_controller_identity_match_count": 0
+  },
+  "integrity": {
+    "source_recipe_input_sha256": "d442751913f1f4af6dc15775b8ee4c6a9e4123c034182a99d6440e07e7e17f92",
+    "recipe_sha256": "a1dd066c1a69fd2ed12e26913ea6ad93ed1d9cdeedd6621b0e519174341feac5",
+    "recipe_sha256_scope": "generated_canonical_recipe",
+    "reviewer_artifact_tree_sha256": "8eac031b59e170fc018344862f8007acddf7a668f7e94d0cadc2120b02ea384e",
+    "handoff_inspection_passed": true,
+    "handoff_inspection_issue_count": 0,
+    "license_packet_integrity_passed": true,
+    "privacy_redaction_count": 380,
+    "same_flow_cli_revalidation_passed": true,
+    "same_flow_cli_revalidation_deterministic_match": true
+  },
+  "paper_scale_trace_floor_met": true,
+  "paper_scale_comparison_floor_met": true,
+  "independent_candidate_review_completed": false,
+  "canonical_curation_completed": false,
+  "confirmatory_admitted": false,
+  "remaining_blockers": [
+    "human_license_review",
+    "underlying_repository_and_model_output_terms_review",
+    "independent_double_candidate_review",
+    "human_trial_comparability_review",
+    "canonical_curation_provenance",
+    "confirmatory_intake_freeze"
+  ],
+  "evidence_boundary": "The v10 handoff establishes an outcome-blind, hash-bound, privacy-projected candidate floor of 72 distinct source-native tasks, each pairing two different source operator groups with three disjoint execution rows per group. It does not establish independent stochastic sampling, human trial comparability, source-license approval, paper figures, claim-evidence links, paper-readiness decisions, canonical clean controls, or confirmatory admission."
+}

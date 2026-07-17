@@ -475,6 +475,12 @@ describe("promotion trial-candidate handoff", () => {
       ["fixture", "credential", "value"].join("-")
     ].join("=");
     const reviewerIdentity = "https://huggingface.co/datasets/source-org/rollout-corpus";
+    const incompletePrivateMaterial = [
+      "-----BEGIN",
+      "OPENSSH",
+      "PRIVATE",
+      "KEY-----"
+    ].join(" ");
     await writeFile(path.join(sourceRoot, "README.md"), licenseText, "utf8");
     const parquetSources: Array<{ path: string; sha256: string }> = [];
     for (let operatorIndex = 0; operatorIndex < 3; operatorIndex += 1) {
@@ -502,6 +508,9 @@ describe("promotion trial-candidate handoff", () => {
                       { role: "tool", content: credentialAssignment },
                       { role: "tool", content: reviewerIdentity }
                     ]
+                  : []),
+                ...(familyIndex === 0 && baseIndex === 1 && trialIndex === 0
+                  ? [{ role: "tool", content: incompletePrivateMaterial }]
                   : [])
               ]),
               auto_judge: JSON.stringify({ observed_score: trialIndex / 10 })
@@ -584,6 +593,8 @@ describe("promotion trial-candidate handoff", () => {
       source_family_count: 4,
       operator_group_count: 3,
       trial_artifact_count: 216,
+      privacy_preflight_applied: true,
+      privacy_unsafe_base_exclusion_count: 1,
       privacy_projection_applied: true,
       privacy_redaction_count: 2
     });
@@ -626,6 +637,105 @@ describe("promotion trial-candidate handoff", () => {
       nativeColumnResult.output_dir
     ))).toMatchObject({ passed: true, issues: [] });
 
+    const pairedRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    pairedRecipe.handoff_id = "candidate-handoff-parquet-paired";
+    pairedRecipe.comparison_policy = {
+      mode: "paired_operator",
+      groups_per_base: 2,
+      trials_per_group: 3
+    };
+    const pairedRecipePath = path.join(workspace, "parquet-paired-recipe.json");
+    await writeFile(pairedRecipePath, `${JSON.stringify(pairedRecipe, null, 2)}\n`, "utf8");
+    const pairedResult = await exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-paired-recipe.json",
+      sourceRoot,
+      outDir: "parquet-paired-handoff"
+    });
+    const pairedManifest = JSON.parse(await readFile(
+      path.join(workspace, pairedResult.manifest_path),
+      "utf8"
+    )) as Record<string, any>;
+    const pairedController = JSON.parse(await readFile(
+      path.join(workspace, pairedResult.controller_map_path),
+      "utf8"
+    )) as Record<string, any>;
+    const pairedTasks = (await readFile(
+      path.join(workspace, pairedResult.reviewer_dir, "candidate-tasks.jsonl"),
+      "utf8"
+    )).split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>);
+    const pairedTrials = pairedManifest.candidates.flatMap((candidate: Record<string, any>) => [
+      ...candidate.trials,
+      ...candidate.comparator_trials
+    ]);
+    const pairedReviewerFiles = await Promise.all(pairedTrials.map((trial: Record<string, any>) =>
+      readFile(path.join(workspace, pairedResult.reviewer_dir, trial.artifact_path), "utf8")));
+
+    expect(pairedResult).toMatchObject({ base_candidate_count: 72, trial_artifact_count: 432 });
+    expect(pairedManifest).toMatchObject({
+      comparison_mode: "paired_operator",
+      operator_groups_per_base: 2,
+      trials_per_operator_group: 3,
+      base_candidate_count: 72,
+      trial_artifact_count: 432,
+      comparator_operator_group_count: 3,
+      largest_comparator_operator_group_share: 1 / 3,
+      paired_comparison_floor_met: true,
+      privacy_preflight_applied: true,
+      privacy_unsafe_base_exclusion_count: 1
+    });
+    expect(pairedController.candidates.every((candidate: Record<string, any>) => {
+      const primaryRefs = candidate.trials.map((trial: Record<string, any>) => trial.source_ref_id);
+      const comparatorRefs = candidate.comparator_trials
+        .map((trial: Record<string, any>) => trial.source_ref_id);
+      return candidate.operator_group !== candidate.comparator_operator_group
+        && candidate.trials.length === 3
+        && candidate.comparator_trials.length === 3
+        && new Set([...primaryRefs, ...comparatorRefs]).size === 6;
+    })).toBe(true);
+    expect(new Set(pairedController.candidates.map((candidate: Record<string, any>) =>
+      candidate.source_family + ":" + candidate.base_group)).size).toBe(72);
+    expect(pairedTasks.every((task) => task.schema_version === "1.1"
+      && task.trial_ids.length === 6
+      && task.trial_groups.length === 2
+      && task.trial_groups[0].group_id === "group-a"
+      && task.trial_groups[1].group_id === "group-b"
+      && task.trial_groups.flatMap((group: Record<string, any>) => group.trial_ids).join("\0")
+        === task.trial_ids.join("\0"))).toBe(true);
+    expect(pairedReviewerFiles.join("\n")).not.toMatch(/operator-[0-9]|family-[0-9]|parquet_path/u);
+    expect(await inspectPromotionTrialCandidateHandoff(path.join(
+      workspace,
+      pairedResult.output_dir
+    ))).toMatchObject({ passed: true, issues: [] });
+    const pairedWorksheet = await preparePromotionTrialCandidateAnnotationWorksheet({
+      cwd: workspace,
+      handoffRoot: pairedResult.output_dir,
+      annotatorId: "reviewer-paired-worksheet",
+      outputPath: "reviews/paired/review-worksheet.json"
+    });
+    expect(pairedWorksheet).toMatchObject({ task_count: 72, annotator_id: "reviewer-paired-worksheet" });
+
+    const invalidPairedRoot = path.join(workspace, "parquet-paired-invalid-controller");
+    await cp(path.join(workspace, pairedResult.output_dir), invalidPairedRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const invalidControllerPath = path.join(
+      invalidPairedRoot,
+      "controller",
+      "trial-candidate-map.json"
+    );
+    const invalidController = JSON.parse(await readFile(invalidControllerPath, "utf8")) as Record<string, any>;
+    invalidController.candidates[0].comparator_operator_group =
+      invalidController.candidates[0].operator_group;
+    await writeFile(invalidControllerPath, `${JSON.stringify(invalidController, null, 2)}\n`, "utf8");
+    const invalidPairedInspection = await inspectPromotionTrialCandidateHandoff(invalidPairedRoot);
+    expect(invalidPairedInspection.passed).toBe(false);
+    expect(invalidPairedInspection.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_handoff_controller_map_invalid"
+    );
+
     const malformedTransformRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
     malformedTransformRecipe.handoff_id = "candidate-handoff-parquet-malformed-transform";
     malformedTransformRecipe.family_value_transform.delimiter = "";
@@ -641,6 +751,26 @@ describe("promotion trial-candidate handoff", () => {
       sourceRoot,
       outDir: "parquet-malformed-transform-handoff"
     })).rejects.toThrow("valid grouping pointers");
+
+    const malformedPairedRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    malformedPairedRecipe.handoff_id = "candidate-handoff-parquet-malformed-paired";
+    malformedPairedRecipe.comparison_policy = {
+      mode: "paired_operator",
+      groups_per_base: 2,
+      trials_per_group: 2
+    };
+    const malformedPairedRecipePath = path.join(workspace, "parquet-malformed-paired-recipe.json");
+    await writeFile(
+      malformedPairedRecipePath,
+      `${JSON.stringify(malformedPairedRecipe, null, 2)}\n`,
+      "utf8"
+    );
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "parquet-malformed-paired-recipe.json",
+      sourceRoot,
+      outDir: "parquet-malformed-paired-handoff"
+    })).rejects.toThrow("three trials per group");
 
     const duplicateRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
     duplicateRecipe.handoff_id = "candidate-handoff-parquet-duplicate-source";
@@ -852,12 +982,89 @@ describe("promotion trial-candidate handoff", () => {
       },
       positive_candidate_count: 0,
       redistributable_positive_candidate_count: 0,
+      source_eligible_candidate_count: 0,
+      redistributable_source_eligible_candidate_count: 0,
       candidate_review_progression_floor_met: false,
       confirmatory_admitted: false
     });
     expect(await inspectPromotionTrialCandidateReviewAdjudication(
       path.join(workspace, "review-adjudication")
     )).toMatchObject({ passed: true, issues: [] });
+  });
+
+  it("allows source-eligible reviews to progress to curation without inventing paper artifacts", async () => {
+    const handoffRoot = path.join(workspace, "handoff");
+    await writeHumanAnnotation(
+      path.join(workspace, "source-eligible-a.json"),
+      handoffRoot,
+      "source-reviewer-a",
+      { allCandidatesSourceEligible: true }
+    );
+    await writeHumanAnnotation(
+      path.join(workspace, "source-eligible-b.json"),
+      handoffRoot,
+      "source-reviewer-b",
+      { allCandidatesSourceEligible: true }
+    );
+    await writeLicenseReview(
+      path.join(workspace, "source-eligible-license.json"),
+      handoffRoot,
+      "source-license-reviewer",
+      {
+        status: "redistribution_permitted",
+        evidenceRefs: ["https://example.org/source-license"]
+      }
+    );
+
+    const result = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      annotationPaths: ["source-eligible-a.json", "source-eligible-b.json"],
+      licenseReviewPath: "source-eligible-license.json",
+      outDir: "source-eligible-adjudication"
+    });
+    const evidence = JSON.parse(await readFile(
+      path.join(workspace, "source-eligible-adjudication", PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
+      "utf8"
+    ));
+
+    expect(result.report).toMatchObject({ passed: true, accepted_label_count: 72 });
+    expect(evidence).toMatchObject({
+      positive_candidate_count: 0,
+      redistributable_positive_candidate_count: 0,
+      source_eligible_candidate_count: 72,
+      redistributable_source_eligible_candidate_count: 72,
+      candidate_review_progression_floor_met: true,
+      confirmatory_admitted: false,
+      remaining_blockers: ["canonical_source_projection", "confirmatory_intake_freeze"]
+    });
+    expect(await inspectPromotionTrialCandidateReviewAdjudication(
+      path.join(workspace, "source-eligible-adjudication")
+    )).toMatchObject({ passed: true, issues: [] });
+
+    evidence.source_eligible_candidate_count = 0;
+    await writeFile(
+      path.join(workspace, "source-eligible-adjudication", PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
+      `${JSON.stringify(evidence, null, 2)}\n`,
+      "utf8"
+    );
+    const reportPath = path.join(
+      workspace,
+      "source-eligible-adjudication",
+      "trial-candidate-review-adjudication.json"
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    report.outputs.evidence_sha256 = createHash("sha256").update(await readFile(
+      path.join(workspace, "source-eligible-adjudication", PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE)
+    )).digest("hex");
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+    const tampered = await inspectPromotionTrialCandidateReviewAdjudication(
+      path.join(workspace, "source-eligible-adjudication")
+    );
+    expect(tampered.passed).toBe(false);
+    expect(tampered.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_output_semantics_invalid"
+    );
   });
 
   it("rejects reused reviewer identities and unresolved candidate disagreements", async () => {
@@ -1091,6 +1298,7 @@ async function writeHumanAnnotation(
   options: {
     firstCandidateObservation?: "negative" | "uncertain";
     firstCandidatePositive?: boolean;
+    allCandidatesSourceEligible?: boolean;
     invalidPointer?: boolean;
   } = {}
 ): Promise<PromotionTrialCandidateInitialAnnotationSet> {
@@ -1103,16 +1311,21 @@ async function writeHumanAnnotation(
       candidate_id: candidate.candidate_id,
       observations: Object.fromEntries(PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.map((field) => [
         field,
-        index === 0 && options.firstCandidatePositive
+        options.allCandidatesSourceEligible
+          && (field === "execution_trace_completeness" || field === "repeated_trial_comparability")
+          ? "positive"
+          : index === 0 && options.firstCandidatePositive
           ? "positive"
           : index === 0 && field === "execution_trace_completeness" && options.firstCandidateObservation
           ? options.firstCandidateObservation
           : "negative"
       ])) as PromotionTrialCandidateHumanLabel["observations"],
-      evidence_refs: index === 0 && options.firstCandidatePositive
-        ? candidate.trials.map((trial: Record<string, any>, trialIndex: number) => ({
+      evidence_refs: options.allCandidatesSourceEligible || (index === 0 && options.firstCandidatePositive)
+        ? [...candidate.trials, ...(candidate.comparator_trials || [])].map((trial: Record<string, any>, trialIndex: number) => ({
             trial_id: trial.trial_id,
-            observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS],
+            observations: options.allCandidatesSourceEligible
+              ? ["execution_trace_completeness", "repeated_trial_comparability"]
+              : [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS],
             json_pointers: [options.invalidPointer && trialIndex === 0 ? "/missing" : ""]
           }))
         : [],
@@ -1139,7 +1352,11 @@ async function writeHumanAnnotation(
 async function writeLicenseReview(
   target: string,
   handoffRoot: string,
-  reviewerId: string
+  reviewerId: string,
+  options: {
+    status?: PromotionTrialCandidateLicenseReviewSet["review"]["status"];
+    evidenceRefs?: string[];
+  } = {}
 ): Promise<PromotionTrialCandidateLicenseReviewSet> {
   const manifest = JSON.parse(await readFile(
     path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
@@ -1157,9 +1374,11 @@ async function writeLicenseReview(
       controller_map_unseen: true
     },
     review: {
-      status: "uncertain",
-      evidence_refs: [],
-      rationale: "The neutral contract fixture does not establish redistribution permission."
+      status: options.status || "uncertain",
+      evidence_refs: options.evidenceRefs || [],
+      rationale: options.status === "redistribution_permitted"
+        ? "The neutral fixture binds the declared HTTPS permission reference."
+        : "The neutral contract fixture does not establish redistribution permission."
     }
   };
   await writeFile(target, `${JSON.stringify(review, null, 2)}\n`, "utf8");

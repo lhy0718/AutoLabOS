@@ -57,12 +57,24 @@ sampling; reviewers must record whether the repeated executions are comparable.
 Two independent reviewers must inspect opaque packets without controller
 identities. They separately decide:
 
-- whether source and downstream redistribution terms permit the intended use;
 - whether the two operator groups answer the same task under comparable
   conditions;
 - whether all required trace and evaluation fields are present;
 - whether privacy projection preserves the substantive evidence;
 - whether the item is usable as a controlled benchmark base.
+
+A separate human license reviewer inspects only the pinned source-license
+packet and public permission evidence. Candidate reviewers do not receive the
+source identity, controller map, or license decision, and the license reviewer
+does not receive candidate annotations.
+
+Progression into canonical curation depends on positive execution completeness
+and repeated-trial comparability for every required source candidate, plus the
+separate license gate. Source-absent result tables, readiness decisions, figure
+audits, and claim links remain availability observations; they are not treated
+as source defects or fabricated to make review pass. Canonical curation must
+create any required benchmark-owned artifacts under `benchmark_curated`
+provenance.
 
 Disagreements require adjudication. Missing or conflicting reviews leave the
 item unadmitted. Reviewer identities, decisions, timestamps, and packet hashes
@@ -96,6 +108,8 @@ read. A failed gate causes explicit backtracking or downgrade, never cosmetic
 paper completion.
 
 The current source comparison is recorded in
-`docs/research/evidence/promotion-source-portfolio-v2.json`. The v9 handoff
-passes the source-native trace floor but fails the paired-comparison gate, so no
-v9 task is admitted.
+`docs/research/evidence/promotion-source-portfolio-v2.json`. The v10 handoff
+passes the source-native trace and structural paired-comparison candidate
+floors. It has no human license decision, independent comparability review,
+canonical clean-control curation, or confirmatory freeze, so no v10 task is
+admitted.

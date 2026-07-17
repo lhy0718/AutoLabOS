@@ -55,6 +55,7 @@ import {
   runResearchPackCli,
   runResearchReviewCli
 } from "./research.js";
+import { runWithProcessLifetime } from "./processLifetime.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -683,7 +684,7 @@ function formatFatalError(error: unknown): string {
   return cwd.length > path.parse(cwd).root.length ? raw.replaceAll(cwd, "<workspace>") : raw;
 }
 
-main().catch((error) => {
+runWithProcessLifetime(main).catch((error) => {
   process.stderr.write(`${formatFatalError(error)}\n`);
   process.exitCode = 1;
 });
