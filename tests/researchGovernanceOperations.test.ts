@@ -100,8 +100,20 @@ describe("research governance operations", () => {
     expect(improveResult.artifact.apply_mode).toBe("plan_only");
     expect(improveResult.artifact.targets.length).toBeGreaterThan(0);
     expect(improveResult.artifact.targets).toEqual(expect.arrayContaining([
-      expect.objectContaining({ finding_code: "artifact_contract_incomplete", target_node: "run_experiments" }),
-      expect.objectContaining({ finding_code: "result_table_missing", target_node: "analyze_results" })
+      expect.objectContaining({
+        finding_code: "artifact_contract_incomplete",
+        target_node: "run_experiments",
+        proposed_change: expect.stringContaining("missing governed artifacts")
+      }),
+      expect.objectContaining({
+        finding_code: "result_table_missing",
+        target_node: "analyze_results",
+        proposed_change: expect.stringContaining("comparator result table")
+      }),
+      expect.objectContaining({
+        finding_code: "unsupported_claim",
+        proposed_change: expect.stringContaining("claim-evidence rows")
+      })
     ]));
     expect(packResult.artifact.paper_ready).toBe(false);
     expect(packResult.artifact.limitations.length).toBeGreaterThan(0);

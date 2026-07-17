@@ -562,6 +562,15 @@ const GOVERNED_RESEARCH_NODES = new Set<GovernedResearchNode>([
 ]);
 
 function proposedChangeForTarget(target: ReviewRepairTarget): string {
+  if (target.finding_code === "artifact_contract_incomplete") {
+    return `Require the ${target.target_node} handoff to contain the missing governed artifacts, then rerun the node before downstream promotion.`;
+  }
+  if (target.finding_code === "result_table_missing" || target.finding_code === "result_table_incomplete") {
+    return "Require analyze_results to emit a complete, measurable comparator result table from executed evidence; backtrack to run_experiments when source metrics are absent.";
+  }
+  if (target.finding_code === "unsupported_claim" || target.finding_code === "unsupported_claims_present") {
+    return "Require analyze_results to emit parseable claim-evidence rows with artifact links, or lower the claim ceiling before downstream promotion.";
+  }
   return `Strengthen the ${target.target_node} ${target.target_surface} so finding ${target.finding_code} is blocked or downgraded before downstream promotion.`;
 }
 
