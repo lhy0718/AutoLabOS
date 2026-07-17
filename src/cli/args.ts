@@ -59,6 +59,7 @@ export type CliAction =
   | { kind: "governance-benchmark-audit-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-freeze-promotion-confirmatory"; manifestPath: string; outDir: string }
   | { kind: "governance-benchmark-gate-promotion-confirmatory"; suitePath: string; predictionsPath: string; systemRunManifestPath?: string; providerRunManifestPaths: string[]; recoveryManifestPath?: string; systemRoles: { ungated: string; checklist: string; manuscript: string; full: string; ablations: string[] }; outDir: string }
+  | { kind: "governance-benchmark-export-promotion-development-evidence"; corpusManifestPath: string; suitePath: string; predictionsPath: string; systemRunManifestPath: string; scoreReportPath: string; gateReportPath: string; recommendationsPath: string; outputPath: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
   | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
   | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
@@ -371,11 +372,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
-    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "audit-promotion-source-expansion" && subcommand !== "export-promotion-trial-candidates" && subcommand !== "preflight-promotion-trial-candidate-annotation" && subcommand !== "adjudicate-promotion-trial-candidate-review" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "preflight-promotion-source-normalization-annotation" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "gate-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "aggregate-promotion-provider-runs" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
+    if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "export-promotion-development-evidence" && subcommand !== "audit-promotion-source-expansion" && subcommand !== "export-promotion-trial-candidates" && subcommand !== "preflight-promotion-trial-candidate-annotation" && subcommand !== "adjudicate-promotion-trial-candidate-review" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "preflight-promotion-source-normalization-annotation" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "gate-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "aggregate-promotion-provider-runs" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",
         message:
-          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|audit-promotion-source-expansion|export-promotion-trial-candidates|preflight-promotion-trial-candidate-annotation|adjudicate-promotion-trial-candidate-review|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|preflight-promotion-source-normalization-annotation|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|gate-promotion-confirmatory|build-promotion|run-promotion|run-promotion-provider|aggregate-promotion-provider-runs|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
+          "Usage: governance-benchmark seed|dry-run|batch|export-bundles|generate-promotion-development|export-promotion-development-evidence|audit-promotion-source-expansion|export-promotion-trial-candidates|preflight-promotion-trial-candidate-annotation|adjudicate-promotion-trial-candidate-review|project-promotion-source|export-promotion-source-normalization|export-promotion-source-normalization-batch|preflight-promotion-source-normalization-annotation|adjudicate-promotion-source-normalization-batch|materialize-promotion-source-normalization-batch|normalize-promotion-source|prepare-promotion-execution-evidence|audit-promotion-confirmatory|freeze-promotion-confirmatory|gate-promotion-confirmatory|build-promotion|run-promotion|run-promotion-provider|aggregate-promotion-provider-runs|export-promotion-prompts|import-promotion-responses|export-promotion-annotations|export-promotion-mutation-audit|verify-promotion-mutations|adjudicate-promotion|analyze-promotion-failures|score-promotion [options]."
       };
     }
     if (subcommand === "audit-promotion-source-expansion") {
@@ -1048,6 +1049,56 @@ export function resolveCliAction(args: string[]): CliAction {
         resolutionPath,
         mutationAuditReportPath,
         outDir
+      };
+    }
+    if (subcommand === "export-promotion-development-evidence") {
+      let corpusManifestPath: string | undefined;
+      let suitePath: string | undefined;
+      let predictionsPath: string | undefined;
+      let systemRunManifestPath: string | undefined;
+      let scoreReportPath: string | undefined;
+      let gateReportPath: string | undefined;
+      let recommendationsPath: string | undefined;
+      let outputPath: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: "Missing value for " + token + "." };
+        }
+        if (token === "--corpus-manifest") corpusManifestPath = value;
+        else if (token === "--suite") suitePath = value;
+        else if (token === "--predictions") predictionsPath = value;
+        else if (token === "--system-run-manifest") systemRunManifestPath = value;
+        else if (token === "--score") scoreReportPath = value;
+        else if (token === "--gate") gateReportPath = value;
+        else if (token === "--recommendations") recommendationsPath = value;
+        else if (token === "--output") outputPath = value;
+        else {
+          return {
+            kind: "error",
+            message: "Unsupported governance-benchmark export-promotion-development-evidence argument: " + token
+          };
+        }
+        index += 1;
+      }
+      if (!corpusManifestPath || !suitePath || !predictionsPath || !systemRunManifestPath
+          || !scoreReportPath || !gateReportPath || !recommendationsPath || !outputPath) {
+        return {
+          kind: "error",
+          message: "export-promotion-development-evidence requires --corpus-manifest, --suite, --predictions, --system-run-manifest, --score, --gate, --recommendations, and --output."
+        };
+      }
+      return {
+        kind: "governance-benchmark-export-promotion-development-evidence",
+        corpusManifestPath,
+        suitePath,
+        predictionsPath,
+        systemRunManifestPath,
+        scoreReportPath,
+        gateReportPath,
+        recommendationsPath,
+        outputPath
       };
     }
     if (subcommand === "gate-promotion-confirmatory") {

@@ -39,6 +39,7 @@ import {
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
   runPromotionConfirmatoryGateCli,
+  runPromotionDevelopmentEvidenceExportCli,
   runPromotionFailureAnalysisCli,
   runPromotionBenchmarkScoreCli
 } from "./governanceBenchmark.js";
@@ -73,6 +74,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
     "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <source-recipe.json> --out-dir <new-handoff-dir>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --handoff-root <handoff> --annotation <review.json> --out-dir <preflight-output>",
@@ -470,6 +472,21 @@ async function main(): Promise<void> {
       recoveryManifestPath: action.recoveryManifestPath,
       systemRoles: action.systemRoles,
       outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-promotion-development-evidence") {
+    await runPromotionDevelopmentEvidenceExportCli({
+      cwd: process.cwd(),
+      corpusManifestPath: action.corpusManifestPath,
+      suitePath: action.suitePath,
+      predictionsPath: action.predictionsPath,
+      systemRunManifestPath: action.systemRunManifestPath,
+      scoreReportPath: action.scoreReportPath,
+      gateReportPath: action.gateReportPath,
+      recommendationsPath: action.recommendationsPath,
+      outputPath: action.outputPath
     });
     return;
   }

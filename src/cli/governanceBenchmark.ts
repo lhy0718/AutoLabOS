@@ -110,6 +110,10 @@ import {
   evaluatePromotionConfirmatoryGate,
   type EvaluatePromotionConfirmatoryGateInput
 } from "../core/benchmark/promotionBenchmarkConfirmatoryGate.js";
+import {
+  exportPromotionDevelopmentEvidence,
+  type ExportPromotionDevelopmentEvidenceInput
+} from "../core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 
@@ -329,6 +333,22 @@ export async function runPromotionConfirmatoryGateCli(
     ].join("\n") + "\n"
   );
   if (!result.report.evidence_gate_passed) process.exitCode = 1;
+}
+
+export async function runPromotionDevelopmentEvidenceExportCli(
+  input: ExportPromotionDevelopmentEvidenceInput
+): Promise<void> {
+  const result = await exportPromotionDevelopmentEvidence(input);
+  process.stdout.write(
+    [
+      "Promotion development evidence exported and cross-verified",
+      "Corpus: " + result.report.corpus.corpus_id,
+      "Cases: " + result.report.corpus.case_count,
+      "Readiness: " + result.report.confirmatory_gate.readiness,
+      "Paper-claim eligible: " + result.report.paper_claim_eligible,
+      "Output: " + result.output_path
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionPromptPackExportCli(

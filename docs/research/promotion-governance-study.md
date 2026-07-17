@@ -426,6 +426,32 @@ not been completed, comparison results and explicit readiness artifacts have
 not been verified, and no candidate has entered the frozen confirmatory corpus.
 The paper-scale admission count therefore remains zero.
 
+### Exploratory Instrument Check
+
+A deterministic development run exercised the complete local instrument on
+four synthetic base bundles and 40 paired cases. The artifact-grounded policy
+matched the provisional labels on this generated suite, while the ungated,
+presence-only, and concern-without-action conditions produced false promotions.
+These values validate evaluator wiring only: the suite has one deterministic
+trial, no held-out external sources, no independent human adjudication, no
+provider repetition, and no post-repair evidence.
+
+The same outputs were passed to the confirmatory gate rather than interpreted
+as paper results. Score validation passed, but the gate returned
+`blocked_for_paper_scale` with 50 findings. It routed insufficient scale,
+held-out status, and source-family coverage to `design_experiments`; evidence
+eligibility to `review`; and the missing provider, comparison-system, and
+recovery records to `run_experiments`. Point estimates that appeared to support
+H1 and H4 did not override these blockers, while the four-base intervals were
+already too wide to support H2 or H3.
+
+The cross-verified, hash-bound summary is
+`docs/research/evidence/promotion-development-evidence-v1.json`. Its source
+artifacts remain local run products and are represented by logical roles plus
+SHA-256 values, not by machine-specific paths. The exporter refuses
+paper-eligible input, a non-blocked gate decision, hash drift, system-coverage
+drift, or a missing blocker-to-node recommendation.
+
 ### Confirmatory Decision Boundary
 
 The implementation now separates benchmark score validity from paper-scale

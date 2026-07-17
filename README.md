@@ -478,6 +478,30 @@ Promotion scoring writes per-family system metrics and recomputes every paired c
 
 The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
 
+For a synthetic development run, export a deterministic evidence summary only
+after the score, system-run manifest, confirmatory gate, and node recommendations
+have been generated:
+
+```sh
+autolabos governance-benchmark export-promotion-development-evidence \
+  --corpus-manifest <corpus-manifest.json> \
+  --suite <suite.json> \
+  --predictions <predictions.jsonl> \
+  --system-run-manifest <system-run-manifest.json> \
+  --score <promotion-score.json> \
+  --gate <promotion-confirmatory-gate.json> \
+  --recommendations <node-strengthening-recommendations.json> \
+  --output <development-evidence.json>
+```
+
+The exporter rehashes every input, revalidates the deterministic system run,
+checks suite and score coverage, and requires every unique gate blocker to map
+to the correct node recommendation. It accepts only synthetic,
+paper-ineligible evidence with a blocked confirmatory decision. The summary
+uses logical artifact roles instead of local paths; the source files remain
+local run products and do not become empirical paper evidence by being
+summarized.
+
 ### Fresh Provider Execution
 
 Run the manuscript-only comparator through a configured OpenAI Responses API key without manually constructing response files:

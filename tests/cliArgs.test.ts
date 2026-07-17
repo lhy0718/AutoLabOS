@@ -299,6 +299,39 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports cross-verified promotion development evidence export", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-development-evidence",
+      "--corpus-manifest",
+      "inputs/corpus-manifest.json",
+      "--suite",
+      "inputs/suite.json",
+      "--predictions",
+      "runs/predictions.jsonl",
+      "--system-run-manifest",
+      "runs/system-run-manifest.json",
+      "--score",
+      "gate/score/promotion-score.json",
+      "--gate",
+      "gate/promotion-confirmatory-gate.json",
+      "--recommendations",
+      "gate/review/node-strengthening-recommendations.json",
+      "--output",
+      "evidence/development-evidence.json"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-development-evidence",
+      corpusManifestPath: "inputs/corpus-manifest.json",
+      suitePath: "inputs/suite.json",
+      predictionsPath: "runs/predictions.jsonl",
+      systemRunManifestPath: "runs/system-run-manifest.json",
+      scoreReportPath: "gate/score/promotion-score.json",
+      gateReportPath: "gate/promotion-confirmatory-gate.json",
+      recommendationsPath: "gate/review/node-strengthening-recommendations.json",
+      outputPath: "evidence/development-evidence.json"
+    });
+  });
+
   it("supports confirmatory promotion intake freezing", () => {
     expect(resolveCliAction([
       "governance-benchmark",
