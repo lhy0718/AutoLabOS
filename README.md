@@ -323,6 +323,10 @@ Failure fingerprints are persisted so structural errors and repeated equivalent 
 
 Runs stay inspectable because the system persists artifacts, checkpoints, and transitions instead of relying on hidden state.
 
+For a history-free release of the reviewed current revision, follow
+[`docs/public-source-release.md`](docs/public-source-release.md). A source
+snapshot and cleanup of an existing public Git history are separate operations.
+
 
 ---
 

@@ -395,15 +395,15 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "OpenAI API key": "openai-key"
+        "OpenAI API key": "test-openai-key"
       })
     );
 
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     expect(config.providers.openai.model).toBe("gpt-5-mini");
     expect(config.providers.openai.reasoning_effort).toBe("xhigh");
-    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
-    await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="openai-key"');
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("test-openai-key");
+    await expect(fs.readFile(path.join(cwd, ".env"), "utf8")).resolves.toContain('OPENAI_API_KEY="test-openai-key"');
   });
 
   it("defaults first-run setup to the current openai_api gpt-5.5 medium configuration", async () => {
@@ -418,7 +418,7 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "",
         "Research backend model": "",
         "Research backend reasoning effort": "",
-        "OpenAI API key": "openai-key"
+        "OpenAI API key": "test-openai-key"
       })
     );
 
@@ -442,7 +442,7 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "high",
-        "OpenAI API key": "openai-key"
+        "OpenAI API key": "test-openai-key"
       });
 
     expect(asked.filter((question) => question.startsWith("General chat reasoning effort"))).toHaveLength(1);
@@ -567,14 +567,14 @@ describe("config .env overrides", () => {
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "openai_api",
       semanticScholarApiKey: "semantic-key",
-      openAiApiKey: "openai-key"
+      openAiApiKey: "test-openai-key"
     });
 
     expect(config.project_name).toBe("web-project");
     expect(config.providers.llm_mode).toBe("openai_api");
     expect(getDefaultPdfAnalysisModeForLlmMode(config.providers.llm_mode)).toBe("responses_api_pdf");
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("semantic-key");
-    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("test-openai-key");
 
     const raw = await fs.readFile(paths.configFile, "utf8");
     expect(raw).toContain("providers:");
@@ -663,7 +663,7 @@ describe("config .env overrides", () => {
         "General chat reasoning effort": "low",
         "Research backend model": "gpt-5-mini",
         "Research backend reasoning effort": "xhigh",
-        "OpenAI API key": "openai-key"
+        "OpenAI API key": "test-openai-key"
       })
     );
 
@@ -671,7 +671,7 @@ describe("config .env overrides", () => {
     expect(config.providers.openai.model).toBe("gpt-5-mini");
     expect(config.providers.openai.command_reasoning_effort).toBe("low");
     expect(config.providers.openai.reasoning_effort).toBe("xhigh");
-    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("openai-key");
+    await expect(resolveOpenAiApiKey(cwd)).resolves.toBe("test-openai-key");
   });
 
   it("normalizes Responses API PDF model to the OpenAI backend model", async () => {

@@ -40,3 +40,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Validate history-free public source snapshot
+        run: node scripts/export-public-snapshot.mjs --out-dir "${RUNNER_TEMP}/autolabos-public-source"
