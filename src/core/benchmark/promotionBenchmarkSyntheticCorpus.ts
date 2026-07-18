@@ -11,6 +11,7 @@ import { promotionVariantDefinitions } from "./promotionBenchmarkVariants.js";
 export interface GenerateSyntheticPromotionCorpusInput {
   cwd: string;
   outDir: string;
+  baseBundleCount?: number;
 }
 
 export interface GenerateSyntheticPromotionCorpusResult {
@@ -23,20 +24,30 @@ export interface GenerateSyntheticPromotionCorpusResult {
 }
 
 const CORPUS_ID = "promotion-governance-synthetic-development-v1";
+const DEFAULT_BASE_BUNDLE_COUNT = 4;
+const MAXIMUM_BASE_BUNDLE_COUNT = 1_000;
 
 export async function generateSyntheticPromotionCorpus(
   input: GenerateSyntheticPromotionCorpusInput
 ): Promise<GenerateSyntheticPromotionCorpusResult> {
   const cwd = path.resolve(input.cwd);
   const outDir = path.resolve(cwd, input.outDir);
+  const baseBundleCount = input.baseBundleCount ?? DEFAULT_BASE_BUNDLE_COUNT;
+  if (!Number.isInteger(baseBundleCount) || baseBundleCount < 1 || baseBundleCount > MAXIMUM_BASE_BUNDLE_COUNT) {
+    throw new Error(`Synthetic promotion corpus baseBundleCount must be an integer from 1 to ${MAXIMUM_BASE_BUNDLE_COUNT}.`);
+  }
+  const corpusId = baseBundleCount === DEFAULT_BASE_BUNDLE_COUNT
+    ? CORPUS_ID
+    : `${CORPUS_ID}-${baseBundleCount}-bases`;
+  const variants = promotionVariantDefinitions();
   if (await pathExists(outDir)) throw new Error(`Synthetic promotion corpus output already exists: ${portableRef(cwd, outDir)}`);
   await fs.mkdir(path.dirname(outDir), { recursive: true });
   const stagingRoot = await fs.mkdtemp(path.join(path.dirname(outDir), `.${path.basename(outDir)}.tmp-`));
   try {
     const cases: PromotionBenchmarkRecipeCase[] = [];
-    const variants = promotionVariantDefinitions();
     const deltas = [0.1, 0, -0.05, 0.02];
-    for (const [baseIndex, delta] of deltas.entries()) {
+    for (let baseIndex = 0; baseIndex < baseBundleCount; baseIndex += 1) {
+      const delta = deltas[baseIndex % deltas.length];
       const baseId = `base-development-${baseIndex + 1}`;
       const sourceRoot = path.join(stagingRoot, "base-bundles", baseId);
       await writeCleanBaseBundle(sourceRoot, baseId, delta, baseIndex);
@@ -54,7 +65,7 @@ export async function generateSyntheticPromotionCorpus(
     }
     const recipe: PromotionBenchmarkRecipe = {
       schema_version: "1.0",
-      suite_id: CORPUS_ID,
+      suite_id: corpusId,
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
@@ -65,15 +76,15 @@ export async function generateSyntheticPromotionCorpus(
     await writeJsonFile(path.join(stagingRoot, "recipe.json"), recipe);
     await writeJsonFile(path.join(stagingRoot, "corpus-manifest.json"), {
       schema_version: "1.0",
-      corpus_id: CORPUS_ID,
+      corpus_id: corpusId,
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
       adjudication_status: "unreviewed",
       mutation_isolation_status: "unreviewed",
       execution_provenance_status: "unverified",
-      base_bundle_count: deltas.length,
+      base_bundle_count: baseBundleCount,
       case_count: cases.length,
-      clean_control_count: deltas.length,
+      clean_control_count: baseBundleCount,
       mutation_family_count: variants.filter((variant) => variant.mutation_family).length,
       use_boundary: "Development, evaluator debugging, and node-strengthening only. Not confirmatory evidence."
     });
@@ -83,9 +94,9 @@ export async function generateSyntheticPromotionCorpus(
     throw error;
   }
   return {
-    corpus_id: CORPUS_ID,
-    base_bundle_count: 4,
-    case_count: 40,
+    corpus_id: corpusId,
+    base_bundle_count: baseBundleCount,
+    case_count: baseBundleCount * variants.length,
     output_dir: portableRef(cwd, outDir),
     recipe_path: portableRef(cwd, path.join(outDir, "recipe.json")),
     corpus_manifest_path: portableRef(cwd, path.join(outDir, "corpus-manifest.json"))
@@ -97,7 +108,7 @@ async function writeCleanBaseBundle(root: string, baseId: string, delta: number,
   await fs.mkdir(path.join(root, "review"), { recursive: true });
   await fs.mkdir(path.join(root, "paper"), { recursive: true });
   await fs.mkdir(path.join(root, "checkpoint"), { recursive: true });
-  const baseline = 0.5 + baseIndex * 0.02;
+  const baseline = 0.5 + (baseIndex % 4) * 0.02;
   await writeJsonFile(path.join(root, "result_table.json"), [
     {
       metric: `primary_score_${baseIndex + 1}`,

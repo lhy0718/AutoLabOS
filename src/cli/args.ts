@@ -43,7 +43,7 @@ export type CliAction =
   | { kind: "governance-benchmark-export-promotion-mutation-audit"; suitePath: string; outDir: string }
   | { kind: "governance-benchmark-verify-promotion-mutations"; suitePath: string; privateMapPath: string; auditPaths: string[]; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; mutationAuditReportPath?: string; outDir: string }
-  | { kind: "governance-benchmark-generate-promotion-development"; outDir: string }
+  | { kind: "governance-benchmark-generate-promotion-development"; outDir: string; baseBundleCount?: number }
   | { kind: "governance-benchmark-audit-promotion-source-expansion"; inventoryPath: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-trial-candidates"; recipePath: string; sourceRoot: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-review-campaign"; handoffRoot: string; annotatorIds: string[]; licenseReviewerId: string; outDir: string }
@@ -1019,17 +1019,29 @@ export function resolveCliAction(args: string[]): CliAction {
     }
     if (subcommand === "generate-promotion-development") {
       let outDir = "outputs/governance-benchmark/promotion-development-corpus";
+      let baseBundleCount: number | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token !== "--out-dir") {
+        if (token !== "--out-dir" && token !== "--base-count") {
           return { kind: "error", message: `Unsupported governance-benchmark generate-promotion-development argument: ${token}` };
         }
         const value = args[index + 1];
-        if (!value) return { kind: "error", message: "Missing value for --out-dir." };
-        outDir = value;
+        if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--out-dir") {
+          outDir = value;
+        } else {
+          baseBundleCount = Number(value);
+          if (!Number.isInteger(baseBundleCount) || baseBundleCount < 1) {
+            return { kind: "error", message: "--base-count must be a positive integer." };
+          }
+        }
         index += 1;
       }
-      return { kind: "governance-benchmark-generate-promotion-development", outDir };
+      return {
+        kind: "governance-benchmark-generate-promotion-development",
+        outDir,
+        ...(baseBundleCount !== undefined ? { baseBundleCount } : {})
+      };
     }
     if (subcommand === "build-promotion") {
       let recipePath: string | undefined;

@@ -61,6 +61,57 @@
               "expected": "blocked_for_paper_scale"
             }
           ]
+        },
+        {
+          "path": "docs/research/evidence/promotion-development-scale-preflight-v1.json",
+          "sha256": "4cb5c25190ff87f2ed5b2a7045e74251ed530f1e0750f43a5d2b62ee4a2dd3ed",
+          "assertions": [
+            {
+              "pointer": "/evidence_class",
+              "operator": "equals",
+              "expected": "synthetic_development"
+            },
+            {
+              "pointer": "/paper_claim_eligible",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/artifact_consistency_verified",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/corpus/base_bundle_count",
+              "operator": "equals",
+              "expected": 72
+            },
+            {
+              "pointer": "/corpus/case_count",
+              "operator": "equals",
+              "expected": 720
+            },
+            {
+              "pointer": "/evaluation/score_validation_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/evaluation/systems",
+              "operator": "min_items",
+              "expected": 4
+            },
+            {
+              "pointer": "/confirmatory_gate/readiness",
+              "operator": "equals",
+              "expected": "blocked_for_paper_scale"
+            },
+            {
+              "pointer": "/confirmatory_gate/evidence_gate_passed",
+              "operator": "equals",
+              "expected": false
+            }
+          ]
         }
       ]
     },

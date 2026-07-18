@@ -372,6 +372,30 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports an explicit synthetic promotion development scale", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "generate-promotion-development",
+      "--base-count",
+      "72",
+      "--out-dir",
+      "outputs/development-scale-check"
+    ])).toEqual({
+      kind: "governance-benchmark-generate-promotion-development",
+      outDir: "outputs/development-scale-check",
+      baseBundleCount: 72
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "generate-promotion-development",
+      "--base-count",
+      "0"
+    ])).toEqual({
+      kind: "error",
+      message: "--base-count must be a positive integer."
+    });
+  });
+
   it("supports cross-verified promotion development evidence export", () => {
     expect(resolveCliAction([
       "governance-benchmark",

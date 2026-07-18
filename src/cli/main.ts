@@ -93,7 +93,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]",
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
-    "  autolabos governance-benchmark generate-promotion-development [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark generate-promotion-development [--base-count <positive-integer>] [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
     "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
     "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <portable-source-recipe.json> --source-root <hash-bound-local-source> --out-dir <new-handoff-dir>",
@@ -403,7 +403,11 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "governance-benchmark-generate-promotion-development") {
-    await runSyntheticPromotionCorpusCli({ cwd: process.cwd(), outDir: action.outDir });
+    await runSyntheticPromotionCorpusCli({
+      cwd: process.cwd(),
+      outDir: action.outDir,
+      baseBundleCount: action.baseBundleCount
+    });
     return;
   }
 
