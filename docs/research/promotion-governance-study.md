@@ -622,13 +622,19 @@ observed contract outcome is recorded in
 `docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`.
 
 The post-review operator boundary is now executable without manufacturing the
-missing judgments. A passing adjudication can be transformed into a
-self-contained canonical-curation handoff with six hash-bound traces and the
-15-role artifact contract per source-eligible task. The generated tasks remain
-`pending_human_curation`, their curator and verifier attestations remain
+missing judgments. Only a passing assignment-bound campaign return can be
+transformed into a self-contained canonical-curation handoff with six
+hash-bound traces and the 15-role artifact contract per source-eligible task.
+The handoff embeds the complete controller receipt, returned review bytes,
+campaign and source-handoff manifests, and adjudication outputs; its inspector
+replays both campaign-return and review-admission checks. A raw adjudication
+directory is rejected at the core API and CLI boundary. The generated tasks
+remain `pending_human_curation`, their curator and verifier attestations remain
 false, and the handoff records zero canonical sources and zero confirmatory
-admissions. Because the real v10 annotations and license decision remain
-incomplete, no real v10 curation handoff can pass this command yet.
+admissions. A same-flow v10 attempt using the integrity-valid but blocked
+campaign receipt exited nonzero, reported that a passing assigned return was
+required, and created no output directory. The real v10 annotations and
+license decision remain incomplete, so no real v10 curation handoff exists.
 
 The implementation now separates the old 20-base provisional intake from a
 72-base paper-scale intake. The latter accepts only candidate IDs recovered

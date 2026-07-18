@@ -38,6 +38,7 @@ import {
   preparePromotionTrialCandidateReviewCampaign
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
 import {
+  PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT,
   collectPromotionTrialCandidateReviewCampaign,
   inspectPromotionTrialCandidateCampaignReturn
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
@@ -1314,7 +1315,48 @@ describe("promotion trial-candidate handoff", () => {
     await expect(preparePromotionCanonicalCurationHandoff({
       cwd: workspace,
       handoffRoot: "handoff",
-      reviewRoot: "review-adjudication",
+      campaignReturnRoot: "review-adjudication",
+      curatorId: "curator-alpha",
+      verifierId: "verifier-beta",
+      curatorProtocolVersion: "curation-protocol-1",
+      verifierProtocolVersion: "verification-protocol-1",
+      outDir: "raw-adjudication-curation-handoff"
+    })).rejects.toThrow("assigned review-campaign return");
+    const pairedHandoffRoot = path.join(workspace, "parquet-paired-handoff");
+    await writeHumanAnnotation(
+      path.join(workspace, "ineligible-paired-review-a.json"),
+      pairedHandoffRoot,
+      "ineligible-reviewer-a"
+    );
+    await writeHumanAnnotation(
+      path.join(workspace, "ineligible-paired-review-b.json"),
+      pairedHandoffRoot,
+      "ineligible-reviewer-b"
+    );
+    await writeLicenseReview(
+      path.join(workspace, "ineligible-paired-license.json"),
+      pairedHandoffRoot,
+      "ineligible-license-reviewer"
+    );
+    await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      annotatorIds: ["ineligible-reviewer-a", "ineligible-reviewer-b"],
+      licenseReviewerId: "ineligible-license-reviewer",
+      outDir: "ineligible-review-campaign"
+    });
+    await collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "ineligible-review-campaign",
+      handoffRoot: "parquet-paired-handoff",
+      annotationPaths: ["ineligible-paired-review-a.json", "ineligible-paired-review-b.json"],
+      licenseReviewPath: "ineligible-paired-license.json",
+      outDir: "ineligible-campaign-return"
+    });
+    await expect(preparePromotionCanonicalCurationHandoff({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      campaignReturnRoot: "ineligible-campaign-return",
       curatorId: "curator-alpha",
       verifierId: "verifier-beta",
       curatorProtocolVersion: "curation-protocol-1",
@@ -1384,10 +1426,34 @@ describe("promotion trial-candidate handoff", () => {
     expect(admission.source_eligible_candidate_ids).toHaveLength(72);
     expect(new Set(admission.source_eligible_candidate_ids)).toHaveProperty("size", 72);
 
+    await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      annotatorIds: ["source-reviewer-a", "source-reviewer-b"],
+      licenseReviewerId: "source-license-reviewer",
+      outDir: "source-eligible-review-campaign"
+    });
+    const campaignReturn = await collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "source-eligible-review-campaign",
+      handoffRoot: "parquet-paired-handoff",
+      annotationPaths: ["source-eligible-b.json", "source-eligible-a.json"],
+      licenseReviewPath: "source-eligible-license.json",
+      outDir: "source-eligible-campaign-return"
+    });
+    expect(campaignReturn.receipt).toMatchObject({
+      passed: true,
+      assigned_return_count: 3,
+      adjudication: {
+        passed: true,
+        source_eligible_candidate_count: 72
+      }
+    });
+
     const curationHandoff = await preparePromotionCanonicalCurationHandoff({
       cwd: workspace,
       handoffRoot: "parquet-paired-handoff",
-      reviewRoot: "source-eligible-adjudication",
+      campaignReturnRoot: "source-eligible-campaign-return",
       curatorId: "curator-alpha",
       verifierId: "verifier-beta",
       curatorProtocolVersion: "curation-protocol-1",
@@ -1406,6 +1472,7 @@ describe("promotion trial-candidate handoff", () => {
       passed: true,
       issues: [],
       manifest: {
+        schema_version: "1.1",
         status: "human_curation_pending",
         source_eligible_candidate_count: 72,
         task_count: 72,
@@ -1440,6 +1507,17 @@ describe("promotion trial-candidate handoff", () => {
       "canonical-curation-handoff",
       PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
     ), "utf8"));
+    expect(path.basename(curationManifest.upstream.campaign_return_receipt_path)).toBe(
+      PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+    );
+    expect(curationManifest.files.map((file: { path: string }) => file.path)).toEqual(
+      expect.arrayContaining([
+        curationManifest.upstream.campaign_return_receipt_path,
+        "upstream/review-campaign-return/returns/reviewer-a.json",
+        "upstream/review-campaign-return/returns/reviewer-b.json",
+        "upstream/review-campaign-return/returns/license-reviewer.json"
+      ])
+    );
     expect(curationManifest.files.some((file: { path: string }) =>
       path.basename(file.path) === PROMOTION_CANONICAL_CURATION_RECORD)).toBe(false);
     const firstCurationTrace = path.join(
@@ -1462,9 +1540,7 @@ describe("promotion trial-candidate handoff", () => {
     const copiedHandoffPath = path.join(
       workspace,
       "canonical-curation-handoff",
-      "upstream",
-      "handoff",
-      PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST
+      curationManifest.upstream.handoff_manifest_path
     );
     const originalCopiedHandoff = await readFile(copiedHandoffPath);
     const changedCopiedHandoff = JSON.parse(originalCopiedHandoff.toString("utf8"));
@@ -1474,7 +1550,7 @@ describe("promotion trial-candidate handoff", () => {
       .update(await readFile(copiedHandoffPath)).digest("hex");
     curationManifest.upstream.handoff_manifest_sha256 = changedHandoffHash;
     const handoffBinding = curationManifest.files.find((file: { path: string }) =>
-      file.path === "upstream/handoff/trial-candidate-handoff.json");
+      file.path === curationManifest.upstream.handoff_manifest_path);
     if (!handoffBinding) throw new Error("Missing copied handoff binding.");
     handoffBinding.sha256 = changedHandoffHash;
     await writeJsonFile(path.join(
@@ -1488,6 +1564,9 @@ describe("promotion trial-candidate handoff", () => {
     expect(semanticHandoffTampered.passed).toBe(false);
     expect(semanticHandoffTampered.issues.map((issue) => issue.code)).toContain(
       "canonical_curation_handoff_upstream_handoff_invalid"
+    );
+    expect(semanticHandoffTampered.issues.map((issue) => issue.code)).toContain(
+      "canonical_curation_handoff_upstream_campaign_return_invalid"
     );
     expect(semanticHandoffTampered.issues.map((issue) => issue.code)).not.toContain(
       "canonical_curation_handoff_file_inventory_invalid"

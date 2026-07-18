@@ -71,7 +71,18 @@
     "validation_issue": "trial_candidate_campaign_return_adjudication_blocked",
     "confirmatory_admitted": false
   },
+  "canonical_curation_preflight": {
+    "input_contract": "assignment_bound_campaign_return",
+    "campaign_return_integrity_passed": true,
+    "campaign_return_adjudication_passed": false,
+    "preparation_cli_exit_code": 1,
+    "output_directory_created": false,
+    "status": "blocked_before_preparation",
+    "blocking_reason": "passing_assigned_review_campaign_return_required",
+    "canonical_source_count": 0,
+    "confirmatory_admitted": false
+  },
   "human_review_completed": false,
   "confirmatory_admitted": false,
-  "evidence_boundary": "This audit records machine-prepared incomplete worksheets, their expected fail-closed preflight, and an assignment-bound controller collection of those still-blank campaign templates. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets, their expected fail-closed preflight, an assignment-bound controller collection of those still-blank campaign templates, and the canonical-curation gate rejecting that blocked receipt without creating output. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
 }

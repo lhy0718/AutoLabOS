@@ -89,10 +89,14 @@ independence, legal authority, or confirmatory admission.
 
 Progression into canonical curation depends on positive execution completeness
 and repeated-trial comparability for every required source candidate, plus the
-separate license gate. Source-absent result tables, readiness decisions, figure
-audits, and claim links remain availability observations; they are not treated
-as source defects or fabricated to make review pass. Canonical curation must
-create any required benchmark-owned artifacts under `benchmark_curated`
+separate license gate. The progression API accepts only the controller-side
+campaign return, never a raw adjudication directory. It independently verifies
+the assigned-return receipt and its complete inventory, requires a passing
+contained adjudication, and binds the exact source handoff revision before any
+curation task is emitted. Source-absent result tables, readiness decisions,
+figure audits, and claim links remain availability observations; they are not
+treated as source defects or fabricated to make review pass. Canonical curation
+must create any required benchmark-owned artifacts under `benchmark_curated`
 provenance.
 
 Disagreements require adjudication. Missing or conflicting reviews leave the
@@ -125,15 +129,17 @@ consistent promotion state across checkpoint, review, and paper artifacts.
 These schema checks are independent of the evaluated promotion policy.
 
 The runtime exposes a separate preparation handoff between review and
-canonical-source creation. It accepts only a revision-matched, integrity-valid
-handoff and adjudication with redistribution permission and at least 72
-source-eligible candidates. The packet copies six privacy-projected,
-hash-verified traces per task, the 15-role contract, and the upstream handoff
-and review receipts. Preparation never emits a canonical source or
-`benchmark-curation.json`: its manifest fixes all curation and verification
-counts at zero, all human attestations at false, and confirmatory admission at
-false. A changed trace, task, guide, contract, or upstream receipt invalidates
-the packet.
+canonical-source creation. Schema `1.1` accepts only a revision-matched,
+integrity-valid source handoff and a passing assignment-bound campaign return
+with redistribution permission and at least 72 source-eligible candidates. The
+packet copies six privacy-projected, hash-verified traces per task, the 15-role
+contract, and the complete campaign-return inventory, including returned bytes
+and contained adjudication. Its inspector replays the campaign-return inspector
+before recovering the exact source-eligible task set. Preparation never emits a
+canonical source or `benchmark-curation.json`: its manifest fixes all curation
+and verification counts at zero, all human attestations at false, and
+confirmatory admission at false. A changed trace, task, guide, contract, or
+upstream receipt invalidates the packet.
 
 Curated controls support claims about detection and repair in a controlled
 promotion-governance benchmark. They do not support claims about the natural

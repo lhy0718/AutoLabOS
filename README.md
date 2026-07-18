@@ -437,7 +437,7 @@ autolabos governance-benchmark adjudicate-promotion-trial-candidate-review \
 
 autolabos governance-benchmark prepare-promotion-canonical-curation \
   --handoff-root <new-handoff-dir> \
-  --review-root <review-adjudication> \
+  --campaign-return-root <campaign-return> \
   --curator-id <pseudonym> \
   --verifier-id <different-pseudonym> \
   --curator-protocol <version> \
@@ -474,7 +474,10 @@ structurally valid but incomplete template remains an auditable blocked return;
 it is never promoted to a completed review. The collector always records
 `confirmatory_admitted=false`. The direct adjudication command remains a
 lower-level contract and diagnostic surface; by itself it does not establish
-that the inputs came from a particular campaign assignment.
+that the inputs came from a particular campaign assignment and cannot be used
+as the canonical-curation input. Canonical curation accepts only an
+integrity-valid, passing campaign return and embeds the complete receipt-bound
+return packet so assignment and adjudication provenance can be re-inspected.
 
 The worksheet command copies only opaque candidate IDs into the final annotation
 shape. Every observation remains `null`, every rationale is empty, and all

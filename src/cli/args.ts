@@ -53,7 +53,7 @@ export type CliAction =
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; reviewerRoot: string; annotationPath: string; outDir: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review"; licenseRoot: string; reviewPath: string; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion-trial-candidate-review"; handoffRoot: string; annotationPaths: string[]; licenseReviewPath: string; resolutionPath?: string; outDir: string }
-  | { kind: "governance-benchmark-prepare-promotion-canonical-curation"; handoffRoot: string; reviewRoot: string; curatorId: string; verifierId: string; curatorProtocolVersion: string; verifierProtocolVersion: string; outDir: string }
+  | { kind: "governance-benchmark-prepare-promotion-canonical-curation"; handoffRoot: string; campaignReturnRoot: string; curatorId: string; verifierId: string; curatorProtocolVersion: string; verifierProtocolVersion: string; outDir: string }
   | { kind: "governance-benchmark-project-promotion-source"; sourceRoot: string; recipePath: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-source-normalization"; sourceRoot: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-source-normalization-batch"; recipePath: string; outDir: string }
@@ -653,7 +653,7 @@ export function resolveCliAction(args: string[]): CliAction {
     }
     if (subcommand === "prepare-promotion-canonical-curation") {
       let handoffRoot: string | undefined;
-      let reviewRoot: string | undefined;
+      let campaignReturnRoot: string | undefined;
       let curatorId: string | undefined;
       let verifierId: string | undefined;
       let curatorProtocolVersion: string | undefined;
@@ -661,7 +661,7 @@ export function resolveCliAction(args: string[]): CliAction {
       let outDir: string | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (token !== "--handoff-root" && token !== "--review-root"
+        if (token !== "--handoff-root" && token !== "--campaign-return-root"
             && token !== "--curator-id" && token !== "--verifier-id"
             && token !== "--curator-protocol" && token !== "--verifier-protocol"
             && token !== "--out-dir") {
@@ -672,7 +672,7 @@ export function resolveCliAction(args: string[]): CliAction {
           return { kind: "error", message: `Missing value for ${token}.` };
         }
         if (token === "--handoff-root") handoffRoot = value;
-        else if (token === "--review-root") reviewRoot = value;
+        else if (token === "--campaign-return-root") campaignReturnRoot = value;
         else if (token === "--curator-id") curatorId = value;
         else if (token === "--verifier-id") verifierId = value;
         else if (token === "--curator-protocol") curatorProtocolVersion = value;
@@ -680,17 +680,17 @@ export function resolveCliAction(args: string[]): CliAction {
         else outDir = value;
         index += 1;
       }
-      if (!handoffRoot || !reviewRoot || !curatorId || !verifierId
+      if (!handoffRoot || !campaignReturnRoot || !curatorId || !verifierId
           || !curatorProtocolVersion || !verifierProtocolVersion || !outDir) {
         return {
           kind: "error",
-          message: "Missing required arguments: --handoff-root, --review-root, --curator-id, --verifier-id, --curator-protocol, --verifier-protocol, and --out-dir are required."
+          message: "Missing required arguments: --handoff-root, --campaign-return-root, --curator-id, --verifier-id, --curator-protocol, --verifier-protocol, and --out-dir are required."
         };
       }
       return {
         kind: "governance-benchmark-prepare-promotion-canonical-curation",
         handoffRoot,
-        reviewRoot,
+        campaignReturnRoot,
         curatorId,
         verifierId,
         curatorProtocolVersion,

@@ -23,6 +23,11 @@ import {
   PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE,
   loadPromotionTrialCandidateReviewAdmissionEvidence
 } from "./promotionBenchmarkTrialCandidateReview.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT,
+  inspectPromotionTrialCandidateCampaignReturn,
+  type PromotionTrialCandidateCampaignReturnReceipt
+} from "./promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 import { isSha256 } from "./promotionBenchmarkSourceDiversity.js";
 
 export const PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST =
@@ -36,19 +41,23 @@ export const PROMOTION_CANONICAL_CURATOR_GUIDE =
 export const PROMOTION_CANONICAL_VERIFIER_GUIDE =
   "verifier/VERIFIER_GUIDE.md";
 
+const UPSTREAM_CAMPAIGN_RETURN_ROOT =
+  "upstream/review-campaign-return";
+const UPSTREAM_CAMPAIGN_RETURN_RECEIPT =
+  `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/${PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT}`;
 const UPSTREAM_HANDOFF_MANIFEST =
-  "upstream/handoff/trial-candidate-handoff.json";
+  `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/upstream/trial-candidate-handoff.json`;
 const UPSTREAM_REVIEW_REPORT =
-  "upstream/review/trial-candidate-review-adjudication.json";
+  `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`;
 const UPSTREAM_REVIEW_LABELS =
-  "upstream/review/adjudicated-candidate-labels.jsonl";
+  `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`;
 const UPSTREAM_REVIEW_EVIDENCE =
-  "upstream/review/trial-candidate-review-evidence.json";
+  `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`;
 
 export interface PreparePromotionCanonicalCurationHandoffInput {
   cwd: string;
   handoffRoot: string;
-  reviewRoot: string;
+  campaignReturnRoot: string;
   curatorId: string;
   verifierId: string;
   curatorProtocolVersion: string;
@@ -120,7 +129,7 @@ export interface PromotionCanonicalCurationTask {
 }
 
 export interface PromotionCanonicalCurationHandoffManifest {
-  schema_version: "1.0";
+  schema_version: "1.1";
   handoff_id: string;
   source_revision: string;
   status: "human_curation_pending";
@@ -139,6 +148,8 @@ export interface PromotionCanonicalCurationHandoffManifest {
   canonical_curation_completed: false;
   confirmatory_admitted: false;
   upstream: {
+    campaign_return_receipt_path: typeof UPSTREAM_CAMPAIGN_RETURN_RECEIPT;
+    campaign_return_receipt_sha256: string;
     handoff_manifest_path: typeof UPSTREAM_HANDOFF_MANIFEST;
     handoff_manifest_sha256: string;
     review_report_path: typeof UPSTREAM_REVIEW_REPORT;
@@ -157,12 +168,12 @@ export async function preparePromotionCanonicalCurationHandoff(
 ): Promise<PreparePromotionCanonicalCurationHandoffResult> {
   const cwd = path.resolve(input.cwd);
   const handoffRoot = path.resolve(cwd, input.handoffRoot);
-  const reviewRoot = path.resolve(cwd, input.reviewRoot);
+  const campaignReturnRoot = path.resolve(cwd, input.campaignReturnRoot);
   const outDir = path.resolve(cwd, input.outDir);
   validateOperatorInput(input);
   assertStrictlyInside(cwd, outDir, "Canonical curation handoff output");
   if (isSameOrContainedPath(handoffRoot, outDir)
-      || isSameOrContainedPath(reviewRoot, outDir)) {
+      || isSameOrContainedPath(campaignReturnRoot, outDir)) {
     throw new Error("Canonical curation handoff output must stay outside upstream evidence roots.");
   }
   if (await pathExists(outDir)) {
@@ -173,6 +184,27 @@ export async function preparePromotionCanonicalCurationHandoff(
   if (!handoff.passed || !handoff.manifest) {
     throw new Error(`Canonical curation requires an integrity-valid candidate handoff: ${handoff.issues.map((issue) => issue.code).join(", ") || "unreadable"}.`);
   }
+  const campaignReturn = await inspectPromotionTrialCandidateCampaignReturn(campaignReturnRoot);
+  if (!campaignReturn.passed || !campaignReturn.receipt) {
+    throw new Error(`Canonical curation requires an integrity-valid assigned review-campaign return: ${campaignReturn.issues.map((issue) => issue.code).join(", ") || "unreadable"}.`);
+  }
+  const receipt = campaignReturn.receipt;
+  if (!receipt.passed || receipt.status !== "adjudicated"
+      || !receipt.adjudication.attempted || !receipt.adjudication.passed) {
+    throw new Error("Canonical curation requires a passing assigned review-campaign return and adjudication.");
+  }
+  if (receipt.handoff_id !== handoff.manifest.handoff_id
+      || receipt.source_revision !== handoff.manifest.source_revision) {
+    throw new Error("Canonical curation requires revision-matched handoff and campaign-return evidence.");
+  }
+  const handoffManifestBytes = await readContainedRegularFile(
+    handoffRoot,
+    path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST)
+  );
+  if (sha256(handoffManifestBytes) !== receipt.input_sha256.handoff_manifest) {
+    throw new Error("Canonical curation requires the exact handoff bound by the campaign return.");
+  }
+  const reviewRoot = path.join(campaignReturnRoot, "adjudication");
   const review = await loadPromotionTrialCandidateReviewAdmissionEvidence(reviewRoot);
   if (review.handoff_id !== handoff.manifest.handoff_id
       || review.source_revision !== handoff.manifest.source_revision) {
@@ -233,14 +265,14 @@ export async function preparePromotionCanonicalCurationHandoff(
       "utf8"
     );
 
-    const upstream = await copyUpstreamEvidence(handoffRoot, reviewRoot, stagingRoot);
+    const upstream = await copyUpstreamEvidence(campaignReturnRoot, stagingRoot, receipt);
     if (upstream.review_labels_sha256 !== review.labels_sha256
         || upstream.review_evidence_sha256 !== review.evidence_sha256) {
       throw new Error("Canonical curation upstream review hashes changed during preparation.");
     }
     const files = await inventoryRegularFiles(stagingRoot);
     const manifest: PromotionCanonicalCurationHandoffManifest = {
-      schema_version: "1.0",
+      schema_version: "1.1",
       handoff_id: handoff.manifest.handoff_id,
       source_revision: handoff.manifest.source_revision,
       status: "human_curation_pending",
@@ -381,16 +413,45 @@ export async function inspectPromotionCanonicalCurationHandoff(
       message: "Pending curation tasks or their six-trial artifacts are missing, changed, or semantically inconsistent."
     });
   }
+  let campaignReturnReceipt: PromotionTrialCandidateCampaignReturnReceipt | null = null;
+  try {
+    const campaignReturn = await inspectPromotionTrialCandidateCampaignReturn(path.join(
+      root,
+      UPSTREAM_CAMPAIGN_RETURN_ROOT
+    ));
+    const receipt = campaignReturn.receipt;
+    if (!campaignReturn.passed || !receipt || !receipt.passed
+        || receipt.status !== "adjudicated"
+        || !receipt.adjudication.attempted
+        || !receipt.adjudication.passed
+        || receipt.handoff_id !== manifest.handoff_id
+        || receipt.source_revision !== manifest.source_revision
+        || receipt.input_sha256.handoff_manifest
+          !== manifest.upstream.handoff_manifest_sha256
+        || receipt.adjudication.report_path
+          !== `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`
+        || receipt.adjudication.report_sha256
+          !== manifest.upstream.review_report_sha256
+        || receipt.adjudication.source_eligible_candidate_count
+          !== manifest.source_eligible_candidate_count) {
+      throw new Error("campaign return mismatch");
+    }
+    campaignReturnReceipt = receipt;
+  } catch {
+    issues.push({
+      code: "canonical_curation_handoff_upstream_campaign_return_invalid",
+      message: "The copied review-campaign return must independently recover assigned returns and a passing adjudication."
+    });
+  }
   if (tasks.length > 0) {
     const expectedFiles = new Set([
       PROMOTION_CANONICAL_CURATION_TASKS,
       PROMOTION_CANONICAL_CURATION_CONTRACT,
       PROMOTION_CANONICAL_CURATOR_GUIDE,
       PROMOTION_CANONICAL_VERIFIER_GUIDE,
-      UPSTREAM_HANDOFF_MANIFEST,
-      UPSTREAM_REVIEW_REPORT,
-      UPSTREAM_REVIEW_LABELS,
-      UPSTREAM_REVIEW_EVIDENCE,
+      UPSTREAM_CAMPAIGN_RETURN_RECEIPT,
+      ...(campaignReturnReceipt?.files || []).map((file) =>
+        `${UPSTREAM_CAMPAIGN_RETURN_ROOT}/${file.path}`),
       ...tasks.flatMap((task) => task.source_trials.map((trial) =>
         `curator/${trial.artifact_path}`))
     ]);
@@ -436,7 +497,7 @@ export async function inspectPromotionCanonicalCurationHandoff(
   }
   try {
     const review = await loadPromotionTrialCandidateReviewAdmissionEvidence(
-      path.join(root, "upstream", "review")
+      path.join(root, UPSTREAM_CAMPAIGN_RETURN_ROOT, "adjudication")
     );
     const taskIds = tasks.map((task) => task.candidate_id).sort();
     if (review.handoff_id !== manifest.handoff_id
@@ -613,7 +674,7 @@ function parseSourceTrial(
 function parseHandoffManifest(value: unknown): PromotionCanonicalCurationHandoffManifest {
   const requiredArtifactCount = Object.keys(PROMOTION_CANONICAL_ARTIFACT_PATHS).length;
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || value.schema_version !== "1.1"
       || !validId(value.handoff_id)
       || !nonEmptyString(value.source_revision)
       || value.status !== "human_curation_pending"
@@ -639,7 +700,9 @@ function parseHandoffManifest(value: unknown): PromotionCanonicalCurationHandoff
     throw new Error("Invalid canonical curation handoff manifest.");
   }
   const upstream = value.upstream;
-  if (upstream.handoff_manifest_path !== UPSTREAM_HANDOFF_MANIFEST
+  if (upstream.campaign_return_receipt_path !== UPSTREAM_CAMPAIGN_RETURN_RECEIPT
+      || !isSha256(upstream.campaign_return_receipt_sha256)
+      || upstream.handoff_manifest_path !== UPSTREAM_HANDOFF_MANIFEST
       || !isSha256(upstream.handoff_manifest_sha256)
       || upstream.review_report_path !== UPSTREAM_REVIEW_REPORT
       || !isSha256(upstream.review_report_sha256)
@@ -683,49 +746,55 @@ async function copyCandidateReviewerArtifacts(
 }
 
 async function copyUpstreamEvidence(
-  handoffRoot: string,
-  reviewRoot: string,
-  stagingRoot: string
+  campaignReturnRoot: string,
+  stagingRoot: string,
+  receipt: PromotionTrialCandidateCampaignReturnReceipt
 ): Promise<PromotionCanonicalCurationHandoffManifest["upstream"]> {
-  const files = [
-    {
-      source: path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
-      sourceRoot: handoffRoot,
-      target: UPSTREAM_HANDOFF_MANIFEST
-    },
-    {
-      source: path.join(reviewRoot, PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT),
-      sourceRoot: reviewRoot,
-      target: UPSTREAM_REVIEW_REPORT
-    },
-    {
-      source: path.join(reviewRoot, PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS),
-      sourceRoot: reviewRoot,
-      target: UPSTREAM_REVIEW_LABELS
-    },
-    {
-      source: path.join(reviewRoot, PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
-      sourceRoot: reviewRoot,
-      target: UPSTREAM_REVIEW_EVIDENCE
+  const receiptPath = path.join(
+    campaignReturnRoot,
+    PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+  );
+  const receiptBytes = await readContainedRegularFile(campaignReturnRoot, receiptPath);
+  if (JSON.stringify(JSON.parse(receiptBytes.toString("utf8")) as unknown)
+      !== JSON.stringify(receipt)) {
+    throw new Error("Campaign return receipt changed during curation preparation.");
+  }
+  for (const file of receipt.files) {
+    const source = path.join(campaignReturnRoot, file.path);
+    const bytes = await readContainedRegularFile(campaignReturnRoot, source);
+    if (sha256(bytes) !== file.sha256 || bytes.byteLength !== file.bytes) {
+      throw new Error("Campaign return evidence changed during curation preparation.");
     }
-  ];
-  const hashes: string[] = [];
-  for (const file of files) {
-    const bytes = await readContainedRegularFile(file.sourceRoot, file.source);
-    const target = path.join(stagingRoot, file.target);
+    const target = path.join(stagingRoot, UPSTREAM_CAMPAIGN_RETURN_ROOT, file.path);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, bytes);
-    hashes.push(sha256(bytes));
   }
+  const copiedReceiptPath = path.join(stagingRoot, UPSTREAM_CAMPAIGN_RETURN_RECEIPT);
+  await fs.mkdir(path.dirname(copiedReceiptPath), { recursive: true });
+  await fs.writeFile(copiedReceiptPath, receiptBytes);
+
+  const fileHash = (relativePath: string): string => {
+    const binding = receipt.files.find((file) => file.path === relativePath);
+    if (!binding) throw new Error(`Campaign return is missing required evidence: ${relativePath}.`);
+    return binding.sha256;
+  };
   return {
+    campaign_return_receipt_path: UPSTREAM_CAMPAIGN_RETURN_RECEIPT,
+    campaign_return_receipt_sha256: sha256(receiptBytes),
     handoff_manifest_path: UPSTREAM_HANDOFF_MANIFEST,
-    handoff_manifest_sha256: hashes[0],
+    handoff_manifest_sha256: fileHash("upstream/trial-candidate-handoff.json"),
     review_report_path: UPSTREAM_REVIEW_REPORT,
-    review_report_sha256: hashes[1],
+    review_report_sha256: fileHash(
+      `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`
+    ),
     review_labels_path: UPSTREAM_REVIEW_LABELS,
-    review_labels_sha256: hashes[2],
+    review_labels_sha256: fileHash(
+      `adjudication/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`
+    ),
     review_evidence_path: UPSTREAM_REVIEW_EVIDENCE,
-    review_evidence_sha256: hashes[3]
+    review_evidence_sha256: fileHash(
+      `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`
+    )
   };
 }
 
@@ -733,6 +802,10 @@ function upstreamHashEntries(
   manifest: PromotionCanonicalCurationHandoffManifest
 ): Array<[string, string]> {
   return [
+    [
+      manifest.upstream.campaign_return_receipt_path,
+      manifest.upstream.campaign_return_receipt_sha256
+    ],
     [manifest.upstream.handoff_manifest_path, manifest.upstream.handoff_manifest_sha256],
     [manifest.upstream.review_report_path, manifest.upstream.review_report_sha256],
     [manifest.upstream.review_labels_path, manifest.upstream.review_labels_sha256],

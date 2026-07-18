@@ -896,7 +896,7 @@ describe("resolveCliAction", () => {
       "governance-benchmark",
       "prepare-promotion-canonical-curation",
       "--handoff-root", "outputs/candidate-handoff",
-      "--review-root", "outputs/review-adjudication",
+      "--campaign-return-root", "outputs/review-campaign-return",
       "--curator-id", "curator-alpha",
       "--verifier-id", "verifier-beta",
       "--curator-protocol", "curation-protocol-1",
@@ -905,7 +905,7 @@ describe("resolveCliAction", () => {
     ])).toEqual({
       kind: "governance-benchmark-prepare-promotion-canonical-curation",
       handoffRoot: "outputs/candidate-handoff",
-      reviewRoot: "outputs/review-adjudication",
+      campaignReturnRoot: "outputs/review-campaign-return",
       curatorId: "curator-alpha",
       verifierId: "verifier-beta",
       curatorProtocolVersion: "curation-protocol-1",
@@ -916,7 +916,7 @@ describe("resolveCliAction", () => {
       "governance-benchmark",
       "prepare-promotion-canonical-curation",
       "--handoff-root", "outputs/candidate-handoff",
-      "--review-root", "outputs/review-adjudication",
+      "--campaign-return-root", "outputs/review-campaign-return",
       "--curator-id", "curator-alpha",
       "--verifier-id", "verifier-beta",
       "--out-dir", "outputs/curation-handoff"

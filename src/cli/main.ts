@@ -97,7 +97,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root <handoff/reviewer> --annotation <review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --license-root <handoff/license> --review <license-review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark adjudicate-promotion-trial-candidate-review --handoff-root <handoff> --annotation <review-a.json> --annotation <review-b.json> --license-review <license-review.json> [--resolution <resolution.json>] --out-dir <adjudication>",
-    "  autolabos governance-benchmark prepare-promotion-canonical-curation --handoff-root <handoff> --review-root <adjudication> --curator-id <pseudonym> --verifier-id <pseudonym> --curator-protocol <version> --verifier-protocol <version> --out-dir <new-curation-handoff>",
+    "  autolabos governance-benchmark prepare-promotion-canonical-curation --handoff-root <handoff> --campaign-return-root <assigned-campaign-return> --curator-id <pseudonym> --verifier-id <pseudonym> --curator-protocol <version> --verifier-protocol <version> --out-dir <new-curation-handoff>",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
@@ -459,7 +459,7 @@ async function main(): Promise<void> {
     await runPromotionCanonicalCurationHandoffCli({
       cwd: process.cwd(),
       handoffRoot: action.handoffRoot,
-      reviewRoot: action.reviewRoot,
+      campaignReturnRoot: action.campaignReturnRoot,
       curatorId: action.curatorId,
       verifierId: action.verifierId,
       curatorProtocolVersion: action.curatorProtocolVersion,
