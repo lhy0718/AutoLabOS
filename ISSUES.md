@@ -13976,7 +13976,11 @@ Path placeholders:
   - Added a `benchmark_curated` contract that binds six source traces, distinct curator/verifier roles, protocol versions, timestamps, evidence ceiling, and 15 hash-bound, semantically cross-checked canonical artifacts.
   - Added a schema 1.1 paper-scale intake that binds the paired handoff, review evidence, 72 distinct candidate IDs, canonical curation, and the 720-case freeze while keeping all benchmark labels provisional.
   - Prepared hash-bound v10 reviewer and license worksheets without filling any observation, decision, rationale, or attestation, then recorded the expected fail-closed preflight and zero-admission adjudication receipts.
-  - Real v10 canonical-source materialization and independent human review remain pending.
+  - Materialized two mutually isolated candidate-review packages and one source-license package from the closed campaign without copying controller metadata into participant roots.
+  - Added assignment-bound collection that rechecks returned pseudonyms and bytes, then accepts adjudication only when it binds the collected return hashes.
+  - Added a post-review canonical-curation handoff and a separate curator/verifier return collector; both remain fail-closed until a passing human campaign return exists.
+  - Added private full-text distribution for independent citation-claim review while keeping third-party source files out of Git and the public snapshot.
+  - Real v10 human returns, canonical-source materialization, independent reference review, and confirmatory provider execution remain pending.
 
 - Regression status:
   - Targeted handoff and paper-scale freeze regression: 25/25 passed on 2026-07-17, including a 72-base/720-case synthetic contract path.
@@ -13988,12 +13992,19 @@ Path placeholders:
   - v10 handoff inspection: passed with 72 distinct source-native bases, 432 unique rows, and zero issues.
   - Same-flow CLI revalidation: passed with deterministic recipe and reviewer-tree hashes.
   - v10 review preparation: two annotation preflights failed closed at 0/72 coverage, the source-license preflight remained unresolved, and combined adjudication produced 0/72 accepted labels with no label or evidence-summary output.
-  - Re-validation result: reviewer handoff preparation complete; independent human review and canonical curation remain pending.
+  - Fresh private campaign distribution: three participant archives passed closed-root and fresh-extraction checks; blank returns were rejected and an assignment-bound collection receipt remained at 0/72 accepted labels.
+  - Canonical-curation same-flow check: preparation from the blocked campaign receipt exited nonzero and created no output directory.
+  - Private citation-review distribution: eight exact full texts were hash-bound into a closed package; a fresh extraction passed integrity checks and failed only the intentionally empty human-review gate.
+  - Latest repository-wide CI on 2026-07-19: `npm test` passed with 217 test files and 2,900 core tests; explicit web tests passed 14/14; build, harness validation, plugin operations, and plugin release checks passed.
+  - Public snapshot at revision `48baac79bfc08c16a69a5576fb2b2ce9e06ea156` contains 746 files, excludes Git history and private review packets, and reports `portable=true`.
+  - Re-validation result: all currently automatable preparation and fail-closed boundaries pass; independent human review and canonical curation remain pending.
 
 - Follow-up risks:
   - Treating a generated table, figure, claim, or readiness decision as source-native would invalidate the benchmark's evidence claims.
   - Selecting comparator availability or task inclusion after reading outcomes would introduce leakage.
   - Dataset-level CC BY metadata does not by itself resolve underlying repository or model-output terms.
+  - Two cited OpenReview papers still lack locally verifiable full text because public requests are currently redirected to browser verification; metadata and search excerpts must not be promoted as full-text evidence.
+  - No real provider credential is present in the current environment. Codex-mock output remains smoke evidence and cannot replace the three real-provider confirmatory trials.
 
 - Evidence/artifacts:
   - `docs/research/evidence/promotion-trial-candidate-source-v9.json`
@@ -14001,8 +14012,11 @@ Path placeholders:
   - `docs/research/evidence/promotion-trial-candidate-source-v10.json`
   - `docs/research/evidence/promotion-trial-candidate-handoff-v10.json`
   - `docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`
+  - `docs/research/evidence/promotion-trial-candidate-review-preflight-v11.json`
   - `docs/research/evidence/promotion-source-portfolio-v2.json`
   - `docs/research/promotion-benchmark-curation-boundary.md`
+  - `papers/promotion-governance/reference-evidence-status.json`
+  - `papers/promotion-governance/submission-status.json`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v10/trial-candidate-handoff.json`
   - `<repo-root>/outputs/promotion-governance/trial-candidate-handoff-v10/controller/trial-candidate-map.json`
 
