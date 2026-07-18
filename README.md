@@ -380,6 +380,45 @@ This is a self-improvement path, but not an unconstrained repo-wide rewrite path
 
 AutoLabOS also has built-in harness presets such as `base`, `compact`, `failure-aware`, and `review-heavy`. These adjust artifact/context policy, failure-memory emphasis, prompt policy, and compression strategy for comparative evaluation paths without changing the governed production workflow.
 
+### Reference Claim Review
+
+Citation-bearing claims can be handed to an independent human reviewer without
+placing third-party full text in a public packet. The preflight produces a
+separate incomplete final-approval template. Only an all-supported review plus
+a completed human approval can generate an import-candidate claims TSV:
+
+```sh
+autolabos reference-review prepare \
+  --claims <refgate_claims.tsv> \
+  --status <reference-evidence-status.json> \
+  --lock <refgate.lock.json> \
+  --out-dir <new-handoff-dir>
+
+autolabos reference-review distribute-private \
+  --packet <handoff-dir> \
+  --source-dir <citation-key-named-full-text-dir> \
+  --out-dir <new-private-distribution-dir>
+
+autolabos reference-review preflight \
+  --packet <handoff-or-private-distribution-dir> \
+  --review <completed-review.json> \
+  --out-dir <new-preflight-dir>
+
+autolabos reference-review import \
+  --packet <handoff-or-private-distribution-dir> \
+  --review <completed-review.json> \
+  --preflight <new-preflight-dir>/reference-claim-review-preflight.json \
+  --approval <completed-final-approval.json> \
+  --claims <refgate_claims.tsv> \
+  --out-dir <new-import-dir>
+```
+
+The import revalidates the closed packet, review, preflight, approval, and
+original claims hash. It writes `refgate_claims.reviewed.tsv` and a hash-bound
+receipt to a new directory; it never overwrites the source claims file. Claims
+omitted because their full text is missing remain unchecked. The candidate TSV
+must pass a separate Refgate submission audit before it is adopted.
+
 ### External Source Projection
 
 External research-agent outputs can be normalized for promotion-benchmark intake without embedding source-specific adapters in public runtime code:

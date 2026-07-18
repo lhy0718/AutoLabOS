@@ -728,6 +728,20 @@ approval and a separate Refgate import remain mandatory. The two unavailable
 OpenReview full texts remain submission blockers rather than being replaced by
 metadata or abstract evidence.
 
+The post-preflight import boundary is now executable without creating the
+missing human decisions. Every preflight emits an incomplete final-approval
+template bound to the exact review-return and report hashes. Import replays the
+closed-packet and review checks, requires every reviewed claim to be supported,
+requires a separately completed human approval, verifies that the source claim
+inventory still matches the handoff hash, and writes a new Refgate import
+candidate rather than overwriting the canonical TSV. Claims omitted because
+their full text is unavailable remain unchecked, and the receipt keeps the
+submission claim gate closed until they are resolved. A same-flow run with the
+current incomplete 12-task template exited nonzero at preflight and import and
+created no import output. Therefore independently reviewed claims, completed
+final approvals, and imported checked statuses all remain zero at this
+checkpoint.
+
 ### Exploratory Instrument Check
 
 A deterministic development run exercised the complete local instrument on

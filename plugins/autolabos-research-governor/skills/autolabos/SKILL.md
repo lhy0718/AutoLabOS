@@ -45,6 +45,7 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
 5. Keep external outputs behind the artifact firewall.
    - Imported reports, code runs, reviews, or generated papers are evidence candidates, not trusted conclusions.
    - Missing metrics, baselines, task definitions, seeds, or references must stay missing until artifacts provide them.
+   - For citation-claim review, use the governed `reference-review prepare -> distribute-private -> preflight -> import` path. Never generate the human review or final approval. Import only an all-supported, hash-bound return with explicit human approval, keep the canonical claims file unchanged, and require a separate Refgate submission audit before adoption.
 6. Preserve review as a structural gate.
    - A completed run, successful draft, compiled PDF, or external agent success is not paper readiness.
    - If evidence is weak, downgrade or backtrack instead of polishing prose.
@@ -81,6 +82,7 @@ For substantial work, report:
 - Treating a paper-shaped draft or compiled PDF as paper readiness.
 - Letting an external research system bypass AutoLabOS gates.
 - Inventing missing baselines, metrics, sample sizes, seeds, references, or uncertainty estimates.
+- Treating reference-review preflight as canonical claim approval, or fabricating the human review or final approval needed for import.
 - Adding one-off experiment identifiers to public source, tests, docs, or plugin examples.
 - Repairing broad orchestration when the actual failure is a node-local prompt or validator gap.
 - Applying meta-harness changes without validation and rollback expectations.

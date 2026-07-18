@@ -9,6 +9,9 @@ export const REFERENCE_CLAIM_REVIEW_TASKS = "reviewer/claim-review-tasks.jsonl";
 export const REFERENCE_CLAIM_REVIEW_TEMPLATE = "reviewer/review-template.json";
 export const REFERENCE_CLAIM_REVIEW_GUIDE = "reviewer/REVIEWER_GUIDE.md";
 export const REFERENCE_CLAIM_REVIEW_PREFLIGHT = "reference-claim-review-preflight.json";
+export const REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE = "final-approval-template.json";
+export const REFERENCE_CLAIM_REVIEW_IMPORT = "reference-claim-review-import.json";
+export const REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS = "refgate_claims.reviewed.tsv";
 export const REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION =
   "reference-claim-review-private-distribution.json";
 export const REFERENCE_CLAIM_REVIEW_SOURCE_README = "reviewer/SOURCE_README.md";
@@ -163,6 +166,49 @@ export interface ReferenceClaimReviewPreflightReport {
 export interface PreflightReferenceClaimReviewResult {
   report: ReferenceClaimReviewPreflightReport;
   report_path: string;
+  summary_path: string;
+  approval_template_path: string;
+}
+
+export interface ImportReferenceClaimReviewInput {
+  cwd: string;
+  packetRoot: string;
+  reviewPath: string;
+  preflightReportPath: string;
+  approvalPath: string;
+  claimsPath: string;
+  outDir: string;
+}
+
+export interface ReferenceClaimReviewImportReceipt {
+  schema_version: "1.0";
+  import_id: string;
+  handoff_id: string;
+  reviewer_id: string;
+  approver_id: string;
+  packet_manifest_sha256: string;
+  source_claims_sha256: string;
+  review_sha256: string;
+  preflight_report_sha256: string;
+  approval_sha256: string;
+  imported_claims_sha256: string;
+  reviewed_claim_count: number;
+  checked_claim_count: number;
+  remaining_unchecked_claim_count: number;
+  remaining_unchecked_claim_ids: string[];
+  review_decision_counts: Record<ReferenceClaimReviewDecision, number>;
+  reviewed_claim_gate_passed: true;
+  submission_claim_gate_passed: boolean;
+  human_identity_verified: false;
+  source_claim_statuses_modified: false;
+  output_claim_statuses_updated: true;
+  evidence_boundary: string;
+}
+
+export interface ImportReferenceClaimReviewResult {
+  receipt: ReferenceClaimReviewImportReceipt;
+  receipt_path: string;
+  claims_path: string;
   summary_path: string;
 }
 
@@ -409,6 +455,178 @@ export async function preflightReferenceClaimReview(
   const reviewPath = path.resolve(cwd, input.reviewPath);
   const outDir = path.resolve(cwd, input.outDir);
   await assertFreshOutput(outDir, "Reference claim review preflight");
+  const evaluation = await inspectReferenceClaimReviewReturn(packetRoot, reviewPath);
+  const { report, tasks } = evaluation;
+  await fs.mkdir(outDir, { recursive: true });
+  const reportPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_PREFLIGHT);
+  const summaryPath = path.join(outDir, "reference-claim-review-preflight.md");
+  const approvalTemplatePath = path.join(outDir, REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE);
+  await writeJsonFile(reportPath, report);
+  const reportSha256 = sha256(await readRegularFile(reportPath));
+  await writeJsonFile(approvalTemplatePath, {
+    schema_version: "1.0",
+    handoff_id: report.handoff_id,
+    review_sha256: report.review_sha256,
+    preflight_report_sha256: reportSha256,
+    approver_id: null,
+    approval_role: "final_reference_claim_approver",
+    approval_attestation: {
+      completed_by_human: false,
+      reviewed_complete_return: false,
+      authorizes_checked_status: false,
+      accepts_evidence_boundary: false
+    },
+    approved_task_ids: tasks.map((task) => task.task_id),
+    rationale: null
+  });
+  await fs.writeFile(summaryPath, renderPreflightSummary(report), "utf8");
+  return {
+    report,
+    report_path: portableRef(cwd, reportPath),
+    summary_path: portableRef(cwd, summaryPath),
+    approval_template_path: portableRef(cwd, approvalTemplatePath)
+  };
+}
+
+export async function importReferenceClaimReview(
+  input: ImportReferenceClaimReviewInput
+): Promise<ImportReferenceClaimReviewResult> {
+  const cwd = path.resolve(input.cwd);
+  const packetRoot = path.resolve(cwd, input.packetRoot);
+  const reviewPath = path.resolve(cwd, input.reviewPath);
+  const preflightReportPath = path.resolve(cwd, input.preflightReportPath);
+  const approvalPath = path.resolve(cwd, input.approvalPath);
+  const claimsPath = path.resolve(cwd, input.claimsPath);
+  const outDir = path.resolve(cwd, input.outDir);
+  await assertFreshOutput(outDir, "Reference claim review import");
+
+  const evaluation = await inspectReferenceClaimReviewReturn(packetRoot, reviewPath);
+  if (!evaluation.report.preflight_passed || !evaluation.report.claim_gate_passed
+      || !evaluation.report.reviewer_id) {
+    throw new Error("Reference claim review import requires a passing all-supported preflight.");
+  }
+
+  const preflightBytes = await readRegularFile(preflightReportPath);
+  let suppliedPreflight: unknown;
+  try {
+    suppliedPreflight = JSON.parse(preflightBytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error("Reference claim review preflight report is not valid JSON.");
+  }
+  if (JSON.stringify(suppliedPreflight) !== JSON.stringify(evaluation.report)) {
+    throw new Error("Reference claim review preflight report does not match the current packet and review.");
+  }
+
+  const approvalBytes = await readRegularFile(approvalPath);
+  const approval = parseReferenceClaimReviewApproval(approvalBytes.toString("utf8"));
+  const preflightSha256 = sha256(preflightBytes);
+  const taskIds = evaluation.tasks.map((task) => task.task_id);
+  if (approval.handoff_id !== evaluation.manifest.handoff_id
+      || approval.review_sha256 !== evaluation.report.review_sha256
+      || approval.preflight_report_sha256 !== preflightSha256
+      || approval.approved_task_ids.length !== taskIds.length
+      || approval.approved_task_ids.some((taskId, index) => taskId !== taskIds[index])) {
+    throw new Error("Reference claim review approval does not bind the exact preflight task set.");
+  }
+
+  const claimsBytes = await readRegularFile(claimsPath);
+  const claimsInput = evaluation.manifest.source_inputs.find((item) => item.role === "claims");
+  if (!claimsInput || sha256(claimsBytes) !== claimsInput.sha256) {
+    throw new Error("Reference claim review source claims have changed since handoff preparation.");
+  }
+  const claims = parseReferenceClaimsTsv(claimsBytes.toString("utf8"));
+  const claimsById = new Map(claims.map((claim) => [claim.claim_id, claim]));
+  const reviewsById = new Map(evaluation.parsed.reviews.map((review) => [review.task_id, review]));
+  for (const task of evaluation.tasks) {
+    const claim = claimsById.get(task.task_id);
+    const review = reviewsById.get(task.task_id);
+    if (!claim || !review || review.decision !== "supported"
+        || claim.manuscript_location !== task.manuscript_location
+        || claim.claim_text !== task.claim_text
+        || claim.citation_key !== task.citation_key
+        || !review.source_location || !review.supporting_passage) {
+      throw new Error(`Reference claim import binding failed: ${task.task_id}`);
+    }
+    assertTsvField(review.source_location, `${task.task_id} source location`);
+    assertTsvField(review.supporting_passage, `${task.task_id} supporting passage`);
+  }
+
+  const packetManifestBytes = await readContainedRegularFile(
+    packetRoot,
+    path.join(packetRoot, REFERENCE_CLAIM_REVIEW_MANIFEST)
+  );
+  const importId = `reference-claim-review-import-${sha256(Buffer.from([
+    evaluation.manifest.handoff_id,
+    sha256(claimsBytes),
+    evaluation.report.review_sha256,
+    preflightSha256,
+    sha256(approvalBytes)
+  ].join(":"), "utf8")).slice(0, 16)}`;
+  const updatedClaims = claims.map((claim) => {
+    const review = reviewsById.get(claim.claim_id);
+    if (!review) return claim;
+    return {
+      ...claim,
+      source_location: review.source_location as string,
+      quote_or_evidence: review.supporting_passage as string,
+      status: "checked",
+      notes: [
+        claim.notes.trim(),
+        `Independent full-text review and explicit final approval recorded in ${importId}.`
+      ].filter(nonEmpty).join(" ")
+    };
+  });
+  const importedClaimsBytes = Buffer.from(renderReferenceClaimsTsv(updatedClaims), "utf8");
+  const uncheckedClaims = updatedClaims.filter((claim) => claim.status !== "checked");
+  const receipt: ReferenceClaimReviewImportReceipt = {
+    schema_version: "1.0",
+    import_id: importId,
+    handoff_id: evaluation.manifest.handoff_id,
+    reviewer_id: evaluation.report.reviewer_id,
+    approver_id: approval.approver_id,
+    packet_manifest_sha256: sha256(packetManifestBytes),
+    source_claims_sha256: sha256(claimsBytes),
+    review_sha256: evaluation.report.review_sha256,
+    preflight_report_sha256: preflightSha256,
+    approval_sha256: sha256(approvalBytes),
+    imported_claims_sha256: sha256(importedClaimsBytes),
+    reviewed_claim_count: evaluation.tasks.length,
+    checked_claim_count: updatedClaims.length - uncheckedClaims.length,
+    remaining_unchecked_claim_count: uncheckedClaims.length,
+    remaining_unchecked_claim_ids: uncheckedClaims.map((claim) => claim.claim_id),
+    review_decision_counts: evaluation.report.decision_counts,
+    reviewed_claim_gate_passed: true,
+    submission_claim_gate_passed: uncheckedClaims.length === 0,
+    human_identity_verified: false,
+    source_claim_statuses_modified: false,
+    output_claim_statuses_updated: true,
+    evidence_boundary: "This import candidate is derived only from a hash-bound all-supported human review and a separately attested final approval. It does not alter the source claims file, verify real-world identities, resolve claims omitted for missing full text, or establish submission readiness. The generated TSV must still pass Refgate submission audit before adoption."
+  };
+
+  await fs.mkdir(outDir, { recursive: true });
+  const claimsOutputPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS);
+  const receiptPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_IMPORT);
+  const summaryPath = path.join(outDir, "reference-claim-review-import.md");
+  await fs.writeFile(claimsOutputPath, importedClaimsBytes);
+  await writeJsonFile(receiptPath, receipt);
+  await fs.writeFile(summaryPath, renderReferenceClaimReviewImportSummary(receipt), "utf8");
+  return {
+    receipt,
+    receipt_path: portableRef(cwd, receiptPath),
+    claims_path: portableRef(cwd, claimsOutputPath),
+    summary_path: portableRef(cwd, summaryPath)
+  };
+}
+
+async function inspectReferenceClaimReviewReturn(
+  packetRoot: string,
+  reviewPath: string
+): Promise<{
+  manifest: ReferenceClaimReviewManifest;
+  tasks: ReferenceClaimReviewTask[];
+  parsed: ParsedReview;
+  report: ReferenceClaimReviewPreflightReport;
+}> {
   const manifest = await inspectPacket(packetRoot);
   const tasks = parseTaskJsonl((await readContainedRegularFile(
     packetRoot,
@@ -448,30 +666,25 @@ export async function preflightReferenceClaimReview(
 
   const preflightPassed = issues.length === 0;
   const claimGatePassed = preflightPassed && counts.supported === manifest.task_count;
-  const report: ReferenceClaimReviewPreflightReport = {
-    schema_version: "1.0",
-    handoff_id: manifest.handoff_id,
-    preflight_passed: preflightPassed,
-    claim_gate_passed: claimGatePassed,
-    reviewer_id: parsed.reviewer_id,
-    task_count: manifest.task_count,
-    reviewed_task_count: coveredTaskIds.size,
-    decision_counts: counts,
-    issues,
-    review_sha256: sha256(reviewBytes),
-    human_identity_verified: false,
-    claim_statuses_modified: false,
-    evidence_boundary: "A passing preflight establishes a complete, hash-bound review return with the reviewer's human and independence attestations. Pseudonymous fields do not verify real-world identity or expertise. This command never changes Refgate claim statuses; explicit final approval and a separate Refgate import remain required."
-  };
-  await fs.mkdir(outDir, { recursive: true });
-  const reportPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_PREFLIGHT);
-  const summaryPath = path.join(outDir, "reference-claim-review-preflight.md");
-  await writeJsonFile(reportPath, report);
-  await fs.writeFile(summaryPath, renderPreflightSummary(report), "utf8");
   return {
-    report,
-    report_path: portableRef(cwd, reportPath),
-    summary_path: portableRef(cwd, summaryPath)
+    manifest,
+    tasks,
+    parsed,
+    report: {
+      schema_version: "1.0",
+      handoff_id: manifest.handoff_id,
+      preflight_passed: preflightPassed,
+      claim_gate_passed: claimGatePassed,
+      reviewer_id: parsed.reviewer_id,
+      task_count: manifest.task_count,
+      reviewed_task_count: coveredTaskIds.size,
+      decision_counts: counts,
+      issues,
+      review_sha256: sha256(reviewBytes),
+      human_identity_verified: false,
+      claim_statuses_modified: false,
+      evidence_boundary: "A passing preflight establishes a complete, hash-bound review return with the reviewer's human and independence attestations. Pseudonymous fields do not verify real-world identity or expertise. This command never changes Refgate claim statuses; explicit final approval and a separate Refgate import remain required."
+    }
   };
 }
 
@@ -494,6 +707,28 @@ async function inspectPacket(packetRoot: string): Promise<ReferenceClaimReviewMa
     throw new Error("Invalid reference claim review manifest.");
   }
   const manifest = raw as unknown as ReferenceClaimReviewManifest;
+  const expectedInputRoles = ["claims", "status", "lock"] as const;
+  if (manifest.source_inputs.length !== expectedInputRoles.length
+      || new Set(manifest.source_inputs.map((item) => item.role)).size !== expectedInputRoles.length
+      || manifest.source_inputs.some((item) =>
+        !expectedInputRoles.includes(item.role)
+        || !nonEmpty(item.ref)
+        || path.basename(item.ref) !== item.ref
+        || !sha256String(item.sha256))) {
+    throw new Error("Reference claim review source input inventory is invalid.");
+  }
+  const inputHashes = expectedInputRoles.map((role) => {
+    const sourceInput = manifest.source_inputs.find((item) => item.role === role);
+    if (!sourceInput) throw new Error(`Reference claim review source input is missing: ${role}`);
+    return sourceInput.sha256;
+  });
+  const expectedHandoffId = `reference-claim-review-${sha256(Buffer.from(
+    inputHashes.join(":"),
+    "utf8"
+  )).slice(0, 16)}`;
+  if (manifest.handoff_id !== expectedHandoffId) {
+    throw new Error("Reference claim review handoff id does not match its source inputs.");
+  }
   if (manifest.missing_full_text_claim_count !== manifest.missing_full_text_claims.length
       || manifest.missing_full_text_claims.some((claim) =>
         !isRecord(claim)
@@ -810,6 +1045,14 @@ interface ParsedReview {
   issues: ReferenceClaimReviewPreflightReport["issues"];
 }
 
+interface ParsedReferenceClaimReviewApproval {
+  handoff_id: string;
+  review_sha256: string;
+  preflight_report_sha256: string;
+  approver_id: string;
+  approved_task_ids: string[];
+}
+
 function parseReviewReturn(text: string): ParsedReview {
   const issues: ReferenceClaimReviewPreflightReport["issues"] = [];
   let value: unknown;
@@ -863,6 +1106,40 @@ function parseReviewReturn(text: string): ParsedReview {
   };
 }
 
+function parseReferenceClaimReviewApproval(text: string): ParsedReferenceClaimReviewApproval {
+  let value: unknown;
+  try {
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Reference claim review approval is not valid JSON.");
+  }
+  if (!isRecord(value)
+      || value.schema_version !== "1.0"
+      || !validId(value.handoff_id)
+      || !sha256String(value.review_sha256)
+      || !sha256String(value.preflight_report_sha256)
+      || !validId(value.approver_id)
+      || value.approval_role !== "final_reference_claim_approver"
+      || !isRecord(value.approval_attestation)
+      || value.approval_attestation.completed_by_human !== true
+      || value.approval_attestation.reviewed_complete_return !== true
+      || value.approval_attestation.authorizes_checked_status !== true
+      || value.approval_attestation.accepts_evidence_boundary !== true
+      || !Array.isArray(value.approved_task_ids)
+      || !value.approved_task_ids.every(validId)
+      || new Set(value.approved_task_ids).size !== value.approved_task_ids.length
+      || !nonEmpty(value.rationale)) {
+    throw new Error("Reference claim review approval is incomplete or invalid.");
+  }
+  return {
+    handoff_id: value.handoff_id,
+    review_sha256: value.review_sha256,
+    preflight_report_sha256: value.preflight_report_sha256,
+    approver_id: value.approver_id,
+    approved_task_ids: value.approved_task_ids
+  };
+}
+
 function validateReviewDecision(
   review: ParsedReview["reviews"][number],
   issues: ReferenceClaimReviewPreflightReport["issues"]
@@ -903,8 +1180,9 @@ function reviewerGuide(): string {
     "4. For `supported` and `rewrite`, record a source locator and a short supporting passage. For `rewrite`, also provide the replacement claim.",
     "5. Write a non-empty rationale for every decision and set all attestations to true only after personally completing the review.",
     "6. Return only the completed JSON for preflight.",
+    "7. If every decision is supported, give the generated final approval template and preflight report to a human final approver. The approver must review the complete return, fill the attestation and rationale, and return the approval JSON separately.",
     "",
-    "A passing preflight does not change Refgate claim status. Final status requires explicit approval and a separate Refgate import."
+    "A passing preflight does not change Refgate claim status. After explicit approval, `autolabos reference-review import` generates a new import-candidate TSV without overwriting the source claims file."
   ].join("\n") + "\n";
 }
 
@@ -922,8 +1200,43 @@ function renderPreflightSummary(report: ReferenceClaimReviewPreflightReport): st
     `- Missing source: ${report.decision_counts.missing_source}`,
     `- Issues: ${report.issues.length}`,
     "- Claim statuses modified: false",
+    "- Final human approval required before import: true",
     "",
     report.evidence_boundary
+  ].join("\n") + "\n";
+}
+
+function renderReferenceClaimsTsv(claims: ReferenceClaimRow[]): string {
+  const lines = claims.map((claim) => CLAIM_COLUMNS.map((column) => {
+    const value = claim[column];
+    assertTsvField(value, `${claim.claim_id} ${column}`);
+    return value;
+  }).join("\t"));
+  return [CLAIM_COLUMNS.join("\t"), ...lines].join("\n") + "\n";
+}
+
+function assertTsvField(value: string, label: string): void {
+  if (/[\t\r\n]/u.test(value)) {
+    throw new Error(`Reference claim TSV field contains a tab or newline: ${label}`);
+  }
+}
+
+function renderReferenceClaimReviewImportSummary(
+  receipt: ReferenceClaimReviewImportReceipt
+): string {
+  return [
+    "# Reference Claim Review Import",
+    "",
+    `- Import: ${receipt.import_id}`,
+    `- Reviewed claims: ${receipt.reviewed_claim_count}`,
+    `- Checked claims in output: ${receipt.checked_claim_count}`,
+    `- Remaining unchecked claims: ${receipt.remaining_unchecked_claim_count}`,
+    `- Reviewed claim gate passed: ${receipt.reviewed_claim_gate_passed}`,
+    `- Submission claim gate passed: ${receipt.submission_claim_gate_passed}`,
+    "- Source claims modified: false",
+    "- Refgate submission audit still required: true",
+    "",
+    receipt.evidence_boundary
   ].join("\n") + "\n";
 }
 

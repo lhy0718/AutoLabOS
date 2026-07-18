@@ -6,10 +6,15 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  importReferenceClaimReview,
   prepareReferenceClaimReview,
   prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
+  REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE,
+  REFERENCE_CLAIM_REVIEW_IMPORT,
+  REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS,
   REFERENCE_CLAIM_REVIEW_MANIFEST,
+  REFERENCE_CLAIM_REVIEW_PREFLIGHT,
   REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION,
   REFERENCE_CLAIM_REVIEW_SOURCE_README,
   REFERENCE_CLAIM_REVIEW_TASKS,
@@ -121,6 +126,119 @@ describe("reference claim review handoff", () => {
       human_identity_verified: false,
       claim_statuses_modified: false
     });
+    const approval = JSON.parse(await readFile(
+      path.join(workspace, "preflight", REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE),
+      "utf8"
+    )) as {
+      approver_id: string | null;
+      approval_attestation: Record<string, boolean>;
+      approved_task_ids: string[];
+    };
+    expect(approval.approver_id).toBeNull();
+    expect(Object.values(approval.approval_attestation).every((value) => value === false)).toBe(true);
+    expect(approval.approved_task_ids).toEqual(["claim-a", "claim-b"]);
+  });
+
+  it("imports an all-supported human review into a new claims file after final approval", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    const reviewPath = await writeCompletedReview(workspace, "supported");
+    await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      outDir: "preflight"
+    });
+    const approvalPath = await writeCompletedApproval(workspace);
+    const sourceClaims = await readFile(path.join(workspace, "claims.tsv"), "utf8");
+
+    const result = await importReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      preflightReportPath: path.join("preflight", REFERENCE_CLAIM_REVIEW_PREFLIGHT),
+      approvalPath,
+      claimsPath: "claims.tsv",
+      outDir: "import"
+    });
+
+    expect(result.receipt).toMatchObject({
+      reviewed_claim_count: 2,
+      checked_claim_count: 2,
+      remaining_unchecked_claim_count: 1,
+      remaining_unchecked_claim_ids: ["claim-c"],
+      reviewed_claim_gate_passed: true,
+      submission_claim_gate_passed: false,
+      human_identity_verified: false,
+      source_claim_statuses_modified: false,
+      output_claim_statuses_updated: true
+    });
+    expect(await readFile(path.join(workspace, "claims.tsv"), "utf8")).toBe(sourceClaims);
+    const importedClaims = await readFile(
+      path.join(workspace, "import", REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS),
+      "utf8"
+    );
+    expect(importedClaims.match(/\tchecked\t/gu)).toHaveLength(2);
+    expect(importedClaims).toContain("claim-c\tline 30\tClaim gamma.\tsource-b\t\t\t\tclaim_unchecked\t");
+    expect(JSON.parse(await readFile(
+      path.join(workspace, "import", REFERENCE_CLAIM_REVIEW_IMPORT),
+      "utf8"
+    ))).toMatchObject({ import_id: result.receipt.import_id });
+  });
+
+  it("rejects import when review, approval, preflight, or source claims are not exact", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    const reviewPath = await writeCompletedReview(workspace, "rewrite");
+    await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      outDir: "rewrite-preflight"
+    });
+    await expect(importReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      preflightReportPath: path.join("rewrite-preflight", REFERENCE_CLAIM_REVIEW_PREFLIGHT),
+      approvalPath: path.join("rewrite-preflight", REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE),
+      claimsPath: "claims.tsv",
+      outDir: "rewrite-import"
+    })).rejects.toThrow("all-supported preflight");
+
+    const supportedReviewPath = await writeCompletedReview(workspace, "supported");
+    await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath: supportedReviewPath,
+      outDir: "supported-preflight"
+    });
+    const incompleteApprovalPath = path.join(
+      workspace,
+      "supported-preflight",
+      REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE
+    );
+    await expect(importReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath: supportedReviewPath,
+      preflightReportPath: path.join("supported-preflight", REFERENCE_CLAIM_REVIEW_PREFLIGHT),
+      approvalPath: incompleteApprovalPath,
+      claimsPath: "claims.tsv",
+      outDir: "incomplete-approval-import"
+    })).rejects.toThrow("approval is incomplete");
+
+    const approvalPath = await writeCompletedApproval(workspace, "supported-preflight");
+    await writeFile(path.join(workspace, "claims.tsv"), "changed claims\n", "utf8");
+    await expect(importReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath: supportedReviewPath,
+      preflightReportPath: path.join("supported-preflight", REFERENCE_CLAIM_REVIEW_PREFLIGHT),
+      approvalPath,
+      claimsPath: "claims.tsv",
+      outDir: "drifted-claims-import"
+    })).rejects.toThrow("source claims have changed");
   });
 
   it("keeps the claim gate closed when a complete review requests revision", async () => {
@@ -359,6 +477,33 @@ function reviewInput(workspace: string, outDir: string) {
     lockPath: "lock.json",
     outDir
   };
+}
+
+async function writeCompletedApproval(
+  workspace: string,
+  preflightDir = "preflight"
+): Promise<string> {
+  const templatePath = path.join(
+    workspace,
+    preflightDir,
+    REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE
+  );
+  const approval = JSON.parse(await readFile(templatePath, "utf8")) as {
+    approver_id: string | null;
+    approval_attestation: Record<string, boolean>;
+    rationale: string | null;
+  };
+  approval.approver_id = "approver-beta";
+  approval.approval_attestation = {
+    completed_by_human: true,
+    reviewed_complete_return: true,
+    authorizes_checked_status: true,
+    accepts_evidence_boundary: true
+  };
+  approval.rationale = "The complete review return and its evidence boundary were inspected.";
+  const approvalPath = path.join(workspace, `${preflightDir}-completed-approval.json`);
+  await writeFile(approvalPath, JSON.stringify(approval), "utf8");
+  return approvalPath;
 }
 
 async function writeCompletedReview(

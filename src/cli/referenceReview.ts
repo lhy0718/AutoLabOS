@@ -1,7 +1,9 @@
 import {
+  importReferenceClaimReview,
   prepareReferenceClaimReview,
   prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
+  type ImportReferenceClaimReviewInput,
   type PrepareReferenceClaimReviewInput,
   type PrepareReferenceClaimReviewPrivateDistributionInput,
   type PreflightReferenceClaimReviewInput
@@ -31,9 +33,26 @@ export async function runReferenceClaimReviewPreflightCli(
     `Coverage: ${result.report.reviewed_task_count}/${result.report.task_count}`,
     `Claim gate passed: ${result.report.claim_gate_passed}`,
     `Report: ${result.report_path}`,
+    `Incomplete final approval template: ${result.approval_template_path}`,
     "Claim statuses modified: false"
   ].join("\n") + "\n");
   if (!result.report.preflight_passed) process.exitCode = 1;
+}
+
+export async function runReferenceClaimReviewImportCli(
+  input: ImportReferenceClaimReviewInput
+): Promise<void> {
+  const result = await importReferenceClaimReview(input);
+  process.stdout.write([
+    `Reference claim review import prepared: ${result.receipt.import_id}`,
+    `Checked claims in output: ${result.receipt.checked_claim_count}`,
+    `Remaining unchecked claims: ${result.receipt.remaining_unchecked_claim_count}`,
+    `Submission claim gate passed: ${result.receipt.submission_claim_gate_passed}`,
+    `Import receipt: ${result.receipt_path}`,
+    `Import-candidate claims: ${result.claims_path}`,
+    "Source claims modified: false",
+    "Refgate submission audit still required: true"
+  ].join("\n") + "\n");
 }
 
 export async function runReferenceClaimReviewPrivateDistributionCli(

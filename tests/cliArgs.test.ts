@@ -68,6 +68,23 @@ describe("resolveCliAction", () => {
       reviewPath: "returns/review.json",
       outDir: "paper/review-preflight"
     });
+    expect(resolveCliAction([
+      "reference-review", "import",
+      "--packet", "paper/review-handoff",
+      "--review", "returns/review.json",
+      "--preflight", "paper/review-preflight/reference-claim-review-preflight.json",
+      "--approval", "returns/final-approval.json",
+      "--claims", "paper/claims.tsv",
+      "--out-dir", "paper/review-import"
+    ])).toEqual({
+      kind: "reference-review-import",
+      packetRoot: "paper/review-handoff",
+      reviewPath: "returns/review.json",
+      preflightReportPath: "paper/review-preflight/reference-claim-review-preflight.json",
+      approvalPath: "returns/final-approval.json",
+      claimsPath: "paper/claims.tsv",
+      outDir: "paper/review-import"
+    });
   });
 
   it("rejects incomplete reference claim review arguments", () => {
@@ -79,6 +96,9 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
     expect(resolveCliAction([
       "reference-review", "preflight", "--packet", "packet"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "import", "--packet", "packet", "--review", "review.json"
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
   });
 

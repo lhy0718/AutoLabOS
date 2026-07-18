@@ -62,6 +62,7 @@ import {
 } from "./research.js";
 import { runWithProcessLifetime } from "./processLifetime.js";
 import {
+  runReferenceClaimReviewImportCli,
   runReferenceClaimReviewPreparationCli,
   runReferenceClaimReviewPrivateDistributionCli,
   runReferenceClaimReviewPreflightCli
@@ -86,6 +87,7 @@ function printHelp(): void {
     "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
     "  autolabos reference-review preflight --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
+    "  autolabos reference-review import --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --preflight <preflight-report.json> --approval <completed-final-approval.json> --claims <refgate_claims.tsv> --out-dir <new-import-dir>",
     "  autolabos governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]",
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
@@ -196,6 +198,19 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       packetRoot: action.packetRoot,
       reviewPath: action.reviewPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-import") {
+    await runReferenceClaimReviewImportCli({
+      cwd: process.cwd(),
+      packetRoot: action.packetRoot,
+      reviewPath: action.reviewPath,
+      preflightReportPath: action.preflightReportPath,
+      approvalPath: action.approvalPath,
+      claimsPath: action.claimsPath,
       outDir: action.outDir
     });
     return;

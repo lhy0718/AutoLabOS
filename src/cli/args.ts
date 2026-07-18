@@ -81,6 +81,7 @@ export type CliAction =
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
   | { kind: "reference-review-preflight"; packetRoot: string; reviewPath: string; outDir: string }
+  | { kind: "reference-review-import"; packetRoot: string; reviewPath: string; preflightReportPath: string; approvalPath: string; claimsPath: string; outDir: string }
   | {
       kind: "meta-harness";
       runs: number;
@@ -1777,10 +1778,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
 function parseReferenceReviewArgs(args: string[]): CliAction {
   const subcommand = args[0];
-  if (subcommand !== "prepare" && subcommand !== "distribute-private" && subcommand !== "preflight") {
+  if (subcommand !== "prepare" && subcommand !== "distribute-private"
+      && subcommand !== "preflight" && subcommand !== "import") {
     return {
       kind: "error",
-      message: "Usage: reference-review prepare|distribute-private|preflight [options]."
+      message: "Usage: reference-review prepare|distribute-private|preflight|import [options]."
     };
   }
   const values = new Map<string, string>();
@@ -1822,6 +1824,30 @@ function parseReferenceReviewArgs(args: string[]): CliAction {
     return packetRoot && sourceDir && outDir
       ? { kind: "reference-review-distribute-private", packetRoot, sourceDir, outDir }
       : { kind: "error", message: "reference-review distribute-private requires --packet, --source-dir, and --out-dir." };
+  }
+  if (subcommand === "import") {
+    const allowed = new Set(["--packet", "--review", "--preflight", "--approval", "--claims", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: `Unsupported reference-review import argument: ${unsupported}.` };
+    }
+    const packetRoot = values.get("--packet");
+    const reviewPath = values.get("--review");
+    const preflightReportPath = values.get("--preflight");
+    const approvalPath = values.get("--approval");
+    const claimsPath = values.get("--claims");
+    const outDir = values.get("--out-dir");
+    return packetRoot && reviewPath && preflightReportPath && approvalPath && claimsPath && outDir
+      ? {
+          kind: "reference-review-import",
+          packetRoot,
+          reviewPath,
+          preflightReportPath,
+          approvalPath,
+          claimsPath,
+          outDir
+        }
+      : { kind: "error", message: "reference-review import requires --packet, --review, --preflight, --approval, --claims, and --out-dir." };
   }
   const allowed = new Set(["--packet", "--review", "--out-dir"]);
   const unsupported = [...values.keys()].find((key) => !allowed.has(key));

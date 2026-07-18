@@ -15,6 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-613
+
+- Status: resolved; focused/full regressions, build, research-governance validation, public sanitization, harness, plugin alignment, and same-flow fail-closed CLI validation pass
+- Validation target: an independently completed reference-claim review must have a hash-bound, explicitly approved path to a Refgate import candidate without manual claim-status editing or automatic mutation of the canonical claims file.
+- Environment/session context: direct CLI validation against the current private reference-review packet and deterministic domain-neutral test fixtures; no human judgment, approval, or claim status was manufactured.
+- Reproduction steps:
+  1. Prepare and privately distribute a hash-bound reference-claim review packet.
+  2. Run `reference-review preflight` over a completed all-supported return.
+  3. Attempt to carry the validated decisions into the Refgate claims TSV using only public AutoLabOS commands.
+  4. Repeat with the current incomplete human template.
+- Expected behavior:
+  - Preflight emits an incomplete final-approval template bound to the exact review and report.
+  - Import requires an all-supported return, a passing exact preflight, a separate completed human approval, and the unchanged source claims hash.
+  - Import writes a new checked-claim candidate and receipt without overwriting canonical claims.
+  - Missing-full-text claims remain unchecked and the submission gate remains closed.
+- Actual behavior:
+  - The flow ended after preflight with prose directing the operator to a separate Refgate import, but no such AutoLabOS command or import contract existed.
+  - Completing the path required manual TSV status edits outside the governed artifact chain.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic fixtures reproduced the missing post-preflight transition and now exercise successful, rewrite-blocked, incomplete-approval, and source-drift paths.
+  - Existing session: the current 12-task incomplete private packet fails preflight and import, creates no import output, and leaves all claim statuses unchanged.
+  - Divergence: no persisted-state or refresh divergence was involved; this was a governed evidence-projection gap.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the reference workflow validated human return structure but deliberately stopped before status mutation without providing a separate hash-bound approval and import-candidate boundary.
+- Code/test changes:
+  - Added an incomplete final human approval template to every preflight output.
+  - Added `reference-review import` with packet, review, preflight, approval, and source-claims hash validation.
+  - Added source-input inventory and handoff-ID revalidation.
+  - Added immutable import output with checked reviewed claims, preserved missing-source blockers, a receipt, and explicit Refgate-audit requirement.
+  - Added CLI argument, help, documentation, and fail-closed regressions.
+- Regression status:
+  - Focused reference-review and CLI regressions: 80/80 pass on 2026-07-19.
+  - Production build: pass on 2026-07-19.
+  - Public-code sanitization and documentation contract: 4/4 pass on 2026-07-19.
+  - Same-flow incomplete packet: preflight exits 1 with 26 issues; import exits 1 and creates no output directory.
+  - Research-governance end-to-end validation: 12 processes pass on 2026-07-19.
+  - Harness validation: 532 issue entries pass on 2026-07-19.
+  - Full repository suite: 217 files and 2915 tests pass; web 14/14 pass on 2026-07-19.
+  - Installed plugin cache sync, strict doctor, and release check: pass on 2026-07-19.
+- Follow-up risks:
+  - Pseudonymous attestations do not verify real-world reviewer or approver identity.
+  - The import candidate does not become canonical until a separate Refgate submission audit passes and the operator explicitly adopts it.
+  - The two current missing-full-text claims remain blockers and cannot enter this import path until a new source-bound packet is prepared.
+- Evidence/artifacts:
+  - `src/core/referenceClaimReview.ts`
+  - `src/cli/referenceReview.ts`
+  - `tests/referenceClaimReview.test.ts`
+  - `<temporary-output>/preflight/reference-claim-review-preflight.json`
+  - `<temporary-output>/preflight/final-approval-template.json`
+
+---
+
 ## Issue: LV-612
 
 - Status: resolved; focused/full regressions, build, research-governance validation, public sanitization, and harness validation pass
