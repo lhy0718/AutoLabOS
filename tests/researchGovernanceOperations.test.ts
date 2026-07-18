@@ -529,6 +529,39 @@ describe("research governance operations", () => {
     }));
   });
 
+  it("fails closed when an explicit pack source directory has no governance sidecars", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-source-"));
+    const external = path.join(workspace, "external-artifacts");
+    const manuscriptSource = path.join(workspace, "manuscript-source");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await mkdir(manuscriptSource, { recursive: true });
+    await writeFile(path.join(manuscriptSource, "manuscript.tex"), "\\section{Results}\n", "utf8");
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+
+    await expect(runResearchPack({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      reviewPath: reviewResult.output_path,
+      sourceDir: "manuscript-source",
+      outDir: "outputs/governance/pack"
+    })).rejects.toThrow("contains no supported governance sidecar artifacts");
+    await expect(readFile(
+      path.join(workspace, "outputs", "governance", "pack", "paper-readiness-bundle.json"),
+      "utf8"
+    )).rejects.toThrow();
+  });
+
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-complete-"));
     const external = path.join(workspace, "external-artifacts");

@@ -161,6 +161,17 @@ export async function runResearchPack(input: {
   const sourceDir = input.sourceDir
     ? resolveWithinCwd(input.cwd, input.sourceDir)
     : path.dirname(resolveWithinCwd(input.cwd, input.gatePath));
+  if (input.sourceDir) {
+    const supplementalFiles = PACK_ALLOWLIST.filter((relative) =>
+      relative !== "gate-report.json" && relative !== "review-report.json");
+    const supplementalFileExists = await Promise.all(supplementalFiles.map((relative) =>
+      fileExists(path.join(sourceDir, relative))));
+    if (!supplementalFileExists.some(Boolean)) {
+      throw new Error(
+        "Research pack --source-dir contains no supported governance sidecar artifacts."
+      );
+    }
+  }
   const artifactDir = path.join(outDir, "artifacts");
   await ensureDir(artifactDir);
 

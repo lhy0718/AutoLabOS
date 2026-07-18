@@ -171,7 +171,7 @@ function printResearchHelp(): void {
     "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>]) [--out-dir <dir>]",
     "  autolabos research review --gate <gate-report.json> [--out-dir <dir>]",
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
-    "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <dir>] [--out-dir <dir>]"
+    "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]"
   ].join("\n") + "\n");
 }
 
