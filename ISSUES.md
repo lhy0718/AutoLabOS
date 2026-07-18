@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-015` Stale and truncated claim stubs obscured citation-source boundaries — `MITIGATED`
   - `R-014` Stale manuscript template and duplicated ACL bibliography ownership escaped review — `RESOLVED`
   - `R-010` Provenance receipts could not be independently recomputed from the paper-eligible suite — `RESOLVED`
   - `R-009` Confirmatory freeze evidence was not bound to suite construction - `RESOLVED`
@@ -10885,6 +10886,74 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-015
+
+- Status: mitigated; 12 full-text evidence candidates are source-bound, while independent review and 2 missing source files remain blocking
+- Validation target: each citation-bearing manuscript claim must bind one complete proposition to its exact citation key, current manuscript location, hash-identified full text, and directly relevant evidence span before Refgate can permit submission.
+- Environment/session context: pre-confirmatory promotion-governance manuscript after the current ACL template repair; no claim was independently approved or promoted to `checked`.
+
+- Reproduction steps:
+  1. Inspect `papers/promotion-governance/refgate_claims.tsv` after the template update.
+  2. Compare each row with the current sentence and citation boundary in `manuscript.tex`.
+  3. Run Refgate source mapping against the ten cited records and available full-text files.
+  4. Inspect the suggested evidence spans and first-page title extraction for CLAIM-BENCH.
+
+- Expected behavior:
+  - Claim rows contain complete, current propositions rather than fragments or empty text.
+  - One row binds one exact citation key without absorbing text supported by the next citation.
+  - Automatic evidence suggestions remain `needs_review`; they cannot self-promote to `checked`.
+  - Missing full text leaves the corresponding claim `claim_unchecked` and keeps the submission gate closed.
+  - Title extraction disagreements remain visible until the rendered first page and BibTeX record are manually compared.
+
+- Actual behavior:
+  - The persisted claim file retained obsolete line numbers, partial or empty claim text, and one cross-citation spill from the SAGE sentence into the ClaimGarden sentence.
+  - Initial source mapping found 8 of 10 full texts, but several automatic candidates were title fragments or wrapped low-coverage text rather than direct evidence.
+  - CLAIM-BENCH produced a source-title mismatch because the proceedings header was selected instead of the title printed immediately below it.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the current manuscript now separates adjacent citation-bearing propositions and maps 12 claims to citation-key-bound full-text candidates.
+  - Existing session: the stale TSV obscured sentence ownership and could make an audit appear more complete than its evidence justified.
+  - Divergence: this was persisted claim-map drift combined with weak source-text projection, not a render refresh defect.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: manuscript edits did not invalidate or regenerate claim stubs, while source mapping optimized lexical overlap without a mandatory proposition-completeness and direct-evidence review gate.
+
+- Code/test changes:
+  - Split adjacent ARA/REPRO-Bench and SAGE/ClaimGarden propositions so each citation has an unambiguous sentence boundary.
+  - Replaced stale, empty, truncated, and cross-citation claim rows with complete propositions and current line locations.
+  - Replaced weak automatic overlap text for 12 claims with citation-key-bound full-text candidates while retaining `needs_review` status.
+  - Added `reference-evidence-status.json` with 8 source hashes, 12 candidate claims, 0 independently checked claims, 2 missing OpenReview full texts, and the CLAIM-BENCH title-extraction review.
+  - Kept both missing-source claims `claim_unchecked`; metadata and abstract-only records do not satisfy the full-text gate.
+
+- Regression status:
+  - Full-text mapping: 8 of 10 cited sources available and hash-bound on 2026-07-18.
+  - Claim coverage: 12 of 14 claims have direct evidence candidates; 0 of 14 are independently checked.
+  - Missing-source behavior: MADS-CPS and ClaimGarden remain `claim_unchecked` and block submission.
+  - CLAIM-BENCH first-page audit: the printed title aligns with the BibTeX record; the automated mismatch is retained as a parser false positive and does not override the claim gate.
+  - Refgate claim consistency: fail-closed as expected on 2026-07-18 with 12 `CLAIM_STATUS_NOT_FINAL` blockers and 2 `CLAIM_EVIDENCE_MISSING` blockers; no low-overlap blocker remains after the source-aligned rewrite.
+  - Refgate submission audit: fail-closed as expected on 2026-07-18 with all 14 claims unapproved and 10 provenance warnings; no claim was promoted.
+  - ACL manuscript build: passed on 2026-07-18 as a four-page A4 review PDF with no overfull boxes.
+  - Visual PDF audit: all four rendered pages inspected on 2026-07-18; no clipping, overlap, duplicate reference entry, or truncated final reference was found.
+  - Public-code sanitization: 3 tests passed on 2026-07-18.
+  - Build: TypeScript and web production builds passed on 2026-07-18.
+  - Full repository CI: 214 core files / 2,876 tests and 1 web file / 14 tests passed on 2026-07-18.
+  - Harness validation: 529 issue entries checked with no structural violations on 2026-07-18.
+
+- Follow-up risks:
+  - The 12 evidence spans require independent review before any `checked` transition.
+  - The two OpenReview full texts must be obtained through an allowed source path or their manuscript claims must be removed or weakened.
+  - A first-page title alignment does not establish claim support and must not be treated as a submission pass.
+
+- Evidence/artifacts:
+  - `papers/promotion-governance/manuscript.tex`
+  - `papers/promotion-governance/refgate_claims.tsv`
+  - `papers/promotion-governance/reference-evidence-status.json`
+  - `papers/promotion-governance/refgate.lock.json`
+  - `papers/promotion-governance/submission-status.json`
+
+---
 
 ## Issue: R-014
 
@@ -10939,7 +11008,7 @@ Path placeholders:
 - Follow-up risks:
   - The ACL review build must be repeated after confirmatory tables and analysis change the final page layout.
   - `aclpubcheck` remains a camera-ready-stage check if the paper is accepted; it is not treated as valid evidence for this line-numbered review draft.
-  - Fourteen citation-bearing claims still require full-text source review; the template repair does not establish reference correctness.
+  - Twelve citation-bearing claims have full-text evidence candidates but remain independently unchecked; two OpenReview claims still lack full-text files.
   - The manuscript remains a pre-confirmatory protocol and development-validation draft until real independent review, confirmatory execution, baselines, and statistical analysis are complete.
 
 - Evidence/artifacts:

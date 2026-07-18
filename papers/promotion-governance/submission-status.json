@@ -22,6 +22,16 @@
     "base_bundle_count": 4,
     "case_count": 40
   },
+  "reference_evidence": {
+    "citation_source_count": 10,
+    "citation_bearing_claim_count": 14,
+    "full_text_source_count": 8,
+    "full_text_evidence_candidate_count": 12,
+    "independently_checked_claim_count": 0,
+    "missing_full_text_claim_count": 2,
+    "submission_gate_passed": false,
+    "status_artifact": "reference-evidence-status.json"
+  },
   "blocking_requirements": [
     "completed_independent_double_human_candidate_review",
     "completed_source_license_review",
@@ -33,7 +43,9 @@
     "double_verified_mutation_isolation",
     "three_real_provider_trials_for_manuscript_only_baseline",
     "post_repair_recovery_and_regression_evaluation",
-    "full_text_review_of_14_citation_bearing_claims",
+    "independent_review_of_12_full_text_evidence_candidates",
+    "full_text_sources_for_2_openreview_claims",
+    "final_refgate_submission_audit_with_zero_blocking_claims",
     "official_acl_review_format_revalidation_after_confirmatory_results"
   ]
 }

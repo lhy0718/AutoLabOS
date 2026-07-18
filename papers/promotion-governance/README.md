@@ -20,7 +20,14 @@ Current blockers:
 - no independent mutation-isolation audit,
 - no three-trial real-provider manuscript-only baseline,
 - no post-repair recovery evaluation,
-- 14 citation-bearing claims still require full-text source review in Refgate.
+- 12 citation-bearing claims have hash-bound full-text evidence candidates but
+  remain independently unchecked in Refgate,
+- 2 OpenReview citation-bearing claims still lack full-text source files,
+- no citation-bearing claim has been promoted to `checked`.
+
+`reference-evidence-status.json` records the portable source hashes, claim
+coverage, missing sources, and the fail-closed review state. It does not package
+third-party PDFs.
 
 ## Build
 
