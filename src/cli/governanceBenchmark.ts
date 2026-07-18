@@ -88,6 +88,10 @@ import {
   type PreparePromotionTrialCandidateReviewCampaignInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
 import {
+  collectPromotionTrialCandidateReviewCampaign,
+  type CollectPromotionTrialCandidateReviewCampaignInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
+import {
   preparePromotionCanonicalCurationHandoff,
   type PreparePromotionCanonicalCurationHandoffInput
 } from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
@@ -561,6 +565,26 @@ export async function runPromotionTrialCandidateReviewCampaignCli(
       "Status: all templates remain incomplete; no human review, license decision, adjudication, or confirmatory admission"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionTrialCandidateReviewCampaignCollectionCli(
+  input: CollectPromotionTrialCandidateReviewCampaignInput
+): Promise<void> {
+  const result = await collectPromotionTrialCandidateReviewCampaign(input);
+  process.stdout.write(
+    [
+      `Campaign return collection ${result.receipt.passed ? "passed" : "blocked"}`,
+      `Campaign: ${result.receipt.campaign_id}`,
+      `Handoff: ${result.receipt.handoff_id}`,
+      `Assigned returns: ${result.receipt.assigned_return_count}/${result.receipt.required_return_count}`,
+      `Adjudication: ${result.receipt.adjudication.attempted ? (result.receipt.adjudication.passed ? "passed" : "failed") : "not attempted"}`,
+      `Accepted labels: ${result.receipt.adjudication.accepted_label_count}/${result.receipt.adjudication.task_count}`,
+      `Source-eligible candidates: ${result.receipt.adjudication.source_eligible_candidate_count}`,
+      `Receipt: ${result.receipt_path}`,
+      `Evidence boundary: ${result.receipt.evidence_boundary}`
+    ].join("\n") + "\n"
+  );
+  if (!result.receipt.passed) process.exitCode = 1;
 }
 
 export async function runPromotionTrialCandidateAnnotationPreflightCli(

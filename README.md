@@ -420,6 +420,14 @@ autolabos governance-benchmark preflight-promotion-trial-candidate-license-revie
   --review <license-review.json> \
   --out-dir <license-preflight>
 
+autolabos governance-benchmark collect-promotion-trial-candidate-review-campaign \
+  --campaign-root <new-review-campaign> \
+  --handoff-root <new-handoff-dir> \
+  --annotation <review-a.json> \
+  --annotation <review-b.json> \
+  --license-review <license-review.json> \
+  --out-dir <campaign-return>
+
 autolabos governance-benchmark adjudicate-promotion-trial-candidate-review \
   --handoff-root <new-handoff-dir> \
   --annotation <review-a.json> \
@@ -456,6 +464,17 @@ or reused participant IDs. All observations and the license decision remain
 `null`, all human attestations remain `false`, and no adjudication output is
 created. Distribute copies of the three package roots separately; keep the
 campaign controller directory private.
+
+Use the campaign-return collector for the controller-side return path. It first
+revalidates the complete campaign and handoff, matches each returned pseudonym
+to its assigned slot, copies the exact return bytes, and binds them to the
+adjudication input hashes in `campaign-return-receipt.json`. An unassigned,
+duplicated, wrong-handoff, missing, symlinked, or changed return is blocked. A
+structurally valid but incomplete template remains an auditable blocked return;
+it is never promoted to a completed review. The collector always records
+`confirmatory_admitted=false`. The direct adjudication command remains a
+lower-level contract and diagnostic surface; by itself it does not establish
+that the inputs came from a particular campaign assignment.
 
 The worksheet command copies only opaque candidate IDs into the final annotation
 shape. Every observation remains `null`, every rationale is empty, and all

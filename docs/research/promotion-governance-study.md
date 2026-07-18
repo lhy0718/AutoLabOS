@@ -596,7 +596,7 @@ license evidence.
 
 The v10 handoff can now be materialized into three separately distributable
 packages without manual copying: two opaque paired-candidate packages and one
-source-license package. The controller-side campaign receipt binds the exact
+source-license package. The controller-side campaign manifest binds the exact
 upstream handoff, packet manifests, templates, and return guides. All 144
 candidate labels, the license decision, and every human attestation remain
 unfilled, so the campaign status is `human_review_pending`, completed human
@@ -607,6 +607,19 @@ The actual v10 campaign passes standalone inspection with 888 hash-bound files
 and no controller path in any participant package. Its local materialization is
 approximately 72 MB because the two reviewer snapshots are physical copies;
 hard links are avoided so one reviewer's edits cannot alter the other package.
+
+The controller return path now has an assignment-bound collector. It rechecks
+the pristine campaign and complete handoff, requires the two annotation
+pseudonyms and source-license reviewer pseudonym to match their assigned slots,
+copies the exact returned bytes, and verifies that any adjudication report used
+those copied hashes. A same-flow run over the three still-blank v10 templates
+produced an integrity-valid blocked receipt: all three pseudonymous assignments
+matched, adjudication attempted and failed, accepted labels remained 0/72, and
+confirmatory admission remained false. This closes a runtime provenance gap
+only: no completed human v10 return has been collected, the human annotation
+count remains zero, and the confirmatory admission count remains zero. The
+observed contract outcome is recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`.
 
 The post-review operator boundary is now executable without manufacturing the
 missing judgments. A passing adjudication can be transformed into a

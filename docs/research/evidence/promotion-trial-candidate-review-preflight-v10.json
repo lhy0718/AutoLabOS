@@ -51,7 +51,27 @@
       "trial_candidate_license_review_file_invalid"
     ]
   },
+  "campaign_return_collection": {
+    "campaign_id": "review-campaign-97a98284ddfd1294a42591fd",
+    "campaign_manifest_sha256": "8cf52d9b4dfd2f83dc2dd8cf5821777f7740146301e9a80c015ff3afee3848c4",
+    "campaign_file_count": 888,
+    "assigned_return_count": 3,
+    "required_return_count": 3,
+    "completed_human_return_count": 0,
+    "adjudication_attempted": true,
+    "adjudication_passed": false,
+    "accepted_label_count": 0,
+    "task_count": 72,
+    "source_eligible_candidate_count": 0,
+    "controller_receipt_file_count": 6,
+    "controller_receipt_integrity_passed": true,
+    "controller_receipt_inspection_issue_count": 0,
+    "collection_cli_exit_code": 1,
+    "status": "review_return_blocked",
+    "validation_issue": "trial_candidate_campaign_return_adjudication_blocked",
+    "confirmatory_admitted": false
+  },
   "human_review_completed": false,
   "confirmatory_admitted": false,
-  "evidence_boundary": "This audit records machine-prepared incomplete worksheets and their expected fail-closed preflight and zero-admission adjudication outcomes. It contains no human annotation, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets, their expected fail-closed preflight, and an assignment-bound controller collection of those still-blank campaign templates. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
 }

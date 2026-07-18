@@ -77,6 +77,16 @@ requires three distinct pseudonymous roles, exact file inventories, null
 decisions, and false human attestations. Package preparation is not annotation,
 license approval, identity proof, or independence proof.
 
+Returned files must re-enter through the campaign controller boundary. The
+collector revalidates the immutable campaign and handoff, binds each return to
+the assigned pseudonymous slot and handoff ID, preserves the exact return hash,
+and requires the downstream adjudication input hashes to match those preserved
+bytes. Unassigned or duplicated reviewer IDs, a mismatched license reviewer,
+wrong-handoff returns, symlinks, file changes, and incomplete review content all
+fail closed. A valid controller receipt establishes assignment and byte
+provenance only; it does not establish real-world identity, expertise,
+independence, legal authority, or confirmatory admission.
+
 Progression into canonical curation depends on positive execution completeness
 and repeated-trial comparability for every required source candidate, plus the
 separate license gate. Source-absent result tables, readiness decisions, figure

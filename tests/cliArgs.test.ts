@@ -760,6 +760,40 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports assignment-bound human-review campaign return collection", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "collect-promotion-trial-candidate-review-campaign",
+      "--campaign-root", "outputs/review-campaign",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--annotation", "returns/review-alpha.json",
+      "--annotation", "returns/review-beta.json",
+      "--license-review", "returns/license-review.json",
+      "--resolution", "returns/resolution.json",
+      "--out-dir", "outputs/campaign-return"
+    ])).toEqual({
+      kind: "governance-benchmark-collect-promotion-trial-candidate-review-campaign",
+      campaignRoot: "outputs/review-campaign",
+      handoffRoot: "outputs/candidate-handoff",
+      annotationPaths: ["returns/review-alpha.json", "returns/review-beta.json"],
+      licenseReviewPath: "returns/license-review.json",
+      resolutionPath: "returns/resolution.json",
+      outDir: "outputs/campaign-return"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "collect-promotion-trial-candidate-review-campaign",
+      "--campaign-root", "outputs/review-campaign",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--annotation", "returns/review-alpha.json",
+      "--license-review", "returns/license-review.json",
+      "--out-dir", "outputs/campaign-return"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two --annotation")
+    });
+  });
+
   it("supports unlabeled trial-candidate annotation worksheet preparation", () => {
     expect(resolveCliAction([
       "governance-benchmark",

@@ -38,6 +38,10 @@ import {
   preparePromotionTrialCandidateReviewCampaign
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
 import {
+  collectPromotionTrialCandidateReviewCampaign,
+  inspectPromotionTrialCandidateCampaignReturn
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
+import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
@@ -934,6 +938,172 @@ describe("promotion trial-candidate handoff", () => {
       sourceRoot,
       outDir: "parquet-duplicate-handoff"
     })).rejects.toThrow("globally distinct source-native balanced three-trial bases");
+  });
+
+  it("collects only assigned campaign returns and binds the adjudication inputs", async () => {
+    await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      annotatorIds: ["campaign-reviewer-a", "campaign-reviewer-b"],
+      licenseReviewerId: "campaign-license-reviewer",
+      outDir: "assigned-return-campaign"
+    });
+    await writeHumanAnnotation(
+      path.join(workspace, "assigned-review-a.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      "campaign-reviewer-a"
+    );
+    await writeHumanAnnotation(
+      path.join(workspace, "assigned-review-b.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      "campaign-reviewer-b"
+    );
+    await writeLicenseReview(
+      path.join(workspace, "assigned-license-review.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      "campaign-license-reviewer"
+    );
+
+    const result = await collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "assigned-return-campaign",
+      handoffRoot: "parquet-paired-handoff",
+      annotationPaths: ["assigned-review-b.json", "assigned-review-a.json"],
+      licenseReviewPath: "assigned-license-review.json",
+      outDir: "assigned-campaign-return"
+    });
+
+    expect(result.receipt).toMatchObject({
+      status: "adjudicated",
+      passed: true,
+      assigned_return_count: 3,
+      required_return_count: 3,
+      adjudication: {
+        attempted: true,
+        passed: true,
+        accepted_label_count: 72,
+        task_count: 72,
+        source_eligible_candidate_count: 0
+      },
+      validation_issues: [],
+      confirmatory_admitted: false
+    });
+    expect(await inspectPromotionTrialCandidateCampaignReturn(
+      path.join(workspace, "assigned-campaign-return")
+    )).toMatchObject({ passed: true, issues: [] });
+
+    await writeFile(
+      path.join(workspace, "assigned-campaign-return", "returns", "reviewer-a.json"),
+      "{}\n",
+      "utf8"
+    );
+    const changed = await inspectPromotionTrialCandidateCampaignReturn(
+      path.join(workspace, "assigned-campaign-return")
+    );
+    expect(changed.passed).toBe(false);
+    expect(changed.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "trial_candidate_campaign_return_inventory_invalid",
+      "trial_candidate_campaign_return_file_hash_mismatch"
+    ]));
+  });
+
+  it("blocks malformed or wrong-handoff campaign returns before adjudication", async () => {
+    await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      annotatorIds: ["assigned-reviewer-a", "assigned-reviewer-b"],
+      licenseReviewerId: "assigned-license-reviewer",
+      outDir: "mismatched-return-campaign"
+    });
+    await writeHumanAnnotation(
+      path.join(workspace, "mismatched-review-a.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      ""
+    );
+    await writeHumanAnnotation(
+      path.join(workspace, "mismatched-review-b.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      "assigned-reviewer-b"
+    );
+    await writeLicenseReview(
+      path.join(workspace, "mismatched-license-review.json"),
+      path.join(workspace, "parquet-paired-handoff"),
+      "assigned-license-reviewer"
+    );
+    await expect(collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "mismatched-return-campaign",
+      handoffRoot: "handoff",
+      annotationPaths: ["mismatched-review-a.json", "mismatched-review-b.json"],
+      licenseReviewPath: "mismatched-license-review.json",
+      outDir: "wrong-handoff-campaign-return"
+    })).rejects.toThrow("does not bind");
+    await expect(access(path.join(workspace, "wrong-handoff-campaign-return"))).rejects.toThrow();
+
+    const result = await collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "mismatched-return-campaign",
+      handoffRoot: "parquet-paired-handoff",
+      annotationPaths: ["mismatched-review-a.json", "mismatched-review-b.json"],
+      licenseReviewPath: "mismatched-license-review.json",
+      outDir: "mismatched-campaign-return"
+    });
+
+    expect(result.receipt).toMatchObject({
+      status: "review_return_blocked",
+      passed: false,
+      assigned_return_count: 2,
+      adjudication: { attempted: false, passed: false },
+      confirmatory_admitted: false
+    });
+    expect(result.receipt.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_campaign_return_reviewer_assignment_mismatch"
+    );
+    expect(await inspectPromotionTrialCandidateCampaignReturn(
+      path.join(workspace, "mismatched-campaign-return")
+    )).toMatchObject({ passed: true, issues: [] });
+  });
+
+  it("preserves pending campaign templates as a blocked adjudication", async () => {
+    await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      annotatorIds: ["pending-reviewer-a", "pending-reviewer-b"],
+      licenseReviewerId: "pending-license-reviewer",
+      outDir: "pending-return-campaign"
+    });
+
+    const result = await collectPromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      campaignRoot: "pending-return-campaign",
+      handoffRoot: "parquet-paired-handoff",
+      annotationPaths: [
+        "pending-return-campaign/reviewer-a/annotation-template.json",
+        "pending-return-campaign/reviewer-b/annotation-template.json"
+      ],
+      licenseReviewPath: "pending-return-campaign/license-reviewer/license-review-template.json",
+      outDir: "pending-campaign-return"
+    });
+
+    expect(result.receipt).toMatchObject({
+      status: "review_return_blocked",
+      passed: false,
+      assigned_return_count: 3,
+      adjudication: {
+        attempted: true,
+        passed: false,
+        accepted_label_count: 0,
+        task_count: 72,
+        source_eligible_candidate_count: 0
+      },
+      confirmatory_admitted: false
+    });
+    expect(result.receipt.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_campaign_return_adjudication_blocked"
+    );
+    expect(await inspectPromotionTrialCandidateCampaignReturn(
+      path.join(workspace, "pending-campaign-return")
+    )).toMatchObject({ passed: true, issues: [] });
   });
 
   it("preflights exact human task coverage without promoting negative labels", async () => {
