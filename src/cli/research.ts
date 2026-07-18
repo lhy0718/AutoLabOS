@@ -1,5 +1,6 @@
 import type { PaperReadinessAuditInput } from "../core/audit/paperReadinessAudit.js";
 import {
+  inspectPaperReadinessBundle,
   runResearchAudit,
   runResearchImprove,
   runResearchNew,
@@ -44,6 +45,15 @@ export async function runResearchPackCli(input: {
   outDir?: string;
 }): Promise<void> {
   printResult(await runResearchPack(input));
+}
+
+export async function runResearchPackVerificationCli(input: {
+  cwd: string;
+  bundleRoot: string;
+}): Promise<void> {
+  const report = await inspectPaperReadinessBundle(input);
+  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  if (report.verdict !== "pass") process.exitCode = 1;
 }
 
 function printResult<T>(result: ResearchOperationResult<T>): void {

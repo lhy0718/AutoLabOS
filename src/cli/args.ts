@@ -76,6 +76,7 @@ export type CliAction =
   | { kind: "research-review"; gatePath: string; outDir?: string }
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
+  | { kind: "research-pack-verify"; bundleRoot: string }
   | { kind: "research-help" }
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
@@ -1840,8 +1841,8 @@ function parseResearchArgs(args: string[]): CliAction {
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     return { kind: "research-help" };
   }
-  if (!["new", "audit", "review", "improve", "pack"].includes(subcommand)) {
-    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack> [options]." };
+  if (!["new", "audit", "review", "improve", "pack", "verify-pack"].includes(subcommand)) {
+    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack|verify-pack> [options]." };
   }
   if (args.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
     return { kind: "research-help" };
@@ -1869,13 +1870,21 @@ function parseResearchArgs(args: string[]): CliAction {
     audit: ["--run", "--external", "--draft", "--log", "--out-dir"],
     review: ["--gate", "--out-dir"],
     improve: ["--review", "--out-dir"],
-    pack: ["--gate", "--review", "--source-dir", "--out-dir"]
+    pack: ["--gate", "--review", "--source-dir", "--out-dir"],
+    "verify-pack": ["--root"]
   };
   const unsupported = [...values.keys()].find((key) => !allowedByCommand[subcommand].includes(key));
   if (unsupported) {
     return { kind: "error", message: `Unsupported research ${subcommand} argument: ${unsupported}` };
   }
   const outDir = values.get("--out-dir");
+
+  if (subcommand === "verify-pack") {
+    const bundleRoot = values.get("--root");
+    return bundleRoot
+      ? { kind: "research-pack-verify", bundleRoot }
+      : { kind: "error", message: "research verify-pack requires --root <paper-readiness-bundle-dir>." };
+  }
 
   if (subcommand === "new") {
     const briefPath = values.get("--brief");

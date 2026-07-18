@@ -28,7 +28,7 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
 - `research:review`: review paper readiness, claim ceilings, downgrade class, and upstream repair targets.
 - `research:improve`: map failures to node-local prompt, skill, or validator strengthening.
-- `research:pack`: export a traceable paper-readiness bundle.
+- `research:pack`: export a traceable paper-readiness bundle and independently verify it before distribution.
 
 ## Artifact Contract
 
@@ -57,7 +57,7 @@ No adapter may skip baseline requirements, claim-evidence mapping, reproducibili
 ## Executable Adapter
 
 The plugin ships a thin bridge for `autolabos research
-<new|audit|review|improve|pack>`. The bridge checks that the AutoLabOS CLI is
+<new|audit|review|improve|pack|verify-pack>`. The bridge checks that the AutoLabOS CLI is
 available, delegates execution without a shell, and emits a blocking
 `GateReport` when the dependency is missing. The CLI owns deterministic
 artifact validation and reuse of the existing brief, audit, review, and
@@ -69,6 +69,10 @@ to `plan_only`. Packaging never rewrites source evidence: it excludes copied
 artifacts containing private paths or credential assignments, redacts
 run-specific identifiers only in public copies, records those copied paths in
 portability metadata, and hashes the resulting public bytes.
+`research verify-pack` then treats the exported directory as untrusted input,
+requires a closed regular-file inventory, recomputes every byte count and
+SHA-256 digest, and rechecks the gate, review, readiness, and claim-ceiling
+bindings without creating a new top-level command intent.
 
 ## Self-Dogfood Loop
 

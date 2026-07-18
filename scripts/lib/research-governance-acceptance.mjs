@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,28 +60,6 @@ function writeCompleteExternalBundle(root) {
   writeJson(path.join(root, "paper", "evidence_links.json"), { claims: [] });
 }
 
-function verifyBundle(workspace, packResult) {
-  const bundle = packResult.artifact;
-  const bundleRoot = path.join(workspace, path.dirname(packResult.output_path));
-  const issues = [];
-  for (const file of bundle.files) {
-    if (path.isAbsolute(file.path) || file.path === ".." || file.path.startsWith("../")) {
-      issues.push(`${file.path}:non_portable_path`);
-      continue;
-    }
-    const absolutePath = path.join(bundleRoot, file.path);
-    if (!fs.existsSync(absolutePath)) {
-      issues.push(`${file.path}:missing`);
-      continue;
-    }
-    const raw = fs.readFileSync(absolutePath);
-    const sha256 = createHash("sha256").update(raw).digest("hex");
-    if (raw.byteLength !== file.bytes) issues.push(`${file.path}:byte_mismatch`);
-    if (sha256 !== file.sha256) issues.push(`${file.path}:hash_mismatch`);
-  }
-  return { passed: bundle.files.length > 0 && issues.length === 0, files: bundle.files.length, issues };
-}
-
 function assertCheck(checks, id, condition, details = {}) {
   const item = check(id, condition, details);
   checks.push(item);
@@ -129,6 +106,7 @@ export function runResearchGovernanceAcceptance({
       "--source-dir", "outputs/weak/audit",
       "--out-dir", "outputs/weak/pack"
     ]);
+    const weakPackVerification = run(["verify-pack", "--root", "outputs/weak/pack"]);
     writeJson(path.join(workspace, "incompatible-gate.json"), { ...weakGate.artifact, schema_version: "2.0" });
     const versionFailure = executeResearch([
       "review",
@@ -149,10 +127,20 @@ export function runResearchGovernanceAcceptance({
     assertCheck(checks, "weak_input_targets_experiment_and_analysis_nodes", weakImprove.artifact.apply_mode === "plan_only"
       && weakTargets.includes("artifact_contract_incomplete:run_experiments")
       && weakTargets.includes("result_table_missing:analyze_results"));
-    const weakBundleCheck = verifyBundle(workspace, weakPack);
     assertCheck(checks, "weak_bundle_is_portable_and_hash_verified", weakPack.artifact.paper_ready === false
       && weakPack.artifact.portability.valid === true
-      && weakBundleCheck.passed, weakBundleCheck);
+      && weakPackVerification.verdict === "pass"
+      && weakPackVerification.closed_inventory === true
+      && weakPackVerification.checked_files === weakPack.artifact.files.length,
+      weakPackVerification);
+    writeJson(path.join(workspace, "outputs", "weak", "pack", "unbound.json"), { unbound: true });
+    const unboundFailure = executeResearch(["verify-pack", "--root", "outputs/weak/pack"]);
+    const unboundReport = JSON.parse(unboundFailure.stdout);
+    assertCheck(checks, "bundle_verification_fails_on_unbound_files", unboundFailure.status === 1
+      && unboundReport.verdict === "fail"
+      && unboundReport.closed_inventory === false
+      && unboundReport.issues.some((issue) => issue.code === "unexpected_file"));
+    fs.rmSync(path.join(workspace, "outputs", "weak", "pack", "unbound.json"));
 
     const completeRoot = path.join(workspace, "complete-input");
     fs.mkdirSync(completeRoot, { recursive: true });
@@ -166,15 +154,17 @@ export function runResearchGovernanceAcceptance({
       "--source-dir", "outputs/complete/audit",
       "--out-dir", "outputs/complete/pack"
     ]);
+    const completePackVerification = run(["verify-pack", "--root", "outputs/complete/pack"]);
     assertCheck(checks, "complete_input_respects_claim_ceiling", completeGate.artifact.verdict === "pass"
       && completeGate.artifact.claim_ceiling === "conditional_claims_with_artifact_links"
       && completeReview.artifact.readiness_class === "paper_scale_candidate"
       && completeReview.artifact.paper_ready === false);
-    const completeBundleCheck = verifyBundle(workspace, completePack);
     assertCheck(checks, "complete_bundle_is_portable_and_hash_verified", completePack.artifact.paper_ready === false
       && completePack.artifact.claim_ceiling === "conditional_claims_with_artifact_links"
       && completePack.artifact.portability.valid === true
-      && completeBundleCheck.passed, completeBundleCheck);
+      && completePackVerification.verdict === "pass"
+      && completePackVerification.closed_inventory === true,
+      completePackVerification);
 
     return {
       commandIntent: "research:audit",

@@ -33,8 +33,8 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - `research:audit`: inspect a run or external artifact bundle as untrusted evidence and emit missing-evidence, traceability, and done-condition findings.
    - `research:review`: decide paper readiness, claim ceilings, downgrade class, and upstream repair targets from the available artifacts.
    - `research:improve`: map gate/review failures to the smallest node-local prompt, skill, or validator strengthening plan.
-   - `research:pack`: export or describe a portable paper-readiness bundle with provenance, claim evidence, downgrade decisions, and limitations.
-2. For executable intent work, run the bundled `scripts/run-research-intent.mjs --check` bridge first. The bridge delegates to `autolabos research <new|audit|review|improve|pack>` and must emit a blocking `GateReport` rather than fabricate output when the CLI dependency is unavailable.
+   - `research:pack`: export or describe a portable paper-readiness bundle with provenance, claim evidence, downgrade decisions, and limitations. Before distribution, run `research verify-pack --root <bundle-dir>` and require a passing closed-inventory, hash, portability, and artifact-binding inspection.
+2. For executable intent work, run the bundled `scripts/run-research-intent.mjs --check` bridge first. The bridge delegates to `autolabos research <new|audit|review|improve|pack|verify-pack>` and must emit a blocking `GateReport` rather than fabricate output when the CLI dependency is unavailable.
 3. On first use inside the AutoLabOS repository, inspect the plugin contract with `npm run plugin:contract`, run `npm run plugin:dogfood`, and use `npm run plugin:doctor` when checking whether the installed Codex plugin cache matches the repo-local contract. Use `npm run plugin:doctor -- --strict` for CI or release checks that should fail on cache drift, `npm run plugin:discovery-check` on a Codex-enabled workstation to verify local installation, enablement, version, source, cache, and skill alignment, `npm run validate:plugin-bridge` for deterministic bridge acceptance, `npm run validate:plugin-bridge:local` for the installed-cache research chain, `npm run validate:plugin-faults` for blocking-path coverage, `npm run validate:plugin-hermetic` for an isolated cache lifecycle, `npm run validate:plugin-operations` for the CI aggregate, `npm run validate:plugin-operations:local` for the workstation aggregate, `npm run plugin:sync-cache` for dry-run cache refresh planning, and `npm run plugin:release-check` before release. Treat a passing dogfood or release-check report as plugin-contract coherence only, not as research completion.
 4. Load repo-local source-of-truth documents before changing behaviorally significant code:
    - `AGENTS.md`
@@ -84,6 +84,7 @@ For substantial work, report:
 - Adding one-off experiment identifiers to public source, tests, docs, or plugin examples.
 - Repairing broad orchestration when the actual failure is a node-local prompt or validator gap.
 - Applying meta-harness changes without validation and rollback expectations.
+- Distributing a paper-readiness bundle without independently rechecking its closed inventory and artifact bindings.
 
 ## Update Rule
 

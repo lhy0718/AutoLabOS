@@ -23,7 +23,14 @@ import {
   type ResearchBriefArtifact,
   type ReviewReportArtifact
 } from "./researchGovernanceArtifacts.js";
+import { containsNonPortableResearchText } from "./researchGovernancePortability.js";
 import { ensureDir, fileExists, writeJsonFile } from "../utils/fs.js";
+
+export {
+  inspectPaperReadinessBundle,
+  type PaperReadinessBundleInspection,
+  type PaperReadinessBundleInspectionIssue
+} from "./paperReadinessBundleInspection.js";
 
 export interface ResearchOperationResult<T> {
   artifact: T;
@@ -49,17 +56,6 @@ const PACK_ALLOWLIST = [
   "meta-harness-patch-plan.json"
 ] as const;
 
-const PRIVATE_PATH_PATTERN = new RegExp(
-  `(?:^|[\\s\"'=:])(?:${[
-    String.fromCharCode(47, 104, 111, 109, 101, 47),
-    String.fromCharCode(47, 85, 115, 101, 114, 115, 47),
-    String.fromCharCode(47, 109, 110, 116, 47),
-    String.fromCharCode(47, 116, 109, 112, 47),
-    "[A-Za-z]:\\\\"
-  ].join("|")})`,
-  "u"
-);
-const SENSITIVE_TEXT_PATTERN = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|private[_-]?key|credential|secret)\s*[=:]/iu;
 const RUN_UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
 const CONDITION_IDENTIFIER_PATTERN = /\b(?:condition|rank|dropout)[_-]\d[a-z0-9._-]*\b/giu;
 const PARAMETER_VALUE_PATTERN = /\b(?:rank|dropout)\s+\d+(?:\.\d+)?\b/giu;
@@ -193,7 +189,7 @@ export async function runResearchPack(input: {
     if (!(await fileExists(candidate.source))) continue;
     const raw = await fs.readFile(candidate.source);
     const text = raw.toString("utf8");
-    if (PRIVATE_PATH_PATTERN.test(text) || SENSITIVE_TEXT_PATTERN.test(text)) {
+    if (containsNonPortableResearchText(text)) {
       portabilityIssues.push(`Excluded ${candidate.relative} because it contains non-portable or sensitive text.`);
       continue;
     }

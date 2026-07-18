@@ -140,7 +140,7 @@ if (args[0] === "--version") {
   process.stdout.write("autolabos 9.9.9\\n");
 } else if (args[0] === "research" && args[1] === "--help") {
   const compatible = process.env.RESEARCH_HELP_MODE === "compatible";
-  process.stdout.write(compatible ? "new audit review improve pack\\n" : "new audit review improve\\n");
+  process.stdout.write(compatible ? "new audit review improve pack verify-pack\\n" : "new audit review improve\\n");
 } else {
   process.exitCode = 2;
 }

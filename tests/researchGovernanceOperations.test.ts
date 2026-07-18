@@ -1,11 +1,12 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { resolveCliAction } from "../src/cli/args.js";
 import {
+  inspectPaperReadinessBundle,
   runResearchAudit,
   runResearchImprove,
   runResearchNew,
@@ -46,6 +47,12 @@ describe("research governance operations", () => {
       "--review",
       "review-report.json"
     ])).toMatchObject({ kind: "research-pack" });
+    expect(resolveCliAction([
+      "research",
+      "verify-pack",
+      "--root",
+      "paper-readiness-bundle"
+    ])).toEqual({ kind: "research-pack-verify", bundleRoot: "paper-readiness-bundle" });
   });
 
   it("creates a versioned ResearchBrief artifact without pretending an empty template is complete", async () => {
@@ -562,6 +569,118 @@ describe("research governance operations", () => {
     )).rejects.toThrow();
   });
 
+  it("independently verifies a closed paper-readiness bundle", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-verify-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeGovernancePack(workspace);
+
+    const inspection = await inspectPaperReadinessBundle({
+      cwd: workspace,
+      bundleRoot: packRoot
+    });
+
+    expect(inspection).toEqual(expect.objectContaining({
+      verdict: "pass",
+      bundle_ref: "outputs/governance/pack",
+      closed_inventory: true,
+      portability_valid: true,
+      issues: []
+    }));
+    expect(inspection.checked_files).toBe(inspection.expected_files);
+    expect(inspection.checked_files).toBeGreaterThan(0);
+  });
+
+  it("fails bundle verification on changed bytes and unbound files", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-tamper-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeGovernancePack(workspace);
+    const gatePath = path.join(packRoot, "artifacts", "gate-report.json");
+    await writeFile(gatePath, `${await readFile(gatePath, "utf8")}\n`, "utf8");
+    await writeFile(path.join(packRoot, "unbound.json"), "{}\n", "utf8");
+
+    const inspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+
+    expect(inspection.verdict).toBe("fail");
+    expect(inspection.closed_inventory).toBe(false);
+    expect(inspection.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "file_size_mismatch", path: "artifacts/gate-report.json" }),
+      expect.objectContaining({ code: "file_hash_mismatch", path: "artifacts/gate-report.json" }),
+      expect.objectContaining({ code: "unexpected_file", path: "unbound.json" })
+    ]));
+  });
+
+  it("fails bundle verification when the manifest contains non-portable text", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-portability-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeGovernancePack(workspace);
+    const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const privatePath = path.posix.join(String.fromCharCode(47), "home", "example", "workspace-item");
+    manifest.limitations.push(`Inspect ${privatePath} before release.`);
+    await writeJson(manifestPath, manifest);
+
+    const inspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+
+    expect(inspection.verdict).toBe("fail");
+    expect(inspection.portability_valid).toBe(false);
+    expect(inspection.issues).toContainEqual(expect.objectContaining({
+      code: "non_portable_content",
+      path: "paper-readiness-bundle.json"
+    }));
+  });
+
+  it("fails bundle verification on duplicate artifact bindings", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-duplicate-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeGovernancePack(workspace);
+    const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.files.push({ ...manifest.files[0] });
+    await writeJson(manifestPath, manifest);
+
+    const inspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+
+    expect(inspection.verdict).toBe("fail");
+    expect(inspection.closed_inventory).toBe(false);
+    expect(inspection.issues).toContainEqual(expect.objectContaining({
+      code: "manifest_invalid",
+      path: expect.stringContaining("files[13].path"),
+      message: expect.stringContaining("unique")
+    }));
+  });
+
+  it("fails bundle verification on symbolic links and artifact binding drift", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-pack-binding-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeGovernancePack(workspace);
+    const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.review_report_id = "review_report_unbound";
+    await writeJson(manifestPath, manifest);
+    const bindingInspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+    expect(bindingInspection.issues).toContainEqual(expect.objectContaining({
+      code: "artifact_binding_mismatch",
+      message: expect.stringContaining("review_report_id")
+    }));
+    const reviewPath = path.join(packRoot, "artifacts", "review-report.json");
+    const symlinkTarget = path.join(workspace, "review-report-target.json");
+    await writeFile(symlinkTarget, await readFile(reviewPath));
+    await rm(reviewPath);
+    await symlink(symlinkTarget, reviewPath);
+
+    const inspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+
+    expect(inspection.verdict).toBe("fail");
+    expect(inspection.closed_inventory).toBe(false);
+    expect(inspection.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "file_type_invalid", path: "artifacts/review-report.json" }),
+      expect.objectContaining({
+        code: "artifact_binding_mismatch",
+        message: expect.stringContaining("bound ReviewReport")
+      })
+    ]));
+  });
+
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-complete-"));
     const external = path.join(workspace, "external-artifacts");
@@ -624,6 +743,29 @@ async function writeCompleteExternalBundle(root: string): Promise<void> {
   await writeJson(path.join(root, "paper", "claim_evidence_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "claim_status_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "evidence_links.json"), { claims: [] });
+}
+
+async function writeGovernancePack(workspace: string): Promise<string> {
+  const external = path.join(workspace, "external-artifacts");
+  await mkdir(external, { recursive: true });
+  const gateResult = await runResearchAudit({
+    cwd: workspace,
+    externalRoot: external,
+    outDir: "outputs/governance/audit"
+  });
+  const reviewResult = await runResearchReview({
+    cwd: workspace,
+    gatePath: gateResult.output_path,
+    outDir: "outputs/governance/review"
+  });
+  await runResearchPack({
+    cwd: workspace,
+    gatePath: gateResult.output_path,
+    reviewPath: reviewResult.output_path,
+    sourceDir: "outputs/governance/audit",
+    outDir: "outputs/governance/pack"
+  });
+  return path.join(workspace, "outputs", "governance", "pack");
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {

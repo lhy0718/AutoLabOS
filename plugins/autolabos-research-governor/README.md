@@ -58,6 +58,7 @@ npm run plugin:research -- audit --external <artifact-root> --out-dir outputs/re
 npm run plugin:research -- review --gate outputs/research-governance/audit/gate-report.json
 npm run plugin:research -- improve --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- pack --gate outputs/research-governance/audit/gate-report.json --review outputs/research-governance/review/review-report.json
+npm run plugin:research -- verify-pack --root outputs/research-governance/pack
 ```
 
 The bridge emits a blocking `GateReport` when the `autolabos` CLI is unavailable.
@@ -71,6 +72,10 @@ verdict is a valid governance outcome and is preserved through packaging.
 - `research:review`: review paper readiness, claim ceilings, downgrade class, and repair targets.
 - `research:improve`: map gate or review failures to node-local strengthening.
 - `research:pack`: export a traceable paper-readiness bundle.
+
+`research verify-pack` is the verification mode of `research:pack`. It
+independently rechecks the closed file inventory, regular-file boundary,
+portable paths, byte counts, SHA-256 bindings, and gate/review/bundle linkage.
 
 ## Artifact Contract
 

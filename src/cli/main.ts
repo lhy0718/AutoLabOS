@@ -57,6 +57,7 @@ import {
   runResearchImproveCli,
   runResearchNewCli,
   runResearchPackCli,
+  runResearchPackVerificationCli,
   runResearchReviewCli
 } from "./research.js";
 import { runWithProcessLifetime } from "./processLifetime.js";
@@ -81,7 +82,7 @@ function printHelp(): void {
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]",
-    "  autolabos research <new|audit|review|improve|pack> [options]",
+    "  autolabos research <new|audit|review|improve|pack|verify-pack> [options]",
     "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
     "  autolabos reference-review preflight --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
@@ -171,7 +172,8 @@ function printResearchHelp(): void {
     "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>]) [--out-dir <dir>]",
     "  autolabos research review --gate <gate-report.json> [--out-dir <dir>]",
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
-    "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]"
+    "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]",
+    "  autolabos research verify-pack --root <paper-readiness-bundle-dir>"
   ].join("\n") + "\n");
 }
 
@@ -323,6 +325,11 @@ async function main(): Promise<void> {
       sourceDir: action.sourceDir,
       outDir: action.outDir
     });
+    return;
+  }
+
+  if (action.kind === "research-pack-verify") {
+    await runResearchPackVerificationCli({ cwd: process.cwd(), bundleRoot: action.bundleRoot });
     return;
   }
 
