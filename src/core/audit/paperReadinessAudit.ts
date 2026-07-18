@@ -9,6 +9,10 @@ import { scoreLiveValidationCase, type LiveValidationCaseScore } from "../benchm
 import { scoreResultTableArtifact, type ResultTableScore } from "../benchmark/resultTableScoring.js";
 import { type GovernanceBenchmarkConditionName } from "../benchmark/governanceCondition.js";
 import type { FigureAuditSummary } from "../exploration/types.js";
+import {
+  parseReferenceClaimsTsv,
+  type ReferenceClaimRow
+} from "../referenceClaimReview.js";
 import { writeJsonFile } from "../../utils/fs.js";
 import { buildClaimEvidenceExport, type ClaimEvidenceExport } from "./claimEvidenceExport.js";
 import { materializeExternalAuditArtifacts } from "./externalArtifactIntake.js";
@@ -41,6 +45,9 @@ export interface PaperReadinessAuditUnsupportedClaim {
   message: string;
   status?: string;
   statement?: string;
+  target_node?: string;
+  evidence_path?: string;
+  recheck_condition?: string;
 }
 
 export interface PaperReadinessAuditDesignContractFinding {
@@ -176,6 +183,14 @@ interface LoadedRunArtifacts {
   governanceConditionPayload: Record<string, unknown> | undefined;
   researchBriefText: string | undefined;
   mainTexExists: boolean;
+  academicClaimEvidenceMap: Record<string, unknown> | undefined;
+  academicReferenceEvidenceStatus: Record<string, unknown> | undefined;
+  academicSubmissionStatus: Record<string, unknown> | undefined;
+  referenceClaimInventory: {
+    present: boolean;
+    valid: boolean;
+    rows: ReferenceClaimRow[];
+  };
 }
 
 interface PaperReadinessAuditBuildResult {
@@ -278,7 +293,10 @@ async function buildAuditSummary(input: {
   const unsupportedClaims = collectUnsupportedClaims(input.artifacts, claimEvidence);
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
   const designContractFindings = collectDesignContractFindings(input.artifacts);
-  const researchScaleFindings = collectResearchScaleFindings(input.artifacts);
+  const researchScaleFindings = [
+    ...collectResearchScaleFindings(input.artifacts),
+    ...collectAcademicPackageFindings(input.artifacts)
+  ];
   const executionIntegrityFindings = collectExecutionIntegrityFindings(input.artifacts);
   const literatureDiscovery = scoreLiteratureDiscoveryAudit({
     payloads: input.artifacts.literatureDiscoveryPayloads
@@ -347,7 +365,7 @@ async function buildAuditSummary(input: {
     blockers.push({
       code: "citation_support_missing",
       severity: "warning",
-      message: `${citationSupportIssues.length} related-work claim(s) have no citation support and must be downgraded.`,
+      message: `${citationSupportIssues.length} related-work claim(s) have missing or unresolved citation support and must be reviewed or downgraded.`,
       source: "claimEvidenceScoring"
     });
   }
@@ -633,12 +651,26 @@ async function buildAuditSummary(input: {
 
 async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
   const conditionPayload = await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "governance_condition.json"));
+  const academicClaimEvidenceMap = await readOptionalJson<Record<string, unknown>>(
+    path.join(runRoot, "paper", "academic_claim_evidence_map.json")
+  );
+  const academicReferenceEvidenceStatus = await readOptionalJson<Record<string, unknown>>(
+    path.join(runRoot, "paper", "reference_evidence_status.json")
+  );
+  const academicSubmissionStatus = await readOptionalJson<Record<string, unknown>>(
+    path.join(runRoot, "paper", "submission_status.json")
+  );
+  const referenceClaimInventory = await readReferenceClaimInventory(
+    path.join(runRoot, "paper", "refgate_claims.tsv")
+  );
+  const explicitClaimEvidenceTable = await readOptionalJson(path.join(runRoot, "paper", "claim_evidence_table.json"));
+  const explicitClaimStatusTable = await readOptionalJson(path.join(runRoot, "paper", "claim_status_table.json"));
   return {
     runRoot,
     condition: parseConditionName(conditionPayload),
     resultTable: await readOptionalJson(path.join(runRoot, "result_table.json")),
-    claimEvidenceTable: await readOptionalJson(path.join(runRoot, "paper", "claim_evidence_table.json")),
-    claimStatusTable: await readOptionalJson(path.join(runRoot, "paper", "claim_status_table.json")),
+    claimEvidenceTable: explicitClaimEvidenceTable ?? normalizeAcademicClaimEvidenceTable(academicClaimEvidenceMap),
+    claimStatusTable: explicitClaimStatusTable ?? normalizeAcademicClaimStatusTable(academicClaimEvidenceMap),
     evidenceLinks: await readOptionalJson(path.join(runRoot, "paper", "evidence_links.json")),
     evidenceGateDecision: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "paper", "evidence_gate_decision.json")),
     paperReadiness: await readOptionalJson<Record<string, unknown>>(path.join(runRoot, "paper", "paper_readiness.json")),
@@ -666,8 +698,68 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     ),
     governanceConditionPayload: conditionPayload,
     researchBriefText: await readResearchBriefText(runRoot),
-    mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex"))
+    mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex")),
+    academicClaimEvidenceMap,
+    academicReferenceEvidenceStatus,
+    academicSubmissionStatus,
+    referenceClaimInventory
   };
+}
+
+function normalizeAcademicClaimEvidenceTable(
+  value: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  const claims = recordArray(value?.claims);
+  if (claims.length === 0) return undefined;
+  return {
+    claims: claims.map((claim) => ({
+      claim_id: stringValue(claim.claim_id),
+      statement: stringValue(claim.statement) || stringValue(claim.claim),
+      artifact_refs: stringArray(claim.artifact_refs),
+      citation_refs: stringArray(claim.citation_refs),
+      evidence_ids: stringArray(claim.evidence_ids)
+    }))
+  };
+}
+
+function normalizeAcademicClaimStatusTable(
+  value: Record<string, unknown> | undefined
+): Record<string, unknown> | undefined {
+  const claims = recordArray(value?.claims);
+  if (claims.length === 0) return undefined;
+  return {
+    claims: claims.map((claim) => ({
+      claim_id: stringValue(claim.claim_id),
+      statement: stringValue(claim.statement) || stringValue(claim.claim),
+      status: normalizeAcademicClaimStatus(stringValue(claim.status)),
+      artifact_refs: stringArray(claim.artifact_refs),
+      citation_refs: stringArray(claim.citation_refs),
+      reproduction_trace_present: stringArray(claim.artifact_refs).length > 0
+    }))
+  };
+}
+
+function normalizeAcademicClaimStatus(status: string | undefined): string {
+  if (status === "supported_by_code_and_tests") return "verified";
+  if (status === "development_only") return "inferred";
+  if (status === "blocked") return "blocked";
+  return "unverified";
+}
+
+async function readReferenceClaimInventory(filePath: string): Promise<{
+  present: boolean;
+  valid: boolean;
+  rows: ReferenceClaimRow[];
+}> {
+  try {
+    const text = await fs.readFile(filePath, "utf8");
+    return { present: true, valid: true, rows: parseReferenceClaimsTsv(text) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { present: false, valid: true, rows: [] };
+    }
+    return { present: true, valid: false, rows: [] };
+  }
 }
 
 function getRunFailureDetail(report: Record<string, unknown> | undefined): string | undefined {
@@ -700,18 +792,33 @@ function collectUnsupportedClaims(
 ): PaperReadinessAuditUnsupportedClaim[] {
   const claims = claimRows(artifacts);
   const byId = new Map(claims.map((claim) => [claim.claim_id, claim] as const));
-  return claimEvidence.issues.map((issue) => ({
-    claim_id: issue.claim_id,
-    message: issue.message,
-    status: byId.get(issue.claim_id)?.status,
-    statement: byId.get(issue.claim_id)?.statement
-  }));
+  const academicById = new Map(recordArray(artifacts.academicClaimEvidenceMap?.claims)
+    .map((claim) => [stringValue(claim.claim_id), claim] as const)
+    .filter((entry): entry is [string, Record<string, unknown>] => Boolean(entry[0])));
+  return claimEvidence.issues.map((issue) => {
+    const academicClaim = academicById.get(issue.claim_id);
+    const missingEvidence = stringArray(academicClaim?.missing_evidence);
+    const academicallyBlocked = stringValue(academicClaim?.status) === "blocked";
+    return {
+      claim_id: issue.claim_id,
+      message: issue.message,
+      status: byId.get(issue.claim_id)?.status,
+      statement: byId.get(issue.claim_id)?.statement,
+      ...(academicallyBlocked
+        ? {
+            target_node: targetNodeForAcademicEvidence(missingEvidence),
+            evidence_path: path.posix.join("paper", "academic_claim_evidence_map.json"),
+            recheck_condition: "Every missing-evidence item is verified and the academic claim status is no longer blocked."
+          }
+        : {})
+    };
+  });
 }
 
 function collectCitationSupportIssues(
   artifacts: LoadedRunArtifacts
 ): PaperReadinessAuditUnsupportedClaim[] {
-  return claimRows(artifacts)
+  const issues: PaperReadinessAuditUnsupportedClaim[] = claimRows(artifacts)
     .filter((claim) =>
       /related|literature|prior work|background/iu.test(claim.section_heading)
         && claim.citation_refs.length === 0
@@ -722,6 +829,27 @@ function collectCitationSupportIssues(
       status: claim.status,
       statement: claim.statement
     }));
+  if (artifacts.referenceClaimInventory.valid) {
+    for (const claim of artifacts.referenceClaimInventory.rows) {
+      if (claim.status.trim().toLowerCase() === "checked") continue;
+      issues.push({
+        claim_id: claim.claim_id,
+        message: `Citation claim ${claim.claim_id} is marked ${claim.status || "unresolved"}.`,
+        status: claim.status,
+        statement: claim.claim_text,
+        target_node: claim.status === "claim_unchecked" ? "collect_papers" : "analyze_papers",
+        evidence_path: path.posix.join("paper", "refgate_claims.tsv"),
+        recheck_condition: "The claim is marked checked only after exact full-text evidence and independent review pass."
+      });
+    }
+  }
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    const key = `${issue.claim_id}\u0000${issue.message}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function collectDesignContractFindings(
@@ -839,6 +967,141 @@ function collectResearchScaleFindings(
     seen.add(key);
     return true;
   });
+}
+
+function collectAcademicPackageFindings(
+  artifacts: LoadedRunArtifacts
+): PaperReadinessAuditResearchScaleFinding[] {
+  const findings: PaperReadinessAuditResearchScaleFinding[] = [];
+  const submissionStatus = artifacts.academicSubmissionStatus;
+  const submissionRequirements = stringArray(submissionStatus?.blocking_requirements);
+  if (submissionStatus?.paper_ready === true && submissionRequirements.length > 0) {
+    findings.push({
+      code: "submission_status_contradiction",
+      severity: "blocker",
+      message: "The academic package declares paper_ready=true while submission requirements remain open.",
+      target_node: "review",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "submission_status.json"),
+      recheck_condition: "paper_ready is false or every declared submission requirement is closed by verified evidence."
+    });
+  }
+
+  const requirementsByNode = new Map<string, string[]>();
+  for (const requirement of submissionRequirements) {
+    const targetNode = targetNodeForAcademicRequirement(requirement);
+    const grouped = requirementsByNode.get(targetNode) || [];
+    grouped.push(requirement);
+    requirementsByNode.set(targetNode, grouped);
+  }
+  for (const [targetNode, requirements] of requirementsByNode) {
+    findings.push({
+      code: `submission_requirements_open:${targetNode}`,
+      severity: "blocker",
+      message: `${requirements.length} submission requirement(s) remain open for ${targetNode}: ${requirements.join(", ")}.`,
+      target_node: targetNode,
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "submission_status.json"),
+      recheck_condition: "Every listed requirement is removed only after its bound evidence passes the submission gate."
+    });
+  }
+
+  const referenceStatus = artifacts.academicReferenceEvidenceStatus;
+  const referenceSummary = recordValue(referenceStatus?.summary);
+  const missingFullTextCount = numberValue(referenceSummary?.missing_full_text_claim_count);
+  const claimCount = numberValue(referenceSummary?.citation_bearing_claim_count);
+  const checkedClaimCount = numberValue(referenceSummary?.independently_checked_claim_count);
+  if (missingFullTextCount > 0) {
+    findings.push({
+      code: "reference_full_text_missing",
+      severity: "blocker",
+      message: `${missingFullTextCount} citation-bearing claim(s) lack a mapped full-text source.`,
+      target_node: "collect_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "reference_evidence_status.json"),
+      recheck_condition: "Every citation-bearing claim is bound to an exact, title-aligned full-text source."
+    });
+  }
+  if (claimCount > checkedClaimCount) {
+    findings.push({
+      code: "reference_claim_review_incomplete",
+      severity: "blocker",
+      message: `${claimCount - checkedClaimCount} of ${claimCount} citation-bearing claim(s) still require independent full-text review.`,
+      target_node: "analyze_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "reference_evidence_status.json"),
+      recheck_condition: "The independently checked claim count equals the citation-bearing claim count and the reference submission gate passes."
+    });
+  }
+  if (artifacts.referenceClaimInventory.present && !artifacts.referenceClaimInventory.valid) {
+    findings.push({
+      code: "reference_claim_inventory_invalid",
+      severity: "blocker",
+      message: "The academic package contains a malformed Refgate claim inventory.",
+      target_node: "analyze_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "refgate_claims.tsv"),
+      recheck_condition: "The Refgate claim inventory parses with the canonical schema."
+    });
+  }
+
+  for (const claim of recordArray(artifacts.academicClaimEvidenceMap?.claims)) {
+    if (stringValue(claim.status) !== "blocked") continue;
+    const claimId = stringValue(claim.claim_id) || "unknown";
+    const missingEvidence = stringArray(claim.missing_evidence);
+    const requirementsByNode = groupAcademicEvidenceByNode(missingEvidence);
+    if (requirementsByNode.size === 0) requirementsByNode.set("review", []);
+    for (const [targetNode, requirements] of requirementsByNode) {
+      findings.push({
+        code: `academic_claim_evidence_blocked:${claimId}:${targetNode}`,
+        severity: "blocker",
+        message: `Academic claim ${claimId} remains blocked by ${requirements.length || "unresolved"} ${targetNode} evidence requirement(s).`,
+        target_node: targetNode,
+        target_surface: "validator",
+        evidence_path: path.posix.join("paper", "academic_claim_evidence_map.json"),
+        recheck_condition: "The claim status changes only after every declared missing-evidence item is verified."
+      });
+    }
+  }
+
+  return findings;
+}
+
+function targetNodeForAcademicRequirement(requirement: string): string {
+  const normalized = requirement.toLowerCase();
+  if (/independent.*(?:full[_-]?text|reference|citation).*review|review.*(?:full[_-]?text|reference|citation)/u.test(normalized)) {
+    return "analyze_papers";
+  }
+  if (/(full[_-]?text|source[_-]?license)/u.test(normalized)) return "collect_papers";
+  if (/(reference|citation|refgate)/u.test(normalized)) return "analyze_papers";
+  if (/(acl|template|format)/u.test(normalized)) return "write_paper";
+  if (/(review|adjudicat|mutation[_-]?isolation)/u.test(normalized)) return "review";
+  if (/(canonical|bundle|held[_-]?out|execution|provider|recovery|experiment|post[_-]?repair)/u.test(normalized)) {
+    return "run_experiments";
+  }
+  return "review";
+}
+
+function targetNodeForAcademicEvidence(missingEvidence: string[]): string {
+  const nodes = [...groupAcademicEvidenceByNode(missingEvidence).keys()];
+  return [
+    "run_experiments",
+    "collect_papers",
+    "analyze_papers",
+    "write_paper",
+    "review"
+  ].find((node) => nodes.includes(node)) || "review";
+}
+
+function groupAcademicEvidenceByNode(missingEvidence: string[]): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const requirement of missingEvidence) {
+    const targetNode = targetNodeForAcademicRequirement(requirement);
+    const requirements = grouped.get(targetNode) || [];
+    requirements.push(requirement);
+    grouped.set(targetNode, requirements);
+  }
+  return grouped;
 }
 
 function collectExecutionIntegrityFindings(
@@ -1058,7 +1321,7 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
     } else if (blocker.code === "unsupported_claims_present") {
       actions.add("Map each major claim to artifact, result, citation, or mark it blocked/downgraded.");
     } else if (blocker.code === "citation_support_missing") {
-      actions.add("Attach citation support or downgrade related-work statements.");
+      actions.add("Attach and verify citation support or downgrade related-work statements.");
     } else if (blocker.code === "figure_result_caption_mismatch") {
       actions.add("Repair figure/result/caption mismatches and rerun figure_audit before review.");
     } else if (blocker.code === "hidden_failed_run") {

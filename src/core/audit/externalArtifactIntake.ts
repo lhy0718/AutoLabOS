@@ -42,12 +42,26 @@ const ALLOWLISTED_RELATIVE_FILES = [
   path.join("paper", "evidence_gate_decision.json"),
   path.join("paper", "paper_readiness.json"),
   path.join("paper", "main.tex"),
+  path.join("paper", "references.bib"),
+  path.join("paper", "academic_claim_evidence_map.json"),
+  path.join("paper", "reference_evidence_status.json"),
+  path.join("paper", "submission_status.json"),
+  path.join("paper", "refgate_claims.tsv"),
   path.join("paper", "draft.md"),
   path.join("paper", "main.md"),
   path.join("logs", "run.log"),
   path.join("logs", "stderr.log"),
   path.join("logs", "stdout.log")
 ];
+
+const ACADEMIC_PACKAGE_ALIASES = [
+  { source: "manuscript.tex", destination: path.join("paper", "main.tex") },
+  { source: "references.bib", destination: path.join("paper", "references.bib") },
+  { source: "claim-evidence-map.json", destination: path.join("paper", "academic_claim_evidence_map.json") },
+  { source: "reference-evidence-status.json", destination: path.join("paper", "reference_evidence_status.json") },
+  { source: "submission-status.json", destination: path.join("paper", "submission_status.json") },
+  { source: "refgate_claims.tsv", destination: path.join("paper", "refgate_claims.tsv") }
+] as const;
 
 export async function materializeExternalAuditArtifacts(
   input: ExternalArtifactIntakeInput
@@ -68,6 +82,16 @@ export async function materializeExternalAuditArtifacts(
     }
     await copyFile(sourcePath, path.join(runRoot, normalizedRelativeFile));
     copiedFiles.push(normalizedRelativeFile);
+  }
+
+  for (const alias of ACADEMIC_PACKAGE_ALIASES) {
+    const sourcePath = path.join(sourceRoot, alias.source);
+    const destinationPath = path.join(runRoot, alias.destination);
+    if (!(await fileExists(sourcePath)) || await fileExists(destinationPath)) {
+      continue;
+    }
+    await copyFile(sourcePath, destinationPath);
+    copiedFiles.push(normalizeRelativeFile(alias.destination));
   }
 
   if (input.draftPath) {

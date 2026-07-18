@@ -287,13 +287,21 @@ export function buildGateReportArtifact(input: {
       code: "unsupported_claim",
       severity: "blocker" as const,
       message: finding.message,
-      evidence_refs: [portableArtifactRef(summary.outputs.claim_evidence_path)]
+      evidence_refs: [portableArtifactRef(finding.evidence_path || summary.outputs.claim_evidence_path)],
+      ...(normalizeGovernedNode(finding.target_node)
+        ? { target_node: normalizeGovernedNode(finding.target_node) }
+        : {}),
+      ...(finding.recheck_condition ? { recheck_condition: finding.recheck_condition } : {})
     })),
     ...summary.citation_support_issues.map((finding) => ({
       code: "citation_support_gap",
       severity: "blocker" as const,
       message: finding.message,
-      evidence_refs: [portableArtifactRef(summary.outputs.claim_evidence_path)]
+      evidence_refs: [portableArtifactRef(finding.evidence_path || summary.outputs.claim_evidence_path)],
+      ...(normalizeGovernedNode(finding.target_node)
+        ? { target_node: normalizeGovernedNode(finding.target_node) }
+        : {}),
+      ...(finding.recheck_condition ? { recheck_condition: finding.recheck_condition } : {})
     })),
     ...summary.design_contract_findings.map((finding) => ({
       code: finding.code,
@@ -569,7 +577,21 @@ function proposedChangeForTarget(target: ReviewRepairTarget): string {
     return "Require analyze_results to emit a complete, measurable comparator result table from executed evidence; backtrack to run_experiments when source metrics are absent.";
   }
   if (target.finding_code === "unsupported_claim" || target.finding_code === "unsupported_claims_present") {
-    return "Require analyze_results to emit parseable claim-evidence rows with artifact links, or lower the claim ceiling before downstream promotion.";
+    return target.target_node === "analyze_results"
+      ? "Require analyze_results to emit parseable claim-evidence rows with artifact links, or lower the claim ceiling before downstream promotion."
+      : `Require ${target.target_node} to close the claim's declared evidence requirements before downstream promotion.`;
+  }
+  if (target.finding_code === "citation_support_gap"
+      || target.finding_code === "reference_claim_review_incomplete") {
+    return target.target_node === "collect_papers"
+      ? "Require collect_papers to acquire and title-check the exact full-text source before citation-claim review can resume."
+      : "Require analyze_papers to bind every citation-bearing claim to independently reviewed full-text evidence before manuscript promotion.";
+  }
+  if (target.finding_code === "reference_full_text_missing") {
+    return "Require collect_papers to acquire and title-check the exact full-text source before claim review can resume.";
+  }
+  if (target.finding_code.startsWith("academic_claim_evidence_blocked:")) {
+    return `Require ${target.target_node} to produce every missing evidence item declared by the blocked academic claim, then rerun the submission gate.`;
   }
   return `Strengthen the ${target.target_node} ${target.target_surface} so finding ${target.finding_code} is blocked or downgraded before downstream promotion.`;
 }

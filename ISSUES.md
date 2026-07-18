@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-016` External academic packages bypassed citation and submission-gate routing — `RESOLVED`
   - `R-015` Stale and truncated claim stubs obscured citation-source boundaries — `MITIGATED`
   - `R-014` Stale manuscript template and duplicated ACL bibliography ownership escaped review — `RESOLVED`
   - `R-010` Provenance receipts could not be independently recomputed from the paper-eligible suite — `RESOLVED`
@@ -10886,6 +10887,62 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-016
+
+- Status: resolved; external academic packages now fail closed and preserve node ownership through `audit -> review -> improve`
+- Validation target: the public research-governance CLI must ingest a portable academic package, detect unresolved references and blocked claim evidence, and route every repair to the node that owns the missing evidence.
+- Environment/session context: `papers/promotion-governance` was supplied through the general `research audit --external` interface rather than a study-specific code path.
+
+- Reproduction steps:
+  1. Build the CLI and run `research audit --external papers/promotion-governance` into a fresh output directory.
+  2. Inspect the GateReport citation count, academic submission blockers, and target nodes.
+  3. Pass the GateReport through `research review` and the resulting ReviewReport through `research improve`.
+
+- Expected behavior:
+  - Root academic-package files are normalized into the canonical portable `paper/` layout.
+  - Unchecked Refgate claims, missing full text, independent-review gaps, blocked empirical claims, and template requirements remain explicit blockers.
+  - Compound claim-evidence gaps produce one finding per owning node instead of collapsing to the first matching node.
+  - Review and meta-harness artifacts preserve evidence paths, target nodes, and recheck conditions.
+
+- Actual behavior:
+  - The initial same-flow audit reported `citation_support_issues=0` because external intake ignored the root claim inventory, reference status, claim map, and submission status.
+  - The resulting review used generic missing-result and missing-contract findings and could not strengthen the responsible literature, execution, review, or writing nodes.
+
+- Fresh vs existing session comparison:
+  - Fresh session: the rebuilt v3 CLI flow detected all 14 unresolved citation claims and the full academic submission boundary.
+  - Existing session: the v1 flow over the same package produced zero citation-support issues and no academic-package findings.
+  - Divergence: this was an external artifact projection defect, not a stale render or manuscript-content defect.
+
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the generic intake allowlist recognized runtime paper artifacts but not the repository's root academic-package contract, so the readiness auditor never loaded the evidence state needed for node-specific repair routing.
+
+- Code/test changes:
+  - Added canonical academic-package intake aliases with canonical-path precedence.
+  - Reused the strict Refgate TSV parser and made malformed inventories fail closed.
+  - Normalized academic claim maps into readiness scoring without treating development-only or blocked claims as verified.
+  - Added submission, reference, and claim-evidence findings with evidence paths, recheck conditions, and node-specific targets.
+  - Split compound missing-evidence lists across all owning nodes and preserved those targets through ReviewReport and MetaHarnessPatchPlan.
+  - Added domain-neutral focused and end-to-end regression tests; no study-specific model, benchmark, or condition names were introduced.
+
+- Regression status:
+  - Build: passed on 2026-07-19.
+  - Focused regression: 6 test files / 41 tests passed on 2026-07-19.
+  - Same-flow v3 audit: correctly blocked with 14 citation issues, 1 unsupported academic claim, 2 missing-full-text claims, and 14 incomplete independent reviews.
+  - Same-flow v3 routing: compound academic evidence reached `review`, `collect_papers`, and `run_experiments`; submission requirements also reached `analyze_papers` and `write_paper`.
+  - Same-flow v3 review and improve: target nodes, portable evidence references, and recheck conditions remained intact.
+
+- Follow-up risks:
+  - The generic runtime artifact contract is still incomplete for this manuscript-only package, so it remains a research memo rather than a paper-ready experiment bundle.
+  - Twelve citation claims still require independent review, two full texts remain unavailable, and confirmatory provider evidence remains external work.
+
+- Evidence/artifacts:
+  - `outputs/promotion-governance/final-research-audit-v3/gate-report.json`
+  - `outputs/promotion-governance/final-research-review-v3/review-report.json`
+  - `outputs/promotion-governance/final-research-improve-v3/meta-harness-patch-plan.json`
+
+---
 
 ## Issue: R-015
 

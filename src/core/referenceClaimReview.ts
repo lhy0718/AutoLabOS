@@ -39,7 +39,7 @@ export const REFERENCE_CLAIM_REVIEW_DECISIONS = [
 export type ReferenceClaimReviewDecision =
   typeof REFERENCE_CLAIM_REVIEW_DECISIONS[number];
 
-interface ClaimRow {
+export interface ReferenceClaimRow {
   claim_id: string;
   manuscript_location: string;
   claim_text: string;
@@ -180,7 +180,7 @@ export async function prepareReferenceClaimReview(
     readRegularFile(statusPath),
     readRegularFile(lockPath)
   ]);
-  const claims = parseClaimsTsv(claimsBytes.toString("utf8"));
+  const claims = parseReferenceClaimsTsv(claimsBytes.toString("utf8"));
   const status = parseEvidenceStatus(JSON.parse(statusBytes.toString("utf8")) as unknown);
   const lock = parseLockEntries(JSON.parse(lockBytes.toString("utf8")) as unknown);
   const statusByKey = new Map(status.sources.map((source) => [source.citation_key, source]));
@@ -672,7 +672,7 @@ async function inspectPrivateDistributionIfPresent(
   }
 }
 
-function parseClaimsTsv(text: string): ClaimRow[] {
+export function parseReferenceClaimsTsv(text: string): ReferenceClaimRow[] {
   const lines = text.replace(/\r/gu, "").split("\n").filter((line) => line.length > 0);
   if (lines.length < 2 || lines[0].split("\t").join("\t") !== CLAIM_COLUMNS.join("\t")) {
     throw new Error("Reference claims TSV header is invalid.");
@@ -685,7 +685,7 @@ function parseClaimsTsv(text: string): ClaimRow[] {
     return Object.fromEntries(CLAIM_COLUMNS.map((column, columnIndex) => [
       column,
       values[columnIndex]
-    ])) as unknown as ClaimRow;
+    ])) as unknown as ReferenceClaimRow;
   });
 }
 

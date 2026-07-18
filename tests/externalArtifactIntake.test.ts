@@ -94,4 +94,130 @@ describe("external artifact audit intake", () => {
     expect(claimExport).toContain("claim_accuracy_delta");
     expect(claimExport).toContain("artifact_or_citation_linked");
   });
+
+  it("normalizes a root academic package and audits its submission and reference gates", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-audit-workspace-"));
+    const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-audit-source-"));
+    tempDirs.push(workspace, external);
+
+    await writeFile(path.join(external, "manuscript.tex"), "\\section{Method}\n", "utf8");
+    await writeFile(path.join(external, "references.bib"), "@article{source_a,title={Source A}}\n", "utf8");
+    await writeFile(path.join(external, "claim-evidence-map.json"), JSON.stringify({
+      schema_version: "1.0",
+      claim_ceiling: "development_validation",
+      claims: [
+        {
+          claim_id: "contract-claim",
+          claim: "The validator enforces the declared contract.",
+          status: "supported_by_code_and_tests",
+          artifact_refs: ["src/validator.ts", "tests/validator.test.ts"]
+        },
+        {
+          claim_id: "effect-claim",
+          claim: "The policy generalizes to held-out evidence.",
+          status: "blocked",
+          missing_evidence: [
+            "real_provider_trials",
+            "source_license_review",
+            "double_adjudicated_labels"
+          ]
+        }
+      ]
+    }), "utf8");
+    await writeFile(path.join(external, "reference-evidence-status.json"), JSON.stringify({
+      schema_version: "1.0",
+      submission_gate_passed: false,
+      summary: {
+        citation_bearing_claim_count: 2,
+        full_text_evidence_candidate_count: 1,
+        independently_checked_claim_count: 0,
+        missing_full_text_claim_count: 1
+      },
+      sources: []
+    }), "utf8");
+    await writeFile(path.join(external, "submission-status.json"), JSON.stringify({
+      schema_version: "1.0",
+      paper_ready: false,
+      manuscript_type: "research_memo",
+      blocking_requirements: [
+        "full_text_source_missing",
+        "completed_independent_review",
+        "independent_review_of_full_text_evidence",
+        "real_provider_trials",
+        "official_template_revalidation"
+      ]
+    }), "utf8");
+    const claimHeader = [
+      "claim_id", "manuscript_location", "claim_text", "citation_key", "source_location",
+      "quote_or_evidence", "evidence_kind", "status", "notes", "claim_type", "importance"
+    ];
+    const claimRows = [
+      ["claim-a", "line 10", "Prior system A enforces a gate.", "source_a", "page 1", "support", "source_text", "needs_review", "review required", "related_work", "normal"],
+      ["claim-b", "line 11", "Prior system B preserves evidence.", "source_b", "", "", "", "claim_unchecked", "full text missing", "related_work", "normal"]
+    ];
+    await writeFile(
+      path.join(external, "refgate_claims.tsv"),
+      [claimHeader, ...claimRows].map((row) => row.join("\t")).join("\n") + "\n",
+      "utf8"
+    );
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/academic-audit"
+    });
+
+    expect(summary.verdict).toBe("blocked");
+    expect(summary.citation_support_issues).toHaveLength(2);
+    expect(summary.citation_support_issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ claim_id: "claim-a", target_node: "analyze_papers" }),
+      expect.objectContaining({ claim_id: "claim-b", target_node: "collect_papers" })
+    ]));
+    expect(summary.unsupported_claims).toContainEqual(expect.objectContaining({
+      claim_id: "effect-claim",
+      target_node: "run_experiments"
+    }));
+    expect(summary.research_scale_findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "reference_full_text_missing", target_node: "collect_papers" }),
+      expect.objectContaining({ code: "reference_claim_review_incomplete", target_node: "analyze_papers" }),
+      expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:run_experiments", target_node: "run_experiments" }),
+      expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:collect_papers", target_node: "collect_papers" }),
+      expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:review", target_node: "review" }),
+      expect.objectContaining({ code: "submission_requirements_open:analyze_papers", target_node: "analyze_papers" }),
+      expect.objectContaining({ code: "submission_requirements_open:write_paper", target_node: "write_paper" })
+    ]));
+
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, "outputs", "academic-audit", "external-intake-manifest.json"),
+      "utf8"
+    )) as { copied_files: string[] };
+    expect(manifest.copied_files).toEqual(expect.arrayContaining([
+      "paper/main.tex",
+      "paper/references.bib",
+      "paper/academic_claim_evidence_map.json",
+      "paper/reference_evidence_status.json",
+      "paper/submission_status.json",
+      "paper/refgate_claims.tsv"
+    ]));
+    expect(JSON.stringify(manifest)).not.toContain(external);
+  });
+
+  it("fails closed when an academic package contains a malformed claim inventory", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-invalid-workspace-"));
+    const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-invalid-source-"));
+    tempDirs.push(workspace, external);
+    await writeFile(path.join(external, "refgate_claims.tsv"), "claim_id\tstatus\nclaim-a\tneeds_review\n", "utf8");
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/academic-invalid-audit"
+    });
+
+    expect(summary.verdict).toBe("blocked");
+    expect(summary.research_scale_findings).toContainEqual(expect.objectContaining({
+      code: "reference_claim_inventory_invalid",
+      target_node: "analyze_papers"
+    }));
+  });
 });

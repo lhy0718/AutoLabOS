@@ -121,6 +121,102 @@ describe("research governance operations", () => {
     expect(JSON.stringify(packResult)).not.toContain(workspace);
   });
 
+  it("routes academic package evidence gaps to the owning research nodes", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-academic-routing-"));
+    const external = path.join(workspace, "academic-package");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "manuscript.tex"), "\\section{Related Work}\n", "utf8");
+    await writeFile(path.join(external, "references.bib"), "@article{source_a,title={Source A}}\n", "utf8");
+    await writeJson(path.join(external, "claim-evidence-map.json"), {
+      schema_version: "1.0",
+      claims: [{
+        claim_id: "held-out-effect",
+        claim: "The policy improves held-out outcomes.",
+        status: "blocked",
+        missing_evidence: ["real_provider_trials"]
+      }]
+    });
+    await writeJson(path.join(external, "reference-evidence-status.json"), {
+      schema_version: "1.0",
+      submission_gate_passed: false,
+      summary: {
+        citation_bearing_claim_count: 2,
+        full_text_evidence_candidate_count: 1,
+        independently_checked_claim_count: 0,
+        missing_full_text_claim_count: 1
+      },
+      sources: []
+    });
+    await writeJson(path.join(external, "submission-status.json"), {
+      schema_version: "1.0",
+      paper_ready: false,
+      manuscript_type: "research_memo",
+      blocking_requirements: ["full_text_source_missing", "real_provider_trials", "official_template_revalidation"]
+    });
+    const header = [
+      "claim_id", "manuscript_location", "claim_text", "citation_key", "source_location",
+      "quote_or_evidence", "evidence_kind", "status", "notes", "claim_type", "importance"
+    ];
+    const rows = [
+      ["claim-a", "line 5", "Prior work A uses a gate.", "source_a", "page 1", "support", "source_text", "needs_review", "review required", "related_work", "normal"],
+      ["claim-b", "line 6", "Prior work B preserves evidence.", "source_b", "", "", "", "claim_unchecked", "full text missing", "related_work", "normal"]
+    ];
+    await writeFile(
+      path.join(external, "refgate_claims.tsv"),
+      [header, ...rows].map((row) => row.join("\t")).join("\n") + "\n",
+      "utf8"
+    );
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/governance/review"
+    });
+    const improveResult = await runResearchImprove({
+      cwd: workspace,
+      reviewPath: reviewResult.output_path,
+      outDir: "outputs/governance/improve"
+    });
+
+    expect(gateResult.artifact.checks.citation_support_issues).toBe(2);
+    expect(gateResult.artifact.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "citation_support_gap", target_node: "analyze_papers" }),
+      expect.objectContaining({ code: "citation_support_gap", target_node: "collect_papers" }),
+      expect.objectContaining({ code: "reference_full_text_missing", target_node: "collect_papers" }),
+      expect.objectContaining({ code: "academic_claim_evidence_blocked:held-out-effect:run_experiments", target_node: "run_experiments" }),
+      expect.objectContaining({ code: "submission_requirements_open:write_paper", target_node: "write_paper" })
+    ]));
+    expect(reviewResult.artifact.repair_targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ finding_code: "citation_support_gap", target_node: "analyze_papers" }),
+      expect.objectContaining({ finding_code: "citation_support_gap", target_node: "collect_papers" }),
+      expect.objectContaining({ finding_code: "reference_full_text_missing", target_node: "collect_papers" }),
+      expect.objectContaining({ finding_code: "unsupported_claim", target_node: "run_experiments" })
+    ]));
+    expect(improveResult.artifact.targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        finding_code: "citation_support_gap",
+        target_node: "collect_papers",
+        proposed_change: expect.stringContaining("exact full-text source")
+      }),
+      expect.objectContaining({
+        finding_code: "reference_full_text_missing",
+        target_node: "collect_papers",
+        proposed_change: expect.stringContaining("exact full-text source")
+      }),
+      expect.objectContaining({
+        finding_code: "academic_claim_evidence_blocked:held-out-effect:run_experiments",
+        target_node: "run_experiments",
+        proposed_change: expect.stringContaining("missing evidence item")
+      })
+    ]));
+  });
+
   it("blocks active runs even when stale paper-scale artifacts look complete", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-active-run-"));
     const runRoot = path.join(workspace, "runs", "active-research-run");
