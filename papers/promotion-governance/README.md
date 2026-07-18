@@ -1,36 +1,45 @@
-# Promotion Governance Research Memo
+# Promotion Governance Pre-Confirmatory Manuscript
 
 ## Status
 
-This manuscript is a protocol and development-validation memo. It is not a
-submission-ready empirical paper. The target venue is the NeurIPS 2026
-AutoResearch workshop, whose call requests the official NeurIPS 2026 template.
-The workshop deadline and submission details were still tentative on
-2026-07-16. Do not substitute an older NeurIPS or ACL style file.
+This manuscript is a protocol and development-validation draft. It is not a
+submission-ready empirical paper. The primary target is an archival long paper
+at REALM 2026, the Second Workshop for Research on Agent Language Models at
+EMNLP 2026. The workshop accepts up to eight content pages, requires the ACL
+2026 style, and lists a direct-submission deadline of 2026-08-05 Anywhere on
+Earth as checked on 2026-07-18.
 
 Current blockers:
 
-- fewer than 20 independently sourced base bundles,
-- no 200-case held-out confirmatory suite,
-- no artifact-verified execution provenance for 20 independent sources,
+- no 72-base independently curated confirmatory corpus,
+- no 720-case held-out confirmatory suite,
+- no artifact-verified execution provenance for 72 source-hash-distinct bases,
+- no completed double-human candidate review or source-license decision,
+- no completed canonical curation and independent verification,
 - no double-adjudicated held-out labels,
 - no independent mutation-isolation audit,
 - no three-trial real-provider manuscript-only baseline,
 - no post-repair recovery evaluation,
-- 14 citation-bearing claims still require full-text source review in Refgate,
-- no official NeurIPS 2026 workshop template bundle in this directory.
+- 14 citation-bearing claims still require full-text source review in Refgate.
 
 ## Build
 
-The neutral memo compiles independently of a venue template:
+The review manuscript compiles with the vendored official ACL style:
 
 ```bash
 cd papers/promotion-governance
 latexmk -pdf -interaction=nonstopmode -halt-on-error manuscript.tex
 ```
 
-The bibliography uses `unsrt`, so references form one list numbered from 1 in
-first-citation order. There is no keyword block and no `ACL2023` package.
+The source uses `\documentclass[11pt]{article}`, `\usepackage[review]{acl}`,
+and `acl_natbib`. Current ACL references are author--year entries rather than a
+numbered list. There is no keyword block. The generic lowercase `acl` package
+is the current official style; `ACL2023` is a retired year-specific filename
+and is deliberately not substituted. The unmodified vendored files come from
+official commit `d5adc823ff0f80f98c80405ca0ab66c68e684409`:
+
+- `acl.sty`: `19dfeddc2c0e448f3926a0bef048a9db3f3611b46265b760caabd7ada4f361de`
+- `acl_natbib.bst`: `6fbb306202290f4b68e74ac1460a8b27398500cb6dfeb4492e74c457eae7cd1e`
 
 ## Development Reproduction
 
@@ -67,8 +76,14 @@ node dist/cli/main.js governance-benchmark score-promotion \
 
 ## Confirmatory Boundary
 
-Create a local manifest for at least 20 independently sourced canonical
-bundles, then freeze it before building the suite:
+Complete the paired 72-candidate review campaign with two independent
+candidate reviewers and a distinct source-license reviewer. Only a passing,
+revision-matched adjudication can prepare canonical curation. Distinct human
+curator and verifier roles must then produce 72 schema-validated canonical
+bundles before confirmatory intake can admit anything.
+
+Create a local manifest for at least 72 source-hash-distinct canonical bundles,
+then freeze it before building the suite:
 
 ```bash
 node dist/cli/main.js governance-benchmark audit-promotion-confirmatory \
@@ -81,6 +96,7 @@ node dist/cli/main.js governance-benchmark freeze-promotion-confirmatory \
 
 node dist/cli/main.js governance-benchmark build-promotion \
   --recipe <frozen-corpus/recipe.json> \
+  --freeze-manifest <frozen-corpus/frozen-intake-manifest.json> \
   --out-dir <confirmatory-suite>
 ```
 
@@ -125,7 +141,7 @@ stay hidden. The importer, rather than a hand-edited
 recipe, sets `adjudication_status=double_adjudicated` and promotes
 `paper_claim_eligible=true` only after the mutation audit is
 `double_verified`, execution provenance is `artifact_verified`, and the
-external-real-run, held-out, 20-base, 200-case, and per-base paired-family gates
+external-real-run, held-out, 72-base, 720-case, and per-base paired-family gates
 all pass.
 The clean controls must include both promotable and non-promotable adjudicated
 outcomes.

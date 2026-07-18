@@ -3703,7 +3703,10 @@ export function renderSubmissionPaperTex(input: {
     lines.push(...renderSubmissionVisuals(input.manuscript, input.figureRenderMode));
   }
 
-  lines.push(`\\bibliographystyle{${resolveSubmissionBibliographyStyle(input)}}`);
+  const bibliographyStyle = resolveSubmissionBibliographyStyle(input);
+  if (bibliographyStyle) {
+    lines.push(`\\bibliographystyle{${bibliographyStyle}}`);
+  }
   lines.push("\\bibliography{references}");
   if (
     (input.manuscript.appendix_sections || []).length > 0 ||
@@ -4407,7 +4410,7 @@ function buildSubmissionCitationBundleKey(
 function resolveSubmissionBibliographyStyle(input: {
   template?: string;
   parsedTemplate?: ParsedLatexTemplate | null;
-}): string {
+}): string | null {
   const templateStyle = input.parsedTemplate?.bibliographyStyle?.trim();
   if (templateStyle) {
     return templateStyle;
@@ -4419,7 +4422,10 @@ function resolveSubmissionBibliographyStyle(input: {
     input.parsedTemplate?.preamble || "",
     ...(input.parsedTemplate?.packages || [])
   ].join("\n");
-  if (/\\usepackage(?:\[[^\]]*\])?\{ACL2023\}/iu.test(templateSurface)) {
+  if (/\\usepackage(?:\[[^\]]*\])?\{acl\}/iu.test(templateSurface)) {
+    return null;
+  }
+  if (/\\usepackage(?:\[[^\]]*\])?\{acl\d{4}\}/iu.test(templateSurface)) {
     return "acl_natbib";
   }
   return "unsrt";

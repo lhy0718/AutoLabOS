@@ -2,10 +2,17 @@
   "schema_version": "1.0",
   "manuscript_type": "research_memo",
   "paper_ready": false,
-  "target_venue": "NeurIPS 2026 AutoResearch workshop",
-  "target_track": "Track A full paper",
-  "target_page_range": "4-8",
-  "template_status": "official_2026_template_not_packaged",
+  "target_venue": "REALM 2026 at EMNLP 2026",
+  "target_track": "archival long paper",
+  "target_page_range": "up to 8 content pages",
+  "template_status": "official_acl_review_style_packaged_build_and_layout_validated",
+  "template_provenance": {
+    "upstream": "https://github.com/acl-org/acl-style-files",
+    "commit": "d5adc823ff0f80f98c80405ca0ab66c68e684409",
+    "retrieved_on": "2026-07-18",
+    "acl_sty_sha256": "19dfeddc2c0e448f3926a0bef048a9db3f3611b46265b760caabd7ada4f361de",
+    "acl_natbib_bst_sha256": "6fbb306202290f4b68e74ac1460a8b27398500cb6dfeb4492e74c457eae7cd1e"
+  },
   "development_evidence": {
     "evidence_class": "synthetic_development",
     "paper_claim_eligible": false,
@@ -16,14 +23,17 @@
     "case_count": 40
   },
   "blocking_requirements": [
-    "at_least_20_independent_base_bundles",
-    "at_least_200_held_out_cases",
+    "completed_independent_double_human_candidate_review",
+    "completed_source_license_review",
+    "completed_canonical_curation_and_verification",
+    "at_least_72_source_hash_distinct_base_bundles",
+    "at_least_720_held_out_cases",
     "artifact_verified_execution_provenance_for_each_base",
     "double_adjudicated_gold_labels",
     "double_verified_mutation_isolation",
     "three_real_provider_trials_for_manuscript_only_baseline",
     "post_repair_recovery_and_regression_evaluation",
     "full_text_review_of_14_citation_bearing_claims",
-    "official_neurips_2026_template_validation"
+    "official_acl_review_format_revalidation_after_confirmatory_results"
   ]
 }

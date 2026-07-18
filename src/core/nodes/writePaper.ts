@@ -6880,6 +6880,22 @@ function checkFinalTexBibliographyStyle(
   parsedTemplate: ParsedLatexTemplate | null
 ): { ok: boolean; actualStyle: string | null; expectedStyle: string | null; message: string } {
   const actualStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || null;
+  if (currentAclTemplateOwnsBibliographyStyle(parsedTemplate)) {
+    if (!actualStyle) {
+      return {
+        ok: true,
+        actualStyle: null,
+        expectedStyle: "acl_natbib (provided by acl.sty)",
+        message: ""
+      };
+    }
+    return {
+      ok: false,
+      actualStyle,
+      expectedStyle: "acl_natbib (provided by acl.sty)",
+      message: "Final rendered TeX must not add a bibliography style because the current acl.sty provides acl_natbib."
+    };
+  }
   const expectedStyle = expectedBibliographyStyleForTemplate(parsedTemplate);
   if (!expectedStyle) {
     if (actualStyle === "plain") {
@@ -6914,10 +6930,22 @@ function expectedBibliographyStyleForTemplate(parsedTemplate: ParsedLatexTemplat
     parsedTemplate?.preamble || "",
     ...(parsedTemplate?.packages || [])
   ].join("\n");
-  if (/\\usepackage(?:\[[^\]]*\])?\{ACL2023\}/iu.test(templateSurface)) {
+  if (/\\usepackage(?:\[[^\]]*\])?\{acl\d{4}\}/iu.test(templateSurface)) {
     return "acl_natbib";
   }
   return null;
+}
+
+function currentAclTemplateOwnsBibliographyStyle(
+  parsedTemplate: ParsedLatexTemplate | null
+): boolean {
+  const templateSurface = [
+    parsedTemplate?.preDocumentPreamble || "",
+    parsedTemplate?.documentClass || "",
+    parsedTemplate?.preamble || "",
+    ...(parsedTemplate?.packages || [])
+  ].join("\n");
+  return /\\usepackage(?:\[[^\]]*\])?\{acl\}/iu.test(templateSurface);
 }
 
 function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; count: number; section: string }> {

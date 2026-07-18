@@ -28,7 +28,7 @@
     },
     {
       "claim_id": "confirmatory-intake-freeze-contract",
-      "claim": "The implementation rejects undersized, duplicate, or mutation-incompatible confirmatory sources; derives opaque base identities from source hashes; emits held-out clean-plus-nine recipes; and keeps every pre-adjudication label and paper-eligibility state provisional.",
+      "claim": "The implementation rejects confirmatory input below 72 source-hash-distinct bases or 720 cases, duplicate or mutation-incompatible sources, and insufficient source-family or operator-group diversity; derives opaque base identities from source hashes; emits held-out clean-plus-nine recipes; and keeps every pre-adjudication label and paper-eligibility state provisional.",
       "status": "supported_by_code_and_tests",
       "artifact_refs": [
         "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
@@ -87,10 +87,14 @@
       "claim": "Fail-closed promotion governance generalizes to independently curated research bundles and real manuscript-only reviewers.",
       "status": "blocked",
       "missing_evidence": [
+        "completed_independent_double_human_candidate_review",
+        "completed_source_license_review",
+        "completed_canonical_curation_and_verification",
         "double_adjudicated_held_out_suite",
         "double_verified_mutation_isolation",
         "artifact_verified_execution_provenance",
-        "at_least_20_independent_base_bundles",
+        "at_least_72_source_hash_distinct_base_bundles",
+        "at_least_720_held_out_cases",
         "three_real_provider_trials",
         "post_repair_recovery_runs"
       ]

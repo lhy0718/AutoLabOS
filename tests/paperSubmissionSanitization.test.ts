@@ -177,9 +177,9 @@ describe("paper submission sanitization", () => {
         sourcePath: "/workspace/template.tex",
         preDocumentPreamble: "\\pdfoutput=1",
         documentClass: "\\documentclass[11pt]{article}",
-        preamble: "\\usepackage[review]{ACL2023}",
+        preamble: "\\usepackage[review]{acl}",
         columnLayout: 1,
-        packages: ["\\usepackage[review]{ACL2023}"],
+        packages: ["\\usepackage[review]{acl}"],
         sectionOrder: ["Introduction", "Results"],
         customCommands: [],
         bibliographyStyle: null
@@ -189,8 +189,9 @@ describe("paper submission sanitization", () => {
     });
 
     expect(tex).toContain("\\pdfoutput=1");
-    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).toContain("\\usepackage[review]{acl}");
     expect(tex).not.toContain("\\textbf{Keywords:}");
+    expect(tex).not.toContain("\\bibliographystyle{");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(tex).not.toContain("\\makebox[4.2em][l]");
   });

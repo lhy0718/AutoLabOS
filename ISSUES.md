@@ -10866,6 +10866,7 @@ Path placeholders:
   - `LV-098` IEEE staging `pdf_url` rows cache HTML instead of PDF, so `analyze_papers` cannot preserve supplemental page images on abstract fallback for those papers.
 - Active research/paper-readiness watchlist: see `Research and paper-readiness watchlist` below.
 - Current watchlist snapshot:
+  - `R-014` Stale manuscript template and duplicated ACL bibliography ownership escaped review — `RESOLVED`
   - `R-010` Provenance receipts could not be independently recomputed from the paper-eligible suite — `RESOLVED`
   - `R-009` Confirmatory freeze evidence was not bound to suite construction - `RESOLVED`
   - `R-008` Paper eligibility could be self-asserted without adjudication provenance — `RESOLVED`
@@ -10884,6 +10885,74 @@ Path placeholders:
 ---
 
 ## Research and paper-readiness watchlist
+
+## Issue: R-014
+
+- Status: resolved at source and manuscript level; official ACL package, clean build, visual layout audit, and focused regression pass
+- Validation target: a paper-facing manuscript and generated ACL source must use the current official review package, must not duplicate bibliography-style ownership, and must keep venue, sample floors, citation behavior, and readiness metadata consistent with the governed study.
+- Environment/session context: pre-confirmatory promotion-governance manuscript targeting REALM 2026 at EMNLP 2026; no human-reviewed confirmatory evidence or provider result was added.
+
+- Reproduction steps:
+  1. Inspect `papers/promotion-governance/manuscript.tex` and its submission metadata before the repair.
+  2. Observe a neutral `10pt` article with manual geometry, numeric `unsrt` references, a stale NeurIPS target, and obsolete 20-base/200-case confirmatory floors.
+  3. Switch the source mechanically to the current generic `acl` package while retaining the generator's explicit `\\bibliographystyle{acl_natbib}`.
+  4. Observe duplicate bibliography-style ownership because the current official `acl.sty` already selects `acl_natbib` internally.
+
+- Expected behavior:
+  - The source uses `\\documentclass[11pt]{article}` and `\\usepackage[review]{acl}` from an exact recorded official ACL style revision.
+  - Current generic ACL sources omit an explicit `\\bibliographystyle`; historical year-specific ACL packages retain backward-compatible explicit-style handling.
+  - The review gate rejects stale venue/template metadata, duplicated style ownership, missing official-style provenance, and manuscript claims that exceed the 72-base/720-case confirmatory contract.
+  - Reference appearance follows the current ACL author--year contract; a numbered list starting at 1 is not imposed on an author--year venue style.
+  - Template or PDF success never changes `paper_ready=false` while empirical and citation blockers remain.
+
+- Actual behavior:
+  - The paper-facing source and readiness metadata had drifted from the governed protocol and current venue contract.
+  - Existing ACL sanitization accepted an explicit bibliography style for all ACL package names and could therefore generate an invalid duplicate declaration for current `acl.sty`.
+
+- Fresh vs existing session comparison:
+  - Fresh session: current generic ACL output delegates bibliography-style ownership to `acl.sty` and builds from a clean auxiliary state.
+  - Existing session: the stale PDF was a five-page letter-sized memo using manual layout and numbered `unsrt` references.
+  - Divergence: this was persisted manuscript/template drift, not an in-memory render or UI refresh defect.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the manually maintained manuscript, submission metadata, and generic manuscript generator did not share a versioned current-ACL template contract, while review treated successful PDF compilation as stronger evidence than venue-template conformance.
+
+- Code/test changes:
+  - Vendored the exact unmodified official `acl.sty` and `acl_natbib.bst` revision with recorded hashes and changed the manuscript to current ACL review mode.
+  - Updated the venue and confirmatory contract to REALM 2026, 72 source-hash-distinct bases, 720 held-out cases, and explicit source/operator diversity floors.
+  - Made current generic ACL generation omit explicit bibliography-style declarations while preserving historical year-specific ACL package compatibility.
+  - Added regression coverage for current ACL style ownership, duplicate-style rejection, historical compatibility, and PDF construction.
+  - Kept citation full-text review, human review, provider trials, confirmatory evidence, and post-result review-format revalidation as explicit blockers.
+
+- Regression status:
+  - Focused manuscript sanitization and PDF-build regression: 2 files / 85 tests passed on 2026-07-18.
+  - Clean `latexmk` build: passed on 2026-07-18 with no overfull boxes.
+  - Visual PDF audit: four A4 review pages inspected on 2026-07-18; the table precedes its first body reference, references are author--year, and no clipping, overlap, or duplicate bibliography is visible.
+  - Meta-language scan: no unresolved prompt, private-tool, placeholder, or operator-instruction trace found in the manuscript on 2026-07-18.
+  - Refgate frozen submission audit: fail-closed as expected on 2026-07-18 with 14 unchecked citation-bearing claims and 10 provenance warnings; no claim was promoted.
+  - Public-code sanitization: 3 tests passed on 2026-07-18 after replacing one retired compatibility term caught by the first full-CI attempt.
+  - Full repository CI: 214 core files / 2,876 tests and 1 web file / 14 tests passed on 2026-07-18.
+  - Harness validation: 528 issue entries checked with no structural violations on 2026-07-18 after correcting the session-comparison field names caught by the first harness attempt.
+  - Official `aclpubcheck`: intentionally deferred because its own documentation targets camera-ready papers and warns that review-version line numbers produce spurious errors.
+
+- Follow-up risks:
+  - The ACL review build must be repeated after confirmatory tables and analysis change the final page layout.
+  - `aclpubcheck` remains a camera-ready-stage check if the paper is accepted; it is not treated as valid evidence for this line-numbered review draft.
+  - Fourteen citation-bearing claims still require full-text source review; the template repair does not establish reference correctness.
+  - The manuscript remains a pre-confirmatory protocol and development-validation draft until real independent review, confirmatory execution, baselines, and statistical analysis are complete.
+
+- Evidence/artifacts:
+  - `papers/promotion-governance/manuscript.tex`
+  - `papers/promotion-governance/manuscript.pdf`
+  - `papers/promotion-governance/submission-status.json`
+  - `papers/promotion-governance/README.md`
+  - `src/core/analysis/paperManuscript.ts`
+  - `src/core/nodes/writePaper.ts`
+  - `tests/paperSubmissionSanitization.test.ts`
+  - `tests/writePaperPdfBuild.test.ts`
+
+---
 
 ## Issue: R-013
 

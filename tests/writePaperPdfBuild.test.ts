@@ -5513,7 +5513,7 @@ describe("writePaper PDF build", () => {
     expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
   });
 
-  it("keeps ACL template dependencies and uses Python-rendered figure assets in the compiled paper", async () => {
+  it("keeps current ACL template dependencies and uses Python-rendered figure assets in the compiled paper", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-write-paper-acl-template-pdf-"));
     process.chdir(root);
 
@@ -5524,7 +5524,7 @@ describe("writePaper PDF build", () => {
       [
         "\\pdfoutput=1",
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\section{Introduction}",
         "\\section{Results}",
@@ -5532,7 +5532,11 @@ describe("writePaper PDF build", () => {
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(
+      path.join(root, "acl.sty"),
+      "% mock ACL style\n\\bibliographystyle{acl_natbib}\n",
+      "utf8"
+    );
     await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
     await seedMediumScientificRun(run);
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -5596,11 +5600,11 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\pdfoutput=1");
-    expect(tex).toContain("\\usepackage[review]{ACL2023}");
-    expect(tex).toContain("\\bibliographystyle{acl_natbib}");
+    expect(tex).toContain("\\usepackage[review]{acl}");
+    expect(tex).not.toContain("\\bibliographystyle{");
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
-    expect(await exists(path.join(runDir, "paper", "ACL2023.sty"))).toBe(true);
+    expect(await exists(path.join(runDir, "paper", "acl.sty"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "acl_natbib.bst"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "figures", "main-result-figure-1.pdf"))).toBe(true);
     const figureRenderer = await readFile(path.join(runDir, "paper", "figures", "render_paper_figures.py"), "utf8");
@@ -5625,7 +5629,7 @@ describe("writePaper PDF build", () => {
     expect(renderValidation.status).toBe("pass");
     expect(renderValidation.metrics.final_tex_preserves_template).toBe(true);
     expect(renderValidation.metrics.rendered_figure_asset_count).toBeGreaterThan(0);
-    expect(renderValidation.metrics.final_tex_bibliography_style).toBe("acl_natbib");
+    expect(renderValidation.metrics.final_tex_bibliography_style).toBeNull();
     expect(renderValidation.metrics.repeated_citation_bundle_count).toBe(0);
   });
 

@@ -1,10 +1,12 @@
-\documentclass[10pt]{article}
+\documentclass[11pt]{article}
 
+\usepackage[review]{acl}
+\usepackage{times}
+\usepackage{latexsym}
 \usepackage[T1]{fontenc}
-\usepackage[margin=1in]{geometry}
+\usepackage[utf8]{inputenc}
 \usepackage{booktabs}
 \usepackage{microtype}
-\usepackage{url}
 
 \title{From Concern Detection to Promotion Control:\\
 A Protocol for Fail-Closed Governance of Autonomous Research Artifacts}
@@ -111,9 +113,10 @@ must be independently double adjudicated and have double-verified mutation
 isolation.
 All variants derived from one base bundle remain in the same split, and source
 content hashes detect renamed duplicates across splits. The confirmatory intake
-freezer rejects fewer than 20 sources, duplicate source trees, and bundles that
-cannot support every registered mutation. It derives opaque base identities
-from source hashes and emits only held-out cases with provisional
+freezer rejects fewer than 72 source-hash-distinct bases, duplicate source
+trees, insufficient source-family or operator-group diversity, and bundles
+that cannot support every registered mutation. It derives opaque base
+identities from source hashes and emits only held-out cases with provisional
 \texttt{needs\_review} labels and \texttt{paper\_claim\_eligible=false}.
 
 \subsection{Fault families and controls}
@@ -161,30 +164,31 @@ trial coverage are validation failures. Failure analysis emits review
 diagnostics and node-strengthening recommendations with explicit recheck
 conditions.
 
-The development corpus contains four synthetic base bundles, one clean control
-and nine counterfactual variants per bundle, for 40 cases. It is marked
-as synthetic development evidence with unreviewed adjudication and no
-paper-claim eligibility. Table~\ref{tab:development} therefore tests
-instrumentation only.
-
-\begin{table}[t]
+\begin{table}[!t]
 \centering
 \small
-\begin{tabular}{lrrrrr}
+\begin{tabular}{lrrr}
 \toprule
-Condition & Acc. & False prom. & Conflict & Clean & Blocker F1 \\
+Condition & False & Conflict & Clean \\
 \midrule
-Always promote & .10 & 1.00 & -- & 1.00 & -- \\
-Presence checklist & .10 & 1.00 & -- & 1.00 & -- \\
-Advisory audit & .10 & 1.00 & 1.00 & 1.00 & 1.00 \\
-Fail-closed audit & 1.00 & .00 & .00 & 1.00 & 1.00 \\
+Always promote & 1.00 & -- & 1.00 \\
+Presence checklist & 1.00 & -- & 1.00 \\
+Advisory audit & 1.00 & 1.00 & 1.00 \\
+Fail-closed audit & .00 & .00 & 1.00 \\
 \bottomrule
 \end{tabular}
 \caption{Synthetic development results over four base bundles and 40 cases.
+Columns report false-promotion, concern--acceptance conflict, and clean-case
+promotion rates.
 The labels were generated for instrument debugging and were not independently
 adjudicated; the table is not confirmatory evidence.}
 \label{tab:development}
 \end{table}
+
+The development corpus contains four synthetic base bundles, one clean control
+and nine counterfactual variants per bundle, for 40 cases. It is marked as
+synthetic development evidence with unreviewed adjudication and no paper-claim
+eligibility. Table~\ref{tab:development} therefore tests instrumentation only.
 
 Before strengthening, the fail-closed audit reached .70 decision accuracy and
 .333 false-promotion rate, missing repeated-run provenance, executed-budget,
@@ -195,24 +199,28 @@ differed from the advisory ablation by .90 decision accuracy and -1.00 false
 promotion. The cluster bootstrap intervals are degenerate because each
 synthetic fault repeats identically across only four base bundles; the paired
 sign-test value is .125. This is direct evidence that the development sample is
-too small for inferential claims, despite perfect case-level scores.
+too small for inferential claims, despite final decision accuracy and blocker
+F1 of 1.00 on the generated cases.
 
 \section{Confirmatory Study and Readiness Gate}
 
-The frozen confirmatory study requires at least 20 independently sourced base
-bundles and 200 held-out cases, with 30 base bundles preferred. Each base must
-bind run configuration, events, metrics, review decision, command, and
-execution log files by hash. The intake gate rejects failed or non-real modes,
-fewer than three distinct trials, hash drift, and duplicate run identities or
-execution fingerprints. This verifies the declared artifact record, not the
-real-world occurrence of execution. Two reviewers must adjudicate held-out
-promotion labels, and separate reviewers must verify mutation isolation without
-access to system predictions. Pseudonymous IDs enforce record-level role
-separation but do not prove real-world identity, so an external assignment log
-is also required. The manuscript-only condition requires three preserved
-real-provider trials per case. At least one post-repair rerun per fault family
-must measure recovery and regression. Raw requests, responses, decisions,
-failures, manifests, hashes, latency, and cost must be retained.
+The frozen confirmatory study requires at least 72 source-hash-distinct base
+bundles and 720 held-out cases. Each base contributes one clean control and one
+variant from every registered fault family. The corpus must span at least three
+declared source families and three operator groups, with no group contributing
+more than half of the bases. Each base binds run configuration, events,
+metrics, review decision, command, and execution logs by hash. The intake gate
+rejects failed or non-real modes, fewer than three distinct source trials, hash
+drift, and duplicate run identities or execution fingerprints. This verifies
+the declared artifact record, not the real-world occurrence of execution. Two
+reviewers must adjudicate held-out promotion labels, and separate reviewers
+must verify mutation isolation without access to system predictions.
+Pseudonymous IDs enforce record-level role separation but do not prove
+real-world identity, so an external assignment log is also required. The
+manuscript-only condition requires three preserved real-provider trials per
+case. At least one post-repair rerun per fault family must measure recovery and
+regression. Raw requests, responses, decisions, failures, manifests, hashes,
+latency, and cost must be retained.
 
 The central hypothesis is that fail-closed governance lowers false promotion
 by at least 20 absolute percentage points relative to the presence checklist
@@ -242,7 +250,6 @@ policy generalizes. Independent artifact curation, adjudication, real-provider
 review, and a frozen confirmatory run are required before advancing beyond a
 research memo.
 
-\bibliographystyle{unsrt}
 \bibliography{references}
 
 \end{document}

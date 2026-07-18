@@ -722,10 +722,12 @@ empirical claims exist yet.
 
 ## Venue Class
 
-The current primary target is the NeurIPS 2026 AutoResearch workshop. Its
-official call includes datasets, benchmarks, evaluation, reproducibility, and
-governance for end-to-end autonomous research, and allows 4--8 page full
-papers. As checked on 2026-07-16, the August 29 deadline and workshop details
-remain tentative. The submission must use the official NeurIPS 2026 template,
-but no past-year or ACL style may be substituted before the workshop exposes
-the official file. The REALM workshop at EMNLP 2026 is a secondary venue fit.
+The primary target is an archival long paper at REALM 2026, the Second Workshop
+for Research on Agent Language Models at EMNLP 2026. Its official call includes
+agent quality evaluation, safety and robustness, and ethics and governance;
+long submissions may use up to eight content pages and must use the ACL 2026
+style. As checked on 2026-07-18, the direct-submission deadline is 2026-08-05
+Anywhere on Earth. The official generic `acl` review style is vendored with the
+manuscript from a pinned upstream commit. The NeurIPS 2026 AutoResearch
+workshop remains a secondary thematic fit, but its separate template and
+submission schedule are not used for the REALM manuscript.
