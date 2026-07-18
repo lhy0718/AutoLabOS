@@ -162,6 +162,8 @@ A schema-valid score report is not a paper-scale acceptance decision.
 - Recompute provider aggregation, benchmark metrics, recovery rate, and
   clean-control regression from referenced raw artifacts. Do not accept
   operator-entered summary values.
+- Compute recovery over every original fault case. A family-level sample or
+  operator-selected subset cannot establish confirmatory recovery.
 - Emit `blocked_for_paper_scale` and node-targeted strengthening
   recommendations when required evidence is missing or invalid.
 - Do not require hypotheses to be supported as a condition of annotation

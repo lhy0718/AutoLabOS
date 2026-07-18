@@ -65,7 +65,7 @@ export interface PromotionRecoveryPairResult {
 }
 
 export interface PromotionRecoveryReport {
-  schema_version: "1.0";
+  schema_version: "1.1";
   generated_at: string;
   study_id: string;
   system_id: string;
@@ -86,6 +86,10 @@ export interface PromotionRecoveryReport {
   missing_fault_families: string[];
   original_base_bundle_count: number;
   clean_control_base_bundle_count: number;
+  original_fault_case_count: number;
+  covered_fault_case_count: number;
+  missing_fault_case_count: number;
+  missing_fault_case_ids: string[];
   fault_repair_pair_count: number;
   successful_recovery_count: number;
   successful_recovery_rate: number | null;
@@ -271,6 +275,24 @@ export async function evaluatePromotionBenchmarkRecovery(
     });
   }
 
+  const validFaultPairs = pairs.filter((pair) => pair.valid && pair.pair_kind === "fault_repair");
+  const originalFaultCaseIds = new Set(
+    (originalLoaded.suite?.cases || [])
+      .filter((item) => item.mutation_family && item.gold.decision !== "promote")
+      .map((item) => item.case_id)
+  );
+  const coveredFaultCaseIds = new Set(validFaultPairs.map((pair) => pair.source_case_id));
+  const missingFaultCaseIds = [...originalFaultCaseIds]
+    .filter((caseId) => !coveredFaultCaseIds.has(caseId))
+    .sort();
+  if (missingFaultCaseIds.length > 0) {
+    issues.push({
+      code: "fault_repair_rerun_coverage_incomplete",
+      message: "Every original fault case requires one valid post-repair rerun.",
+      ref: String(missingFaultCaseIds.length) + " missing"
+    });
+  }
+
   const originalBaseIds = new Set(
     (originalLoaded.suite?.cases || []).map((item) => item.base_bundle_id)
   );
@@ -287,12 +309,11 @@ export async function evaluatePromotionBenchmarkRecovery(
     });
   }
 
-  const validFaultPairs = pairs.filter((pair) => pair.valid && pair.pair_kind === "fault_repair");
   const validControlPairs = pairs.filter((pair) => pair.valid && pair.pair_kind === "clean_control");
   const recoveredCount = validFaultPairs.filter((pair) => pair.recovered === true).length;
   const regressionCount = validControlPairs.filter((pair) => pair.regressed === true).length;
   const report: PromotionRecoveryReport = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     generated_at: new Date().toISOString(),
     study_id: manifest.study_id,
     system_id: manifest.system_id,
@@ -313,9 +334,13 @@ export async function evaluatePromotionBenchmarkRecovery(
     missing_fault_families: missingFamilies,
     original_base_bundle_count: originalBaseIds.size,
     clean_control_base_bundle_count: controlBaseIds.size,
+    original_fault_case_count: originalFaultCaseIds.size,
+    covered_fault_case_count: coveredFaultCaseIds.size,
+    missing_fault_case_count: missingFaultCaseIds.length,
+    missing_fault_case_ids: missingFaultCaseIds,
     fault_repair_pair_count: validFaultPairs.length,
     successful_recovery_count: recoveredCount,
-    successful_recovery_rate: ratioOrNull(recoveredCount, validFaultPairs.length),
+    successful_recovery_rate: ratioOrNull(recoveredCount, originalFaultCaseIds.size),
     clean_control_pair_count: validControlPairs.length,
     clean_control_regression_count: regressionCount,
     clean_control_regression_rate: ratioOrNull(regressionCount, validControlPairs.length),
@@ -530,6 +555,7 @@ function renderMarkdown(report: PromotionRecoveryReport): string {
     "- System: " + report.system_id,
     "- Validation: " + (report.passed ? "passed" : "failed"),
     "- Fault-family coverage: " + report.covered_fault_families.length + "/" + report.required_fault_families.length,
+    "- Fault-case coverage: " + report.covered_fault_case_count + "/" + report.original_fault_case_count,
     "- Successful recovery: " + formatRate(report.successful_recovery_rate),
     "- Clean-control regression: " + formatRate(report.clean_control_regression_rate),
     "",

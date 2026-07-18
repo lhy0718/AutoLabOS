@@ -446,6 +446,9 @@ function makeAssessmentFixture(h1Supported: boolean): {
     original_predictions_sha256: inputPredictionsSha256,
     original_system_run_manifest_sha256: systemRunManifestSha256,
     missing_fault_families: [],
+    original_fault_case_count: 648,
+    covered_fault_case_count: 648,
+    missing_fault_case_count: 0,
     successful_recovery_rate: 0.90,
     clean_control_regression_rate: 0.05
   } as PromotionRecoveryReport;

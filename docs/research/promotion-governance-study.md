@@ -826,7 +826,8 @@ or empirical independence.
   one clean control and one variant from every required fault family.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded
   comparisons.
-- At least one gate ablation and one post-repair rerun per fault family.
+- At least one gate ablation and one post-repair rerun for every original fault
+  case, with complete coverage across all fault families.
 - Three independent provider runs per manuscript-only case when that condition
   is used for external claims.
 - Raw decisions, concerns, manifests, hashes, costs, and failures preserved.

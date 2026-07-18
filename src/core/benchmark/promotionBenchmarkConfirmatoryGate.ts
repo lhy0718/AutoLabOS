@@ -99,6 +99,9 @@ export interface PromotionConfirmatoryGateReport {
   };
   recovery: {
     status: "verified" | "missing_or_invalid";
+    original_fault_case_count: number | null;
+    covered_fault_case_count: number | null;
+    missing_fault_case_count: number | null;
     successful_recovery_rate: number | null;
     clean_control_regression_rate: number | null;
   };
@@ -372,6 +375,9 @@ export async function evaluatePromotionConfirmatoryGate(
     },
     recovery: {
       status: recovery?.passed ? "verified" : "missing_or_invalid",
+      original_fault_case_count: recovery?.original_fault_case_count ?? null,
+      covered_fault_case_count: recovery?.covered_fault_case_count ?? null,
+      missing_fault_case_count: recovery?.missing_fault_case_count ?? null,
       successful_recovery_rate: recovery?.successful_recovery_rate ?? null,
       clean_control_regression_rate: recovery?.clean_control_regression_rate ?? null
     },
@@ -653,12 +659,14 @@ function inspectConfirmatoryEvidence(input: {
       || input.recovery.original_predictions_sha256 !== input.inputPredictionsSha256
       || input.recovery.original_system_run_manifest_sha256 !== input.systemRunManifestSha256
       || input.recovery.missing_fault_families.length > 0
+      || input.recovery.missing_fault_case_count !== 0
+      || input.recovery.covered_fault_case_count !== input.recovery.original_fault_case_count
       || input.recovery.successful_recovery_rate === null
       || input.recovery.clean_control_regression_rate === null) {
     addIssue(
       input.issues,
       "post_repair_evidence_not_verified",
-      "Recovery evidence must be valid, hash-bound to the selected suite and predictions, cover every fault family, and report clean-control regressions.",
+      "Recovery evidence must be valid, hash-bound to the selected suite and predictions, cover every original fault case across all fault families, and report clean-control regressions.",
       "run_experiments"
     );
   }

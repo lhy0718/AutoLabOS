@@ -146,7 +146,8 @@ on clean research bundles?
   no family or group above half of the base bundles, family-stratified metrics,
   and leave-one-family-out sensitivity analysis.
 - All required fault families and clean positive, null, and negative controls.
-- At least one post-repair rerun for every fault family.
+- One post-repair rerun for every original fault case, covering every fault
+  family without selective case omission.
 - Three independent real-provider runs per manuscript-only test case when that
   baseline supports an external claim.
 - Paired bootstrap confidence intervals over base bundles.

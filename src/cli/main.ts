@@ -45,6 +45,7 @@ import {
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
+  runPromotionRecoveryEvaluationCli,
   runPromotionConfirmatoryGateCli,
   runPromotionDevelopmentEvidenceExportCli,
   runPromotionFailureAnalysisCli,
@@ -116,6 +117,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
+    "  autolabos governance-benchmark evaluate-promotion-recovery --manifest <recovery-manifest.json> [--out-dir outputs/governance-benchmark/promotion-recovery]",
     "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--freeze-manifest <frozen-intake-manifest.json>] [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
@@ -625,6 +627,15 @@ async function main(): Promise<void> {
 
   if (action.kind === "governance-benchmark-freeze-promotion-confirmatory") {
     await runPromotionConfirmatoryFreezeCli({
+      cwd: process.cwd(),
+      manifestPath: action.manifestPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-evaluate-promotion-recovery") {
+    await runPromotionRecoveryEvaluationCli({
       cwd: process.cwd(),
       manifestPath: action.manifestPath,
       outDir: action.outDir

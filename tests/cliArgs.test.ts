@@ -511,6 +511,31 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports explicit post-repair promotion evaluation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "evaluate-promotion-recovery",
+      "--manifest",
+      "inputs/recovery-manifest.json",
+      "--out-dir",
+      "outputs/recovery"
+    ])).toEqual({
+      kind: "governance-benchmark-evaluate-promotion-recovery",
+      manifestPath: "inputs/recovery-manifest.json",
+      outDir: "outputs/recovery"
+    });
+  });
+
+  it("requires a recovery manifest for post-repair evaluation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "evaluate-promotion-recovery"
+    ])).toEqual({
+      kind: "error",
+      message: "Missing required argument: --manifest <recovery-manifest.json>."
+    });
+  });
+
   it("supports promotion benchmark failure analysis", () => {
     expect(resolveCliAction([
       "governance-benchmark",

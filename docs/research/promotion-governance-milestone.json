@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "96c6d1b0be002f381f06c13ed92448f89b355b06146f3c602612b7793f44affa"
+          "sha256": "ad7b17bfa652be2c54736ecf0f84ef45b525cf42ba431112f84c86982fad226b"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -277,7 +277,7 @@
     },
     {
       "id": "post_repair_recovery",
-      "label": "Post-repair reruns cover every fault family and preserve clean controls",
+      "label": "Post-repair reruns cover every original fault case and preserve clean controls",
       "target_node": "run_experiments",
       "required": true,
       "evidence": [
@@ -289,6 +289,21 @@
               "pointer": "/recovery/status",
               "operator": "equals",
               "expected": "verified"
+            },
+            {
+              "pointer": "/recovery/original_fault_case_count",
+              "operator": "equals",
+              "expected": 648
+            },
+            {
+              "pointer": "/recovery/covered_fault_case_count",
+              "operator": "equals",
+              "expected": 648
+            },
+            {
+              "pointer": "/recovery/missing_fault_case_count",
+              "operator": "equals",
+              "expected": 0
             },
             {
               "pointer": "/recovery/successful_recovery_rate",

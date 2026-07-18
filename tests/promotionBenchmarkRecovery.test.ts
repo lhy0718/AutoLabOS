@@ -123,8 +123,16 @@ describe("promotion benchmark recovery", () => {
       passed: true,
       original_base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       clean_control_base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
-      fault_repair_pair_count: 9,
-      successful_recovery_count: 9,
+      original_fault_case_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
+      covered_fault_case_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
+      missing_fault_case_count: 0,
+      missing_fault_case_ids: [],
+      fault_repair_pair_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
+      successful_recovery_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
       successful_recovery_rate: 1,
       clean_control_pair_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
       clean_control_regression_count: 0,
@@ -133,8 +141,25 @@ describe("promotion benchmark recovery", () => {
     });
   });
 
+  it("fails closed when one original fault case has no post-repair rerun", async () => {
+    const fixture = await createRecoveryFixture("one_fault_case");
+    const result = await evaluatePromotionBenchmarkRecovery({
+      cwd: fixture.workspace,
+      manifestPath: "recovery-manifest.json",
+      outDir: "recovery-output"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.missing_fault_families).toEqual([]);
+    expect(result.report.missing_fault_case_count).toBe(1);
+    expect(result.report.successful_recovery_rate).toBeLessThan(1);
+    expect(result.report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "fault_repair_rerun_coverage_incomplete" })
+    ]));
+  });
+
   it("fails closed when one fault family has no post-repair rerun", async () => {
-    const fixture = await createRecoveryFixture(true);
+    const fixture = await createRecoveryFixture("one_fault_family");
     const result = await evaluatePromotionBenchmarkRecovery({
       cwd: fixture.workspace,
       manifestPath: "recovery-manifest.json",
@@ -143,13 +168,44 @@ describe("promotion benchmark recovery", () => {
 
     expect(result.report.passed).toBe(false);
     expect(result.report.missing_fault_families).toHaveLength(1);
+    expect(result.report.missing_fault_case_count).toBe(MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES);
     expect(result.report.issues).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "fault_family_recovery_missing" })
+      expect.objectContaining({ code: "fault_family_recovery_missing" }),
+      expect.objectContaining({ code: "fault_repair_rerun_coverage_incomplete" })
+    ]));
+  });
+
+  it("fails closed when complete target-scale recovery inputs are synthetic", async () => {
+    const fixture = await createRecoveryFixture(undefined, "synthetic_development");
+    const result = await evaluatePromotionBenchmarkRecovery({
+      cwd: fixture.workspace,
+      manifestPath: "recovery-manifest.json",
+      outDir: "recovery-output"
+    });
+
+    expect(result.report).toMatchObject({
+      passed: false,
+      original_base_bundle_count: MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
+      original_fault_case_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
+      covered_fault_case_count:
+        MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES * REQUIRED_CONFIRMATORY_MUTATION_FAMILIES.length,
+      missing_fault_case_count: 0,
+      successful_recovery_rate: 1,
+      clean_control_regression_rate: 0
+    });
+    expect(result.report.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "original_external_real_run_required" }),
+      expect.objectContaining({ code: "original_paper_claim_eligibility_required" }),
+      expect.objectContaining({ code: "repaired_external_real_run_required" })
     ]));
   });
 });
 
-async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace: string }> {
+async function createRecoveryFixture(
+  omission?: "one_fault_case" | "one_fault_family",
+  evidenceClass: "external_real_run" | "synthetic_development" = "external_real_run"
+): Promise<{ workspace: string }> {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-recovery-"));
   tempDirs.push(workspace);
   const originalCases: PromotionBenchmarkCaseManifest[] = [];
@@ -255,17 +311,15 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     repairedCases.push(repairedCase);
     originalPredictions.push(predictionFromGold(originalCase, "original-trial"));
     repairedPredictions.push(predictionFromGold(repairedCase, "repaired-trial"));
-    if (!omitLastFault || faultIndex < variants.length - 2) {
-      pairs.push({
-        pair_kind: "fault_repair",
-        source_case_id: originalCase.case_id,
-        source_trial_id: "original-trial",
-        repaired_case_id: repairedCase.case_id,
-        repaired_trial_id: "repaired-trial",
-        mutation_family: mutationFamily,
-        declared_repair_owner: originalCase.gold.repair_owners[0]
-      });
-    }
+    pairs.push({
+      pair_kind: "fault_repair",
+      source_case_id: originalCase.case_id,
+      source_trial_id: "original-trial",
+      repaired_case_id: repairedCase.case_id,
+      repaired_trial_id: "repaired-trial",
+      mutation_family: mutationFamily,
+      declared_repair_owner: originalCase.gold.repair_owners[0]
+    });
   }
 
   await completePaperScaleOriginalFixture({
@@ -277,8 +331,22 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     pairs,
     variants
   });
-  await writeSuite(workspace, "original", "confirmatory-study", originalCases, true);
-  await writeSuite(workspace, "repaired", "confirmatory-study-repaired", repairedCases, false);
+  await writeSuite(
+    workspace,
+    "original",
+    "confirmatory-study",
+    originalCases,
+    evidenceClass === "external_real_run",
+    evidenceClass
+  );
+  await writeSuite(
+    workspace,
+    "repaired",
+    "confirmatory-study-repaired",
+    repairedCases,
+    false,
+    evidenceClass
+  );
   await writePredictions(path.join(workspace, "original-predictions.jsonl"), originalPredictions);
   await writePredictions(path.join(workspace, "repaired-predictions.jsonl"), repairedPredictions);
   await writeSystemRunManifest({
@@ -299,6 +367,15 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     trialId: "repaired-trial",
     caseCount: repairedCases.length
   });
+  let manifestPairs = pairs;
+  if (omission === "one_fault_case") {
+    const omittedPair = [...pairs].reverse().find((pair) => pair.pair_kind === "fault_repair");
+    manifestPairs = pairs.filter((pair) => pair !== omittedPair);
+  } else if (omission === "one_fault_family") {
+    const omittedFamily = variants.at(-1)?.mutation_family;
+    manifestPairs = pairs.filter((pair) =>
+      pair.pair_kind !== "fault_repair" || pair.mutation_family !== omittedFamily);
+  }
   await writeFile(path.join(workspace, "recovery-manifest.json"), JSON.stringify({
     schema_version: "1.0",
     study_id: "confirmatory-study",
@@ -309,7 +386,7 @@ async function createRecoveryFixture(omitLastFault = false): Promise<{ workspace
     original_system_run_manifest_path: "original-system-run-manifest.json",
     repaired_system_run_manifest_path: "repaired-system-run-manifest.json",
     system_id: "artifact-audit",
-    pairs
+    pairs: manifestPairs
   }));
   return { workspace };
 }
@@ -404,6 +481,43 @@ async function completePaperScaleOriginalFixture(input: {
       });
     }
   }
+  for (const originalCase of input.originalCases.filter((benchmarkCase) => benchmarkCase.mutation_family)) {
+    if (input.pairs.some((pair) => pair.source_case_id === originalCase.case_id)) continue;
+    const repairedId = "repaired-" + originalCase.case_id;
+    const repairedArtifact = await writeCaseArtifact(
+      input.workspace,
+      "repaired",
+      repairedId,
+      {
+        base_id: originalCase.base_bundle_id,
+        state: "repaired",
+        repaired_family: originalCase.mutation_family
+      }
+    );
+    const repairedCase = makeCase({
+      caseId: repairedId,
+      baseId: originalCase.base_bundle_id,
+      artifactRoot: repairedArtifact.root,
+      artifactSha: repairedArtifact.sha,
+      sourceSha: originalCase.source_sha256 as string,
+      familySha: originalCase.source_family_id_sha256 as string,
+      operatorSha: originalCase.operator_group_id_sha256 as string,
+      gold: input.variants[0].gold
+    });
+    const declaredRepairOwner = originalCase.gold.repair_owners[0];
+    if (!declaredRepairOwner) throw new Error("Fault recovery fixture requires a declared repair owner.");
+    input.repairedCases.push(repairedCase);
+    input.repairedPredictions.push(predictionFromGold(repairedCase, "repaired-trial"));
+    input.pairs.push({
+      pair_kind: "fault_repair",
+      source_case_id: originalCase.case_id,
+      source_trial_id: "original-trial",
+      repaired_case_id: repairedCase.case_id,
+      repaired_trial_id: "repaired-trial",
+      mutation_family: originalCase.mutation_family,
+      declared_repair_owner: declaredRepairOwner
+    });
+  }
 }
 
 async function writeCaseArtifact(
@@ -450,7 +564,8 @@ async function writeSuite(
   suiteRoot: string,
   suiteId: string,
   cases: PromotionBenchmarkCaseManifest[],
-  paperClaimEligible: boolean
+  paperClaimEligible: boolean,
+  evidenceClass: "external_real_run" | "synthetic_development" = "external_real_run"
 ): Promise<void> {
   const caseDir = path.join(workspace, suiteRoot, "cases");
   await mkdir(caseDir, { recursive: true });
@@ -528,7 +643,7 @@ async function writeSuite(
   await writeFile(path.join(workspace, suiteRoot, "suite.json"), JSON.stringify({
     schema_version: "1.0",
     suite_id: suiteId,
-    evidence_class: "external_real_run",
+    evidence_class: evidenceClass,
     paper_claim_eligible: paperClaimEligible,
     adjudication_status: "double_adjudicated",
     mutation_isolation_status: "double_verified",

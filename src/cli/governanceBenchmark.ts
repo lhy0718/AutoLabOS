@@ -133,6 +133,10 @@ import {
   type EvaluatePromotionConfirmatoryGateInput
 } from "../core/benchmark/promotionBenchmarkConfirmatoryGate.js";
 import {
+  evaluatePromotionBenchmarkRecovery,
+  type EvaluatePromotionRecoveryInput
+} from "../core/benchmark/promotionBenchmarkRecovery.js";
+import {
   exportPromotionDevelopmentEvidence,
   type ExportPromotionDevelopmentEvidenceInput
 } from "../core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
@@ -359,6 +363,26 @@ export async function runPromotionConfirmatoryGateCli(
   if (!result.report.evidence_gate_passed) process.exitCode = 1;
 }
 
+export async function runPromotionRecoveryEvaluationCli(
+  input: EvaluatePromotionRecoveryInput
+): Promise<void> {
+  const result = await evaluatePromotionBenchmarkRecovery(input);
+  process.stdout.write(
+    [
+      "Promotion recovery evaluation " + (result.report.passed ? "passed" : "failed") + ": " + result.report.study_id,
+      "System: " + result.report.system_id,
+      "Fault-family coverage: " + result.report.covered_fault_families.length + "/" + result.report.required_fault_families.length,
+      "Fault-case coverage: " + result.report.covered_fault_case_count + "/" + result.report.original_fault_case_count,
+      "Successful recovery: " + formatOptionalRate(result.report.successful_recovery_rate),
+      "Clean-control regression: " + formatOptionalRate(result.report.clean_control_regression_rate),
+      "Report: " + result.report_path,
+      "Summary: " + result.markdown_path,
+      "Evidence boundary: paper-scale recovery requires external real-run, double-adjudicated, artifact-verified suites"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.passed) process.exitCode = 1;
+}
+
 export async function runPromotionDevelopmentEvidenceExportCli(
   input: ExportPromotionDevelopmentEvidenceInput
 ): Promise<void> {
@@ -373,6 +397,10 @@ export async function runPromotionDevelopmentEvidenceExportCli(
       "Output: " + result.output_path
     ].join("\n") + "\n"
   );
+}
+
+function formatOptionalRate(value: number | null): string {
+  return value === null ? "n/a" : value.toFixed(4);
 }
 
 export async function runPromotionPromptPackExportCli(
