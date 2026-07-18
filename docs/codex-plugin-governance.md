@@ -57,7 +57,7 @@ No adapter may skip baseline requirements, claim-evidence mapping, reproducibili
 ## Executable Adapter
 
 The plugin ships a thin bridge for `autolabos research
-<new|audit|review|improve|pack|verify-pack>`. The bridge checks that the AutoLabOS CLI is
+<new|audit|review|improve|pack|verify-pack|verify-milestone>`. The bridge checks that the AutoLabOS CLI is
 available, delegates execution without a shell, and emits a blocking
 `GateReport` when the dependency is missing. The CLI owns deterministic
 artifact validation and reuse of the existing brief, audit, review, and
@@ -73,6 +73,10 @@ portability metadata, and hashes the resulting public bytes.
 requires a closed regular-file inventory, recomputes every byte count and
 SHA-256 digest, and rechecks the gate, review, readiness, and claim-ceiling
 bindings without creating a new top-level command intent.
+
+`research verify-milestone` is likewise a cross-intent verification mode. It
+keeps a long-running objective open until every declared hash and assertion
+passes, and groups unmet requirements by their owning workflow node.
 
 ## Self-Dogfood Loop
 

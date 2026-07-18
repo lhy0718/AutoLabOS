@@ -8,6 +8,7 @@ import {
   runResearchReview,
   type ResearchOperationResult
 } from "../core/researchGovernanceOperations.js";
+import { verifyResearchMilestone } from "../core/researchMilestoneAudit.js";
 
 export async function runResearchNewCli(input: {
   cwd: string;
@@ -54,6 +55,16 @@ export async function runResearchPackVerificationCli(input: {
   const report = await inspectPaperReadinessBundle(input);
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (report.verdict !== "pass") process.exitCode = 1;
+}
+
+export async function runResearchMilestoneVerificationCli(input: {
+  cwd: string;
+  contractPath: string;
+  outDir: string;
+}): Promise<void> {
+  const result = await verifyResearchMilestone(input);
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  if (!result.report.achieved) process.exitCode = 1;
 }
 
 function printResult<T>(result: ResearchOperationResult<T>): void {

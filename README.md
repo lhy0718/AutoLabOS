@@ -419,6 +419,27 @@ receipt to a new directory; it never overwrites the source claims file. Claims
 omitted because their full text is missing remain unchecked. The candidate TSV
 must pass a separate Refgate submission audit before it is adopted.
 
+### Research Milestone Verification
+
+Long-running research can bind its final requirements to a declarative artifact
+contract instead of inferring completion from workflow state:
+
+```sh
+autolabos research verify-milestone \
+  --contract <milestone.json> \
+  --out-dir <new-audit-dir>
+```
+
+Each required evidence file must stay inside the declared workspace root and
+carry an expected SHA-256 in the contract. Missing, empty, symbolic-link,
+unbound, rewritten, or assertion-failing evidence keeps the milestone
+incomplete. The report groups failed requirements by their declared workflow
+node and exits nonzero until every required item passes.
+
+A passing artifact audit establishes only the declared byte and JSON contracts.
+It does not independently prove scientific validity, human identity, provider
+identity, or statistical independence.
+
 ### External Source Projection
 
 External research-agent outputs can be normalized for promotion-benchmark intake without embedding source-specific adapters in public runtime code:

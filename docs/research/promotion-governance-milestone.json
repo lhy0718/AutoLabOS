@@ -1,0 +1,381 @@
+{
+  "schema_version": "1.0",
+  "milestone_id": "promotion-governance-workshop-submission",
+  "target_state": "workshop_submission_ready",
+  "evidence_root": "../..",
+  "requirements": [
+    {
+      "id": "literature_gap_and_research_question",
+      "label": "The literature gap, candidate comparison, falsifiable research questions, hypotheses, and venue fit are fixed",
+      "target_node": "generate_hypotheses",
+      "required": true,
+      "evidence": [
+        {
+          "path": "docs/research/promotion-governance-study.md",
+          "sha256": "96c6d1b0be002f381f06c13ed92448f89b355b06146f3c602612b7793f44affa"
+        },
+        {
+          "path": "papers/promotion-governance/references.bib",
+          "sha256": "c34f4a8fe8dc45b68bb491f7a0f7d9ff9aec5989fe8fbf874afc37308c5b0d51"
+        }
+      ]
+    },
+    {
+      "id": "domain_neutral_instrument_and_baselines",
+      "label": "The domain-neutral benchmark instrument and deterministic comparison systems are artifact-consistent",
+      "target_node": "design_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "docs/research/evidence/promotion-development-evidence-v1.json",
+          "sha256": "898a5d279747a059fb282442bf0c05f0e39c38be3d08d458aa5b691003f5515b",
+          "assertions": [
+            {
+              "pointer": "/evidence_class",
+              "operator": "equals",
+              "expected": "synthetic_development"
+            },
+            {
+              "pointer": "/paper_claim_eligible",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/artifact_consistency_verified",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/evaluation/score_validation_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/evaluation/systems",
+              "operator": "min_items",
+              "expected": 4
+            },
+            {
+              "pointer": "/confirmatory_gate/readiness",
+              "operator": "equals",
+              "expected": "blocked_for_paper_scale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "candidate_trace_floor",
+      "label": "A source-bound and outcome-blind 72-base candidate handoff with paired comparison traces is prepared",
+      "target_node": "design_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "docs/research/evidence/promotion-trial-candidate-handoff-v10.json",
+          "sha256": "c201fd278e2a85aa329d81e1ad21d7b1a9312d822be9f5f1a0aef03843829318",
+          "assertions": [
+            {
+              "pointer": "/selection/selected_base_count",
+              "operator": "gte",
+              "expected": 72
+            },
+            {
+              "pointer": "/selection/selected_trial_count",
+              "operator": "gte",
+              "expected": 432
+            },
+            {
+              "pointer": "/integrity/handoff_inspection_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/paper_scale_trace_floor_met",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/paper_scale_comparison_floor_met",
+              "operator": "equals",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "independent_candidate_and_license_review",
+      "label": "Two independent candidate reviews and a distinct source-license review pass for all 72 bases",
+      "target_node": "review",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/trial-candidate-review-campaign-return-v10-pending/campaign-return-receipt.json",
+          "sha256": "bb9da2d7cb81f7b8f0369a453e6fe8693ffd464c21237dadc8b330f81db1d470",
+          "assertions": [
+            {
+              "pointer": "/passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/status",
+              "operator": "equals",
+              "expected": "review_return_verified"
+            },
+            {
+              "pointer": "/adjudication/accepted_label_count",
+              "operator": "gte",
+              "expected": 72
+            },
+            {
+              "pointer": "/adjudication/source_eligible_candidate_count",
+              "operator": "gte",
+              "expected": 72
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "canonical_curation_and_confirmatory_admission",
+      "label": "Human-reviewed candidates are canonically curated, independently verified, and admitted to a frozen confirmatory corpus",
+      "target_node": "run_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "docs/research/evidence/promotion-trial-candidate-handoff-v10.json",
+          "sha256": "c201fd278e2a85aa329d81e1ad21d7b1a9312d822be9f5f1a0aef03843829318",
+          "assertions": [
+            {
+              "pointer": "/independent_candidate_review_completed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/canonical_curation_completed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/confirmatory_admitted",
+              "operator": "equals",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "paper_scale_confirmatory_suite",
+      "label": "The held-out confirmatory suite contains at least 72 bases and 720 cases and passes the evidence gate",
+      "target_node": "design_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
+          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
+          "assertions": [
+            {
+              "pointer": "/base_bundle_count",
+              "operator": "gte",
+              "expected": 72
+            },
+            {
+              "pointer": "/case_count",
+              "operator": "gte",
+              "expected": 720
+            },
+            {
+              "pointer": "/evidence_gate_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/readiness",
+              "operator": "equals",
+              "expected": "paper_scale_candidate"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "real_provider_repetition",
+      "label": "The manuscript-only comparison is backed by three complete hash-bound real-provider trials",
+      "target_node": "run_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
+          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
+          "assertions": [
+            {
+              "pointer": "/provider_repetition/status",
+              "operator": "equals",
+              "expected": "verified_receipt_distinct"
+            },
+            {
+              "pointer": "/provider_repetition/trial_count",
+              "operator": "gte",
+              "expected": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "post_repair_recovery",
+      "label": "Post-repair reruns cover every fault family and preserve clean controls",
+      "target_node": "run_experiments",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
+          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
+          "assertions": [
+            {
+              "pointer": "/recovery/status",
+              "operator": "equals",
+              "expected": "verified"
+            },
+            {
+              "pointer": "/recovery/successful_recovery_rate",
+              "operator": "gte",
+              "expected": 0
+            },
+            {
+              "pointer": "/recovery/clean_control_regression_rate",
+              "operator": "lte",
+              "expected": 0.1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "independent_reference_review_and_refgate",
+      "label": "Every citation-bearing claim has full-text evidence, independent review, approval, and a zero-blocker Refgate audit",
+      "target_node": "analyze_papers",
+      "required": true,
+      "evidence": [
+        {
+          "path": "docs/research/evidence/promotion-reference-review-handoff-v2.json",
+          "sha256": "a0cf3c13c917e509078e791f1002a1ef47ee930b09ddd8445a06205c8c22e980",
+          "assertions": [
+            {
+              "pointer": "/public_handoff/missing_full_text_claim_count",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/public_handoff/human_review_completed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/archive_extraction_preflight/preflight_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/archive_extraction_preflight/claim_gate_passed",
+              "operator": "equals",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workshop_manuscript_readiness",
+      "label": "The official ACL-style manuscript is rebuilt after confirmatory results and passes the final paper-readiness review",
+      "target_node": "write_paper",
+      "required": true,
+      "evidence": [
+        {
+          "path": "papers/promotion-governance/submission-status.json",
+          "sha256": "daf52d4dee699b8bd85954222a34670d52b45372d3a14ed0f2985c45c4e3983e",
+          "assertions": [
+            {
+              "pointer": "/paper_ready",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/manuscript_type",
+              "operator": "equals",
+              "expected": "paper_ready"
+            },
+            {
+              "pointer": "/blocking_requirements",
+              "operator": "max_items",
+              "expected": 0
+            }
+          ]
+        },
+        {
+          "path": "papers/promotion-governance/manuscript.tex",
+          "sha256": "93d6dff1f2a7f036ca5535b2c3546a222370258f8569fc5e91930361701a95fb"
+        },
+        {
+          "path": "papers/promotion-governance/manuscript.pdf",
+          "sha256": "76cfe51a3c11c1a78666c0052fac79c77e2bd101d62857e96d7c255eb6ef3c48"
+        }
+      ]
+    },
+    {
+      "id": "portable_paper_readiness_bundle",
+      "label": "The final portable paper-readiness bundle is internally valid and positively reviewed",
+      "target_node": "review",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/final-paper-readiness-bundle-v6/paper-readiness-bundle.json",
+          "sha256": "728eb1603a32b61a8c61b43ccdd43763314eaba8145fd679ba07dbed7f1cca0c",
+          "assertions": [
+            {
+              "pointer": "/portability/valid",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/paper_ready",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/readiness_class",
+              "operator": "equals",
+              "expected": "paper_ready"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "final_validation_and_clean_revision",
+      "label": "Build, tests, web, harness, smoke, plugin, paper validation, and clean revision checks have a final hash-bound receipt",
+      "target_node": "review",
+      "required": true,
+      "evidence": [
+        {
+          "path": "outputs/promotion-governance/final-validation-receipt.json",
+          "sha256": null,
+          "assertions": [
+            {
+              "pointer": "/passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/clean_worktree",
+              "operator": "equals",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

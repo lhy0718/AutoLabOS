@@ -793,6 +793,30 @@ no three-run external provider aggregate has been executed for a paper-eligible
 suite. Therefore no confirmatory metrics, hypothesis verdicts, or paper-scale
 empirical claims exist yet.
 
+### Long-Horizon Completion Contract
+
+The final paper-scale milestone is declared in
+`docs/research/promotion-governance-milestone.json` rather than inferred from
+workflow completion, a successful build, or the presence of a manuscript.
+
+Every requirement names its owning workflow node and one or more evidence files
+with expected SHA-256 values and machine-checkable JSON assertions. Future
+artifacts remain explicitly hash-unbound until they are produced and reviewed;
+missing, rewritten, unbound, or assertion-failing evidence keeps the milestone
+incomplete and routes the requirement back to its declared node.
+
+A same-flow audit of the current workspace passed 3 of 12 requirements:
+literature and research-question grounding, the synthetic development
+instrument, and the 72-base candidate trace floor. The other nine requirements
+remain incomplete and are grouped under `analyze_papers`,
+`design_experiments`, `review`, `run_experiments`, and `write_paper`.
+No failed item was promoted from path existence alone.
+
+The contract separates implemented instrument evidence from confirmatory
+evidence. Its audit can verify artifact bytes and declared values but cannot
+independently establish human identity, provider identity, scientific validity,
+or empirical independence.
+
 ## Minimum Publishable Experiment
 
 - At least 72 source-hash-distinct base bundles covering positive, null, and

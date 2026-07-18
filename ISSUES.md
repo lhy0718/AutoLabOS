@@ -15,6 +15,59 @@ Path placeholders:
 
 ---
 
+## Issue: LV-614
+
+- Status: resolved; focused/full regressions, build, web, research-governance, harness, plugin local/release, global preflight, and same-flow fail-closed milestone audit pass
+- Validation target: the final workshop-submission goal must remain one executable, hash-bound completion contract instead of being repeatedly collapsed into short implementation tasks or inferred from stale artifact presence.
+- Environment/session context: direct CLI validation against the current promotion-governance research artifacts plus deterministic domain-neutral fixtures; no missing human review, provider execution, experiment result, or paper-readiness decision was manufactured.
+- Reproduction steps:
+  1. Inspect the long-running paper-scale objective and the distributed study, gate, review, provider, manuscript, and CI artifacts.
+  2. Attempt to answer whether the final objective is achieved from one current, machine-verifiable contract.
+  3. Modify, remove, unlink, or leave unbound one declared evidence artifact and repeat the check.
+- Expected behavior:
+  - One portable contract enumerates every required final milestone, its owning workflow node, exact evidence bytes, and machine-checkable assertions.
+  - Completion is true only when every required item passes against current artifacts.
+  - Missing, unbound, changed, symlinked, or assertion-failing evidence closes the gate and routes the unmet requirement to the responsible node.
+  - The report states that byte and assertion checks do not independently prove scientific validity, human identity, provider identity, or statistical independence.
+- Actual behavior:
+  - Final-goal requirements were distributed across prose, local outputs, paper status, and specialized gates without one executable overall completion contract.
+  - A previous command run or file path could be cited informally without proving that all current final requirements still held together.
+  - Short completed tasks therefore appeared to end the goal even though paper-scale evidence remained absent.
+- Fresh vs existing session comparison:
+  - Fresh session: domain-neutral fixtures reproduce complete, missing, unbound, assertion-failing, byte-drift, symlink, and invalid-contract paths.
+  - Existing session: the current research workspace is correctly classified as incomplete, with 3 of 12 requirements passing and 9 failing.
+  - Divergence: no persisted-session divergence was involved; this was a missing cross-artifact completion projection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: specialized governance artifacts enforced local gates, but no immutable aggregate milestone projected the entire long-horizon objective into current evidence and explicit node ownership.
+- Code/test changes:
+  - Added a declarative research milestone contract and verifier with workspace containment, regular-file and symlink checks, SHA-256 binding, JSON assertions, grouped node routing, and fresh JSON/Markdown reports.
+  - Added `autolabos research verify-milestone --contract <milestone.json> --out-dir <new-output-dir>` with fail-closed exit status.
+  - Added the 12-requirement workshop-submission contract and documented the current evidence ceiling.
+  - Added plugin guidance and deterministic regressions for success, missing/unbound evidence, assertion failure, byte drift, symlink traversal, and invalid contracts.
+- Regression status:
+  - Focused milestone, CLI, plugin, public-sanitization, and documentation regressions: 37/37 pass on 2026-07-19.
+  - Production build: pass on 2026-07-19.
+  - Full repository suite: 218 files and 2920 tests pass; web 14/14 pass on 2026-07-19.
+  - Explicit web validation: 14/14 pass on 2026-07-19.
+  - Research-governance end-to-end validation: 12 processes pass on 2026-07-19.
+  - Harness validation: 533 issue entries pass on 2026-07-19.
+  - Plugin dogfood, 4/4 CI operations gates, cache sync, strict doctor, release check, PATH dependency check, and 12-process installed-cache bridge acceptance: pass for version `0.1.0+codex.20260718215750`.
+  - Global Codex preflight: 4/4 gates pass on 2026-07-19.
+  - Same-flow plugin audit: exits 1 with `verdict=incomplete`, 3/12 requirements passed, 9/12 failed, and no contract issue.
+  - Node routing: `analyze_papers` 1, `design_experiments` 1, `review` 3, `run_experiments` 3, and `write_paper` 1 unmet requirement.
+- Follow-up risks:
+  - A contract proves only the declared files and assertions; it cannot establish undeclared scientific facts or real-world actor identity.
+  - Expected hashes must be deliberately reviewed and updated when accepted evidence changes.
+  - Human candidate/license review, the 72-base/720-case confirmatory suite, three real-provider trials, recovery evaluation, full-text/reference approval, and final manuscript review remain incomplete.
+- Evidence/artifacts:
+  - `src/core/researchMilestoneAudit.ts`
+  - `docs/research/promotion-governance-milestone.json`
+  - `tests/researchMilestoneAudit.test.ts`
+  - `outputs/promotion-governance/milestone-audit-v4/research-milestone-audit.json`
+
+---
+
 ## Issue: LV-613
 
 - Status: resolved; focused/full regressions, build, research-governance validation, public sanitization, harness, plugin alignment, and same-flow fail-closed CLI validation pass

@@ -77,6 +77,7 @@ export type CliAction =
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
   | { kind: "research-pack-verify"; bundleRoot: string }
+  | { kind: "research-milestone-verify"; contractPath: string; outDir: string }
   | { kind: "research-help" }
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
@@ -1867,8 +1868,8 @@ function parseResearchArgs(args: string[]): CliAction {
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     return { kind: "research-help" };
   }
-  if (!["new", "audit", "review", "improve", "pack", "verify-pack"].includes(subcommand)) {
-    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack|verify-pack> [options]." };
+  if (!["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone"].includes(subcommand)) {
+    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack|verify-pack|verify-milestone> [options]." };
   }
   if (args.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
     return { kind: "research-help" };
@@ -1897,7 +1898,8 @@ function parseResearchArgs(args: string[]): CliAction {
     review: ["--gate", "--out-dir"],
     improve: ["--review", "--out-dir"],
     pack: ["--gate", "--review", "--source-dir", "--out-dir"],
-    "verify-pack": ["--root"]
+    "verify-pack": ["--root"],
+    "verify-milestone": ["--contract", "--out-dir"]
   };
   const unsupported = [...values.keys()].find((key) => !allowedByCommand[subcommand].includes(key));
   if (unsupported) {
@@ -1910,6 +1912,13 @@ function parseResearchArgs(args: string[]): CliAction {
     return bundleRoot
       ? { kind: "research-pack-verify", bundleRoot }
       : { kind: "error", message: "research verify-pack requires --root <paper-readiness-bundle-dir>." };
+  }
+
+  if (subcommand === "verify-milestone") {
+    const contractPath = values.get("--contract");
+    return contractPath && outDir
+      ? { kind: "research-milestone-verify", contractPath, outDir }
+      : { kind: "error", message: "research verify-milestone requires --contract <milestone.json> and --out-dir <new-output-dir>." };
   }
 
   if (subcommand === "new") {

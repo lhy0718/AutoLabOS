@@ -1,6 +1,6 @@
 {
   "name": "autolabos-research-governor",
-  "version": "0.1.0+codex.20260711043552",
+  "version": "0.1.0+codex.20260718215750",
   "description": "Codex-native governance harness for evidence-gated research runs.",
   "author": {
     "name": "AutoLabOS maintainers"

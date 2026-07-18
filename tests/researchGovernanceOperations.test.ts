@@ -53,6 +53,14 @@ describe("research governance operations", () => {
       "--root",
       "paper-readiness-bundle"
     ])).toEqual({ kind: "research-pack-verify", bundleRoot: "paper-readiness-bundle" });
+    expect(resolveCliAction([
+      "research",
+      "verify-milestone",
+      "--contract",
+      "milestone.json",
+      "--out-dir",
+      "audit"
+    ])).toEqual({ kind: "research-milestone-verify", contractPath: "milestone.json", outDir: "audit" });
   });
 
   it("creates a versioned ResearchBrief artifact without pretending an empty template is complete", async () => {

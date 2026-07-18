@@ -59,6 +59,7 @@ npm run plugin:research -- review --gate outputs/research-governance/audit/gate-
 npm run plugin:research -- improve --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- pack --gate outputs/research-governance/audit/gate-report.json --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- verify-pack --root outputs/research-governance/pack
+npm run plugin:research -- verify-milestone --contract <milestone.json> --out-dir <new-milestone-audit-dir>
 ```
 
 The bridge emits a blocking `GateReport` when the `autolabos` CLI is unavailable.
@@ -76,6 +77,11 @@ verdict is a valid governance outcome and is preserved through packaging.
 `research verify-pack` is the verification mode of `research:pack`. It
 independently rechecks the closed file inventory, regular-file boundary,
 portable paths, byte counts, SHA-256 bindings, and gate/review/bundle linkage.
+
+`research verify-milestone` is a cross-intent verification mode for a
+long-running objective. It rechecks declared artifact hashes and JSON
+assertions, groups unmet requirements by their owning workflow node, and exits
+nonzero until every required item passes.
 
 ## Artifact Contract
 

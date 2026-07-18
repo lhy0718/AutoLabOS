@@ -140,7 +140,7 @@ if (args[0] === "--version") {
   process.stdout.write("autolabos 9.9.9\\n");
 } else if (args[0] === "research" && args[1] === "--help") {
   const compatible = process.env.RESEARCH_HELP_MODE === "compatible";
-  process.stdout.write(compatible ? "new audit review improve pack verify-pack\\n" : "new audit review improve\\n");
+  process.stdout.write(compatible ? "new audit review improve pack verify-pack verify-milestone\\n" : "new audit review improve\\n");
 } else {
   process.exitCode = 2;
 }
@@ -171,6 +171,43 @@ if (args[0] === "--version") {
       expect(compatibleReport.verdict).toBe("pass");
       expect(mismatchReport.artifact_id).not.toBe(compatibleReport.artifact_id);
       expect(JSON.stringify([mismatchReport, compatibleReport])).not.toContain(tempRoot);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("forwards milestone verification through the plugin bridge", () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-milestone-"));
+    const fakeCli = path.join(tempRoot, "autolabos-fixture");
+    const source = `#!/usr/bin/env node
+process.stdout.write(JSON.stringify(process.argv.slice(2)));
+`;
+
+    try {
+      fs.writeFileSync(fakeCli, source, { mode: 0o755 });
+      const bridge = path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs");
+      const result = spawnSync(process.execPath, [
+        bridge,
+        "verify-milestone",
+        "--contract",
+        "milestone.json",
+        "--out-dir",
+        "audit"
+      ], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_BIN: fakeCli }
+      });
+
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        "research",
+        "verify-milestone",
+        "--contract",
+        "milestone.json",
+        "--out-dir",
+        "audit"
+      ]);
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

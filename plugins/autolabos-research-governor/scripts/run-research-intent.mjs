@@ -4,11 +4,11 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 const args = process.argv.slice(2);
-const allowedIntents = new Set(["new", "audit", "review", "improve", "pack", "verify-pack"]);
+const allowedIntents = new Set(["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone"]);
 
 if (args.includes("--help") || args.includes("-h") || args.length === 0) {
   process.stdout.write([
-    "Usage: run-research-intent.mjs <new|audit|review|improve|pack|verify-pack> [autolabos research options]",
+    "Usage: run-research-intent.mjs <new|audit|review|improve|pack|verify-pack|verify-milestone> [autolabos research options]",
     "       run-research-intent.mjs --check"
   ].join("\n") + "\n");
   process.exit(0);
@@ -29,7 +29,7 @@ if (args[0] === "--check") {
   const contractCompatible = Boolean(
     available
     && helpResult?.status === 0
-    && ["new", "audit", "review", "improve", "pack", "verify-pack"].every((intent) => helpText.includes(intent))
+    && ["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone"].every((intent) => helpText.includes(intent))
   );
   const report = dependencyReport({
     available,
