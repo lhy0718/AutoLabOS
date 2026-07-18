@@ -5,6 +5,17 @@
   "target_venue": "REALM 2026 at EMNLP 2026",
   "target_track": "archival long paper",
   "target_page_range": "up to 8 content pages",
+  "submission_schedule": {
+    "verified_on": "2026-07-18",
+    "official_source": "https://realm-workshop.github.io/call_for_papers/",
+    "direct_submission_deadline": "2026-08-05T23:59:00-12:00",
+    "arr_commitment_deadline": "2026-08-31T23:59:00-12:00",
+    "notification_date": "2026-09-07",
+    "camera_ready_deadline": "2026-09-14T23:59:00-12:00",
+    "workshop_date": "2026-10-29",
+    "deadline_status_at_verification": "open",
+    "critical_path": "independent_human_candidate_and_license_review_then_canonical_curation_and_real_provider_execution"
+  },
   "template_status": "official_acl_review_style_packaged_build_and_layout_validated",
   "template_provenance": {
     "upstream": "https://github.com/acl-org/acl-style-files",
