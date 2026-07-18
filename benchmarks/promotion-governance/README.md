@@ -91,26 +91,70 @@ confirmatory evidence.
 
 ## Freeze Confirmatory Intake
 
-Create a local intake manifest only after collecting at least 20 independently
-sourced canonical artifact bundles:
+The intake contract has two explicit tiers. Schema `1.0` is a 20-base,
+200-case provisional tier for source-route and evaluator validation. It can
+never satisfy the paper-scale gate. Schema `1.1` is the paper-scale tier and
+requires at least 72 independently reviewed canonical bases and 720 held-out
+cases. The 72-base floor is derived from the preregistered zero-event bound in
+the confirmatory contract; it is not interchangeable with the provisional
+floor.
+
+A provisional manifest has this shape:
 
 ```json
 {
   "schema_version": "1.0",
+  "intake_tier": "provisional",
   "study_id": "promotion-confirmatory-v1",
   "sources": [
     {
       "source_id": "local-source-001",
       "source_root": "../private-bundles/bundle-001",
-      "evidence_class": "external_real_run"
+      "evidence_class": "external_real_run",
+      "source_family_id": "source-family-a",
+      "operator_group_id": "operator-group-a",
+      "source_revision": "pinned-source-revision",
+      "origin_kind": "native",
+      "distribution_scope": "local_evaluation_only",
+      "license_review_status": "unreviewed"
     }
   ]
 }
 ```
 
-The `sources` array must contain at least 20 entries. `source_root` is resolved
-relative to the intake manifest. `source_id` is local bookkeeping and is not
-copied into the frozen corpus.
+For a paper-scale freeze, use schema `1.1`, declare the closed paired-candidate
+handoff and double-human review roots, and bind every source to an admitted
+candidate:
+
+```json
+{
+  "schema_version": "1.1",
+  "intake_tier": "paper_scale",
+  "study_id": "promotion-confirmatory-v1",
+  "candidate_handoff_root": "../candidate-handoff",
+  "candidate_review_root": "../candidate-review",
+  "sources": [
+    {
+      "source_id": "local-source-001",
+      "source_root": "../canonical-bundles/bundle-001",
+      "evidence_class": "external_real_run",
+      "source_family_id": "source-family-a",
+      "operator_group_id": "operator-group-a",
+      "source_revision": "pinned-source-revision",
+      "origin_kind": "normalized",
+      "distribution_scope": "redistributable",
+      "license_review_status": "human_verified",
+      "candidate_id": "candidate-001"
+    }
+  ]
+}
+```
+
+The `sources` array must contain at least 20 entries for provisional intake or
+72 entries for paper-scale intake. `source_root` is resolved relative to the
+intake manifest. `source_id` is local bookkeeping and is not copied into the
+frozen corpus. Paper-scale candidate IDs must be unique and must be present in
+the revision-matched, integrity-valid handoff and review evidence.
 
 Every source root must contain `execution-evidence.json`. The sidecar must
 declare `evidence_class=external_real_run`, `execution_mode=real_execution`, a
@@ -161,7 +205,8 @@ node dist/cli/main.js governance-benchmark build-promotion \
   --out-dir <confirmatory-suite>
 ```
 
-The audit writes a fail-closed report even when the 20-source floor is not met.
+The audit writes a fail-closed report even when the declared tier's source
+floor is not met.
 The freezer additionally rejects duplicate tree hashes, run IDs, or execution
 fingerprints; symbolic links; existing or source-contained output directories;
 and any source that cannot support all nine declared fault mutations. It
@@ -284,8 +329,8 @@ and full-label agreement. A completed suite is marked
 - the suite is marked `execution_provenance_status=artifact_verified`,
 - the source evidence class is `external_real_run`,
 - all cases are in the held-out test split,
-- at least 20 source-hash-distinct base bundles are present,
-- at least 200 cases are present, and
+- at least 72 source-hash-distinct base bundles are present,
+- at least 720 cases are present, and
 - every base bundle has one clean control and all nine required fault-family
   variants, and
 - adjudicated clean controls include both promotable and non-promotable
