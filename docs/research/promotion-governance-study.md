@@ -636,6 +636,18 @@ campaign receipt exited nonzero, reported that a passing assigned return was
 required, and created no output directory. The real v10 annotations and
 license decision remain incomplete, so no real v10 curation handoff exists.
 
+The canonical-source return boundary is now executable as a separate
+controller operation. It accepts the pending curation handoff plus returned
+source roots, copies both into a closed packet, and independently recomputes
+all task, role, protocol, trace, artifact, and semantic checks. A synthetic
+72-source regression demonstrates two controller outcomes: sources signed by
+unassigned curator/verifier pseudonyms produce an integrity-inspectable blocked
+receipt, while the same contract-complete sources with the assigned roles
+produce a 72/72 verified receipt. Post-collection byte tampering invalidates
+the packet. These are system-validation fixtures only. Because no real v10
+curation handoff or human-curated source exists, the real return count and
+confirmatory admission count remain zero.
+
 The implementation now separates the old 20-base provisional intake from a
 72-base paper-scale intake. Schema `1.2` accepts only candidate IDs recovered
 from an integrity-valid paired handoff and recomputed as source-eligible from a

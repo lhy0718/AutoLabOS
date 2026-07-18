@@ -34,6 +34,7 @@ import {
   runPromotionTrialCandidateLicenseReviewPreflightCli,
   runPromotionTrialCandidateReviewAdjudicationCli,
   runPromotionCanonicalCurationHandoffCli,
+  runPromotionCanonicalCurationReturnCollectionCli,
   runPromotionSourceProjectionCli,
   runPromotionSourceNormalizationPackExportCli,
   runPromotionSourceNormalizationBatchExportCli,
@@ -98,6 +99,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --license-root <handoff/license> --review <license-review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark adjudicate-promotion-trial-candidate-review --handoff-root <handoff> --annotation <review-a.json> --annotation <review-b.json> --license-review <license-review.json> [--resolution <resolution.json>] --out-dir <adjudication>",
     "  autolabos governance-benchmark prepare-promotion-canonical-curation --handoff-root <handoff> --campaign-return-root <assigned-campaign-return> --curator-id <pseudonym> --verifier-id <pseudonym> --curator-protocol <version> --verifier-protocol <version> --out-dir <new-curation-handoff>",
+    "  autolabos governance-benchmark collect-promotion-canonical-curation --curation-handoff-root <curation-handoff> --source-root <canonical-source> [--source-root <canonical-source>] --out-dir <new-curation-return>",
     "  autolabos governance-benchmark project-promotion-source --source-root <raw-source> --recipe <projection.json> --out-dir <projected-bundle>",
     "  autolabos governance-benchmark export-promotion-source-normalization --source-root <projected-bundle> --out-dir <annotation-pack>",
     "  autolabos governance-benchmark export-promotion-source-normalization-batch --recipe <batch-recipe.json> --out-dir <review-batch>",
@@ -464,6 +466,16 @@ async function main(): Promise<void> {
       verifierId: action.verifierId,
       curatorProtocolVersion: action.curatorProtocolVersion,
       verifierProtocolVersion: action.verifierProtocolVersion,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-collect-promotion-canonical-curation") {
+    await runPromotionCanonicalCurationReturnCollectionCli({
+      cwd: process.cwd(),
+      curationHandoffRoot: action.curationHandoffRoot,
+      sourceRoots: action.sourceRoots,
       outDir: action.outDir
     });
     return;

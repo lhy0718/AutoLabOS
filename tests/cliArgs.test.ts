@@ -926,6 +926,34 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports assignment-bound canonical curation return collection", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "collect-promotion-canonical-curation",
+      "--curation-handoff-root", "outputs/curation-handoff",
+      "--source-root", "returns/canonical-source-a",
+      "--source-root", "returns/canonical-source-b",
+      "--out-dir", "outputs/curation-return"
+    ])).toEqual({
+      kind: "governance-benchmark-collect-promotion-canonical-curation",
+      curationHandoffRoot: "outputs/curation-handoff",
+      sourceRoots: [
+        "returns/canonical-source-a",
+        "returns/canonical-source-b"
+      ],
+      outDir: "outputs/curation-return"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "collect-promotion-canonical-curation",
+      "--curation-handoff-root", "outputs/curation-handoff",
+      "--out-dir", "outputs/curation-return"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("at least one --source-root")
+    });
+  });
+
   it("supports blind source-normalization pack export and double-annotation materialization", () => {
     expect(resolveCliAction([
       "governance-benchmark",

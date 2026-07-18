@@ -619,6 +619,26 @@ task remains `pending_human_curation`, every completion attestation is
 artifacts outside the packet before the existing confirmatory intake audit can
 admit anything.
 
+Completed canonical sources must then pass through the assignment-bound return
+collector before they can serve as governed downstream evidence:
+
+```sh
+autolabos governance-benchmark collect-promotion-canonical-curation \
+  --curation-handoff-root <curation-handoff> \
+  --source-root <canonical-source-1> \
+  --source-root <canonical-source-2> \
+  --out-dir <curation-return>
+```
+
+The collector copies the complete pending handoff and every returned source
+tree into a new controller packet. It rechecks candidate coverage, assigned
+curator and verifier pseudonyms, protocol versions, all six trace bindings, all
+15 canonical artifacts, cross-artifact semantics, and source-tree hashes. An
+incomplete, duplicated, invalid, or role-mismatched set produces an auditable
+`curation_return_blocked` receipt and a nonzero CLI exit. Even a verified
+receipt keeps `confirmatory_admitted=false`; collection does not establish
+confirmatory results or paper readiness.
+
 Bind the frozen intake explicitly when building the suite:
 
 ```sh

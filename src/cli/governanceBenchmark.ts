@@ -96,6 +96,10 @@ import {
   type PreparePromotionCanonicalCurationHandoffInput
 } from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
 import {
+  collectPromotionCanonicalCurationReturn,
+  type CollectPromotionCanonicalCurationReturnInput
+} from "../core/benchmark/promotionBenchmarkCanonicalCurationReturn.js";
+import {
   exportPromotionSourceNormalizationPack,
   normalizePromotionSource,
   type ExportPromotionSourceNormalizationPackInput,
@@ -690,6 +694,24 @@ export async function runPromotionCanonicalCurationHandoffCli(
       "Status: human curation and independent verification remain incomplete; no confirmatory admission"
     ].join("\n") + "\n"
   );
+}
+
+export async function runPromotionCanonicalCurationReturnCollectionCli(
+  input: CollectPromotionCanonicalCurationReturnInput
+): Promise<void> {
+  const result = await collectPromotionCanonicalCurationReturn(input);
+  process.stdout.write(
+    [
+      `Canonical curation return ${result.receipt.passed ? "verified" : "blocked"}`,
+      `Handoff: ${result.receipt.handoff_id}`,
+      `Received returns: ${result.receipt.received_return_count}/${result.receipt.required_return_count}`,
+      `Assignment matched: ${result.receipt.assigned_return_count}/${result.receipt.required_return_count}`,
+      `Canonical validation passed: ${result.receipt.verified_return_count}/${result.receipt.required_return_count}`,
+      `Receipt: ${result.receipt_path}`,
+      "Evidence boundary: a verified return remains pre-confirmatory evidence and does not establish paper readiness"
+    ].join("\n") + "\n"
+  );
+  if (!result.receipt.passed) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationPackExportCli(

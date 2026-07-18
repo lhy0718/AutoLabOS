@@ -141,6 +141,17 @@ and verification counts at zero, all human attestations at false, and
 confirmatory admission at false. A changed trace, task, guide, contract, or
 upstream receipt invalidates the packet.
 
+The runtime also exposes a controller-side return collector for completed
+canonical sources. It copies the exact preparation handoff and every returned
+source tree into a closed packet, then recomputes candidate coverage, assigned
+curator and verifier identities, protocol versions, six-trial provenance,
+artifact hashes, and canonical cross-artifact semantics. Its receipt separates
+packet integrity from return success: a role mismatch or incomplete source set
+can remain inspectable while `passed=false` and
+`status=curation_return_blocked`. A verified receipt still records
+`confirmatory_admitted=false`; it is a provenance handoff, not a benchmark or
+paper-readiness decision.
+
 Curated controls support claims about detection and repair in a controlled
 promotion-governance benchmark. They do not support claims about the natural
 prevalence of paper-quality failures or the absolute scientific quality of the

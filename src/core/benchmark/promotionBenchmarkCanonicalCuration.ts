@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
-import type { PromotionTrialCandidateRecord } from "./promotionBenchmarkTrialCandidateHandoff.js";
 import { scoreClaimEvidenceArtifacts } from "./claimEvidenceScoring.js";
 import { scoreResultTableArtifact } from "./resultTableScoring.js";
 import { isSha256 } from "./promotionBenchmarkSourceDiversity.js";
@@ -72,7 +71,24 @@ export interface InspectPromotionCanonicalCurationInput {
   sourceRoot: string;
   handoffId: string;
   sourceRevision: string;
-  candidate: PromotionTrialCandidateRecord;
+  candidate: PromotionCanonicalCurationCandidateBinding;
+}
+
+export interface PromotionCanonicalCurationCandidateBinding {
+  candidate_id: string;
+  base_candidate_sha256: string;
+  trials: Array<{
+    trial_id: string;
+    source_ref_sha256: string;
+    source_blob_sha256: string;
+    reviewer_blob_sha256: string;
+  }>;
+  comparator_trials?: Array<{
+    trial_id: string;
+    source_ref_sha256: string;
+    source_blob_sha256: string;
+    reviewer_blob_sha256: string;
+  }>;
 }
 
 export interface PromotionCanonicalCurationInspection {
@@ -520,7 +536,7 @@ function parseArtifactBinding(value: unknown): PromotionCanonicalCurationRecord[
 }
 
 function canonicalTrialBindings(
-  candidate: PromotionTrialCandidateRecord
+  candidate: PromotionCanonicalCurationCandidateBinding
 ): PromotionCanonicalCurationRecord["source_trials"] {
   return [
     ...candidate.trials.map((trial) => ({

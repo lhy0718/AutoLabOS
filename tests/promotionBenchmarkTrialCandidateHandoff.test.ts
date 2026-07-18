@@ -69,6 +69,11 @@ import {
   preparePromotionCanonicalCurationHandoff
 } from "../src/core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
 import {
+  PROMOTION_CANONICAL_CURATION_RETURN_RECEIPT,
+  collectPromotionCanonicalCurationReturn,
+  inspectPromotionCanonicalCurationReturn
+} from "../src/core/benchmark/promotionBenchmarkCanonicalCurationReturn.js";
+import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
@@ -1604,6 +1609,18 @@ describe("promotion trial-candidate handoff", () => {
     expect(unauthorizedCompletion.issues.map((issue) => issue.code)).not.toContain(
       "canonical_curation_handoff_file_inventory_invalid"
     );
+    await rm(unauthorizedCompletionPath);
+    curationManifest.files = curationManifest.files.filter((file: { path: string }) =>
+      file.path !== "curator/completion.json");
+    await writeJsonFile(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
+    ), curationManifest);
+    expect(await inspectPromotionCanonicalCurationHandoff(path.join(
+      workspace,
+      "canonical-curation-handoff"
+    ))).toMatchObject({ passed: true, issues: [] });
 
     const handoffManifest = JSON.parse(await readFile(
       path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
@@ -1628,6 +1645,7 @@ describe("promotion trial-candidate handoff", () => {
       candidate
     ]));
     const intakeSources = [];
+    const canonicalSourceRoots: string[] = [];
     for (const [index, candidate] of handoffManifest.candidates.entries()) {
       const controller = controllerByCandidate.get(candidate.candidate_id);
       if (!controller) throw new Error("Controller fixture is missing a candidate.");
@@ -1639,6 +1657,7 @@ describe("promotion trial-candidate handoff", () => {
         sourceRevision: handoffManifest.source_revision,
         candidate
       });
+      canonicalSourceRoots.push(path.relative(workspace, sourceRoot).replace(/\\/gu, "/"));
       intakeSources.push({
         source_id: `source-${String(index + 1).padStart(2, "0")}`,
         source_root: path.relative(workspace, sourceRoot).replace(/\\/gu, "/"),
@@ -1652,6 +1671,115 @@ describe("promotion trial-candidate handoff", () => {
         candidate_id: candidate.candidate_id
       });
     }
+    await expect(collectPromotionCanonicalCurationReturn({
+      cwd: workspace,
+      curationHandoffRoot: "canonical-curation-handoff",
+      sourceRoots: [
+        canonicalSourceRoots[0],
+        `${canonicalSourceRoots[0]}/paper`
+      ],
+      outDir: "canonical-curation-return-overlap"
+    })).rejects.toThrow("source roots must not overlap");
+    await expect(access(path.join(
+      workspace,
+      "canonical-curation-return-overlap"
+    ))).rejects.toThrow();
+    const roleMismatchReturn = await collectPromotionCanonicalCurationReturn({
+      cwd: workspace,
+      curationHandoffRoot: "canonical-curation-handoff",
+      sourceRoots: canonicalSourceRoots,
+      outDir: "canonical-curation-return-role-mismatch"
+    });
+    expect(roleMismatchReturn.receipt).toMatchObject({
+      status: "curation_return_blocked",
+      passed: false,
+      received_return_count: 72,
+      assigned_return_count: 0,
+      verified_return_count: 0,
+      required_return_count: 72
+    });
+    expect(roleMismatchReturn.receipt.validation_issues.every((issue) =>
+      issue.code === "canonical_curation_return_role_assignment_mismatch")).toBe(true);
+    expect(await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return-role-mismatch"
+    ))).toMatchObject({ passed: true, issues: [], receipt: { passed: false } });
+
+    for (const sourceRoot of canonicalSourceRoots) {
+      const curationPath = path.join(workspace, sourceRoot, PROMOTION_CANONICAL_CURATION_RECORD);
+      const record = JSON.parse(await readFile(curationPath, "utf8"));
+      record.curator_id = "curator-alpha";
+      record.verifier_id = "verifier-beta";
+      await writeJsonFile(curationPath, record);
+    }
+    const curationReturn = await collectPromotionCanonicalCurationReturn({
+      cwd: workspace,
+      curationHandoffRoot: "canonical-curation-handoff",
+      sourceRoots: canonicalSourceRoots,
+      outDir: "canonical-curation-return"
+    });
+    expect(curationReturn.receipt).toMatchObject({
+      status: "verified",
+      passed: true,
+      received_return_count: 72,
+      assigned_return_count: 72,
+      verified_return_count: 72,
+      required_return_count: 72,
+      confirmatory_admitted: false,
+      validation_issues: []
+    });
+    expect(curationReturn.receipt.returns).toHaveLength(72);
+    expect(await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return"
+    ))).toMatchObject({ passed: true, issues: [], receipt: { passed: true } });
+    expect(path.basename(curationReturn.receipt_path)).toBe(
+      PROMOTION_CANONICAL_CURATION_RETURN_RECEIPT
+    );
+    const returnedResultPath = path.join(
+      workspace,
+      "canonical-curation-return",
+      curationReturn.receipt.returns[0].source_path,
+      "result_table.json"
+    );
+    const returnedResult = await readFile(returnedResultPath);
+    await writeFile(returnedResultPath, "[]\n", "utf8");
+    const tamperedReturn = await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return"
+    ));
+    expect(tamperedReturn.passed).toBe(false);
+    expect(tamperedReturn.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "canonical_curation_return_inventory_invalid",
+      "canonical_curation_return_recomputation_mismatch"
+    ]));
+    await writeFile(returnedResultPath, returnedResult);
+    expect(await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return"
+    ))).toMatchObject({ passed: true, issues: [], receipt: { passed: true } });
+    const malformedSourcePath = path.join(
+      workspace,
+      "canonical-curation-return",
+      "sources",
+      "unexpected.json"
+    );
+    await writeFile(malformedSourcePath, "{}\n", "utf8");
+    const malformedReturn = await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return"
+    ));
+    expect(malformedReturn.passed).toBe(false);
+    expect(malformedReturn.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "canonical_curation_return_inventory_invalid",
+      "canonical_curation_return_sources_invalid"
+    ]));
+    await rm(malformedSourcePath);
+    expect(await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "canonical-curation-return"
+    ))).toMatchObject({ passed: true, issues: [], receipt: { passed: true } });
+
     await writeJsonFile(path.join(workspace, "paper-scale-raw-review-intake.json"), {
       schema_version: "1.2",
       intake_tier: "paper_scale",

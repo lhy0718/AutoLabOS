@@ -85,6 +85,7 @@ export interface PromotionCanonicalCurationHandoffIssue {
 export interface PromotionCanonicalCurationHandoffInspection {
   passed: boolean;
   manifest: PromotionCanonicalCurationHandoffManifest | null;
+  tasks: PromotionCanonicalCurationTask[];
   issues: PromotionCanonicalCurationHandoffIssue[];
 }
 
@@ -335,6 +336,7 @@ export async function inspectPromotionCanonicalCurationHandoff(
     return {
       passed: false,
       manifest: null,
+      tasks: [],
       issues: [{
         code: "canonical_curation_handoff_manifest_unreadable",
         message: "The canonical curation handoff manifest is missing or invalid."
@@ -530,7 +532,7 @@ export async function inspectPromotionCanonicalCurationHandoff(
       message: "Copied handoff evidence must bind every pending task to the same six source trials."
     });
   }
-  return { passed: issues.length === 0, manifest, issues };
+  return { passed: issues.length === 0, manifest, tasks, issues };
 }
 
 export function promotionCanonicalCurationHandoffContract(): Record<string, unknown> {
