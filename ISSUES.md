@@ -10885,6 +10885,69 @@ Path placeholders:
 
 ## Research and paper-readiness watchlist
 
+## Issue: R-012
+
+- Status: resolved; canonical curation now has a fail-closed post-review preparation handoff, and the full validation set plus real v10 refusal replay pass
+- Validation target: source-eligible human review must lead to a reproducible curator/verifier task packet without an operator manually inventing source-trial bindings, and preparation must never be mistaken for completed human curation.
+- Environment/session context: domain-neutral 72-candidate paired-review fixture; no human label, license decision, canonical source, or empirical benchmark result was created by this change.
+
+- Reproduction steps:
+  1. Complete the existing trial-candidate adjudication path and inspect its source-eligible candidate IDs.
+  2. Attempt to begin canonical curation using only the public CLI.
+  3. Observe that no command binds the adjudicated IDs to their six exact traces, the 15-role curation contract, assigned curator/verifier roles, or upstream review receipts.
+  4. Hand-assemble those inputs, creating an unaudited gap between review and confirmatory intake where pending work can be confused with a final `human_verified` record.
+
+- Expected behavior:
+  - Preparation revalidates the handoff, review hashes, revision, redistribution permission, and 72-candidate source-eligibility floor.
+  - Every task binds three primary and three comparator traces plus all 15 canonical artifact roles.
+  - Curator and verifier IDs are distinct, but their completion attestations remain false.
+  - The packet is self-contained, hash-closed, tamper-evident, and contains no canonical source or final `benchmark-curation.json`.
+  - Incomplete or ineligible review fails before creating an output directory.
+
+- Actual behavior:
+  - Canonical curation previously had only a final-record inspector consumed by confirmatory intake.
+  - The transition from adjudicated review to human curation depended on manual file assembly and had no explicit pending-state authority record.
+
+- Fresh vs existing session comparison:
+  - Fresh session: `prepare-promotion-canonical-curation` emits a self-inspected `human_curation_pending` handoff only after all upstream review gates pass.
+  - Existing session: the real v10 review remains incomplete and must be rejected without creating a curation handoff.
+  - Divergence: this is an operator handoff contract gap, not a TUI refresh or resume issue.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: the system modeled the final curation authority but not the persisted pending state and trace transfer required to reach it safely.
+
+- Code/test changes:
+  - Added a canonical-curation handoff module with atomic output, exact upstream receipt copies, 72-task floor enforcement, six trace copies per task, and a frozen 15-role runtime contract.
+  - Added curator and verifier guides while keeping canonical source root, derivation mode, timestamps, and both human attestations empty or false.
+  - Added exact inventory/hash inspection, semantic task checks, upstream hash checks, symlink/path containment, final-record exclusion, and false-completion detection.
+  - Added the public CLI command and corrected the adjacent README handoff flag from the unsupported `--repository-root` to `--source-root`.
+  - Extended the 72-base path to prove pending output, zero admission, ineligible-review refusal, and copied-trace tamper detection.
+
+- Regression status:
+  - TypeScript validation: passed on 2026-07-18.
+  - Focused CLI and 72-base handoff regression: 2 files / 89 tests passed on 2026-07-18.
+  - Full repository CI: 214 core files / 2,875 tests and 1 web file / 14 tests passed on 2026-07-18.
+  - Production build: passed on 2026-07-18; npm retained its non-blocking `esbuild` allow-scripts review warning.
+  - Harness validation: 526 issue entries checked with no structural violations on 2026-07-18.
+  - Public-code sanitization: 3 tests passed on 2026-07-18.
+  - Real v10 refusal replay: exited 1 with `adjudication_not_passed` and left no output or staging directory on 2026-07-18.
+  - Diff whitespace validation: passed on 2026-07-18.
+
+- Follow-up risks:
+  - The handoff verifies pseudonymous role separation, not real-world human identity, expertise, or independence.
+  - Packet preparation cannot establish that curation or verification occurred.
+  - Real v10 admission remains zero until independent review, source-license approval, human curation, and confirmatory execution are completed.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkCanonicalCurationHandoff.ts`
+  - `src/core/benchmark/promotionBenchmarkCanonicalCuration.ts`
+  - `tests/promotionBenchmarkTrialCandidateHandoff.test.ts`
+  - `tests/cliArgs.test.ts`
+  - `docs/research/promotion-benchmark-curation-boundary.md`
+
+---
+
 ## Issue: R-011
 
 - Status: resolved; canonical clean controls now require hash-bound artifact completeness and policy-independent semantic consistency

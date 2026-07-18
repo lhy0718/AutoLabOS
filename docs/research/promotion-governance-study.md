@@ -594,6 +594,15 @@ fail-closed outcomes are recorded in
 This establishes reviewer handoff readiness only; it is not human-review or
 license evidence.
 
+The post-review operator boundary is now executable without manufacturing the
+missing judgments. A passing adjudication can be transformed into a
+self-contained canonical-curation handoff with six hash-bound traces and the
+15-role artifact contract per source-eligible task. The generated tasks remain
+`pending_human_curation`, their curator and verifier attestations remain
+false, and the handoff records zero canonical sources and zero confirmatory
+admissions. Because the real v10 annotations and license decision remain
+incomplete, no real v10 curation handoff can pass this command yet.
+
 The implementation now separates the old 20-base provisional intake from a
 72-base paper-scale intake. The latter accepts only candidate IDs recovered
 from an integrity-valid paired handoff and recomputed as source-eligible from a

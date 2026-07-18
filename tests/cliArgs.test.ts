@@ -792,6 +792,41 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports fail-closed canonical curation handoff preparation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-canonical-curation",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--review-root", "outputs/review-adjudication",
+      "--curator-id", "curator-alpha",
+      "--verifier-id", "verifier-beta",
+      "--curator-protocol", "curation-protocol-1",
+      "--verifier-protocol", "verification-protocol-1",
+      "--out-dir", "outputs/curation-handoff"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-canonical-curation",
+      handoffRoot: "outputs/candidate-handoff",
+      reviewRoot: "outputs/review-adjudication",
+      curatorId: "curator-alpha",
+      verifierId: "verifier-beta",
+      curatorProtocolVersion: "curation-protocol-1",
+      verifierProtocolVersion: "verification-protocol-1",
+      outDir: "outputs/curation-handoff"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-canonical-curation",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--review-root", "outputs/review-adjudication",
+      "--curator-id", "curator-alpha",
+      "--verifier-id", "verifier-beta",
+      "--out-dir", "outputs/curation-handoff"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--curator-protocol")
+    });
+  });
+
   it("supports blind source-normalization pack export and double-annotation materialization", () => {
     expect(resolveCliAction([
       "governance-benchmark",

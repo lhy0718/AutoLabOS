@@ -105,6 +105,17 @@ IDs and links, evidence-store resolution, SOTA-claim support declarations, and
 consistent promotion state across checkpoint, review, and paper artifacts.
 These schema checks are independent of the evaluated promotion policy.
 
+The runtime exposes a separate preparation handoff between review and
+canonical-source creation. It accepts only a revision-matched, integrity-valid
+handoff and adjudication with redistribution permission and at least 72
+source-eligible candidates. The packet copies six privacy-projected,
+hash-verified traces per task, the 15-role contract, and the upstream handoff
+and review receipts. Preparation never emits a canonical source or
+`benchmark-curation.json`: its manifest fixes all curation and verification
+counts at zero, all human attestations at false, and confirmatory admission at
+false. A changed trace, task, guide, contract, or upstream receipt invalidates
+the packet.
+
 Curated controls support claims about detection and repair in a controlled
 promotion-governance benchmark. They do not support claims about the natural
 prevalence of paper-quality failures or the absolute scientific quality of the

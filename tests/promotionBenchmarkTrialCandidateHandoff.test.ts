@@ -53,6 +53,12 @@ import {
   type PromotionCanonicalCurationRecord
 } from "../src/core/benchmark/promotionBenchmarkCanonicalCuration.js";
 import {
+  PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST,
+  PROMOTION_CANONICAL_CURATION_TASKS,
+  inspectPromotionCanonicalCurationHandoff,
+  preparePromotionCanonicalCurationHandoff
+} from "../src/core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
+import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
@@ -1007,6 +1013,17 @@ describe("promotion trial-candidate handoff", () => {
     expect(await inspectPromotionTrialCandidateReviewAdjudication(
       path.join(workspace, "review-adjudication")
     )).toMatchObject({ passed: true, issues: [] });
+    await expect(preparePromotionCanonicalCurationHandoff({
+      cwd: workspace,
+      handoffRoot: "handoff",
+      reviewRoot: "review-adjudication",
+      curatorId: "curator-alpha",
+      verifierId: "verifier-beta",
+      curatorProtocolVersion: "curation-protocol-1",
+      verifierProtocolVersion: "verification-protocol-1",
+      outDir: "ineligible-curation-handoff"
+    })).rejects.toThrow("source-eligible review floor");
+    await expect(access(path.join(workspace, "ineligible-curation-handoff"))).rejects.toThrow();
   });
 
   it("allows source-eligible reviews to progress to curation without inventing paper artifacts", async () => {
@@ -1068,6 +1085,148 @@ describe("promotion trial-candidate handoff", () => {
     });
     expect(admission.source_eligible_candidate_ids).toHaveLength(72);
     expect(new Set(admission.source_eligible_candidate_ids)).toHaveProperty("size", 72);
+
+    const curationHandoff = await preparePromotionCanonicalCurationHandoff({
+      cwd: workspace,
+      handoffRoot: "parquet-paired-handoff",
+      reviewRoot: "source-eligible-adjudication",
+      curatorId: "curator-alpha",
+      verifierId: "verifier-beta",
+      curatorProtocolVersion: "curation-protocol-1",
+      verifierProtocolVersion: "verification-protocol-1",
+      outDir: "canonical-curation-handoff"
+    });
+    expect(curationHandoff).toMatchObject({
+      task_count: 72,
+      canonical_source_count: 0,
+      canonical_curation_completed: false
+    });
+    const curationInspection = await inspectPromotionCanonicalCurationHandoff(
+      path.join(workspace, "canonical-curation-handoff")
+    );
+    expect(curationInspection).toMatchObject({
+      passed: true,
+      issues: [],
+      manifest: {
+        status: "human_curation_pending",
+        source_eligible_candidate_count: 72,
+        task_count: 72,
+        canonical_source_count: 0,
+        curation_completed_count: 0,
+        verification_completed_count: 0,
+        canonical_curation_completed: false,
+        confirmatory_admitted: false
+      }
+    });
+    const curationTasks = (await readFile(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_TASKS
+    ), "utf8")).split(/\r?\n/u).filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, any>);
+    expect(curationTasks).toHaveLength(72);
+    expect(curationTasks.every((task) =>
+      task.status === "pending_human_curation"
+      && task.source_trials.length === 6
+      && task.required_artifacts.length === 15
+      && task.canonical_source_root === null
+      && task.curator_attestation.completed_by_human === false
+      && task.verifier_attestation.completed_by_human === false)).toBe(true);
+    await expect(access(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_RECORD
+    ))).rejects.toThrow();
+    const curationManifest = JSON.parse(await readFile(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
+    ), "utf8"));
+    expect(curationManifest.files.some((file: { path: string }) =>
+      path.basename(file.path) === PROMOTION_CANONICAL_CURATION_RECORD)).toBe(false);
+    const firstCurationTrace = path.join(
+      workspace,
+      "canonical-curation-handoff",
+      "curator",
+      curationTasks[0].source_trials[0].artifact_path
+    );
+    const originalCurationTrace = await readFile(firstCurationTrace);
+    await writeFile(firstCurationTrace, "{}\n", "utf8");
+    const curationTampered = await inspectPromotionCanonicalCurationHandoff(
+      path.join(workspace, "canonical-curation-handoff")
+    );
+    expect(curationTampered.passed).toBe(false);
+    expect(curationTampered.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "canonical_curation_handoff_file_inventory_invalid",
+      "canonical_curation_handoff_tasks_invalid"
+    ]));
+    await writeFile(firstCurationTrace, originalCurationTrace);
+    const copiedHandoffPath = path.join(
+      workspace,
+      "canonical-curation-handoff",
+      "upstream",
+      "handoff",
+      PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST
+    );
+    const originalCopiedHandoff = await readFile(copiedHandoffPath);
+    const changedCopiedHandoff = JSON.parse(originalCopiedHandoff.toString("utf8"));
+    changedCopiedHandoff.candidates[0].base_candidate_sha256 = "f".repeat(64);
+    await writeJsonFile(copiedHandoffPath, changedCopiedHandoff);
+    const changedHandoffHash = createHash("sha256")
+      .update(await readFile(copiedHandoffPath)).digest("hex");
+    curationManifest.upstream.handoff_manifest_sha256 = changedHandoffHash;
+    const handoffBinding = curationManifest.files.find((file: { path: string }) =>
+      file.path === "upstream/handoff/trial-candidate-handoff.json");
+    if (!handoffBinding) throw new Error("Missing copied handoff binding.");
+    handoffBinding.sha256 = changedHandoffHash;
+    await writeJsonFile(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
+    ), curationManifest);
+    const semanticHandoffTampered = await inspectPromotionCanonicalCurationHandoff(
+      path.join(workspace, "canonical-curation-handoff")
+    );
+    expect(semanticHandoffTampered.passed).toBe(false);
+    expect(semanticHandoffTampered.issues.map((issue) => issue.code)).toContain(
+      "canonical_curation_handoff_upstream_handoff_invalid"
+    );
+    expect(semanticHandoffTampered.issues.map((issue) => issue.code)).not.toContain(
+      "canonical_curation_handoff_file_inventory_invalid"
+    );
+    await writeFile(copiedHandoffPath, originalCopiedHandoff);
+    const originalHandoffHash = createHash("sha256")
+      .update(originalCopiedHandoff).digest("hex");
+    curationManifest.upstream.handoff_manifest_sha256 = originalHandoffHash;
+    handoffBinding.sha256 = originalHandoffHash;
+    const unauthorizedCompletionPath = path.join(
+      workspace,
+      "canonical-curation-handoff",
+      "curator",
+      "completion.json"
+    );
+    await writeFile(unauthorizedCompletionPath, "{}\n", "utf8");
+    curationManifest.files.push({
+      path: "curator/completion.json",
+      sha256: createHash("sha256").update(await readFile(unauthorizedCompletionPath)).digest("hex")
+    });
+    curationManifest.files.sort((left: { path: string }, right: { path: string }) =>
+      left.path.localeCompare(right.path));
+    await writeJsonFile(path.join(
+      workspace,
+      "canonical-curation-handoff",
+      PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
+    ), curationManifest);
+    const unauthorizedCompletion = await inspectPromotionCanonicalCurationHandoff(
+      path.join(workspace, "canonical-curation-handoff")
+    );
+    expect(unauthorizedCompletion.passed).toBe(false);
+    expect(unauthorizedCompletion.issues.map((issue) => issue.code)).toContain(
+      "canonical_curation_handoff_file_contract_invalid"
+    );
+    expect(unauthorizedCompletion.issues.map((issue) => issue.code)).not.toContain(
+      "canonical_curation_handoff_file_inventory_invalid"
+    );
 
     const handoffManifest = JSON.parse(await readFile(
       path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),

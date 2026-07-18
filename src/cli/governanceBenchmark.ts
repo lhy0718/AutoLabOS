@@ -84,6 +84,10 @@ import {
   type PreflightPromotionTrialCandidateLicenseReviewInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
+  preparePromotionCanonicalCurationHandoff,
+  type PreparePromotionCanonicalCurationHandoffInput
+} from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
+import {
   exportPromotionSourceNormalizationPack,
   normalizePromotionSource,
   type ExportPromotionSourceNormalizationPackInput,
@@ -621,6 +625,24 @@ export async function runPromotionTrialCandidateReviewAdjudicationCli(
     ].join("\n") + "\n"
   );
   if (!result.report.passed) process.exitCode = 1;
+}
+
+export async function runPromotionCanonicalCurationHandoffCli(
+  input: PreparePromotionCanonicalCurationHandoffInput
+): Promise<void> {
+  const result = await preparePromotionCanonicalCurationHandoff(input);
+  process.stdout.write(
+    [
+      "Pending canonical-curation handoff prepared",
+      `Handoff: ${result.handoff_id}`,
+      `Tasks: ${result.task_count}`,
+      `Curator guide: ${result.curator_guide_path}`,
+      `Verifier guide: ${result.verifier_guide_path}`,
+      `Manifest: ${result.manifest_path}`,
+      "Canonical sources: 0",
+      "Status: human curation and independent verification remain incomplete; no confirmatory admission"
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionSourceNormalizationPackExportCli(
