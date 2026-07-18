@@ -563,17 +563,18 @@ Confirmatory intake requires every projected, normalized, or native bundle to pr
 
 Confirmatory intake has two non-interchangeable tiers. Schema `1.0` is always
 `provisional`: it requires at least 20 artifact-verified source bundles and
-cannot stand in for the paper-scale corpus. Schema `1.1` must declare
+cannot stand in for the paper-scale corpus. Schema `1.2` must declare
 `intake_tier=paper_scale`, a paired candidate handoff root, a passing
-double-human review root, and at least 72 candidate-bound canonical sources:
+assignment-bound campaign-return root, and at least 72 candidate-bound
+canonical sources. A raw adjudication directory is not accepted:
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "intake_tier": "paper_scale",
   "study_id": "governance-study",
   "candidate_handoff_root": "candidate-handoff",
-  "candidate_review_root": "candidate-review",
+  "candidate_campaign_return_root": "candidate-campaign-return",
   "sources": [
     {
       "source_id": "source-001",
@@ -640,10 +641,11 @@ built without `--freeze-manifest` remains valid for development, but it cannot
 become paper-claim-eligible.
 
 The freeze also preserves the exact intake manifest and, for paper-scale input,
-the complete candidate handoff and review roots under `upstream-evidence/`.
-A sorted file inventory binds every non-empty regular file by SHA-256 and must
-reproduce the intake, handoff-manifest, adjudicated-label, and review-evidence
-receipts. The builder carries this closed directory into
+the complete candidate handoff and campaign-return roots under
+`upstream-evidence/`. A sorted file inventory binds every non-empty regular file
+by SHA-256 and must reproduce the intake, handoff manifest, controller receipt,
+returned files, adjudication report, labels, and review-evidence receipts. The
+builder carries this closed directory into
 `confirmatory-freeze/upstream-evidence/`; missing files, added files, symlinks,
 or byte drift invalidate suite loading and route confirmatory work back to
 experiment design.

@@ -637,9 +637,10 @@ required, and created no output directory. The real v10 annotations and
 license decision remain incomplete, so no real v10 curation handoff exists.
 
 The implementation now separates the old 20-base provisional intake from a
-72-base paper-scale intake. The latter accepts only candidate IDs recovered
+72-base paper-scale intake. Schema `1.2` accepts only candidate IDs recovered
 from an integrity-valid paired handoff and recomputed as source-eligible from a
-hash-bound double-human adjudication. Every source must also carry a schema
+passing assignment-bound campaign return; a raw adjudication directory is
+rejected. Every source must also carry a schema
 `1.1` `benchmark_curated` record that binds all six source traces, distinct
 curator and verifier roles, protocol versions, timestamps, and the hashes of the
 15 canonical result, execution, review, paper, figure, claim, citation, and
@@ -649,8 +650,9 @@ completed run state, figure-audit clearance, exact claim/evidence/citation
 linkage, evidence-store resolution, and consistent checkpoint/review/paper
 readiness. This schema gate is independent of the evaluated promotion policy.
 A synthetic end-to-end regression reaches 72 bases and 720 cases; it validates
-the gate implementation only and does not alter the zero-admission status of
-the real v10 candidate set.
+the gate implementation only. The freeze now retains the entire campaign-return
+packet and rechecks its receipt and closed inventory. This does not alter the
+zero-admission status of the real v10 candidate set.
 
 The five-route public source comparison is frozen in
 `docs/research/evidence/promotion-source-portfolio-v2.json`. It retains two

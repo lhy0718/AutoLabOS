@@ -19,9 +19,9 @@ import {
 import { PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 import {
+  PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
   PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
-  PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
-  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+  PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
 import { PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
 import {
@@ -29,6 +29,9 @@ import {
   PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT,
   PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 
 const tempDirs: string[] = [];
 
@@ -605,14 +608,90 @@ async function writeConfirmatoryFreezeEvidence(
   const recipeSha256 = hashText(recipeText);
   const sourceRevision = "recovery-source-revision";
   const intakeText = JSON.stringify({
-    schema_version: "1.1",
+    schema_version: "1.2",
     intake_tier: "paper_scale",
-    study_id: suiteId
+    study_id: suiteId,
+    candidate_handoff_root: "candidate-handoff",
+    candidate_campaign_return_root: "candidate-campaign-return"
   });
-  const handoffText = JSON.stringify({ schema_version: "1.0", handoff_id: "recovery-handoff" });
+  const handoffText = JSON.stringify({
+    schema_version: "1.0",
+    handoff_id: "recovery-handoff",
+    source_revision: sourceRevision
+  });
   const reviewLabelsText = '{"schema_version":"1.0","candidate_id":"candidate-placeholder"}\n';
   const reviewEvidenceText = JSON.stringify({ schema_version: "1.0", handoff_id: "recovery-handoff" });
   const reviewReportText = JSON.stringify({ schema_version: "1.0", passed: true });
+  const campaignManifestText = JSON.stringify({
+    schema_version: "1.0",
+    campaign_id: "recovery-review-campaign",
+    handoff_id: "recovery-handoff",
+    source_revision: sourceRevision
+  });
+  const returnTexts = {
+    "returns/reviewer-a.json": JSON.stringify({
+      handoff_id: "recovery-handoff",
+      annotator_id: "reviewer-a"
+    }),
+    "returns/reviewer-b.json": JSON.stringify({
+      handoff_id: "recovery-handoff",
+      annotator_id: "reviewer-b"
+    }),
+    "returns/license-reviewer.json": JSON.stringify({
+      handoff_id: "recovery-handoff",
+      reviewer_id: "license-reviewer"
+    })
+  };
+  const campaignFiles = [
+    {
+      path: `adjudication/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`,
+      bytes: reviewLabelsText
+    },
+    {
+      path: `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`,
+      bytes: reviewEvidenceText
+    },
+    {
+      path: `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`,
+      bytes: reviewReportText
+    },
+    ...Object.entries(returnTexts).map(([filePath, bytes]) => ({ path: filePath, bytes })),
+    { path: "upstream/review-campaign.json", bytes: campaignManifestText },
+    { path: "upstream/trial-candidate-handoff.json", bytes: handoffText }
+  ].sort((left, right) => left.path.localeCompare(right.path));
+  const campaignReceiptText = JSON.stringify({
+    schema_version: "1.0",
+    kind: "promotion_trial_candidate_campaign_return",
+    campaign_id: "recovery-review-campaign",
+    handoff_id: "recovery-handoff",
+    source_revision: sourceRevision,
+    status: "adjudicated",
+    passed: true,
+    assigned_return_count: 3,
+    required_return_count: 3,
+    returns: [],
+    input_sha256: {
+      campaign_manifest: hashText(campaignManifestText),
+      handoff_manifest: hashText(handoffText)
+    },
+    adjudication: {
+      attempted: true,
+      passed: true,
+      report_path: `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`,
+      report_sha256: hashText(reviewReportText),
+      accepted_label_count: sourceByBase.size,
+      task_count: sourceByBase.size,
+      source_eligible_candidate_count: sourceByBase.size
+    },
+    validation_issues: [],
+    confirmatory_admitted: false,
+    files: campaignFiles.map((file) => ({
+      path: file.path,
+      bytes: Buffer.byteLength(file.bytes),
+      sha256: hashText(file.bytes)
+    })),
+    evidence_boundary: "Synthetic frozen-provenance parser fixture only."
+  });
   const upstreamFiles = [
     { ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF, bytes: intakeText },
     {
@@ -620,17 +699,13 @@ async function writeConfirmatoryFreezeEvidence(
       bytes: handoffText
     },
     {
-      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`,
-      bytes: reviewLabelsText
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/${PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT}`,
+      bytes: campaignReceiptText
     },
-    {
-      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`,
-      bytes: reviewEvidenceText
-    },
-    {
-      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`,
-      bytes: reviewReportText
-    }
+    ...campaignFiles.map((file) => ({
+      ref: `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/${file.path}`,
+      bytes: file.bytes
+    }))
   ].sort((left, right) => left.ref.localeCompare(right.ref));
   for (const item of upstreamFiles) {
     const outputPath = path.join(freezeRoot, item.ref);
@@ -656,7 +731,7 @@ async function writeConfirmatoryFreezeEvidence(
     copied_root: "base-bundles/" + benchmarkCase.base_bundle_id
   }));
   const freezeManifest = {
-    schema_version: "1.1",
+    schema_version: "1.2",
     study_id: suiteId,
     intake_tier: "paper_scale",
     evidence_class: "external_real_run",
@@ -667,11 +742,11 @@ async function writeConfirmatoryFreezeEvidence(
     source_diversity_status: "declared_stratified",
     intake_manifest_sha256: hashText(intakeText),
     upstream_evidence: {
-      schema_version: "1.0",
-      method: "contained_intake_review_evidence",
+      schema_version: "1.1",
+      method: "contained_intake_campaign_return_evidence",
       intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
       candidate_handoff_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
-      candidate_review_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
+      candidate_campaign_return_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
       files: upstreamInventory
     },
     recipe_sha256: recipeSha256,
@@ -681,6 +756,8 @@ async function writeConfirmatoryFreezeEvidence(
       handoff_id: "recovery-handoff",
       source_revision: sourceRevision,
       handoff_manifest_sha256: hashText(handoffText),
+      campaign_return_receipt_sha256: hashText(campaignReceiptText),
+      review_report_sha256: hashText(reviewReportText),
       adjudicated_labels_sha256: hashText(reviewLabelsText),
       review_evidence_sha256: hashText(reviewEvidenceText),
       source_eligible_candidate_count: sourceBundles.length
@@ -692,7 +769,7 @@ async function writeConfirmatoryFreezeEvidence(
   await writeFile(path.join(freezeRoot, "recipe.json"), recipeText);
   await writeFile(path.join(freezeRoot, "frozen-intake-manifest.json"), freezeText);
   return {
-    schema_version: "1.0",
+    schema_version: "1.1",
     method: "verified_confirmatory_freeze",
     study_id: suiteId,
     intake_tier: "paper_scale",

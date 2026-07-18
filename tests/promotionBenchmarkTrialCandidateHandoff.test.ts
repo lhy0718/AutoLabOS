@@ -74,7 +74,7 @@ import {
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryIntake.js";
 import {
   PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
-  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
 
@@ -1652,12 +1652,35 @@ describe("promotion trial-candidate handoff", () => {
         candidate_id: candidate.candidate_id
       });
     }
+    await writeJsonFile(path.join(workspace, "paper-scale-raw-review-intake.json"), {
+      schema_version: "1.2",
+      intake_tier: "paper_scale",
+      study_id: "promotion-confirmatory-raw-review-bypass",
+      candidate_handoff_root: "parquet-paired-handoff",
+      candidate_campaign_return_root: "source-eligible-adjudication",
+      sources: intakeSources
+    });
+    const rawReviewBypass = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath: "paper-scale-raw-review-intake.json",
+      outDir: "paper-scale-raw-review-intake-audit"
+    });
+    expect(rawReviewBypass.report.passed).toBe(false);
+    expect(rawReviewBypass.report.global_issues.map((issue) => issue.code)).toContain(
+      "confirmatory_paper_scale_campaign_return_invalid"
+    );
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath: "paper-scale-raw-review-intake.json",
+      outDir: "paper-scale-raw-review-frozen"
+    })).rejects.toThrow("confirmatory_paper_scale_campaign_return_invalid");
+
     await writeJsonFile(path.join(workspace, "paper-scale-intake.json"), {
-      schema_version: "1.1",
+      schema_version: "1.2",
       intake_tier: "paper_scale",
       study_id: "promotion-confirmatory-paper-scale",
       candidate_handoff_root: "parquet-paired-handoff",
-      candidate_review_root: "source-eligible-adjudication",
+      candidate_campaign_return_root: "source-eligible-campaign-return",
       sources: intakeSources
     });
     const intakeAudit = await auditPromotionConfirmatoryIntake({
@@ -1706,11 +1729,41 @@ describe("promotion trial-candidate handoff", () => {
       "paper-scale-frozen",
       PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
     ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateCampaignReturn(path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT
+    ))).toMatchObject({ passed: true, issues: [] });
     expect(await inspectPromotionTrialCandidateReviewAdjudication(path.join(
       workspace,
       "paper-scale-frozen",
-      PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+      PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
+      "adjudication"
     ))).toMatchObject({ passed: true, issues: [] });
+    const frozenCampaignReceiptPath = path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
+      PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+    );
+    const frozenCampaignReceiptBytes = await readFile(frozenCampaignReceiptPath);
+    const changedFrozenCampaignReceipt = JSON.parse(
+      frozenCampaignReceiptBytes.toString("utf8")
+    );
+    changedFrozenCampaignReceipt.assigned_return_count = 2;
+    await writeJsonFile(frozenCampaignReceiptPath, changedFrozenCampaignReceipt);
+    const changedFrozenCampaign = await inspectPromotionConfirmatoryFreezeEvidence({
+      freezeManifestPath: path.join(workspace, frozen.freeze_manifest_path),
+      recipePath: path.join(workspace, frozen.recipe_path)
+    });
+    expect(changedFrozenCampaign.passed).toBe(false);
+    expect(changedFrozenCampaign.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "confirmatory_freeze_upstream_hash_mismatch",
+        "confirmatory_freeze_campaign_return_invalid"
+      ])
+    );
+    await writeFile(frozenCampaignReceiptPath, frozenCampaignReceiptBytes);
 
     const labelTamperedRoot = path.join(workspace, "label-tampered-adjudication");
     await cp(path.join(workspace, "source-eligible-adjudication"), labelTamperedRoot, {

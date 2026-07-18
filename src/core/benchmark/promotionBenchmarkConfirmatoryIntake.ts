@@ -39,7 +39,7 @@ import {
   PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT,
   PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
   PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
-  PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
 import {
@@ -50,6 +50,10 @@ import {
 import {
   loadPromotionTrialCandidateReviewAdmissionEvidence
 } from "./promotionBenchmarkTrialCandidateReview.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT,
+  inspectPromotionTrialCandidateCampaignReturn
+} from "./promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 
 export const MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES =
   MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES;
@@ -75,11 +79,11 @@ export interface PromotionConfirmatoryIntakeSource {
 }
 
 export interface PromotionConfirmatoryIntakeManifest {
-  schema_version: "1.0" | "1.1";
+  schema_version: "1.0" | "1.2";
   intake_tier: "provisional" | "paper_scale";
   study_id: string;
   candidate_handoff_root?: string;
-  candidate_review_root?: string;
+  candidate_campaign_return_root?: string;
   sources: PromotionConfirmatoryIntakeSource[];
 }
 
@@ -187,6 +191,8 @@ interface PaperScaleEvidence {
   source_revision: string;
   candidate_by_id: Map<string, PromotionTrialCandidateRecord>;
   source_eligible_candidate_ids: Set<string>;
+  campaign_return_receipt_sha256: string;
+  review_report_sha256: string;
   review_labels_sha256: string;
   review_evidence_sha256: string;
 }
@@ -219,7 +225,10 @@ export async function freezePromotionConfirmatoryCorpus(
       throw new Error(`Promotion confirmatory output must stay outside source bundles: ${source.source_id}`);
     }
   }
-  for (const evidenceRoot of [manifest.candidate_handoff_root, manifest.candidate_review_root].filter(nonEmptyString)) {
+  for (const evidenceRoot of [
+    manifest.candidate_handoff_root,
+    manifest.candidate_campaign_return_root
+  ].filter(nonEmptyString)) {
     const resolved = path.resolve(manifestRoot, evidenceRoot);
     if (isSameOrContainedPath(resolved, outDir)) {
       throw new Error("Promotion confirmatory output must stay outside candidate evidence roots.");
@@ -287,7 +296,7 @@ export async function freezePromotionConfirmatoryCorpus(
     await writeJsonFile(recipePath, recipe);
     const recipeSha256 = sha256(await fs.readFile(recipePath));
     await writeJsonFile(path.join(stagingRoot, "frozen-intake-manifest.json"), {
-      schema_version: "1.1",
+      schema_version: "1.2",
       study_id: manifest.study_id,
       intake_tier: manifest.intake_tier,
       generated_at: new Date().toISOString(),
@@ -308,6 +317,9 @@ export async function freezePromotionConfirmatoryCorpus(
               handoff_id: inspected.paper_scale_evidence.handoff_id,
               source_revision: inspected.paper_scale_evidence.source_revision,
               handoff_manifest_sha256: inspected.paper_scale_evidence.handoff_manifest_sha256,
+              campaign_return_receipt_sha256:
+                inspected.paper_scale_evidence.campaign_return_receipt_sha256,
+              review_report_sha256: inspected.paper_scale_evidence.review_report_sha256,
               adjudicated_labels_sha256: inspected.paper_scale_evidence.review_labels_sha256,
               review_evidence_sha256: inspected.paper_scale_evidence.review_evidence_sha256,
               source_eligible_candidate_count:
@@ -368,18 +380,19 @@ async function copyConfirmatoryUpstreamEvidence(input: {
   manifestRoot: string;
   manifest: PromotionConfirmatoryIntakeManifest;
 }): Promise<{
-  schema_version: "1.0";
-  method: "contained_intake_review_evidence";
+  schema_version: "1.1";
+  method: "contained_intake_campaign_return_evidence";
   intake_manifest_ref: string;
   candidate_handoff_root_ref: string | null;
-  candidate_review_root_ref: string | null;
+  candidate_campaign_return_root_ref: string | null;
   files: Array<{ ref: string; sha256: string }>;
 }> {
   const upstreamRoot = path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT);
   await fs.mkdir(upstreamRoot, { recursive: true });
   await fs.copyFile(input.manifestPath, path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF));
   if (input.manifest.intake_tier === "paper_scale") {
-    if (!input.manifest.candidate_handoff_root || !input.manifest.candidate_review_root) {
+    if (!input.manifest.candidate_handoff_root
+        || !input.manifest.candidate_campaign_return_root) {
       throw new Error("Paper-scale confirmatory intake requires candidate evidence roots.");
     }
     await fs.cp(
@@ -388,8 +401,8 @@ async function copyConfirmatoryUpstreamEvidence(input: {
       { recursive: true, errorOnExist: true, force: false }
     );
     await fs.cp(
-      path.resolve(input.manifestRoot, input.manifest.candidate_review_root),
-      path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT),
+      path.resolve(input.manifestRoot, input.manifest.candidate_campaign_return_root),
+      path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT),
       { recursive: true, errorOnExist: true, force: false }
     );
   }
@@ -414,14 +427,14 @@ async function copyConfirmatoryUpstreamEvidence(input: {
   await visit(upstreamRoot);
   files.sort((left, right) => left.ref.localeCompare(right.ref));
   return {
-    schema_version: "1.0",
-    method: "contained_intake_review_evidence",
+    schema_version: "1.1",
+    method: "contained_intake_campaign_return_evidence",
     intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
     candidate_handoff_root_ref: input.manifest.intake_tier === "paper_scale"
       ? PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
       : null,
-    candidate_review_root_ref: input.manifest.intake_tier === "paper_scale"
-      ? PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
+    candidate_campaign_return_root_ref: input.manifest.intake_tier === "paper_scale"
+      ? PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT
       : null,
     files
   };
@@ -442,7 +455,10 @@ export async function auditPromotionConfirmatoryIntake(
       throw new Error(`Promotion confirmatory audit output must stay outside source bundles: ${source.source_id}`);
     }
   }
-  for (const evidenceRoot of [manifest.candidate_handoff_root, manifest.candidate_review_root].filter(nonEmptyString)) {
+  for (const evidenceRoot of [
+    manifest.candidate_handoff_root,
+    manifest.candidate_campaign_return_root
+  ].filter(nonEmptyString)) {
     if (isSameOrContainedPath(path.resolve(manifestRoot, evidenceRoot), outDir)) {
       throw new Error("Promotion confirmatory audit output must stay outside candidate evidence roots.");
     }
@@ -738,9 +754,18 @@ async function inspectPaperScaleEvidence(
     };
   }
   const handoffRoot = path.resolve(manifestRoot, manifest.candidate_handoff_root || "");
-  const reviewRoot = path.resolve(manifestRoot, manifest.candidate_review_root || "");
+  const campaignReturnRoot = path.resolve(
+    manifestRoot,
+    manifest.candidate_campaign_return_root || ""
+  );
   const handoff = await inspectPromotionTrialCandidateHandoff(handoffRoot);
   const handoffManifest = handoff.manifest;
+  const handoffManifestSha256 = handoffManifest
+    ? await hashRegularFile(path.join(
+      handoffRoot,
+      PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST
+    )).catch(() => null)
+    : null;
   const handoffFloorVerified = Boolean(
     handoff.passed
       && handoffManifest
@@ -760,6 +785,30 @@ async function inspectPaperScaleEvidence(
     });
   }
 
+  const campaignReturn = await inspectPromotionTrialCandidateCampaignReturn(
+    campaignReturnRoot
+  );
+  const campaignReceipt = campaignReturn.receipt;
+  const campaignReturnVerified = Boolean(
+    campaignReturn.passed
+      && campaignReceipt
+      && campaignReceipt.passed
+      && campaignReceipt.status === "adjudicated"
+      && campaignReceipt.adjudication.attempted
+      && campaignReceipt.adjudication.passed
+      && handoffManifest
+      && campaignReceipt.handoff_id === handoffManifest.handoff_id
+      && campaignReceipt.source_revision === handoffManifest.source_revision
+      && campaignReceipt.input_sha256.handoff_manifest === handoffManifestSha256
+  );
+  if (!campaignReturnVerified) {
+    issues.push({
+      code: "confirmatory_paper_scale_campaign_return_invalid",
+      message: "Paper-scale intake requires an integrity-valid, passing assigned review-campaign return bound to the exact candidate handoff."
+    });
+  }
+
+  const reviewRoot = path.join(campaignReturnRoot, "adjudication");
   let review: Awaited<ReturnType<typeof loadPromotionTrialCandidateReviewAdmissionEvidence>> | null = null;
   try {
     review = await loadPromotionTrialCandidateReviewAdmissionEvidence(reviewRoot);
@@ -770,7 +819,8 @@ async function inspectPaperScaleEvidence(
     });
   }
   const reviewVerified = Boolean(
-    review
+    campaignReturnVerified
+      && review
       && handoffManifest
       && review.handoff_id === handoffManifest.handoff_id
       && review.source_revision === handoffManifest.source_revision
@@ -779,6 +829,8 @@ async function inspectPaperScaleEvidence(
       && review.candidate_review_progression_floor_met
       && review.source_eligible_candidate_ids.length
         >= MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES
+      && campaignReceipt?.adjudication.source_eligible_candidate_count
+        === review.source_eligible_candidate_ids.length
   );
   if (review && !reviewVerified) {
     issues.push({
@@ -786,7 +838,8 @@ async function inspectPaperScaleEvidence(
       message: "Paper-scale intake requires revision-matched double-human review, redistribution permission, and 72 source-eligible candidates."
     });
   }
-  if (!handoffManifest || !review) {
+  if (!handoffManifest || !review || !campaignReceipt || !campaignReturnVerified
+      || !handoffManifestSha256 || !campaignReceipt.adjudication.report_sha256) {
     return {
       evidence: null,
       handoff_verified: handoffFloorVerified,
@@ -807,13 +860,15 @@ async function inspectPaperScaleEvidence(
   return {
     evidence: {
       handoff_id: handoffManifest.handoff_id,
-      handoff_manifest_sha256: sha256(await fs.readFile(path.join(
-        handoffRoot,
-        PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST
-      ))),
+      handoff_manifest_sha256: handoffManifestSha256,
       source_revision: handoffManifest.source_revision,
       candidate_by_id: candidateById,
       source_eligible_candidate_ids: new Set(review.source_eligible_candidate_ids),
+      campaign_return_receipt_sha256: sha256(await fs.readFile(path.join(
+        campaignReturnRoot,
+        PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+      ))),
+      review_report_sha256: campaignReceipt.adjudication.report_sha256,
       review_labels_sha256: review.labels_sha256,
       review_evidence_sha256: review.evidence_sha256
     },
@@ -853,18 +908,18 @@ function minimumConfirmatorySourceCount(
 
 function parseIntakeManifest(value: unknown): PromotionConfirmatoryIntakeManifest {
   if (!isRecord(value)
-      || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
+      || (value.schema_version !== "1.0" && value.schema_version !== "1.2")
       || !validId(value.study_id)
       || !Array.isArray(value.sources)) {
-    throw new Error("Promotion confirmatory intake requires schema_version=1.0 or 1.1, a study_id, and sources.");
+    throw new Error("Promotion confirmatory intake requires schema_version=1.0 or 1.2, a study_id, and sources.");
   }
   if (value.sources.length === 0) throw new Error("Promotion confirmatory intake requires at least one source bundle.");
-  const paperScale = value.schema_version === "1.1";
+  const paperScale = value.schema_version === "1.2";
   if ((paperScale && (value.intake_tier !== "paper_scale"
         || !nonEmptyString(value.candidate_handoff_root)
-        || !nonEmptyString(value.candidate_review_root)))
+        || !nonEmptyString(value.candidate_campaign_return_root)))
       || (!paperScale && value.intake_tier !== undefined && value.intake_tier !== "provisional")) {
-    throw new Error("Schema 1.1 requires paper_scale candidate handoff and review roots; schema 1.0 is provisional.");
+    throw new Error("Schema 1.2 requires paper_scale candidate handoff and campaign-return roots; schema 1.0 is provisional.");
   }
   const sourceIds = new Set<string>();
   const candidateIds = new Set<string>();
@@ -899,13 +954,13 @@ function parseIntakeManifest(value: unknown): PromotionConfirmatoryIntakeManifes
     };
   });
   return {
-    schema_version: paperScale ? "1.1" : "1.0",
+    schema_version: paperScale ? "1.2" : "1.0",
     intake_tier: paperScale ? "paper_scale" : "provisional",
     study_id: value.study_id,
     ...(paperScale
       ? {
           candidate_handoff_root: value.candidate_handoff_root as string,
-          candidate_review_root: value.candidate_review_root as string
+          candidate_campaign_return_root: value.candidate_campaign_return_root as string
         }
       : {}),
     sources
@@ -932,6 +987,14 @@ async function inspectRequiredLicenseFile(
     });
     return null;
   }
+}
+
+async function hashRegularFile(filePath: string): Promise<string> {
+  const stat = await fs.lstat(filePath);
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
+    throw new Error("Expected a non-empty regular file.");
+  }
+  return sha256(await fs.readFile(filePath));
 }
 
 function sha256(value: Uint8Array): string {

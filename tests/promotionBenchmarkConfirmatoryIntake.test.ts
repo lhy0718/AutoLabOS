@@ -52,7 +52,7 @@ describe("promotion confirmatory intake", () => {
       upstream_evidence: {
         intake_manifest_ref: string;
         candidate_handoff_root_ref: string | null;
-        candidate_review_root_ref: string | null;
+        candidate_campaign_return_root_ref: string | null;
         files: Array<{ ref: string; sha256: string }>;
       };
       cases: Array<{
@@ -119,11 +119,11 @@ describe("promotion confirmatory intake", () => {
     expect(freezeManifest.execution_provenance_status).toBe("artifact_verified");
     expect(freezeManifest.source_diversity_status).toBe("declared_stratified");
     expect(freezeManifest.upstream_evidence).toEqual({
-      schema_version: "1.0",
-      method: "contained_intake_review_evidence",
+      schema_version: "1.1",
+      method: "contained_intake_campaign_return_evidence",
       intake_manifest_ref: "upstream-evidence/intake-manifest.json",
       candidate_handoff_root_ref: null,
-      candidate_review_root_ref: null,
+      candidate_campaign_return_root_ref: null,
       files: [{
         ref: "upstream-evidence/intake-manifest.json",
         sha256: freezeManifest.intake_manifest_sha256
@@ -289,16 +289,24 @@ describe("promotion confirmatory intake", () => {
       schema_version: string;
       intake_tier?: string;
       candidate_handoff_root?: string;
-      candidate_review_root?: string;
+      candidate_campaign_return_root?: string;
       sources: Array<Record<string, unknown>>;
     };
     manifest.schema_version = "1.1";
     manifest.intake_tier = "paper_scale";
     manifest.candidate_handoff_root = "candidate-handoff";
-    manifest.candidate_review_root = "candidate-review";
+    manifest.candidate_campaign_return_root = "candidate-campaign-return";
     manifest.sources.forEach((source, index) => {
       source.candidate_id = `candidate-${String(index + 1).padStart(2, "0")}`;
     });
+    await writeJson(path.join(workspace, manifestPath), manifest);
+    await expect(auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath,
+      outDir: "obsolete-schema-paper-scale-audit"
+    })).rejects.toThrow("schema_version=1.0 or 1.2");
+
+    manifest.schema_version = "1.2";
     await writeJson(path.join(workspace, manifestPath), manifest);
 
     const audit = await auditPromotionConfirmatoryIntake({
@@ -317,6 +325,7 @@ describe("promotion confirmatory intake", () => {
     });
     expect(audit.report.global_issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       "confirmatory_paper_scale_handoff_invalid",
+      "confirmatory_paper_scale_campaign_return_invalid",
       "confirmatory_paper_scale_review_invalid",
       "confirmatory_source_count_minimum_not_met"
     ]));

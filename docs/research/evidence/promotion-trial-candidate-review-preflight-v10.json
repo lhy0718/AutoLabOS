@@ -82,7 +82,16 @@
     "canonical_source_count": 0,
     "confirmatory_admitted": false
   },
+  "confirmatory_intake_precondition": {
+    "required_schema_version": "1.2",
+    "required_review_input": "assignment_bound_campaign_return",
+    "entered": false,
+    "status": "not_entered_missing_canonical_sources",
+    "canonical_source_count": 0,
+    "required_canonical_source_count": 72,
+    "confirmatory_admitted": false
+  },
   "human_review_completed": false,
   "confirmatory_admitted": false,
-  "evidence_boundary": "This audit records machine-prepared incomplete worksheets, their expected fail-closed preflight, an assignment-bound controller collection of those still-blank campaign templates, and the canonical-curation gate rejecting that blocked receipt without creating output. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
+  "evidence_boundary": "This audit records machine-prepared incomplete worksheets, their expected fail-closed preflight, an assignment-bound controller collection of those still-blank campaign templates, the canonical-curation gate rejecting that blocked receipt without creating output, and confirmatory intake remaining unentered because no canonical sources exist. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, or confirmatory admission."
 }

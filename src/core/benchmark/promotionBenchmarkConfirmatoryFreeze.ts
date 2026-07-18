@@ -15,6 +15,9 @@ import {
   PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT,
   PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE
 } from "./promotionBenchmarkTrialCandidateReview.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+} from "./promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 
 export const PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT = "confirmatory-freeze";
 export const PROMOTION_CONFIRMATORY_FREEZE_MANIFEST_REF =
@@ -26,8 +29,8 @@ export const PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF =
   `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/intake-manifest.json`;
 export const PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT =
   `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/candidate-handoff`;
-export const PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT =
-  `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/candidate-review`;
+export const PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT =
+  `${PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT}/candidate-campaign-return`;
 export const MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES = 20;
 
 export type PromotionConfirmatoryFreezeTier = "provisional" | "paper_scale";
@@ -36,13 +39,15 @@ export interface PromotionConfirmatoryFreezeCandidateReviewReceipt {
   handoff_id: string;
   source_revision: string;
   handoff_manifest_sha256: string;
+  campaign_return_receipt_sha256: string;
+  review_report_sha256: string;
   adjudicated_labels_sha256: string;
   review_evidence_sha256: string;
   source_eligible_candidate_count: number;
 }
 
 export interface PromotionConfirmatoryFreezeProvenance {
-  schema_version: "1.0";
+  schema_version: "1.1";
   method: "verified_confirmatory_freeze";
   study_id: string;
   intake_tier: PromotionConfirmatoryFreezeTier;
@@ -86,7 +91,7 @@ export function parsePromotionConfirmatoryFreezeProvenance(
   value: unknown
 ): PromotionConfirmatoryFreezeProvenance | null {
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || value.schema_version !== "1.1"
       || value.method !== "verified_confirmatory_freeze"
       || !validId(value.study_id)
       || (value.intake_tier !== "provisional" && value.intake_tier !== "paper_scale")
@@ -117,7 +122,7 @@ export function parsePromotionConfirmatoryFreezeProvenance(
     return null;
   }
   return {
-    schema_version: "1.0",
+    schema_version: "1.1",
     method: "verified_confirmatory_freeze",
     study_id: value.study_id,
     intake_tier: value.intake_tier,
@@ -188,7 +193,7 @@ export async function inspectPromotionConfirmatoryFreezeEvidence(input: {
     candidateReview,
     issues
   );
-  if (freeze.schema_version !== "1.1"
+  if (freeze.schema_version !== "1.2"
       || (tier !== "provisional" && tier !== "paper_scale")
       || !validId(freeze.study_id)
       || freeze.evidence_class !== "external_real_run"
@@ -286,8 +291,8 @@ export async function inspectPromotionConfirmatoryFreezeEvidence(input: {
     && Number.isInteger(caseCount)
     && isSha256(freeze.intake_manifest_sha256);
   const provenance: PromotionConfirmatoryFreezeProvenance | null = issues.length === 0 && structurallyValid
-    ? {
-        schema_version: "1.0",
+      ? {
+        schema_version: "1.1",
         method: "verified_confirmatory_freeze",
         study_id: freeze.study_id as string,
         intake_tier: tier,
@@ -320,13 +325,15 @@ async function inspectUpstreamEvidence(
   const value = freeze.upstream_evidence;
   if (value === undefined) return null;
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
-      || value.method !== "contained_intake_review_evidence"
+      || value.schema_version !== "1.1"
+      || value.method !== "contained_intake_campaign_return_evidence"
       || value.intake_manifest_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF
       || (tier === "paper_scale"
         ? value.candidate_handoff_root_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
-          || value.candidate_review_root_ref !== PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT
-        : value.candidate_handoff_root_ref !== null || value.candidate_review_root_ref !== null)
+          || value.candidate_campaign_return_root_ref
+            !== PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT
+        : value.candidate_handoff_root_ref !== null
+          || value.candidate_campaign_return_root_ref !== null)
       || !Array.isArray(value.files)
       || value.files.length === 0) {
     issues.push({
@@ -391,18 +398,28 @@ async function inspectUpstreamEvidence(
   }
   if (tier === "paper_scale" && candidateReview) {
     const handoffRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT}/${PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST}`;
-    const labelsRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`;
-    const reviewEvidenceRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`;
-    const reviewReportRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_REVIEW_ROOT}/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`;
+    const campaignReceiptRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/${PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT}`;
+    const labelsRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_ADJUDICATED_LABELS}`;
+    const reviewEvidenceRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE}`;
+    const reviewReportRef = `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`;
     if (byRef.get(handoffRef) !== candidateReview.handoff_manifest_sha256
+        || byRef.get(campaignReceiptRef) !== candidateReview.campaign_return_receipt_sha256
+        || byRef.get(reviewReportRef) !== candidateReview.review_report_sha256
         || byRef.get(labelsRef) !== candidateReview.adjudicated_labels_sha256
-        || byRef.get(reviewEvidenceRef) !== candidateReview.review_evidence_sha256
-        || !byRef.has(reviewReportRef)) {
+        || byRef.get(reviewEvidenceRef) !== candidateReview.review_evidence_sha256) {
       issues.push({
         code: "confirmatory_freeze_candidate_review_receipt_mismatch",
-        message: "Contained handoff and review evidence must reproduce every candidate-review receipt."
+        message: "Contained handoff and campaign-return evidence must reproduce every candidate-review receipt."
       });
     }
+    await inspectContainedCampaignReturnReceipt({
+      freezeRoot,
+      campaignReceiptRef,
+      handoffRef,
+      candidateReview,
+      inventory: byRef,
+      issues
+    });
   }
   const intakeBytes = await readRegularFile(
     path.join(freezeRoot, PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF),
@@ -417,7 +434,7 @@ async function inspectUpstreamEvidence(
         : intake.intake_tier;
       if (intake.study_id !== freeze.study_id
           || intakeTier !== tier
-          || (tier === "paper_scale" ? intake.schema_version !== "1.1" : intake.schema_version !== "1.0")) {
+          || (tier === "paper_scale" ? intake.schema_version !== "1.2" : intake.schema_version !== "1.0")) {
         throw new Error("mismatch");
       }
     } catch {
@@ -594,6 +611,8 @@ function parseCandidateReviewReceipt(value: unknown): PromotionConfirmatoryFreez
       || !validId(value.handoff_id)
       || !nonEmptyString(value.source_revision)
       || !isSha256(value.handoff_manifest_sha256)
+      || !isSha256(value.campaign_return_receipt_sha256)
+      || !isSha256(value.review_report_sha256)
       || !isSha256(value.adjudicated_labels_sha256)
       || !isSha256(value.review_evidence_sha256)
       || !Number.isInteger(value.source_eligible_candidate_count)
@@ -601,6 +620,80 @@ function parseCandidateReviewReceipt(value: unknown): PromotionConfirmatoryFreez
     return null;
   }
   return value as unknown as PromotionConfirmatoryFreezeCandidateReviewReceipt;
+}
+
+async function inspectContainedCampaignReturnReceipt(input: {
+  freezeRoot: string;
+  campaignReceiptRef: string;
+  handoffRef: string;
+  candidateReview: PromotionConfirmatoryFreezeCandidateReviewReceipt;
+  inventory: Map<string, string>;
+  issues: PromotionConfirmatoryFreezeIssue[];
+}): Promise<void> {
+  try {
+    const receipt = parseJsonRecord(await fs.readFile(path.join(
+      input.freezeRoot,
+      input.campaignReceiptRef
+    )));
+    const receiptInput = isRecord(receipt.input_sha256) ? receipt.input_sha256 : null;
+    const adjudication = isRecord(receipt.adjudication) ? receipt.adjudication : null;
+    const containedHandoffRef =
+      `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/upstream/trial-candidate-handoff.json`;
+    const containedCampaignRef =
+      `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/upstream/review-campaign.json`;
+    if (receipt.kind !== "promotion_trial_candidate_campaign_return"
+        || receipt.status !== "adjudicated"
+        || receipt.passed !== true
+        || receipt.handoff_id !== input.candidateReview.handoff_id
+        || receipt.source_revision !== input.candidateReview.source_revision
+        || receipt.assigned_return_count !== 3
+        || receipt.required_return_count !== 3
+        || !Array.isArray(receipt.validation_issues)
+        || receipt.validation_issues.length !== 0
+        || receipt.confirmatory_admitted !== false
+        || !receiptInput
+        || !isSha256(receiptInput.campaign_manifest)
+        || receiptInput.handoff_manifest !== input.candidateReview.handoff_manifest_sha256
+        || input.inventory.get(input.handoffRef) !== receiptInput.handoff_manifest
+        || input.inventory.get(containedHandoffRef) !== receiptInput.handoff_manifest
+        || input.inventory.get(containedCampaignRef) !== receiptInput.campaign_manifest
+        || !adjudication
+        || adjudication.attempted !== true
+        || adjudication.passed !== true
+        || adjudication.report_path
+          !== `adjudication/${PROMOTION_TRIAL_CANDIDATE_REVIEW_ADJUDICATION_REPORT}`
+        || adjudication.report_sha256 !== input.candidateReview.review_report_sha256
+        || adjudication.source_eligible_candidate_count
+          !== input.candidateReview.source_eligible_candidate_count
+        || !Array.isArray(receipt.files)) {
+      throw new Error("campaign receipt mismatch");
+    }
+    const expectedRefs = [input.campaignReceiptRef];
+    const seen = new Set<string>();
+    for (const file of receipt.files) {
+      if (!isRecord(file) || !safeRelativePath(file.path) || !isSha256(file.sha256)
+          || seen.has(file.path)) {
+        throw new Error("campaign inventory invalid");
+      }
+      seen.add(file.path);
+      const ref = `${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/${file.path}`;
+      if (input.inventory.get(ref) !== file.sha256) {
+        throw new Error("campaign file hash mismatch");
+      }
+      expectedRefs.push(ref);
+    }
+    const observedRefs = [...input.inventory.keys()].filter((ref) =>
+      ref === input.campaignReceiptRef
+        || ref.startsWith(`${PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT}/`));
+    if (!sameStringSet(observedRefs, expectedRefs)) {
+      throw new Error("campaign inventory not closed");
+    }
+  } catch {
+    input.issues.push({
+      code: "confirmatory_freeze_campaign_return_invalid",
+      message: "The contained campaign-return receipt and its exact file inventory must remain self-consistent."
+    });
+  }
 }
 
 async function readRegularFile(
