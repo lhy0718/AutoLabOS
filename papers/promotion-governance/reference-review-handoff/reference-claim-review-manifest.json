@@ -25,11 +25,13 @@
     {
       "claim_id": "claim-0012",
       "citation_key": "petel2026madscps",
+      "source_title": "MADS-CPS: A Machine-Checkable Admissibility Contract for AI Scientists in Autonomous Laboratories",
       "record_url": "https://openreview.net/forum?id=VrYHFXGyUO"
     },
     {
       "claim_id": "claim-0014",
       "citation_key": "nishi2026claimgarden",
+      "source_title": "ClaimGarden: Update-Aware Claim-State Control for AI Scientist Workflows",
       "record_url": "https://openreview.net/forum?id=Y8INhipPQe"
     }
   ],

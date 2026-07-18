@@ -40,7 +40,12 @@ describe("reference claim review handoff", () => {
       "utf8"
     )) as {
       task_count: number;
-      missing_full_text_claims: Array<{ claim_id: string }>;
+      missing_full_text_claims: Array<{
+        claim_id: string;
+        citation_key: string;
+        source_title: string;
+        record_url: string;
+      }>;
       evidence_boundary: string;
     };
     const tasks = (await readFile(
@@ -60,6 +65,7 @@ describe("reference claim review handoff", () => {
     expect(manifest.missing_full_text_claims).toEqual([{
       claim_id: "claim-c",
       citation_key: "source-b",
+      source_title: "Source Beta",
       record_url: "https://example.test/source-b"
     }]);
     expect(tasks.map((task) => task.task_id)).toEqual(["claim-a", "claim-b"]);
@@ -214,10 +220,16 @@ describe("reference claim review handoff", () => {
         sha256: SOURCE_ALPHA_SHA256
       }]
     });
-    expect(await readFile(
+    const sourceReadme = await readFile(
       path.join(workspace, "private-distribution", REFERENCE_CLAIM_REVIEW_SOURCE_README),
       "utf8"
-    )).toContain("must not be published");
+    );
+    expect(sourceReadme).toContain("must not be published");
+    expect(sourceReadme).toContain("## Missing Full Text");
+    expect(sourceReadme).toContain(
+      "source-b: Source Beta (record: https://example.test/source-b; blocked claims: claim-c)"
+    );
+    expect(sourceReadme).toContain("must not be reviewed until the exact full text is acquired");
 
     const preflight = await preflightReferenceClaimReview({
       cwd: workspace,

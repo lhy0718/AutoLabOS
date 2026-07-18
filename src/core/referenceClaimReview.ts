@@ -76,6 +76,7 @@ interface ReferenceClaimReviewManifest {
   missing_full_text_claims: Array<{
     claim_id: string;
     citation_key: string;
+    source_title?: string;
     record_url: string;
   }>;
   reviewer_root: "reviewer";
@@ -206,6 +207,7 @@ export async function prepareReferenceClaimReview(
       missing.push({
         claim_id: claim.claim_id,
         citation_key: claim.citation_key,
+        source_title: lockEntry.title,
         record_url: source.record_url
       });
       continue;
@@ -346,7 +348,10 @@ export async function prepareReferenceClaimReviewPrivateDistribution(
   }));
   copiedFiles.set(
     REFERENCE_CLAIM_REVIEW_SOURCE_README,
-    Buffer.from(renderPrivateSourceReadme(sourceRecords), "utf8")
+    Buffer.from(renderPrivateSourceReadme(
+      sourceRecords,
+      handoff.missing_full_text_claims
+    ), "utf8")
   );
   for (const [index, source] of sources.entries()) {
     copiedFiles.set(sourceRecords[index].path, source.bytes);
@@ -489,6 +494,15 @@ async function inspectPacket(packetRoot: string): Promise<ReferenceClaimReviewMa
     throw new Error("Invalid reference claim review manifest.");
   }
   const manifest = raw as unknown as ReferenceClaimReviewManifest;
+  if (manifest.missing_full_text_claim_count !== manifest.missing_full_text_claims.length
+      || manifest.missing_full_text_claims.some((claim) =>
+        !isRecord(claim)
+        || !validId(claim.claim_id)
+        || !validId(claim.citation_key)
+        || (claim.source_title !== undefined && !nonEmpty(claim.source_title))
+        || !nonEmpty(claim.record_url))) {
+    throw new Error("Reference claim review missing-source inventory is invalid.");
+  }
   const expectedFiles = new Set([
     REFERENCE_CLAIM_REVIEW_TASKS,
     REFERENCE_CLAIM_REVIEW_TEMPLATE,
@@ -914,8 +928,27 @@ function renderPreflightSummary(report: ReferenceClaimReviewPreflightReport): st
 }
 
 function renderPrivateSourceReadme(
-  sources: ReferenceClaimReviewPrivateDistributionManifest["sources"]
+  sources: ReferenceClaimReviewPrivateDistributionManifest["sources"],
+  missingClaims: ReferenceClaimReviewManifest["missing_full_text_claims"]
 ): string {
+  const missingSources = new Map<string, {
+    sourceTitle: string;
+    recordUrl: string;
+    claimIds: string[];
+  }>();
+  for (const claim of missingClaims) {
+    const existing = missingSources.get(claim.citation_key);
+    if (existing) {
+      existing.claimIds.push(claim.claim_id);
+      continue;
+    }
+    missingSources.set(claim.citation_key, {
+      sourceTitle: claim.source_title || claim.citation_key,
+      recordUrl: claim.record_url,
+      claimIds: [claim.claim_id]
+    });
+  }
+
   return [
     "# Private Full-Text Sources",
     "",
@@ -926,8 +959,23 @@ function renderPrivateSourceReadme(
     ...sources.map((source) =>
       "- " + source.citation_key + ": " + source.path + " (SHA-256 " + source.sha256 + ")"),
     "",
+    ...(missingSources.size > 0 ? [
+      "## Missing Full Text",
+      "",
+      "The following sources are not included. Their claims remain blocked and must not be reviewed until the exact full text is acquired, title-checked, and hash-bound in a new packet.",
+      "",
+      ...[...missingSources.entries()].map(([citationKey, source]) =>
+        "- " + readmeInline(citationKey) + ": " + readmeInline(source.sourceTitle)
+        + " (record: " + readmeInline(source.recordUrl)
+        + "; blocked claims: " + source.claimIds.map(readmeInline).join(", ") + ")"),
+      ""
+    ] : []),
     "Return only the completed review JSON outside this packet."
   ].join("\n") + "\n";
+}
+
+function readmeInline(value: string): string {
+  return value.replace(/\s+/gu, " ").trim();
 }
 
 async function assertRegularDirectory(target: string, label: string): Promise<void> {

@@ -64,6 +64,9 @@ Its manifest fixes `public_distribution_allowed=false` and
 `license_review_status=not_assessed`; the resulting directory must not enter a
 public source snapshot without a separate license review. The original two
 missing-source claims remain absent rather than being filled from abstracts.
+The private packet's `reviewer/SOURCE_README.md` lists their citation keys,
+titles, public record URLs, and blocked claim IDs so source collection remains
+explicitly separate from human claim review.
 
 Preflight a returned human review separately:
 
