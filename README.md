@@ -668,14 +668,14 @@ built without `--freeze-manifest` remains valid for development, but it cannot
 become paper-claim-eligible.
 
 The freeze also preserves the exact intake manifest and, for paper-scale input,
-the complete candidate handoff and campaign-return roots under
-`upstream-evidence/`. A sorted file inventory binds every non-empty regular file
-by SHA-256 and must reproduce the intake, handoff manifest, controller receipt,
-returned files, adjudication report, labels, and review-evidence receipts. The
-builder carries this closed directory into
-`confirmatory-freeze/upstream-evidence/`; missing files, added files, symlinks,
-or byte drift invalidate suite loading and route confirmatory work back to
-experiment design.
+the complete candidate handoff, campaign-return, and canonical-curation-return
+roots under `upstream-evidence/`. A sorted file inventory binds every non-empty
+regular file by SHA-256 and must reproduce the intake, handoff manifest,
+controller receipts, returned files and source trees, adjudication report,
+labels, and review-evidence receipts. The builder carries this closed directory
+and every frozen base tree into `confirmatory-freeze/`; missing files, added
+files, symlinks, or byte drift invalidate suite loading and route confirmatory
+work back to experiment design.
 
 A benchmark recipe cannot set `paper_claim_eligible=true`. Only the independent
 adjudication path may issue that state after all scale, diversity, execution,
