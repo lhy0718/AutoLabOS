@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 
 import { writeJsonFile } from "../../utils/fs.js";
 import {
+  hashPromotionBenchmarkSuiteSnapshot,
   PROMOTION_DECISIONS,
   loadPromotionBenchmarkSuite,
   type PromotionBenchmarkPrediction,
@@ -15,7 +16,10 @@ import {
   type PromotionPromptRequestMap,
   type PromotionProviderResponse
 } from "./promotionBenchmarkPromptPack.js";
-import type { PromotionProviderRunManifest } from "./promotionBenchmarkProviderRunner.js";
+import type {
+  PromotionProviderRunManifest,
+  PromotionProviderSourceSuiteBinding
+} from "./promotionBenchmarkProviderRunner.js";
 
 const REQUIRED_TRIAL_COUNT = 3;
 
@@ -27,7 +31,7 @@ export interface AggregatePromotionProviderRunsInput {
 }
 
 export interface PromotionProviderAggregateManifest {
-  schema_version: "1.0";
+  schema_version: "1.1";
   aggregate_id: string;
   status: "completed";
   protocol: "manuscript-only-v1";
@@ -36,7 +40,9 @@ export interface PromotionProviderAggregateManifest {
   provider_receipt_status: "recorded_not_independently_verified";
   provider_identity_independently_verified: false;
   external_empirical_evidence_eligible: true;
+  paper_claim_evidence_eligible: boolean;
   independent_trial_requirement_met: true;
+  evidence_boundary: string;
   independence_basis: {
     required_trial_count: 3;
     distinct_run_ids: true;
@@ -48,6 +54,7 @@ export interface PromotionProviderAggregateManifest {
   suite_id: string;
   suite_path: string;
   suite_sha256: string;
+  source_suite: PromotionProviderSourceSuiteBinding;
   system_id: string;
   requested_model: string;
   resolved_model: string;
@@ -120,6 +127,14 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     throw new Error(`Promotion benchmark suite validation failed: ${loaded.issues.map((issue) => issue.code).join(", ")}`);
   }
   if (loaded.suite.cases.length === 0) throw new Error("Promotion provider aggregation requires a non-empty suite.");
+  const suiteSha256 = await sha256File(suitePath);
+  const sourceSuite: PromotionProviderSourceSuiteBinding = {
+    path: portableRef(cwd, suitePath),
+    manifest_sha256: suiteSha256,
+    snapshot_sha256: await hashPromotionBenchmarkSuiteSnapshot(suitePath),
+    evidence_class: loaded.suite.manifest.evidence_class || "unspecified",
+    paper_claim_eligible: loaded.suite.manifest.paper_claim_eligible === true
+  };
 
   const validatedRuns: ValidatedRun[] = [];
   for (const manifestInputPath of input.runManifestPaths) {
@@ -132,6 +147,7 @@ export async function aggregatePromotionBenchmarkProviderRuns(
       cwd,
       manifestPath,
       suiteId: loaded.suite.manifest.suite_id,
+      sourceSuite,
       expectedCaseIds: loaded.suite.cases.map((benchmarkCase) => benchmarkCase.case_id),
       manuscriptPathByCase: new Map(loaded.suite.cases.map((benchmarkCase) => [
         benchmarkCase.case_id,
@@ -198,9 +214,8 @@ export async function aggregatePromotionBenchmarkProviderRuns(
   })).slice(0, 16)}`;
   const predictionsPath = path.join(outDir, "predictions.jsonl");
   const manifestPath = path.join(outDir, "provider-run-aggregate-manifest.json");
-  const suiteSha256 = await sha256File(suitePath);
   const manifest: PromotionProviderAggregateManifest = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     aggregate_id: aggregateId,
     status: "completed",
     protocol: "manuscript-only-v1",
@@ -209,7 +224,10 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     provider_receipt_status: "recorded_not_independently_verified",
     provider_identity_independently_verified: false,
     external_empirical_evidence_eligible: true,
+    paper_claim_evidence_eligible: sourceSuite.paper_claim_eligible
+      && validatedRuns.every((run) => run.manifest.paper_claim_evidence_eligible),
     independent_trial_requirement_met: true,
+    evidence_boundary: "This aggregate verifies three complete hash-bound provider executions. It is paper-claim evidence only when the bound source suite is paper-claim eligible and the downstream confirmatory gate accepts the complete comparison and recovery evidence.",
     independence_basis: {
       required_trial_count: 3,
       distinct_run_ids: true,
@@ -221,6 +239,7 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     suite_id: reference.suite_id,
     suite_path: portableRef(cwd, suitePath),
     suite_sha256: suiteSha256,
+    source_suite: sourceSuite,
     system_id: reference.system_id,
     requested_model: reference.requested_model,
     resolved_model: referenceRun.resolvedModel,
@@ -262,6 +281,7 @@ async function validateRun(input: {
   cwd: string;
   manifestPath: string;
   suiteId: string;
+  sourceSuite: PromotionProviderSourceSuiteBinding;
   expectedCaseIds: string[];
   manuscriptPathByCase: Map<string, string>;
 }): Promise<ValidatedRun> {
@@ -270,6 +290,12 @@ async function validateRun(input: {
   const runRoot = path.dirname(input.manifestPath);
   if (manifest.suite_id !== input.suiteId) {
     throw new Error(`Provider run suite_id does not match the selected suite: ${manifest.trial_id}`);
+  }
+  if (!sameSourceSuiteBinding(manifest.source_suite, input.sourceSuite)) {
+    throw new Error(`Provider run source-suite binding does not match the selected suite: ${manifest.trial_id}`);
+  }
+  if (manifest.paper_claim_evidence_eligible !== input.sourceSuite.paper_claim_eligible) {
+    throw new Error(`Provider run paper-claim eligibility does not match the selected suite: ${manifest.trial_id}`);
   }
 
   const requestsPath = await resolveRunArtifact(input.cwd, runRoot, manifest.prompt_pack.requests_path, "requests");
@@ -428,13 +454,15 @@ async function validateRequestMap(input: {
 }
 
 function parseCompletedRunManifest(value: unknown, context: string): PromotionProviderRunManifest {
-  if (!isRecord(value) || value.schema_version !== "1.0" || value.status !== "completed"
+  if (!isRecord(value) || value.schema_version !== "1.1" || value.status !== "completed"
       || value.protocol !== "manuscript-only-v1" || value.provider !== "openai_responses_api"
       || value.evidence_class !== "external_real_provider"
       || value.provider_receipt_status !== "recorded_not_independently_verified"
       || value.provider_identity_independently_verified !== false
       || value.external_empirical_evidence_eligible !== true
+      || typeof value.paper_claim_evidence_eligible !== "boolean"
       || value.independent_trial_requirement_met !== false
+      || !nonEmptyString(value.evidence_boundary) || !isSourceSuiteBinding(value.source_suite)
       || !portableIdentifier(value.run_id) || !portableIdentifier(value.suite_id)
       || !portableIdentifier(value.system_id) || !portableIdentifier(value.trial_id)
       || !nonEmptyString(value.requested_model) || !nonEmptyString(value.reasoning_effort)
@@ -447,6 +475,27 @@ function parseCompletedRunManifest(value: unknown, context: string): PromotionPr
     throw new Error(`Invalid completed external provider run manifest: ${context}`);
   }
   return value as unknown as PromotionProviderRunManifest;
+}
+
+function isSourceSuiteBinding(value: unknown): value is PromotionProviderSourceSuiteBinding {
+  return isRecord(value)
+    && nonEmptyString(value.path)
+    && isSha256(value.manifest_sha256)
+    && isSha256(value.snapshot_sha256)
+    && ["synthetic_development", "human_adjudicated_test", "external_real_run", "unspecified"]
+      .includes(String(value.evidence_class))
+    && typeof value.paper_claim_eligible === "boolean";
+}
+
+function sameSourceSuiteBinding(
+  left: PromotionProviderSourceSuiteBinding,
+  right: PromotionProviderSourceSuiteBinding
+): boolean {
+  return left.path === right.path
+    && left.manifest_sha256 === right.manifest_sha256
+    && left.snapshot_sha256 === right.snapshot_sha256
+    && left.evidence_class === right.evidence_class
+    && left.paper_claim_eligible === right.paper_claim_eligible;
 }
 
 function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifest): Array<{

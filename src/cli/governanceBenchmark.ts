@@ -315,6 +315,7 @@ export async function runPromotionProviderCli(
       `Suite: ${result.manifest.suite_id}`,
       `Responses: ${result.manifest.completed_response_count}/${result.manifest.request_count}`,
       `Cost USD: ${result.manifest.usage.cost_usd.toFixed(6)}`,
+      `Paper-claim evidence eligible: ${result.manifest.paper_claim_evidence_eligible}`,
       `Predictions: ${result.predictions_path}`,
       `Manifest: ${result.manifest_path}`
     ].join("\n") + "\n"
@@ -332,6 +333,7 @@ export async function runPromotionProviderAggregationCli(
       `Trials: ${result.manifest.trial_count}`,
       `Predictions: ${result.manifest.prediction_count}`,
       `Independent trial requirement: ${result.manifest.independent_trial_requirement_met}`,
+      `Paper-claim evidence eligible: ${result.manifest.paper_claim_evidence_eligible}`,
       `Output: ${result.predictions_path}`,
       `Manifest: ${result.manifest_path}`
     ].join("\n") + "\n"

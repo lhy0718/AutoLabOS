@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-17
+Last updated: 2026-07-19
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,59 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-612
+
+- Status: resolved; focused/full regressions, build, research-governance validation, public sanitization, and harness validation pass
+- Validation target: real-provider execution evidence must remain distinct from paper-claim eligibility and must stay bound to the exact closed benchmark suite evaluated by the provider.
+- Environment/session context: direct provider-runner and three-trial aggregate fixtures over a valid development suite; no real API credential or provider call was used for the regression.
+- Reproduction steps:
+  1. Build a valid development promotion suite whose evidence class is unspecified and whose `paper_claim_eligible` value is false.
+  2. Execute the provider runner with external-provider-shaped response receipts and complete usage metadata.
+  3. Inspect the completed run manifest and aggregate three distinct completed trials.
+  4. Change a source-suite eligibility field or rewrite one case-manifest byte sequence after the runs.
+- Expected behavior:
+  - The manifest separately records external provider execution and paper-claim evidence eligibility.
+  - A development suite remains ineligible for paper claims even when the provider execution itself is real.
+  - Every run binds the source-suite manifest hash and a closed snapshot hash covering case manifests and artifact trees.
+  - Aggregate and confirmatory gates reject eligibility drift or any closed-suite byte drift.
+- Actual behavior:
+  - `external_empirical_evidence_eligible=true` was the only completed-run eligibility field, so a real-provider-shaped run over a development suite was not self-describing at the paper-claim boundary.
+  - Run manifests bound prompt and manuscript hashes but not the source suite's evidence class, paper eligibility, or closed snapshot.
+  - The aggregate revalidated manuscripts but had no run-owned source-suite snapshot binding to compare.
+- Fresh vs existing session comparison:
+  - Fresh session: domain-neutral provider fixtures reproduced the ambiguous completed manifest and the missing suite binding.
+  - Existing session: no completed real provider run exists in the current research checkpoint; the production risk was found before external execution.
+  - Divergence: no persisted-state or refresh divergence was involved; this was an evidence-contract gap.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the provider contract treated external execution provenance as the final eligibility boundary and relied on the later confirmatory gate to recover source-suite eligibility, leaving run and aggregate artifacts ambiguous when inspected independently.
+- Code/test changes:
+  - Upgraded provider run and aggregate manifests to schema 1.1.
+  - Added a workspace-contained source-suite binding with manifest and closed-snapshot SHA-256, evidence class, and paper-claim eligibility.
+  - Added separate `paper_claim_evidence_eligible` and explicit evidence-boundary fields while preserving external execution provenance.
+  - Required the three-trial aggregate to rehash and match every run's suite binding.
+  - Required the confirmatory gate to reject aggregates that are not explicitly paper-claim eligible.
+  - Added regressions for development-suite downgrading, eligibility tampering, case-manifest byte drift, and out-of-workspace suite paths.
+- Regression status:
+  - Focused provider and confirmatory regressions: 23/23 pass on 2026-07-19.
+  - Production build: pass on 2026-07-19.
+  - Research-governance end-to-end validation: 12 processes pass on 2026-07-19.
+  - Public-code sanitization: 3/3 pass on 2026-07-19.
+  - Harness validation: 531 issue entries pass on 2026-07-19.
+  - Full repository suite: 217 files and 2913 tests pass; web 14/14 pass on 2026-07-19.
+- Follow-up risks:
+  - A completed provider run still does not independently prove provider identity or statistical independence.
+  - Paper claims still require three valid trials over a paper-claim-eligible suite plus complete comparison, recovery, and confirmatory-gate evidence.
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkProviderRunner.ts`
+  - `src/core/benchmark/promotionBenchmarkProviderAggregate.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts`
+  - `tests/promotionBenchmarkProviderRunner.test.ts`
+  - `tests/promotionBenchmarkProviderAggregate.test.ts`
+  - `tests/promotionBenchmarkConfirmatoryGate.test.ts`
 
 ---
 

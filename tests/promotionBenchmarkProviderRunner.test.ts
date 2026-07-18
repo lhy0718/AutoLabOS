@@ -52,12 +52,20 @@ describe("promotion benchmark provider runner", () => {
     const result = await runPromotionBenchmarkProvider(providerInput(workspace, suitePath, "provider-run"), client);
 
     expect(result.manifest).toMatchObject({
+      schema_version: "1.1",
       status: "completed",
       evidence_class: "external_real_provider",
       provider_receipt_status: "recorded_not_independently_verified",
       provider_identity_independently_verified: false,
       external_empirical_evidence_eligible: true,
+      paper_claim_evidence_eligible: false,
       independent_trial_requirement_met: false,
+      source_suite: {
+        evidence_class: "unspecified",
+        paper_claim_eligible: false,
+        manifest_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        snapshot_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u)
+      },
       request_count: 2,
       completed_response_count: 2,
       failed_response_count: 0,
@@ -121,6 +129,7 @@ describe("promotion benchmark provider runner", () => {
     expect(manifest).toMatchObject({
       status: "failed",
       external_empirical_evidence_eligible: false,
+      paper_claim_evidence_eligible: false,
       completed_response_count: 1,
       failed_response_count: 1,
       failure: {
@@ -151,6 +160,22 @@ describe("promotion benchmark provider runner", () => {
     await expect(stat(path.join(workspace, "fake-run"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("rejects a source suite outside the provider workspace", async () => {
+    const workspace = await createWorkspace();
+    const sourceWorkspace = await createWorkspace();
+    const suitePath = await createSuite(sourceWorkspace);
+    const client: PromotionProviderClient = {
+      complete: vi.fn(async () => ({ text: "{}" }))
+    };
+
+    await expect(runPromotionBenchmarkProvider(
+      providerInput(workspace, path.join(sourceWorkspace, suitePath), "outside-suite-run"),
+      client
+    )).rejects.toThrow("Promotion suite must be inside the workspace");
+    expect(client.complete).not.toHaveBeenCalled();
+    await expect(stat(path.join(workspace, "outside-suite-run"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("fails external evidence when provider provenance or usage is missing", async () => {
     const workspace = await createWorkspace();
     const suitePath = await createSuite(workspace);
@@ -169,7 +194,8 @@ describe("promotion benchmark provider runner", () => {
       status: "failed",
       completed_response_count: 0,
       failed_response_count: 1,
-      external_empirical_evidence_eligible: false
+      external_empirical_evidence_eligible: false,
+      paper_claim_evidence_eligible: false
     });
 
     const missingModelClient: PromotionProviderClient = {

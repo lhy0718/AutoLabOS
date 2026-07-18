@@ -131,13 +131,20 @@ source does not enumerate case identifiers or encode case-specific metrics.
   evidence. The fresh provider runner hash-binds its prompt pack, requires a
   new output root, preserves outputs, hashed response identifiers, usage,
   cost, latency, failures, and predictions, and fails closed on partial or
-  malformed responses. One completed runner invocation remains one trial and
-  does not satisfy the three-trial requirement by itself. The three-trial
+  malformed responses. Provider-run manifest schema 1.1 also binds the exact
+  source-suite manifest and closed-snapshot hashes, evidence class, and
+  source-suite paper-claim eligibility.
+  It records external provider execution and paper-claim evidence eligibility
+  as separate fields, so a real provider run over a development suite remains
+  ineligible for paper claims. One completed runner invocation remains one
+  trial and does not satisfy the three-trial requirement by itself. The three-trial
   aggregate is admissible only when exactly three completed manifests share
   the suite, system, model, reasoning effort, protocol, and prompt hashes;
   expose distinct run, trial, and hashed response receipt identifiers; retain
   complete case coverage; and pass artifact rehashing against the current
-  suite. This operational repetition gate does not independently verify
+  suite. The aggregate repeats the source-suite binding, and the confirmatory
+  gate requires its explicit paper-claim eligibility in addition to complete
+  repetition. This operational repetition gate does not independently verify
   provider identity or statistical independence.
 - **Artifact-grounded promotion:** applies the full gate, claim ceiling, figure
   consistency, execution-state, and review-transition policy.

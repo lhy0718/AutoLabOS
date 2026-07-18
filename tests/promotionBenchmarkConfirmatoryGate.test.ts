@@ -136,6 +136,19 @@ describe("promotion confirmatory gate", () => {
     expect(assessment.hypotheses.every((item) => item.status === "supported")).toBe(true);
   });
 
+  it("rejects provider repetitions that are not eligible for paper claims", () => {
+    const fixture = makeAssessmentFixture(true);
+    fixture.providerAggregate.paper_claim_evidence_eligible = false;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "provider_repetition_not_verified",
+      target_node: "run_experiments"
+    }));
+  });
+
   it("rejects deterministic evidence from an unversioned system protocol", () => {
     const fixture = makeAssessmentFixture(true);
     fixture.systemRunManifest.schema_version = "1.0";
@@ -407,7 +420,8 @@ function makeAssessmentFixture(h1Supported: boolean): {
     system_id: roles.manuscript,
     trial_count: 3,
     independent_trial_requirement_met: true,
-    external_empirical_evidence_eligible: true
+    external_empirical_evidence_eligible: true,
+    paper_claim_evidence_eligible: true
   } as PromotionProviderAggregateManifest;
   const systemRunManifest = {
     schema_version: "1.1",

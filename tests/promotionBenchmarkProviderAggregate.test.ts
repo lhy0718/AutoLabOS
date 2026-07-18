@@ -32,12 +32,20 @@ describe("promotion provider run aggregation", () => {
     });
 
     expect(result.manifest).toMatchObject({
+      schema_version: "1.1",
       status: "completed",
       evidence_class: "external_real_provider",
       provider_receipt_status: "recorded_not_independently_verified",
       provider_identity_independently_verified: false,
       external_empirical_evidence_eligible: true,
+      paper_claim_evidence_eligible: false,
       independent_trial_requirement_met: true,
+      source_suite: {
+        evidence_class: "unspecified",
+        paper_claim_eligible: false,
+        manifest_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        snapshot_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u)
+      },
       case_count: 2,
       request_count_per_trial: 2,
       trial_count: 3,
@@ -175,6 +183,44 @@ describe("promotion provider run aggregation", () => {
       outDir: "reused-receipts-aggregate"
     })).rejects.toThrow("distinct response receipts");
     await expect(stat(path.join(workspace, "reused-receipts-aggregate"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a run manifest whose paper-claim suite binding was changed after execution", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const manifests = await createProviderRuns(workspace, suitePath, ["trial-a", "trial-b", "trial-c"]);
+    const manifestPath = path.join(workspace, manifests[0]);
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      source_suite: { paper_claim_eligible: boolean };
+      paper_claim_evidence_eligible: boolean;
+    };
+    manifest.source_suite.paper_claim_eligible = true;
+    manifest.paper_claim_evidence_eligible = true;
+    await writeFile(manifestPath, JSON.stringify(manifest));
+
+    await expect(aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "eligibility-drift-aggregate"
+    })).rejects.toThrow("source-suite binding does not match");
+  });
+
+  it("rejects case-manifest byte drift after provider execution", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const manifests = await createProviderRuns(workspace, suitePath, ["trial-a", "trial-b", "trial-c"]);
+    const suite = JSON.parse(await readFile(path.join(workspace, suitePath), "utf8")) as { cases: string[] };
+    const casePath = path.join(workspace, path.dirname(suitePath), suite.cases[0]);
+    const caseManifest = JSON.parse(await readFile(casePath, "utf8"));
+    await writeFile(casePath, `${JSON.stringify(caseManifest)}\n`);
+
+    await expect(aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "case-drift-aggregate"
+    })).rejects.toThrow("source-suite binding does not match");
   });
 });
 

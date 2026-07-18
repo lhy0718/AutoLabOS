@@ -635,6 +635,7 @@ function inspectConfirmatoryEvidence(input: {
       || input.providerAggregate.trial_count !== 3
       || input.providerAggregate.independent_trial_requirement_met !== true
       || input.providerAggregate.external_empirical_evidence_eligible !== true
+      || input.providerAggregate.paper_claim_evidence_eligible !== true
       || manuscript?.trial_count !== 3
       || manuscript.coverage_rate !== 1) {
     addIssue(

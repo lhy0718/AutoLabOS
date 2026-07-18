@@ -4,6 +4,11 @@ import { promises as fs } from "node:fs";
 
 import { writeJsonFile } from "../../utils/fs.js";
 import {
+  hashPromotionBenchmarkSuiteSnapshot,
+  loadPromotionBenchmarkSuite,
+  type PromotionBenchmarkEvidenceClass
+} from "./promotionBenchmark.js";
+import {
   buildOpenAiResponsesModelChoices,
   buildOpenAiResponsesReasoningChoices
 } from "../../integrations/openai/modelCatalog.js";
@@ -49,8 +54,16 @@ export interface RunPromotionProviderInput {
   evidenceClass: PromotionProviderEvidenceClass;
 }
 
+export interface PromotionProviderSourceSuiteBinding {
+  path: string;
+  manifest_sha256: string;
+  snapshot_sha256: string;
+  evidence_class: PromotionBenchmarkEvidenceClass | "unspecified";
+  paper_claim_eligible: boolean;
+}
+
 export interface PromotionProviderRunManifest {
-  schema_version: "1.0";
+  schema_version: "1.1";
   run_id: string;
   status: "running" | "completed" | "failed";
   protocol: "manuscript-only-v1";
@@ -59,8 +72,11 @@ export interface PromotionProviderRunManifest {
   provider_receipt_status: "recorded_not_independently_verified" | "test_fixture";
   provider_identity_independently_verified: false;
   external_empirical_evidence_eligible: boolean;
+  paper_claim_evidence_eligible: boolean;
   independent_trial_requirement_met: false;
+  evidence_boundary: string;
   suite_id: string;
+  source_suite: PromotionProviderSourceSuiteBinding;
   system_id: string;
   trial_id: string;
   requested_model: string;
@@ -114,6 +130,7 @@ export async function runPromotionBenchmarkProvider(
   assertInside(cwd, outDir, "Provider output directory");
   await assertFreshOutput(outDir);
   assertExternalEnvironment(input.evidenceClass);
+  const sourceSuite = await inspectSourceSuite(cwd, input.suitePath);
 
   const promptPackDir = path.join(outDir, "prompt-pack");
   const exported = await exportPromotionBenchmarkPromptPack({
@@ -139,7 +156,7 @@ export async function runPromotionBenchmarkProvider(
   const predictionsDir = path.join(outDir, "predictions");
   const startedAt = new Date().toISOString();
   const manifest: PromotionProviderRunManifest = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     run_id: `provider-run-${sha256([
       requestMap.suite_id,
       input.systemId,
@@ -157,8 +174,11 @@ export async function runPromotionBenchmarkProvider(
       : "test_fixture",
     provider_identity_independently_verified: false,
     external_empirical_evidence_eligible: false,
+    paper_claim_evidence_eligible: false,
     independent_trial_requirement_met: false,
+    evidence_boundary: "This manifest distinguishes a recorded external provider execution from paper-claim eligibility. Paper-claim evidence additionally requires a paper-claim-eligible source suite, a valid three-trial aggregate, and the downstream confirmatory gate.",
     suite_id: requestMap.suite_id,
+    source_suite: sourceSuite,
     system_id: input.systemId,
     trial_id: input.trialId,
     requested_model: input.model,
@@ -242,6 +262,8 @@ export async function runPromotionBenchmarkProvider(
     manifest.status = "completed";
     manifest.completed_at = new Date().toISOString();
     manifest.external_empirical_evidence_eligible = input.evidenceClass === "external_real_provider";
+    manifest.paper_claim_evidence_eligible = input.evidenceClass === "external_real_provider"
+      && sourceSuite.paper_claim_eligible;
     manifest.artifacts.predictions_path = portableRef(cwd, predictionsPath);
     manifest.artifacts.predictions_sha256 = await sha256File(predictionsPath);
     await writeJsonFile(manifestPath, manifest);
@@ -268,6 +290,27 @@ export async function runPromotionBenchmarkProvider(
       `Promotion provider run failed; partial artifacts were preserved at ${portableRef(cwd, outDir)}: ${failure.message}`
     );
   }
+}
+
+async function inspectSourceSuite(
+  cwd: string,
+  suiteInputPath: string
+): Promise<PromotionProviderSourceSuiteBinding> {
+  const requestedSuitePath = path.resolve(cwd, suiteInputPath);
+  assertStrictlyInside(cwd, requestedSuitePath, "Promotion suite");
+  const suitePath = await fs.realpath(requestedSuitePath);
+  assertStrictlyInside(cwd, suitePath, "Promotion suite");
+  const loaded = await loadPromotionBenchmarkSuite(suitePath);
+  if (!loaded.suite || loaded.issues.length > 0) {
+    throw new Error(`Promotion benchmark suite validation failed: ${loaded.issues.map((issue) => issue.code).join(", ")}`);
+  }
+  return {
+    path: portableRef(cwd, suitePath),
+    manifest_sha256: await sha256File(suitePath),
+    snapshot_sha256: await hashPromotionBenchmarkSuiteSnapshot(suitePath),
+    evidence_class: loaded.suite.manifest.evidence_class || "unspecified",
+    paper_claim_eligible: loaded.suite.manifest.paper_claim_eligible === true
+  };
 }
 
 function parsePromptRequests(
@@ -411,6 +454,13 @@ function assertInside(root: string, candidate: string, label: string): void {
   const relative = path.relative(root, candidate);
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
     throw new Error(`${label} must be a new directory inside the workspace.`);
+  }
+}
+
+function assertStrictlyInside(root: string, candidate: string, label: string): void {
+  const relative = path.relative(root, candidate);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${label} must be inside the workspace.`);
   }
 }
 
