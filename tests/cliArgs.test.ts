@@ -32,6 +32,42 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["audit", "-h"]).kind).toBe("audit-help");
   });
 
+  it("supports reference claim review handoff and preflight", () => {
+    expect(resolveCliAction([
+      "reference-review", "prepare",
+      "--claims", "paper/claims.tsv",
+      "--status", "paper/reference-status.json",
+      "--lock", "paper/refgate.lock.json",
+      "--out-dir", "paper/review-handoff"
+    ])).toEqual({
+      kind: "reference-review-prepare",
+      claimsPath: "paper/claims.tsv",
+      statusPath: "paper/reference-status.json",
+      lockPath: "paper/refgate.lock.json",
+      outDir: "paper/review-handoff"
+    });
+    expect(resolveCliAction([
+      "reference-review", "preflight",
+      "--packet", "paper/review-handoff",
+      "--review", "returns/review.json",
+      "--out-dir", "paper/review-preflight"
+    ])).toEqual({
+      kind: "reference-review-preflight",
+      packetRoot: "paper/review-handoff",
+      reviewPath: "returns/review.json",
+      outDir: "paper/review-preflight"
+    });
+  });
+
+  it("rejects incomplete reference claim review arguments", () => {
+    expect(resolveCliAction([
+      "reference-review", "prepare", "--claims", "claims.tsv"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "preflight", "--packet", "packet"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+  });
+
   it("supports web mode with host and port", () => {
     expect(resolveCliAction(["web", "--host", "0.0.0.0", "--port", "3001"])).toEqual({
       kind: "web",

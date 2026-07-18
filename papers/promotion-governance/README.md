@@ -29,6 +29,40 @@ Current blockers:
 coverage, missing sources, and the fail-closed review state. It does not package
 third-party PDFs.
 
+## Independent Reference Review
+
+`reference-review-handoff/` binds the 12 mapped full-text candidates to the
+current claim TSV, evidence status, and Refgate lock hashes. Give an independent
+reviewer only `reference-review-handoff/reviewer/`. The included template is
+incomplete by construction: its reviewer identity and decisions are null, and
+all human and independence attestations are false.
+
+To reproduce the handoff in a fresh output directory:
+
+```bash
+node dist/cli/main.js reference-review prepare \
+  --claims papers/promotion-governance/refgate_claims.tsv \
+  --status papers/promotion-governance/reference-evidence-status.json \
+  --lock papers/promotion-governance/refgate.lock.json \
+  --out-dir <new-reference-review-handoff>
+```
+
+Preflight a returned human review separately:
+
+```bash
+node dist/cli/main.js reference-review preflight \
+  --packet papers/promotion-governance/reference-review-handoff \
+  --review <completed-human-review.json> \
+  --out-dir <new-reference-review-preflight>
+```
+
+Preflight verifies exact task coverage, packet hashes, decision-specific
+evidence, and the reviewer's attestations. It does not verify real-world
+identity and never modifies Refgate claim status. Even a fully supported return
+still requires explicit final approval and a separate Refgate import. The two
+claims without full source text remain outside the task file and continue to
+block submission.
+
 ## Build
 
 The review manuscript compiles with the vendored official ACL style:

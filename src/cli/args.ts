@@ -75,6 +75,8 @@ export type CliAction =
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
   | { kind: "research-help" }
+  | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
+  | { kind: "reference-review-preflight"; packetRoot: string; reviewPath: string; outDir: string }
   | {
       kind: "meta-harness";
       runs: number;
@@ -108,6 +110,10 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "research") {
     return parseResearchArgs(args.slice(1));
+  }
+
+  if (first === "reference-review") {
+    return parseReferenceReviewArgs(args.slice(1));
   }
 
   if (first === "web") {
@@ -1688,6 +1694,54 @@ export function resolveCliAction(args: string[]): CliAction {
     message:
       "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
   };
+}
+
+function parseReferenceReviewArgs(args: string[]): CliAction {
+  const subcommand = args[0];
+  if (subcommand !== "prepare" && subcommand !== "preflight") {
+    return {
+      kind: "error",
+      message: "Usage: reference-review prepare|preflight [options]."
+    };
+  }
+  const values = new Map<string, string>();
+  for (let index = 1; index < args.length; index += 1) {
+    const token = args[index];
+    const value = args[index + 1];
+    if (!token?.startsWith("--") || !value || value.startsWith("--")) {
+      return { kind: "error", message: `Invalid reference-review argument: ${token || "<empty>"}.` };
+    }
+    if (values.has(token)) {
+      return { kind: "error", message: `Duplicate reference-review argument: ${token}.` };
+    }
+    values.set(token, value);
+    index += 1;
+  }
+  if (subcommand === "prepare") {
+    const allowed = new Set(["--claims", "--status", "--lock", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: `Unsupported reference-review prepare argument: ${unsupported}.` };
+    }
+    const claimsPath = values.get("--claims");
+    const statusPath = values.get("--status");
+    const lockPath = values.get("--lock");
+    const outDir = values.get("--out-dir");
+    return claimsPath && statusPath && lockPath && outDir
+      ? { kind: "reference-review-prepare", claimsPath, statusPath, lockPath, outDir }
+      : { kind: "error", message: "reference-review prepare requires --claims, --status, --lock, and --out-dir." };
+  }
+  const allowed = new Set(["--packet", "--review", "--out-dir"]);
+  const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+  if (unsupported) {
+    return { kind: "error", message: `Unsupported reference-review preflight argument: ${unsupported}.` };
+  }
+  const packetRoot = values.get("--packet");
+  const reviewPath = values.get("--review");
+  const outDir = values.get("--out-dir");
+  return packetRoot && reviewPath && outDir
+    ? { kind: "reference-review-preflight", packetRoot, reviewPath, outDir }
+    : { kind: "error", message: "reference-review preflight requires --packet, --review, and --out-dir." };
 }
 
 function parseResearchArgs(args: string[]): CliAction {

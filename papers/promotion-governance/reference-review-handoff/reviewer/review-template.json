@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "reference-claim-review-eb8fd03200d305b5",
+  "reviewer_id": null,
+  "label_source": "human",
+  "review_role": "independent_claim_review",
+  "independence_attestation": {
+    "completed_by_human": false,
+    "reviewer_did_not_generate_evidence_candidates": false,
+    "full_source_text_inspected": false
+  },
+  "reviews": [
+    {
+      "task_id": "claim-0001",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0002",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0003",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0004",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0005",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0006",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0007",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0008",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0009",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0010",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0011",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    },
+    {
+      "task_id": "claim-0013",
+      "decision": null,
+      "source_location": null,
+      "supporting_passage": null,
+      "proposed_claim_text": null,
+      "rationale": null
+    }
+  ]
+}

@@ -29,6 +29,15 @@
     "full_text_evidence_candidate_count": 12,
     "independently_checked_claim_count": 0,
     "missing_full_text_claim_count": 2,
+    "review_handoff": {
+      "handoff_id": "reference-claim-review-eb8fd03200d305b5",
+      "task_count": 12,
+      "human_review_completed": false,
+      "preflight_passed": false,
+      "claim_gate_passed": false,
+      "claim_statuses_modified": false,
+      "manifest": "reference-review-handoff/reference-claim-review-manifest.json"
+    },
     "submission_gate_passed": false,
     "status_artifact": "reference-evidence-status.json"
   },

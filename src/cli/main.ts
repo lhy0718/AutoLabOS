@@ -58,6 +58,10 @@ import {
   runResearchReviewCli
 } from "./research.js";
 import { runWithProcessLifetime } from "./processLifetime.js";
+import {
+  runReferenceClaimReviewPreparationCli,
+  runReferenceClaimReviewPreflightCli
+} from "./referenceReview.js";
 
 function printHelp(): void {
   process.stdout.write([
@@ -75,6 +79,8 @@ function printHelp(): void {
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]",
     "  autolabos research <new|audit|review|improve|pack> [options]",
+    "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
+    "  autolabos reference-review preflight --packet <handoff-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
     "  autolabos governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
     "  autolabos governance-benchmark dry-run --seed <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/<task>]",
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
@@ -165,6 +171,27 @@ function printResearchHelp(): void {
 
 async function main(): Promise<void> {
   const action = resolveCliAction(process.argv.slice(2));
+
+  if (action.kind === "reference-review-prepare") {
+    await runReferenceClaimReviewPreparationCli({
+      cwd: process.cwd(),
+      claimsPath: action.claimsPath,
+      statusPath: action.statusPath,
+      lockPath: action.lockPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-preflight") {
+    await runReferenceClaimReviewPreflightCli({
+      cwd: process.cwd(),
+      packetRoot: action.packetRoot,
+      reviewPath: action.reviewPath,
+      outDir: action.outDir
+    });
+    return;
+  }
 
   if (action.kind === "help") {
     printHelp();

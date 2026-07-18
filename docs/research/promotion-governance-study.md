@@ -641,6 +641,26 @@ rules for future controls are defined in
 `docs/research/promotion-benchmark-curation-boundary.md`. These records do not
 change the zero-admission decision.
 
+### Citation Claim Review Handoff
+
+The manuscript's 14 citation-bearing claims are now separated into 12
+full-text-backed review tasks and two missing-source blockers. A deterministic
+handoff binds the current claim TSV, evidence-status record, Refgate lock, each
+candidate passage, public record URL, source locator, and full-text SHA-256.
+The reviewer package contains no third-party PDF and no controller-local path.
+Its return template leaves all decisions and reviewer identity null and all
+human and independence attestations false.
+
+The generated incomplete return fails the same preflight used for future human
+reviews: no reviewer is accepted, the claim gate remains closed, and no claim
+status changes. A completed return must cover all 12 tasks, inspect the full
+source text, and choose `supported`, `rewrite`, `wrong_source`, or
+`missing_source` with decision-specific evidence. Structural preflight does not
+prove real-world reviewer identity and cannot write `checked`; explicit final
+approval and a separate Refgate import remain mandatory. The two unavailable
+OpenReview full texts remain submission blockers rather than being replaced by
+metadata or abstract evidence.
+
 ### Exploratory Instrument Check
 
 A deterministic development run exercised the complete local instrument on
