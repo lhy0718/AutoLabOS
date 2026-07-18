@@ -707,7 +707,9 @@ closes the complete file inventory. The resulting archive was extracted into a
 fresh directory and passed through the same preflight. Its distribution
 manifest explicitly forbids public release and records that source-license
 review is not assessed, so neither the archive nor the third-party PDFs enter
-the public source snapshot.
+the public source snapshot. The packet, archive, missing-source inventory, and
+expected fail-closed preflight are fixed in
+`docs/research/evidence/promotion-reference-review-handoff-v2.json`.
 
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim

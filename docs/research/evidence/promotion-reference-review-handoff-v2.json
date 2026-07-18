@@ -1,0 +1,77 @@
+{
+  "schema_version": "1.0",
+  "audit_id": "promotion-reference-review-handoff-v2-20260719",
+  "generated_at": "2026-07-19T03:31:19+09:00",
+  "public_handoff": {
+    "handoff_id": "reference-claim-review-eb8fd03200d305b5",
+    "task_count": 12,
+    "missing_full_text_claim_count": 2,
+    "manifest_sha256": "ff41d72c5a5a762a239a955bff3f953c05efdcaa116b62856daf78d96c0ac9a4",
+    "third_party_full_text_included": false,
+    "human_review_completed": false,
+    "claim_statuses_modified": false
+  },
+  "private_distribution": {
+    "distribution_id": "reference-claim-review-distribution-2d811c063b169231",
+    "distribution_scope": "private_review_only",
+    "source_count": 8,
+    "public_distribution_allowed": false,
+    "license_review_status": "not_assessed",
+    "distribution_manifest_sha256": "b5dea6f0a74e46599c835f0cbacd433ce19255a5b65d3bc173aec8aaca7900fe",
+    "source_readme_sha256": "c5058258a6bfc324a028a7a1d69914875952fa5bbb200f8dec58de601a2690ca",
+    "archive_ref": "outputs/promotion-governance/reference-review-private-v2.tar.gz",
+    "archive_size_bytes": 22690454,
+    "archive_sha256": "644736e5addf5a6dc5451dafb728092558506944d3e6e02ad68d3f0928189c1b"
+  },
+  "archive_extraction_preflight": {
+    "packet_hashes_verified": true,
+    "expected_incomplete_template_rejected": true,
+    "preflight_passed": false,
+    "claim_gate_passed": false,
+    "reviewer_id": null,
+    "human_identity_verified": false,
+    "claim_statuses_modified": false,
+    "issue_counts": {
+      "reviewer_id_invalid": 1,
+      "review_independence_unattested": 1,
+      "review_decision_invalid": 12,
+      "review_rationale_missing": 12
+    }
+  },
+  "missing_sources": [
+    {
+      "claim_id": "claim-0012",
+      "citation_key": "petel2026madscps",
+      "title": "MADS-CPS: A Machine-Checkable Admissibility Contract for AI Scientists in Autonomous Laboratories",
+      "record_url": "https://openreview.net/forum?id=VrYHFXGyUO",
+      "record_visibility": "everyone",
+      "record_metadata_license_label": "CC BY 4.0",
+      "full_text_acquired": false,
+      "retrieval_result": "official_pdf_and_attachment_endpoints_returned_http_403_from_current_environment"
+    },
+    {
+      "claim_id": "claim-0014",
+      "citation_key": "nishi2026claimgarden",
+      "title": "ClaimGarden: Update-Aware Claim-State Control for AI Scientist Workflows",
+      "record_url": "https://openreview.net/forum?id=Y8INhipPQe",
+      "record_visibility": "everyone",
+      "record_metadata_license_label": "CC BY 4.0",
+      "full_text_acquired": false,
+      "retrieval_result": "official_pdf_and_attachment_endpoints_returned_http_403_from_current_environment"
+    }
+  ],
+  "substitution_policy": {
+    "metadata_accepted_as_full_text": false,
+    "abstract_accepted_as_full_text": false,
+    "search_index_text_accepted_as_full_text": false,
+    "missing_claims_converted_to_review_tasks": false
+  },
+  "next_required_evidence": [
+    "acquire the exact two missing full texts through an authorized browser session or author-provided copy",
+    "verify each acquired title and content hash before updating the Refgate evidence inventory",
+    "generate a fresh review handoff that covers every citation-bearing claim",
+    "obtain an independent human review return with complete evidence-specific decisions",
+    "run structural preflight and explicit Refgate approval without automatically promoting claim status"
+  ],
+  "evidence_boundary": "This receipt establishes a reproducible 12-task public handoff, an eight-source hash-bound private distribution, explicit visibility of two missing full texts, archive integrity, and fail-closed rejection of the incomplete human template. It does not establish retrieval or review of the two missing sources, reviewer identity or independence, redistribution permission, a checked citation claim, submission readiness, or paper-scale empirical evidence."
+}

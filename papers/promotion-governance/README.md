@@ -66,7 +66,9 @@ public source snapshot without a separate license review. The original two
 missing-source claims remain absent rather than being filled from abstracts.
 The private packet's `reviewer/SOURCE_README.md` lists their citation keys,
 titles, public record URLs, and blocked claim IDs so source collection remains
-explicitly separate from human claim review.
+explicitly separate from human claim review. The public verification receipt is
+`docs/research/evidence/promotion-reference-review-handoff-v2.json`; it records
+hashes and gate outcomes, not the third-party full texts.
 
 Preflight a returned human review separately:
 
