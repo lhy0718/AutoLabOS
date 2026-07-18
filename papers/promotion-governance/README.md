@@ -47,11 +47,29 @@ node dist/cli/main.js reference-review prepare \
   --out-dir <new-reference-review-handoff>
 ```
 
+When the reviewer should receive an offline, hash-bound copy of the already
+mapped full texts, place exactly one `<citation-key>.pdf` or
+`<citation-key>.txt` file per mapped source in a private source directory and
+create a closed distribution:
+
+```bash
+node dist/cli/main.js reference-review distribute-private \
+  --packet papers/promotion-governance/reference-review-handoff \
+  --source-dir <private-citation-key-named-full-text-dir> \
+  --out-dir <new-private-reference-review-distribution>
+```
+
+This command rejects missing, ambiguous, symlinked, or hash-mismatched sources.
+Its manifest fixes `public_distribution_allowed=false` and
+`license_review_status=not_assessed`; the resulting directory must not enter a
+public source snapshot without a separate license review. The original two
+missing-source claims remain absent rather than being filled from abstracts.
+
 Preflight a returned human review separately:
 
 ```bash
 node dist/cli/main.js reference-review preflight \
-  --packet papers/promotion-governance/reference-review-handoff \
+  --packet <handoff-or-private-distribution-dir> \
   --review <completed-human-review.json> \
   --out-dir <new-reference-review-preflight>
 ```

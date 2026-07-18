@@ -78,6 +78,7 @@ export type CliAction =
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
   | { kind: "research-help" }
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
+  | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
   | { kind: "reference-review-preflight"; packetRoot: string; reviewPath: string; outDir: string }
   | {
       kind: "meta-harness";
@@ -1775,10 +1776,10 @@ export function resolveCliAction(args: string[]): CliAction {
 
 function parseReferenceReviewArgs(args: string[]): CliAction {
   const subcommand = args[0];
-  if (subcommand !== "prepare" && subcommand !== "preflight") {
+  if (subcommand !== "prepare" && subcommand !== "distribute-private" && subcommand !== "preflight") {
     return {
       kind: "error",
-      message: "Usage: reference-review prepare|preflight [options]."
+      message: "Usage: reference-review prepare|distribute-private|preflight [options]."
     };
   }
   const values = new Map<string, string>();
@@ -1807,6 +1808,19 @@ function parseReferenceReviewArgs(args: string[]): CliAction {
     return claimsPath && statusPath && lockPath && outDir
       ? { kind: "reference-review-prepare", claimsPath, statusPath, lockPath, outDir }
       : { kind: "error", message: "reference-review prepare requires --claims, --status, --lock, and --out-dir." };
+  }
+  if (subcommand === "distribute-private") {
+    const allowed = new Set(["--packet", "--source-dir", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review distribute-private argument: " + unsupported + "." };
+    }
+    const packetRoot = values.get("--packet");
+    const sourceDir = values.get("--source-dir");
+    const outDir = values.get("--out-dir");
+    return packetRoot && sourceDir && outDir
+      ? { kind: "reference-review-distribute-private", packetRoot, sourceDir, outDir }
+      : { kind: "error", message: "reference-review distribute-private requires --packet, --source-dir, and --out-dir." };
   }
   const allowed = new Set(["--packet", "--review", "--out-dir"]);
   const unsupported = [...values.keys()].find((key) => !allowed.has(key));

@@ -47,7 +47,16 @@
       "preflight_passed": false,
       "claim_gate_passed": false,
       "claim_statuses_modified": false,
-      "manifest": "reference-review-handoff/reference-claim-review-manifest.json"
+      "manifest": "reference-review-handoff/reference-claim-review-manifest.json",
+      "private_distribution": {
+        "prepared": true,
+        "full_text_source_count": 8,
+        "closed_inventory_verified": true,
+        "fresh_archive_extraction_preflight_verified": true,
+        "public_distribution_allowed": false,
+        "license_review_status": "not_assessed",
+        "human_review_completed": false
+      }
     },
     "submission_gate_passed": false,
     "status_artifact": "reference-evidence-status.json"

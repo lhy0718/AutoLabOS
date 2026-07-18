@@ -699,6 +699,16 @@ The reviewer package contains no third-party PDF and no controller-local path.
 Its return template leaves all decisions and reviewer identity null and all
 human and independence attestations false.
 
+For offline independent review, the general reference-review distribution
+command has also assembled a separate private packet from the eight mapped
+full texts. It deduplicates sources shared by multiple claims, verifies each
+source against the task hash, rejects symbolic links and ambiguous files, and
+closes the complete file inventory. The resulting archive was extracted into a
+fresh directory and passed through the same preflight. Its distribution
+manifest explicitly forbids public release and records that source-license
+review is not assessed, so neither the archive nor the third-party PDFs enter
+the public source snapshot.
+
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim
 status changes. A completed return must cover all 12 tasks, inspect the full

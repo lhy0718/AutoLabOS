@@ -47,6 +47,17 @@ describe("resolveCliAction", () => {
       outDir: "paper/review-handoff"
     });
     expect(resolveCliAction([
+      "reference-review", "distribute-private",
+      "--packet", "paper/review-handoff",
+      "--source-dir", "private/full-text",
+      "--out-dir", "private/review-distribution"
+    ])).toEqual({
+      kind: "reference-review-distribute-private",
+      packetRoot: "paper/review-handoff",
+      sourceDir: "private/full-text",
+      outDir: "private/review-distribution"
+    });
+    expect(resolveCliAction([
       "reference-review", "preflight",
       "--packet", "paper/review-handoff",
       "--review", "returns/review.json",
@@ -62,6 +73,9 @@ describe("resolveCliAction", () => {
   it("rejects incomplete reference claim review arguments", () => {
     expect(resolveCliAction([
       "reference-review", "prepare", "--claims", "claims.tsv"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "distribute-private", "--packet", "packet"
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
     expect(resolveCliAction([
       "reference-review", "preflight", "--packet", "packet"

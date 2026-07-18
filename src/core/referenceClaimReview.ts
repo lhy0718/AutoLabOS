@@ -9,6 +9,11 @@ export const REFERENCE_CLAIM_REVIEW_TASKS = "reviewer/claim-review-tasks.jsonl";
 export const REFERENCE_CLAIM_REVIEW_TEMPLATE = "reviewer/review-template.json";
 export const REFERENCE_CLAIM_REVIEW_GUIDE = "reviewer/REVIEWER_GUIDE.md";
 export const REFERENCE_CLAIM_REVIEW_PREFLIGHT = "reference-claim-review-preflight.json";
+export const REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION =
+  "reference-claim-review-private-distribution.json";
+export const REFERENCE_CLAIM_REVIEW_SOURCE_README = "reviewer/SOURCE_README.md";
+
+const REVIEW_SOURCE_EXTENSIONS = [".pdf", ".txt"] as const;
 
 const CLAIM_COLUMNS = [
   "claim_id",
@@ -100,6 +105,42 @@ export interface PreflightReferenceClaimReviewInput {
   packetRoot: string;
   reviewPath: string;
   outDir: string;
+}
+
+export interface PrepareReferenceClaimReviewPrivateDistributionInput {
+  cwd: string;
+  packetRoot: string;
+  sourceDir: string;
+  outDir: string;
+}
+
+interface ReferenceClaimReviewPrivateDistributionManifest {
+  schema_version: "1.0";
+  distribution_id: string;
+  handoff_id: string;
+  upstream_manifest_sha256: string;
+  distribution_scope: "private_review_only";
+  public_distribution_allowed: false;
+  license_review_status: "not_assessed";
+  reviewer_root: "reviewer";
+  source_count: number;
+  sources: Array<{
+    citation_key: string;
+    path: string;
+    format: "pdf" | "txt";
+    sha256: string;
+  }>;
+  files: Array<{ path: string; sha256: string }>;
+  evidence_boundary: string;
+}
+
+export interface PrepareReferenceClaimReviewPrivateDistributionResult {
+  distribution_id: string;
+  handoff_id: string;
+  source_count: number;
+  output_dir: string;
+  manifest_path: string;
+  review_template_path: string;
 }
 
 export interface ReferenceClaimReviewPreflightReport {
@@ -270,6 +311,91 @@ export async function prepareReferenceClaimReview(
   };
 }
 
+export async function prepareReferenceClaimReviewPrivateDistribution(
+  input: PrepareReferenceClaimReviewPrivateDistributionInput
+): Promise<PrepareReferenceClaimReviewPrivateDistributionResult> {
+  const cwd = path.resolve(input.cwd);
+  const packetRoot = path.resolve(cwd, input.packetRoot);
+  const sourceDir = path.resolve(cwd, input.sourceDir);
+  const outDir = path.resolve(cwd, input.outDir);
+  await assertFreshOutput(outDir, "Private reference claim review distribution");
+
+  const handoff = await inspectPacket(packetRoot);
+  const tasks = parseTaskJsonl((await readContainedRegularFile(
+    packetRoot,
+    path.join(packetRoot, REFERENCE_CLAIM_REVIEW_TASKS)
+  )).toString("utf8"));
+  const sources = await collectBoundReviewSources(sourceDir, tasks);
+  const copiedFiles = new Map<string, Buffer>();
+  const handoffPaths = [
+    REFERENCE_CLAIM_REVIEW_MANIFEST,
+    ...handoff.files.map((file) => file.path)
+  ];
+  for (const relativePath of handoffPaths) {
+    copiedFiles.set(relativePath, await readContainedRegularFile(
+      packetRoot,
+      path.join(packetRoot, relativePath)
+    ));
+  }
+
+  const sourceRecords = sources.map((source) => ({
+    citation_key: source.citationKey,
+    path: `reviewer/sources/${source.citationKey}${source.extension}`,
+    format: source.extension.slice(1) as "pdf" | "txt",
+    sha256: source.sha256
+  }));
+  copiedFiles.set(
+    REFERENCE_CLAIM_REVIEW_SOURCE_README,
+    Buffer.from(renderPrivateSourceReadme(sourceRecords), "utf8")
+  );
+  for (const [index, source] of sources.entries()) {
+    copiedFiles.set(sourceRecords[index].path, source.bytes);
+  }
+
+  const upstreamManifestBytes = copiedFiles.get(REFERENCE_CLAIM_REVIEW_MANIFEST);
+  if (!upstreamManifestBytes) throw new Error("Reference claim review manifest was not copied.");
+  const files = [...copiedFiles.entries()]
+    .map(([relativePath, bytes]) => ({ path: relativePath, sha256: sha256(bytes) }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+  const distributionId = `reference-claim-review-distribution-${sha256(Buffer.from([
+    sha256(upstreamManifestBytes),
+    ...sourceRecords.map((source) => `${source.path}:${source.sha256}`)
+  ].join(":"), "utf8")).slice(0, 16)}`;
+  const distribution: ReferenceClaimReviewPrivateDistributionManifest = {
+    schema_version: "1.0",
+    distribution_id: distributionId,
+    handoff_id: handoff.handoff_id,
+    upstream_manifest_sha256: sha256(upstreamManifestBytes),
+    distribution_scope: "private_review_only",
+    public_distribution_allowed: false,
+    license_review_status: "not_assessed",
+    reviewer_root: "reviewer",
+    source_count: sourceRecords.length,
+    sources: sourceRecords,
+    files,
+    evidence_boundary: "This closed packet includes hash-bound third-party full text solely for private independent review. It does not establish redistribution rights, verify reviewer identity, complete missing-source claims, modify claim status, or make the manuscript paper-ready. Do not publish this distribution without a separate license review."
+  };
+
+  await fs.mkdir(outDir, { recursive: true });
+  for (const [relativePath, bytes] of copiedFiles) {
+    const target = path.join(outDir, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, bytes);
+  }
+  const manifestPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION);
+  await writeJsonFile(manifestPath, distribution);
+  await inspectPacket(outDir);
+
+  return {
+    distribution_id: distributionId,
+    handoff_id: handoff.handoff_id,
+    source_count: sourceRecords.length,
+    output_dir: portableRef(cwd, outDir),
+    manifest_path: portableRef(cwd, manifestPath),
+    review_template_path: portableRef(cwd, path.join(outDir, REFERENCE_CLAIM_REVIEW_TEMPLATE))
+  };
+}
+
 export async function preflightReferenceClaimReview(
   input: PreflightReferenceClaimReviewInput
 ): Promise<PreflightReferenceClaimReviewResult> {
@@ -379,7 +505,171 @@ async function inspectPacket(packetRoot: string): Promise<ReferenceClaimReviewMa
       throw new Error(`Reference claim review packet hash mismatch: ${file.path}`);
     }
   }
+  await inspectPrivateDistributionIfPresent(packetRoot, manifest);
   return manifest;
+}
+
+async function collectBoundReviewSources(
+  sourceDir: string,
+  tasks: ReferenceClaimReviewTask[]
+): Promise<Array<{
+  citationKey: string;
+  extension: typeof REVIEW_SOURCE_EXTENSIONS[number];
+  sha256: string;
+  bytes: Buffer;
+}>> {
+  await assertRegularDirectory(sourceDir, "Reference review source directory");
+  const expectedByKey = new Map<string, string>();
+  for (const task of tasks) {
+    const previous = expectedByKey.get(task.citation_key);
+    if (previous && previous !== task.full_text_sha256) {
+      throw new Error(`Reference review tasks disagree on source hash: ${task.citation_key}`);
+    }
+    expectedByKey.set(task.citation_key, task.full_text_sha256);
+  }
+
+  const sources: Array<{
+    citationKey: string;
+    extension: typeof REVIEW_SOURCE_EXTENSIONS[number];
+    sha256: string;
+    bytes: Buffer;
+  }> = [];
+  for (const [citationKey, expectedSha256] of [...expectedByKey.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))) {
+    const candidates: Array<{
+      extension: typeof REVIEW_SOURCE_EXTENSIONS[number];
+      bytes: Buffer;
+    }> = [];
+    for (const extension of REVIEW_SOURCE_EXTENSIONS) {
+      const candidatePath = path.join(sourceDir, `${citationKey}${extension}`);
+      const bytes = await readOptionalContainedRegularFile(sourceDir, candidatePath);
+      if (bytes) candidates.push({ extension, bytes });
+    }
+    if (candidates.length === 0) {
+      throw new Error(`Missing hash-bound reference review source: ${citationKey}.pdf or ${citationKey}.txt`);
+    }
+    if (candidates.length > 1) {
+      throw new Error(`Ambiguous reference review source: ${citationKey} has both PDF and text files.`);
+    }
+    const candidate = candidates[0];
+    const actualSha256 = sha256(candidate.bytes);
+    if (actualSha256 !== expectedSha256) {
+      throw new Error(`Reference review source hash mismatch: ${citationKey}`);
+    }
+    sources.push({
+      citationKey,
+      extension: candidate.extension,
+      sha256: actualSha256,
+      bytes: candidate.bytes
+    });
+  }
+  return sources;
+}
+
+async function inspectPrivateDistributionIfPresent(
+  packetRoot: string,
+  handoff: ReferenceClaimReviewManifest
+): Promise<void> {
+  const distributionPath = path.join(packetRoot, REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION);
+  let distributionBytes: Buffer;
+  try {
+    distributionBytes = await readContainedRegularFile(packetRoot, distributionPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  const raw = JSON.parse(distributionBytes.toString("utf8")) as unknown;
+  if (!isRecord(raw)
+      || raw.schema_version !== "1.0"
+      || !validId(raw.distribution_id)
+      || raw.handoff_id !== handoff.handoff_id
+      || !sha256String(raw.upstream_manifest_sha256)
+      || raw.distribution_scope !== "private_review_only"
+      || raw.public_distribution_allowed !== false
+      || raw.license_review_status !== "not_assessed"
+      || raw.reviewer_root !== "reviewer"
+      || !Number.isInteger(raw.source_count)
+      || (raw.source_count as number) <= 0
+      || !Array.isArray(raw.sources)
+      || !Array.isArray(raw.files)
+      || !raw.sources.every((source) => isRecord(source)
+        && validId(source.citation_key)
+        && nonEmpty(source.path)
+        && (source.format === "pdf" || source.format === "txt")
+        && sha256String(source.sha256))
+      || !raw.files.every((file) => isRecord(file)
+        && nonEmpty(file.path)
+        && sha256String(file.sha256))
+      || !nonEmpty(raw.evidence_boundary)) {
+    throw new Error("Invalid private reference claim review distribution manifest.");
+  }
+  const distribution = raw as unknown as ReferenceClaimReviewPrivateDistributionManifest;
+  const upstreamManifestBytes = await readContainedRegularFile(
+    packetRoot,
+    path.join(packetRoot, REFERENCE_CLAIM_REVIEW_MANIFEST)
+  );
+  if (sha256(upstreamManifestBytes) !== distribution.upstream_manifest_sha256) {
+    throw new Error("Private reference review distribution upstream manifest hash mismatch.");
+  }
+  const expectedDistributionId = "reference-claim-review-distribution-" + sha256(Buffer.from([
+    distribution.upstream_manifest_sha256,
+    ...distribution.sources
+      .map((source) => source.path + ":" + source.sha256)
+      .sort((left, right) => left.localeCompare(right))
+  ].join(":"), "utf8")).slice(0, 16);
+  if (distribution.distribution_id !== expectedDistributionId) {
+    throw new Error("Private reference review distribution id mismatch.");
+  }
+
+  const tasks = parseTaskJsonl((await readContainedRegularFile(
+    packetRoot,
+    path.join(packetRoot, REFERENCE_CLAIM_REVIEW_TASKS)
+  )).toString("utf8"));
+  const expectedSources = new Map<string, string>();
+  for (const task of tasks) expectedSources.set(task.citation_key, task.full_text_sha256);
+  if (distribution.source_count !== expectedSources.size
+      || distribution.sources.length !== expectedSources.size
+      || new Set(distribution.sources.map((source) => source.citation_key)).size !== expectedSources.size) {
+    throw new Error("Private reference review distribution source inventory is incomplete.");
+  }
+  for (const source of distribution.sources) {
+    const expectedHash = expectedSources.get(source.citation_key);
+    const expectedPath = `reviewer/sources/${source.citation_key}.${source.format}`;
+    if (!validId(source.citation_key)
+        || (source.format !== "pdf" && source.format !== "txt")
+        || source.path !== expectedPath
+        || !expectedHash
+        || source.sha256 !== expectedHash) {
+      throw new Error("Private reference review distribution source binding is invalid.");
+    }
+  }
+
+  const expectedFilePaths = new Set([
+    REFERENCE_CLAIM_REVIEW_MANIFEST,
+    ...handoff.files.map((file) => file.path),
+    REFERENCE_CLAIM_REVIEW_SOURCE_README,
+    ...distribution.sources.map((source) => source.path)
+  ]);
+  if (distribution.files.length !== expectedFilePaths.size
+      || new Set(distribution.files.map((file) => file.path)).size !== expectedFilePaths.size
+      || distribution.files.some((file) => !expectedFilePaths.has(file.path) || !sha256String(file.sha256))) {
+    throw new Error("Private reference review distribution file inventory is invalid.");
+  }
+  for (const file of distribution.files) {
+    const bytes = await readContainedRegularFile(packetRoot, path.join(packetRoot, file.path));
+    if (sha256(bytes) !== file.sha256) {
+      throw new Error(`Private reference review distribution hash mismatch: ${file.path}`);
+    }
+  }
+  const actualFiles = await listContainedRegularFiles(packetRoot);
+  const closedInventory = new Set([
+    REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION,
+    ...expectedFilePaths
+  ]);
+  if (actualFiles.length !== closedInventory.size
+      || actualFiles.some((file) => !closedInventory.has(file))) {
+    throw new Error("Private reference review distribution contains unbound files.");
+  }
 }
 
 function parseClaimsTsv(text: string): ClaimRow[] {
@@ -621,6 +911,84 @@ function renderPreflightSummary(report: ReferenceClaimReviewPreflightReport): st
     "",
     report.evidence_boundary
   ].join("\n") + "\n";
+}
+
+function renderPrivateSourceReadme(
+  sources: ReferenceClaimReviewPrivateDistributionManifest["sources"]
+): string {
+  return [
+    "# Private Full-Text Sources",
+    "",
+    "Use these files only for the independent claim review in this packet.",
+    "Verify the listed SHA-256 before review and inspect the full source, not only the candidate passage.",
+    "These files have not passed a redistribution-license review and must not be published with the public source snapshot.",
+    "",
+    ...sources.map((source) =>
+      "- " + source.citation_key + ": " + source.path + " (SHA-256 " + source.sha256 + ")"),
+    "",
+    "Return only the completed review JSON outside this packet."
+  ].join("\n") + "\n";
+}
+
+async function assertRegularDirectory(target: string, label: string): Promise<void> {
+  const stat = await fs.lstat(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(label + " must be a regular directory.");
+  }
+}
+
+async function readOptionalContainedRegularFile(
+  root: string,
+  target: string
+): Promise<Buffer | null> {
+  let stat;
+  try {
+    stat = await fs.lstat(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) {
+    throw new Error("Expected a non-empty regular reference source: " + target);
+  }
+  const [canonicalRoot, canonicalTarget] = await Promise.all([
+    fs.realpath(root),
+    fs.realpath(target)
+  ]);
+  const relative = path.relative(canonicalRoot, canonicalTarget);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error("Reference review source escaped the source directory.");
+  }
+  return fs.readFile(canonicalTarget);
+}
+
+async function listContainedRegularFiles(root: string): Promise<string[]> {
+  const canonicalRoot = await fs.realpath(root);
+  const files: string[] = [];
+  const visit = async (directory: string): Promise<void> => {
+    const entries = await fs.readdir(directory);
+    for (const name of entries.sort((left, right) => left.localeCompare(right))) {
+      const target = path.join(directory, name);
+      const stat = await fs.lstat(target);
+      if (stat.isSymbolicLink()) {
+        throw new Error("Private reference review distribution contains a symbolic link.");
+      }
+      const canonicalTarget = await fs.realpath(target);
+      const relative = path.relative(canonicalRoot, canonicalTarget);
+      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error("Private reference review distribution file escaped the packet root.");
+      }
+      if (stat.isDirectory()) {
+        await visit(canonicalTarget);
+      } else if (stat.isFile() && stat.size > 0) {
+        files.push(relative.replace(/\\/gu, "/"));
+      } else {
+        throw new Error("Private reference review distribution contains an invalid file.");
+      }
+    }
+  };
+  await visit(canonicalRoot);
+  return files.sort((left, right) => left.localeCompare(right));
 }
 
 async function assertFreshOutput(target: string, label: string): Promise<void> {

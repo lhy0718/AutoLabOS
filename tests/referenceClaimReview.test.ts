@@ -1,18 +1,24 @@
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
   prepareReferenceClaimReview,
+  prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
   REFERENCE_CLAIM_REVIEW_MANIFEST,
+  REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION,
+  REFERENCE_CLAIM_REVIEW_SOURCE_README,
   REFERENCE_CLAIM_REVIEW_TASKS,
   REFERENCE_CLAIM_REVIEW_TEMPLATE
 } from "../src/core/referenceClaimReview.js";
 
 const tempDirs: string[] = [];
+const SOURCE_ALPHA_TEXT = "Full source alpha for independent claim review.\n";
+const SOURCE_ALPHA_SHA256 = createHash("sha256").update(SOURCE_ALPHA_TEXT).digest("hex");
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((directory) =>
@@ -171,6 +177,119 @@ describe("reference claim review handoff", () => {
       outDir: "preflight"
     })).rejects.toThrow("packet hash mismatch");
   });
+
+  it("creates a closed private distribution with one deduplicated hash-bound source", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    const sourceDir = path.join(workspace, "sources");
+    await mkdir(sourceDir);
+    await writeFile(path.join(sourceDir, "source-a.txt"), SOURCE_ALPHA_TEXT, "utf8");
+
+    const result = await prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    });
+
+    expect(result).toMatchObject({
+      handoff_id: expect.stringMatching(/^reference-claim-review-/u),
+      source_count: 1,
+      output_dir: "private-distribution"
+    });
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, "private-distribution", REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION),
+      "utf8"
+    )) as {
+      public_distribution_allowed: boolean;
+      license_review_status: string;
+      sources: Array<{ citation_key: string; path: string; sha256: string }>;
+    };
+    expect(manifest).toMatchObject({
+      public_distribution_allowed: false,
+      license_review_status: "not_assessed",
+      sources: [{
+        citation_key: "source-a",
+        path: "reviewer/sources/source-a.txt",
+        sha256: SOURCE_ALPHA_SHA256
+      }]
+    });
+    expect(await readFile(
+      path.join(workspace, "private-distribution", REFERENCE_CLAIM_REVIEW_SOURCE_README),
+      "utf8"
+    )).toContain("must not be published");
+
+    const preflight = await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "private-distribution",
+      reviewPath: path.join("private-distribution", REFERENCE_CLAIM_REVIEW_TEMPLATE),
+      outDir: "private-distribution-preflight"
+    });
+    expect(preflight.report).toMatchObject({
+      preflight_passed: false,
+      claim_gate_passed: false,
+      task_count: 2
+    });
+  });
+
+  it("rejects a private distribution when a required source is missing or has the wrong hash", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    await mkdir(path.join(workspace, "empty-sources"));
+
+    await expect(prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "empty-sources",
+      outDir: "missing-distribution"
+    })).rejects.toThrow("Missing hash-bound reference review source");
+
+    await mkdir(path.join(workspace, "wrong-sources"));
+    await writeFile(path.join(workspace, "wrong-sources", "source-a.txt"), "wrong source\n", "utf8");
+    await expect(prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "wrong-sources",
+      outDir: "wrong-distribution"
+    })).rejects.toThrow("source hash mismatch");
+  });
+
+  it("rejects source symlinks and post-distribution source tampering", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    const linkedSourceDir = path.join(workspace, "linked-sources");
+    await mkdir(linkedSourceDir);
+    await writeFile(path.join(linkedSourceDir, "target.txt"), SOURCE_ALPHA_TEXT, "utf8");
+    await symlink("target.txt", path.join(linkedSourceDir, "source-a.txt"));
+    await expect(prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "linked-sources",
+      outDir: "linked-distribution"
+    })).rejects.toThrow("regular reference source");
+
+    const sourceDir = path.join(workspace, "sources");
+    await mkdir(sourceDir);
+    await writeFile(path.join(sourceDir, "source-a.txt"), SOURCE_ALPHA_TEXT, "utf8");
+    await prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    });
+    await writeFile(
+      path.join(workspace, "private-distribution", "reviewer", "sources", "source-a.txt"),
+      "tampered source\n",
+      "utf8"
+    );
+
+    await expect(preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "private-distribution",
+      reviewPath: path.join("private-distribution", REFERENCE_CLAIM_REVIEW_TEMPLATE),
+      outDir: "tampered-preflight"
+    })).rejects.toThrow("distribution hash mismatch");
+  });
 });
 
 async function createWorkspace(): Promise<string> {
@@ -199,7 +318,7 @@ async function createWorkspace(): Promise<string> {
         citation_key: "source-a",
         record_url: "https://example.test/source-a",
         full_text_status: "mapped",
-        pdf_sha256: "a".repeat(64),
+        pdf_sha256: SOURCE_ALPHA_SHA256,
         claim_ids: ["claim-a", "claim-b"]
       },
       {

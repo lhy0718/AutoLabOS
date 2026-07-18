@@ -1,7 +1,9 @@
 import {
   prepareReferenceClaimReview,
+  prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
   type PrepareReferenceClaimReviewInput,
+  type PrepareReferenceClaimReviewPrivateDistributionInput,
   type PreflightReferenceClaimReviewInput
 } from "../core/referenceClaimReview.js";
 
@@ -32,4 +34,19 @@ export async function runReferenceClaimReviewPreflightCli(
     "Claim statuses modified: false"
   ].join("\n") + "\n");
   if (!result.report.preflight_passed) process.exitCode = 1;
+}
+
+export async function runReferenceClaimReviewPrivateDistributionCli(
+  input: PrepareReferenceClaimReviewPrivateDistributionInput
+): Promise<void> {
+  const result = await prepareReferenceClaimReviewPrivateDistribution(input);
+  process.stdout.write([
+    "Private reference claim review distribution prepared: " + result.distribution_id,
+    "Handoff: " + result.handoff_id,
+    "Hash-bound full-text sources: " + result.source_count,
+    "Manifest: " + result.manifest_path,
+    "Incomplete human template: " + result.review_template_path,
+    "Public distribution allowed: false",
+    "Claim statuses modified: false"
+  ].join("\n") + "\n");
 }
