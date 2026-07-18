@@ -801,6 +801,7 @@ async function collectBoundReviewSources(
       throw new Error(`Ambiguous reference review source: ${citationKey} has both PDF and text files.`);
     }
     const candidate = candidates[0];
+    assertReviewSourceContent(citationKey, candidate.extension, candidate.bytes);
     const actualSha256 = sha256(candidate.bytes);
     if (actualSha256 !== expectedSha256) {
       throw new Error(`Reference review source hash mismatch: ${citationKey}`);
@@ -910,6 +911,10 @@ async function inspectPrivateDistributionIfPresent(
       throw new Error(`Private reference review distribution hash mismatch: ${file.path}`);
     }
   }
+  for (const source of distribution.sources) {
+    const bytes = await readContainedRegularFile(packetRoot, path.join(packetRoot, source.path));
+    assertReviewSourceContent(source.citation_key, `.${source.format}`, bytes);
+  }
   const actualFiles = await listContainedRegularFiles(packetRoot);
   const closedInventory = new Set([
     REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION,
@@ -918,6 +923,28 @@ async function inspectPrivateDistributionIfPresent(
   if (actualFiles.length !== closedInventory.size
       || actualFiles.some((file) => !closedInventory.has(file))) {
     throw new Error("Private reference review distribution contains unbound files.");
+  }
+}
+
+function assertReviewSourceContent(
+  citationKey: string,
+  extension: typeof REVIEW_SOURCE_EXTENSIONS[number],
+  bytes: Buffer
+): void {
+  if (extension === ".pdf") {
+    const header = bytes.subarray(0, Math.min(bytes.length, 1024)).toString("latin1");
+    const trailer = bytes.subarray(Math.max(0, bytes.length - 1024)).toString("latin1");
+    if (!header.includes("%PDF-") || !trailer.includes("%%EOF")) {
+      throw new Error(`Reference review PDF source is not a structurally valid PDF: ${citationKey}`);
+    }
+    return;
+  }
+
+  const text = bytes.toString("utf8");
+  const normalized = text.replace(/^\uFEFF/u, "").trimStart().toLowerCase();
+  if (text.includes("\uFFFD") || !nonEmpty(text) || normalized.startsWith("<!doctype html")
+      || normalized.startsWith("<html")) {
+    throw new Error(`Reference review text source is not valid plain text: ${citationKey}`);
   }
 }
 

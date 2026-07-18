@@ -57,6 +57,8 @@ Also downgrade or block paper-scale progression when:
 - positive tuning claims have no repeated-seed support
 - evaluation sets or optimizer steps are only smoke/preflight scale
 - a method-centered paper misses canonical method references needed for related-work grounding
+- a full-text evidence source is accepted from a filename, URL, or hash without checking that
+  its bytes are a real PDF or plain text rather than an HTML challenge or error response
 
 ## Review-gate continuation rule
 When a review gate blocks paper-scale progression, treat the block as a governed outcome, not as a writing problem.

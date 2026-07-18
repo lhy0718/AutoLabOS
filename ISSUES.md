@@ -15,6 +15,56 @@ Path placeholders:
 
 ---
 
+## Issue: LV-615
+
+- Status: resolved; focused regression, production build, and same-flow private-packet validation pass
+- Validation target: reference-review source intake must reject CAPTCHA, challenge, and error HTML even when the bytes are stored with a PDF or text extension and match a declared hash.
+- Environment/session context: direct retrieval attempts against two public OpenReview records plus deterministic domain-neutral fixtures; no search snippet or abstract was substituted for full text.
+- Reproduction steps:
+  1. Request a public paper PDF from an endpoint protected by browser verification.
+  2. Save the successful HTTP response under a citation-key PDF filename.
+  3. Bind its SHA-256 in evidence status and prepare a private reference-review distribution.
+  4. Repeat with the same HTML bytes under a text filename.
+- Expected behavior:
+  - A PDF source contains an actual PDF header and EOF marker.
+  - A text source is nonempty UTF-8 plain text and is not an HTML document.
+  - The same content validation is repeated whenever a private packet is reopened.
+  - Invalid content fails before independent review and cannot become a full-text evidence candidate.
+- Actual behavior:
+  - OpenReview returned a browser-verification HTML document from both canonical PDF and content-hash PDF URLs in the current environment.
+  - The existing distribution path checked regular-file containment, citation-key naming, and exact SHA-256 only.
+  - If evidence status had been updated to the HTML response hash, the challenge page could have been packaged as a full-text source.
+- Fresh vs existing session comparison:
+  - Fresh session: domain-neutral fixtures reproduce exact-hash HTML under both PDF and text extensions.
+  - Existing session: all eight previously hash-bound research PDFs pass the new content check; the generated incomplete human template still fails closed with 12/12 task coverage and no claim promotion.
+  - Divergence: no persisted-state divergence was involved; this was a missing source-content projection.
+- Root-cause hypothesis:
+  - Type: in_memory_projection_bug
+  - Hypothesis: source identity was projected from filename and hash binding without validating whether the bound bytes represented the declared document format.
+- Code/test changes:
+  - Added PDF header/trailer validation before source distribution.
+  - Added nonempty UTF-8 plain-text validation with HTML document rejection.
+  - Reapplied the same validation while inspecting an existing private packet.
+  - Added exact-hash CAPTCHA HTML regressions for both accepted source extensions.
+  - Added the source-content rule to the paper-scale research loop skill.
+- Regression status:
+  - Focused reference-review regression: 12/12 pass on 2026-07-19.
+  - Production build: pass on 2026-07-19.
+  - Same-flow private packet: the eight real PDFs pass content validation; the incomplete human review remains correctly blocked.
+  - Full repository suite: 218 files and 2921 tests pass; web 14/14 pass on 2026-07-19.
+  - Research-governance end-to-end validation: 12 processes pass on 2026-07-19.
+  - Harness validation: 534 issue entries pass on 2026-07-19.
+- Follow-up risks:
+  - Structural PDF checks do not prove that the document is the intended paper; title/content alignment and independent human review remain required.
+  - HTML fragments that do not begin as a document are not treated as full text merely because they pass encoding checks; reviewers still inspect the complete source.
+  - The two current OpenReview full texts remain unacquired because the public endpoints require an interactive challenge in this environment.
+- Evidence/artifacts:
+  - src/core/referenceClaimReview.ts
+  - tests/referenceClaimReview.test.ts
+  - .codex/skills/paper-scale-research-loop/SKILL.md
+
+---
+
 ## Issue: LV-614
 
 - Status: resolved; focused/full regressions, build, web, research-governance, harness, plugin local/release, global preflight, and same-flow fail-closed milestone audit pass

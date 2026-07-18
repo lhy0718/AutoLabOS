@@ -384,6 +384,50 @@ describe("reference claim review handoff", () => {
     })).rejects.toThrow("source hash mismatch");
   });
 
+  it("rejects challenge HTML even when it is hash-bound as a PDF or text source", async () => {
+    const pdfWorkspace = await createWorkspace();
+    const challengeHtml = "<!doctype html><html><title>Verifying your browser</title></html>\n";
+    const challengeSha256 = createHash("sha256").update(challengeHtml).digest("hex");
+    const pdfStatusPath = path.join(pdfWorkspace, "status.json");
+    const pdfStatus = JSON.parse(await readFile(pdfStatusPath, "utf8")) as {
+      sources: Array<{ citation_key: string; pdf_sha256: string | null }>;
+    };
+    const pdfSource = pdfStatus.sources.find((source) => source.citation_key === "source-a");
+    if (!pdfSource) throw new Error("Missing source-a test fixture.");
+    pdfSource.pdf_sha256 = challengeSha256;
+    await writeFile(pdfStatusPath, JSON.stringify(pdfStatus), "utf8");
+    await prepareReferenceClaimReview(reviewInput(pdfWorkspace, "packet"));
+    await mkdir(path.join(pdfWorkspace, "sources"));
+    await writeFile(path.join(pdfWorkspace, "sources", "source-a.pdf"), challengeHtml, "utf8");
+
+    await expect(prepareReferenceClaimReviewPrivateDistribution({
+      cwd: pdfWorkspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    })).rejects.toThrow("not a structurally valid PDF");
+
+    const textWorkspace = await createWorkspace();
+    const textStatusPath = path.join(textWorkspace, "status.json");
+    const textStatus = JSON.parse(await readFile(textStatusPath, "utf8")) as {
+      sources: Array<{ citation_key: string; pdf_sha256: string | null }>;
+    };
+    const textSource = textStatus.sources.find((source) => source.citation_key === "source-a");
+    if (!textSource) throw new Error("Missing source-a test fixture.");
+    textSource.pdf_sha256 = challengeSha256;
+    await writeFile(textStatusPath, JSON.stringify(textStatus), "utf8");
+    await prepareReferenceClaimReview(reviewInput(textWorkspace, "packet"));
+    await mkdir(path.join(textWorkspace, "sources"));
+    await writeFile(path.join(textWorkspace, "sources", "source-a.txt"), challengeHtml, "utf8");
+
+    await expect(prepareReferenceClaimReviewPrivateDistribution({
+      cwd: textWorkspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    })).rejects.toThrow("not valid plain text");
+  });
+
   it("rejects source symlinks and post-distribution source tampering", async () => {
     const workspace = await createWorkspace();
     await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
