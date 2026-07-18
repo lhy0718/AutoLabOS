@@ -41,6 +41,7 @@
       "byte_count": 4214873,
       "archive_entry_count": 947,
       "closed_package_root_verified": true,
+      "fresh_extraction_preflight_verified": true,
       "controller_files_included": false,
       "included_in_public_snapshot": false
     },
@@ -51,6 +52,7 @@
       "byte_count": 4214965,
       "archive_entry_count": 947,
       "closed_package_root_verified": true,
+      "fresh_extraction_preflight_verified": true,
       "controller_files_included": false,
       "included_in_public_snapshot": false
     },
@@ -61,6 +63,7 @@
       "byte_count": 4238,
       "archive_entry_count": 10,
       "closed_package_root_verified": true,
+      "fresh_extraction_preflight_verified": true,
       "controller_files_included": false,
       "included_in_public_snapshot": false
     }
