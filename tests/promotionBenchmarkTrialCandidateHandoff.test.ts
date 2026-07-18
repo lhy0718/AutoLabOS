@@ -33,6 +33,11 @@ import {
   preflightPromotionTrialCandidateLicenseReview
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_CAMPAIGN_MANIFEST,
+  inspectPromotionTrialCandidateReviewCampaign,
+  preparePromotionTrialCandidateReviewCampaign
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
+import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
@@ -264,6 +269,14 @@ describe("promotion trial-candidate handoff", () => {
       confirmatory_admitted: false,
       remaining_blockers: expect.arrayContaining(["human_license_review", "independent_double_candidate_review"])
     });
+    await expect(preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: result.output_dir,
+      annotatorIds: ["reviewer-alpha", "reviewer-beta"],
+      licenseReviewerId: "license-reviewer",
+      outDir: "unpaired-review-campaign"
+    })).rejects.toThrow("paired six-trial");
+    await expect(access(path.join(workspace, "unpaired-review-campaign"))).rejects.toThrow();
   }, 30_000);
 
   it("rejects a source route with fewer than three operator groups", async () => {
@@ -737,6 +750,121 @@ describe("promotion trial-candidate handoff", () => {
       outputPath: "reviews/paired/review-worksheet.json"
     });
     expect(pairedWorksheet).toMatchObject({ task_count: 72, annotator_id: "reviewer-paired-worksheet" });
+    await expect(preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: pairedResult.output_dir,
+      annotatorIds: ["reviewer-alpha", "reviewer-alpha"],
+      licenseReviewerId: "license-reviewer",
+      outDir: "invalid-review-campaign"
+    })).rejects.toThrow("two distinct annotators");
+    await expect(access(path.join(workspace, "invalid-review-campaign"))).rejects.toThrow();
+
+    const campaign = await preparePromotionTrialCandidateReviewCampaign({
+      cwd: workspace,
+      handoffRoot: pairedResult.output_dir,
+      annotatorIds: ["reviewer-alpha", "reviewer-beta"],
+      licenseReviewerId: "license-reviewer",
+      outDir: "paired-review-campaign"
+    });
+    expect(campaign).toMatchObject({
+      candidate_count: 72,
+      human_annotation_completed_count: 0,
+      human_license_review_completed: false,
+      reviewer_package_paths: [
+        "paired-review-campaign/reviewer-a",
+        "paired-review-campaign/reviewer-b"
+      ],
+      license_package_path: "paired-review-campaign/license-reviewer"
+    });
+    const campaignRoot = path.join(workspace, campaign.output_dir);
+    expect(await inspectPromotionTrialCandidateReviewCampaign(campaignRoot)).toMatchObject({
+      passed: true,
+      issues: [],
+      manifest: {
+        status: "human_review_pending",
+        candidate_count: 72,
+        human_annotation_completed_count: 0,
+        human_license_review_completed: false,
+        adjudication_completed: false,
+        confirmatory_admitted: false
+      }
+    });
+    const campaignManifest = JSON.parse(await readFile(
+      path.join(campaignRoot, PROMOTION_TRIAL_CANDIDATE_REVIEW_CAMPAIGN_MANIFEST),
+      "utf8"
+    )) as Record<string, any>;
+    expect(campaignManifest.assignments.map((item: Record<string, any>) =>
+      item.participant_id)).toEqual([
+      "reviewer-alpha",
+      "reviewer-beta",
+      "license-reviewer"
+    ]);
+    const reviewerATemplatePath = path.join(
+      campaignRoot,
+      "reviewer-a",
+      "annotation-template.json"
+    );
+    const reviewerATemplate = JSON.parse(await readFile(
+      reviewerATemplatePath,
+      "utf8"
+    )) as Record<string, any>;
+    expect(reviewerATemplate.independence_attestation).toEqual({
+      completed_by_human: false,
+      peer_annotations_unseen: false,
+      controller_map_unseen: false
+    });
+    expect(reviewerATemplate.annotations).toHaveLength(72);
+    expect(reviewerATemplate.annotations.every((item: Record<string, any>) =>
+      Object.values(item.observations).every((value) => value === null)
+      && item.evidence_refs.length === 0
+      && item.rationale === "")).toBe(true);
+    const licenseTemplate = JSON.parse(await readFile(path.join(
+      campaignRoot,
+      "license-reviewer",
+      "license-review-template.json"
+    ), "utf8")) as Record<string, any>;
+    expect(licenseTemplate).toMatchObject({
+      reviewer_id: "license-reviewer",
+      independence_attestation: {
+        completed_by_human: false,
+        candidate_annotations_unseen: false,
+        controller_map_unseen: false
+      },
+      review: { status: null, evidence_refs: [], rationale: "" }
+    });
+    await expect(access(path.join(
+      campaignRoot,
+      "reviewer-a",
+      "packet",
+      "controller"
+    ))).rejects.toThrow();
+    expect(await inspectPromotionTrialCandidateReviewerPacket(path.join(
+      campaignRoot,
+      "reviewer-a",
+      "packet"
+    ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateReviewerPacket(path.join(
+      campaignRoot,
+      "reviewer-b",
+      "packet"
+    ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionTrialCandidateLicensePacket(path.join(
+      campaignRoot,
+      "license-reviewer",
+      "packet"
+    ))).toMatchObject({ passed: true, issues: [] });
+    reviewerATemplate.independence_attestation.completed_by_human = true;
+    await writeFile(
+      reviewerATemplatePath,
+      `${JSON.stringify(reviewerATemplate, null, 2)}\n`,
+      "utf8"
+    );
+    const changedCampaign = await inspectPromotionTrialCandidateReviewCampaign(campaignRoot);
+    expect(changedCampaign.passed).toBe(false);
+    expect(changedCampaign.issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "trial_candidate_review_campaign_inventory_invalid",
+      "trial_candidate_review_campaign_reviewer_template_invalid"
+    ]));
 
     const invalidPairedRoot = path.join(workspace, "parquet-paired-invalid-controller");
     await cp(path.join(workspace, pairedResult.output_dir), invalidPairedRoot, {

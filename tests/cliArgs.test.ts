@@ -695,6 +695,35 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports isolated pending human-review campaign preparation", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-review-campaign",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--annotator-id", "reviewer-alpha",
+      "--annotator-id", "reviewer-beta",
+      "--license-reviewer-id", "license-reviewer",
+      "--out-dir", "outputs/review-campaign"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-trial-candidate-review-campaign",
+      handoffRoot: "outputs/candidate-handoff",
+      annotatorIds: ["reviewer-alpha", "reviewer-beta"],
+      licenseReviewerId: "license-reviewer",
+      outDir: "outputs/review-campaign"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-review-campaign",
+      "--handoff-root", "outputs/candidate-handoff",
+      "--annotator-id", "reviewer-alpha",
+      "--license-reviewer-id", "license-reviewer",
+      "--out-dir", "outputs/review-campaign"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two --annotator-id")
+    });
+  });
+
   it("supports unlabeled trial-candidate annotation worksheet preparation", () => {
     expect(resolveCliAction([
       "governance-benchmark",

@@ -594,6 +594,20 @@ fail-closed outcomes are recorded in
 This establishes reviewer handoff readiness only; it is not human-review or
 license evidence.
 
+The v10 handoff can now be materialized into three separately distributable
+packages without manual copying: two opaque paired-candidate packages and one
+source-license package. The controller-side campaign receipt binds the exact
+upstream handoff, packet manifests, templates, and return guides. All 144
+candidate labels, the license decision, and every human attestation remain
+unfilled, so the campaign status is `human_review_pending`, completed human
+annotation count is zero, and confirmatory admission remains zero. This closes
+the packet-isolation and return-template preparation gap only; real independent
+people must still complete and return the three inputs.
+The actual v10 campaign passes standalone inspection with 888 hash-bound files
+and no controller path in any participant package. Its local materialization is
+approximately 72 MB because the two reviewer snapshots are physical copies;
+hard links are avoided so one reviewer's edits cannot alter the other package.
+
 The post-review operator boundary is now executable without manufacturing the
 missing judgments. A passing adjudication can be transformed into a
 self-contained canonical-curation handoff with six hash-bound traces and the

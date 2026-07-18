@@ -26,6 +26,7 @@ import {
   runSyntheticPromotionCorpusCli,
   runPromotionSourceExpansionAuditCli,
   runPromotionTrialCandidateHandoffExportCli,
+  runPromotionTrialCandidateReviewCampaignCli,
   runPromotionTrialCandidateAnnotationWorksheetCli,
   runPromotionTrialCandidateLicenseReviewWorksheetCli,
   runPromotionTrialCandidateAnnotationPreflightCli,
@@ -82,6 +83,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
     "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <portable-source-recipe.json> --source-root <hash-bound-local-source> --out-dir <new-handoff-dir>",
+    "  autolabos governance-benchmark prepare-promotion-trial-candidate-review-campaign --handoff-root <handoff> --annotator-id <reviewer-a> --annotator-id <reviewer-b> --license-reviewer-id <license-reviewer> --out-dir <new-review-campaign>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-worksheet --handoff-root <handoff> --annotator-id <pseudonym> --output <annotation.json>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet --handoff-root <handoff> --reviewer-id <pseudonym> --output <license-review.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root <handoff/reviewer> --annotation <review.json> --out-dir <preflight-output>",
@@ -343,6 +345,17 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       recipePath: action.recipePath,
       sourceRoot: action.sourceRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-prepare-promotion-trial-candidate-review-campaign") {
+    await runPromotionTrialCandidateReviewCampaignCli({
+      cwd: process.cwd(),
+      handoffRoot: action.handoffRoot,
+      annotatorIds: action.annotatorIds,
+      licenseReviewerId: action.licenseReviewerId,
       outDir: action.outDir
     });
     return;

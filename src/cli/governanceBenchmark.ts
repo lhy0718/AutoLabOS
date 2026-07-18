@@ -84,6 +84,10 @@ import {
   type PreflightPromotionTrialCandidateLicenseReviewInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReview.js";
 import {
+  preparePromotionTrialCandidateReviewCampaign,
+  type PreparePromotionTrialCandidateReviewCampaignInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
+import {
   preparePromotionCanonicalCurationHandoff,
   type PreparePromotionCanonicalCurationHandoffInput
 } from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
@@ -536,6 +540,25 @@ export async function runPromotionTrialCandidateHandoffExportCli(
       `Manifest: ${result.manifest_path}`,
       `Evidence summary: ${result.evidence_summary_path}`,
       "Evidence boundary: revision-bound source-trace candidate handoff only; no licensing, human annotation, confirmatory admission, or paper-readiness claim"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateReviewCampaignCli(
+  input: PreparePromotionTrialCandidateReviewCampaignInput
+): Promise<void> {
+  const result = await preparePromotionTrialCandidateReviewCampaign(input);
+  process.stdout.write(
+    [
+      "Pending human-review campaign prepared",
+      `Campaign: ${result.campaign_id}`,
+      `Handoff: ${result.handoff_id}`,
+      `Candidates: ${result.candidate_count}`,
+      `Reviewer packages: ${result.reviewer_package_paths.join(", ")}`,
+      `License-review package: ${result.license_package_path}`,
+      `Manifest: ${result.manifest_path}`,
+      "Completed human annotations: 0",
+      "Status: all templates remain incomplete; no human review, license decision, adjudication, or confirmatory admission"
     ].join("\n") + "\n"
   );
 }

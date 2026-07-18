@@ -68,6 +68,15 @@ packet and public permission evidence. Candidate reviewers do not receive the
 source identity, controller map, or license decision, and the license reviewer
 does not receive candidate annotations.
 
+The runtime materializes this separation as an immutable pending review
+campaign. Two reviewer package roots receive identical opaque six-trial packet
+snapshots but different blank annotation templates; a third package receives
+only the source-license packet and an undecided license template. The campaign
+controller binds upstream and package-manifest hashes, while its inspector
+requires three distinct pseudonymous roles, exact file inventories, null
+decisions, and false human attestations. Package preparation is not annotation,
+license approval, identity proof, or independence proof.
+
 Progression into canonical curation depends on positive execution completeness
 and repeated-trial comparability for every required source candidate, plus the
 separate license gate. Source-absent result tables, readiness decisions, figure

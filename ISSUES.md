@@ -10885,6 +10885,69 @@ Path placeholders:
 
 ## Research and paper-readiness watchlist
 
+## Issue: R-013
+
+- Status: resolved; paired paper-scale review now has an atomic three-package campaign handoff, and source, real v10, full CI, and harness validation pass
+- Validation target: the two candidate reviewers and distinct source-license reviewer must receive self-contained, mutually isolated inputs without manual packet copying or any generated human judgment.
+- Environment/session context: domain-neutral paired 72-candidate fixture; templates deliberately contain zero completed human annotations, no license decision, no adjudication, and no confirmatory admission.
+
+- Reproduction steps:
+  1. Start from an integrity-valid paired 72-candidate handoff.
+  2. Prepare two annotation worksheets and one license worksheet.
+  3. Manually copy the shared `reviewer/` packet twice and `license/` once, then try to prove which exact packet and template each person received.
+  4. Observe that the runtime validates individual packets and returned files but does not persist a campaign-level assignment, isolation, or distribution receipt.
+
+- Expected behavior:
+  - One command accepts exactly two distinct candidate-reviewer pseudonyms and one distinct license-reviewer pseudonym.
+  - It accepts only the paired two-group, three-trial-per-group paper-scale handoff.
+  - It emits two identical opaque candidate packages and one license-only package with no controller or peer data.
+  - All template observations and decisions stay null, all human attestations stay false, and completion/admission counts stay zero.
+  - A standalone inspector binds the upstream handoff, packet manifests, templates, guides, exact file inventory, and participant-role separation.
+
+- Actual behavior:
+  - Reviewer and license packets were individually hash-closed, and worksheet commands were fail-closed.
+  - The three package copies, role assignment, and distribution receipt still depended on manual filesystem operations.
+
+- Fresh vs existing session comparison:
+  - Fresh session: `prepare-promotion-trial-candidate-review-campaign` atomically creates and self-inspects three isolated pending packages.
+  - Existing session: real v10 has only incomplete worksheet slots and a failed adjudication, so campaign preparation must not change its evidence count.
+  - Divergence: this is a persisted operator-handoff gap, not a UI refresh or resume defect.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: packet integrity and return-file validity were modeled separately, but the distribution assignment connecting them was not persisted.
+
+- Code/test changes:
+  - Added a review-campaign module that copies only manifest-bound packet files into two reviewer roots and one license-reviewer root.
+  - Added distinct-role validation, paired six-trial and 72-candidate floors, immutable blank templates, exact return guides, atomic staging, and zero-completion fields.
+  - Added standalone packet, template, upstream, inventory, path, symlink, and extra-file inspection.
+  - Added the public CLI command and parser coverage.
+  - Extended the paired 72-base regression to prove isolation, null/false templates, packet validity, duplicate-role refusal, and tamper detection.
+
+- Regression status:
+  - TypeScript validation: passed on 2026-07-18.
+  - Focused CLI and paired 72-base handoff regression: 2 files / 90 tests passed on 2026-07-18.
+  - Production build: passed on 2026-07-18; npm retained its non-blocking `esbuild` allow-scripts review warning.
+  - Real v10 campaign: standalone inspection passed across 888 hash-bound files; 72 candidates, zero completed human annotations, no license completion, no adjudication, no admission, and no controller path in participant packages.
+  - Public-code sanitization: 3 tests passed on 2026-07-18.
+  - Full repository CI: 214 core files / 2,876 tests and 1 web file / 14 tests passed on 2026-07-18.
+  - Harness validation: 527 issue entries checked with no structural violations on 2026-07-18.
+  - Diff whitespace validation: passed on 2026-07-18.
+
+- Follow-up risks:
+  - Pseudonymous role separation does not prove real-world reviewer identity, expertise, or independence.
+  - Campaign preparation does not complete any annotation or make a legal determination.
+  - The external human-review blocker remains unchanged until three real reviewers return valid inputs.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.ts`
+  - `src/core/benchmark/promotionBenchmarkTrialCandidateReview.ts`
+  - `tests/promotionBenchmarkTrialCandidateHandoff.test.ts`
+  - `tests/cliArgs.test.ts`
+  - `docs/research/promotion-benchmark-curation-boundary.md`
+
+---
+
 ## Issue: R-012
 
 - Status: resolved; canonical curation now has a fail-closed post-review preparation handoff, and the full validation set plus real v10 refusal replay pass
