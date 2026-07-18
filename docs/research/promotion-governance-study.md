@@ -607,6 +607,16 @@ The actual v10 campaign passes standalone inspection with 888 hash-bound files
 and no controller path in any participant package. Its local materialization is
 approximately 72 MB because the two reviewer snapshots are physical copies;
 hard links are avoided so one reviewer's edits cannot alter the other package.
+A fresh run at code revision `694e98ecb756b25be7792895aa8ae34401ffc311`
+re-materialized all 13 pinned source files with exact declared hashes, rebuilt
+the 72-candidate workspace handoff, and produced three private distribution
+archives. Archive inspection found only the assigned participant root in each
+archive and no controller files. These local operator artifacts are deliberately
+excluded from the history-free public source snapshot because neither source
+redistribution nor human review is complete. Their sizes, closed-root checks,
+and blank-return preflights are recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v11.json`.
+Transfer hashes remain in the private operator log alongside the archives.
 
 The controller return path now has an assignment-bound collector. It rechecks
 the pristine campaign and complete handoff, requires the two annotation
@@ -618,8 +628,11 @@ matched, adjudication attempted and failed, accepted labels remained 0/72, and
 confirmatory admission remained false. This closes a runtime provenance gap
 only: no completed human v10 return has been collected, the human annotation
 count remains zero, and the confirmatory admission count remains zero. The
-observed contract outcome is recorded in
-`docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`.
+historical contract outcome is recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v10.json`;
+the fresh distribution run and its new assignment-bound blocked receipt are
+recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v11.json`.
 
 The post-review operator boundary is now executable without manufacturing the
 missing judgments. Only a passing assignment-bound campaign return can be

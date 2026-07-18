@@ -1,0 +1,141 @@
+{
+  "schema_version": "1.0",
+  "run_kind": "private_human_review_distribution_preflight",
+  "code_revision": "694e98ecb756b25be7792895aa8ae34401ffc311",
+  "handoff_id": "public-execution-trace-candidate-handoff-v10",
+  "handoff_manifest_sha256": "526b408a610fd9a6c85fe2e6e2e86a2bd592da1e7f6aef6d5de73c94aa6f16a2",
+  "reviewer_packet_manifest_sha256": "107fe3e611f4ed52724b319b65fa38e1675f676782e7ef6760962c58b17f356c",
+  "license_packet_manifest_sha256": "a156ec3c5cfeccf18c29de2b75811a5e0beefe5256060a64e157743031ba53d3",
+  "source_materialization": {
+    "source_revision_bound_by_handoff_manifest": true,
+    "verified_file_count": 13,
+    "verified_parquet_file_count": 12,
+    "all_declared_sha256_matched": true,
+    "row_count": 80036,
+    "local_source_included_in_public_snapshot": false
+  },
+  "handoff": {
+    "base_candidate_count": 72,
+    "trial_artifact_count": 432,
+    "reviewer_artifact_tree_sha256": "8eac031b59e170fc018344862f8007acddf7a668f7e94d0cadc2120b02ea384e",
+    "paper_scale_trace_floor_met": true,
+    "human_review_completed": false,
+    "confirmatory_admitted": false
+  },
+  "campaign": {
+    "campaign_id": "review-campaign-e5789de835947f0f5bcadad6",
+    "campaign_manifest_sha256": "e0081b799b812d2b949baa43d66adca025aeafff50be02197f217cfb700b25e4",
+    "declared_file_count": 888,
+    "assignment_count": 3,
+    "candidate_count": 72,
+    "human_annotation_completed_count": 0,
+    "human_license_review_completed": false,
+    "adjudication_completed": false,
+    "confirmatory_admitted": false
+  },
+  "private_distribution_archives": [
+    {
+      "slot": "reviewer-a",
+      "artifact_ref": "outputs/governance-benchmark/promotion-v10-reviewer-a.tar.gz",
+      "sha256_recorded_in_private_operator_log": true,
+      "byte_count": 4214873,
+      "archive_entry_count": 947,
+      "closed_package_root_verified": true,
+      "controller_files_included": false,
+      "included_in_public_snapshot": false
+    },
+    {
+      "slot": "reviewer-b",
+      "artifact_ref": "outputs/governance-benchmark/promotion-v10-reviewer-b.tar.gz",
+      "sha256_recorded_in_private_operator_log": true,
+      "byte_count": 4214965,
+      "archive_entry_count": 947,
+      "closed_package_root_verified": true,
+      "controller_files_included": false,
+      "included_in_public_snapshot": false
+    },
+    {
+      "slot": "license-reviewer",
+      "artifact_ref": "outputs/governance-benchmark/promotion-v10-license-reviewer.tar.gz",
+      "sha256_recorded_in_private_operator_log": true,
+      "byte_count": 4238,
+      "archive_entry_count": 10,
+      "closed_package_root_verified": true,
+      "controller_files_included": false,
+      "included_in_public_snapshot": false
+    }
+  ],
+  "blank_return_preflights": [
+    {
+      "slot": "reviewer-a",
+      "template_sha256": "ed50ef9574292649ac165e3ce265c60fafbbc5e7e9d92362a261baf087e78ee3",
+      "cli_exit_code": 1,
+      "passed": false,
+      "annotation_count": 0,
+      "source_eligible_candidate_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    },
+    {
+      "slot": "reviewer-b",
+      "template_sha256": "3af52dfe110f01b0eb4a3424ffbcbb4c6b8697cc15b088b1aa865db128c787ec",
+      "cli_exit_code": 1,
+      "passed": false,
+      "annotation_count": 0,
+      "source_eligible_candidate_count": 0,
+      "validation_issue": "trial_candidate_annotation_file_invalid"
+    },
+    {
+      "slot": "license-reviewer",
+      "template_sha256": "ac0c7957d3b02840a4f50d253f39bbf565137c6230370cf72cbc39633bf44432",
+      "cli_exit_code": 1,
+      "passed": false,
+      "reviewer_id": null,
+      "license_status": null,
+      "evidence_reference_count": 0,
+      "validation_issue": "trial_candidate_license_review_file_invalid"
+    }
+  ],
+  "campaign_return_preflight": {
+    "receipt_sha256": "45b103a1066a97924a0c01f906a3ccead826fc358effc9daa69389d99e2ba674",
+    "cli_exit_code": 1,
+    "status": "review_return_blocked",
+    "assigned_return_count": 3,
+    "required_return_count": 3,
+    "adjudication_attempted": true,
+    "adjudication_passed": false,
+    "accepted_label_count": 0,
+    "task_count": 72,
+    "source_eligible_candidate_count": 0,
+    "validation_issue": "trial_candidate_campaign_return_adjudication_blocked",
+    "confirmatory_admitted": false
+  },
+  "canonical_curation_preflight": {
+    "input_contract": "assignment_bound_campaign_return",
+    "preparation_cli_exit_code": 1,
+    "output_directory_created": false,
+    "status": "blocked_before_preparation",
+    "blocking_reason": "passing_assigned_review_campaign_return_required",
+    "canonical_source_count": 0,
+    "confirmatory_admitted": false
+  },
+  "confirmatory_intake_precondition": {
+    "required_schema_version": "1.3",
+    "required_review_input": "assignment_bound_campaign_and_curation_returns",
+    "canonical_curation_return_required": true,
+    "canonical_curation_return_available": false,
+    "entered": false,
+    "canonical_source_count": 0,
+    "required_canonical_source_count": 72,
+    "confirmatory_admitted": false
+  },
+  "public_release_boundary": {
+    "public_snapshot_revision": "694e98ecb756b25be7792895aa8ae34401ffc311",
+    "public_snapshot_tree_sha256": "67aab9b36357e6fc618941c7acb081508b8de3b81ff74fa00a6252c587da15b1",
+    "history_included": false,
+    "portable": true,
+    "private_review_packets_included": false
+  },
+  "human_review_completed": false,
+  "confirmatory_admitted": false,
+  "evidence_boundary": "This receipt establishes that the pinned source was re-materialized with all declared hashes matching, a workspace-owned 72-candidate campaign was generated, three controller-free private distribution archives were closed and hashed, blank returns were rejected independently, the assignment-bound collector preserved zero accepted labels, and canonical curation created no output. It contains no completed human return, license conclusion, legal grant, reviewer-independence evidence, accepted candidate label, canonical source, confirmatory result, or paper-readiness evidence."
+}
