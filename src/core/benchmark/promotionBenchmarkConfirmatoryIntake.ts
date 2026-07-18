@@ -40,6 +40,7 @@ import {
   PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
   PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
   PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
 import {
@@ -54,6 +55,16 @@ import {
   PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT,
   inspectPromotionTrialCandidateCampaignReturn
 } from "./promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
+import {
+  PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST,
+  inspectPromotionCanonicalCurationHandoff
+} from "./promotionBenchmarkCanonicalCurationHandoff.js";
+import {
+  PROMOTION_CANONICAL_CURATION_RETURN_HANDOFF_ROOT,
+  PROMOTION_CANONICAL_CURATION_RETURN_RECEIPT,
+  inspectPromotionCanonicalCurationReturn,
+  type PromotionCanonicalCurationReturnBinding
+} from "./promotionBenchmarkCanonicalCurationReturn.js";
 
 export const MINIMUM_PROVISIONAL_CONFIRMATORY_SOURCE_BUNDLES =
   MINIMUM_PROVISIONAL_CONFIRMATORY_BASE_BUNDLES;
@@ -79,11 +90,12 @@ export interface PromotionConfirmatoryIntakeSource {
 }
 
 export interface PromotionConfirmatoryIntakeManifest {
-  schema_version: "1.0" | "1.2";
+  schema_version: "1.0" | "1.3";
   intake_tier: "provisional" | "paper_scale";
   study_id: string;
   candidate_handoff_root?: string;
   candidate_campaign_return_root?: string;
+  canonical_curation_return_root?: string;
   sources: PromotionConfirmatoryIntakeSource[];
 }
 
@@ -148,6 +160,7 @@ export interface PromotionConfirmatoryIntakeAuditReport {
   artifact_verified_source_count: number;
   candidate_handoff_verified: boolean;
   candidate_review_verified: boolean;
+  candidate_curation_return_verified: boolean;
   source_eligible_candidate_count: number;
   canonical_curation_verified_source_count: number;
   global_issues: PromotionExecutionEvidenceIssue[];
@@ -177,6 +190,7 @@ interface PreparedSource {
   origin_kind: PromotionConfirmatorySourceOriginKind;
   candidate_id: string | null;
   canonical_curation_record_sha256: string | null;
+  canonical_curation_return_source_ref: string | null;
 }
 
 interface ConfirmatorySourceInspection {
@@ -192,6 +206,9 @@ interface PaperScaleEvidence {
   candidate_by_id: Map<string, PromotionTrialCandidateRecord>;
   source_eligible_candidate_ids: Set<string>;
   campaign_return_receipt_sha256: string;
+  curation_return_receipt_sha256: string;
+  curation_return_root: string;
+  curation_binding_by_candidate: Map<string, PromotionCanonicalCurationReturnBinding>;
   review_report_sha256: string;
   review_labels_sha256: string;
   review_evidence_sha256: string;
@@ -201,6 +218,7 @@ interface PaperScaleEvidenceInspection {
   evidence: PaperScaleEvidence | null;
   handoff_verified: boolean;
   review_verified: boolean;
+  curation_return_verified: boolean;
   source_eligible_candidate_count: number;
 }
 
@@ -227,7 +245,8 @@ export async function freezePromotionConfirmatoryCorpus(
   }
   for (const evidenceRoot of [
     manifest.candidate_handoff_root,
-    manifest.candidate_campaign_return_root
+    manifest.candidate_campaign_return_root,
+    manifest.canonical_curation_return_root
   ].filter(nonEmptyString)) {
     const resolved = path.resolve(manifestRoot, evidenceRoot);
     if (isSameOrContainedPath(resolved, outDir)) {
@@ -296,7 +315,7 @@ export async function freezePromotionConfirmatoryCorpus(
     await writeJsonFile(recipePath, recipe);
     const recipeSha256 = sha256(await fs.readFile(recipePath));
     await writeJsonFile(path.join(stagingRoot, "frozen-intake-manifest.json"), {
-      schema_version: "1.2",
+      schema_version: "1.3",
       study_id: manifest.study_id,
       intake_tier: manifest.intake_tier,
       generated_at: new Date().toISOString(),
@@ -319,6 +338,8 @@ export async function freezePromotionConfirmatoryCorpus(
               handoff_manifest_sha256: inspected.paper_scale_evidence.handoff_manifest_sha256,
               campaign_return_receipt_sha256:
                 inspected.paper_scale_evidence.campaign_return_receipt_sha256,
+              curation_return_receipt_sha256:
+                inspected.paper_scale_evidence.curation_return_receipt_sha256,
               review_report_sha256: inspected.paper_scale_evidence.review_report_sha256,
               adjudicated_labels_sha256: inspected.paper_scale_evidence.review_labels_sha256,
               review_evidence_sha256: inspected.paper_scale_evidence.review_evidence_sha256,
@@ -337,6 +358,7 @@ export async function freezePromotionConfirmatoryCorpus(
         origin_kind: source.origin_kind,
         candidate_id: source.candidate_id,
         canonical_curation_record_sha256: source.canonical_curation_record_sha256,
+        canonical_curation_return_source_ref: source.canonical_curation_return_source_ref,
         run_id_sha256: source.run_id_sha256,
         execution_fingerprint: source.execution_fingerprint,
         evidence_manifest_sha256: source.evidence_manifest_sha256,
@@ -380,11 +402,12 @@ async function copyConfirmatoryUpstreamEvidence(input: {
   manifestRoot: string;
   manifest: PromotionConfirmatoryIntakeManifest;
 }): Promise<{
-  schema_version: "1.1";
-  method: "contained_intake_campaign_return_evidence";
+  schema_version: "1.2";
+  method: "contained_intake_campaign_curation_return_evidence";
   intake_manifest_ref: string;
   candidate_handoff_root_ref: string | null;
   candidate_campaign_return_root_ref: string | null;
+  canonical_curation_return_root_ref: string | null;
   files: Array<{ ref: string; sha256: string }>;
 }> {
   const upstreamRoot = path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT);
@@ -392,7 +415,8 @@ async function copyConfirmatoryUpstreamEvidence(input: {
   await fs.copyFile(input.manifestPath, path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF));
   if (input.manifest.intake_tier === "paper_scale") {
     if (!input.manifest.candidate_handoff_root
-        || !input.manifest.candidate_campaign_return_root) {
+        || !input.manifest.candidate_campaign_return_root
+        || !input.manifest.canonical_curation_return_root) {
       throw new Error("Paper-scale confirmatory intake requires candidate evidence roots.");
     }
     await fs.cp(
@@ -403,6 +427,11 @@ async function copyConfirmatoryUpstreamEvidence(input: {
     await fs.cp(
       path.resolve(input.manifestRoot, input.manifest.candidate_campaign_return_root),
       path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT),
+      { recursive: true, errorOnExist: true, force: false }
+    );
+    await fs.cp(
+      path.resolve(input.manifestRoot, input.manifest.canonical_curation_return_root),
+      path.join(input.stagingRoot, PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT),
       { recursive: true, errorOnExist: true, force: false }
     );
   }
@@ -427,14 +456,17 @@ async function copyConfirmatoryUpstreamEvidence(input: {
   await visit(upstreamRoot);
   files.sort((left, right) => left.ref.localeCompare(right.ref));
   return {
-    schema_version: "1.1",
-    method: "contained_intake_campaign_return_evidence",
+    schema_version: "1.2",
+    method: "contained_intake_campaign_curation_return_evidence",
     intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
     candidate_handoff_root_ref: input.manifest.intake_tier === "paper_scale"
       ? PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT
       : null,
     candidate_campaign_return_root_ref: input.manifest.intake_tier === "paper_scale"
       ? PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT
+      : null,
+    canonical_curation_return_root_ref: input.manifest.intake_tier === "paper_scale"
+      ? PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT
       : null,
     files
   };
@@ -457,7 +489,8 @@ export async function auditPromotionConfirmatoryIntake(
   }
   for (const evidenceRoot of [
     manifest.candidate_handoff_root,
-    manifest.candidate_campaign_return_root
+    manifest.candidate_campaign_return_root,
+    manifest.canonical_curation_return_root
   ].filter(nonEmptyString)) {
     if (isSameOrContainedPath(path.resolve(manifestRoot, evidenceRoot), outDir)) {
       throw new Error("Promotion confirmatory audit output must stay outside candidate evidence roots.");
@@ -559,10 +592,14 @@ async function inspectConfirmatorySources(
     }
     let canonicalCurationRecordSha256: string | null = null;
     let canonicalCurationVerifiedArtifactCount = 0;
+    let canonicalCurationReturnSourceRef: string | null = null;
     if (manifest.intake_tier === "paper_scale") {
       const paperScaleEvidence = paperScale.evidence;
       const candidate = source.candidate_id && paperScaleEvidence
         ? paperScaleEvidence.candidate_by_id.get(source.candidate_id)
+        : undefined;
+      const curationBinding = source.candidate_id && paperScaleEvidence
+        ? paperScaleEvidence.curation_binding_by_candidate.get(source.candidate_id)
         : undefined;
       if (!source.candidate_id) {
         issues.push({
@@ -598,6 +635,36 @@ async function inspectConfirmatorySources(
             ref: source.candidate_id
           });
         }
+        if (!curationBinding || !curationBinding.validation_passed
+            || !curationBinding.assignment_match
+            || !curationBinding.curation_record_sha256) {
+          issues.push({
+            code: "confirmatory_candidate_curation_return_binding_missing",
+            message: "Paper-scale sources require one verified assignment-bound curation return.",
+            ref: source.candidate_id
+          });
+        } else {
+          const expectedSourceRoot = path.resolve(
+            paperScaleEvidence.curation_return_root,
+            curationBinding.source_path
+          );
+          canonicalCurationReturnSourceRef =
+            `${PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT}/${curationBinding.source_path}`;
+          if (sourceRoot !== expectedSourceRoot) {
+            issues.push({
+              code: "confirmatory_curation_return_source_mismatch",
+              message: "Paper-scale source roots must identify the exact source contained in the verified curation return.",
+              ref: source.candidate_id
+            });
+          }
+          if (sourceSha256 && sourceSha256 !== curationBinding.source_tree_sha256) {
+            issues.push({
+              code: "confirmatory_curation_return_source_hash_mismatch",
+              message: "Paper-scale source content must reproduce its curation-return tree hash.",
+              ref: source.candidate_id
+            });
+          }
+        }
         const curation = await inspectPromotionCanonicalCuration({
           sourceRoot,
           handoffId: paperScaleEvidence.handoff_id,
@@ -607,6 +674,14 @@ async function inspectConfirmatorySources(
         canonicalCurationRecordSha256 = curation.record_sha256;
         canonicalCurationVerifiedArtifactCount = curation.verified_artifact_count;
         issues.push(...curation.issues);
+        if (curationBinding?.curation_record_sha256
+            && curation.record_sha256 !== curationBinding.curation_record_sha256) {
+          issues.push({
+            code: "confirmatory_curation_return_record_hash_mismatch",
+            message: "Canonical curation evidence must reproduce the record hash bound by the return receipt.",
+            ref: source.candidate_id
+          });
+        }
       }
     }
 
@@ -653,7 +728,8 @@ async function inspectConfirmatorySources(
               source_revision: source.source_revision,
               origin_kind: source.origin_kind,
               candidate_id: source.candidate_id || null,
-              canonical_curation_record_sha256: canonicalCurationRecordSha256
+              canonical_curation_record_sha256: canonicalCurationRecordSha256,
+              canonical_curation_return_source_ref: canonicalCurationReturnSourceRef
             }
           }
         : {})
@@ -727,6 +803,7 @@ async function inspectConfirmatorySources(
     artifact_verified_source_count: prepared.length,
     candidate_handoff_verified: paperScale.handoff_verified,
     candidate_review_verified: paperScale.review_verified,
+    candidate_curation_return_verified: paperScale.curation_return_verified,
     source_eligible_candidate_count: paperScale.source_eligible_candidate_count,
     canonical_curation_verified_source_count: sourceAudits.filter(
       (source) => Boolean(source.canonical_curation_record_sha256)
@@ -750,6 +827,7 @@ async function inspectPaperScaleEvidence(
       evidence: null,
       handoff_verified: false,
       review_verified: false,
+      curation_return_verified: false,
       source_eligible_candidate_count: 0
     };
   }
@@ -838,12 +916,86 @@ async function inspectPaperScaleEvidence(
       message: "Paper-scale intake requires revision-matched double-human review, redistribution permission, and 72 source-eligible candidates."
     });
   }
-  if (!handoffManifest || !review || !campaignReceipt || !campaignReturnVerified
-      || !handoffManifestSha256 || !campaignReceipt.adjudication.report_sha256) {
+  const campaignReturnReceiptSha256 = campaignReceipt
+    ? await hashRegularFile(path.join(
+      campaignReturnRoot,
+      PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
+    )).catch(() => null)
+    : null;
+  const curationReturnRoot = path.resolve(
+    manifestRoot,
+    manifest.canonical_curation_return_root || ""
+  );
+  const curationReturn = await inspectPromotionCanonicalCurationReturn(
+    curationReturnRoot
+  );
+  const curationReceipt = curationReturn.receipt;
+  const curationReturnReceiptSha256 = curationReceipt
+    ? await hashRegularFile(path.join(
+      curationReturnRoot,
+      PROMOTION_CANONICAL_CURATION_RETURN_RECEIPT
+    )).catch(() => null)
+    : null;
+  const curationHandoffRoot = path.join(
+    curationReturnRoot,
+    PROMOTION_CANONICAL_CURATION_RETURN_HANDOFF_ROOT
+  );
+  const curationHandoff = await inspectPromotionCanonicalCurationHandoff(
+    curationHandoffRoot
+  );
+  const curationHandoffManifest = curationHandoff.manifest;
+  const curationHandoffManifestSha256 = curationHandoffManifest
+    ? await hashRegularFile(path.join(
+      curationHandoffRoot,
+      PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST
+    )).catch(() => null)
+    : null;
+  const curationCandidateIds = curationReceipt?.returns.flatMap((binding) =>
+    binding.candidate_id && binding.validation_passed && binding.assignment_match
+      ? [binding.candidate_id]
+      : []) || [];
+  const curationReturnVerified = Boolean(
+    reviewVerified
+      && curationReturn.passed
+      && curationReceipt
+      && curationReceipt.passed
+      && curationReceipt.status === "verified"
+      && curationReceipt.confirmatory_admitted === false
+      && curationHandoff.passed
+      && curationHandoffManifest
+      && curationHandoffManifestSha256
+      && curationReceipt.input_sha256.curation_handoff_manifest
+        === curationHandoffManifestSha256
+      && handoffManifest
+      && campaignReturnReceiptSha256
+      && curationReceipt.handoff_id === handoffManifest.handoff_id
+      && curationReceipt.source_revision === handoffManifest.source_revision
+      && curationHandoffManifest.upstream.handoff_manifest_sha256
+        === handoffManifestSha256
+      && curationHandoffManifest.upstream.campaign_return_receipt_sha256
+        === campaignReturnReceiptSha256
+      && curationReceipt.required_return_count
+        === review?.source_eligible_candidate_ids.length
+      && curationReceipt.verified_return_count
+        === review?.source_eligible_candidate_ids.length
+      && sameStringSet(curationCandidateIds, review?.source_eligible_candidate_ids || [])
+  );
+  if (!curationReturnVerified) {
+    issues.push({
+      code: "confirmatory_paper_scale_curation_return_invalid",
+      message: "Paper-scale intake requires a complete verified curation return bound to the exact candidate handoff and assigned campaign return."
+    });
+  }
+  if (!handoffManifest || !review || !reviewVerified || !campaignReceipt
+      || !campaignReturnVerified || !handoffManifestSha256
+      || !campaignReceipt.adjudication.report_sha256
+      || !campaignReturnReceiptSha256 || !curationReceipt
+      || !curationReturnVerified || !curationReturnReceiptSha256) {
     return {
       evidence: null,
       handoff_verified: handoffFloorVerified,
-      review_verified: false,
+      review_verified: reviewVerified,
+      curation_return_verified: curationReturnVerified,
       source_eligible_candidate_count: review?.source_eligible_candidate_ids.length || 0
     };
   }
@@ -864,16 +1016,18 @@ async function inspectPaperScaleEvidence(
       source_revision: handoffManifest.source_revision,
       candidate_by_id: candidateById,
       source_eligible_candidate_ids: new Set(review.source_eligible_candidate_ids),
-      campaign_return_receipt_sha256: sha256(await fs.readFile(path.join(
-        campaignReturnRoot,
-        PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT
-      ))),
+      campaign_return_receipt_sha256: campaignReturnReceiptSha256,
+      curation_return_receipt_sha256: curationReturnReceiptSha256,
+      curation_return_root: curationReturnRoot,
+      curation_binding_by_candidate: new Map(curationReceipt.returns.flatMap((binding) =>
+        binding.candidate_id ? [[binding.candidate_id, binding] as const] : [])),
       review_report_sha256: campaignReceipt.adjudication.report_sha256,
       review_labels_sha256: review.labels_sha256,
       review_evidence_sha256: review.evidence_sha256
     },
     handoff_verified: handoffFloorVerified,
     review_verified: reviewVerified,
+    curation_return_verified: curationReturnVerified,
     source_eligible_candidate_count: review.source_eligible_candidate_ids.length
   };
 }
@@ -908,18 +1062,19 @@ function minimumConfirmatorySourceCount(
 
 function parseIntakeManifest(value: unknown): PromotionConfirmatoryIntakeManifest {
   if (!isRecord(value)
-      || (value.schema_version !== "1.0" && value.schema_version !== "1.2")
+      || (value.schema_version !== "1.0" && value.schema_version !== "1.3")
       || !validId(value.study_id)
       || !Array.isArray(value.sources)) {
-    throw new Error("Promotion confirmatory intake requires schema_version=1.0 or 1.2, a study_id, and sources.");
+    throw new Error("Promotion confirmatory intake requires schema_version=1.0 or 1.3, a study_id, and sources.");
   }
   if (value.sources.length === 0) throw new Error("Promotion confirmatory intake requires at least one source bundle.");
-  const paperScale = value.schema_version === "1.2";
+  const paperScale = value.schema_version === "1.3";
   if ((paperScale && (value.intake_tier !== "paper_scale"
         || !nonEmptyString(value.candidate_handoff_root)
-        || !nonEmptyString(value.candidate_campaign_return_root)))
+        || !nonEmptyString(value.candidate_campaign_return_root)
+        || !nonEmptyString(value.canonical_curation_return_root)))
       || (!paperScale && value.intake_tier !== undefined && value.intake_tier !== "provisional")) {
-    throw new Error("Schema 1.2 requires paper_scale candidate handoff and campaign-return roots; schema 1.0 is provisional.");
+    throw new Error("Schema 1.3 requires paper_scale candidate handoff, campaign-return, and canonical-curation-return roots; schema 1.0 is provisional.");
   }
   const sourceIds = new Set<string>();
   const candidateIds = new Set<string>();
@@ -954,13 +1109,14 @@ function parseIntakeManifest(value: unknown): PromotionConfirmatoryIntakeManifes
     };
   });
   return {
-    schema_version: paperScale ? "1.2" : "1.0",
+    schema_version: paperScale ? "1.3" : "1.0",
     intake_tier: paperScale ? "paper_scale" : "provisional",
     study_id: value.study_id,
     ...(paperScale
       ? {
           candidate_handoff_root: value.candidate_handoff_root as string,
-          candidate_campaign_return_root: value.candidate_campaign_return_root as string
+          candidate_campaign_return_root: value.candidate_campaign_return_root as string,
+          canonical_curation_return_root: value.canonical_curation_return_root as string
         }
       : {}),
     sources
@@ -1016,6 +1172,11 @@ function countBy<T>(values: T[], keyFor: (value: T) => string): Map<string, numb
 
 function largestCount(counts: Map<string, number>): number {
   return Math.max(0, ...counts.values());
+}
+
+function sameStringSet(value: readonly string[], expected: readonly string[]): boolean {
+  return value.length === expected.length
+    && [...value].sort().join("\0") === [...expected].sort().join("\0");
 }
 
 function validId(value: unknown): value is string {

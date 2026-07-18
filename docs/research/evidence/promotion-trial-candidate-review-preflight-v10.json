@@ -83,8 +83,10 @@
     "confirmatory_admitted": false
   },
   "confirmatory_intake_precondition": {
-    "required_schema_version": "1.2",
-    "required_review_input": "assignment_bound_campaign_return",
+    "required_schema_version": "1.3",
+    "required_review_input": "assignment_bound_campaign_and_curation_returns",
+    "canonical_curation_return_required": true,
+    "canonical_curation_return_available": false,
     "entered": false,
     "status": "not_entered_missing_canonical_sources",
     "canonical_source_count": 0,

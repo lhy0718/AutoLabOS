@@ -53,6 +53,7 @@ describe("promotion confirmatory intake", () => {
         intake_manifest_ref: string;
         candidate_handoff_root_ref: string | null;
         candidate_campaign_return_root_ref: string | null;
+        canonical_curation_return_root_ref: string | null;
         files: Array<{ ref: string; sha256: string }>;
       };
       cases: Array<{
@@ -119,11 +120,12 @@ describe("promotion confirmatory intake", () => {
     expect(freezeManifest.execution_provenance_status).toBe("artifact_verified");
     expect(freezeManifest.source_diversity_status).toBe("declared_stratified");
     expect(freezeManifest.upstream_evidence).toEqual({
-      schema_version: "1.1",
-      method: "contained_intake_campaign_return_evidence",
+      schema_version: "1.2",
+      method: "contained_intake_campaign_curation_return_evidence",
       intake_manifest_ref: "upstream-evidence/intake-manifest.json",
       candidate_handoff_root_ref: null,
       candidate_campaign_return_root_ref: null,
+      canonical_curation_return_root_ref: null,
       files: [{
         ref: "upstream-evidence/intake-manifest.json",
         sha256: freezeManifest.intake_manifest_sha256
@@ -187,6 +189,23 @@ describe("promotion confirmatory intake", () => {
       "confirmatory_freeze_upstream_evidence_set_not_closed"
     );
     await rm(undeclaredUpstreamPath);
+    const suiteFrozenSourcePath = path.join(
+      workspace,
+      "suite",
+      "confirmatory-freeze",
+      freezeManifest.source_bundles[0].copied_root,
+      "run_record.json"
+    );
+    const suiteFrozenSourceBytes = await readFile(suiteFrozenSourcePath);
+    await writeFile(suiteFrozenSourcePath, "{}\n", "utf8");
+    const frozenSourceTampered = await loadPromotionBenchmarkSuite(path.join(
+      workspace,
+      built.suite_path
+    ));
+    expect(frozenSourceTampered.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_source_tree_mismatch"
+    );
+    await writeFile(suiteFrozenSourcePath, suiteFrozenSourceBytes);
     const faultCase = recipe.cases.find((item) => item.mutation_family);
     if (!faultCase) throw new Error("Frozen fixture is missing a fault case.");
     const mutationPath = path.join(workspace, "suite", "provenance", faultCase.case_id + ".json");
@@ -290,12 +309,14 @@ describe("promotion confirmatory intake", () => {
       intake_tier?: string;
       candidate_handoff_root?: string;
       candidate_campaign_return_root?: string;
+      canonical_curation_return_root?: string;
       sources: Array<Record<string, unknown>>;
     };
     manifest.schema_version = "1.1";
     manifest.intake_tier = "paper_scale";
     manifest.candidate_handoff_root = "candidate-handoff";
     manifest.candidate_campaign_return_root = "candidate-campaign-return";
+    manifest.canonical_curation_return_root = "canonical-curation-return";
     manifest.sources.forEach((source, index) => {
       source.candidate_id = `candidate-${String(index + 1).padStart(2, "0")}`;
     });
@@ -304,9 +325,9 @@ describe("promotion confirmatory intake", () => {
       cwd: workspace,
       manifestPath,
       outDir: "obsolete-schema-paper-scale-audit"
-    })).rejects.toThrow("schema_version=1.0 or 1.2");
+    })).rejects.toThrow("schema_version=1.0 or 1.3");
 
-    manifest.schema_version = "1.2";
+    manifest.schema_version = "1.3";
     await writeJson(path.join(workspace, manifestPath), manifest);
 
     const audit = await auditPromotionConfirmatoryIntake({
@@ -321,12 +342,14 @@ describe("promotion confirmatory intake", () => {
       minimum_source_count: MINIMUM_PAPER_SCALE_CONFIRMATORY_SOURCE_BUNDLES,
       candidate_handoff_verified: false,
       candidate_review_verified: false,
+      candidate_curation_return_verified: false,
       canonical_curation_verified_source_count: 0
     });
     expect(audit.report.global_issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
       "confirmatory_paper_scale_handoff_invalid",
       "confirmatory_paper_scale_campaign_return_invalid",
       "confirmatory_paper_scale_review_invalid",
+      "confirmatory_paper_scale_curation_return_invalid",
       "confirmatory_source_count_minimum_not_met"
     ]));
     expect(audit.report.sources.every((source) =>

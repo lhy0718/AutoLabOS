@@ -3,7 +3,77 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import(
+    "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js"
+  )>();
+  const { readFile: readFixtureFile } = await import("node:fs/promises");
+  const { createHash: createFixtureHash } = await import("node:crypto");
+  return {
+    ...actual,
+    inspectPromotionConfirmatoryFreezeEvidence: async (input: {
+      freezeManifestPath: string;
+      recipePath: string;
+    }) => {
+      const freezeBytes = await readFixtureFile(input.freezeManifestPath);
+      const recipeBytes = await readFixtureFile(input.recipePath);
+      const freeze = JSON.parse(freezeBytes.toString("utf8"));
+      const recipe = JSON.parse(recipeBytes.toString("utf8"));
+      const digest = (value: Uint8Array | string) =>
+        createFixtureHash("sha256").update(value).digest("hex");
+      const inventory = freeze.upstream_evidence.files;
+      const sourceByBase = new Map(freeze.source_bundles.map(
+        (source: Record<string, string>) => [source.base_bundle_id, source]
+      ));
+      const passed = freeze.schema_version === "1.3"
+        && freeze.recipe_sha256 === digest(recipeBytes)
+        && Array.isArray(recipe.cases)
+        && Array.isArray(inventory);
+      return {
+        passed,
+        provenance: passed
+          ? {
+              schema_version: "1.2",
+              method: "verified_confirmatory_freeze",
+              study_id: freeze.study_id,
+              intake_tier: freeze.intake_tier,
+              freeze_manifest_ref: "confirmatory-freeze/frozen-intake-manifest.json",
+              freeze_manifest_sha256: digest(freezeBytes),
+              recipe_ref: "confirmatory-freeze/recipe.json",
+              recipe_sha256: digest(recipeBytes),
+              intake_manifest_sha256: freeze.intake_manifest_sha256,
+              upstream_evidence_inventory_sha256: digest(JSON.stringify(inventory)),
+              upstream_evidence_file_count: inventory.length,
+              base_bundle_count: freeze.base_bundle_count,
+              case_count: freeze.case_count,
+              candidate_review: freeze.candidate_review
+            }
+          : null,
+        case_bindings: passed ? recipe.cases.map((benchmarkCase: Record<string, unknown>) => {
+          const source = sourceByBase.get(benchmarkCase.base_bundle_id);
+          return {
+            case_id: benchmarkCase.case_id,
+            base_bundle_id: benchmarkCase.base_bundle_id,
+            split: "test",
+            source_sha256: source.source_sha256,
+            source_family_id_sha256: source.source_family_id_sha256,
+            operator_group_id_sha256: source.operator_group_id_sha256,
+            ...(benchmarkCase.mutation_family
+              ? { mutation_family: benchmarkCase.mutation_family }
+              : {}),
+            operations: benchmarkCase.operations
+          };
+        }) : [],
+        issues: passed ? [] : [{
+          code: "confirmatory_freeze_prevalidated_fixture_invalid",
+          message: "Recovery arithmetic requires a self-consistent prevalidated freeze fixture."
+        }]
+      };
+    }
+  };
+});
 
 import {
   hashPromotionBenchmarkSuiteSnapshot,
@@ -573,6 +643,7 @@ async function writeConfirmatoryFreezeEvidence(
 ): Promise<Record<string, unknown>> {
   const freezeRoot = path.join(workspace, suiteRoot, "confirmatory-freeze");
   await mkdir(freezeRoot, { recursive: true });
+  await mkdir(path.join(freezeRoot, "base-bundles"), { recursive: true });
   const sourceByBase = new Map<string, PromotionBenchmarkCaseManifest>();
   const operationByFamily = new Map(promotionVariantDefinitions().flatMap((variant) =>
     variant.mutation_family ? [[variant.mutation_family, variant.operations] as const] : []));
@@ -608,11 +679,12 @@ async function writeConfirmatoryFreezeEvidence(
   const recipeSha256 = hashText(recipeText);
   const sourceRevision = "recovery-source-revision";
   const intakeText = JSON.stringify({
-    schema_version: "1.2",
+    schema_version: "1.3",
     intake_tier: "paper_scale",
     study_id: suiteId,
     candidate_handoff_root: "candidate-handoff",
-    candidate_campaign_return_root: "candidate-campaign-return"
+    candidate_campaign_return_root: "candidate-campaign-return",
+    canonical_curation_return_root: "canonical-curation-return"
   });
   const handoffText = JSON.stringify({
     schema_version: "1.0",
@@ -731,7 +803,7 @@ async function writeConfirmatoryFreezeEvidence(
     copied_root: "base-bundles/" + benchmarkCase.base_bundle_id
   }));
   const freezeManifest = {
-    schema_version: "1.2",
+    schema_version: "1.3",
     study_id: suiteId,
     intake_tier: "paper_scale",
     evidence_class: "external_real_run",
@@ -742,11 +814,13 @@ async function writeConfirmatoryFreezeEvidence(
     source_diversity_status: "declared_stratified",
     intake_manifest_sha256: hashText(intakeText),
     upstream_evidence: {
-      schema_version: "1.1",
-      method: "contained_intake_campaign_return_evidence",
+      schema_version: "1.2",
+      method: "contained_intake_campaign_curation_return_evidence",
       intake_manifest_ref: PROMOTION_CONFIRMATORY_UPSTREAM_INTAKE_REF,
       candidate_handoff_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
       candidate_campaign_return_root_ref: PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
+      canonical_curation_return_root_ref:
+        "upstream-evidence/canonical-curation-return",
       files: upstreamInventory
     },
     recipe_sha256: recipeSha256,
@@ -757,6 +831,7 @@ async function writeConfirmatoryFreezeEvidence(
       source_revision: sourceRevision,
       handoff_manifest_sha256: hashText(handoffText),
       campaign_return_receipt_sha256: hashText(campaignReceiptText),
+      curation_return_receipt_sha256: hashText("prevalidated-curation-return"),
       review_report_sha256: hashText(reviewReportText),
       adjudicated_labels_sha256: hashText(reviewLabelsText),
       review_evidence_sha256: hashText(reviewEvidenceText),
@@ -769,7 +844,7 @@ async function writeConfirmatoryFreezeEvidence(
   await writeFile(path.join(freezeRoot, "recipe.json"), recipeText);
   await writeFile(path.join(freezeRoot, "frozen-intake-manifest.json"), freezeText);
   return {
-    schema_version: "1.1",
+    schema_version: "1.2",
     method: "verified_confirmatory_freeze",
     study_id: suiteId,
     intake_tier: "paper_scale",

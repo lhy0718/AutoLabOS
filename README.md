@@ -563,22 +563,25 @@ Confirmatory intake requires every projected, normalized, or native bundle to pr
 
 Confirmatory intake has two non-interchangeable tiers. Schema `1.0` is always
 `provisional`: it requires at least 20 artifact-verified source bundles and
-cannot stand in for the paper-scale corpus. Schema `1.2` must declare
+cannot stand in for the paper-scale corpus. Schema `1.3` must declare
 `intake_tier=paper_scale`, a paired candidate handoff root, a passing
-assignment-bound campaign-return root, and at least 72 candidate-bound
-canonical sources. A raw adjudication directory is not accepted:
+assignment-bound campaign-return root, a verified canonical-curation-return
+root, and at least 72 candidate-bound canonical sources. A raw adjudication
+directory or a source outside the verified curation-return packet is not
+accepted:
 
 ```json
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "intake_tier": "paper_scale",
   "study_id": "governance-study",
   "candidate_handoff_root": "candidate-handoff",
   "candidate_campaign_return_root": "candidate-campaign-return",
+  "canonical_curation_return_root": "canonical-curation-return",
   "sources": [
     {
       "source_id": "source-001",
-      "source_root": "canonical-sources/source-001",
+      "source_root": "canonical-curation-return/sources/return-0001",
       "evidence_class": "external_real_run",
       "source_family_id": "family-a",
       "operator_group_id": "operator-a",
@@ -602,11 +605,15 @@ curation inspector also requires complete comparator rows with consistent
 deltas, all six bound source trials, matching planned and executed budgets, a
 completed run, an issue-free figure audit, exact claim/evidence/citation
 linkage, and agreement across checkpoint, review, and paper-readiness state.
-Intake recomputes candidate-level source eligibility from adjudicated labels and
-cross-checks the review summary. Missing review, unresolved redistribution,
-candidate reuse, trace drift, artifact drift, or path escape prevents the
-paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
-not replace blind benchmark-case adjudication or make the suite paper-ready.
+Intake recomputes candidate-level source eligibility from adjudicated labels,
+cross-checks the review summary, independently inspects the curation return,
+and matches each candidate to its exact returned path, tree hash, and curation
+record hash. Missing review, unresolved redistribution, candidate reuse, raw
+source reuse, trace drift, artifact drift, or path escape prevents the
+paper-scale freeze. The freeze preserves both complete return packets and the
+frozen base trees so a packaged suite can repeat those checks. Frozen labels
+remain `needs_review`; intake curation does not replace blind benchmark-case
+adjudication or make the suite paper-ready.
 
 The curation preparation command is intentionally fail-closed. It runs only
 after revision-matched double-human review and redistribution permission reach

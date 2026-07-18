@@ -80,6 +80,7 @@ import {
 import {
   PROMOTION_CONFIRMATORY_UPSTREAM_HANDOFF_ROOT,
   PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
+  PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT,
   inspectPromotionConfirmatoryFreezeEvidence
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryFreeze.js";
 
@@ -1729,6 +1730,17 @@ describe("promotion trial-candidate handoff", () => {
       validation_issues: []
     });
     expect(curationReturn.receipt.returns).toHaveLength(72);
+    const returnedSourceByCandidate = new Map(curationReturn.receipt.returns.flatMap(
+      (binding) => binding.candidate_id ? [[binding.candidate_id, binding.source_path] as const] : []
+    ));
+    const returnedIntakeSources = intakeSources.map((source) => {
+      const returnedSourcePath = returnedSourceByCandidate.get(source.candidate_id);
+      if (!returnedSourcePath) throw new Error("Curation return fixture is missing a candidate.");
+      return {
+        ...source,
+        source_root: `canonical-curation-return/${returnedSourcePath}`
+      };
+    });
     expect(await inspectPromotionCanonicalCurationReturn(path.join(
       workspace,
       "canonical-curation-return"
@@ -1781,12 +1793,13 @@ describe("promotion trial-candidate handoff", () => {
     ))).toMatchObject({ passed: true, issues: [], receipt: { passed: true } });
 
     await writeJsonFile(path.join(workspace, "paper-scale-raw-review-intake.json"), {
-      schema_version: "1.2",
+      schema_version: "1.3",
       intake_tier: "paper_scale",
       study_id: "promotion-confirmatory-raw-review-bypass",
       candidate_handoff_root: "parquet-paired-handoff",
       candidate_campaign_return_root: "source-eligible-adjudication",
-      sources: intakeSources
+      canonical_curation_return_root: "canonical-curation-return",
+      sources: returnedIntakeSources
     });
     const rawReviewBypass = await auditPromotionConfirmatoryIntake({
       cwd: workspace,
@@ -1803,13 +1816,38 @@ describe("promotion trial-candidate handoff", () => {
       outDir: "paper-scale-raw-review-frozen"
     })).rejects.toThrow("confirmatory_paper_scale_campaign_return_invalid");
 
+    await writeJsonFile(path.join(workspace, "paper-scale-raw-source-intake.json"), {
+      schema_version: "1.3",
+      intake_tier: "paper_scale",
+      study_id: "promotion-confirmatory-raw-source-bypass",
+      candidate_handoff_root: "parquet-paired-handoff",
+      candidate_campaign_return_root: "source-eligible-campaign-return",
+      canonical_curation_return_root: "canonical-curation-return",
+      sources: intakeSources
+    });
+    const rawSourceBypass = await auditPromotionConfirmatoryIntake({
+      cwd: workspace,
+      manifestPath: "paper-scale-raw-source-intake.json",
+      outDir: "paper-scale-raw-source-intake-audit"
+    });
+    expect(rawSourceBypass.report.passed).toBe(false);
+    expect(rawSourceBypass.report.sources.every((source) =>
+      source.issues.some((issue) =>
+        issue.code === "confirmatory_curation_return_source_mismatch"))).toBe(true);
+    await expect(freezePromotionConfirmatoryCorpus({
+      cwd: workspace,
+      manifestPath: "paper-scale-raw-source-intake.json",
+      outDir: "paper-scale-raw-source-frozen"
+    })).rejects.toThrow("confirmatory_curation_return_source_mismatch");
+
     await writeJsonFile(path.join(workspace, "paper-scale-intake.json"), {
-      schema_version: "1.2",
+      schema_version: "1.3",
       intake_tier: "paper_scale",
       study_id: "promotion-confirmatory-paper-scale",
       candidate_handoff_root: "parquet-paired-handoff",
       candidate_campaign_return_root: "source-eligible-campaign-return",
-      sources: intakeSources
+      canonical_curation_return_root: "canonical-curation-return",
+      sources: returnedIntakeSources
     });
     const intakeAudit = await auditPromotionConfirmatoryIntake({
       cwd: workspace,
@@ -1823,6 +1861,7 @@ describe("promotion trial-candidate handoff", () => {
       minimum_source_count: 72,
       candidate_handoff_verified: true,
       candidate_review_verified: true,
+      candidate_curation_return_verified: true,
       source_eligible_candidate_count: 72,
       canonical_curation_verified_source_count: 72
     });
@@ -1868,6 +1907,11 @@ describe("promotion trial-candidate handoff", () => {
       PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
       "adjudication"
     ))).toMatchObject({ passed: true, issues: [] });
+    expect(await inspectPromotionCanonicalCurationReturn(path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT
+    ))).toMatchObject({ passed: true, issues: [], receipt: { passed: true } });
     const frozenCampaignReceiptPath = path.join(
       workspace,
       "paper-scale-frozen",
@@ -1892,6 +1936,51 @@ describe("promotion trial-candidate handoff", () => {
       ])
     );
     await writeFile(frozenCampaignReceiptPath, frozenCampaignReceiptBytes);
+    const frozenCurationReceiptPath = path.join(
+      workspace,
+      "paper-scale-frozen",
+      PROMOTION_CONFIRMATORY_UPSTREAM_CURATION_RETURN_ROOT,
+      PROMOTION_CANONICAL_CURATION_RETURN_RECEIPT
+    );
+    const frozenCurationReceiptBytes = await readFile(frozenCurationReceiptPath);
+    const changedFrozenCurationReceipt = JSON.parse(
+      frozenCurationReceiptBytes.toString("utf8")
+    );
+    changedFrozenCurationReceipt.verified_return_count = 71;
+    await writeJsonFile(frozenCurationReceiptPath, changedFrozenCurationReceipt);
+    const changedFrozenCuration = await inspectPromotionConfirmatoryFreezeEvidence({
+      freezeManifestPath: path.join(workspace, frozen.freeze_manifest_path),
+      recipePath: path.join(workspace, frozen.recipe_path)
+    });
+    expect(changedFrozenCuration.passed).toBe(false);
+    expect(changedFrozenCuration.issues.map((issue) => issue.code)).toEqual(
+      expect.arrayContaining([
+        "confirmatory_freeze_upstream_hash_mismatch",
+        "confirmatory_freeze_curation_return_invalid"
+      ])
+    );
+    await writeFile(frozenCurationReceiptPath, frozenCurationReceiptBytes);
+    const frozenManifest = JSON.parse(await readFile(
+      path.join(workspace, frozen.freeze_manifest_path),
+      "utf8"
+    )) as { source_bundles: Array<{ copied_root: string }> };
+    const frozenSourcePath = path.join(
+      workspace,
+      "paper-scale-frozen",
+      frozenManifest.source_bundles[0].copied_root,
+      "result_table.json"
+    );
+    const frozenSourceBytes = await readFile(frozenSourcePath);
+    await writeFile(frozenSourcePath, "[]\n", "utf8");
+    const changedFrozenSource = await inspectPromotionConfirmatoryFreezeEvidence({
+      freezeManifestPath: path.join(workspace, frozen.freeze_manifest_path),
+      recipePath: path.join(workspace, frozen.recipe_path)
+    });
+    expect(changedFrozenSource.passed).toBe(false);
+    expect(changedFrozenSource.issues.map((issue) => issue.code)).toContain(
+      "confirmatory_freeze_source_tree_mismatch"
+    );
+    await writeFile(frozenSourcePath, frozenSourceBytes);
 
     const labelTamperedRoot = path.join(workspace, "label-tampered-adjudication");
     await cp(path.join(workspace, "source-eligible-adjudication"), labelTamperedRoot, {

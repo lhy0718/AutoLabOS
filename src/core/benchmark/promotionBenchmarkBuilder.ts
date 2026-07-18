@@ -180,6 +180,15 @@ export async function buildPromotionBenchmarkSuite(
         recipePath,
         path.join(stagingRoot, PROMOTION_CONFIRMATORY_FREEZE_RECIPE_REF)
       );
+      await fs.cp(
+        path.join(path.dirname(freezeManifestPath), "base-bundles"),
+        path.join(
+          stagingRoot,
+          PROMOTION_CONFIRMATORY_FREEZE_EVIDENCE_ROOT,
+          "base-bundles"
+        ),
+        { recursive: true, errorOnExist: true, force: false }
+      );
       if (freezeInspection.provenance.upstream_evidence_inventory_sha256) {
         await fs.cp(
           path.join(path.dirname(freezeManifestPath), PROMOTION_CONFIRMATORY_UPSTREAM_EVIDENCE_ROOT),

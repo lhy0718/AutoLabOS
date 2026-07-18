@@ -3,6 +3,7 @@ import { promises as fs } from "node:fs";
 import { createHash } from "node:crypto";
 
 import { writeJsonFile } from "../../utils/fs.js";
+import { hashPromotionArtifactTree } from "./promotionArtifactTree.js";
 import {
   inspectPromotionSourceDiversity,
   isPromotionSourceDiversityStatus,
@@ -15,6 +16,8 @@ import {
   parsePromotionConfirmatoryFreezeProvenance,
   type PromotionConfirmatoryFreezeProvenance
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
+
+export { hashPromotionArtifactTree } from "./promotionArtifactTree.js";
 
 export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "block"] as const;
 
@@ -1251,6 +1254,7 @@ async function hasClosedConfirmatoryFreezeEvidence(
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
     const entries = (await fs.readdir(evidenceRoot)).sort();
     const expectedEntries = [
+      "base-bundles",
       "frozen-intake-manifest.json",
       "recipe.json",
       ...(provenance.upstream_evidence_inventory_sha256 ? ["upstream-evidence"] : [])
@@ -1259,7 +1263,9 @@ async function hasClosedConfirmatoryFreezeEvidence(
     for (const entry of entries) {
       const stat = await fs.lstat(path.join(evidenceRoot, entry));
       if (stat.isSymbolicLink()) return false;
-      if (entry === "upstream-evidence" ? !stat.isDirectory() : !stat.isFile()) return false;
+      if ((entry === "upstream-evidence" || entry === "base-bundles")
+        ? !stat.isDirectory()
+        : !stat.isFile()) return false;
     }
     return true;
   } catch {
@@ -1887,30 +1893,6 @@ async function fileExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-export async function hashPromotionArtifactTree(root: string): Promise<string> {
-  const absoluteRoot = path.resolve(root);
-  const hash = createHash("sha256");
-  const visit = async (current: string): Promise<void> => {
-    const stat = await fs.lstat(current);
-    const relative = path.relative(absoluteRoot, current).replace(/\\/gu, "/") || ".";
-    if (stat.isSymbolicLink()) {
-      throw new Error(`Symbolic links are not allowed in promotion benchmark artifacts: ${relative}`);
-    }
-    if (stat.isDirectory()) {
-      hash.update(`directory\0${relative}\0`);
-      const entries = await fs.readdir(current);
-      for (const entry of entries.sort()) await visit(path.join(current, entry));
-      return;
-    }
-    if (!stat.isFile()) throw new Error(`Unsupported artifact type: ${relative}`);
-    hash.update(`file\0${relative}\0`);
-    hash.update(await fs.readFile(current));
-    hash.update("\0");
-  };
-  await visit(absoluteRoot);
-  return hash.digest("hex");
 }
 
 export async function hashPromotionBenchmarkSuiteSnapshot(suitePath: string): Promise<string> {

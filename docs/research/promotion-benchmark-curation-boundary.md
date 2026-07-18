@@ -168,18 +168,23 @@ paper completion.
 
 The runtime now enforces this boundary through two intake tiers. Schema
 `1.0` is normalized to `provisional` and retains a 20-base development
-floor. Schema `1.2` is `paper_scale` only and requires an integrity-valid
-paired handoff, a revision-matched passing campaign-return packet,
-redistribution permission, 72 source-eligible candidate IDs, and one
-`benchmark-curation.json` per canonical source. The curation record binds the
+floor. Schema `1.3` is `paper_scale` only and requires an integrity-valid
+paired handoff, a revision-matched passing campaign-return packet, a verified
+assignment-bound curation-return packet, redistribution permission, 72
+source-eligible candidate IDs, and one `benchmark-curation.json` per canonical
+source. Every declared source root must identify the exact contained return
+path for its candidate and reproduce the return receipt's source-tree and
+curation-record hashes. The curation record binds the
 six source traces, distinct curator and verifier IDs, protocol versions,
 timestamps, intended clean readiness, evidence ceiling, and the fixed
 artifact paths used by the mutation contract. Artifact bytes, real paths, and
 cross-artifact clean-control semantics are rechecked before freeze.
-The freeze preserves the complete campaign-return directory and independently
-binds its controller receipt, exact returned-file inventory, contained
-adjudication report, labels, and evidence summary. A raw adjudication directory
-cannot enter either paper-scale intake or the frozen provenance contract.
+The freeze preserves the complete campaign-return and curation-return
+directories, independently binds both controller receipts and exact returned
+file inventories, and retains every frozen base tree for direct hash
+recomputation in packaged suites. A raw adjudication directory or a
+non-returned canonical source cannot enter either paper-scale intake or the
+frozen provenance contract.
 
 The end-to-end regression fixture reaches 72 canonical bases and 720 cases to
 verify this contract. It is synthetic system-validation evidence and does not
