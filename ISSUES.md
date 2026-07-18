@@ -10885,6 +10885,71 @@ Path placeholders:
 
 ## Research and paper-readiness watchlist
 
+## Issue: R-011
+
+- Status: resolved; canonical clean controls now require hash-bound artifact completeness and policy-independent semantic consistency
+- Validation target: a paper-scale canonical source must not pass curation merely because non-empty files match hashes and a record claims `human_verified`; its clean comparator, execution, claims, figure audit, and readiness state must form one coherent promotable control.
+- Environment/session context: domain-neutral single-source and 72-base/720-case synthetic contract fixtures; no human review, source outcome, or empirical result was created or upgraded by this repair.
+
+- Reproduction steps:
+  1. Create the previously required canonical artifact paths with arbitrary non-empty bytes.
+  2. Hash those bytes into `benchmark-curation.json`, bind six valid source traces, and set distinct curator/verifier IDs plus `curation_status=human_verified`.
+  3. Run `inspectPromotionCanonicalCuration`.
+  4. Observe that the record passes path, hash, source-trace, and role checks without proving that the result table is complete, trials and budgets agree, claims resolve, or readiness states are coherent.
+
+- Expected behavior:
+  - Curation binds the complete clean-control surface required by the benchmark, not only the files directly mutated by fault variants.
+  - Comparator deltas are arithmetically consistent and every primary/comparator source trial appears exactly once.
+  - Planned and executed budgets match the six bound trials and the run is completed.
+  - Figure, claim, evidence-store, design-contract, review, checkpoint, and paper-readiness records agree on an issue-free clean promotion.
+  - The semantic gate is independent of the promotion policy under evaluation.
+
+- Actual behavior:
+  - The curation inspector previously verified nine paths, hashes, source-trace bindings, role separation, and record shape only.
+  - It accepted hash-valid bytes without parsing or cross-checking their scientific meaning.
+  - The paper-scale fixture exercised freeze integrity but did not prove that the same clean source was promotable by the artifact audit.
+
+- Fresh vs existing session comparison:
+  - Fresh session: schema 1.1 curation records require 15 artifact roles and pass cross-artifact semantic checks before confirmatory intake.
+  - Existing session: historical development fixtures remain outside paper evidence; a paper-scale record with only the older nine-role inventory fails closed during record parsing.
+  - Divergence: no UI or resume state is involved; the defect was an underspecified persisted curation authority record.
+
+- Root cause hypothesis:
+  - Type: `persisted_state_bug`
+  - Hypothesis: `benchmark-curation.json` was treated as sufficient authority once its files and human-role fields were hash-valid, while the clean-control semantics consumed by later evaluators were never independently revalidated.
+
+- Code/test changes:
+  - Versioned the incompatible contract as schema 1.1 and expanded the curation inventory from nine mutation-facing files to 15 result, execution, evidence-store, design, figure, review, paper, claim, and checkpoint roles.
+  - Added policy-independent checks for canonical result schema and delta arithmetic, exact six-trial coverage, budget equality, completed run identity, figure-audit clearance, exact claim ID/link coverage, evidence-store resolution, SOTA evidence declarations, readiness agreement, Results text, and curation/verification timestamp order.
+  - Hashing and semantic parsing now consume the same single file read.
+  - Replaced arbitrary-byte curation fixtures with coherent clean controls and added a regression where the result delta is corrupted and the curation hash is recomputed.
+  - Added an adjacent regression showing the same valid clean control remains `conditionally-ready` with no blocker under the independent paper-readiness audit.
+  - Upgraded the 72-base/720-case paper-scale fixture to bind all six source trials and the full clean-control artifact surface.
+
+- Regression status:
+  - TypeScript validation: passed on 2026-07-18 with `npx tsc -p tsconfig.json --noEmit`.
+  - Canonical curation regressions: 6/6 passed on 2026-07-18.
+  - 72-base handoff and paper-scale intake regression: 25/25 passed on 2026-07-18.
+  - Confirmatory intake, gate, and recovery regressions: 25/25 passed on 2026-07-18.
+  - Build: passed on 2026-07-18; the existing non-fatal esbuild allow-scripts warning remains unchanged.
+  - Full repository CI: passed on 2026-07-18 with 214 core test files / 2,874 tests and 1 web test file / 14 tests.
+  - Harness validation: 525/525 passed on 2026-07-18.
+  - Public-code sanitization: 3/3 passed on 2026-07-18.
+
+- Follow-up risks:
+  - Pseudonymous curator/verifier IDs and semantically valid artifacts do not establish real-world human identity, expertise, or independence.
+  - The validator establishes internal clean-control coherence, not the scientific truth of a human-authored metric or claim.
+  - Real v10 admission remains zero until independent candidate review, source-license approval, and human curation are completed.
+
+- Evidence/artifacts:
+  - `src/core/benchmark/promotionBenchmarkCanonicalCuration.ts`
+  - `src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts`
+  - `tests/promotionBenchmarkCanonicalCuration.test.ts`
+  - `tests/promotionBenchmarkTrialCandidateHandoff.test.ts`
+  - `docs/research/promotion-benchmark-curation-boundary.md`
+
+---
+
 ## Issue: R-010
 
 - Status: resolved; intake/review and pre-adjudication suite receipts are now backed by closed, suite-contained evidence that the loader independently recomputes
@@ -13644,7 +13709,7 @@ Path placeholders:
   - Added outcome-blind paired-operator selection, six-trace opaque reviewer tasks, fail-closed privacy preflight with whole-task backfill, and paired handoff inspection.
   - Separated source eligibility (execution completeness and comparability) from source-absent paper-artifact availability, and added semantic inspection for contradictory progression counts.
   - Added candidate-level adjudicated-label/summary cross-validation, including nested license-review consistency.
-  - Added a `benchmark_curated` contract that binds six source traces, distinct curator/verifier roles, protocol versions, timestamps, evidence ceiling, and nine hash-bound canonical artifacts.
+  - Added a `benchmark_curated` contract that binds six source traces, distinct curator/verifier roles, protocol versions, timestamps, evidence ceiling, and 15 hash-bound, semantically cross-checked canonical artifacts.
   - Added a schema 1.1 paper-scale intake that binds the paired handoff, review evidence, 72 distinct candidate IDs, canonical curation, and the 720-case freeze while keeping all benchmark labels provisional.
   - Prepared hash-bound v10 reviewer and license worksheets without filling any observation, decision, rationale, or attestation, then recorded the expected fail-closed preflight and zero-admission adjudication receipts.
   - Real v10 canonical-source materialization and independent human review remain pending.

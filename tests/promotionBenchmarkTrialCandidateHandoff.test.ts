@@ -49,6 +49,7 @@ import { projectPromotionReviewerArtifact } from "../src/core/benchmark/promotio
 import {
   PROMOTION_CANONICAL_ARTIFACT_PATHS,
   PROMOTION_CANONICAL_CURATION_RECORD,
+  PROMOTION_CANONICAL_CURATION_SCHEMA_VERSION,
   type PromotionCanonicalCurationRecord
 } from "../src/core/benchmark/promotionBenchmarkCanonicalCuration.js";
 import {
@@ -1557,33 +1558,51 @@ async function writeCanonicalConfirmatorySource(input: {
   candidate: PromotionTrialCandidateRecord;
 }): Promise<void> {
   const { root, ordinal, candidate } = input;
+  const trialIds = [
+    ...candidate.trials,
+    ...(candidate.comparator_trials || [])
+  ].map((trial) => trial.trial_id);
   await mkdir(root, { recursive: true });
   await writeFile(path.join(root, "SOURCE_LICENSE.txt"), "Permission is granted for fixture use.\n", "utf8");
   await writeJsonFile(path.join(root, "result_table.json"), [{
-    primary: ordinal / 100,
-    comparator: (ordinal + 1) / 100
+    metric: "primary_metric",
+    baseline: ordinal / 100,
+    comparator: (ordinal + 1) / 100,
+    delta: 0.01,
+    direction: "higher_better"
   }]);
   await writeJsonFile(path.join(root, "experiment_evidence.json"), {
-    trials: candidate.trials.map((trial) => ({ trial_id: trial.trial_id }))
+    trials: trialIds.map((trialId) => ({ trial_id: trialId }))
   });
   await writeJsonFile(path.join(root, "run_config.json"), {
-    planned_budget: { trials: candidate.trials.length }
+    planned_budget: { trials: trialIds.length }
   });
   await writeJsonFile(path.join(root, "run_record.json"), {
+    id: `run-${String(ordinal).padStart(2, "0")}`,
     status: "completed",
-    executed_budget: { trials: candidate.trials.length },
+    executed_budget: { trials: trialIds.length },
     fixture_ordinal: ordinal
   });
+  await writeFile(
+    path.join(root, "evidence_store.jsonl"),
+    `${JSON.stringify({ id: "evidence-primary", metric_evidence_present: true })}\n`,
+    "utf8"
+  );
   await writeJsonFile(path.join(root, "figure_audit", "figure_audit_summary.json"), {
+    audited_at: "2026-01-01T00:00:00.000Z",
+    figure_count: 1,
+    issues: [],
     severe_mismatch_count: 0,
     review_block_required: false
   });
   const claim = {
     claim_id: "claim-primary",
+    statement: "The measured comparison is reported.",
     section_heading: "Results",
     status: "verified",
     artifact_refs: ["result_table.json"],
-    citation_refs: ["source-primary"]
+    citation_refs: ["source-primary"],
+    reproduction_trace_present: true
   };
   await writeJsonFile(path.join(root, "paper", "claim_status_table.json"), { claims: [claim] });
   await writeJsonFile(path.join(root, "paper", "claim_evidence_table.json"), { claims: [claim] });
@@ -1594,7 +1613,19 @@ async function writeCanonicalConfirmatorySource(input: {
       citation_paper_ids: ["source-primary"]
     }]
   });
-  await writeJsonFile(path.join(root, "checkpoint", "state.json"), { paper_ready: true });
+  await writeFile(
+    path.join(root, "paper", "main.tex"),
+    "\\section{Results}\nThe measured comparison is linked to the canonical evidence artifacts.\n",
+    "utf8"
+  );
+  await writeJsonFile(path.join(root, "paper", "paper_readiness.json"), {
+    paper_ready: true,
+    readiness_state: "paper_ready"
+  });
+  await writeJsonFile(path.join(root, "checkpoint", "state.json"), {
+    paper_ready: true,
+    run_status: "completed"
+  });
   await writeJsonFile(path.join(root, "design_contracts.json"), {
     sota_ranking_claimed: false,
     sota_evidence_present: false
@@ -1611,6 +1642,10 @@ async function writeCanonicalConfirmatorySource(input: {
   await writeJsonFile(path.join(root, "review", "decision.json"), {
     outcome: "accept",
     ordinal
+  });
+  await writeJsonFile(path.join(root, "review", "paper_critique.json"), {
+    paper_readiness_state: "paper_ready",
+    claim_ceiling_applied: true
   });
   await writeFile(path.join(root, "command.txt"), `runner --item ${ordinal}\n`, "utf8");
   await writeFile(path.join(root, "execution.log"), `completed item ${ordinal}\n`, "utf8");
@@ -1645,7 +1680,7 @@ async function writeCanonicalConfirmatorySource(input: {
       sha256: createHash("sha256").update(await readFile(path.join(root, relativePath))).digest("hex")
     })));
   const curation: PromotionCanonicalCurationRecord = {
-    schema_version: "1.0",
+    schema_version: PROMOTION_CANONICAL_CURATION_SCHEMA_VERSION,
     provenance_class: "benchmark_curated",
     handoff_id: input.handoffId,
     candidate_id: candidate.candidate_id,

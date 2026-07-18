@@ -93,6 +93,18 @@ review gates pass. A curated control must bind:
 - an intended readiness decision and evidence ceiling;
 - the curator and adjudicator protocol versions.
 
+Schema `1.1` defines a machine-checkable clean-control surface with 15
+hash-bound roles:
+result table, experiment evidence, run configuration, run record, evidence
+store, design contract, figure audit, review critique, review decision, paper
+Results text, paper readiness, claim status, claim evidence, evidence links,
+and checkpoint readiness. Integrity alone is insufficient. The curation
+inspector cross-checks comparator arithmetic, all six source-trial IDs,
+planned/executed budgets, completed run state, figure-audit status, exact claim
+IDs and links, evidence-store resolution, SOTA-claim support declarations, and
+consistent promotion state across checkpoint, review, and paper artifacts.
+These schema checks are independent of the evaluated promotion policy.
+
 Curated controls support claims about detection and repair in a controlled
 promotion-governance benchmark. They do not support claims about the natural
 prevalence of paper-quality failures or the absolute scientific quality of the
@@ -115,8 +127,8 @@ permission, 72 source-eligible candidate IDs, and one
 `benchmark-curation.json` per canonical source. The curation record binds the
 six source traces, distinct curator and verifier IDs, protocol versions,
 timestamps, intended clean readiness, evidence ceiling, and the fixed
-artifact paths used by the mutation contract. Artifact bytes and real paths
-are rechecked before freeze.
+artifact paths used by the mutation contract. Artifact bytes, real paths, and
+cross-artifact clean-control semantics are rechecked before freeze.
 
 The end-to-end regression fixture reaches 72 canonical bases and 720 cases to
 verify this contract. It is synthetic system-validation evidence and does not

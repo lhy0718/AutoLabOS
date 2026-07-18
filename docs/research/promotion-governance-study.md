@@ -597,10 +597,15 @@ license evidence.
 The implementation now separates the old 20-base provisional intake from a
 72-base paper-scale intake. The latter accepts only candidate IDs recovered
 from an integrity-valid paired handoff and recomputed as source-eligible from a
-hash-bound double-human adjudication. Every source must also carry a
-`benchmark_curated` record that binds all six source traces, distinct curator
-and verifier roles, protocol versions, timestamps, and the hashes of the
-canonical result, execution, figure, claim, citation, and readiness artifacts.
+hash-bound double-human adjudication. Every source must also carry a schema
+`1.1` `benchmark_curated` record that binds all six source traces, distinct
+curator and verifier roles, protocol versions, timestamps, and the hashes of the
+15 canonical result, execution, review, paper, figure, claim, citation, and
+readiness artifacts. Hash validity is not sufficient: intake independently
+checks result arithmetic, six-trial coverage, planned/executed budget equality,
+completed run state, figure-audit clearance, exact claim/evidence/citation
+linkage, evidence-store resolution, and consistent checkpoint/review/paper
+readiness. This schema gate is independent of the evaluated promotion policy.
 A synthetic end-to-end regression reaches 72 bases and 720 cases; it validates
 the gate implementation only and does not alter the zero-admission status of
 the real v10 candidate set.

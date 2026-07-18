@@ -538,13 +538,17 @@ double-human review root, and at least 72 candidate-bound canonical sources:
 }
 ```
 
-Each paper-scale source must contain `benchmark-curation.json` with
-`provenance_class=benchmark_curated`. The record binds all three primary and
+Each paper-scale source must contain schema `1.1` `benchmark-curation.json`
+with `provenance_class=benchmark_curated`. The record binds all three primary and
 three comparator trace hashes, distinct human curator and verifier IDs,
 protocol versions, timestamps, intended clean readiness, the
-`paper_scale_candidate` evidence ceiling, and hashes for the result,
-execution, figure-audit, claim, citation, and readiness artifacts. Intake
-recomputes candidate-level source eligibility from adjudicated labels and
+`paper_scale_candidate` evidence ceiling, and hashes for 15 result, execution,
+review, paper, figure-audit, claim, citation, and readiness artifacts. The
+curation inspector also requires complete comparator rows with consistent
+deltas, all six bound source trials, matching planned and executed budgets, a
+completed run, an issue-free figure audit, exact claim/evidence/citation
+linkage, and agreement across checkpoint, review, and paper-readiness state.
+Intake recomputes candidate-level source eligibility from adjudicated labels and
 cross-checks the review summary. Missing review, unresolved redistribution,
 candidate reuse, trace drift, artifact drift, or path escape prevents the
 paper-scale freeze. Frozen labels remain `needs_review`; intake curation does
