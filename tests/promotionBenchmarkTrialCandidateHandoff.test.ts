@@ -48,10 +48,15 @@ import {
   inspectPromotionTrialCandidateCampaignReturn
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 import {
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_ATTESTATION,
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_MANIFEST,
   PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_ATTESTATION,
   PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_MANIFEST,
+  auditPromotionTrialCandidateLicenseReviewWorkspace,
   auditPromotionTrialCandidateReviewWorkspace,
+  finalizePromotionTrialCandidateLicenseReviewWorkspace,
   finalizePromotionTrialCandidateReviewWorkspace,
+  preparePromotionTrialCandidateLicenseReviewWorkspace,
   preparePromotionTrialCandidateReviewWorkspace
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.js";
 import {
@@ -958,6 +963,9 @@ describe("promotion trial-candidate handoff", () => {
     expect(licenseReturnGuideText).toContain(
       "preflight-promotion-trial-candidate-license-review"
     );
+    expect(licenseReturnGuideText).toContain(
+      "prepare-promotion-trial-candidate-license-review-workspace"
+    );
     expect(licenseReturnGuideText).toContain("--license-root packet");
     await expect(access(path.join(
       campaignRoot,
@@ -1323,6 +1331,263 @@ describe("promotion trial-candidate handoff", () => {
       source_eligible_candidate_count: 0,
       validation_issues: []
     });
+  });
+
+  it("keeps resumable source-license review blank, conservative, and preflight-bound", async () => {
+    const prepared = await preparePromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      packageRoot: "paired-review-campaign/license-reviewer",
+      outDir: "paired-license-review-workspace"
+    });
+    expect(prepared).toMatchObject({
+      reviewer_id: "license-reviewer",
+      review_scope: "candidate_scoped",
+      subject_count: 76,
+      output_dir: "paired-license-review-workspace"
+    });
+
+    const blankAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-license-review-workspace-audit-blank"
+    });
+    expect(blankAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      review_scope: "candidate_scoped",
+      subject_count: 76,
+      completed_subject_review_count: 0,
+      incomplete_subject_review_count: 76,
+      malformed_subject_review_count: 0,
+      aggregate_review_complete: false,
+      attestation_complete: false,
+      packet_integrity_valid: true,
+      validation_issues: []
+    });
+    await expect(finalizePromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outputPath: "paired-review-returns/license-review.json"
+    })).rejects.toThrow("not ready to finalize");
+    await expect(access(path.join(
+      workspace,
+      "paired-review-returns/license-review.json"
+    ))).rejects.toThrow();
+
+    const manifest = JSON.parse(await readFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_MANIFEST
+    ), "utf8")) as Record<string, any>;
+    const completeSubject = async (item: Record<string, string>): Promise<void> => {
+      const target = path.join(workspace, prepared.output_dir, item.path);
+      const review = JSON.parse(await readFile(target, "utf8")) as Record<string, any>;
+      review.status = "local_evaluation_only";
+      review.rationale = "The fixture supports local evaluation but does not establish redistribution permission.";
+      await writeJsonFile(target, review);
+    };
+    await completeSubject(manifest.subject_files[0]);
+    const partialAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-license-review-workspace-audit-partial"
+    });
+    expect(partialAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      completed_subject_review_count: 1,
+      incomplete_subject_review_count: 75,
+      malformed_subject_review_count: 0
+    });
+
+    await Promise.all(
+      manifest.subject_files.slice(1).map((item: Record<string, string>) =>
+        completeSubject(item))
+    );
+    const aggregatePath = path.join(
+      workspace,
+      prepared.output_dir,
+      manifest.aggregate_review_path
+    );
+    await writeJsonFile(aggregatePath, {
+      schema_version: "1.0",
+      status: "redistribution_permitted",
+      evidence_refs: ["https://example.org/public-license"],
+      rationale: "This intentionally mismatched aggregate exercises the conservative gate."
+    });
+    const mismatchAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-license-review-workspace-audit-mismatch"
+    });
+    expect(mismatchAudit.report).toMatchObject({
+      workspace_valid: false,
+      ready_to_finalize: false,
+      completed_subject_review_count: 76,
+      incomplete_subject_review_count: 0,
+      aggregate_review_complete: true,
+      attestation_complete: false
+    });
+    expect(mismatchAudit.report.validation_issues.map((item) => item.code)).toContain(
+      "trial_candidate_license_review_workspace_final_contract_invalid"
+    );
+
+    await writeJsonFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_ATTESTATION
+    ), {
+      completed_by_human: true,
+      candidate_annotations_unseen: true,
+      controller_map_unseen: true
+    });
+    await writeJsonFile(aggregatePath, {
+      schema_version: "1.0",
+      status: "local_evaluation_only",
+      evidence_refs: [],
+      rationale: "The conservative aggregate preserves the local-evaluation-only subject decisions."
+    });
+    const completedAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-license-review-workspace-audit-complete"
+    });
+    expect(completedAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: true,
+      completed_subject_review_count: 76,
+      incomplete_subject_review_count: 0,
+      malformed_subject_review_count: 0,
+      aggregate_review_complete: true,
+      attestation_complete: true,
+      validation_issues: []
+    });
+
+    const finalized = await finalizePromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outputPath: "paired-review-returns/license-review.json"
+    });
+    expect(finalized).toMatchObject({
+      reviewer_id: "license-reviewer",
+      review_scope: "candidate_scoped",
+      subject_count: 76,
+      license_root: "paired-license-review-workspace/packet",
+      preflight_required: true
+    });
+    const parsed = parsePromotionTrialCandidateLicenseReviewSet(JSON.parse(
+      await readFile(path.join(workspace, finalized.output_path), "utf8")
+    ) as unknown);
+    expect(parsed.schema_version).toBe("1.1");
+    if (parsed.schema_version === "1.1") expect(parsed.subject_reviews).toHaveLength(76);
+    const preflight = await preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      licenseRoot: finalized.license_root,
+      reviewPath: finalized.output_path,
+      outDir: "paired-license-review-workspace-preflight"
+    });
+    expect(preflight.report).toMatchObject({
+      passed: true,
+      reviewer_id: "license-reviewer",
+      license_status: "local_evaluation_only",
+      validation_issues: []
+    });
+  });
+
+  it("supports a source-only license workspace without inventing subject reviews", async () => {
+    const packageRoot = path.join(workspace, "source-only-license-package");
+    await mkdir(packageRoot, { recursive: true });
+    await cp(
+      path.join(workspace, "parquet-handoff", "license"),
+      path.join(packageRoot, "packet"),
+      { recursive: true }
+    );
+    await preparePromotionTrialCandidateLicenseReviewWorksheet({
+      cwd: workspace,
+      handoffRoot: "parquet-handoff",
+      reviewerId: "source-license-reviewer",
+      outputPath: "source-only-license-package/license-review-template.json"
+    });
+
+    const prepared = await preparePromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      packageRoot: "source-only-license-package",
+      outDir: "source-only-license-workspace"
+    });
+    expect(prepared).toMatchObject({
+      reviewer_id: "source-license-reviewer",
+      review_scope: "source_only",
+      subject_count: 0
+    });
+    const blankAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "source-only-license-workspace-audit-blank"
+    });
+    expect(blankAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      subject_count: 0,
+      completed_subject_review_count: 0,
+      incomplete_subject_review_count: 0,
+      aggregate_review_complete: false,
+      attestation_complete: false,
+      validation_issues: []
+    });
+
+    const manifest = JSON.parse(await readFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_MANIFEST
+    ), "utf8")) as Record<string, any>;
+    await writeJsonFile(path.join(
+      workspace,
+      prepared.output_dir,
+      manifest.aggregate_review_path
+    ), {
+      schema_version: "1.0",
+      status: "redistribution_permitted",
+      evidence_refs: ["https://example.org/source-license"],
+      rationale: "The public fixture license establishes the source-only decision."
+    });
+    await writeJsonFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_LICENSE_REVIEW_WORKSPACE_ATTESTATION
+    ), {
+      completed_by_human: true,
+      candidate_annotations_unseen: true,
+      controller_map_unseen: true
+    });
+    const completeAudit = await auditPromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "source-only-license-workspace-audit-complete"
+    });
+    expect(completeAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: true,
+      subject_count: 0,
+      aggregate_review_complete: true,
+      attestation_complete: true,
+      validation_issues: []
+    });
+    const finalized = await finalizePromotionTrialCandidateLicenseReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outputPath: "source-only-license-return.json"
+    });
+    const review = parsePromotionTrialCandidateLicenseReviewSet(JSON.parse(
+      await readFile(path.join(workspace, finalized.output_path), "utf8")
+    ) as unknown);
+    expect(review.schema_version).toBe("1.0");
+    const preflight = await preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      licenseRoot: finalized.license_root,
+      reviewPath: finalized.output_path,
+      outDir: "source-only-license-workspace-preflight"
+    });
+    expect(preflight.report).toMatchObject({ passed: true, validation_issues: [] });
   });
 
   it("collects only assigned campaign returns and binds the adjudication inputs", async () => {

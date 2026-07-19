@@ -1038,6 +1038,47 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports resumable trial-candidate license review workspace operations", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-license-review-workspace",
+      "--package-root", "outputs/review-campaign/license-reviewer",
+      "--out-dir", "reviews/license-workspace"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-trial-candidate-license-review-workspace",
+      packageRoot: "outputs/review-campaign/license-reviewer",
+      outDir: "reviews/license-workspace"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-trial-candidate-license-review-workspace",
+      "--workspace-root", "reviews/license-workspace",
+      "--out-dir", "reviews/license-workspace-audit"
+    ])).toEqual({
+      kind: "governance-benchmark-audit-promotion-trial-candidate-license-review-workspace",
+      workspaceRoot: "reviews/license-workspace",
+      outDir: "reviews/license-workspace-audit"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "finalize-promotion-trial-candidate-license-review-workspace",
+      "--workspace-root", "reviews/license-workspace",
+      "--output", "returns/license-review.json"
+    ])).toEqual({
+      kind: "governance-benchmark-finalize-promotion-trial-candidate-license-review-workspace",
+      workspaceRoot: "reviews/license-workspace",
+      outputPath: "returns/license-review.json"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-trial-candidate-license-review-workspace",
+      "--workspace-root", "reviews/license-workspace"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--workspace-root and --out-dir")
+    });
+  });
+
   it("supports hash-bound research validation profiles", () => {
     expect(resolveCliAction([
       "research", "run-validation",

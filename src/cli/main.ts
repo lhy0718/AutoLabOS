@@ -33,6 +33,9 @@ import {
   runPromotionTrialCandidateReviewWorkspacePreparationCli,
   runPromotionTrialCandidateReviewWorkspaceAuditCli,
   runPromotionTrialCandidateReviewWorkspaceFinalizationCli,
+  runPromotionTrialCandidateLicenseReviewWorkspacePreparationCli,
+  runPromotionTrialCandidateLicenseReviewWorkspaceAuditCli,
+  runPromotionTrialCandidateLicenseReviewWorkspaceFinalizationCli,
   runPromotionTrialCandidateLicenseReviewWorksheetCli,
   runPromotionTrialCandidateAnnotationPreflightCli,
   runPromotionTrialCandidateLicenseReviewPreflightCli,
@@ -115,6 +118,9 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-review-workspace --package-root <campaign/reviewer-a> --out-dir <new-workspace>",
     "  autolabos governance-benchmark audit-promotion-trial-candidate-review-workspace --workspace-root <workspace> --out-dir <new-audit>",
     "  autolabos governance-benchmark finalize-promotion-trial-candidate-review-workspace --workspace-root <workspace> --output <annotation.json>",
+    "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-review-workspace --package-root <campaign/license-reviewer> --out-dir <new-workspace>",
+    "  autolabos governance-benchmark audit-promotion-trial-candidate-license-review-workspace --workspace-root <workspace> --out-dir <new-audit>",
+    "  autolabos governance-benchmark finalize-promotion-trial-candidate-license-review-workspace --workspace-root <workspace> --output <license-review.json>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet --handoff-root <handoff> --reviewer-id <pseudonym> --output <license-review.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root <handoff/reviewer> --annotation <review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --license-root <handoff/license> --review <license-review.json> --out-dir <preflight-output>",
@@ -537,6 +543,33 @@ async function main(): Promise<void> {
 
   if (action.kind === "governance-benchmark-finalize-promotion-trial-candidate-review-workspace") {
     await runPromotionTrialCandidateReviewWorkspaceFinalizationCli({
+      cwd: process.cwd(),
+      workspaceRoot: action.workspaceRoot,
+      outputPath: action.outputPath
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-prepare-promotion-trial-candidate-license-review-workspace") {
+    await runPromotionTrialCandidateLicenseReviewWorkspacePreparationCli({
+      cwd: process.cwd(),
+      packageRoot: action.packageRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-audit-promotion-trial-candidate-license-review-workspace") {
+    await runPromotionTrialCandidateLicenseReviewWorkspaceAuditCli({
+      cwd: process.cwd(),
+      workspaceRoot: action.workspaceRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-finalize-promotion-trial-candidate-license-review-workspace") {
+    await runPromotionTrialCandidateLicenseReviewWorkspaceFinalizationCli({
       cwd: process.cwd(),
       workspaceRoot: action.workspaceRoot,
       outputPath: action.outputPath

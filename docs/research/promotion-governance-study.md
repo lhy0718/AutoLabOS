@@ -692,6 +692,23 @@ workspace inventory, audit result, and failed finalization boundary are
 recorded in
 `docs/research/evidence/promotion-trial-candidate-review-workspace-v1.json`.
 
+The distinct source-license assignment now has the same resumable boundary
+without receiving a machine-generated decision. A live run over the v13
+license-review package copied its integrity-valid candidate-scoped packet into
+an 86-file, 131,261-byte workspace and split all 76 declared subjects into
+separate editable files. The first audit found a valid packet and exact
+inventory, zero malformed reviews, 0/76 complete reviews, an incomplete
+aggregate decision, and false attestations. It therefore kept
+`ready_to_finalize=false`; the finalization attempt exited nonzero and created
+no return file. Regression tests separately cover blank, 1/76, conservative
+aggregate mismatch, and 76/76 candidate-scoped states, plus the zero-subject
+source-only path. Both completed fixture paths must pass the existing
+packet-bound license-review preflight. This removes monolithic 76-row editing
+friction only. It does not supply a license status, set a human attestation,
+verify legal authority, or alter the paper ceiling. Implementation, packet,
+workspace, audit, and failed-finalization hashes are recorded in
+`docs/research/evidence/promotion-trial-candidate-license-review-workspace-v1.json`.
+
 The controller return path now has an assignment-bound collector. It rechecks
 the pristine campaign and complete handoff, requires the two annotation
 pseudonyms and source-license reviewer pseudonym to match their assigned slots,

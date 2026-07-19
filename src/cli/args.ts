@@ -53,6 +53,9 @@ export type CliAction =
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-review-workspace"; packageRoot: string; outDir: string }
   | { kind: "governance-benchmark-audit-promotion-trial-candidate-review-workspace"; workspaceRoot: string; outDir: string }
   | { kind: "governance-benchmark-finalize-promotion-trial-candidate-review-workspace"; workspaceRoot: string; outputPath: string }
+  | { kind: "governance-benchmark-prepare-promotion-trial-candidate-license-review-workspace"; packageRoot: string; outDir: string }
+  | { kind: "governance-benchmark-audit-promotion-trial-candidate-license-review-workspace"; workspaceRoot: string; outDir: string }
+  | { kind: "governance-benchmark-finalize-promotion-trial-candidate-license-review-workspace"; workspaceRoot: string; outputPath: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-license-worksheet"; handoffRoot: string; reviewerId: string; outputPath: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; reviewerRoot: string; annotationPath: string; outDir: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review"; licenseRoot: string; reviewPath: string; outDir: string }
@@ -469,6 +472,81 @@ export function resolveCliAction(args: string[]): CliAction {
       }
       return {
         kind: "governance-benchmark-finalize-promotion-trial-candidate-review-workspace",
+        workspaceRoot,
+        outputPath
+      };
+    }
+    if (subcommand === "prepare-promotion-trial-candidate-license-review-workspace") {
+      let packageRoot: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--package-root" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark prepare-promotion-trial-candidate-license-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--package-root") packageRoot = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!packageRoot || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --package-root and --out-dir are required." };
+      }
+      return {
+        kind: "governance-benchmark-prepare-promotion-trial-candidate-license-review-workspace",
+        packageRoot,
+        outDir
+      };
+    }
+    if (subcommand === "audit-promotion-trial-candidate-license-review-workspace") {
+      let workspaceRoot: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--workspace-root" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark audit-promotion-trial-candidate-license-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--workspace-root") workspaceRoot = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!workspaceRoot || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --workspace-root and --out-dir are required." };
+      }
+      return {
+        kind: "governance-benchmark-audit-promotion-trial-candidate-license-review-workspace",
+        workspaceRoot,
+        outDir
+      };
+    }
+    if (subcommand === "finalize-promotion-trial-candidate-license-review-workspace") {
+      let workspaceRoot: string | undefined;
+      let outputPath: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--workspace-root" && token !== "--output") {
+          return { kind: "error", message: `Unsupported governance-benchmark finalize-promotion-trial-candidate-license-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--workspace-root") workspaceRoot = value;
+        else outputPath = value;
+        index += 1;
+      }
+      if (!workspaceRoot || !outputPath) {
+        return { kind: "error", message: "Missing required arguments: --workspace-root and --output are required." };
+      }
+      return {
+        kind: "governance-benchmark-finalize-promotion-trial-candidate-license-review-workspace",
         workspaceRoot,
         outputPath
       };

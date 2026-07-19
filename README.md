@@ -527,6 +527,18 @@ autolabos governance-benchmark prepare-promotion-trial-candidate-license-workshe
   --reviewer-id <pseudonym> \
   --output <license-review.json>
 
+autolabos governance-benchmark prepare-promotion-trial-candidate-license-review-workspace \
+  --package-root <new-review-campaign>/license-reviewer \
+  --out-dir <license-review-workspace>
+
+autolabos governance-benchmark audit-promotion-trial-candidate-license-review-workspace \
+  --workspace-root <license-review-workspace> \
+  --out-dir <new-license-workspace-audit>
+
+autolabos governance-benchmark finalize-promotion-trial-candidate-license-review-workspace \
+  --workspace-root <license-review-workspace> \
+  --output <license-review.json>
+
 autolabos governance-benchmark preflight-promotion-trial-candidate-annotation \
   --reviewer-root <new-handoff-dir>/reviewer \
   --annotation <review-a.json> \
@@ -619,6 +631,21 @@ the resulting file must still pass
 `packet/` directory before controller-side collection. Workspace completion
 does not prove reviewer identity or independence, validate cited evidence,
 compare reviewers, adjudicate labels, or admit confirmatory evidence.
+
+For a large assigned source-license package, the license-review-workspace
+command copies the integrity-valid license packet into a separate editable root,
+splits candidate-scoped work into one file per declared subject, and keeps the
+aggregate decision and three attestations separate. Its audit accepts blank and
+partial progress as structurally valid but refuses finalization until every
+subject has a valid decision and rationale, the top-level decision is the
+conservative aggregate, and all attestations are explicitly true. A permitted
+decision still requires public HTTPS evidence under the existing review
+contract. Finalization only assembles the existing monolithic review schema;
+the result must still pass
+`preflight-promotion-trial-candidate-license-review` against the copied
+`packet/` directory. The workspace does not supply a decision, verify human
+identity or legal authority, grant redistribution permission, expose candidate
+annotations, or admit confirmatory evidence.
 
 The source-license worksheet is equally fail-closed: its decision starts as
 `null`, its evidence and rationale are empty, and all attestations are `false`.

@@ -96,11 +96,17 @@ import {
   type CollectPromotionTrialCandidateReviewCampaignInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 import {
+  auditPromotionTrialCandidateLicenseReviewWorkspace,
   auditPromotionTrialCandidateReviewWorkspace,
+  finalizePromotionTrialCandidateLicenseReviewWorkspace,
   finalizePromotionTrialCandidateReviewWorkspace,
+  preparePromotionTrialCandidateLicenseReviewWorkspace,
   preparePromotionTrialCandidateReviewWorkspace,
+  type AuditPromotionTrialCandidateLicenseReviewWorkspaceInput,
   type AuditPromotionTrialCandidateReviewWorkspaceInput,
+  type FinalizePromotionTrialCandidateLicenseReviewWorkspaceInput,
   type FinalizePromotionTrialCandidateReviewWorkspaceInput,
+  type PreparePromotionTrialCandidateLicenseReviewWorkspaceInput,
   type PreparePromotionTrialCandidateReviewWorkspaceInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.js";
 import {
@@ -829,6 +835,63 @@ export async function runPromotionTrialCandidateReviewWorkspaceFinalizationCli(
       `Output: ${result.output_path}`,
       `Reviewer packet: ${result.reviewer_root}`,
       "Status: packet-bound annotation preflight remains required before campaign collection"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateLicenseReviewWorkspacePreparationCli(
+  input: PreparePromotionTrialCandidateLicenseReviewWorkspaceInput
+): Promise<void> {
+  const result = await preparePromotionTrialCandidateLicenseReviewWorkspace(input);
+  process.stdout.write(
+    [
+      "Resumable trial-candidate source-license review workspace prepared",
+      `Handoff: ${result.handoff_id}`,
+      `Reviewer ID: ${result.reviewer_id}`,
+      `Scope: ${result.review_scope}`,
+      `Subjects: ${result.subject_count}`,
+      `Workspace: ${result.output_dir}`,
+      `Manifest: ${result.manifest_path}`,
+      "Status: all license decisions and attestations remain incomplete by construction"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateLicenseReviewWorkspaceAuditCli(
+  input: AuditPromotionTrialCandidateLicenseReviewWorkspaceInput
+): Promise<void> {
+  const result = await auditPromotionTrialCandidateLicenseReviewWorkspace(input);
+  process.stdout.write(
+    [
+      `Trial-candidate source-license review workspace ${result.report.workspace_valid ? "valid" : "invalid"}`,
+      `Ready to finalize: ${result.report.ready_to_finalize}`,
+      `Completed subjects: ${result.report.completed_subject_review_count}/${result.report.subject_count}`,
+      `Incomplete subjects: ${result.report.incomplete_subject_review_count}`,
+      `Malformed subjects: ${result.report.malformed_subject_review_count}`,
+      `Aggregate complete: ${result.report.aggregate_review_complete}`,
+      `Attestation complete: ${result.report.attestation_complete}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`,
+      "Evidence boundary: structural progress only; no human identity, legal authority, license grant, candidate-annotation access, or confirmatory admission"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.workspace_valid) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateLicenseReviewWorkspaceFinalizationCli(
+  input: FinalizePromotionTrialCandidateLicenseReviewWorkspaceInput
+): Promise<void> {
+  const result = await finalizePromotionTrialCandidateLicenseReviewWorkspace(input);
+  process.stdout.write(
+    [
+      "Trial-candidate source-license review workspace assembled",
+      `Handoff: ${result.handoff_id}`,
+      `Reviewer ID: ${result.reviewer_id}`,
+      `Scope: ${result.review_scope}`,
+      `Subjects: ${result.subject_count}`,
+      `Output: ${result.output_path}`,
+      `License packet: ${result.license_root}`,
+      "Status: packet-bound license-review preflight remains required before campaign collection"
     ].join("\n") + "\n"
   );
 }
