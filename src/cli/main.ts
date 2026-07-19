@@ -45,6 +45,7 @@ import {
   runPromotionExecutionEvidencePreparationCli,
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
+  runPromotionDevelopmentRecoveryCli,
   runPromotionRecoveryEvaluationCli,
   runPromotionConfirmatoryGateCli,
   runPromotionDevelopmentEvidenceExportCli,
@@ -117,6 +118,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-execution-evidence --source-root <bundle> --run-id <id> --backend <backend> --started-at <ISO> --completed-at <ISO> --trial <id> --trial <id> --trial <id> --artifact <role=relative-path> [--artifact <role=relative-path>]",
     "  autolabos governance-benchmark audit-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory-audit]",
     "  autolabos governance-benchmark freeze-promotion-confirmatory --manifest <intake.json> [--out-dir outputs/governance-benchmark/promotion-confirmatory]",
+    "  autolabos governance-benchmark run-promotion-development-recovery --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --repaired-suite-id <id> --repaired-trial-id <id> [--out-dir outputs/governance-benchmark/promotion-development-recovery]",
     "  autolabos governance-benchmark evaluate-promotion-recovery --manifest <recovery-manifest.json> [--out-dir outputs/governance-benchmark/promotion-recovery]",
     "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--freeze-manifest <frozen-intake-manifest.json>] [--out-dir outputs/governance-benchmark/promotion-suite]",
@@ -638,6 +640,19 @@ async function main(): Promise<void> {
     await runPromotionRecoveryEvaluationCli({
       cwd: process.cwd(),
       manifestPath: action.manifestPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-run-promotion-development-recovery") {
+    await runPromotionDevelopmentRecoveryCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      originalPredictionsPath: action.predictionsPath,
+      originalSystemRunManifestPath: action.systemRunManifestPath,
+      repairedSuiteId: action.repairedSuiteId,
+      repairedTrialId: action.repairedTrialId,
       outDir: action.outDir
     });
     return;

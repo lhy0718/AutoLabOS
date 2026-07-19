@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
 import { evaluatePromotionConfirmatoryGate } from "../src/core/benchmark/promotionBenchmarkConfirmatoryGate.js";
 import { exportPromotionDevelopmentEvidence } from "../src/core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
+import { runPromotionDevelopmentRecovery } from "../src/core/benchmark/promotionBenchmarkDevelopmentRecovery.js";
 import { runPromotionBenchmarkProvider } from "../src/core/benchmark/promotionBenchmarkProviderRunner.js";
 import { runPromotionBenchmarkSystems } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { generateSyntheticPromotionCorpus } from "../src/core/benchmark/promotionBenchmarkSyntheticCorpus.js";
@@ -70,14 +71,14 @@ describe("promotion development evidence export", () => {
   });
 
   it("cross-verifies hash-bound real-model repetitions as development-only evidence", async () => {
-    const fixture = await createDevelopmentFlow(true);
+    const fixture = await createDevelopmentFlow({ includeProvider: true });
     const result = await exportPromotionDevelopmentEvidence({
       ...fixture.inputs,
       outputPath: "development-evidence-real-model.json"
     });
 
     expect(result.report).toMatchObject({
-      schema_version: "1.1",
+      schema_version: "1.2",
       paper_claim_eligible: false,
       evaluation: { prediction_count: 280 },
       real_model_evaluation: {
@@ -99,9 +100,61 @@ describe("promotion development evidence export", () => {
     ]));
     expect(result.report.evidence_boundary).toContain("verified development executions");
   });
+
+  it("cross-verifies complete post-repair reruns without promoting development evidence", async () => {
+    const fixture = await createDevelopmentFlow({ includeProvider: true, includeRecovery: true });
+    const result = await exportPromotionDevelopmentEvidence({
+      ...fixture.inputs,
+      outputPath: "development-evidence-with-recovery.json"
+    });
+
+    expect(result.report).toMatchObject({
+      schema_version: "1.2",
+      paper_claim_eligible: false,
+      development_recovery_evaluation: {
+        status: "verified_development_only",
+        original_fault_case_count: 36,
+        covered_fault_case_count: 36,
+        missing_fault_case_count: 0,
+        successful_recovery_rate: 1,
+        clean_control_regression_rate: 0,
+        paper_claim_evidence_eligible: false
+      },
+      confirmatory_gate: {
+        readiness: "blocked_for_paper_scale",
+        paper_ready: false,
+        recovery: {
+          status: "missing_or_invalid",
+          successful_recovery_rate: 1,
+          clean_control_regression_rate: 0
+        }
+      }
+    });
+    expect(result.report.source_artifacts.map((item) => item.role)).toContain("recovery_report");
+    expect(result.report.evidence_boundary).toContain("post-repair rerun");
+  });
+
+  it("rejects recovery report drift after the confirmatory gate binds it", async () => {
+    const fixture = await createDevelopmentFlow({ includeRecovery: true });
+    const gate = JSON.parse(
+      await readFile(path.join(fixture.workspace, fixture.inputs.gateReportPath), "utf8")
+    ) as { artifacts: { recovery_report_ref: string } };
+    const reportPath = path.join(fixture.workspace, gate.artifacts.recovery_report_ref);
+    const report = JSON.parse(await readFile(reportPath, "utf8")) as Record<string, unknown>;
+    report.successful_recovery_rate = 0;
+    await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n", "utf8");
+
+    await expect(exportPromotionDevelopmentEvidence({
+      ...fixture.inputs,
+      outputPath: "rejected-recovery-drift.json"
+    })).rejects.toThrow("does not match the confirmatory gate bindings");
+  });
 });
 
-async function createDevelopmentFlow(includeProvider = false): Promise<{
+async function createDevelopmentFlow(options: {
+  includeProvider?: boolean;
+  includeRecovery?: boolean;
+} = {}): Promise<{
   workspace: string;
   inputs: Omit<Parameters<typeof exportPromotionDevelopmentEvidence>[0], "outputPath">;
 }> {
@@ -120,7 +173,7 @@ async function createDevelopmentFlow(includeProvider = false): Promise<{
     outDir: "predictions"
   });
   const providerRunManifestPaths: string[] = [];
-  if (includeProvider) {
+  if (options.includeProvider) {
     for (const trialId of ["local-trial-a", "local-trial-b", "local-trial-c"]) {
       const run = await runPromotionBenchmarkProvider({
         cwd: workspace,
@@ -152,12 +205,24 @@ async function createDevelopmentFlow(includeProvider = false): Promise<{
       providerRunManifestPaths.push(run.manifest_path);
     }
   }
+  const recovery = options.includeRecovery
+    ? await runPromotionDevelopmentRecovery({
+      cwd: workspace,
+      suitePath: suite.suite_path,
+      originalPredictionsPath: systems.predictions_path,
+      originalSystemRunManifestPath: systems.manifest_path,
+      repairedSuiteId: "development-repaired-suite",
+      repairedTrialId: "development-post-repair-trial",
+      outDir: "recovery"
+    })
+    : null;
   const gate = await evaluatePromotionConfirmatoryGate({
     cwd: workspace,
     suitePath: suite.suite_path,
     predictionsPath: systems.predictions_path,
     systemRunManifestPath: systems.manifest_path,
     providerRunManifestPaths,
+    recoveryManifestPath: recovery?.recovery_manifest_path,
     systemRoles: {
       ungated: "always-promote",
       checklist: "presence-checklist",

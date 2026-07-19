@@ -19,7 +19,7 @@ Current blockers:
 - no double-adjudicated held-out labels,
 - no independent mutation-isolation audit,
 - no three-trial paper-eligible real-model manuscript-only baseline,
-- no post-repair recovery evaluation,
+- no paper-scale post-repair recovery evaluation,
 - 12 citation-bearing claims have hash-bound full-text evidence candidates but
   remain independently unchecked in Refgate,
 - 2 OpenReview citation-bearing claims still lack full-text source files,
@@ -116,11 +116,16 @@ WORKDIR=$(mktemp -d)
 node dist/cli/main.js governance-benchmark generate-promotion-development --out-dir "$WORKDIR/corpus"
 node dist/cli/main.js governance-benchmark build-promotion --recipe "$WORKDIR/corpus/recipe.json" --out-dir "$WORKDIR/suite"
 node dist/cli/main.js governance-benchmark run-promotion --suite "$WORKDIR/suite/suite.json" --out-dir "$WORKDIR/predictions"
+node dist/cli/main.js governance-benchmark run-promotion-development-recovery --suite "$WORKDIR/suite/suite.json" --predictions "$WORKDIR/predictions/predictions.jsonl" --system-run-manifest "$WORKDIR/predictions/system-run-manifest.json" --repaired-suite-id development-repaired-suite --repaired-trial-id development-post-repair --out-dir "$WORKDIR/recovery"
 node dist/cli/main.js governance-benchmark score-promotion --suite "$WORKDIR/suite/suite.json" --predictions "$WORKDIR/predictions/predictions.jsonl" --out-dir "$WORKDIR/score"
 ```
 
-The generated suite must report `paper_claim_eligible=false`, and the score
-must report `paired_analysis.exploratory_only=true`.
+The generated suite must report `paper_claim_eligible=false`, the score must
+report `paired_analysis.exploratory_only=true`, and the recovery summary must
+report `development_evidence_verified=true` with
+`paper_claim_eligible=false`. The development recovery command uses the paired
+clean control as an oracle repair target to validate rerun coverage and metric
+arithmetic; it is not evidence of autonomous repair or paper-scale recovery.
 
 The `development/` directory preserves the generated recipe, corpus manifest,
 raw predictions, and score outputs used by the development table. The

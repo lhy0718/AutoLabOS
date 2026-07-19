@@ -137,6 +137,10 @@ import {
   type EvaluatePromotionRecoveryInput
 } from "../core/benchmark/promotionBenchmarkRecovery.js";
 import {
+  runPromotionDevelopmentRecovery,
+  type RunPromotionDevelopmentRecoveryInput
+} from "../core/benchmark/promotionBenchmarkDevelopmentRecovery.js";
+import {
   exportPromotionDevelopmentEvidence,
   type ExportPromotionDevelopmentEvidenceInput
 } from "../core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
@@ -434,6 +438,24 @@ export async function runPromotionRecoveryEvaluationCli(
     ].join("\n") + "\n"
   );
   if (!result.report.passed) process.exitCode = 1;
+}
+
+export async function runPromotionDevelopmentRecoveryCli(
+  input: RunPromotionDevelopmentRecoveryInput
+): Promise<void> {
+  const result = await runPromotionDevelopmentRecovery(input);
+  process.stdout.write(
+    [
+      "Promotion development recovery verified: " + result.summary.source_suite_id,
+      "System: " + result.summary.system_id,
+      "Fault-case coverage: " + result.summary.covered_fault_case_count + "/" + result.summary.original_fault_case_count,
+      "Successful recovery: " + formatOptionalRate(result.summary.successful_recovery_rate),
+      "Clean-control regression: " + formatOptionalRate(result.summary.clean_control_regression_rate),
+      "Recovery manifest: " + result.recovery_manifest_path,
+      "Summary: " + result.summary_path,
+      "Evidence boundary: synthetic development only; not eligible for paper claims"
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionDevelopmentEvidenceExportCli(

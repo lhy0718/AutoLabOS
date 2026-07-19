@@ -749,13 +749,13 @@ checkpoint.
 
 ### Exploratory Instrument Check
 
-A deterministic development run exercised the complete local instrument on
+An initial deterministic development run exercised the complete local instrument on
 four synthetic base bundles and 40 paired cases. The artifact-grounded policy
 matched the provisional labels on this generated suite, while the ungated,
 presence-only, and concern-without-action conditions produced false promotions.
 These values validate evaluator wiring only: the suite has one deterministic
 trial, no held-out external sources, no independent human adjudication, no
-provider repetition, and no post-repair evidence.
+provider repetition, and at that checkpoint no post-repair evidence.
 
 The same outputs were passed to the confirmatory gate rather than interpreted
 as paper results. Score validation passed, but the gate returned
@@ -803,6 +803,17 @@ labels have been admitted and no three-run aggregate has been executed for a
 paper-eligible suite. Therefore no confirmatory metrics, hypothesis verdicts,
 or paper-scale empirical claims exist yet.
 
+A controlled synthetic recovery run also materialized each fault case's paired
+clean control as an oracle repair target and reran the full artifact policy over
+all 40 repaired cases. It covered 36 of 36 original fault cases, recovered all 36,
+and preserved all four clean controls, yielding development recovery 1.0 and
+clean-control regression 0.0. These values verify the recovery runner, hash
+bindings, pair coverage, and metric arithmetic; they do not establish autonomous
+repair quality. The confirmatory gate binds the recovery report but retains
+`paper_ready=false` and `post_repair_evidence_not_verified` because both suites
+remain synthetic, unadjudicated, and artifact-execution-ineligible for paper
+claims.
+
 ### Long-Horizon Completion Contract
 
 The final paper-scale milestone is declared in
@@ -815,9 +826,10 @@ artifacts remain explicitly hash-unbound until they are produced and reviewed;
 missing, rewritten, unbound, or assertion-failing evidence keeps the milestone
 incomplete and routes the requirement back to its declared node.
 
-A same-flow audit of the current workspace passed 3 of 12 requirements:
+A same-flow audit of the current workspace passed 4 of 12 requirements:
 literature and research-question grounding, the synthetic development
-instrument, and the 72-base candidate trace floor. The other nine requirements
+instrument, the 72-base candidate trace floor, and three hash-bound local
+real-model development trials. The other eight requirements
 remain incomplete and are grouped under `analyze_papers`,
 `design_experiments`, `review`, `run_experiments`, and `write_paper`.
 No failed item was promoted from path existence alone.

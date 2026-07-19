@@ -526,6 +526,42 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports end-to-end synthetic development recovery", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-development-recovery",
+      "--suite",
+      "inputs/suite.json",
+      "--predictions",
+      "runs/original/predictions.jsonl",
+      "--system-run-manifest",
+      "runs/original/system-run-manifest.json",
+      "--repaired-suite-id",
+      "repaired-development-suite",
+      "--repaired-trial-id",
+      "post-repair-trial",
+      "--out-dir",
+      "outputs/development-recovery"
+    ])).toEqual({
+      kind: "governance-benchmark-run-promotion-development-recovery",
+      suitePath: "inputs/suite.json",
+      predictionsPath: "runs/original/predictions.jsonl",
+      systemRunManifestPath: "runs/original/system-run-manifest.json",
+      repairedSuiteId: "repaired-development-suite",
+      repairedTrialId: "post-repair-trial",
+      outDir: "outputs/development-recovery"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-development-recovery",
+      "--suite",
+      "inputs/suite.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("requires")
+    });
+  });
+
   it("requires a recovery manifest for post-repair evaluation", () => {
     expect(resolveCliAction([
       "governance-benchmark",

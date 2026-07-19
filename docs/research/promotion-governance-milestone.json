@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "f2d72f77438f90fccd144610fb657b6704a6d73173f764a57cbf4a2e9c2dbda9"
+          "sha256": "e192e33f882e5cdf32d6d761fdf1997a7137c7f9bf250c4f5e61aa256c1920ac"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -259,7 +259,7 @@
       "evidence": [
         {
           "path": "docs/research/evidence/promotion-real-model-development-evidence-v1.json",
-          "sha256": "16cffd46d58b74a01410e2122a6fb4d6efb1a1e17750e904a7ede6da6ebe2484",
+          "sha256": "17e95276ee6360c9f0464a4b9d05b16943c3121f55083f4a5de1369808053ae4",
           "assertions": [
             {
               "pointer": "/real_model_evaluation/status",
@@ -376,7 +376,7 @@
       "evidence": [
         {
           "path": "papers/promotion-governance/submission-status.json",
-          "sha256": "5af6f422e63ed5bb3549ae1ef2b573d8e4977f3a95bbcd0d5335f737b2d21a96",
+          "sha256": "1a054fc6183b2ad831231ff9a91cfa80fc47765fc815def3e26a311535c29610",
           "assertions": [
             {
               "pointer": "/paper_ready",

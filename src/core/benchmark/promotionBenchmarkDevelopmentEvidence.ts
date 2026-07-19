@@ -18,6 +18,7 @@ import {
   type PromotionBenchmarkSystemRunManifest
 } from "./promotionBenchmarkSystems.js";
 import type { PromotionProviderAggregateManifest } from "./promotionBenchmarkProviderAggregate.js";
+import type { PromotionRecoveryReport } from "./promotionBenchmarkRecovery.js";
 
 export interface ExportPromotionDevelopmentEvidenceInput {
   cwd: string;
@@ -32,7 +33,7 @@ export interface ExportPromotionDevelopmentEvidenceInput {
 }
 
 export interface PromotionDevelopmentEvidenceReport {
-  schema_version: "1.1";
+  schema_version: "1.2";
   evidence_id: string;
   generated_at: string;
   evidence_class: "synthetic_development";
@@ -74,6 +75,16 @@ export interface PromotionDevelopmentEvidenceReport {
     external_empirical_evidence_eligible: boolean;
     paper_claim_evidence_eligible: false;
     model_artifact_digest: string | null;
+  };
+  development_recovery_evaluation: {
+    status: "not_available" | "verified_development_only";
+    original_fault_case_count: number;
+    covered_fault_case_count: number;
+    missing_fault_case_count: number;
+    successful_recovery_rate: number | null;
+    clean_control_regression_rate: number | null;
+    paper_claim_evidence_eligible: false;
+    paper_scale_eligibility_issue_codes: string[];
   };
   confirmatory_gate: {
     readiness: "blocked_for_paper_scale";
@@ -133,6 +144,16 @@ interface NodeStrengtheningRecommendation {
   recheck_condition: string;
 }
 
+const DEVELOPMENT_RECOVERY_ELIGIBILITY_ISSUES = new Set([
+  "original_external_real_run_required",
+  "original_paper_claim_eligibility_required",
+  "original_double_adjudication_required",
+  "original_artifact_execution_required",
+  "repaired_external_real_run_required",
+  "repaired_double_adjudication_required",
+  "repaired_artifact_execution_required"
+]);
+
 export async function exportPromotionDevelopmentEvidence(
   input: ExportPromotionDevelopmentEvidenceInput
 ): Promise<ExportPromotionDevelopmentEvidenceResult> {
@@ -163,6 +184,7 @@ export async function exportPromotionDevelopmentEvidence(
   const gate = parseGateReport(gateValue);
   const recommendations = parseRecommendations(recommendationsValue);
   const providerAggregate = await resolveProviderAggregate({ cwd, gate, paths });
+  const developmentRecovery = await resolveDevelopmentRecovery({ cwd, gate, paths });
   const loaded = await loadPromotionBenchmarkSuite(paths.suite);
   if (!loaded.suite || loaded.issues.length > 0) {
     throw new Error(
@@ -186,12 +208,13 @@ export async function exportPromotionDevelopmentEvidence(
     recommendations,
     systemRun,
     providerAggregate,
+    developmentRecovery,
     suite: loaded.suite,
     hashes
   });
 
   const report: PromotionDevelopmentEvidenceReport = {
-    schema_version: "1.1",
+    schema_version: "1.2",
     evidence_id: corpus.corpus_id + ":evidence",
     generated_at: gate.generated_at,
     evidence_class: "synthetic_development",
@@ -232,6 +255,27 @@ export async function exportPromotionDevelopmentEvidence(
       paper_claim_evidence_eligible: false,
       model_artifact_digest: null
     },
+    development_recovery_evaluation: developmentRecovery ? {
+      status: "verified_development_only",
+      original_fault_case_count: developmentRecovery.original_fault_case_count,
+      covered_fault_case_count: developmentRecovery.covered_fault_case_count,
+      missing_fault_case_count: developmentRecovery.missing_fault_case_count,
+      successful_recovery_rate: developmentRecovery.successful_recovery_rate,
+      clean_control_regression_rate: developmentRecovery.clean_control_regression_rate,
+      paper_claim_evidence_eligible: false,
+      paper_scale_eligibility_issue_codes: [...new Set(
+        developmentRecovery.issues.map((issue) => issue.code)
+      )].sort()
+    } : {
+      status: "not_available",
+      original_fault_case_count: 0,
+      covered_fault_case_count: 0,
+      missing_fault_case_count: 0,
+      successful_recovery_rate: null,
+      clean_control_regression_rate: null,
+      paper_claim_evidence_eligible: false,
+      paper_scale_eligibility_issue_codes: []
+    },
     confirmatory_gate: {
       readiness: "blocked_for_paper_scale",
       paper_ready: false,
@@ -257,7 +301,10 @@ export async function exportPromotionDevelopmentEvidence(
       + (providerAggregate
         ? "The real-model repetitions are verified development executions, but the suite is not human-adjudicated or eligible for paper claims. "
         : "No verified real-model repetition is included. ")
-      + "This record is not recovery-verified or eligible for paper claims."
+      + (developmentRecovery
+        ? "The post-repair rerun is verified only as synthetic development evidence. "
+        : "No verified post-repair development rerun is included. ")
+      + "This record is not eligible for paper claims."
   };
   await writeJsonFile(outputPath, report);
   return { report, output_path: portableRef(cwd, outputPath) };
@@ -272,10 +319,21 @@ function verifyDevelopmentEvidence(input: {
   recommendations: NodeStrengtheningRecommendation[];
   systemRun: PromotionBenchmarkSystemRunManifest;
   providerAggregate: PromotionProviderAggregateManifest | null;
+  developmentRecovery: PromotionRecoveryReport | null;
   suite: NonNullable<Awaited<ReturnType<typeof loadPromotionBenchmarkSuite>>["suite"]>;
   hashes: Record<string, string>;
 }): void {
-  const { corpus, score, gate, recommendations, systemRun, providerAggregate, suite, hashes } = input;
+  const {
+    corpus,
+    score,
+    gate,
+    recommendations,
+    systemRun,
+    providerAggregate,
+    developmentRecovery,
+    suite,
+    hashes
+  } = input;
   const suiteManifest = suite.manifest;
   const baseBundleCount = new Set(suite.cases.map((benchmarkCase) => benchmarkCase.base_bundle_id)).size;
   const cleanControlCount = suite.cases.filter((benchmarkCase) => !benchmarkCase.mutation_family).length;
@@ -342,7 +400,35 @@ function verifyDevelopmentEvidence(input: {
   } else if (gate.provider_repetition.status === "verified_receipt_distinct") {
     throw new Error("Confirmatory gate reports provider repetition without a verifiable aggregate artifact.");
   }
+  if (developmentRecovery) {
+    verifyDevelopmentRecoveryBinding({
+      cwd: input.cwd,
+      paths: input.paths,
+      gate,
+      recovery: developmentRecovery,
+      suite,
+      hashes
+    });
+  } else if (gate.artifacts.recovery_report_ref || gate.artifacts.recovery_report_sha256) {
+    throw new Error("Confirmatory gate binds recovery evidence without a verifiable development report.");
+  }
   verifyRecommendationCoverage(gate.blockers, recommendations);
+}
+
+async function resolveDevelopmentRecovery(input: {
+  cwd: string;
+  gate: PromotionConfirmatoryGateReport;
+  paths: Record<string, string>;
+}): Promise<PromotionRecoveryReport | null> {
+  const reportRef = input.gate.artifacts.recovery_report_ref;
+  const reportSha256 = input.gate.artifacts.recovery_report_sha256;
+  if (!reportRef && !reportSha256) return null;
+  if (!reportRef || !reportSha256) {
+    throw new Error("Development recovery evidence requires a complete gate artifact binding.");
+  }
+  const reportPath = await resolveExistingInside(input.cwd, reportRef, "Development recovery report");
+  input.paths.recovery_report = reportPath;
+  return parseDevelopmentRecoveryReport(await readJson(reportPath, "development recovery report"));
 }
 
 async function resolveProviderAggregate(input: {
@@ -403,6 +489,50 @@ function verifyProviderAggregateBinding(input: {
     aggregate.artifacts.predictions_path,
     input.paths.provider_predictions,
     "Provider aggregate predictions"
+  );
+}
+
+function verifyDevelopmentRecoveryBinding(input: {
+  cwd: string;
+  paths: Record<string, string>;
+  gate: PromotionConfirmatoryGateReport;
+  recovery: PromotionRecoveryReport;
+  suite: NonNullable<Awaited<ReturnType<typeof loadPromotionBenchmarkSuite>>["suite"]>;
+  hashes: Record<string, string>;
+}): void {
+  const issueCodes = new Set(input.recovery.issues.map((issue) => issue.code));
+  const exactEligibilityIssues = issueCodes.size === DEVELOPMENT_RECOVERY_ELIGIBILITY_ISSUES.size
+    && [...issueCodes].every((code) => DEVELOPMENT_RECOVERY_ELIGIBILITY_ISSUES.has(code));
+  if (input.gate.artifacts.recovery_report_sha256 !== input.hashes.recovery_report
+      || input.recovery.passed
+      || !exactEligibilityIssues
+      || input.recovery.study_id !== input.suite.manifest.suite_id
+      || input.recovery.system_id !== input.gate.system_roles.full
+      || input.recovery.original_suite_sha256 !== input.hashes.suite
+      || input.recovery.original_suite_snapshot_sha256 !== input.gate.artifacts.suite_snapshot_sha256
+      || input.recovery.original_predictions_sha256 !== input.hashes.predictions
+      || input.recovery.original_system_run_manifest_sha256 !== input.hashes.system_run_manifest
+      || input.recovery.missing_fault_families.length > 0
+      || input.recovery.missing_fault_case_count !== 0
+      || input.recovery.covered_fault_case_count !== input.recovery.original_fault_case_count
+      || input.recovery.successful_recovery_rate === null
+      || input.recovery.clean_control_regression_rate === null
+      || input.recovery.pairs.some((pair) => !pair.valid)
+      || input.gate.recovery.status !== "missing_or_invalid"
+      || input.gate.recovery.original_fault_case_count !== input.recovery.original_fault_case_count
+      || input.gate.recovery.covered_fault_case_count !== input.recovery.covered_fault_case_count
+      || input.gate.recovery.missing_fault_case_count !== input.recovery.missing_fault_case_count
+      || input.gate.recovery.successful_recovery_rate !== input.recovery.successful_recovery_rate
+      || input.gate.recovery.clean_control_regression_rate !== input.recovery.clean_control_regression_rate
+      || input.gate.blockers.some((blocker) => blocker.code === "post_repair_evidence_missing")
+      || !input.gate.blockers.some((blocker) => blocker.code === "post_repair_evidence_not_verified")) {
+    throw new Error("Development recovery evidence does not match the confirmatory gate bindings.");
+  }
+  assertArtifactRef(
+    input.cwd,
+    input.gate.artifacts.recovery_report_ref!,
+    input.paths.recovery_report,
+    "Development recovery report"
   );
 }
 
@@ -498,6 +628,32 @@ function parseProviderAggregate(value: unknown): PromotionProviderAggregateManif
     throw new Error("Invalid real-model development aggregate manifest.");
   }
   return value as unknown as PromotionProviderAggregateManifest;
+}
+
+function parseDevelopmentRecoveryReport(value: unknown): PromotionRecoveryReport {
+  if (!isRecord(value)
+      || value.schema_version !== "1.1"
+      || value.passed !== false
+      || !nonEmptyString(value.study_id)
+      || !nonEmptyString(value.system_id)
+      || !sha256Digest(value.original_suite_sha256)
+      || !sha256Digest(value.original_suite_snapshot_sha256)
+      || !sha256Digest(value.original_predictions_sha256)
+      || !sha256Digest(value.original_system_run_manifest_sha256)
+      || !positiveInteger(value.original_fault_case_count)
+      || !positiveInteger(value.covered_fault_case_count)
+      || !nonNegativeInteger(value.missing_fault_case_count)
+      || typeof value.successful_recovery_rate !== "number"
+      || typeof value.clean_control_regression_rate !== "number"
+      || !Array.isArray(value.missing_fault_families)
+      || !Array.isArray(value.issues)
+      || value.issues.some((issue) => !isRecord(issue) || !nonEmptyString(issue.code))
+      || !Array.isArray(value.pairs)
+      || value.pairs.length === 0
+      || value.pairs.some((pair) => !isRecord(pair) || typeof pair.valid !== "boolean")) {
+    throw new Error("Invalid synthetic development recovery report.");
+  }
+  return value as unknown as PromotionRecoveryReport;
 }
 
 function validDevelopmentProviderContract(value: Record<string, unknown>): boolean {
@@ -674,6 +830,7 @@ function logicalArtifactRef(role: string): string {
     score_report: "promotion-score.json",
     provider_aggregate: "provider-run-aggregate-manifest.json",
     provider_predictions: "provider-predictions.jsonl",
+    recovery_report: "promotion-recovery-report.json",
     confirmatory_gate: "promotion-confirmatory-gate.json",
     node_strengthening_recommendations: "node-strengthening-recommendations.json"
   };
@@ -684,6 +841,10 @@ function logicalArtifactRef(role: string): string {
 
 function positiveInteger(value: unknown): value is number {
   return Number.isInteger(value) && Number(value) > 0;
+}
+
+function nonNegativeInteger(value: unknown): value is number {
+  return Number.isInteger(value) && Number(value) >= 0;
 }
 
 function nonEmptyString(value: unknown): value is string {

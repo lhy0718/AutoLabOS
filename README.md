@@ -769,7 +769,8 @@ The score also emits base-bundle-clustered system intervals for false promotion,
 For a synthetic development run, export a development evidence summary only
 after the score, system-run manifest, confirmatory gate, and node recommendations
 have been generated. When the gate includes a verified three-trial real-model
-aggregate, the exporter also rehashes the aggregate manifest and its predictions:
+aggregate or a development recovery report, the exporter also rehashes those
+bound artifacts and their predictions:
 
 ```sh
 autolabos governance-benchmark export-promotion-development-evidence \
@@ -790,8 +791,8 @@ it also checks the aggregate's source-suite binding, model execution class,
 trial and prediction counts, and aggregate prediction hash. It accepts only
 synthetic, paper-ineligible evidence with a blocked confirmatory decision. The
 summary uses logical artifact roles instead of local paths; real-model execution
-is marked `verified_development_only` and does not become paper evidence by
-being summarized.
+and complete synthetic recovery are marked `verified_development_only` and do
+not become paper evidence by being summarized.
 
 ### Fresh Real-Model Execution
 
@@ -826,6 +827,36 @@ autolabos governance-benchmark aggregate-promotion-provider-runs \
 ```
 
 Aggregation accepts exactly three distinct run and trial IDs from one provider, execution environment, model, model digest when local, reasoning setting, and prompt protocol. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused execution receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence. Paper claims additionally require a paper-eligible source suite and acceptance by the downstream confirmatory gate.
+
+### Synthetic Development Recovery
+
+Exercise the complete recovery plumbing on a paper-ineligible synthetic suite
+without manually constructing repaired suites or pair manifests:
+
+```sh
+autolabos governance-benchmark run-promotion-development-recovery \
+  --suite <development-suite.json> \
+  --predictions <original-predictions.jsonl> \
+  --system-run-manifest <original-system-run-manifest.json> \
+  --repaired-suite-id <new-suite-id> \
+  --repaired-trial-id <new-trial-id> \
+  --out-dir <new-recovery-output-dir>
+```
+
+The command requires one clean control and every registered fault family for
+each base, plus exactly one declared full artifact-policy system. For each
+source case it materializes the paired clean control as an oracle repair target,
+reruns that full policy, binds every source/repaired case and trial, and derives
+fault coverage, successful recovery, and clean-control regression from the raw
+predictions. This validates repair materialization, rerun coverage, and metric
+arithmetic; it does not demonstrate autonomous repair capability.
+
+The command refuses external-real or paper-facing suites. Its report remains
+`synthetic_development`, `paper_claim_eligible=false`, and
+`development_evidence_verified=true`. A confirmatory gate may preserve the
+observed recovery rates while still classifying recovery as `missing_or_invalid`
+for paper-scale purposes and routing `post_repair_evidence_not_verified` to
+`run_experiments`.
 
 ### Post-Repair Evidence And Confirmatory Gate
 
