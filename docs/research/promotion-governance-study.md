@@ -650,6 +650,20 @@ task, packet, campaign, and blank-template hashes are recorded in
 This establishes candidate-scoped review readiness only; human review and the
 paper-scale milestone remain incomplete.
 
+Revision `2465ea3e2a2c412defeea8d463129e67cff18617` closes the remaining
+reviewer-side operation gap without changing that evidence ceiling. The v13
+campaign preserves the v11 reviewer and license packet hashes while adding
+package-relative preflight commands to each role-isolated return guide. Fresh
+extraction matched all 440 files in each candidate-review package and all eight
+files in the license-review package to their campaign sources. Both 72-row
+candidate templates and the 76-row license template remained blank and failed
+their respective preflights; controller-side collection bound all three
+assigned returns but accepted zero labels and remained blocked. Guide, template,
+preflight, campaign, and blocked-return hashes are recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v13.json`.
+Operational self-containment does not establish human identity, independence,
+license permission, adjudication, canonical curation, or confirmatory evidence.
+
 The assigned initial-review package can now be converted into a resumable
 candidate-per-file workspace without modifying the closed campaign. A live v10
 run copied the integrity-valid 72-task opaque packet into a 513-file,

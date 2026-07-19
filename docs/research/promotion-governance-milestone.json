@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "8ead57839ebb0fc695c06d348fd622e4a97e34650f2990dbe0760ab9620271f0"
+          "sha256": "713ac3a676eafbad01f5e6fddab804aebe3e9f2e40765033627f1d0fdbeeac4a"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -161,9 +161,39 @@
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-trial-candidate-review-preflight-v12.json",
-          "sha256": "8a41d6edf7f1e10f6983aa294668b3d7da23dbbc98fe2e9f9938b5a297f4bd86",
+          "path": "docs/research/evidence/promotion-trial-candidate-review-preflight-v13.json",
+          "sha256": "8867013b4a2dd1492d5533a35540f09e80bf8d5541f89418ac9031e09cb82416",
           "assertions": [
+            {
+              "pointer": "/return_guides/package_relative_preflight_commands_present",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/return_guides/controller_path_required",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/return_guides/peer_path_required",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/fresh_extraction/reviewer_a_exact_tree_match",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/fresh_extraction/reviewer_b_exact_tree_match",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/fresh_extraction/license_reviewer_exact_tree_match",
+              "operator": "equals",
+              "expected": true
+            },
             {
               "pointer": "/campaign/human_annotation_completed_count",
               "operator": "gte",
