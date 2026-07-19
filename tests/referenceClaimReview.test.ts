@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  inspectPrivateReferenceClaimReviewPackage,
+  packagePrivateReferenceClaimReviewDistribution,
   importReferenceClaimReview,
   prepareReferenceClaimReview,
   prepareReferenceClaimReviewPrivateDistribution,
@@ -17,6 +19,7 @@ import {
   REFERENCE_CLAIM_REVIEW_MANIFEST,
   REFERENCE_CLAIM_REVIEW_PREFLIGHT,
   REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION,
+  REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE,
   REFERENCE_CLAIM_REVIEW_SOURCE_README,
   REFERENCE_CLAIM_REVIEW_TASKS,
   REFERENCE_CLAIM_REVIEW_TEMPLATE
@@ -396,6 +399,157 @@ describe("reference claim review handoff", () => {
       claim_gate_passed: false,
       task_count: 2
     });
+  });
+
+  it("packages a private distribution deterministically and verifies a fresh extraction", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    await mkdir(path.join(workspace, "sources"));
+    await writeFile(path.join(workspace, "sources", "source-a.txt"), SOURCE_ALPHA_TEXT, "utf8");
+    await prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    });
+
+    const result = await packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: "private-package"
+    });
+    const repeated = await packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: "private-package-repeat"
+    });
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, "private-package", REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE),
+      "utf8"
+    )) as {
+      package_id: string;
+      status: string;
+      archive_path: string;
+      archive_sha256: string;
+      archive_root: string;
+      file_count: number;
+      single_reviewer_root: boolean;
+      regular_file_or_directory_entries_only: boolean;
+      fresh_extraction_exact_tree_match: boolean;
+      public_distribution_allowed: boolean;
+      human_review_completed: boolean;
+      claim_gate_passed: boolean;
+      evidence_boundary: string;
+    };
+    expect(result).toMatchObject({
+      package_id: manifest.package_id,
+      output_dir: "private-package",
+      file_count: 7,
+      human_review_completed: false,
+      public_distribution_allowed: false
+    });
+    expect(manifest).toMatchObject({
+      status: "human_review_pending",
+      archive_path: "archives/reference-reviewer.tar.gz",
+      archive_root: "reference-reviewer",
+      single_reviewer_root: true,
+      regular_file_or_directory_entries_only: true,
+      fresh_extraction_exact_tree_match: true,
+      public_distribution_allowed: false,
+      human_review_completed: false,
+      claim_gate_passed: false
+    });
+    expect(manifest.evidence_boundary).toContain("does not establish redistribution rights");
+    expect(await readFile(path.join(workspace, result.manifest_path), "utf8"))
+      .toBe(await readFile(path.join(workspace, repeated.manifest_path), "utf8"));
+    expect(await readFile(path.join(workspace, result.archive_path)))
+      .toEqual(await readFile(path.join(workspace, repeated.archive_path)));
+    expect((await inspectPrivateReferenceClaimReviewPackage(
+      path.join(workspace, "private-package")
+    )).passed).toBe(true);
+  });
+
+  it("fails closed on private package tampering, source tampering, and nested output", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    await mkdir(path.join(workspace, "sources"));
+    await writeFile(path.join(workspace, "sources", "source-a.txt"), SOURCE_ALPHA_TEXT, "utf8");
+    await prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    });
+    const result = await packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: "private-package"
+    });
+
+    const changedArchiveRoot = path.join(workspace, "private-package-changed-archive");
+    await cp(path.join(workspace, "private-package"), changedArchiveRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const changedArchivePath = path.join(
+      changedArchiveRoot,
+      path.relative("private-package", result.archive_path)
+    );
+    await writeFile(changedArchivePath, Buffer.concat([
+      await readFile(changedArchivePath),
+      Buffer.from("changed", "utf8")
+    ]));
+    const changedArchiveInspection = await inspectPrivateReferenceClaimReviewPackage(
+      changedArchiveRoot
+    );
+    expect(changedArchiveInspection.passed).toBe(false);
+    expect(changedArchiveInspection.issues.map((issue) => issue.code)).toContain(
+      "reference_review_private_package_archive_invalid"
+    );
+
+    const expandedManifestRoot = path.join(workspace, "private-package-expanded-manifest");
+    await cp(path.join(workspace, "private-package"), expandedManifestRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const expandedManifestPath = path.join(
+      expandedManifestRoot,
+      REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE
+    );
+    const expandedManifest = JSON.parse(await readFile(expandedManifestPath, "utf8")) as Record<string, unknown>;
+    expandedManifest.unexpected = true;
+    await writeFile(expandedManifestPath, JSON.stringify(expandedManifest), "utf8");
+    expect((await inspectPrivateReferenceClaimReviewPackage(expandedManifestRoot))).toMatchObject({
+      passed: false,
+      manifest: null,
+      issues: [{ code: "reference_review_private_package_manifest_unreadable" }]
+    });
+
+    await expect(packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: path.join("private-distribution", "nested-package")
+    })).rejects.toThrow("must be separate");
+
+    await symlink(path.join(workspace, "private-distribution"), path.join(workspace, "distribution-alias"), "dir");
+    await expect(packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: path.join("distribution-alias", "nested-package")
+    })).rejects.toThrow("must be separate");
+
+    await writeFile(
+      path.join(workspace, "private-distribution", "reviewer", "sources", "source-a.txt"),
+      "changed source\n",
+      "utf8"
+    );
+    await expect(packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: "package-from-changed-source"
+    })).rejects.toThrow("distribution hash mismatch");
   });
 
   it("rejects a private distribution when a required source is missing or has the wrong hash", async () => {

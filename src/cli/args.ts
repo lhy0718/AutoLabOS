@@ -88,6 +88,8 @@ export type CliAction =
   | { kind: "research-help" }
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
+  | { kind: "reference-review-package-private"; distributionRoot: string; outDir: string }
+  | { kind: "reference-review-verify-private-package"; packageRoot: string }
   | { kind: "reference-review-preflight"; packetRoot: string; reviewPath: string; outDir: string }
   | { kind: "reference-review-import"; packetRoot: string; reviewPath: string; preflightReportPath: string; approvalPath: string; claimsPath: string; outDir: string }
   | {
@@ -1982,11 +1984,11 @@ export function resolveCliAction(args: string[]): CliAction {
 
 function parseReferenceReviewArgs(args: string[]): CliAction {
   const subcommand = args[0];
-  if (subcommand !== "prepare" && subcommand !== "distribute-private"
+  if (subcommand !== "prepare" && subcommand !== "distribute-private" && subcommand !== "package-private" && subcommand !== "verify-private-package"
       && subcommand !== "preflight" && subcommand !== "import") {
     return {
       kind: "error",
-      message: "Usage: reference-review prepare|distribute-private|preflight|import [options]."
+      message: "Usage: reference-review prepare|distribute-private|package-private|verify-private-package|preflight|import [options]."
     };
   }
   const values = new Map<string, string>();
@@ -2028,6 +2030,35 @@ function parseReferenceReviewArgs(args: string[]): CliAction {
     return packetRoot && sourceDir && outDir
       ? { kind: "reference-review-distribute-private", packetRoot, sourceDir, outDir }
       : { kind: "error", message: "reference-review distribute-private requires --packet, --source-dir, and --out-dir." };
+  }
+  if (subcommand === "package-private") {
+    const allowed = new Set(["--distribution", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review package-private argument: " + unsupported + "." };
+    }
+    const distributionRoot = values.get("--distribution");
+    const outDir = values.get("--out-dir");
+    return distributionRoot && outDir
+      ? { kind: "reference-review-package-private", distributionRoot, outDir }
+      : {
+          kind: "error",
+          message: "reference-review package-private requires --distribution and --out-dir."
+        };
+  }
+  if (subcommand === "verify-private-package") {
+    const allowed = new Set(["--package"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review verify-private-package argument: " + unsupported + "." };
+    }
+    const packageRoot = values.get("--package");
+    return packageRoot
+      ? { kind: "reference-review-verify-private-package", packageRoot }
+      : {
+          kind: "error",
+          message: "reference-review verify-private-package requires --package."
+        };
   }
   if (subcommand === "import") {
     const allowed = new Set(["--packet", "--review", "--preflight", "--approval", "--claims", "--out-dir"]);

@@ -58,6 +58,22 @@ describe("resolveCliAction", () => {
       outDir: "private/review-distribution"
     });
     expect(resolveCliAction([
+      "reference-review", "package-private",
+      "--distribution", "private/review-distribution",
+      "--out-dir", "private/reviewer-package"
+    ])).toEqual({
+      kind: "reference-review-package-private",
+      distributionRoot: "private/review-distribution",
+      outDir: "private/reviewer-package"
+    });
+    expect(resolveCliAction([
+      "reference-review", "verify-private-package",
+      "--package", "private/reviewer-package"
+    ])).toEqual({
+      kind: "reference-review-verify-private-package",
+      packageRoot: "private/reviewer-package"
+    });
+    expect(resolveCliAction([
       "reference-review", "preflight",
       "--packet", "paper/review-handoff",
       "--review", "returns/review.json",
@@ -98,7 +114,13 @@ describe("resolveCliAction", () => {
       "reference-review", "preflight", "--packet", "packet"
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
     expect(resolveCliAction([
+      "reference-review", "package-private", "--distribution", "private-distribution"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
       "reference-review", "import", "--packet", "packet", "--review", "review.json"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "verify-private-package"
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
   });
 

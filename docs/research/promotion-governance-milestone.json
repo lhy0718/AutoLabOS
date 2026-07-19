@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "f852cc63ccbd717799c89e3ff264ac7e1644af69d5805aa56afee374a1508a4d"
+          "sha256": "0ae8aea0efaedf8f0c1c97c832b95aef3ce8ff8af44572587d56813468b9880b"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -422,13 +422,43 @@
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-reference-review-handoff-v4.json",
-          "sha256": "deceed4112c3a53bee77b855aa80eded1d00caaabf910d8ed784a7da032fffac",
+          "path": "docs/research/evidence/promotion-reference-review-handoff-v5.json",
+          "sha256": "08346d50197c739829fb58611a241301c46eab7ee840bf1801cc5805676ba6af",
           "assertions": [
             {
               "pointer": "/private_distribution/source_count",
               "operator": "equals",
               "expected": 8
+            },
+            {
+              "pointer": "/private_package/self_inspection_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/private_package/single_reviewer_root",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/private_package/regular_file_or_directory_entries_only",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/private_package/fresh_extraction_exact_tree_match",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/private_package/public_distribution_allowed",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/private_package/human_review_completed",
+              "operator": "equals",
+              "expected": false
             },
             {
               "pointer": "/source_integrity/source_title_matched_count",
@@ -447,6 +477,11 @@
             },
             {
               "pointer": "/review_contract/package_relative_preflight_command_present",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/review_contract/recipient_package_verification_command_present",
               "operator": "equals",
               "expected": true
             },
@@ -557,7 +592,7 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-v28/research-validation-report.json",
+          "path": "outputs/promotion-governance/final-validation-v29/research-validation-report.json",
           "sha256": null,
           "verifier": "research_validation_report",
           "assertions": [

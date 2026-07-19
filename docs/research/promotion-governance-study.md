@@ -784,10 +784,15 @@ command assembled a separate private packet from the eight mapped full texts.
 It deduplicates sources shared by multiple claims, verifies each source against
 the task hash, rejects symbolic links and ambiguous files, and closes the
 complete file inventory. Its manifest forbids public release and records that
-source-license review is not assessed, so neither the packet nor the third-party
-PDFs enter the public source snapshot. The current packet, distribution receipt,
-and expected fail-closed preflight are fixed in
-`docs/research/evidence/promotion-reference-review-handoff-v4.json`.
+source-license review is not assessed. A second command packages that verified
+directory as one deterministic reviewer archive, binds its bytes and file tree
+to a strict manifest, and rechecks the packet from a fresh extraction. Neither
+the packet, archive, nor third-party PDFs enter the public source snapshot;
+packaging proves transport integrity only and does not establish redistribution
+permission or human review. The current packet, private-package receipt, and
+expected fail-closed preflight are fixed in the latest receipt. The receiver
+can rerun the same strict package inspector after transfer before extracting
+the reviewer root.
 
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim

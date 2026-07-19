@@ -1,10 +1,15 @@
+import path from "node:path";
+
 import {
   importReferenceClaimReview,
+  inspectPrivateReferenceClaimReviewPackage,
+  packagePrivateReferenceClaimReviewDistribution,
   prepareReferenceClaimReview,
   prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
   type ImportReferenceClaimReviewInput,
   type PrepareReferenceClaimReviewInput,
+  type PackagePrivateReferenceClaimReviewInput,
   type PrepareReferenceClaimReviewPrivateDistributionInput,
   type PreflightReferenceClaimReviewInput
 } from "../core/referenceClaimReview.js";
@@ -68,4 +73,39 @@ export async function runReferenceClaimReviewPrivateDistributionCli(
     "Public distribution allowed: false",
     "Claim statuses modified: false"
   ].join("\n") + "\n");
+}
+
+export async function runReferenceClaimReviewPrivatePackageCli(
+  input: PackagePrivateReferenceClaimReviewInput
+): Promise<void> {
+  const result = await packagePrivateReferenceClaimReviewDistribution(input);
+  process.stdout.write([
+    "Private reference claim review package prepared: " + result.package_id,
+    "Distribution: " + result.distribution_id,
+    "Handoff: " + result.handoff_id,
+    "Hash-bound files: " + result.file_count,
+    "Manifest: " + result.manifest_path,
+    "Reviewer archive: " + result.archive_path,
+    "Fresh extraction verified: true",
+    "Public distribution allowed: false",
+    "Human review completed: false",
+    "Claim gate passed: false"
+  ].join("\n") + "\n");
+}
+
+export async function runReferenceClaimReviewPrivatePackageVerificationCli(
+  input: { cwd: string; packageRoot: string }
+): Promise<void> {
+  const inspection = await inspectPrivateReferenceClaimReviewPackage(
+    path.resolve(input.cwd, input.packageRoot)
+  );
+  process.stdout.write([
+    "Private reference claim review package verification: " + (inspection.passed ? "passed" : "failed"),
+    "Package: " + input.packageRoot,
+    "Package id: " + (inspection.manifest?.package_id || "unresolved"),
+    "Issues: " + inspection.issues.length,
+    "Human review completed: false",
+    "Claim gate passed: false"
+  ].join("\n") + "\n");
+  if (!inspection.passed) process.exitCode = 1;
 }

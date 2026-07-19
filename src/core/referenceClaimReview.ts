@@ -1,4 +1,5 @@
-import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -14,9 +15,15 @@ export const REFERENCE_CLAIM_REVIEW_IMPORT = "reference-claim-review-import.json
 export const REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS = "refgate_claims.reviewed.tsv";
 export const REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION =
   "reference-claim-review-private-distribution.json";
+export const REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE =
+  "reference-claim-review-private-package.json";
 export const REFERENCE_CLAIM_REVIEW_SOURCE_README = "reviewer/SOURCE_README.md";
 
 const REVIEW_SOURCE_EXTENSIONS = [".pdf", ".txt"] as const;
+const PRIVATE_PACKAGE_ARCHIVE = "archives/reference-reviewer.tar.gz";
+const PRIVATE_PACKAGE_ROOT = "reference-reviewer";
+const PROCESS_TIMEOUT_MS = 120_000;
+const MAX_PROCESS_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 const CLAIM_COLUMNS = [
   "claim_id",
@@ -117,6 +124,62 @@ export interface PrepareReferenceClaimReviewPrivateDistributionInput {
   sourceDir: string;
   outDir: string;
 }
+
+export interface PackagePrivateReferenceClaimReviewInput {
+  cwd: string;
+  distributionRoot: string;
+  outDir: string;
+}
+
+export interface ReferenceClaimReviewPrivatePackageManifest {
+  schema_version: "1.0";
+  package_id: string;
+  distribution_id: string;
+  handoff_id: string;
+  source_distribution_manifest_sha256: string;
+  status: "human_review_pending";
+  archive_path: typeof PRIVATE_PACKAGE_ARCHIVE;
+  archive_sha256: string;
+  archive_bytes: number;
+  archive_entry_count: number;
+  archive_root: typeof PRIVATE_PACKAGE_ROOT;
+  file_count: number;
+  files: Array<{ path: string; sha256: string }>;
+  single_reviewer_root: true;
+  regular_file_or_directory_entries_only: true;
+  fresh_extraction_exact_tree_match: true;
+  public_distribution_allowed: false;
+  license_review_status: "not_assessed";
+  human_review_completed: false;
+  human_identity_verified: false;
+  claim_gate_passed: false;
+  self_inspection_passed: true;
+  evidence_boundary: string;
+}
+
+export interface ReferenceClaimReviewPrivatePackageIssue {
+  code: string;
+  message: string;
+}
+
+export interface ReferenceClaimReviewPrivatePackageInspection {
+  passed: boolean;
+  manifest: ReferenceClaimReviewPrivatePackageManifest | null;
+  issues: ReferenceClaimReviewPrivatePackageIssue[];
+}
+
+export interface PackagePrivateReferenceClaimReviewResult {
+  package_id: string;
+  distribution_id: string;
+  handoff_id: string;
+  output_dir: string;
+  manifest_path: string;
+  archive_path: string;
+  file_count: number;
+  human_review_completed: false;
+  public_distribution_allowed: false;
+}
+
 
 interface ReferenceClaimReviewPrivateDistributionManifest {
   schema_version: "1.0";
@@ -436,7 +499,6 @@ export async function prepareReferenceClaimReviewPrivateDistribution(
   const manifestPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION);
   await writeJsonFile(manifestPath, distribution);
   await inspectPacket(outDir);
-
   return {
     distribution_id: distributionId,
     handoff_id: handoff.handoff_id,
@@ -445,6 +507,241 @@ export async function prepareReferenceClaimReviewPrivateDistribution(
     manifest_path: portableRef(cwd, manifestPath),
     review_template_path: portableRef(cwd, path.join(outDir, REFERENCE_CLAIM_REVIEW_TEMPLATE))
   };
+}
+
+export async function packagePrivateReferenceClaimReviewDistribution(
+  input: PackagePrivateReferenceClaimReviewInput
+): Promise<PackagePrivateReferenceClaimReviewResult> {
+  const cwd = path.resolve(input.cwd);
+  const distributionRoot = path.resolve(cwd, input.distributionRoot);
+  const outDir = path.resolve(cwd, input.outDir);
+  await assertRegularDirectory(distributionRoot, "Private reference review distribution");
+  await assertFreshOutput(outDir, "Private reference review package");
+  const canonicalDistributionRoot = await fs.realpath(distributionRoot);
+  const canonicalOutDir = await resolveProspectiveCanonicalPath(outDir);
+  if (isSameOrContainedPath(canonicalDistributionRoot, canonicalOutDir)
+      || isSameOrContainedPath(canonicalOutDir, canonicalDistributionRoot)) {
+    throw new Error("Private reference review package output must be separate from its source distribution.");
+  }
+
+  const handoff = await inspectPacket(distributionRoot);
+  const distribution = await inspectPrivateDistributionIfPresent(distributionRoot, handoff);
+  if (!distribution) {
+    throw new Error("Private reference review package requires a private distribution manifest.");
+  }
+  const files = await inventoryRegularFiles(distributionRoot);
+  const distributionManifestSha256 = sha256(await readContainedRegularFile(
+    distributionRoot,
+    path.join(distributionRoot, REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION)
+  ));
+  const stagingRoot = path.join(
+    path.dirname(outDir),
+    `.${path.basename(outDir)}.staging-${randomUUID()}`
+  );
+  const stagedPacketRoot = path.join(stagingRoot, PRIVATE_PACKAGE_ROOT);
+  const verificationRoot = path.join(stagingRoot, ".verification");
+  const archivePath = path.join(stagingRoot, PRIVATE_PACKAGE_ARCHIVE);
+
+  try {
+    await fs.mkdir(path.dirname(archivePath), { recursive: true });
+    for (const file of files) {
+      const source = path.join(distributionRoot, file.path);
+      const target = path.join(stagedPacketRoot, file.path);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(source, target);
+    }
+    await runProcess("tar", [
+      "--sort=name",
+      "--mtime=@0",
+      "--owner=0",
+      "--group=0",
+      "--numeric-owner",
+      "--mode=u+rwX,go=rX",
+      "--format=ustar",
+      "-czf",
+      archivePath,
+      "-C",
+      stagingRoot,
+      PRIVATE_PACKAGE_ROOT
+    ]);
+    const entries = await listArchive(archivePath);
+    if (!archiveHasSingleReviewerRoot(entries)
+        || !await archiveHasOnlyRegularFilesAndDirectories(archivePath, entries.length)) {
+      throw new Error("Private reference review archive failed root or entry-type isolation.");
+    }
+    await fs.mkdir(verificationRoot, { recursive: true });
+    await extractArchive(archivePath, verificationRoot);
+    const extractedRoot = path.join(verificationRoot, PRIVATE_PACKAGE_ROOT);
+    const extractedFiles = await inventoryRegularFiles(extractedRoot);
+    if (JSON.stringify(extractedFiles) !== JSON.stringify(files)) {
+      throw new Error("Private reference review archive changed bytes during fresh extraction.");
+    }
+    await inspectPacket(extractedRoot);
+
+    const archiveBytes = await fs.readFile(archivePath);
+    const archiveStat = await fs.stat(archivePath);
+    const archiveSha256 = sha256(archiveBytes);
+    const packageId = `reference-claim-review-package-${sha256(Buffer.from([
+      distribution.distribution_id,
+      distributionManifestSha256,
+      archiveSha256
+    ].join(":"), "utf8")).slice(0, 16)}`;
+    await fs.rm(verificationRoot, { recursive: true, force: true });
+    await fs.rm(stagedPacketRoot, { recursive: true, force: true });
+
+    const manifest: ReferenceClaimReviewPrivatePackageManifest = {
+      schema_version: "1.0",
+      package_id: packageId,
+      distribution_id: distribution.distribution_id,
+      handoff_id: distribution.handoff_id,
+      source_distribution_manifest_sha256: distributionManifestSha256,
+      status: "human_review_pending",
+      archive_path: PRIVATE_PACKAGE_ARCHIVE,
+      archive_sha256: archiveSha256,
+      archive_bytes: archiveStat.size,
+      archive_entry_count: entries.length,
+      archive_root: PRIVATE_PACKAGE_ROOT,
+      file_count: files.length,
+      files,
+      single_reviewer_root: true,
+      regular_file_or_directory_entries_only: true,
+      fresh_extraction_exact_tree_match: true,
+      public_distribution_allowed: false,
+      license_review_status: "not_assessed",
+      human_review_completed: false,
+      human_identity_verified: false,
+      claim_gate_passed: false,
+      self_inspection_passed: true,
+      evidence_boundary: "This package binds one integrity-valid private reference distribution to a deterministic, single-root archive and verifies an exact fresh extraction. It does not establish redistribution rights, human judgment, reviewer identity, claim support, or paper readiness."
+    };
+    const manifestPath = path.join(stagingRoot, REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE);
+    await writeJsonFile(manifestPath, manifest);
+    const inspection = await inspectPrivateReferenceClaimReviewPackage(stagingRoot);
+    if (!inspection.passed) {
+      throw new Error(`Private reference review package failed self-inspection: ${inspection.issues.map((issue) => issue.code).join(", ")}.`);
+    }
+    await fs.rename(stagingRoot, outDir);
+    return {
+      package_id: packageId,
+      distribution_id: distribution.distribution_id,
+      handoff_id: distribution.handoff_id,
+      output_dir: portableRef(cwd, outDir),
+      manifest_path: portableRef(cwd, path.join(outDir, REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE)),
+      archive_path: portableRef(cwd, path.join(outDir, PRIVATE_PACKAGE_ARCHIVE)),
+      file_count: files.length,
+      human_review_completed: false,
+      public_distribution_allowed: false
+    };
+  } catch (error) {
+    await fs.rm(stagingRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function inspectPrivateReferenceClaimReviewPackage(
+  rootPath: string
+): Promise<ReferenceClaimReviewPrivatePackageInspection> {
+  const root = path.resolve(rootPath);
+  let manifest: ReferenceClaimReviewPrivatePackageManifest;
+  try {
+    manifest = parsePrivatePackageManifest(JSON.parse((await readContainedRegularFile(
+      root,
+      path.join(root, REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE)
+    )).toString("utf8")) as unknown);
+  } catch {
+    return {
+      passed: false,
+      manifest: null,
+      issues: [{
+        code: "reference_review_private_package_manifest_unreadable",
+        message: "The private reference review package manifest is missing or invalid."
+      }]
+    };
+  }
+
+  const issues: ReferenceClaimReviewPrivatePackageIssue[] = [];
+  const observedFiles = await inventoryRegularFiles(root).catch(() => null);
+  const expectedFiles = new Set([
+    REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE,
+    manifest.archive_path
+  ]);
+  if (!observedFiles
+      || observedFiles.length !== expectedFiles.size
+      || observedFiles.some((file) => !expectedFiles.has(file.path))) {
+    issues.push({
+      code: "reference_review_private_package_inventory_invalid",
+      message: "The package may contain only its manifest and declared archive."
+    });
+  }
+
+  const archivePath = path.join(root, manifest.archive_path);
+  const archiveStat = await fs.lstat(archivePath).catch(() => null);
+  if (!archiveStat || !archiveStat.isFile() || archiveStat.isSymbolicLink()
+      || archiveStat.size !== manifest.archive_bytes
+      || await hashFile(archivePath).catch(() => "") !== manifest.archive_sha256) {
+    issues.push({
+      code: "reference_review_private_package_archive_invalid",
+      message: "The declared archive is missing, changed, or not a regular file."
+    });
+    return { passed: false, manifest, issues };
+  }
+
+  const entries = await listArchive(archivePath).catch(() => null);
+  const entryTypesValid = entries
+    ? await archiveHasOnlyRegularFilesAndDirectories(archivePath, entries.length).catch(() => false)
+    : false;
+  if (!entries
+      || entries.length !== manifest.archive_entry_count
+      || !archiveHasSingleReviewerRoot(entries)
+      || !entryTypesValid) {
+    issues.push({
+      code: "reference_review_private_package_archive_isolation_invalid",
+      message: "The archive is not confined to one regular-file reviewer root."
+    });
+    return { passed: false, manifest, issues };
+  }
+
+  const verificationRoot = path.join(
+    path.dirname(root),
+    `.${path.basename(root)}.inspection-${randomUUID()}`
+  );
+  try {
+    await fs.mkdir(verificationRoot, { recursive: true });
+    await extractArchive(archivePath, verificationRoot);
+    const extractedRoot = path.join(verificationRoot, PRIVATE_PACKAGE_ROOT);
+    const extractedFiles = await inventoryRegularFiles(extractedRoot);
+    if (JSON.stringify(extractedFiles) !== JSON.stringify(manifest.files)
+        || extractedFiles.length !== manifest.file_count) {
+      issues.push({
+        code: "reference_review_private_package_extraction_invalid",
+        message: "Fresh extraction does not match the hash-bound source distribution tree."
+      });
+    } else {
+      const handoff = await inspectPacket(extractedRoot);
+      const distribution = await inspectPrivateDistributionIfPresent(extractedRoot, handoff);
+      const distributionManifestSha256 = await hashFile(path.join(
+        extractedRoot,
+        REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION
+      ));
+      if (!distribution
+          || distribution.distribution_id !== manifest.distribution_id
+          || distribution.handoff_id !== manifest.handoff_id
+          || distributionManifestSha256 !== manifest.source_distribution_manifest_sha256) {
+        issues.push({
+          code: "reference_review_private_package_source_binding_invalid",
+          message: "The extracted distribution does not match the package source binding."
+        });
+      }
+    }
+  } catch {
+    issues.push({
+      code: "reference_review_private_package_extraction_invalid",
+      message: "The archive could not be safely extracted and inspected."
+    });
+  } finally {
+    await fs.rm(verificationRoot, { recursive: true, force: true });
+  }
+  return { passed: issues.length === 0, manifest, issues };
 }
 
 export async function preflightReferenceClaimReview(
@@ -823,13 +1120,13 @@ async function collectBoundReviewSources(
 async function inspectPrivateDistributionIfPresent(
   packetRoot: string,
   handoff: ReferenceClaimReviewManifest
-): Promise<void> {
+): Promise<ReferenceClaimReviewPrivateDistributionManifest | null> {
   const distributionPath = path.join(packetRoot, REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION);
   let distributionBytes: Buffer;
   try {
     distributionBytes = await readContainedRegularFile(packetRoot, distributionPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
   const raw = JSON.parse(distributionBytes.toString("utf8")) as unknown;
@@ -928,6 +1225,253 @@ async function inspectPrivateDistributionIfPresent(
       || actualFiles.some((file) => !closedInventory.has(file))) {
     throw new Error("Private reference review distribution contains unbound files.");
   }
+  return distribution;
+}
+
+function parsePrivatePackageManifest(
+  value: unknown
+): ReferenceClaimReviewPrivatePackageManifest {
+  if (!isRecord(value)
+      || !hasExactKeys(value, [
+        "schema_version", "package_id", "distribution_id", "handoff_id",
+        "source_distribution_manifest_sha256", "status", "archive_path",
+        "archive_sha256", "archive_bytes", "archive_entry_count", "archive_root",
+        "file_count", "files", "single_reviewer_root",
+        "regular_file_or_directory_entries_only",
+        "fresh_extraction_exact_tree_match", "public_distribution_allowed",
+        "license_review_status", "human_review_completed",
+        "human_identity_verified", "claim_gate_passed", "self_inspection_passed",
+        "evidence_boundary"
+      ])
+      || value.schema_version !== "1.0"
+      || !validId(value.package_id)
+      || !validId(value.distribution_id)
+      || !validId(value.handoff_id)
+      || !sha256String(value.source_distribution_manifest_sha256)
+      || value.status !== "human_review_pending"
+      || value.archive_path !== PRIVATE_PACKAGE_ARCHIVE
+      || !sha256String(value.archive_sha256)
+      || !positiveInteger(value.archive_bytes)
+      || !positiveInteger(value.archive_entry_count)
+      || value.archive_root !== PRIVATE_PACKAGE_ROOT
+      || !positiveInteger(value.file_count)
+      || !Array.isArray(value.files)
+      || value.files.length !== value.file_count
+      || value.single_reviewer_root !== true
+      || value.regular_file_or_directory_entries_only !== true
+      || value.fresh_extraction_exact_tree_match !== true
+      || value.public_distribution_allowed !== false
+      || value.license_review_status !== "not_assessed"
+      || value.human_review_completed !== false
+      || value.human_identity_verified !== false
+      || value.claim_gate_passed !== false
+      || value.self_inspection_passed !== true
+      || !nonEmpty(value.evidence_boundary)) {
+    throw new Error("Invalid private reference review package manifest.");
+  }
+  const files = value.files.map(parsePrivatePackageFile);
+  const sortedFiles = [...files].sort((left, right) => left.path.localeCompare(right.path));
+  if (new Set(files.map((file) => file.path)).size !== files.length
+      || JSON.stringify(files) !== JSON.stringify(sortedFiles)
+      || !files.some((file) => file.path === REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION)
+      || !files.some((file) => file.path === REFERENCE_CLAIM_REVIEW_MANIFEST)) {
+    throw new Error("Invalid private reference review package file inventory.");
+  }
+  const expectedPackageId = `reference-claim-review-package-${sha256(Buffer.from([
+    value.distribution_id,
+    value.source_distribution_manifest_sha256,
+    value.archive_sha256
+  ].join(":"), "utf8")).slice(0, 16)}`;
+  if (value.package_id !== expectedPackageId) {
+    throw new Error("Private reference review package id mismatch.");
+  }
+  return {
+    ...(value as unknown as ReferenceClaimReviewPrivatePackageManifest),
+    files
+  };
+}
+
+function parsePrivatePackageFile(value: unknown): { path: string; sha256: string } {
+  if (!isRecord(value)
+      || !hasExactKeys(value, ["path", "sha256"])
+      || !safeRelativePath(value.path)
+      || value.path.includes("\n")
+      || value.path.includes("\r")
+      || !sha256String(value.sha256)) {
+    throw new Error("Invalid private reference review package file binding.");
+  }
+  return { path: value.path, sha256: value.sha256 };
+}
+
+async function inventoryRegularFiles(
+  root: string
+): Promise<Array<{ path: string; sha256: string }>> {
+  await assertRegularDirectory(root, "Reference review inventory root");
+  const files: Array<{ path: string; sha256: string }> = [];
+  const visit = async (current: string): Promise<void> => {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+      const absolute = path.join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        throw new Error("Reference review package inventory contains a symbolic link.");
+      }
+      if (entry.isDirectory()) {
+        await visit(absolute);
+        continue;
+      }
+      if (!entry.isFile()) {
+        throw new Error("Reference review package inventory contains a non-regular file.");
+      }
+      const stat = await fs.lstat(absolute);
+      if (stat.size === 0) {
+        throw new Error("Reference review package inventory contains an empty file.");
+      }
+      const relative = path.relative(root, absolute).replace(/\\/gu, "/");
+      if (!safeRelativePath(relative)
+          || relative.includes("\n")
+          || relative.includes("\r")) {
+        throw new Error("Reference review package inventory contains an unsafe path.");
+      }
+      files.push({ path: relative, sha256: await hashFile(absolute) });
+    }
+  };
+  await visit(root);
+  return files.sort((left, right) => left.path.localeCompare(right.path));
+}
+
+async function listArchive(archivePath: string): Promise<string[]> {
+  const output = (await runProcess("tar", ["-tzf", archivePath])).toString("utf8");
+  const entries = output.split(/\r?\n/u).filter(Boolean);
+  if (entries.length === 0) {
+    throw new Error("Private reference review archive is empty.");
+  }
+  return entries;
+}
+
+function archiveHasSingleReviewerRoot(entries: string[]): boolean {
+  const normalized = entries.map((entry) => entry.replace(/\/$/u, ""));
+  return normalized.length > 0 && normalized.every((entry) =>
+    (entry === PRIVATE_PACKAGE_ROOT || entry.startsWith(`${PRIVATE_PACKAGE_ROOT}/`))
+      && !path.isAbsolute(entry)
+      && !entry.includes("\\")
+      && !entry.includes("\n")
+      && !entry.includes("\r")
+      && !entry.split("/").includes(".."));
+}
+
+async function archiveHasOnlyRegularFilesAndDirectories(
+  archivePath: string,
+  expectedEntryCount: number
+): Promise<boolean> {
+  const output = (await runProcess("tar", ["-tvzf", archivePath])).toString("utf8");
+  const lines = output.split(/\r?\n/u).filter(Boolean);
+  return lines.length === expectedEntryCount
+    && lines.every((line) => line.startsWith("-") || line.startsWith("d"));
+}
+
+async function extractArchive(archivePath: string, extractRoot: string): Promise<void> {
+  await runProcess("tar", [
+    "-xzf",
+    archivePath,
+    "--no-same-owner",
+    "--no-same-permissions",
+    "--delay-directory-restore",
+    "-C",
+    extractRoot
+  ]);
+}
+
+async function runProcess(command: string, args: readonly string[]): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, [...args], { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    let outputBytes = 0;
+    let settled = false;
+    const timeout = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      child.kill("SIGKILL");
+      reject(new Error(`${command} exceeded the bounded process timeout.`));
+    }, PROCESS_TIMEOUT_MS);
+    const collect = (chunks: Buffer[], chunk: Buffer): void => {
+      if (settled) return;
+      outputBytes += chunk.length;
+      if (outputBytes > MAX_PROCESS_OUTPUT_BYTES) {
+        settled = true;
+        clearTimeout(timeout);
+        child.kill("SIGKILL");
+        reject(new Error(`${command} exceeded the bounded output limit.`));
+        return;
+      }
+      chunks.push(chunk);
+    };
+    child.stdout.on("data", (chunk: Buffer) => collect(stdout, chunk));
+    child.stderr.on("data", (chunk: Buffer) => collect(stderr, chunk));
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (code !== 0) {
+        reject(new Error(
+          `${command} failed (${code}): ${Buffer.concat(stderr).toString("utf8").trim()}`
+        ));
+        return;
+      }
+      resolve(Buffer.concat(stdout));
+    });
+  });
+}
+
+function hasExactKeys(value: Record<string, unknown>, expected: string[]): boolean {
+  return JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
+}
+
+function positiveInteger(value: unknown): value is number {
+  return Number.isInteger(value) && (value as number) > 0;
+}
+
+function safeRelativePath(value: unknown): value is string {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 4096
+    && !path.isAbsolute(value)
+    && !value.includes("\\")
+    && !value.split("/").includes("..");
+}
+
+function isSameOrContainedPath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function resolveProspectiveCanonicalPath(target: string): Promise<string> {
+  const missingSegments: string[] = [];
+  let current = path.resolve(target);
+  while (true) {
+    try {
+      const canonical = await fs.realpath(current);
+      return path.resolve(canonical, ...missingSegments.reverse());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) {
+        throw new Error("Could not resolve a canonical parent for the private package output.");
+      }
+      missingSegments.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
+async function hashFile(target: string): Promise<string> {
+  return sha256(await fs.readFile(target));
 }
 
 function assertReviewSourceContent(

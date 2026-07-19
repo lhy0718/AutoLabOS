@@ -72,6 +72,8 @@ import { runWithProcessLifetime } from "./processLifetime.js";
 import {
   runReferenceClaimReviewImportCli,
   runReferenceClaimReviewPreparationCli,
+  runReferenceClaimReviewPrivatePackageCli,
+  runReferenceClaimReviewPrivatePackageVerificationCli,
   runReferenceClaimReviewPrivateDistributionCli,
   runReferenceClaimReviewPreflightCli
 } from "./referenceReview.js";
@@ -94,6 +96,8 @@ function printHelp(): void {
     "  autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone|run-validation> [options]",
     "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
+    "  autolabos reference-review package-private --distribution <private-distribution-dir> --out-dir <new-private-package-dir>",
+    "  autolabos reference-review verify-private-package --package <private-package-dir>",
     "  autolabos reference-review preflight --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
     "  autolabos reference-review import --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --preflight <preflight-report.json> --approval <completed-final-approval.json> --claims <refgate_claims.tsv> --out-dir <new-import-dir>",
     "  autolabos governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
@@ -238,6 +242,23 @@ async function main(): Promise<void> {
       packetRoot: action.packetRoot,
       sourceDir: action.sourceDir,
       outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-package-private") {
+    await runReferenceClaimReviewPrivatePackageCli({
+      cwd: process.cwd(),
+      distributionRoot: action.distributionRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-verify-private-package") {
+    await runReferenceClaimReviewPrivatePackageVerificationCli({
+      cwd: process.cwd(),
+      packageRoot: action.packageRoot
     });
     return;
   }

@@ -399,6 +399,13 @@ autolabos reference-review distribute-private \
   --source-dir <citation-key-named-full-text-dir> \
   --out-dir <new-private-distribution-dir>
 
+autolabos reference-review package-private \
+  --distribution <private-distribution-dir> \
+  --out-dir <new-private-package-dir>
+
+autolabos reference-review verify-private-package \
+  --package <private-package-dir>
+
 autolabos reference-review preflight \
   --packet <handoff-or-private-distribution-dir> \
   --review <completed-review.json> \
@@ -412,6 +419,13 @@ autolabos reference-review import \
   --claims <refgate_claims.tsv> \
   --out-dir <new-import-dir>
 ```
+
+`package-private` creates a deterministic single-root reviewer archive, binds
+its hash and exact file tree in a strict manifest, and verifies the archive from
+a fresh extraction. The package still contains third-party full text and remains
+private; archive integrity does not establish redistribution permission, human
+review, reviewer identity, or claim support. The receiver should rerun
+`verify-private-package` on the delivered manifest-and-archive directory.
 
 The import revalidates the closed packet, review, preflight, approval, and
 original claims hash. It writes `refgate_claims.reviewed.tsv` and a hash-bound
