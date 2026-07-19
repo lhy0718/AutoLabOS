@@ -143,6 +143,18 @@ export interface RunResearchValidationResult {
   summary_path: string;
 }
 
+export interface VerifyResearchValidationReportInput {
+  cwd: string;
+  reportPath: string;
+}
+
+export interface ResearchValidationReportVerification {
+  passed: boolean;
+  issues: string[];
+  profile_sha256: string | null;
+  repository_head: string | null;
+}
+
 export async function runResearchValidation(
   input: RunResearchValidationInput,
   deps: RunResearchValidationDeps = {}
@@ -408,6 +420,332 @@ export async function inspectGitRepository(
       status
     };
   }
+}
+
+export async function verifyResearchValidationReport(
+  input: VerifyResearchValidationReportInput
+): Promise<ResearchValidationReportVerification> {
+  const cwd = path.resolve(input.cwd);
+  const issues: string[] = [];
+  let profileSha256: string | null = null;
+  let repositoryHead: string | null = null;
+  let reportPath: string;
+  try {
+    reportPath = await resolveContainedRegularFile(
+      cwd,
+      path.resolve(cwd, input.reportPath),
+      "Research validation report"
+    );
+  } catch {
+    return verificationResult(["report_file_invalid"], null, null);
+  }
+  if (path.basename(reportPath) !== RESEARCH_VALIDATION_REPORT) {
+    issues.push("report_filename_invalid");
+  }
+  let decoded: unknown;
+  try {
+    decoded = parseJson(await fs.readFile(reportPath));
+  } catch {
+    return verificationResult([...issues, "report_json_invalid"], null, null);
+  }
+  if (!isRecord(decoded)) {
+    return verificationResult([...issues, "report_root_invalid"], null, null);
+  }
+  if (decoded.schema_version !== "1.0"
+      || decoded.passed !== true
+      || decoded.status !== "pass"
+      || typeof decoded.validation_id !== "string"
+      || !/^research-validation-[a-f0-9]{16}$/u.test(decoded.validation_id)
+      || typeof decoded.generated_at !== "string"
+      || !Number.isFinite(Date.parse(decoded.generated_at))) {
+    issues.push("report_status_invalid");
+  }
+
+  const reportRoot = path.dirname(reportPath);
+  const profileRecord = isRecord(decoded.profile) ? decoded.profile : null;
+  let profile: ResearchValidationProfile | null = null;
+  if (!profileRecord
+      || typeof profileRecord.ref !== "string"
+      || !validPortableRelativePath(profileRecord.ref, false)
+      || typeof profileRecord.sha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(profileRecord.sha256)
+      || !Array.isArray(profileRecord.required_step_ids)
+      || !profileRecord.required_step_ids.every(validId)) {
+    issues.push("report_profile_invalid");
+  } else {
+    try {
+      const profilePath = await resolveContainedRegularFile(
+        cwd,
+        path.resolve(cwd, profileRecord.ref),
+        "Research validation profile"
+      );
+      const profileBytes = await fs.readFile(profilePath);
+      profileSha256 = sha256(profileBytes);
+      if (profileSha256 !== profileRecord.sha256) issues.push("profile_hash_mismatch");
+      profile = parseProfile(parseJson(profileBytes));
+      if (profile.profile_id !== profileRecord.id
+          || !sameValues(profile.required_step_ids, profileRecord.required_step_ids as string[])) {
+        issues.push("profile_contract_mismatch");
+      }
+    } catch {
+      issues.push("profile_file_invalid");
+    }
+  }
+
+  const summary = isRecord(decoded.summary) ? decoded.summary : null;
+  const steps = Array.isArray(decoded.steps) ? decoded.steps : [];
+  if (!profile
+      || !summary
+      || summary.required_step_count !== profile.required_step_ids.length
+      || summary.passed_step_count !== profile.required_step_ids.length
+      || summary.failed_step_count !== 0
+      || steps.length !== profile.steps.length) {
+    issues.push("report_summary_invalid");
+  }
+
+  const repository = isRecord(decoded.repository) ? decoded.repository : null;
+  const before = repository && isRecord(repository.before) ? repository.before : null;
+  const after = repository && isRecord(repository.after) ? repository.after : null;
+  if (!repository
+      || repository.stable_head !== true
+      || repository.clean_before_and_after !== true
+      || !validRepositoryReportState(before, "repository-status.before.txt")
+      || !validRepositoryReportState(after, "repository-status.after.txt")
+      || before?.head !== after?.head) {
+    issues.push("report_repository_state_invalid");
+  } else {
+    const verifiedBefore = before as Record<string, unknown>;
+    const verifiedAfter = after as Record<string, unknown>;
+    repositoryHead = verifiedBefore.head as string;
+    await verifyRecordedArtifact(
+      reportRoot,
+      verifiedBefore.status_path as string,
+      verifiedBefore.status_sha256 as string,
+      0,
+      true,
+      "repository_before_status",
+      issues
+    );
+    await verifyRecordedArtifact(
+      reportRoot,
+      verifiedAfter.status_path as string,
+      verifiedAfter.status_sha256 as string,
+      0,
+      true,
+      "repository_after_status",
+      issues
+    );
+    const current = await inspectGitRepository(cwd);
+    if (!current.available
+        || !current.clean
+        || current.head !== repositoryHead
+        || current.status.byteLength !== 0) {
+      issues.push("current_repository_state_mismatch");
+    }
+    if (profileSha256 && typeof decoded.generated_at === "string") {
+      const expectedValidationId = `research-validation-${sha256(Buffer.from([
+        profileSha256,
+        repositoryHead,
+        decoded.generated_at
+      ].join("\n"))).slice(0, 16)}`;
+      if (decoded.validation_id !== expectedValidationId) issues.push("validation_id_mismatch");
+    }
+
+  }
+
+  if (profile) {
+    const byId = new Map<string, Record<string, unknown>>();
+    for (const raw of steps) {
+      if (!isRecord(raw) || !validId(raw.id) || byId.has(raw.id)) {
+        issues.push("report_step_set_invalid");
+        continue;
+      }
+      byId.set(raw.id, raw);
+    }
+    if (!sameValues(profile.required_step_ids, [...byId.keys()])) {
+      issues.push("report_step_set_invalid");
+    }
+    for (const step of profile.steps) {
+      const result = byId.get(step.id);
+      if (!result) continue;
+      if (result.passed !== true
+          || result.command !== step.command
+          || !Array.isArray(result.args)
+          || !deepEqual(result.args, step.args)
+          || result.cwd !== step.cwd
+          || result.timeout_ms !== step.timeout_ms
+          || result.exit_code !== 0
+          || result.signal !== null
+          || result.timed_out !== false
+          || typeof result.duration_ms !== "number"
+          || !Number.isFinite(result.duration_ms)
+          || result.duration_ms < 0) {
+        issues.push(`step_contract_invalid:${step.id}`);
+      }
+      await verifyStreamRecord(
+        reportRoot,
+        result.stdout,
+        `steps/${step.id}.stdout.log`,
+        `step_stdout:${step.id}`,
+        issues
+      );
+      await verifyStreamRecord(
+        reportRoot,
+        result.stderr,
+        `steps/${step.id}.stderr.log`,
+        `step_stderr:${step.id}`,
+        issues
+      );
+      await verifyExpectedOutputRecords(reportRoot, step, result.expected_outputs, issues);
+    }
+  }
+
+  return verificationResult(issues, profileSha256, repositoryHead);
+}
+
+function validRepositoryReportState(
+  value: Record<string, unknown> | null,
+  expectedStatusPath: string
+): boolean {
+  return Boolean(value
+    && value.available === true
+    && typeof value.head === "string"
+    && validGitObjectId(value.head)
+    && value.clean === true
+    && value.dirty_entry_count === 0
+    && value.status_sha256 === sha256(Buffer.alloc(0))
+    && typeof value.status_path === "string"
+    && value.status_path === expectedStatusPath);
+}
+
+async function verifyStreamRecord(
+  reportRoot: string,
+  value: unknown,
+  expectedPath: string,
+  label: string,
+  issues: string[]
+): Promise<void> {
+  if (!isRecord(value)
+      || typeof value.path !== "string"
+      || value.path !== expectedPath
+      || !validPortableRelativePath(value.path, false)
+      || typeof value.bytes !== "number"
+      || !Number.isSafeInteger(value.bytes)
+      || value.bytes < 0
+      || typeof value.sha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(value.sha256)) {
+    issues.push(`${label}_record_invalid`);
+    return;
+  }
+  await verifyRecordedArtifact(
+    reportRoot,
+    value.path,
+    value.sha256,
+    value.bytes,
+    true,
+    label,
+    issues
+  );
+}
+
+async function verifyExpectedOutputRecords(
+  reportRoot: string,
+  profileStep: ResearchValidationStepProfile,
+  value: unknown,
+  issues: string[]
+): Promise<void> {
+  if (!Array.isArray(value) || value.length !== profileStep.expected_outputs.length) {
+    issues.push(`step_expected_outputs_invalid:${profileStep.id}`);
+    return;
+  }
+  const byPath = new Map<string, Record<string, unknown>>();
+  for (const raw of value) {
+    if (!isRecord(raw) || typeof raw.path !== "string" || byPath.has(raw.path)) {
+      issues.push(`step_expected_outputs_invalid:${profileStep.id}`);
+      continue;
+    }
+    byPath.set(raw.path, raw);
+  }
+  if (!sameValues(profileStep.expected_outputs, [...byPath.keys()])) {
+    issues.push(`step_expected_outputs_invalid:${profileStep.id}`);
+  }
+  for (const relative of profileStep.expected_outputs) {
+    const record = byPath.get(relative);
+    if (!record) continue;
+    if (record.exists !== true
+        || record.regular_file !== true
+        || typeof record.bytes !== "number"
+        || !Number.isSafeInteger(record.bytes)
+        || record.bytes <= 0
+        || typeof record.sha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(record.sha256)) {
+      issues.push(`step_expected_output_record_invalid:${profileStep.id}:${relative}`);
+      continue;
+    }
+    await verifyRecordedArtifact(
+      reportRoot,
+      relative,
+      record.sha256,
+      record.bytes,
+      false,
+      `step_expected_output:${profileStep.id}:${relative}`,
+      issues
+    );
+  }
+}
+
+async function verifyRecordedArtifact(
+  root: string,
+  relative: string,
+  expectedSha256: string,
+  expectedBytes: number,
+  allowEmpty: boolean,
+  label: string,
+  issues: string[]
+): Promise<void> {
+  if (!validPortableRelativePath(relative, false)) {
+    issues.push(`${label}_path_invalid`);
+    return;
+  }
+  const candidate = path.resolve(root, relative);
+  if (!isInside(root, candidate)) {
+    issues.push(`${label}_path_invalid`);
+    return;
+  }
+  try {
+    await assertNoSymlinkTraversal(root, candidate);
+    const stat = await fs.lstat(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      issues.push(`${label}_file_invalid`);
+      return;
+    }
+    const bytes = await fs.readFile(candidate);
+    if (bytes.byteLength !== expectedBytes
+        || (!allowEmpty && bytes.byteLength === 0)
+        || sha256(bytes) !== expectedSha256) {
+      issues.push(`${label}_hash_mismatch`);
+    }
+  } catch {
+    issues.push(`${label}_file_missing`);
+  }
+}
+
+function verificationResult(
+  issues: string[],
+  profileSha256: string | null,
+  repositoryHead: string | null
+): ResearchValidationReportVerification {
+  const unique = [...new Set(issues)];
+  return {
+    passed: unique.length === 0,
+    issues: unique,
+    profile_sha256: profileSha256,
+    repository_head: repositoryHead
+  };
+}
+
+function deepEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function parseProfile(value: unknown): ResearchValidationProfile {

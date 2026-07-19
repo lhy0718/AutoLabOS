@@ -3,6 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { writeJsonFile } from "../utils/fs.js";
+import { verifyResearchValidationReport } from "./researchValidationRun.js";
 
 export const RESEARCH_MILESTONE_ASSERTION_OPERATORS = [
   "equals",
@@ -22,9 +23,12 @@ export interface ResearchMilestoneAssertion {
   expected: unknown;
 }
 
+export type ResearchMilestoneEvidenceVerifier = "sha256" | "research_validation_report";
+
 export interface ResearchMilestoneEvidenceContract {
   path: string;
   sha256: string | null;
+  verifier?: ResearchMilestoneEvidenceVerifier;
   assertions?: ResearchMilestoneAssertion[];
 }
 
@@ -54,6 +58,7 @@ export interface ResearchMilestoneEvidenceResult {
   path: string;
   expected_sha256: string | null;
   actual_sha256: string | null;
+  verifier: ResearchMilestoneEvidenceVerifier;
   passed: boolean;
   issues: string[];
   assertions: ResearchMilestoneAssertionResult[];
@@ -212,10 +217,20 @@ async function evaluateEvidence(
       } else {
         const bytes = await fs.readFile(candidate);
         actualSha256 = sha256(bytes);
-        if (!contract.sha256) {
-          issues.push("evidence_hash_unbound");
-        } else if (actualSha256 !== contract.sha256) {
-          issues.push("evidence_hash_mismatch");
+        if (contract.verifier === "research_validation_report") {
+          const verification = await verifyResearchValidationReport({
+            cwd: evidenceRoot,
+            reportPath: contract.path
+          });
+          if (!verification.passed) {
+            issues.push(...verification.issues.map((issue) => `evidence_validation_report_${issue}`));
+          }
+        } else {
+          if (!contract.sha256) {
+            issues.push("evidence_hash_unbound");
+          } else if (actualSha256 !== contract.sha256) {
+            issues.push("evidence_hash_mismatch");
+          }
         }
         if ((contract.assertions || []).length > 0) {
           try {
@@ -245,6 +260,7 @@ async function evaluateEvidence(
     path: contract.path,
     expected_sha256: contract.sha256,
     actual_sha256: actualSha256,
+    verifier: contract.verifier || "sha256",
     passed: issues.length === 0,
     issues: [...new Set(issues)],
     assertions: assertionResults
@@ -378,6 +394,15 @@ function parseEvidence(
       ? value.sha256
       : undefined;
   if (expectedSha256 === undefined) issues.push(`contract_evidence_sha256_invalid:${prefix}`);
+  const verifier = value.verifier === undefined || value.verifier === "sha256"
+    ? "sha256"
+    : value.verifier === "research_validation_report"
+      ? "research_validation_report"
+      : undefined;
+  if (!verifier) issues.push(`contract_evidence_verifier_invalid:${prefix}`);
+  if (verifier === "research_validation_report" && expectedSha256 !== null) {
+    issues.push(`contract_evidence_verifier_sha256_conflict:${prefix}`);
+  }
   const assertions: ResearchMilestoneAssertion[] = [];
   if (value.assertions !== undefined && !Array.isArray(value.assertions)) {
     issues.push(`contract_evidence_assertions_invalid:${prefix}`);
@@ -410,8 +435,13 @@ function parseEvidence(
       expected
     });
   }
-  if (!evidencePath || expectedSha256 === undefined) return null;
-  return { path: evidencePath, sha256: expectedSha256, ...(assertions.length > 0 ? { assertions } : {}) };
+  if (!evidencePath || expectedSha256 === undefined || !verifier) return null;
+  return {
+    path: evidencePath,
+    sha256: expectedSha256,
+    ...(verifier !== "sha256" ? { verifier } : {}),
+    ...(assertions.length > 0 ? { assertions } : {})
+  };
 }
 
 function groupNextActions(requirements: ResearchMilestoneRequirementResult[]): ResearchMilestoneNextAction[] {

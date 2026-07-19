@@ -441,8 +441,9 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-receipt.json",
+          "path": "outputs/promotion-governance/final-validation/research-validation-report.json",
           "sha256": null,
+          "verifier": "research_validation_report",
           "assertions": [
             {
               "pointer": "/passed",
@@ -450,9 +451,49 @@
               "expected": true
             },
             {
-              "pointer": "/clean_worktree",
+              "pointer": "/status",
+              "operator": "equals",
+              "expected": "pass"
+            },
+            {
+              "pointer": "/profile/id",
+              "operator": "equals",
+              "expected": "paper-scale-release-validation"
+            },
+            {
+              "pointer": "/profile/sha256",
+              "operator": "equals",
+              "expected": "853a2c426757c551f0f1b0d97c921fac0785379e956647f4c1d87731cf65727c"
+            },
+            {
+              "pointer": "/summary/required_step_count",
+              "operator": "equals",
+              "expected": 10
+            },
+            {
+              "pointer": "/summary/passed_step_count",
+              "operator": "equals",
+              "expected": 10
+            },
+            {
+              "pointer": "/summary/failed_step_count",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/repository/stable_head",
               "operator": "equals",
               "expected": true
+            },
+            {
+              "pointer": "/repository/clean_before_and_after",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/steps",
+              "operator": "min_items",
+              "expected": 10
             }
           ]
         }

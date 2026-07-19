@@ -461,6 +461,15 @@ the report failed. Command success establishes only the declared validation
 surface and never substitutes for scientific, human-review, licensing,
 reference, or paper-readiness evidence.
 
+Milestone contracts can bind a final receipt without creating a Git-hash cycle
+by setting `verifier` to `research_validation_report` and `sha256` to `null`.
+This verifier does not trust a claimed `passed` field alone: it re-hashes the
+current profile, requires the recorded clean and stable HEAD to equal the
+current repository HEAD, and re-hashes every recorded stream and expected
+output. The profile runner must write the report directly to the path declared
+by the milestone contract; a hand-written claimed-pass receipt without the
+bound profile, repository state, logs, and outputs is not equivalent.
+
 ### External Source Projection
 
 External research-agent outputs can be normalized for promotion-benchmark intake without embedding source-specific adapters in public runtime code:

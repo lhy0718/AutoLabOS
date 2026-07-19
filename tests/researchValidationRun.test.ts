@@ -6,10 +6,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   executeValidationCommand,
   runResearchValidation,
+  verifyResearchValidationReport,
   type ResearchValidationCommandContext,
   type ResearchValidationCommandResult,
   type ResearchValidationRepositoryState
 } from "../src/core/researchValidationRun.js";
+import { verifyResearchMilestone } from "../src/core/researchMilestoneAudit.js";
 
 describe("research validation run", () => {
   let workspace: string;
@@ -194,6 +196,88 @@ describe("research validation run", () => {
     });
   });
 
+  it("re-verifies a self-bound report and rejects log tampering", async () => {
+    await writeProfile(workspace, {
+      required_step_ids: ["build"],
+      steps: [step("build")]
+    });
+    await fs.writeFile(path.join(workspace, ".gitignore"), "outputs/\n", "utf8");
+    await fs.writeFile(path.join(workspace, "milestone.json"), `${JSON.stringify({
+      schema_version: "1.0",
+      milestone_id: "final-validation",
+      target_state: "validated",
+      evidence_root: ".",
+      requirements: [{
+        id: "final_validation",
+        label: "Final validation is self-bound",
+        target_node: "review",
+        required: true,
+        evidence: [{
+          path: "outputs/final-validation/research-validation-report.json",
+          sha256: null,
+          verifier: "research_validation_report",
+          assertions: [{ pointer: "/passed", operator: "equals", expected: true }]
+        }]
+      }]
+    }, null, 2)}\n`, "utf8");
+
+    await runGit(workspace, ["init"]);
+    await runGit(workspace, [
+      "add", ".gitignore", "validation-profile.json", "milestone.json"
+    ]);
+    await runGit(workspace, [
+      "-c", "user.name=Validation Fixture",
+      "-c", "user.email=validation-fixture@example.invalid",
+      "commit", "-m", "fixture"
+    ]);
+
+    const run = await runResearchValidation({
+      cwd: workspace,
+      profilePath: "validation-profile.json",
+      outDir: "outputs/final-validation"
+    }, {
+      executeCommand: async () => commandResult(0, "verified-command"),
+      now: () => new Date("2026-01-02T03:04:05.000Z")
+    });
+    const verified = await verifyResearchValidationReport({
+      cwd: workspace,
+      reportPath: run.report_path
+    });
+
+    expect(verified).toMatchObject({
+      passed: true,
+      issues: [],
+      profile_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      repository_head: expect.stringMatching(/^[a-f0-9]{40}$/u)
+    });
+
+    const milestone = await verifyResearchMilestone({
+      cwd: workspace,
+      contractPath: "milestone.json",
+      outDir: "outputs/milestone-audit"
+    });
+    expect(milestone.report).toMatchObject({
+      achieved: true,
+      verdict: "achieved",
+      summary: { passed_requirement_count: 1, failed_requirement_count: 0 }
+    });
+    expect(milestone.report.requirements[0]?.evidence[0]?.verifier).toBe(
+      "research_validation_report"
+    );
+
+    await fs.appendFile(
+      path.join(workspace, "outputs", "final-validation", "steps", "build.stdout.log"),
+      "-tampered",
+      "utf8"
+    );
+    const tampered = await verifyResearchValidationReport({
+      cwd: workspace,
+      reportPath: run.report_path
+    });
+    expect(tampered.passed).toBe(false);
+    expect(tampered.issues).toContain("step_stdout:build_hash_mismatch");
+  });
+
   it("keeps the repository paper-scale profile structurally executable", async () => {
     const sourceProfile = await fs.readFile(path.resolve(
       process.cwd(),
@@ -306,6 +390,18 @@ function repositoryState(clean: boolean, statusText = ""): ResearchValidationRep
     status_sha256: "b".repeat(64),
     status
   };
+}
+
+async function runGit(root: string, args: string[]): Promise<void> {
+  const result = await executeValidationCommand({
+    command: "git",
+    args,
+    cwd: root,
+    timeoutMs: 10_000
+  });
+  if (result.exit_code !== 0) {
+    throw new Error(result.stderr.toString("utf8") || `git ${args.join(" ")} failed`);
+  }
 }
 
 function commandResult(

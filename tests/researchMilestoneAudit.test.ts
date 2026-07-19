@@ -123,6 +123,47 @@ describe("research milestone audit", () => {
     ]);
   });
 
+  it("rejects a manually claimed validation pass without self-bound artifacts", async () => {
+    const workspace = await makeWorkspace();
+    await writeJson(path.join(workspace, "evidence", "research-validation-report.json"), {
+      schema_version: "1.0",
+      validation_id: "research-validation-0000000000000000",
+      generated_at: "2026-01-02T03:04:05.000Z",
+      passed: true,
+      status: "pass"
+    });
+    await writeContract(workspace, {
+      schema_version: "1.0",
+      milestone_id: "self-bound-validation",
+      target_state: "validated",
+      evidence_root: ".",
+      requirements: [{
+        id: "final_validation",
+        label: "Final validation is self-bound",
+        target_node: "review",
+        required: true,
+        evidence: [{
+          path: "evidence/research-validation-report.json",
+          sha256: null,
+          verifier: "research_validation_report",
+          assertions: [{ pointer: "/passed", operator: "equals", expected: true }]
+        }]
+      }]
+    });
+
+    const result = await verifyResearchMilestone({
+      cwd: workspace,
+      contractPath: "milestone.json",
+      outDir: "audit"
+    });
+    const evidence = result.report.requirements[0]?.evidence[0];
+
+    expect(result.report.achieved).toBe(false);
+    expect(evidence?.verifier).toBe("research_validation_report");
+    expect(evidence?.issues).not.toContain("evidence_hash_unbound");
+    expect(evidence?.issues).toContain("evidence_validation_report_report_profile_invalid");
+  });
+
   it("detects byte drift after a contract has bound the evidence hash", async () => {
     const workspace = await makeWorkspace();
     const evidencePath = path.join(workspace, "evidence", "report.json");
