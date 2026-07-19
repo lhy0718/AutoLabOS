@@ -423,7 +423,7 @@
       "evidence": [
         {
           "path": "docs/research/evidence/promotion-reference-review-handoff-v5.json",
-          "sha256": "08346d50197c739829fb58611a241301c46eab7ee840bf1801cc5805676ba6af",
+          "sha256": "5e77b887181d9bdeaa4a6de9cd83d0392a9918b40b3564eff2cdc13f73a17a97",
           "assertions": [
             {
               "pointer": "/private_distribution/source_count",
@@ -592,7 +592,7 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-v29/research-validation-report.json",
+          "path": "outputs/promotion-governance/final-validation-v30/research-validation-report.json",
           "sha256": null,
           "verifier": "research_validation_report",
           "assertions": [

@@ -70,6 +70,7 @@
   },
   "review_contract": {
     "package_relative_preflight_command_present": true,
+    "recipient_package_verification_command_present": true,
     "distinct_final_approver_required": true,
     "distinct_final_approver_attestation_required": true,
     "same_reviewer_approver_rejected": true,
@@ -83,7 +84,6 @@
     ],
     "unchecked_claim_count": 12,
     "source_title_blocker_count": 0,
-    "recipient_package_verification_command_present": true,
     "missing_source_key_count": 0
   },
   "scope_correction": {
