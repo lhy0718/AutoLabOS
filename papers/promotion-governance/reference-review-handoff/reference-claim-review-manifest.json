@@ -34,7 +34,7 @@
     },
     {
       "path": "reviewer/REVIEWER_GUIDE.md",
-      "sha256": "2f710b1629871614d10c5a83e5efcb4b146b26e109d7ab4a37d4de56881e7c6b"
+      "sha256": "f7db205b2aaf9aab8c5503936aa6efea39334ee6715e2ffa87b4fbd21754ced9"
     }
   ],
   "evidence_boundary": "This packet binds full-text evidence candidates to manuscript claims for independent human review. It contains no third-party PDF, no completed human judgment, no verified reviewer identity, no checked claim, and no paper-readiness decision. Missing full texts remain blocking and are not converted into review tasks."

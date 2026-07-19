@@ -787,7 +787,7 @@ complete file inventory. Its manifest forbids public release and records that
 source-license review is not assessed, so neither the packet nor the third-party
 PDFs enter the public source snapshot. The current packet, distribution receipt,
 and expected fail-closed preflight are fixed in
-`docs/research/evidence/promotion-reference-review-handoff-v3.json`.
+`docs/research/evidence/promotion-reference-review-handoff-v4.json`.
 
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim
@@ -803,6 +803,13 @@ macro while the PDF rendered the same symbol as Unicode. The generic
 normalization fix passes the full Refgate test suite and does not override a
 source mismatch manually. Bibliography and source-integrity gates therefore
 pass; the 12 unchecked human claim decisions remain the only Refgate blockers.
+
+The handoff guide now gives a packet-relative preflight command and requires
+the complete public or private packet root so the reviewer does not need a
+controller-local path. The final-approval template includes an explicit
+attestation that the approver did not perform the initial review, and import
+rejects matching reviewer and approver IDs. These structural checks preserve a
+two-person gate without claiming that pseudonymous identities are verified.
 
 The post-preflight import boundary remains executable without creating the
 missing human decisions. Every preflight emits an incomplete final-approval

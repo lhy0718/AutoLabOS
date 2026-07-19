@@ -32,9 +32,11 @@ third-party PDFs.
 
 `reference-review-handoff/` binds the 12 mapped full-text candidates to the
 current claim TSV, evidence status, and Refgate lock hashes. Give an independent
-reviewer only `reference-review-handoff/reviewer/`. The included template is
-incomplete by construction: its reviewer identity and decisions are null, and
-all human and independence attestations are false.
+reviewer the complete handoff root so its manifest remains available to the
+packet-relative preflight command; the public handoff contains no third-party
+full text. The included template is incomplete by construction: its reviewer
+identity and decisions are null, and all human and independence attestations
+are false.
 
 To reproduce the handoff in a fresh output directory:
 
@@ -67,7 +69,7 @@ inventory rather than being filled from metadata or abstracts. The private
 packet's `reviewer/SOURCE_README.md` lists the retained source inventory and
 public record URLs so source handling remains explicitly separate from human
 claim review. The public verification receipt is
-`docs/research/evidence/promotion-reference-review-handoff-v3.json`; it records
+`docs/research/evidence/promotion-reference-review-handoff-v4.json`; it records
 hashes, the scope correction, and gate outcomes, not the third-party full texts.
 
 Preflight a returned human review separately:
@@ -82,7 +84,9 @@ node dist/cli/main.js reference-review preflight \
 Preflight verifies exact task coverage, packet hashes, decision-specific
 evidence, and the reviewer's attestations. It does not verify real-world
 identity and never modifies Refgate claim status. Even a fully supported return
-still requires explicit final approval and a separate Refgate import.
+still requires explicit final approval by a different human and a separate
+Refgate import. Import rejects an approval whose approver ID matches the initial
+reviewer ID.
 
 ## Build
 

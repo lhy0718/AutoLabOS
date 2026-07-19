@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "13c451bee829cf684e1fbb728ea2db7e3d54ea0e732f68b02c77a0906b4d17fc"
+          "sha256": "f852cc63ccbd717799c89e3ff264ac7e1644af69d5805aa56afee374a1508a4d"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -422,8 +422,8 @@
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-reference-review-handoff-v3.json",
-          "sha256": "8fcb281086833008979a5b6ce09ee4a221fbe9d1a35052487ff013c5d0bb6425",
+          "path": "docs/research/evidence/promotion-reference-review-handoff-v4.json",
+          "sha256": "deceed4112c3a53bee77b855aa80eded1d00caaabf910d8ed784a7da032fffac",
           "assertions": [
             {
               "pointer": "/private_distribution/source_count",
@@ -444,6 +444,26 @@
               "pointer": "/public_handoff/missing_full_text_claim_count",
               "operator": "equals",
               "expected": 0
+            },
+            {
+              "pointer": "/review_contract/package_relative_preflight_command_present",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/review_contract/distinct_final_approver_required",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/review_contract/distinct_final_approver_attestation_required",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/review_contract/same_reviewer_approver_rejected",
+              "operator": "equals",
+              "expected": true
             },
             {
               "pointer": "/public_handoff/human_review_completed",

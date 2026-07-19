@@ -11,6 +11,7 @@ import {
   prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
   REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE,
+  REFERENCE_CLAIM_REVIEW_GUIDE,
   REFERENCE_CLAIM_REVIEW_IMPORT,
   REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS,
   REFERENCE_CLAIM_REVIEW_MANIFEST,
@@ -78,6 +79,14 @@ describe("reference claim review handoff", () => {
     expect(Object.values(template.independence_attestation)).toEqual([false, false, false]);
     expect(template.reviews.every((review) => review.decision === null)).toBe(true);
     expect(manifest.evidence_boundary).toContain("no completed human judgment");
+    const guide = await readFile(
+      path.join(workspace, "packet", REFERENCE_CLAIM_REVIEW_GUIDE),
+      "utf8"
+    );
+    expect(guide).toContain(
+      "autolabos reference-review preflight --packet . --review <completed-review.json>"
+    );
+    expect(guide).toContain("a different human final approver");
   });
 
   it("fails closed on the generated incomplete template", async () => {
@@ -186,6 +195,33 @@ describe("reference claim review handoff", () => {
     ))).toMatchObject({ import_id: result.receipt.import_id });
   });
 
+  it("rejects final approval performed by the initial claim reviewer", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    const reviewPath = await writeCompletedReview(workspace, "supported");
+    await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      outDir: "preflight"
+    });
+    const approvalPath = await writeCompletedApproval(workspace);
+    const approval = JSON.parse(await readFile(approvalPath, "utf8")) as {
+      approver_id: string;
+    };
+    approval.approver_id = "reviewer-alpha";
+    await writeFile(approvalPath, JSON.stringify(approval), "utf8");
+
+    await expect(importReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: "packet",
+      reviewPath,
+      preflightReportPath: path.join("preflight", REFERENCE_CLAIM_REVIEW_PREFLIGHT),
+      approvalPath,
+      claimsPath: "claims.tsv",
+      outDir: "import"
+    })).rejects.toThrow("approver must be different from the initial reviewer");
+  });
   it("rejects import when review, approval, preflight, or source claims are not exact", async () => {
     const workspace = await createWorkspace();
     await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
@@ -541,6 +577,7 @@ async function writeCompletedApproval(
   approval.approval_attestation = {
     completed_by_human: true,
     reviewed_complete_return: true,
+    approver_did_not_perform_initial_review: true,
     authorizes_checked_status: true,
     accepts_evidence_boundary: true
   };

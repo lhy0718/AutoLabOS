@@ -473,6 +473,7 @@ export async function preflightReferenceClaimReview(
     approval_attestation: {
       completed_by_human: false,
       reviewed_complete_return: false,
+      approver_did_not_perform_initial_review: false,
       authorizes_checked_status: false,
       accepts_evidence_boundary: false
     },
@@ -527,6 +528,9 @@ export async function importReferenceClaimReview(
       || approval.approved_task_ids.length !== taskIds.length
       || approval.approved_task_ids.some((taskId, index) => taskId !== taskIds[index])) {
     throw new Error("Reference claim review approval does not bind the exact preflight task set.");
+  }
+  if (approval.approver_id === evaluation.report.reviewer_id) {
+    throw new Error("Reference claim review approver must be different from the initial reviewer.");
   }
 
   const claimsBytes = await readRegularFile(claimsPath);
@@ -1149,6 +1153,7 @@ function parseReferenceClaimReviewApproval(text: string): ParsedReferenceClaimRe
       || value.approval_role !== "final_reference_claim_approver"
       || !isRecord(value.approval_attestation)
       || value.approval_attestation.completed_by_human !== true
+      || value.approval_attestation.approver_did_not_perform_initial_review !== true
       || value.approval_attestation.reviewed_complete_return !== true
       || value.approval_attestation.authorizes_checked_status !== true
       || value.approval_attestation.accepts_evidence_boundary !== true
@@ -1207,7 +1212,13 @@ function reviewerGuide(): string {
     "4. For `supported` and `rewrite`, record a source locator and a short supporting passage. For `rewrite`, also provide the replacement claim.",
     "5. Write a non-empty rationale for every decision and set all attestations to true only after personally completing the review.",
     "6. Return only the completed JSON for preflight.",
-    "7. If every decision is supported, give the generated final approval template and preflight report to a human final approver. The approver must review the complete return, fill the attestation and rationale, and return the approval JSON separately.",
+    "7. If every decision is supported, give the generated final approval template and preflight report to a different human final approver. The approver must review the complete return, fill the attestation and rationale, and return the approval JSON separately.",
+    "",
+    "From the packet root (the parent of `reviewer/`), run:",
+    "",
+    "```sh",
+    "autolabos reference-review preflight --packet . --review <completed-review.json> --out-dir <new-preflight-dir>",
+    "```",
     "",
     "A passing preflight does not change Refgate claim status. After explicit approval, `autolabos reference-review import` generates a new import-candidate TSV without overwriting the source claims file."
   ].join("\n") + "\n";
