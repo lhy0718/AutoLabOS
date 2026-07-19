@@ -826,7 +826,7 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-v34/research-validation-report.json",
+          "path": "outputs/promotion-governance/final-validation-v36/research-validation-report.json",
           "sha256": null,
           "verifier": "research_validation_report",
           "assertions": [
