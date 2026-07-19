@@ -108,6 +108,8 @@ export class OllamaClient {
     model: string;
     messages: OllamaMessage[];
     stream?: boolean;
+    format?: "json" | Record<string, unknown>;
+    think?: boolean;
     options?: Record<string, unknown>;
     abortSignal?: AbortSignal;
     timeoutMs?: number;
@@ -133,6 +135,8 @@ export class OllamaClient {
         model: opts.model,
         messages: opts.messages,
         stream: false,
+        ...(opts.format ? { format: opts.format } : {}),
+        ...(opts.think !== undefined ? { think: opts.think } : {}),
         ...opts.options ? { options: opts.options } : {}
       };
 

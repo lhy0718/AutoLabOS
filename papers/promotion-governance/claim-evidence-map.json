@@ -95,7 +95,7 @@
         "artifact_verified_execution_provenance",
         "at_least_72_source_hash_distinct_base_bundles",
         "at_least_720_held_out_cases",
-        "three_real_provider_trials",
+        "three_paper_eligible_real_model_trials",
         "post_repair_recovery_runs"
       ]
     }

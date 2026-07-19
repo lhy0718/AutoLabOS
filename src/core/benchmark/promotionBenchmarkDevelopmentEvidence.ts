@@ -17,6 +17,7 @@ import {
   verifyPromotionBenchmarkSystemRun,
   type PromotionBenchmarkSystemRunManifest
 } from "./promotionBenchmarkSystems.js";
+import type { PromotionProviderAggregateManifest } from "./promotionBenchmarkProviderAggregate.js";
 
 export interface ExportPromotionDevelopmentEvidenceInput {
   cwd: string;
@@ -31,7 +32,7 @@ export interface ExportPromotionDevelopmentEvidenceInput {
 }
 
 export interface PromotionDevelopmentEvidenceReport {
-  schema_version: "1.0";
+  schema_version: "1.1";
   evidence_id: string;
   generated_at: string;
   evidence_class: "synthetic_development";
@@ -63,6 +64,16 @@ export interface PromotionDevelopmentEvidenceReport {
       mean_latency_ms: number | null;
       total_cost_usd: number | null;
     }>;
+  };
+  real_model_evaluation: {
+    status: "not_available" | "verified_development_only";
+    trial_count: number;
+    prediction_count: number;
+    execution_environment: PromotionProviderAggregateManifest["execution_environment"] | null;
+    execution_receipt_status: PromotionProviderAggregateManifest["execution_receipt_status"] | null;
+    external_empirical_evidence_eligible: boolean;
+    paper_claim_evidence_eligible: false;
+    model_artifact_digest: string | null;
   };
   confirmatory_gate: {
     readiness: "blocked_for_paper_scale";
@@ -126,7 +137,7 @@ export async function exportPromotionDevelopmentEvidence(
   input: ExportPromotionDevelopmentEvidenceInput
 ): Promise<ExportPromotionDevelopmentEvidenceResult> {
   const cwd = path.resolve(input.cwd);
-  const paths = {
+  const paths: Record<string, string> = {
     corpus_manifest: await resolveExistingInside(cwd, input.corpusManifestPath, "Corpus manifest"),
     suite: await resolveExistingInside(cwd, input.suitePath, "Development suite"),
     predictions: await resolveExistingInside(cwd, input.predictionsPath, "Development predictions"),
@@ -151,6 +162,7 @@ export async function exportPromotionDevelopmentEvidence(
   const score = parseScoreReport(scoreValue);
   const gate = parseGateReport(gateValue);
   const recommendations = parseRecommendations(recommendationsValue);
+  const providerAggregate = await resolveProviderAggregate({ cwd, gate, paths });
   const loaded = await loadPromotionBenchmarkSuite(paths.suite);
   if (!loaded.suite || loaded.issues.length > 0) {
     throw new Error(
@@ -173,12 +185,13 @@ export async function exportPromotionDevelopmentEvidence(
     gate,
     recommendations,
     systemRun,
+    providerAggregate,
     suite: loaded.suite,
     hashes
   });
 
   const report: PromotionDevelopmentEvidenceReport = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     evidence_id: corpus.corpus_id + ":evidence",
     generated_at: gate.generated_at,
     evidence_class: "synthetic_development",
@@ -200,6 +213,25 @@ export async function exportPromotionDevelopmentEvidence(
         .sort((left, right) => left.system_id.localeCompare(right.system_id))
         .map(summarizeSystem)
     },
+    real_model_evaluation: providerAggregate ? {
+      status: "verified_development_only",
+      trial_count: providerAggregate.trial_count,
+      prediction_count: providerAggregate.prediction_count,
+      execution_environment: providerAggregate.execution_environment,
+      execution_receipt_status: providerAggregate.execution_receipt_status,
+      external_empirical_evidence_eligible: providerAggregate.external_empirical_evidence_eligible,
+      paper_claim_evidence_eligible: false,
+      model_artifact_digest: providerAggregate.model_artifact_digest
+    } : {
+      status: "not_available",
+      trial_count: 0,
+      prediction_count: 0,
+      execution_environment: null,
+      execution_receipt_status: null,
+      external_empirical_evidence_eligible: false,
+      paper_claim_evidence_eligible: false,
+      model_artifact_digest: null
+    },
     confirmatory_gate: {
       readiness: "blocked_for_paper_scale",
       paper_ready: false,
@@ -220,9 +252,12 @@ export async function exportPromotionDevelopmentEvidence(
       }))
       .sort((left, right) => left.role.localeCompare(right.role)),
     evidence_boundary:
-      "Deterministic synthetic development evidence for evaluator debugging and node strengthening only. "
+      "Synthetic development evidence for evaluator debugging and node strengthening only. "
       + "The source artifacts are local run products bound here by role and SHA-256, not repository-distributed evidence. "
-      + "This record is not human-adjudicated, external-real, provider-repeated, recovery-verified, or eligible for paper claims."
+      + (providerAggregate
+        ? "The real-model repetitions are verified development executions, but the suite is not human-adjudicated or eligible for paper claims. "
+        : "No verified real-model repetition is included. ")
+      + "This record is not recovery-verified or eligible for paper claims."
   };
   await writeJsonFile(outputPath, report);
   return { report, output_path: portableRef(cwd, outputPath) };
@@ -236,10 +271,11 @@ function verifyDevelopmentEvidence(input: {
   gate: PromotionConfirmatoryGateReport;
   recommendations: NodeStrengtheningRecommendation[];
   systemRun: PromotionBenchmarkSystemRunManifest;
+  providerAggregate: PromotionProviderAggregateManifest | null;
   suite: NonNullable<Awaited<ReturnType<typeof loadPromotionBenchmarkSuite>>["suite"]>;
   hashes: Record<string, string>;
 }): void {
-  const { corpus, score, gate, recommendations, systemRun, suite, hashes } = input;
+  const { corpus, score, gate, recommendations, systemRun, providerAggregate, suite, hashes } = input;
   const suiteManifest = suite.manifest;
   const baseBundleCount = new Set(suite.cases.map((benchmarkCase) => benchmarkCase.base_bundle_id)).size;
   const cleanControlCount = suite.cases.filter((benchmarkCase) => !benchmarkCase.mutation_family).length;
@@ -264,7 +300,7 @@ function verifyDevelopmentEvidence(input: {
       || corpus.clean_control_count !== cleanControlCount
       || corpus.mutation_family_count !== mutationFamilyCount
       || score.case_count !== suite.cases.length
-      || score.prediction_count !== systemRun.prediction_count
+      || score.prediction_count !== systemRun.prediction_count + (providerAggregate?.prediction_count || 0)
       || gate.case_count !== suite.cases.length
       || gate.base_bundle_count !== baseBundleCount) {
     throw new Error("Development evidence counts do not match the current artifacts.");
@@ -277,6 +313,7 @@ function verifyDevelopmentEvidence(input: {
   }
   const scoredSystems = new Set<string>(score.systems.map((system) => system.system_id));
   const declaredSystems = new Set<string>(systemRun.systems.map((system) => system.system_id));
+  if (providerAggregate) declaredSystems.add(providerAggregate.system_id);
   if (scoredSystems.size !== declaredSystems.size
       || [...scoredSystems].some((systemId) => !declaredSystems.has(systemId))) {
     throw new Error("Development score system coverage does not match the system run manifest.");
@@ -300,7 +337,73 @@ function verifyDevelopmentEvidence(input: {
     input.paths.system_run_manifest,
     "System run manifest"
   );
+  if (providerAggregate) {
+    verifyProviderAggregateBinding({ cwd: input.cwd, paths: input.paths, gate, providerAggregate, suite, hashes });
+  } else if (gate.provider_repetition.status === "verified_receipt_distinct") {
+    throw new Error("Confirmatory gate reports provider repetition without a verifiable aggregate artifact.");
+  }
   verifyRecommendationCoverage(gate.blockers, recommendations);
+}
+
+async function resolveProviderAggregate(input: {
+  cwd: string;
+  gate: PromotionConfirmatoryGateReport;
+  paths: Record<string, string>;
+}): Promise<PromotionProviderAggregateManifest | null> {
+  if (input.gate.provider_repetition.status !== "verified_receipt_distinct") return null;
+  const aggregateRef = input.gate.artifacts.provider_aggregate_ref;
+  const aggregateSha256 = input.gate.artifacts.provider_aggregate_sha256;
+  if (!aggregateRef || !aggregateSha256) {
+    throw new Error("Verified provider repetition requires a bound aggregate artifact.");
+  }
+  const aggregatePath = await resolveExistingInside(input.cwd, aggregateRef, "Provider aggregate");
+  const aggregate = parseProviderAggregate(await readJson(aggregatePath, "provider aggregate"));
+  const predictionsPath = await resolveExistingInside(
+    input.cwd,
+    aggregate.artifacts.predictions_path,
+    "Provider aggregate predictions"
+  );
+  input.paths.provider_aggregate = aggregatePath;
+  input.paths.provider_predictions = predictionsPath;
+  return aggregate;
+}
+
+function verifyProviderAggregateBinding(input: {
+  cwd: string;
+  paths: Record<string, string>;
+  gate: PromotionConfirmatoryGateReport;
+  providerAggregate: PromotionProviderAggregateManifest;
+  suite: NonNullable<Awaited<ReturnType<typeof loadPromotionBenchmarkSuite>>["suite"]>;
+  hashes: Record<string, string>;
+}): void {
+  const aggregate = input.providerAggregate;
+  if (input.gate.artifacts.provider_aggregate_sha256 !== input.hashes.provider_aggregate
+      || aggregate.artifacts.predictions_sha256 !== input.hashes.provider_predictions
+      || aggregate.suite_id !== input.suite.manifest.suite_id
+      || aggregate.suite_sha256 !== input.hashes.suite
+      || aggregate.source_suite.manifest_sha256 !== input.hashes.suite
+      || aggregate.source_suite.snapshot_sha256 !== input.gate.artifacts.suite_snapshot_sha256
+      || aggregate.source_suite.paper_claim_eligible !== false
+      || aggregate.paper_claim_evidence_eligible !== false
+      || aggregate.real_model_empirical_evidence_eligible !== true
+      || aggregate.trial_count !== input.gate.provider_repetition.trial_count
+      || aggregate.case_count !== input.suite.cases.length
+      || aggregate.prediction_count !== aggregate.case_count * aggregate.trial_count) {
+    throw new Error("Development real-model evidence does not match the confirmatory gate bindings.");
+  }
+  assertArtifactRef(
+    input.cwd,
+    input.gate.artifacts.provider_aggregate_ref!,
+    input.paths.provider_aggregate,
+    "Provider aggregate"
+  );
+  assertArtifactRef(input.cwd, aggregate.source_suite.path, input.paths.suite, "Provider source suite");
+  assertArtifactRef(
+    input.cwd,
+    aggregate.artifacts.predictions_path,
+    input.paths.provider_predictions,
+    "Provider aggregate predictions"
+  );
 }
 
 function verifyRecommendationCoverage(
@@ -326,17 +429,23 @@ function summarizeSystem(system: PromotionBenchmarkSystemMetrics): PromotionDeve
   return {
     system_id: system.system_id,
     trial_count: system.trial_count,
-    coverage_rate: system.coverage_rate,
-    macro_decision_f1: system.macro_decision_f1,
-    false_paper_ready_rate: system.false_paper_ready_rate,
-    concern_acceptance_conflict_rate: system.concern_acceptance_conflict_rate,
-    blocker_f1: system.blocker_f1,
-    repair_owner_exact_match_accuracy: system.repair_owner_exact_match_accuracy,
-    clean_case_promotion_accuracy: system.clean_case_promotion_accuracy,
-    trace_coverage: system.trace_coverage,
-    mean_latency_ms: system.mean_latency_ms,
-    total_cost_usd: system.total_cost_usd
+    coverage_rate: roundSummaryMetric(system.coverage_rate),
+    macro_decision_f1: roundSummaryMetric(system.macro_decision_f1),
+    false_paper_ready_rate: roundSummaryMetric(system.false_paper_ready_rate),
+    concern_acceptance_conflict_rate: roundSummaryMetric(system.concern_acceptance_conflict_rate),
+    blocker_f1: roundSummaryMetric(system.blocker_f1),
+    repair_owner_exact_match_accuracy: roundSummaryMetric(system.repair_owner_exact_match_accuracy),
+    clean_case_promotion_accuracy: roundSummaryMetric(system.clean_case_promotion_accuracy),
+    trace_coverage: roundSummaryMetric(system.trace_coverage),
+    mean_latency_ms: roundSummaryMetric(system.mean_latency_ms),
+    total_cost_usd: roundSummaryMetric(system.total_cost_usd)
   };
+}
+
+function roundSummaryMetric(value: number): number;
+function roundSummaryMetric(value: number | null): number | null;
+function roundSummaryMetric(value: number | null): number | null {
+  return value === null ? null : Math.round(value * 1000) / 1000;
 }
 
 function countBlockers(blockers: PromotionConfirmatoryGateIssue[]): PromotionDevelopmentEvidenceReport["confirmatory_gate"]["blockers"] {
@@ -354,6 +463,58 @@ function countBlockers(blockers: PromotionConfirmatoryGateIssue[]): PromotionDev
   return [...counts.entries()]
     .map(([code, value]) => ({ code, ...value }))
     .sort((left, right) => left.code.localeCompare(right.code));
+}
+
+function parseProviderAggregate(value: unknown): PromotionProviderAggregateManifest {
+  if (!isRecord(value)
+      || value.schema_version !== "1.2"
+      || value.status !== "completed"
+      || value.protocol !== "manuscript-only-v1"
+      || !["openai_responses_api", "ollama_local"].includes(String(value.provider))
+      || !["external_real_provider", "local_real_model"].includes(String(value.evidence_class))
+      || !["remote_api", "local_runtime"].includes(String(value.execution_environment))
+      || !["recorded_not_independently_verified", "local_runtime_hash_bound"]
+        .includes(String(value.execution_receipt_status))
+      || value.provider_identity_independently_verified !== false
+      || typeof value.external_empirical_evidence_eligible !== "boolean"
+      || value.real_model_empirical_evidence_eligible !== true
+      || value.paper_claim_evidence_eligible !== false
+      || value.independent_trial_requirement_met !== true
+      || !nonEmptyString(value.suite_id)
+      || !sha256Digest(value.suite_sha256)
+      || !nonEmptyString(value.system_id)
+      || !positiveInteger(value.case_count)
+      || value.trial_count !== 3
+      || !positiveInteger(value.prediction_count)
+      || !isRecord(value.source_suite)
+      || !nonEmptyString(value.source_suite.path)
+      || !sha256Digest(value.source_suite.manifest_sha256)
+      || !sha256Digest(value.source_suite.snapshot_sha256)
+      || value.source_suite.paper_claim_eligible !== false
+      || !isRecord(value.artifacts)
+      || !nonEmptyString(value.artifacts.predictions_path)
+      || !sha256Digest(value.artifacts.predictions_sha256)
+      || !validDevelopmentProviderContract(value)) {
+    throw new Error("Invalid real-model development aggregate manifest.");
+  }
+  return value as unknown as PromotionProviderAggregateManifest;
+}
+
+function validDevelopmentProviderContract(value: Record<string, unknown>): boolean {
+  if (value.provider === "openai_responses_api") {
+    return value.evidence_class === "external_real_provider"
+      && value.execution_environment === "remote_api"
+      && value.execution_receipt_status === "recorded_not_independently_verified"
+      && value.external_empirical_evidence_eligible === true
+      && value.model_artifact_digest === null;
+  }
+  return value.provider === "ollama_local"
+    && value.evidence_class === "local_real_model"
+    && value.execution_environment === "local_runtime"
+    && value.execution_receipt_status === "local_runtime_hash_bound"
+    && value.external_empirical_evidence_eligible === false
+    && typeof value.model_artifact_digest === "string"
+    && /^(?:sha256:)?[a-f0-9]{12,64}$/u.test(value.model_artifact_digest);
 }
 
 function parseDevelopmentCorpusManifest(value: unknown): DevelopmentCorpusManifest {
@@ -511,6 +672,8 @@ function logicalArtifactRef(role: string): string {
     predictions: "predictions.jsonl",
     system_run_manifest: "system-run-manifest.json",
     score_report: "promotion-score.json",
+    provider_aggregate: "provider-run-aggregate-manifest.json",
+    provider_predictions: "provider-predictions.jsonl",
     confirmatory_gate: "promotion-confirmatory-gate.json",
     node_strengthening_recommendations: "node-strengthening-recommendations.json"
   };
@@ -525,6 +688,10 @@ function positiveInteger(value: unknown): value is number {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function sha256Digest(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

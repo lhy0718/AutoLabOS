@@ -70,7 +70,7 @@
     "artifact_verified_execution_provenance_for_each_base",
     "double_adjudicated_gold_labels",
     "double_verified_mutation_isolation",
-    "three_real_provider_trials_for_manuscript_only_baseline",
+    "three_paper_eligible_real_model_trials_for_manuscript_only_baseline",
     "post_repair_recovery_and_regression_evaluation",
     "independent_review_of_12_full_text_evidence_candidates",
     "full_text_sources_for_2_openreview_claims",

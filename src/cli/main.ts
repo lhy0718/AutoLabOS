@@ -121,7 +121,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--freeze-manifest <frozen-intake-manifest.json>] [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
-    "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai --model <id> --reasoning <effort> --system <id> --trial <id> --out-dir <new-output-dir>",
+    "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai|ollama --model <id> --reasoning <effort|off> --system <id> --trial <id> --out-dir <new-output-dir> [--base-url <ollama-url>]",
     "  autolabos governance-benchmark aggregate-promotion-provider-runs --suite <suite.json> --run-manifest <trial-a/provider-run-manifest.json> --run-manifest <trial-b/provider-run-manifest.json> --run-manifest <trial-c/provider-run-manifest.json> --out-dir <new-output-dir>",
     "  autolabos governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts]",
     "  autolabos governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions]",
@@ -702,7 +702,8 @@ async function main(): Promise<void> {
       reasoningEffort: action.reasoningEffort,
       systemId: action.systemId,
       trialId: action.trialId,
-      outDir: action.outDir
+      outDir: action.outDir,
+      baseUrl: action.baseUrl
     });
     return;
   }

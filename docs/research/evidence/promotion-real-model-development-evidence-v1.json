@@ -1,0 +1,322 @@
+{
+  "schema_version": "1.1",
+  "evidence_id": "promotion-governance-synthetic-development-v1:evidence",
+  "generated_at": "2026-07-19T00:33:08.346Z",
+  "evidence_class": "synthetic_development",
+  "paper_claim_eligible": false,
+  "artifact_consistency_verified": true,
+  "source_artifact_availability": "local_run_only",
+  "corpus": {
+    "corpus_id": "promotion-governance-synthetic-development-v1",
+    "base_bundle_count": 4,
+    "case_count": 40,
+    "clean_control_count": 4,
+    "mutation_family_count": 9
+  },
+  "evaluation": {
+    "score_validation_passed": true,
+    "prediction_count": 280,
+    "trial_id": "development-protocol-v2",
+    "systems": [
+      {
+        "system_id": "advisory-artifact-audit",
+        "trial_count": 1,
+        "coverage_rate": 1,
+        "macro_decision_f1": 0.045,
+        "false_paper_ready_rate": 1,
+        "concern_acceptance_conflict_rate": 1,
+        "blocker_f1": 1,
+        "repair_owner_exact_match_accuracy": 1,
+        "clean_case_promotion_accuracy": 1,
+        "trace_coverage": 1,
+        "mean_latency_ms": 1.575,
+        "total_cost_usd": 0
+      },
+      {
+        "system_id": "always-promote",
+        "trial_count": 1,
+        "coverage_rate": 1,
+        "macro_decision_f1": 0.045,
+        "false_paper_ready_rate": 1,
+        "concern_acceptance_conflict_rate": null,
+        "blocker_f1": null,
+        "repair_owner_exact_match_accuracy": 0,
+        "clean_case_promotion_accuracy": 1,
+        "trace_coverage": null,
+        "mean_latency_ms": 0,
+        "total_cost_usd": 0
+      },
+      {
+        "system_id": "artifact-audit",
+        "trial_count": 1,
+        "coverage_rate": 1,
+        "macro_decision_f1": 1,
+        "false_paper_ready_rate": 0,
+        "concern_acceptance_conflict_rate": 0,
+        "blocker_f1": 1,
+        "repair_owner_exact_match_accuracy": 1,
+        "clean_case_promotion_accuracy": 1,
+        "trace_coverage": 1,
+        "mean_latency_ms": 1.575,
+        "total_cost_usd": 0
+      },
+      {
+        "system_id": "manuscript-reviewer",
+        "trial_count": 3,
+        "coverage_rate": 1,
+        "macro_decision_f1": 0.083,
+        "false_paper_ready_rate": 0,
+        "concern_acceptance_conflict_rate": 0,
+        "blocker_f1": null,
+        "repair_owner_exact_match_accuracy": 0,
+        "clean_case_promotion_accuracy": 0,
+        "trace_coverage": 1,
+        "mean_latency_ms": 981.958,
+        "total_cost_usd": 0
+      },
+      {
+        "system_id": "presence-checklist",
+        "trial_count": 1,
+        "coverage_rate": 1,
+        "macro_decision_f1": 0.045,
+        "false_paper_ready_rate": 1,
+        "concern_acceptance_conflict_rate": null,
+        "blocker_f1": null,
+        "repair_owner_exact_match_accuracy": 0,
+        "clean_case_promotion_accuracy": 1,
+        "trace_coverage": null,
+        "mean_latency_ms": 0.125,
+        "total_cost_usd": 0
+      }
+    ]
+  },
+  "real_model_evaluation": {
+    "status": "verified_development_only",
+    "trial_count": 3,
+    "prediction_count": 120,
+    "execution_environment": "local_runtime",
+    "execution_receipt_status": "local_runtime_hash_bound",
+    "external_empirical_evidence_eligible": false,
+    "paper_claim_evidence_eligible": false,
+    "model_artifact_digest": "6488c96fa5faab64bb65cbd30d4289e20e6130ef535a93ef9a49f42eda893ea7"
+  },
+  "confirmatory_gate": {
+    "readiness": "blocked_for_paper_scale",
+    "paper_ready": false,
+    "claim_class": "mixed_or_weak_signal",
+    "evidence_gate_passed": false,
+    "provider_repetition": {
+      "status": "verified_receipt_distinct",
+      "trial_count": 3,
+      "provider_identity_independently_verified": false,
+      "caveat": "Distinct local runtime receipts prove separate hash-bound executions, not external provider identity or statistical independence."
+    },
+    "recovery": {
+      "status": "missing_or_invalid",
+      "original_fault_case_count": null,
+      "covered_fault_case_count": null,
+      "missing_fault_case_count": null,
+      "successful_recovery_rate": null,
+      "clean_control_regression_rate": null
+    },
+    "hypotheses": [
+      {
+        "hypothesis_id": "H1",
+        "status": "supported",
+        "observed_value": 1,
+        "confidence_interval_95": [
+          1,
+          1
+        ],
+        "threshold": 0.2,
+        "decision_rule": "lower_bound_at_least_threshold",
+        "point_threshold_met": true,
+        "inference_unit": "base_bundle_id",
+        "comparison": "presence-checklist minus artifact-audit",
+        "interpretation": "Observed 1.0000 with clustered 95% CI [1.0000, 1.0000]; support requires the lower bound to be at least 0.2000."
+      },
+      {
+        "hypothesis_id": "H2",
+        "status": "not_supported",
+        "observed_value": 0,
+        "confidence_interval_95": [
+          0,
+          0.6023646356164747
+        ],
+        "threshold": 0.05,
+        "decision_rule": "upper_bound_at_most_threshold",
+        "point_threshold_met": true,
+        "inference_unit": "base_bundle_id",
+        "comparison": "artifact-audit",
+        "interpretation": "Observed 0.0000 with clustered 95% CI [0.0000, 0.6024]; support requires the upper bound to be at most 0.0500."
+      },
+      {
+        "hypothesis_id": "H3",
+        "status": "not_supported",
+        "observed_value": 1,
+        "confidence_interval_95": [
+          0.3976353643835253,
+          1
+        ],
+        "threshold": 0.9,
+        "decision_rule": "lower_bound_at_least_threshold",
+        "point_threshold_met": true,
+        "inference_unit": "base_bundle_id",
+        "comparison": "artifact-audit",
+        "interpretation": "Observed 1.0000 with clustered 95% CI [0.3976, 1.0000]; support requires the lower bound to be at least 0.9000."
+      },
+      {
+        "hypothesis_id": "H4",
+        "status": "supported",
+        "observed_value": 1,
+        "confidence_interval_95": [
+          1,
+          1
+        ],
+        "threshold": 0.15,
+        "decision_rule": "lower_bound_at_least_threshold",
+        "point_threshold_met": true,
+        "inference_unit": "base_bundle_id",
+        "comparison": "artifact-audit minus always-promote",
+        "interpretation": "Observed 1.0000 with clustered 95% CI [1.0000, 1.0000]; support requires the lower bound to be at least 0.1500."
+      }
+    ],
+    "blocker_count": 49,
+    "blockers": [
+      {
+        "code": "confirmatory_adjudication_provenance_missing",
+        "target_node": "review",
+        "count": 1
+      },
+      {
+        "code": "confirmatory_case_not_held_out",
+        "target_node": "design_experiments",
+        "count": 40
+      },
+      {
+        "code": "confirmatory_evidence_status_ineligible",
+        "target_node": "review",
+        "count": 1
+      },
+      {
+        "code": "confirmatory_freeze_provenance_missing",
+        "target_node": "design_experiments",
+        "count": 1
+      },
+      {
+        "code": "minimum_base_bundle_count_not_met",
+        "target_node": "design_experiments",
+        "count": 1
+      },
+      {
+        "code": "minimum_case_count_not_met",
+        "target_node": "design_experiments",
+        "count": 1
+      },
+      {
+        "code": "post_repair_evidence_missing",
+        "target_node": "run_experiments",
+        "count": 1
+      },
+      {
+        "code": "post_repair_evidence_not_verified",
+        "target_node": "run_experiments",
+        "count": 1
+      },
+      {
+        "code": "provider_evidence_not_paper_eligible",
+        "target_node": "review",
+        "count": 1
+      },
+      {
+        "code": "source_family_analysis_incomplete",
+        "target_node": "design_experiments",
+        "count": 1
+      }
+    ]
+  },
+  "node_strengthening": [
+    {
+      "node": "design_experiments",
+      "priority": "high",
+      "diagnostic_ids": [
+        "promotion_confirmatory:confirmatory_freeze_provenance_missing",
+        "promotion_confirmatory:minimum_case_count_not_met",
+        "promotion_confirmatory:minimum_base_bundle_count_not_met",
+        "promotion_confirmatory:confirmatory_case_not_held_out",
+        "promotion_confirmatory:source_family_analysis_incomplete"
+      ],
+      "problem_summary": "Confirmatory evidence requires a hash-bound paper-scale freeze covering every suite base and case. Confirmatory evaluation requires at least 720 cases. Confirmatory evaluation requires at least 72 base bundles. Every confirmatory case must use the test split. At least three source families with complete family-stratified analysis are required.",
+      "recheck_condition": "Re-run the confirmatory gate and require blocker confirmatory_freeze_provenance_missing to be absent. Re-run the confirmatory gate and require blocker minimum_case_count_not_met to be absent. Re-run the confirmatory gate and require blocker minimum_base_bundle_count_not_met to be absent. Re-run the confirmatory gate and require blocker confirmatory_case_not_held_out to be absent. Re-run the confirmatory gate and require blocker source_family_analysis_incomplete to be absent."
+    },
+    {
+      "node": "review",
+      "priority": "high",
+      "diagnostic_ids": [
+        "promotion_confirmatory:confirmatory_adjudication_provenance_missing",
+        "promotion_confirmatory:confirmatory_evidence_status_ineligible",
+        "promotion_confirmatory:provider_evidence_not_paper_eligible"
+      ],
+      "problem_summary": "Confirmatory evidence requires hash-bound source-suite, double-annotation, adjudicated-label, and mutation-audit provenance. The suite must be external-real, paper-claim-eligible, double-adjudicated, double-mutation-verified, artifact-verified, and declared-stratified. The real-model repetition is verified, but its bound source suite is not eligible for paper claims.",
+      "recheck_condition": "Re-run the confirmatory gate and require blocker confirmatory_adjudication_provenance_missing to be absent. Re-run the confirmatory gate and require blocker confirmatory_evidence_status_ineligible to be absent. Re-run the confirmatory gate and require blocker provider_evidence_not_paper_eligible to be absent."
+    },
+    {
+      "node": "run_experiments",
+      "priority": "high",
+      "diagnostic_ids": [
+        "promotion_confirmatory:post_repair_evidence_missing",
+        "promotion_confirmatory:post_repair_evidence_not_verified"
+      ],
+      "problem_summary": "A hash-bound post-repair recovery manifest is required. Recovery evidence must be valid, hash-bound to the selected suite and predictions, cover every original fault case across all fault families, and report clean-control regressions.",
+      "recheck_condition": "Re-run the confirmatory gate and require blocker post_repair_evidence_missing to be absent. Re-run the confirmatory gate and require blocker post_repair_evidence_not_verified to be absent."
+    }
+  ],
+  "source_artifacts": [
+    {
+      "role": "confirmatory_gate",
+      "ref": "<development-run>/promotion-confirmatory-gate.json",
+      "sha256": "f8d77a8d7cfb98823823ff37264b8787fddfd2ecf945a50e727195f784e26090"
+    },
+    {
+      "role": "corpus_manifest",
+      "ref": "<development-run>/corpus-manifest.json",
+      "sha256": "c2f9157cab0952a0bf6a5331e3ae747ab0c8be613f21e7923481c7d6d09b18fb"
+    },
+    {
+      "role": "node_strengthening_recommendations",
+      "ref": "<development-run>/node-strengthening-recommendations.json",
+      "sha256": "177f0d9fd393e01f6c96f37f9f95ef2fa7a35c5adc010cf3fdc9735613a001b6"
+    },
+    {
+      "role": "predictions",
+      "ref": "<development-run>/predictions.jsonl",
+      "sha256": "d557a4e2f807b76e9e368eb026a01f6c4a1a0d3510537a4f88fca499742d955f"
+    },
+    {
+      "role": "provider_aggregate",
+      "ref": "<development-run>/provider-run-aggregate-manifest.json",
+      "sha256": "67707ef11d76412b873573b523cf7b26b809f8c13864de0123ca993d3cba7e2e"
+    },
+    {
+      "role": "provider_predictions",
+      "ref": "<development-run>/provider-predictions.jsonl",
+      "sha256": "4bc843157a90f4a20c7790afd45aa4e0f9a3e1c73fd68210c8664ad73712ea9f"
+    },
+    {
+      "role": "score_report",
+      "ref": "<development-run>/promotion-score.json",
+      "sha256": "73bd5d620b0c610759659629496a6fb95fa65495540a8bb0d9df7e9918bd4fc8"
+    },
+    {
+      "role": "suite",
+      "ref": "<development-run>/suite.json",
+      "sha256": "768fe182b1ff310d3513692409a0c4b98354c2a13ef9c09872f28408713133e0"
+    },
+    {
+      "role": "system_run_manifest",
+      "ref": "<development-run>/system-run-manifest.json",
+      "sha256": "4891cfd715c1fa413ffd8f702a3935d61ccdb04aacd0b7d9796e821e9d5e750e"
+    }
+  ],
+  "evidence_boundary": "Synthetic development evidence for evaluator debugging and node strengthening only. The source artifacts are local run products bound here by role and SHA-256, not repository-distributed evidence. The real-model repetitions are verified development executions, but the suite is not human-adjudicated or eligible for paper claims. This record is not recovery-verified or eligible for paper claims."
+}

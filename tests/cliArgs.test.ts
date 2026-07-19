@@ -599,7 +599,33 @@ describe("resolveCliAction", () => {
       reasoningEffort: "high",
       systemId: "manuscript-reviewer",
       trialId: "trial-beta",
-      outDir: "outputs/provider-runs/trial-beta"
+      outDir: "outputs/provider-runs/trial-beta",
+      baseUrl: undefined
+    });
+  });
+
+  it("supports a hash-bound local model promotion run", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "outputs/promotion-suite/suite.json",
+      "--provider", "ollama",
+      "--model", "local-model:latest",
+      "--reasoning", "off",
+      "--system", "manuscript-reviewer",
+      "--trial", "trial-local",
+      "--base-url", "http://127.0.0.1:11434",
+      "--out-dir", "outputs/provider-runs/trial-local"
+    ])).toEqual({
+      kind: "governance-benchmark-run-promotion-provider",
+      suitePath: "outputs/promotion-suite/suite.json",
+      provider: "ollama",
+      model: "local-model:latest",
+      reasoningEffort: "off",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-local",
+      outDir: "outputs/provider-runs/trial-local",
+      baseUrl: "http://127.0.0.1:11434"
     });
   });
 
@@ -1314,6 +1340,35 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("Unsupported OpenAI Responses model")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "suite.json",
+      "--provider", "ollama",
+      "--model", "local-model:latest",
+      "--reasoning", "high",
+      "--system", "manuscript-reviewer",
+      "--trial", "trial-alpha",
+      "--out-dir", "outputs/provider-run"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--reasoning off")
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--suite", "suite.json",
+      "--provider", "openai",
+      "--model", "gpt-5.4",
+      "--reasoning", "high",
+      "--system", "manuscript-reviewer",
+      "--trial", "trial-alpha",
+      "--base-url", "http://127.0.0.1:11434",
+      "--out-dir", "outputs/provider-run"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--base-url")
     });
     expect(resolveCliAction([
       "governance-benchmark",

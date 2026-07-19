@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
 import { evaluatePromotionConfirmatoryGate } from "../src/core/benchmark/promotionBenchmarkConfirmatoryGate.js";
 import { exportPromotionDevelopmentEvidence } from "../src/core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
+import { runPromotionBenchmarkProvider } from "../src/core/benchmark/promotionBenchmarkProviderRunner.js";
 import { runPromotionBenchmarkSystems } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { generateSyntheticPromotionCorpus } from "../src/core/benchmark/promotionBenchmarkSyntheticCorpus.js";
 
@@ -67,9 +68,40 @@ describe("promotion development evidence export", () => {
       outputPath: "rejected-evidence.json"
     })).rejects.toThrow("do not cover the gate blockers");
   });
+
+  it("cross-verifies hash-bound real-model repetitions as development-only evidence", async () => {
+    const fixture = await createDevelopmentFlow(true);
+    const result = await exportPromotionDevelopmentEvidence({
+      ...fixture.inputs,
+      outputPath: "development-evidence-real-model.json"
+    });
+
+    expect(result.report).toMatchObject({
+      schema_version: "1.1",
+      paper_claim_eligible: false,
+      evaluation: { prediction_count: 280 },
+      real_model_evaluation: {
+        status: "verified_development_only",
+        trial_count: 3,
+        prediction_count: 120,
+        execution_environment: "local_runtime",
+        execution_receipt_status: "local_runtime_hash_bound",
+        external_empirical_evidence_eligible: false,
+        paper_claim_evidence_eligible: false
+      },
+      confirmatory_gate: {
+        provider_repetition: { status: "verified_receipt_distinct", trial_count: 3 }
+      }
+    });
+    expect(result.report.source_artifacts.map((item) => item.role)).toEqual(expect.arrayContaining([
+      "provider_aggregate",
+      "provider_predictions"
+    ]));
+    expect(result.report.evidence_boundary).toContain("verified development executions");
+  });
 });
 
-async function createDevelopmentFlow(): Promise<{
+async function createDevelopmentFlow(includeProvider = false): Promise<{
   workspace: string;
   inputs: Omit<Parameters<typeof exportPromotionDevelopmentEvidence>[0], "outputPath">;
 }> {
@@ -87,12 +119,45 @@ async function createDevelopmentFlow(): Promise<{
     trialId: "development-trial",
     outDir: "predictions"
   });
+  const providerRunManifestPaths: string[] = [];
+  if (includeProvider) {
+    for (const trialId of ["local-trial-a", "local-trial-b", "local-trial-c"]) {
+      const run = await runPromotionBenchmarkProvider({
+        cwd: workspace,
+        suitePath: suite.suite_path,
+        outDir: `provider-${trialId}`,
+        provider: "ollama_local",
+        model: "local-model:latest",
+        modelArtifactDigest: "a".repeat(64),
+        reasoningEffort: "off",
+        systemId: "provider-review",
+        trialId,
+        evidenceClass: "local_real_model"
+      }, {
+        complete: async () => ({
+          text: JSON.stringify({
+            decision: "needs_review",
+            concerns: [{
+              code: "insufficient_manuscript_evidence",
+              severity: "blocking",
+              evidence_refs: ["manuscript"]
+            }],
+            repair_owners: ["review"]
+          }),
+          model: "local-model:latest",
+          totalDurationNs: 100,
+          usage: { inputTokens: 10, outputTokens: 5, costUsd: 0 }
+        })
+      });
+      providerRunManifestPaths.push(run.manifest_path);
+    }
+  }
   const gate = await evaluatePromotionConfirmatoryGate({
     cwd: workspace,
     suitePath: suite.suite_path,
     predictionsPath: systems.predictions_path,
     systemRunManifestPath: systems.manifest_path,
-    providerRunManifestPaths: [],
+    providerRunManifestPaths,
     systemRoles: {
       ungated: "always-promote",
       checklist: "presence-checklist",

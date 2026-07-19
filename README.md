@@ -766,9 +766,10 @@ Promotion scoring writes per-family system metrics and recomputes every paired c
 
 The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
 
-For a synthetic development run, export a deterministic evidence summary only
+For a synthetic development run, export a development evidence summary only
 after the score, system-run manifest, confirmatory gate, and node recommendations
-have been generated:
+have been generated. When the gate includes a verified three-trial real-model
+aggregate, the exporter also rehashes the aggregate manifest and its predictions:
 
 ```sh
 autolabos governance-benchmark export-promotion-development-evidence \
@@ -784,15 +785,17 @@ autolabos governance-benchmark export-promotion-development-evidence \
 
 The exporter rehashes every input, revalidates the deterministic system run,
 checks suite and score coverage, and requires every unique gate blocker to map
-to the correct node recommendation. It accepts only synthetic,
-paper-ineligible evidence with a blocked confirmatory decision. The summary
-uses logical artifact roles instead of local paths; the source files remain
-local run products and do not become empirical paper evidence by being
-summarized.
+to the correct node recommendation. For a verified real-model development run,
+it also checks the aggregate's source-suite binding, model execution class,
+trial and prediction counts, and aggregate prediction hash. It accepts only
+synthetic, paper-ineligible evidence with a blocked confirmatory decision. The
+summary uses logical artifact roles instead of local paths; real-model execution
+is marked `verified_development_only` and does not become paper evidence by
+being summarized.
 
-### Fresh Provider Execution
+### Fresh Real-Model Execution
 
-Run the manuscript-only comparator through a configured OpenAI Responses API key without manually constructing response files:
+Run the manuscript-only comparator through either the OpenAI Responses API or a local Ollama runtime without manually constructing response files:
 
 ```sh
 autolabos governance-benchmark run-promotion-provider \
@@ -805,9 +808,11 @@ autolabos governance-benchmark run-promotion-provider \
   --out-dir <new-output-dir>
 ```
 
-The command requires a new output directory and an explicit model, reasoning effort, system ID, and trial ID. It hash-binds the opaque prompt pack, saves each provider output before advancing, hashes provider response IDs instead of exposing them, records the resolved model, token usage, cost, latency, failures, and predictions, and withholds predictions after any incomplete or malformed response. Fake-response environment variables are rejected in external-evidence mode. The recorded receipt supports auditing but does not independently verify provider identity.
+For a local Ollama execution, select `--provider ollama`, use `--reasoning off`, and optionally set `--base-url <ollama-url>`. The runner resolves the installed model to its exact artifact digest before any case is evaluated.
 
-Manual prompt export and response import remain useful adapter surfaces, but they do not by themselves establish a fresh external provider run. A completed provider-run manifest marks one trial as external empirical evidence while keeping `independent_trial_requirement_met=false`; the preregistered manuscript-only comparison still requires three independent complete trials.
+The command requires a new output directory and an explicit model, reasoning setting, system ID, and trial ID. It hash-binds the opaque prompt pack, saves each model output before advancing, records the resolved model, token usage, cost, latency, failures, and predictions, and withholds predictions after any incomplete or malformed response. Remote API runs hash provider response IDs instead of exposing them. Local runs bind a self-recorded runtime receipt to the exact model artifact digest, timestamps, duration, token counts, and output hash. Fake-response environment variables are rejected for both real-model paths. Neither receipt type independently proves provider identity or statistical independence.
+
+Manual prompt export and response import remain useful adapter surfaces, but they do not by themselves establish a fresh real-model run. A completed run manifest marks one real-model trial while keeping `independent_trial_requirement_met=false`; the preregistered manuscript-only comparison still requires three complete trials.
 
 After three fresh runs complete against the same suite, system, model, reasoning effort, and prompt protocol, aggregate them with their manifests:
 
@@ -820,7 +825,7 @@ autolabos governance-benchmark aggregate-promotion-provider-runs \
   --out-dir <new-aggregate-output-dir>
 ```
 
-Aggregation accepts exactly three distinct run and trial IDs. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused response receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence.
+Aggregation accepts exactly three distinct run and trial IDs from one provider, execution environment, model, model digest when local, reasoning setting, and prompt protocol. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused execution receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence. Paper claims additionally require a paper-eligible source suite and acceptance by the downstream confirmatory gate.
 
 ### Post-Repair Evidence And Confirmatory Gate
 

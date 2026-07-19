@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "ad7b17bfa652be2c54736ecf0f84ef45b525cf42ba431112f84c86982fad226b"
+          "sha256": "f2d72f77438f90fccd144610fb657b6704a6d73173f764a57cbf4a2e9c2dbda9"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -252,24 +252,39 @@
       ]
     },
     {
-      "id": "real_provider_repetition",
-      "label": "The manuscript-only comparison is backed by three complete hash-bound real-provider trials",
+      "id": "real_model_repetition",
+      "label": "The manuscript-only comparison has three complete hash-bound real-model development trials",
       "target_node": "run_experiments",
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
-          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
+          "path": "docs/research/evidence/promotion-real-model-development-evidence-v1.json",
+          "sha256": "16cffd46d58b74a01410e2122a6fb4d6efb1a1e17750e904a7ede6da6ebe2484",
           "assertions": [
             {
-              "pointer": "/provider_repetition/status",
+              "pointer": "/real_model_evaluation/status",
               "operator": "equals",
-              "expected": "verified_receipt_distinct"
+              "expected": "verified_development_only"
             },
             {
-              "pointer": "/provider_repetition/trial_count",
+              "pointer": "/real_model_evaluation/trial_count",
               "operator": "gte",
               "expected": 3
+            },
+            {
+              "pointer": "/real_model_evaluation/prediction_count",
+              "operator": "gte",
+              "expected": 120
+            },
+            {
+              "pointer": "/real_model_evaluation/paper_claim_evidence_eligible",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/confirmatory_gate/provider_repetition/status",
+              "operator": "equals",
+              "expected": "verified_receipt_distinct"
             }
           ]
         }
@@ -361,7 +376,7 @@
       "evidence": [
         {
           "path": "papers/promotion-governance/submission-status.json",
-          "sha256": "daf52d4dee699b8bd85954222a34670d52b45372d3a14ed0f2985c45c4e3983e",
+          "sha256": "5af6f422e63ed5bb3549ae1ef2b573d8e4977f3a95bbcd0d5335f737b2d21a96",
           "assertions": [
             {
               "pointer": "/paper_ready",
@@ -382,11 +397,11 @@
         },
         {
           "path": "papers/promotion-governance/manuscript.tex",
-          "sha256": "93d6dff1f2a7f036ca5535b2c3546a222370258f8569fc5e91930361701a95fb"
+          "sha256": "1519db1a12ddd44f385d9671f2041b13d6a822d58c5aa7a1d37b3180b4464cd6"
         },
         {
           "path": "papers/promotion-governance/manuscript.pdf",
-          "sha256": "76cfe51a3c11c1a78666c0052fac79c77e2bd101d62857e96d7c255eb6ef3c48"
+          "sha256": "80ac0b197e557cb550f830db6b9793381d28ff0b5bb4ca422c95b8e2cb34d6b8"
         }
       ]
     },

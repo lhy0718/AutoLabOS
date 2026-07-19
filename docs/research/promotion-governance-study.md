@@ -127,20 +127,25 @@ source does not enumerate case identifiers or encode case-specific metrics.
   `paper/paper_readiness.json`; each must be a regular, parseable JSON file.
 - **Manuscript-only reviewer:** reviews the paper-facing text without run
   artifacts. Results from this condition are reportable only when produced by
-  a real provider under a preserved protocol; Codex mock runs remain smoke
-  evidence. The fresh provider runner hash-binds its prompt pack, requires a
-  new output root, preserves outputs, hashed response identifiers, usage,
-  cost, latency, failures, and predictions, and fails closed on partial or
-  malformed responses. Provider-run manifest schema 1.1 also binds the exact
-  source-suite manifest and closed-snapshot hashes, evidence class, and
-  source-suite paper-claim eligibility.
-  It records external provider execution and paper-claim evidence eligibility
-  as separate fields, so a real provider run over a development suite remains
+  a real model under a preserved protocol; Codex mock runs remain smoke
+  evidence. The runner supports remote API and local Ollama execution. It
+  hash-binds its prompt pack, requires a new output root, preserves outputs,
+  execution receipts, usage, cost, latency, failures, and predictions, and
+  fails closed on partial or malformed responses. Provider-run manifest
+  schema 1.2 also binds the exact source-suite manifest and closed-snapshot
+  hashes, evidence class, execution environment, receipt status, and
+  source-suite paper-claim eligibility. Remote runs hash provider response
+  identifiers. Local runs bind a self-recorded receipt to the exact model
+  artifact digest, timestamps, runtime duration, token counts, and output
+  hash. The receipt distinction is explicit because local runtime records do
+  not establish external provider identity.
+  It records real-model execution and paper-claim evidence eligibility as
+  separate fields, so a real-model run over a development suite remains
   ineligible for paper claims. One completed runner invocation remains one
   trial and does not satisfy the three-trial requirement by itself. The three-trial
   aggregate is admissible only when exactly three completed manifests share
   the suite, system, model, reasoning effort, protocol, and prompt hashes;
-  expose distinct run, trial, and hashed response receipt identifiers; retain
+  expose distinct run, trial, and hashed execution receipt identifiers; retain
   complete case coverage; and pass artifact rehashing against the current
   suite. The aggregate repeats the source-suite binding, and the confirmatory
   gate requires its explicit paper-claim eligibility in addition to complete
@@ -258,7 +263,7 @@ recorded in
 - Treat `execution_provenance_status=artifact_verified` as verification of the
   declared artifact record, not proof that execution occurred or that operators
   were independent.
-- Report deterministic replay, synthetic mutation, real provider, and live-run
+- Report deterministic replay, synthetic mutation, real-model, and live-run
   evidence as different evidence classes.
 - Do not claim human validation until at least two independent reviewers have
   adjudicated the held-out labels.
@@ -787,11 +792,16 @@ proxy for evidence validity. Missing evidence returns
 `run_experiments`, `analyze_results`, or `review` as the recheck target. The
 gate never returns `paper_ready=true`.
 
-This is an implemented evaluation contract, not a completed experiment. At
-the current checkpoint, no human normalization labels have been admitted and
-no three-run external provider aggregate has been executed for a paper-eligible
-suite. Therefore no confirmatory metrics, hypothesis verdicts, or paper-scale
-empirical claims exist yet.
+This is an implemented evaluation contract, not a completed paper-scale
+experiment. A three-trial local real-model development run now covers all 40
+synthetic cases with distinct hash-bound runtime receipts. The reviewer returned
+`needs_review` for every case: false promotion was zero, but clean-case promotion,
+blocker F1, and repair-owner exact match were all zero. This is useful instrument
+evidence that blanket deferral must not be mistaken for review quality. The
+tracked receipt remains `verified_development_only`; no human normalization
+labels have been admitted and no three-run aggregate has been executed for a
+paper-eligible suite. Therefore no confirmatory metrics, hypothesis verdicts,
+or paper-scale empirical claims exist yet.
 
 ### Long-Horizon Completion Contract
 

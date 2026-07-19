@@ -821,6 +821,40 @@ describe("OllamaClient", () => {
     expect(result.model).toBe("test-model");
   });
 
+  it("chat forwards structured output and thinking controls", async () => {
+    delete process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE;
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      model: "local-model:latest",
+      message: { role: "assistant", content: "{}" },
+      total_duration: 100,
+      prompt_eval_count: 7,
+      eval_count: 2
+    }), { status: 200, headers: { "Content-Type": "application/json" } }));
+
+    try {
+      const client = new OllamaClient(DEFAULT_OLLAMA_BASE_URL);
+      await client.chat({
+        model: "local-model:latest",
+        messages: [{ role: "user", content: "return json" }],
+        format: "json",
+        think: false,
+        options: { temperature: 0 }
+      });
+
+      expect(fetchMock).toHaveBeenCalledOnce();
+      const request = fetchMock.mock.calls[0]?.[1];
+      expect(JSON.parse(String(request?.body))).toMatchObject({
+        model: "local-model:latest",
+        stream: false,
+        format: "json",
+        think: false,
+        options: { temperature: 0 }
+      });
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it("chatStream returns fake response when env var is set", async () => {
     process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = "streamed fake output";
     const client = new OllamaClient(DEFAULT_OLLAMA_BASE_URL);

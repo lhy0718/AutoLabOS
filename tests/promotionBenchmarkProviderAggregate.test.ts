@@ -32,12 +32,14 @@ describe("promotion provider run aggregation", () => {
     });
 
     expect(result.manifest).toMatchObject({
-      schema_version: "1.1",
+      schema_version: "1.2",
       status: "completed",
       evidence_class: "external_real_provider",
-      provider_receipt_status: "recorded_not_independently_verified",
+      execution_environment: "remote_api",
+      execution_receipt_status: "recorded_not_independently_verified",
       provider_identity_independently_verified: false,
       external_empirical_evidence_eligible: true,
+      real_model_empirical_evidence_eligible: true,
       paper_claim_evidence_eligible: false,
       independent_trial_requirement_met: true,
       source_suite: {
@@ -58,7 +60,7 @@ describe("promotion provider run aggregation", () => {
       independence_basis: {
         distinct_run_ids: true,
         distinct_trial_ids: true,
-        distinct_response_receipts: true,
+        distinct_execution_receipts: true,
         identical_prompt_pack: true
       }
     });
@@ -84,6 +86,36 @@ describe("promotion provider run aggregation", () => {
       runManifestPaths: manifests,
       outDir: "aggregate"
     })).rejects.toThrow("output already exists");
+  });
+
+  it("aggregates three local real-model trials with one exact model digest", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const manifests = await createLocalProviderRuns(workspace, suitePath);
+
+    const result = await aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "local-aggregate"
+    });
+
+    expect(result.manifest).toMatchObject({
+      schema_version: "1.2",
+      provider: "ollama_local",
+      evidence_class: "local_real_model",
+      execution_environment: "local_runtime",
+      execution_receipt_status: "local_runtime_hash_bound",
+      external_empirical_evidence_eligible: false,
+      real_model_empirical_evidence_eligible: true,
+      paper_claim_evidence_eligible: false,
+      trial_count: 3,
+      model_artifact_digest: `sha256:${"c".repeat(64)}`,
+      independence_basis: {
+        distinct_execution_receipts: true,
+        caveat: expect.stringContaining("local runtime receipts")
+      }
+    });
   });
 
   it("rejects missing or duplicate trial manifests before creating output", async () => {
@@ -165,7 +197,7 @@ describe("promotion provider run aggregation", () => {
     })).rejects.toThrow("Promotion benchmark suite validation failed: artifact_hash_mismatch");
   });
 
-  it("rejects reused response receipts across otherwise distinct trials", async () => {
+  it("rejects reused execution receipts across otherwise distinct trials", async () => {
     const workspace = await createWorkspace();
     const suitePath = await createSuite(workspace);
     const manifests = await createProviderRuns(
@@ -181,7 +213,7 @@ describe("promotion provider run aggregation", () => {
       suitePath,
       runManifestPaths: manifests,
       outDir: "reused-receipts-aggregate"
-    })).rejects.toThrow("distinct response receipts");
+    })).rejects.toThrow("distinct execution receipts");
     await expect(stat(path.join(workspace, "reused-receipts-aggregate"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
@@ -269,6 +301,42 @@ async function createProviderRuns(
       systemId: "manuscript-reviewer",
       trialId,
       evidenceClass: "external_real_provider"
+    }, client);
+    manifests.push(result.manifest_path);
+  }
+  return manifests;
+}
+
+async function createLocalProviderRuns(workspace: string, suitePath: string): Promise<string[]> {
+  const manifests: string[] = [];
+  for (const [index, trialId] of ["local-a", "local-b", "local-c"].entries()) {
+    const client: PromotionProviderClient = {
+      complete: async () => ({
+        text: JSON.stringify({
+          decision: "needs_review",
+          concerns: [{
+            code: "manuscript_evidence_uncertain",
+            severity: "warning",
+            evidence_refs: ["manuscript"]
+          }],
+          repair_owners: ["review"]
+        }),
+        model: "local-model:latest",
+        totalDurationNs: 1_000_000 + index,
+        usage: { inputTokens: 11, outputTokens: 4, costUsd: 0 }
+      })
+    };
+    const result = await runPromotionBenchmarkProvider({
+      cwd: workspace,
+      suitePath,
+      outDir: `local-provider-${index + 1}`,
+      provider: "ollama_local",
+      model: "local-model:latest",
+      modelArtifactDigest: `sha256:${"c".repeat(64)}`,
+      reasoningEffort: "off",
+      systemId: "manuscript-reviewer",
+      trialId,
+      evidenceClass: "local_real_model"
     }, client);
     manifests.push(result.manifest_path);
   }

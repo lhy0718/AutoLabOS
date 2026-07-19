@@ -148,8 +148,10 @@ on clean research bundles?
 - All required fault families and clean positive, null, and negative controls.
 - One post-repair rerun for every original fault case, covering every fault
   family without selective case omission.
-- Three independent real-provider runs per manuscript-only test case when that
-  baseline supports an external claim.
+- Three complete real-model runs per manuscript-only test case when that
+  baseline supports an empirical claim. Remote API runs require provider
+  response receipts; local runs require an exact model artifact digest and
+  hash-bound runtime receipts.
 - Paired bootstrap confidence intervals over base bundles.
 - Raw counts and effect sizes reported even when significance tests are
   inconclusive.
@@ -187,7 +189,7 @@ on clean research bundles?
 - One development pilot for schema and mutation validation.
 - One repair pass after the development pilot.
 - One frozen confirmatory test pass.
-- Up to three real-provider repetitions for the manuscript-only condition.
+- Up to three real-model repetitions for the manuscript-only condition.
 - One independent metric recomputation from preserved raw predictions.
 
 ## Paper Ceiling If Evidence Remains Weak
@@ -223,7 +225,7 @@ on clean research bundles?
   declared auditors separate from promotion-label adjudicators.
 - Ungated, checklist, and full-policy conditions are executed on the held-out
   set.
-- Manuscript-only claims rely on real provider runs rather than mocks.
+- Manuscript-only claims rely on complete real-model runs rather than mocks.
 - Results include false promotion and clean-case error, not safety recall alone.
 - Concern-acceptance conflicts and repair outcomes are traceable to raw
   predictions.

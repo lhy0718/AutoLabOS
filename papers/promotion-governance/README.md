@@ -18,7 +18,7 @@ Current blockers:
 - no completed canonical curation and independent verification,
 - no double-adjudicated held-out labels,
 - no independent mutation-isolation audit,
-- no three-trial real-provider manuscript-only baseline,
+- no three-trial paper-eligible real-model manuscript-only baseline,
 - no post-repair recovery evaluation,
 - 12 citation-bearing claims have hash-bound full-text evidence candidates but
   remain independently unchecked in Refgate,

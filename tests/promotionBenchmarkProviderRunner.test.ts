@@ -13,10 +13,13 @@ import {
 
 const tempDirs: string[] = [];
 const originalFakeResponse = process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE;
+const originalFakeOllamaResponse = process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE;
 
 afterEach(async () => {
   if (originalFakeResponse === undefined) delete process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE;
   else process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE = originalFakeResponse;
+  if (originalFakeOllamaResponse === undefined) delete process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE;
+  else process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = originalFakeOllamaResponse;
   vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
@@ -52,12 +55,14 @@ describe("promotion benchmark provider runner", () => {
     const result = await runPromotionBenchmarkProvider(providerInput(workspace, suitePath, "provider-run"), client);
 
     expect(result.manifest).toMatchObject({
-      schema_version: "1.1",
+      schema_version: "1.2",
       status: "completed",
       evidence_class: "external_real_provider",
-      provider_receipt_status: "recorded_not_independently_verified",
+      execution_environment: "remote_api",
+      execution_receipt_status: "recorded_not_independently_verified",
       provider_identity_independently_verified: false,
       external_empirical_evidence_eligible: true,
+      real_model_empirical_evidence_eligible: true,
       paper_claim_evidence_eligible: false,
       independent_trial_requirement_met: false,
       source_suite: {
@@ -146,7 +151,7 @@ describe("promotion benchmark provider runner", () => {
     });
   });
 
-  it("rejects fake response environments for external evidence before creating output", async () => {
+  it("rejects fake response environments for real-model evidence before creating output", async () => {
     const workspace = await createWorkspace();
     const suitePath = await createSuite(workspace);
     process.env.AUTOLABOS_FAKE_OPENAI_RESPONSE = "{}";
@@ -158,6 +163,85 @@ describe("promotion benchmark provider runner", () => {
       .rejects.toThrow("rejects fake response environment");
     expect(client.complete).not.toHaveBeenCalled();
     await expect(stat(path.join(workspace, "fake-run"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("records a hash-bound local model run without claiming external provider identity", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const client: PromotionProviderClient = {
+      complete: async () => ({
+        text: JSON.stringify({ decision: "promote", concerns: [], repair_owners: [] }),
+        model: "local-model:latest",
+        totalDurationNs: 1_000_000,
+        usage: { inputTokens: 12, outputTokens: 4, costUsd: 0 }
+      })
+    };
+
+    const result = await runPromotionBenchmarkProvider({
+      cwd: workspace,
+      suitePath,
+      outDir: "local-run",
+      provider: "ollama_local",
+      model: "local-model:latest",
+      modelArtifactDigest: `sha256:${"a".repeat(64)}`,
+      reasoningEffort: "off",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-local",
+      evidenceClass: "local_real_model"
+    }, client);
+
+    expect(result.manifest).toMatchObject({
+      schema_version: "1.2",
+      provider: "ollama_local",
+      evidence_class: "local_real_model",
+      execution_environment: "local_runtime",
+      execution_receipt_status: "local_runtime_hash_bound",
+      external_empirical_evidence_eligible: false,
+      real_model_empirical_evidence_eligible: true,
+      paper_claim_evidence_eligible: false,
+      model_artifact_digest: `sha256:${"a".repeat(64)}`
+    });
+    const outputs = (await readFile(path.join(workspace, "local-run", "provider-outputs.jsonl"), "utf8"))
+      .trim().split("\n").map((line) => JSON.parse(line));
+    expect(outputs).toHaveLength(2);
+    expect(outputs[0]).toMatchObject({
+      execution_receipt_kind: "local_runtime_record",
+      execution_receipt_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+      model_artifact_digest: `sha256:${"a".repeat(64)}`
+    });
+  });
+
+  it("rejects fake Ollama responses and missing local runtime provenance", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE = "{}";
+    const localInput = {
+      cwd: workspace,
+      suitePath,
+      outDir: "fake-local-run",
+      provider: "ollama_local" as const,
+      model: "local-model:latest",
+      modelArtifactDigest: `sha256:${"b".repeat(64)}`,
+      reasoningEffort: "off",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-local",
+      evidenceClass: "local_real_model" as const
+    };
+    const client: PromotionProviderClient = {
+      complete: vi.fn(async () => ({
+        text: JSON.stringify({ decision: "promote", concerns: [], repair_owners: [] }),
+        model: "local-model:latest",
+        usage: { inputTokens: 1, outputTokens: 1, costUsd: 0 }
+      }))
+    };
+
+    await expect(runPromotionBenchmarkProvider(localInput, client))
+      .rejects.toThrow("rejects fake response environment");
+    expect(client.complete).not.toHaveBeenCalled();
+    delete process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE;
+
+    await expect(runPromotionBenchmarkProvider({ ...localInput, outDir: "missing-local-duration" }, client))
+      .rejects.toThrow("runtime duration is missing");
   });
 
   it("rejects a source suite outside the provider workspace", async () => {

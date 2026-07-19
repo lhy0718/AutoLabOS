@@ -18,6 +18,9 @@ import {
 } from "./promotionBenchmarkPromptPack.js";
 import type {
   PromotionProviderRunManifest,
+  PromotionProviderName,
+  PromotionProviderEvidenceClass,
+  PromotionExecutionEnvironment,
   PromotionProviderSourceSuiteBinding
 } from "./promotionBenchmarkProviderRunner.js";
 
@@ -31,15 +34,17 @@ export interface AggregatePromotionProviderRunsInput {
 }
 
 export interface PromotionProviderAggregateManifest {
-  schema_version: "1.1";
+  schema_version: "1.2";
   aggregate_id: string;
   status: "completed";
   protocol: "manuscript-only-v1";
-  provider: "openai_responses_api";
-  evidence_class: "external_real_provider";
-  provider_receipt_status: "recorded_not_independently_verified";
+  provider: PromotionProviderName;
+  evidence_class: Exclude<PromotionProviderEvidenceClass, "test_fixture">;
+  execution_environment: Exclude<PromotionExecutionEnvironment, "test_fixture">;
+  execution_receipt_status: "recorded_not_independently_verified" | "local_runtime_hash_bound";
   provider_identity_independently_verified: false;
-  external_empirical_evidence_eligible: true;
+  external_empirical_evidence_eligible: boolean;
+  real_model_empirical_evidence_eligible: boolean;
   paper_claim_evidence_eligible: boolean;
   independent_trial_requirement_met: true;
   evidence_boundary: string;
@@ -47,7 +52,7 @@ export interface PromotionProviderAggregateManifest {
     required_trial_count: 3;
     distinct_run_ids: true;
     distinct_trial_ids: true;
-    distinct_response_receipts: true;
+    distinct_execution_receipts: true;
     identical_prompt_pack: true;
     caveat: string;
   };
@@ -58,6 +63,7 @@ export interface PromotionProviderAggregateManifest {
   system_id: string;
   requested_model: string;
   resolved_model: string;
+  model_artifact_digest: string | null;
   reasoning_effort: string;
   generated_at: string;
   case_count: number;
@@ -101,7 +107,7 @@ interface ValidatedRun {
   manifestPath: string;
   manifestSha256: string;
   predictions: PromotionBenchmarkPrediction[];
-  responseReceiptHashes: string[];
+  executionReceiptHashes: string[];
   resolvedModel: string;
 }
 
@@ -163,9 +169,13 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     if (manifest.suite_id !== reference.suite_id
         || manifest.system_id !== reference.system_id
         || manifest.requested_model !== reference.requested_model
+        || manifest.model_artifact_digest !== reference.model_artifact_digest
         || manifest.reasoning_effort !== reference.reasoning_effort
         || manifest.protocol !== reference.protocol
         || manifest.provider !== reference.provider
+        || manifest.evidence_class !== reference.evidence_class
+        || manifest.execution_environment !== reference.execution_environment
+        || manifest.execution_receipt_status !== reference.execution_receipt_status
         || manifest.request_count !== reference.request_count
         || manifest.prompt_pack.requests_sha256 !== reference.prompt_pack.requests_sha256
         || manifest.prompt_pack.private_map_sha256 !== reference.prompt_pack.private_map_sha256
@@ -182,9 +192,9 @@ export async function aggregatePromotionBenchmarkProviderRuns(
   if (new Set(trialIds).size !== REQUIRED_TRIAL_COUNT) {
     throw new Error("Promotion provider aggregation requires three distinct trial_ids.");
   }
-  const responseReceiptHashes = validatedRuns.flatMap((run) => run.responseReceiptHashes);
-  if (new Set(responseReceiptHashes).size !== responseReceiptHashes.length) {
-    throw new Error("Promotion provider aggregation requires distinct response receipts across trials.");
+  const executionReceiptHashes = validatedRuns.flatMap((run) => run.executionReceiptHashes);
+  if (new Set(executionReceiptHashes).size !== executionReceiptHashes.length) {
+    throw new Error("Promotion provider aggregation requires distinct execution receipts across trials.");
   }
 
   const sortedRuns = [...validatedRuns].sort((left, right) =>
@@ -215,26 +225,30 @@ export async function aggregatePromotionBenchmarkProviderRuns(
   const predictionsPath = path.join(outDir, "predictions.jsonl");
   const manifestPath = path.join(outDir, "provider-run-aggregate-manifest.json");
   const manifest: PromotionProviderAggregateManifest = {
-    schema_version: "1.1",
+    schema_version: "1.2",
     aggregate_id: aggregateId,
     status: "completed",
     protocol: "manuscript-only-v1",
-    provider: "openai_responses_api",
-    evidence_class: "external_real_provider",
-    provider_receipt_status: "recorded_not_independently_verified",
+    provider: reference.provider,
+    evidence_class: reference.evidence_class as Exclude<PromotionProviderEvidenceClass, "test_fixture">,
+    execution_environment: reference.execution_environment as Exclude<PromotionExecutionEnvironment, "test_fixture">,
+    execution_receipt_status: reference.execution_receipt_status as PromotionProviderAggregateManifest["execution_receipt_status"],
     provider_identity_independently_verified: false,
-    external_empirical_evidence_eligible: true,
+    external_empirical_evidence_eligible: reference.external_empirical_evidence_eligible,
+    real_model_empirical_evidence_eligible: true,
     paper_claim_evidence_eligible: sourceSuite.paper_claim_eligible
       && validatedRuns.every((run) => run.manifest.paper_claim_evidence_eligible),
     independent_trial_requirement_met: true,
-    evidence_boundary: "This aggregate verifies three complete hash-bound provider executions. It is paper-claim evidence only when the bound source suite is paper-claim eligible and the downstream confirmatory gate accepts the complete comparison and recovery evidence.",
+    evidence_boundary: "This aggregate verifies three complete hash-bound real-model executions and distinguishes remote provider receipts from self-recorded local runtime receipts. It is paper-claim evidence only when the bound source suite is paper-claim eligible and the downstream confirmatory gate accepts the complete comparison and recovery evidence.",
     independence_basis: {
       required_trial_count: 3,
       distinct_run_ids: true,
       distinct_trial_ids: true,
-      distinct_response_receipts: true,
+      distinct_execution_receipts: true,
       identical_prompt_pack: true,
-      caveat: "Distinct provider receipts and trial identifiers do not independently verify provider identity or statistical independence."
+      caveat: reference.provider === "ollama_local"
+        ? "Distinct local runtime receipts prove separate hash-bound executions, not external provider identity or statistical independence."
+        : "Distinct provider receipts and trial identifiers do not independently verify provider identity or statistical independence."
     },
     suite_id: reference.suite_id,
     suite_path: portableRef(cwd, suitePath),
@@ -243,6 +257,7 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     system_id: reference.system_id,
     requested_model: reference.requested_model,
     resolved_model: referenceRun.resolvedModel,
+    model_artifact_digest: reference.model_artifact_digest,
     reasoning_effort: reference.reasoning_effort,
     generated_at: new Date().toISOString(),
     case_count: loaded.suite.cases.length,
@@ -394,7 +409,7 @@ async function validateRun(input: {
     manifestPath: input.manifestPath,
     manifestSha256: sha256(manifestText),
     predictions,
-    responseReceiptHashes: outputs.map((output) => output.responseReceiptHash),
+    executionReceiptHashes: outputs.map((output) => output.executionReceiptHash),
     resolvedModel: outputs[0].resolvedModel
   };
 }
@@ -454,25 +469,24 @@ async function validateRequestMap(input: {
 }
 
 function parseCompletedRunManifest(value: unknown, context: string): PromotionProviderRunManifest {
-  if (!isRecord(value) || value.schema_version !== "1.1" || value.status !== "completed"
-      || value.protocol !== "manuscript-only-v1" || value.provider !== "openai_responses_api"
-      || value.evidence_class !== "external_real_provider"
-      || value.provider_receipt_status !== "recorded_not_independently_verified"
+  if (!isRecord(value) || value.schema_version !== "1.2" || value.status !== "completed"
+      || value.protocol !== "manuscript-only-v1" || !validRealProviderContract(value)
       || value.provider_identity_independently_verified !== false
-      || value.external_empirical_evidence_eligible !== true
+      || value.real_model_empirical_evidence_eligible !== true
       || typeof value.paper_claim_evidence_eligible !== "boolean"
       || value.independent_trial_requirement_met !== false
       || !nonEmptyString(value.evidence_boundary) || !isSourceSuiteBinding(value.source_suite)
       || !portableIdentifier(value.run_id) || !portableIdentifier(value.suite_id)
       || !portableIdentifier(value.system_id) || !portableIdentifier(value.trial_id)
       || !nonEmptyString(value.requested_model) || !nonEmptyString(value.reasoning_effort)
+      || (value.model_artifact_digest !== null && !validModelArtifactDigest(value.model_artifact_digest))
       || !validTimestamp(value.started_at) || !validTimestamp(value.completed_at)
       || Date.parse(value.completed_at) < Date.parse(value.started_at)
       || !positiveInteger(value.request_count)
       || value.completed_response_count !== value.request_count || value.failed_response_count !== 0
       || value.failure !== null || !isUsage(value.usage)
       || !isPromptPack(value.prompt_pack) || !isCompletedArtifacts(value.artifacts)) {
-    throw new Error(`Invalid completed external provider run manifest: ${context}`);
+    throw new Error(`Invalid completed real-model provider run manifest: ${context}`);
   }
   return value as unknown as PromotionProviderRunManifest;
 }
@@ -500,7 +514,7 @@ function sameSourceSuiteBinding(
 
 function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifest): Array<{
   requestId: string;
-  responseReceiptHash: string;
+  executionReceiptHash: string;
   resolvedModel: string;
   inputTokens: number;
   outputTokens: number;
@@ -515,8 +529,10 @@ function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifes
       "provider",
       "requested_model",
       "resolved_model",
+      "model_artifact_digest",
       "reasoning_effort",
-      "response_id_sha256",
+      "execution_receipt_kind",
+      "execution_receipt_sha256",
       "output_text",
       "output_text_sha256",
       "usage",
@@ -525,7 +541,9 @@ function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifes
     if (!isRecord(value) || value.schema_version !== "1.0" || !nonEmptyString(value.request_id)
         || value.provider !== manifest.provider || value.requested_model !== manifest.requested_model
         || !nonEmptyString(value.resolved_model) || value.reasoning_effort !== manifest.reasoning_effort
-        || !isSha256(value.response_id_sha256) || !nonEmptyString(value.output_text)
+        || value.model_artifact_digest !== manifest.model_artifact_digest
+        || value.execution_receipt_kind !== expectedReceiptKind(manifest.provider)
+        || !isSha256(value.execution_receipt_sha256) || !nonEmptyString(value.output_text)
         || !isSha256(value.output_text_sha256) || sha256(value.output_text) !== value.output_text_sha256
         || !isRecord(value.usage) || !nonNegativeInteger(value.usage.inputTokens)
         || !nonNegativeInteger(value.usage.outputTokens) || !nonNegativeFinite(value.usage.costUsd)
@@ -536,7 +554,7 @@ function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifes
     const response = parseStrictOutputText(value.request_id, value.output_text, value.latency_ms, value.usage.costUsd);
     return {
       requestId: value.request_id,
-      responseReceiptHash: value.response_id_sha256,
+      executionReceiptHash: value.execution_receipt_sha256,
       resolvedModel: value.resolved_model,
       inputTokens: value.usage.inputTokens,
       outputTokens: value.usage.outputTokens,
@@ -544,6 +562,28 @@ function parseProviderOutputs(raw: string, manifest: PromotionProviderRunManifes
       response
     };
   });
+}
+
+function validRealProviderContract(value: Record<string, unknown>): boolean {
+  if (value.provider === "openai_responses_api") {
+    return value.evidence_class === "external_real_provider"
+      && value.execution_environment === "remote_api"
+      && value.execution_receipt_status === "recorded_not_independently_verified"
+      && value.external_empirical_evidence_eligible === true
+      && value.model_artifact_digest === null;
+  }
+  if (value.provider === "ollama_local") {
+    return value.evidence_class === "local_real_model"
+      && value.execution_environment === "local_runtime"
+      && value.execution_receipt_status === "local_runtime_hash_bound"
+      && value.external_empirical_evidence_eligible === false
+      && validModelArtifactDigest(value.model_artifact_digest);
+  }
+  return false;
+}
+
+function expectedReceiptKind(provider: PromotionProviderName): "provider_response_id" | "local_runtime_record" {
+  return provider === "ollama_local" ? "local_runtime_record" : "provider_response_id";
 }
 
 function parseProviderResponses(raw: string): PromotionProviderResponse[] {
@@ -785,6 +825,10 @@ function nonEmptyString(value: unknown): value is string {
 
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function validModelArtifactDigest(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sha256:)?[a-f0-9]{12,64}$/u.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -142,13 +142,16 @@ import {
 } from "../core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
+import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
 
 export interface RunPromotionProviderCliInput {
   cwd: string;
   suitePath: string;
-  provider: "openai";
+  provider: "openai" | "ollama";
   model: string;
   reasoningEffort: string;
+  baseUrl?: string;
   systemId: string;
   trialId: string;
   outDir: string;
@@ -288,6 +291,25 @@ export async function runPromotionBenchmarkSystemsCli(
 export async function runPromotionProviderCli(
   input: RunPromotionProviderCliInput
 ): Promise<void> {
+  const result = input.provider === "ollama"
+    ? await runOllamaPromotionProvider(input)
+    : await runOpenAiPromotionProvider(input);
+  process.stdout.write(
+    [
+      `Promotion provider run completed: ${result.manifest.run_id}`,
+      `Suite: ${result.manifest.suite_id}`,
+      `Responses: ${result.manifest.completed_response_count}/${result.manifest.request_count}`,
+      `Provider: ${result.manifest.provider}`,
+      `Execution environment: ${result.manifest.execution_environment}`,
+      `Cost USD: ${result.manifest.usage.cost_usd.toFixed(6)}`,
+      `Paper-claim evidence eligible: ${result.manifest.paper_claim_evidence_eligible}`,
+      `Predictions: ${result.predictions_path}`,
+      `Manifest: ${result.manifest_path}`
+    ].join("\n") + "\n"
+  );
+}
+
+async function runOpenAiPromotionProvider(input: RunPromotionProviderCliInput) {
   const apiKey = await resolveOpenAiApiKey(input.cwd);
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is required for an external promotion provider run.");
@@ -296,7 +318,7 @@ export async function runPromotionProviderCli(
     model: input.model,
     reasoningEffort: input.reasoningEffort
   });
-  const result = await runPromotionBenchmarkProvider({
+  return runPromotionBenchmarkProvider({
     cwd: input.cwd,
     suitePath: input.suitePath,
     outDir: input.outDir,
@@ -313,17 +335,48 @@ export async function runPromotionProviderCli(
       reasoningEffort: request.reasoningEffort
     })
   });
-  process.stdout.write(
-    [
-      `Promotion provider run completed: ${result.manifest.run_id}`,
-      `Suite: ${result.manifest.suite_id}`,
-      `Responses: ${result.manifest.completed_response_count}/${result.manifest.request_count}`,
-      `Cost USD: ${result.manifest.usage.cost_usd.toFixed(6)}`,
-      `Paper-claim evidence eligible: ${result.manifest.paper_claim_evidence_eligible}`,
-      `Predictions: ${result.predictions_path}`,
-      `Manifest: ${result.manifest_path}`
-    ].join("\n") + "\n"
-  );
+}
+
+async function runOllamaPromotionProvider(input: RunPromotionProviderCliInput) {
+  const client = new OllamaClient(input.baseUrl || DEFAULT_OLLAMA_BASE_URL);
+  const models = await client.listModels();
+  const installed = models.find((model) =>
+    model.name === input.model || model.name === `${input.model}:latest`);
+  if (!installed?.digest) {
+    throw new Error(`Ollama model is unavailable or has no digest: ${input.model}.`);
+  }
+  return runPromotionBenchmarkProvider({
+    cwd: input.cwd,
+    suitePath: input.suitePath,
+    outDir: input.outDir,
+    provider: "ollama_local",
+    model: input.model,
+    modelArtifactDigest: installed.digest,
+    reasoningEffort: input.reasoningEffort,
+    systemId: input.systemId,
+    trialId: input.trialId,
+    evidenceClass: "local_real_model"
+  }, {
+    complete: async (request) => {
+      const completion = await client.chat({
+        model: request.model,
+        messages: [{ role: "user", content: request.prompt }],
+        format: "json",
+        think: false,
+        options: { temperature: 0 }
+      });
+      return {
+        text: completion.text,
+        model: completion.model,
+        totalDurationNs: completion.totalDuration,
+        usage: {
+          inputTokens: completion.promptEvalCount,
+          outputTokens: completion.evalCount,
+          costUsd: 0
+        }
+      };
+    }
+  });
 }
 
 export async function runPromotionProviderAggregationCli(

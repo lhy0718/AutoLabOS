@@ -33,7 +33,7 @@ the audit passed all development cases; an advisory-only ablation still
 accepted every defective case despite detecting its concerns. These results
 are instrument validation, not empirical evidence for general effectiveness:
 the suite is synthetic, unreviewed, and explicitly ineligible for paper-level
-claims. We specify the independently adjudicated, real-provider experiment
+claims. We specify the independently adjudicated, real-model experiment
 needed to test the central hypothesis.
 \end{abstract}
 
@@ -218,10 +218,12 @@ reviewers must adjudicate held-out promotion labels, and separate reviewers
 must verify mutation isolation without access to system predictions.
 Pseudonymous IDs enforce record-level role separation but do not prove
 real-world identity, so an external assignment log is also required. The
-manuscript-only condition requires three preserved real-provider trials per
-case. At least one post-repair rerun per fault family must measure recovery and
-regression. Raw requests, responses, decisions, failures, manifests, hashes,
-latency, and cost must be retained.
+manuscript-only condition requires three preserved real-model trials per case.
+Remote API trials retain hashed provider receipts; local trials retain an exact
+model-artifact digest and hash-bound runtime receipts. At least one post-repair
+rerun per fault family must measure recovery and regression. Raw requests,
+responses, decisions, failures, manifests, hashes, latency, and cost must be
+retained.
 
 The central hypothesis is that fail-closed governance lowers false promotion
 by at least 20 absolute percentage points relative to the presence checklist
@@ -247,7 +249,7 @@ Promotion governance treats paper readiness as an evidence-bound transition
 rather than a by-product of workflow completion. The implementation and
 development suite show that this distinction is measurable and that detected
 failures can drive targeted audit strengthening. They do not yet show that the
-policy generalizes. Independent artifact curation, adjudication, real-provider
+policy generalizes. Independent artifact curation, adjudication, real-model
 review, and a frozen confirmatory run are required before advancing beyond a
 research memo.
 

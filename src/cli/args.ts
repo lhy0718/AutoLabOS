@@ -35,7 +35,7 @@ export type CliAction =
   | { kind: "governance-benchmark-export-bundles"; publicOutputRoots: string[]; outDir?: string; maxBundles?: number }
   | { kind: "governance-benchmark-build-promotion"; recipePath: string; freezeManifestPath?: string; outDir: string }
   | { kind: "governance-benchmark-run-promotion"; suitePath: string; systems: PromotionBenchmarkSystemName[]; trialId?: string; outDir?: string }
-  | { kind: "governance-benchmark-run-promotion-provider"; suitePath: string; provider: "openai"; model: string; reasoningEffort: string; systemId: string; trialId: string; outDir: string }
+  | { kind: "governance-benchmark-run-promotion-provider"; suitePath: string; provider: "openai" | "ollama"; model: string; reasoningEffort: string; systemId: string; trialId: string; outDir: string; baseUrl?: string }
   | { kind: "governance-benchmark-aggregate-promotion-provider-runs"; suitePath: string; runManifestPaths: string[]; outDir: string }
   | { kind: "governance-benchmark-export-promotion-prompts"; suitePath: string; outDir: string }
   | { kind: "governance-benchmark-import-promotion-responses"; requestMapPath: string; responsesPath: string; systemId: string; trialId: string; outDir: string }
@@ -1097,28 +1097,32 @@ export function resolveCliAction(args: string[]): CliAction {
     }
     if (subcommand === "run-promotion-provider") {
       let suitePath: string | undefined;
-      let provider: "openai" | undefined;
+      let provider: "openai" | "ollama" | undefined;
       let model: string | undefined;
       let reasoningEffort: string | undefined;
       let systemId: string | undefined;
       let trialId: string | undefined;
       let outDir: string | undefined;
+      let baseUrl: string | undefined;
       for (let index = 2; index < args.length; index += 1) {
         const token = args[index];
-        if (!["--suite", "--provider", "--model", "--reasoning", "--system", "--trial", "--out-dir"].includes(token)) {
+        if (!["--suite", "--provider", "--model", "--reasoning", "--system", "--trial", "--out-dir", "--base-url"].includes(token)) {
           return { kind: "error", message: `Unsupported governance-benchmark run-promotion-provider argument: ${token}` };
         }
         const value = args[index + 1];
         if (!value || value.startsWith("--")) return { kind: "error", message: `Missing value for ${token}.` };
         if (token === "--suite") suitePath = value;
         else if (token === "--provider") {
-          if (value !== "openai") return { kind: "error", message: `Unsupported promotion provider: ${value}.` };
+          if (value !== "openai" && value !== "ollama") {
+            return { kind: "error", message: `Unsupported promotion provider: ${value}.` };
+          }
           provider = value;
         } else if (token === "--model") model = value;
         else if (token === "--reasoning") reasoningEffort = value;
         else if (token === "--system") systemId = value;
         else if (token === "--trial") trialId = value;
-        else outDir = value;
+        else if (token === "--out-dir") outDir = value;
+        else baseUrl = value;
         index += 1;
       }
       if (!suitePath || !provider || !model || !reasoningEffort || !systemId || !trialId || !outDir) {
@@ -1127,11 +1131,17 @@ export function resolveCliAction(args: string[]): CliAction {
           message: "run-promotion-provider requires --suite, --provider, --model, --reasoning, --system, --trial, and --out-dir."
         };
       }
-      if (!buildOpenAiResponsesModelChoices().includes(model)) {
+      if (provider === "openai" && !buildOpenAiResponsesModelChoices().includes(model)) {
         return { kind: "error", message: `Unsupported OpenAI Responses model: ${model}.` };
       }
-      if (!buildOpenAiResponsesReasoningChoices(model).includes(reasoningEffort)) {
+      if (provider === "openai" && !buildOpenAiResponsesReasoningChoices(model).includes(reasoningEffort)) {
         return { kind: "error", message: `Unsupported reasoning effort for ${model}: ${reasoningEffort}.` };
+      }
+      if (provider === "ollama" && reasoningEffort !== "off") {
+        return { kind: "error", message: "Ollama promotion provider requires --reasoning off." };
+      }
+      if (provider === "openai" && baseUrl) {
+        return { kind: "error", message: "--base-url is supported only for the Ollama provider." };
       }
       return {
         kind: "governance-benchmark-run-promotion-provider",
@@ -1141,7 +1151,8 @@ export function resolveCliAction(args: string[]): CliAction {
         reasoningEffort,
         systemId,
         trialId,
-        outDir
+        outDir,
+        ...(baseUrl ? { baseUrl } : {})
       };
     }
     if (subcommand === "aggregate-promotion-provider-runs") {

@@ -635,20 +635,27 @@ function inspectConfirmatoryEvidence(input: {
     }
   }
   const manuscript = systemById.get(input.roles.manuscript);
-  if (!input.providerAggregate
-      || input.providerAggregate.suite_id !== input.score.suite_id
-      || input.providerAggregate.system_id !== input.roles.manuscript
-      || input.providerAggregate.trial_count !== 3
-      || input.providerAggregate.independent_trial_requirement_met !== true
-      || input.providerAggregate.external_empirical_evidence_eligible !== true
-      || input.providerAggregate.paper_claim_evidence_eligible !== true
-      || manuscript?.trial_count !== 3
-      || manuscript.coverage_rate !== 1) {
+  const providerRepetitionVerified = Boolean(input.providerAggregate
+      && input.providerAggregate.suite_id === input.score.suite_id
+      && input.providerAggregate.system_id === input.roles.manuscript
+      && input.providerAggregate.trial_count === 3
+      && input.providerAggregate.independent_trial_requirement_met === true
+      && input.providerAggregate.real_model_empirical_evidence_eligible === true
+      && manuscript?.trial_count === 3
+      && manuscript.coverage_rate === 1);
+  if (!providerRepetitionVerified) {
     addIssue(
       input.issues,
       "provider_repetition_not_verified",
-      "The manuscript-only role requires a validated three-trial provider aggregate with complete coverage.",
+      "The manuscript-only role requires a validated three-trial real-model provider aggregate with complete coverage.",
       "run_experiments"
+    );
+  } else if (input.providerAggregate!.paper_claim_evidence_eligible !== true) {
+    addIssue(
+      input.issues,
+      "provider_evidence_not_paper_eligible",
+      "The real-model repetition is verified, but its bound source suite is not eligible for paper claims.",
+      "review"
     );
   }
   if (!input.recovery?.passed

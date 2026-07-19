@@ -21,12 +21,16 @@ import {
   type PromotionProviderResponse
 } from "./promotionBenchmarkPromptPack.js";
 
-export type PromotionProviderEvidenceClass = "external_real_provider" | "test_fixture";
+export type PromotionProviderName = "openai_responses_api" | "ollama_local";
+export type PromotionProviderEvidenceClass = "external_real_provider" | "local_real_model" | "test_fixture";
+export type PromotionExecutionEnvironment = "remote_api" | "local_runtime" | "test_fixture";
+export type PromotionExecutionReceiptKind = "provider_response_id" | "local_runtime_record" | "test_fixture";
 
 export interface PromotionProviderCompletion {
   text: string;
   responseId?: string;
   model?: string;
+  totalDurationNs?: number;
   usage?: {
     inputTokens?: number;
     outputTokens?: number;
@@ -46,8 +50,9 @@ export interface RunPromotionProviderInput {
   cwd: string;
   suitePath: string;
   outDir: string;
-  provider: "openai_responses_api";
+  provider: PromotionProviderName;
   model: string;
+  modelArtifactDigest?: string;
   reasoningEffort: string;
   systemId: string;
   trialId: string;
@@ -63,15 +68,17 @@ export interface PromotionProviderSourceSuiteBinding {
 }
 
 export interface PromotionProviderRunManifest {
-  schema_version: "1.1";
+  schema_version: "1.2";
   run_id: string;
   status: "running" | "completed" | "failed";
   protocol: "manuscript-only-v1";
-  provider: "openai_responses_api";
+  provider: PromotionProviderName;
   evidence_class: PromotionProviderEvidenceClass;
-  provider_receipt_status: "recorded_not_independently_verified" | "test_fixture";
+  execution_environment: PromotionExecutionEnvironment;
+  execution_receipt_status: "recorded_not_independently_verified" | "local_runtime_hash_bound" | "test_fixture";
   provider_identity_independently_verified: false;
   external_empirical_evidence_eligible: boolean;
+  real_model_empirical_evidence_eligible: boolean;
   paper_claim_evidence_eligible: boolean;
   independent_trial_requirement_met: false;
   evidence_boundary: string;
@@ -80,6 +87,7 @@ export interface PromotionProviderRunManifest {
   system_id: string;
   trial_id: string;
   requested_model: string;
+  model_artifact_digest: string | null;
   reasoning_effort: string;
   started_at: string;
   completed_at: string | null;
@@ -129,7 +137,7 @@ export async function runPromotionBenchmarkProvider(
   const outDir = path.resolve(cwd, input.outDir);
   assertInside(cwd, outDir, "Provider output directory");
   await assertFreshOutput(outDir);
-  assertExternalEnvironment(input.evidenceClass);
+  assertRealModelEnvironment(input.evidenceClass);
   const sourceSuite = await inspectSourceSuite(cwd, input.suitePath);
 
   const promptPackDir = path.join(outDir, "prompt-pack");
@@ -156,12 +164,14 @@ export async function runPromotionBenchmarkProvider(
   const predictionsDir = path.join(outDir, "predictions");
   const startedAt = new Date().toISOString();
   const manifest: PromotionProviderRunManifest = {
-    schema_version: "1.1",
+    schema_version: "1.2",
     run_id: `provider-run-${sha256([
       requestMap.suite_id,
       input.systemId,
       input.trialId,
+      input.provider,
       input.model,
+      input.modelArtifactDigest || "no-model-artifact-digest",
       input.reasoningEffort,
       startedAt
     ].join("\0")).slice(0, 16)}`,
@@ -169,19 +179,22 @@ export async function runPromotionBenchmarkProvider(
     protocol: "manuscript-only-v1",
     provider: input.provider,
     evidence_class: input.evidenceClass,
-    provider_receipt_status: input.evidenceClass === "external_real_provider"
-      ? "recorded_not_independently_verified"
-      : "test_fixture",
+    execution_environment: executionEnvironment(input),
+    execution_receipt_status: executionReceiptStatus(input),
     provider_identity_independently_verified: false,
     external_empirical_evidence_eligible: false,
+    real_model_empirical_evidence_eligible: false,
     paper_claim_evidence_eligible: false,
     independent_trial_requirement_met: false,
-    evidence_boundary: "This manifest distinguishes a recorded external provider execution from paper-claim eligibility. Paper-claim evidence additionally requires a paper-claim-eligible source suite, a valid three-trial aggregate, and the downstream confirmatory gate.",
+    evidence_boundary: input.provider === "ollama_local"
+      ? "This manifest records a hash-bound local model execution with an exact model artifact digest. The runtime receipt is self-recorded rather than issued by an external provider. Paper-claim evidence additionally requires a paper-claim-eligible source suite, a valid three-trial aggregate, and the downstream confirmatory gate."
+      : "This manifest distinguishes a recorded external provider execution from paper-claim eligibility. Paper-claim evidence additionally requires a paper-claim-eligible source suite, a valid three-trial aggregate, and the downstream confirmatory gate.",
     suite_id: requestMap.suite_id,
     source_suite: sourceSuite,
     system_id: input.systemId,
     trial_id: input.trialId,
     requested_model: input.model,
+    model_artifact_digest: input.modelArtifactDigest || null,
     reasoning_effort: input.reasoningEffort,
     started_at: startedAt,
     completed_at: null,
@@ -218,13 +231,24 @@ export async function runPromotionBenchmarkProvider(
     for (const request of requests) {
       activeRequestId = request.request_id;
       const requestStartedAt = Date.now();
+      const requestStartedAtIso = new Date(requestStartedAt).toISOString();
       const completion = await client.complete({
         prompt: request.prompt,
         model: input.model,
         reasoningEffort: input.reasoningEffort
       });
-      const latencyMs = Date.now() - requestStartedAt;
+      const requestCompletedAt = Date.now();
+      const latencyMs = requestCompletedAt - requestStartedAt;
       validateCompletionProvenance(completion, input.evidenceClass, request.request_id);
+      const receipt = buildExecutionReceipt({
+        input,
+        runId: manifest.run_id,
+        requestId: request.request_id,
+        requestStartedAt: requestStartedAtIso,
+        requestCompletedAt: new Date(requestCompletedAt).toISOString(),
+        latencyMs,
+        completion
+      });
       const response = parseCompletion(request.request_id, completion.text, latencyMs, completion.usage?.costUsd);
       const outputRecord = {
         schema_version: "1.0",
@@ -232,8 +256,10 @@ export async function runPromotionBenchmarkProvider(
         provider: input.provider,
         requested_model: input.model,
         resolved_model: completion.model || input.model,
+        model_artifact_digest: input.modelArtifactDigest || null,
         reasoning_effort: input.reasoningEffort,
-        response_id_sha256: completion.responseId ? sha256(completion.responseId) : null,
+        execution_receipt_kind: receipt.kind,
+        execution_receipt_sha256: receipt.sha256,
         output_text: completion.text,
         output_text_sha256: sha256(completion.text),
         usage: completion.usage || null,
@@ -262,7 +288,8 @@ export async function runPromotionBenchmarkProvider(
     manifest.status = "completed";
     manifest.completed_at = new Date().toISOString();
     manifest.external_empirical_evidence_eligible = input.evidenceClass === "external_real_provider";
-    manifest.paper_claim_evidence_eligible = input.evidenceClass === "external_real_provider"
+    manifest.real_model_empirical_evidence_eligible = input.evidenceClass !== "test_fixture";
+    manifest.paper_claim_evidence_eligible = input.evidenceClass !== "test_fixture"
       && sourceSuite.paper_claim_eligible;
     manifest.artifacts.predictions_path = portableRef(cwd, predictionsPath);
     manifest.artifacts.predictions_sha256 = await sha256File(predictionsPath);
@@ -390,18 +417,22 @@ function validateCompletionProvenance(
   requestId: string
 ): void {
   if (!completion.text.trim()) throw new Error(`Provider returned empty output: ${requestId}`);
-  if (evidenceClass !== "external_real_provider") return;
-  if (!completion.responseId?.trim()) {
+  if (evidenceClass === "test_fixture") return;
+  if (evidenceClass === "external_real_provider" && !completion.responseId?.trim()) {
     throw new Error(`External provider response id is missing: ${requestId}`);
   }
   if (!completion.model?.trim()) {
-    throw new Error(`External provider resolved model is missing: ${requestId}`);
+    throw new Error(`Real model execution resolved model is missing: ${requestId}`);
   }
   if (!completion.usage
       || !nonNegativeInteger(completion.usage.inputTokens)
       || !nonNegativeInteger(completion.usage.outputTokens)
       || !nonNegativeFinite(completion.usage.costUsd)) {
-    throw new Error(`External provider token usage or cost is missing: ${requestId}`);
+    throw new Error(`Real model execution token usage or cost is missing: ${requestId}`);
+  }
+  if (evidenceClass === "local_real_model"
+      && (!positiveFinite(completion.totalDurationNs))) {
+    throw new Error(`Local model runtime duration is missing: ${requestId}`);
   }
 }
 
@@ -417,27 +448,102 @@ function validateInput(input: RunPromotionProviderInput): void {
     if (!nonEmptyString(value)) throw new Error(`Promotion provider input requires ${name}.`);
   }
   if (!buildOpenAiResponsesModelChoices().includes(input.model)) {
-    throw new Error(`Unsupported OpenAI Responses model: ${input.model}.`);
+    if (input.provider === "openai_responses_api") {
+      throw new Error(`Unsupported OpenAI Responses model: ${input.model}.`);
+    }
   }
-  if (!buildOpenAiResponsesReasoningChoices(input.model).includes(input.reasoningEffort)) {
+  if (input.provider === "openai_responses_api"
+      && !buildOpenAiResponsesReasoningChoices(input.model).includes(input.reasoningEffort)) {
     throw new Error(`Unsupported reasoning effort for ${input.model}: ${input.reasoningEffort}.`);
+  }
+  if (input.provider === "ollama_local" && input.reasoningEffort !== "off") {
+    throw new Error("Ollama promotion runs currently require reasoningEffort=off for JSON-only evaluation.");
+  }
+  if (input.provider === "ollama_local" && !validModelArtifactDigest(input.modelArtifactDigest)) {
+    throw new Error("Ollama promotion runs require a model artifact digest.");
+  }
+  if (input.provider === "openai_responses_api" && input.evidenceClass === "local_real_model") {
+    throw new Error("OpenAI Responses runs cannot use local_real_model evidence class.");
+  }
+  if (input.provider === "ollama_local" && input.evidenceClass === "external_real_provider") {
+    throw new Error("Ollama runs cannot use external_real_provider evidence class.");
   }
   if (!portableIdentifier(input.systemId) || !portableIdentifier(input.trialId)) {
     throw new Error("Promotion provider systemId and trialId must be portable identifiers.");
   }
 }
 
-function assertExternalEnvironment(evidenceClass: PromotionProviderEvidenceClass): void {
-  if (evidenceClass !== "external_real_provider") return;
+function assertRealModelEnvironment(evidenceClass: PromotionProviderEvidenceClass): void {
+  if (evidenceClass === "test_fixture") return;
   const fakeVariables = [
     "AUTOLABOS_FAKE_OPENAI_RESPONSE",
     "AUTOLABOS_FAKE_OPENAI_RESPONSE_SEQUENCE",
-    "AUTOLABOS_FAKE_OPENAI_RESPONSE_ID"
+    "AUTOLABOS_FAKE_OPENAI_RESPONSE_ID",
+    "AUTOLABOS_FAKE_OLLAMA_RESPONSE",
+    "AUTOLABOS_FAKE_OLLAMA_RESPONSE_SEQUENCE"
   ];
   const active = fakeVariables.filter((name) => process.env[name]?.trim());
   if (active.length > 0) {
-    throw new Error(`External provider evidence rejects fake response environment variables: ${active.join(", ")}`);
+    throw new Error(`Real model evidence rejects fake response environment variables: ${active.join(", ")}`);
   }
+}
+
+function executionEnvironment(input: RunPromotionProviderInput): PromotionExecutionEnvironment {
+  if (input.evidenceClass === "test_fixture") return "test_fixture";
+  return input.provider === "ollama_local" ? "local_runtime" : "remote_api";
+}
+
+function executionReceiptStatus(
+  input: RunPromotionProviderInput
+): PromotionProviderRunManifest["execution_receipt_status"] {
+  if (input.evidenceClass === "test_fixture") return "test_fixture";
+  return input.provider === "ollama_local"
+    ? "local_runtime_hash_bound"
+    : "recorded_not_independently_verified";
+}
+
+function buildExecutionReceipt(input: {
+  input: RunPromotionProviderInput;
+  runId: string;
+  requestId: string;
+  requestStartedAt: string;
+  requestCompletedAt: string;
+  latencyMs: number;
+  completion: PromotionProviderCompletion;
+}): { kind: PromotionExecutionReceiptKind; sha256: string } {
+  if (input.input.evidenceClass === "test_fixture") {
+    return {
+      kind: "test_fixture",
+      sha256: sha256(JSON.stringify({
+        request_id: input.requestId,
+        output_sha256: sha256(input.completion.text)
+      }))
+    };
+  }
+  if (input.input.provider === "openai_responses_api") {
+    return {
+      kind: "provider_response_id",
+      sha256: sha256(input.completion.responseId as string)
+    };
+  }
+  return {
+    kind: "local_runtime_record",
+    sha256: sha256(JSON.stringify({
+      provider: input.input.provider,
+      run_id: input.runId,
+      request_id: input.requestId,
+      requested_model: input.input.model,
+      resolved_model: input.completion.model,
+      model_artifact_digest: input.input.modelArtifactDigest,
+      request_started_at: input.requestStartedAt,
+      request_completed_at: input.requestCompletedAt,
+      latency_ms: input.latencyMs,
+      total_duration_ns: input.completion.totalDurationNs,
+      input_tokens: input.completion.usage?.inputTokens,
+      output_tokens: input.completion.usage?.outputTokens,
+      output_sha256: sha256(input.completion.text)
+    }))
+  };
 }
 
 async function assertFreshOutput(outDir: string): Promise<void> {
@@ -510,6 +616,14 @@ function nonNegativeInteger(value: unknown): value is number {
 
 function nonNegativeFinite(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function positiveFinite(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function validModelArtifactDigest(value: unknown): value is string {
+  return typeof value === "string" && /^(?:sha256:)?[a-f0-9]{12,64}$/u.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
