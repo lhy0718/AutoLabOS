@@ -88,6 +88,10 @@ import {
   type PreparePromotionTrialCandidateReviewCampaignInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
 import {
+  exportPromotionTrialCandidateReviewDistribution,
+  type ExportPromotionTrialCandidateReviewDistributionInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateReviewDistribution.js";
+import {
   collectPromotionTrialCandidateReviewCampaign,
   type CollectPromotionTrialCandidateReviewCampaignInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
@@ -680,6 +684,24 @@ export async function runPromotionTrialCandidateReviewCampaignCli(
       `Manifest: ${result.manifest_path}`,
       "Completed human annotations: 0",
       "Status: all templates remain incomplete; no human review, license decision, adjudication, or confirmatory admission"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateReviewDistributionExportCli(
+  input: ExportPromotionTrialCandidateReviewDistributionInput
+): Promise<void> {
+  const result = await exportPromotionTrialCandidateReviewDistribution(input);
+  process.stdout.write(
+    [
+      "Role-isolated pending review distribution exported",
+      `Distribution: ${result.distribution_id}`,
+      `Campaign: ${result.campaign_id}`,
+      `Handoff: ${result.handoff_id}`,
+      `Archives: ${result.archive_paths.join(", ")}`,
+      `Manifest: ${result.manifest_path}`,
+      "Completed human annotations: 0",
+      "Status: archive integrity passed; no human review, independence, license decision, adjudication, or confirmatory admission inferred"
     ].join("\n") + "\n"
   );
 }

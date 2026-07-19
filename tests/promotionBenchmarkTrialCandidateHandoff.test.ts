@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -37,6 +37,11 @@ import {
   inspectPromotionTrialCandidateReviewCampaign,
   preparePromotionTrialCandidateReviewCampaign
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaign.js";
+import {
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_DISTRIBUTION_MANIFEST,
+  exportPromotionTrialCandidateReviewDistribution,
+  inspectPromotionTrialCandidateReviewDistribution
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewDistribution.js";
 import {
   PROMOTION_TRIAL_CANDIDATE_CAMPAIGN_RETURN_RECEIPT,
   collectPromotionTrialCandidateReviewCampaign,
@@ -993,6 +998,131 @@ describe("promotion trial-candidate handoff", () => {
       issues: []
     });
 
+    const distribution = await exportPromotionTrialCandidateReviewDistribution({
+      cwd: workspace,
+      campaignRoot: campaign.output_dir,
+      outDir: "paired-review-distribution"
+    });
+    expect(distribution).toMatchObject({
+      campaign_id: campaign.campaign_id,
+      handoff_id: campaign.handoff_id,
+      package_count: 3,
+      human_annotation_completed_count: 0,
+      human_license_review_completed: false
+    });
+    const distributionRoot = path.join(workspace, distribution.output_dir);
+    expect(await inspectPromotionTrialCandidateReviewDistribution(distributionRoot))
+      .toMatchObject({
+        passed: true,
+        issues: [],
+        manifest: {
+          status: "human_review_pending",
+          human_annotation_completed_count: 0,
+          human_license_review_completed: false,
+          adjudication_completed: false,
+          confirmatory_admitted: false,
+          self_inspection_passed: true
+        }
+      });
+    const distributionManifest = JSON.parse(await readFile(path.join(
+      distributionRoot,
+      PROMOTION_TRIAL_CANDIDATE_REVIEW_DISTRIBUTION_MANIFEST
+    ), "utf8")) as Record<string, any>;
+    expect(distributionManifest.packages.map((item: Record<string, any>) => ({
+      slot: item.slot,
+      file_count: item.file_count,
+      single_role_root: item.single_role_root,
+      controller_content_present: item.controller_content_present,
+      peer_package_content_present: item.peer_package_content_present,
+      fresh_extraction_exact_tree_match: item.fresh_extraction_exact_tree_match
+    }))).toEqual([
+      expect.objectContaining({ slot: "reviewer-a", file_count: 440 }),
+      expect.objectContaining({ slot: "reviewer-b", file_count: 440 }),
+      expect.objectContaining({ slot: "license-reviewer", file_count: 8 })
+    ]);
+    expect(distributionManifest.packages.every((item: Record<string, any>) =>
+      item.single_role_root === true
+      && item.controller_content_present === false
+      && item.peer_package_content_present === false
+      && item.fresh_extraction_exact_tree_match === true)).toBe(true);
+
+    const repeatedDistribution = await exportPromotionTrialCandidateReviewDistribution({
+      cwd: workspace,
+      campaignRoot: campaign.output_dir,
+      outDir: "paired-review-distribution-repeat"
+    });
+    expect(await readFile(path.join(
+      workspace,
+      repeatedDistribution.manifest_path
+    ), "utf8")).toBe(await readFile(path.join(
+      distributionRoot,
+      PROMOTION_TRIAL_CANDIDATE_REVIEW_DISTRIBUTION_MANIFEST
+    ), "utf8"));
+
+    const corruptedDistributionRoot = path.join(workspace, "paired-review-distribution-corrupt");
+    await cp(distributionRoot, corruptedDistributionRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const corruptedArchivePath = path.join(
+      corruptedDistributionRoot,
+      distributionManifest.packages[0].archive_path
+    );
+    await writeFile(corruptedArchivePath, Buffer.concat([
+      await readFile(corruptedArchivePath),
+      Buffer.from("changed", "utf8")
+    ]));
+    const corruptedDistribution = await inspectPromotionTrialCandidateReviewDistribution(
+      corruptedDistributionRoot
+    );
+    expect(corruptedDistribution.passed).toBe(false);
+    expect(corruptedDistribution.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_distribution_archive_invalid"
+    );
+
+    const linkedDistributionRoot = path.join(workspace, "paired-review-distribution-linked");
+    await cp(distributionRoot, linkedDistributionRoot, {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const linkedManifestPath = path.join(
+      linkedDistributionRoot,
+      PROMOTION_TRIAL_CANDIDATE_REVIEW_DISTRIBUTION_MANIFEST
+    );
+    const linkedManifest = JSON.parse(await readFile(
+      linkedManifestPath,
+      "utf8"
+    )) as Record<string, any>;
+    const linkedArchivePath = path.join(
+      linkedDistributionRoot,
+      linkedManifest.packages[0].archive_path
+    );
+    const linkedSourceRoot = path.join(workspace, "linked-review-package");
+    await mkdir(path.join(linkedSourceRoot, "reviewer-a"), { recursive: true });
+    await symlink("missing-target", path.join(linkedSourceRoot, "reviewer-a", "linked-entry"));
+    await execFileAsync("tar", [
+      "-czf", linkedArchivePath, "-C", linkedSourceRoot, "reviewer-a"
+    ]);
+    const linkedArchiveBytes = await readFile(linkedArchivePath);
+    const linkedListing = await execFileAsync("tar", ["-tzf", linkedArchivePath], {
+      encoding: "utf8"
+    });
+    linkedManifest.packages[0].archive_sha256 = createHash("sha256")
+      .update(linkedArchiveBytes).digest("hex");
+    linkedManifest.packages[0].archive_bytes = linkedArchiveBytes.length;
+    linkedManifest.packages[0].archive_entry_count = linkedListing.stdout
+      .split(/\r?\n/u).filter(Boolean).length;
+    await writeFile(linkedManifestPath, `${JSON.stringify(linkedManifest, null, 2)}\n`, "utf8");
+    const linkedDistribution = await inspectPromotionTrialCandidateReviewDistribution(
+      linkedDistributionRoot
+    );
+    expect(linkedDistribution.passed).toBe(false);
+    expect(linkedDistribution.issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_review_distribution_isolation_invalid"
+    );
+
     const invalidPairedRoot = path.join(workspace, "parquet-paired-invalid-controller");
     await cp(path.join(workspace, pairedResult.output_dir), invalidPairedRoot, {
       recursive: true,
@@ -1061,7 +1191,7 @@ describe("promotion trial-candidate handoff", () => {
       sourceRoot,
       outDir: "parquet-duplicate-handoff"
     })).rejects.toThrow("globally distinct source-native balanced three-trial bases");
-  });
+  }, 15_000);
 
   it("keeps resumable human review blank, partial, and preflight-bound", async () => {
     const prepared = await preparePromotionTrialCandidateReviewWorkspace({

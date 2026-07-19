@@ -905,6 +905,27 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports role-isolated pending review distribution export", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-trial-candidate-review-distribution",
+      "--campaign-root", "outputs/review-campaign",
+      "--out-dir", "outputs/review-distribution"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-trial-candidate-review-distribution",
+      campaignRoot: "outputs/review-campaign",
+      outDir: "outputs/review-distribution"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-trial-candidate-review-distribution",
+      "--campaign-root", "outputs/review-campaign"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--campaign-root and --out-dir")
+    });
+  });
+
   it("supports assignment-bound human-review campaign return collection", () => {
     expect(resolveCliAction([
       "governance-benchmark",
