@@ -630,6 +630,26 @@ and blank-return preflights are recorded in
 `docs/research/evidence/promotion-trial-candidate-review-preflight-v11.json`.
 Transfer hashes remain in the private operator log alongside the archives.
 
+A subsequent scope audit found that the v10 source-level license task was too
+coarse for candidate redistribution. It could record a decision about the
+collection repository but did not bind the separate terms of every selected
+base material and operator output. The v10 source-license result therefore
+cannot open the candidate-review progression floor, even if a reviewer were to
+mark that source-only task as redistribution-permitted.
+
+Revision `0ed871dfd654af4fc8ca0ea93fc188a2fdeb56d9` closes that contract gap
+without inventing a legal conclusion. The v11 handoff binds a hash-verified
+provenance catalog to a schema-1.1 task with 76 subjects: one collection, 72
+selected base materials, and three operator outputs. Each of the 72 opaque
+candidates requires exactly four subjects, and every subject carries public
+evidence. The associated v12 campaign contains an exact 76-row license
+worksheet and still reports zero completed subject decisions, zero completed
+candidate annotations, no adjudication, and no confirmatory admission. The
+task, packet, campaign, and blank-template hashes are recorded in
+`docs/research/evidence/promotion-trial-candidate-review-preflight-v12.json`.
+This establishes candidate-scoped review readiness only; human review and the
+paper-scale milestone remain incomplete.
+
 The assigned initial-review package can now be converted into a resumable
 candidate-per-file workspace without modifying the closed campaign. A live v10
 run copied the integrity-valid 72-task opaque packet into a 513-file,

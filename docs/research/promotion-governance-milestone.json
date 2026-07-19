@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "0c1d5826c9a07d76ee320b4b88c931f2d1cecbdbbc4a28a2278226d4ec9a5667"
+          "sha256": "8ead57839ebb0fc695c06d348fd622e4a97e34650f2990dbe0760ab9620271f0"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -161,28 +161,28 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/trial-candidate-review-campaign-return-v10-pending/campaign-return-receipt.json",
-          "sha256": "bb9da2d7cb81f7b8f0369a453e6fe8693ffd464c21237dadc8b330f81db1d470",
+          "path": "docs/research/evidence/promotion-trial-candidate-review-preflight-v12.json",
+          "sha256": "3cd26282be72b5c37037315413fe866979293cc84888415446d23bbaa9ac7e27",
           "assertions": [
             {
-              "pointer": "/passed",
+              "pointer": "/campaign/human_annotation_completed_count",
+              "operator": "gte",
+              "expected": 144
+            },
+            {
+              "pointer": "/campaign/human_license_review_completed",
               "operator": "equals",
               "expected": true
             },
             {
-              "pointer": "/status",
+              "pointer": "/progression_gate/candidate_scoped_review_completed",
               "operator": "equals",
-              "expected": "review_return_verified"
+              "expected": true
             },
             {
-              "pointer": "/adjudication/accepted_label_count",
-              "operator": "gte",
-              "expected": 72
-            },
-            {
-              "pointer": "/adjudication/source_eligible_candidate_count",
-              "operator": "gte",
-              "expected": 72
+              "pointer": "/progression_gate/two_independent_candidate_reviews_completed",
+              "operator": "equals",
+              "expected": true
             }
           ]
         }
