@@ -1115,6 +1115,38 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports hash-bound human-review coordination audits", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-human-review-coordination",
+      "--candidate-workspace", "reviews/candidate-a",
+      "--candidate-workspace", "reviews/candidate-b",
+      "--license-workspace", "reviews/license",
+      "--reference-workspace", "reviews/citation",
+      "--out-dir", "reviews/coordination-audit"
+    ])).toEqual({
+      kind: "governance-benchmark-audit-promotion-human-review-coordination",
+      candidateWorkspaceRoots: [
+        "reviews/candidate-a",
+        "reviews/candidate-b"
+      ],
+      licenseWorkspaceRoot: "reviews/license",
+      referenceWorkspaceRoot: "reviews/citation",
+      outDir: "reviews/coordination-audit"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-human-review-coordination",
+      "--candidate-workspace", "reviews/candidate-a",
+      "--license-workspace", "reviews/license",
+      "--reference-workspace", "reviews/citation",
+      "--out-dir", "reviews/coordination-audit"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("exactly two --candidate-workspace")
+    });
+  });
+
   it("supports hash-bound research validation profiles", () => {
     expect(resolveCliAction([
       "research", "run-validation",

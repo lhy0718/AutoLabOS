@@ -345,6 +345,13 @@ export async function auditReferenceClaimReviewWorkspace(
   };
 }
 
+export async function inspectReferenceClaimReviewWorkspaceState(
+  input: Pick<AuditReferenceClaimReviewWorkspaceInput, "cwd" | "workspaceRoot">
+): Promise<ReferenceClaimReviewWorkspaceAuditReport> {
+  const cwd = await fs.realpath(path.resolve(input.cwd));
+  return (await inspectReferenceClaimReviewWorkspace(cwd, input.workspaceRoot)).report;
+}
+
 export async function finalizeReferenceClaimReviewWorkspace(
   input: FinalizeReferenceClaimReviewWorkspaceInput
 ): Promise<FinalizeReferenceClaimReviewWorkspaceResult> {

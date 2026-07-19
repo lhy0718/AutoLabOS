@@ -780,6 +780,30 @@ rules for future controls are defined in
 `docs/research/promotion-benchmark-curation-boundary.md`. These records do not
 change the zero-admission decision.
 
+### Human Review Coordination
+
+Candidate, source-license, and citation review workspaces now share one
+read-only coordination audit. The audit replays each workspace's native
+integrity checks, verifies distinct role assignments, and binds the complete
+current byte tree before and after inspection. It refuses output if a reviewer
+edits a workspace during the audit. A collection-ready result still authorizes
+neither adjudication nor confirmatory admission.
+
+The first live audit found that the two candidate workspaces belonged to
+candidate handoff v10 while the source-license workspace belonged to v11.
+Although all three workspaces were individually valid, the combined assignment
+was invalid and collection was blocked. Two new blank candidate workspaces were
+therefore prepared from the latest assigned v11 packages; no prior workspace,
+license decision, citation decision, or attestation was modified.
+
+The repeated live audit reports four structurally valid and distinct roles, no
+handoff mismatch, and zero ready roles. Candidate progress is 0/72 for each
+reviewer, source-license progress is 0/76, and citation progress is 0/12. The
+coordination state is consequently `awaiting_human_review`, with zero
+system-supplied human decisions, attestations, approvals, checked claims, or
+confirmatory admissions. This checkpoint closes an operational consistency gap
+without changing the paper evidence ceiling.
+
 ### Citation Claim Review Handoff
 
 The manuscript now has 12 citation-bearing claims, and every claim maps to one
@@ -934,10 +958,11 @@ artifacts remain explicitly hash-unbound until they are produced and reviewed;
 missing, rewritten, unbound, or assertion-failing evidence keeps the milestone
 incomplete and routes the requirement back to its declared node.
 
-A same-flow audit of the current workspace passed 4 of 12 requirements:
+A clean-revision audit of the current workspace passed 5 of 12 requirements:
 literature and research-question grounding, the synthetic development
 instrument, the 72-base candidate trace floor, and three hash-bound local
-real-model development trials. The other eight requirements
+real-model development trials, plus final validation and clean revision. The
+other seven requirements
 remain incomplete and are grouped under `analyze_papers`,
 `design_experiments`, `review`, `run_experiments`, and `write_paper`.
 No failed item was promoted from path existence alone.

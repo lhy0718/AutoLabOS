@@ -36,6 +36,7 @@ import {
   runPromotionTrialCandidateLicenseReviewWorkspacePreparationCli,
   runPromotionTrialCandidateLicenseReviewWorkspaceAuditCli,
   runPromotionTrialCandidateLicenseReviewWorkspaceFinalizationCli,
+  runPromotionHumanReviewCoordinationAuditCli,
   runPromotionTrialCandidateLicenseReviewWorksheetCli,
   runPromotionTrialCandidateAnnotationPreflightCli,
   runPromotionTrialCandidateLicenseReviewPreflightCli,
@@ -127,6 +128,7 @@ function printHelp(): void {
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-review-workspace --package-root <campaign/license-reviewer> --out-dir <new-workspace>",
     "  autolabos governance-benchmark audit-promotion-trial-candidate-license-review-workspace --workspace-root <workspace> --out-dir <new-audit>",
     "  autolabos governance-benchmark finalize-promotion-trial-candidate-license-review-workspace --workspace-root <workspace> --output <license-review.json>",
+    "  autolabos governance-benchmark audit-promotion-human-review-coordination --candidate-workspace <reviewer-a-workspace> --candidate-workspace <reviewer-b-workspace> --license-workspace <license-workspace> --reference-workspace <citation-workspace> --out-dir <new-audit>",
     "  autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet --handoff-root <handoff> --reviewer-id <pseudonym> --output <license-review.json>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root <handoff/reviewer> --annotation <review.json> --out-dir <preflight-output>",
     "  autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --license-root <handoff/license> --review <license-review.json> --out-dir <preflight-output>",
@@ -606,6 +608,17 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       workspaceRoot: action.workspaceRoot,
       outputPath: action.outputPath
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-audit-promotion-human-review-coordination") {
+    await runPromotionHumanReviewCoordinationAuditCli({
+      cwd: process.cwd(),
+      candidateWorkspaceRoots: action.candidateWorkspaceRoots,
+      licenseWorkspaceRoot: action.licenseWorkspaceRoot,
+      referenceWorkspaceRoot: action.referenceWorkspaceRoot,
+      outDir: action.outDir
     });
     return;
   }

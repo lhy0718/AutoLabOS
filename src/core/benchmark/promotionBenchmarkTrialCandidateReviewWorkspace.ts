@@ -399,6 +399,13 @@ export async function auditPromotionTrialCandidateReviewWorkspace(
   };
 }
 
+export async function inspectPromotionTrialCandidateReviewWorkspace(
+  input: Pick<AuditPromotionTrialCandidateReviewWorkspaceInput, "cwd" | "workspaceRoot">
+): Promise<PromotionTrialCandidateReviewWorkspaceAuditReport> {
+  const cwd = path.resolve(input.cwd);
+  return (await inspectWorkspace(cwd, input.workspaceRoot)).report;
+}
+
 export async function finalizePromotionTrialCandidateReviewWorkspace(
   input: FinalizePromotionTrialCandidateReviewWorkspaceInput
 ): Promise<FinalizePromotionTrialCandidateReviewWorkspaceResult> {
@@ -589,6 +596,16 @@ export async function auditPromotionTrialCandidateLicenseReviewWorkspace(
     report_path: portableRef(cwd, reportPath),
     summary_path: portableRef(cwd, summaryPath)
   };
+}
+
+export async function inspectPromotionTrialCandidateLicenseReviewWorkspace(
+  input: Pick<
+    AuditPromotionTrialCandidateLicenseReviewWorkspaceInput,
+    "cwd" | "workspaceRoot"
+  >
+): Promise<PromotionTrialCandidateLicenseReviewWorkspaceAuditReport> {
+  const cwd = path.resolve(input.cwd);
+  return (await inspectLicenseWorkspace(cwd, input.workspaceRoot)).report;
 }
 
 export async function finalizePromotionTrialCandidateLicenseReviewWorkspace(

@@ -110,6 +110,10 @@ import {
   type PreparePromotionTrialCandidateReviewWorkspaceInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.js";
 import {
+  auditPromotionHumanReviewCoordination,
+  type AuditPromotionHumanReviewCoordinationInput
+} from "../core/benchmark/promotionBenchmarkHumanReviewCoordination.js";
+import {
   preparePromotionCanonicalCurationHandoff,
   type PreparePromotionCanonicalCurationHandoffInput
 } from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
@@ -876,6 +880,25 @@ export async function runPromotionTrialCandidateLicenseReviewWorkspaceAuditCli(
     ].join("\n") + "\n"
   );
   if (!result.report.workspace_valid) process.exitCode = 1;
+}
+
+export async function runPromotionHumanReviewCoordinationAuditCli(
+  input: AuditPromotionHumanReviewCoordinationInput
+): Promise<void> {
+  const result = await auditPromotionHumanReviewCoordination(input);
+  process.stdout.write(
+    [
+      `Human-review coordination ${result.report.status}`,
+      `Coordination valid: ${result.report.coordination_valid}`,
+      `Ready for collection: ${result.report.ready_for_collection}`,
+      `Structurally valid roles: ${result.report.structurally_valid_role_count}/4`,
+      `Ready roles: ${result.report.ready_role_count}/4`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`,
+      "Evidence boundary: structural coordination only; no human decisions, attestations, approvals, adjudication, confirmatory admission, or paper-readiness claim"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.coordination_valid) process.exitCode = 1;
 }
 
 export async function runPromotionTrialCandidateLicenseReviewWorkspaceFinalizationCli(
