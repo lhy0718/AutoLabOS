@@ -22,11 +22,10 @@ Current blockers:
 - no paper-scale post-repair recovery evaluation,
 - 12 citation-bearing claims have hash-bound full-text evidence candidates but
   remain independently unchecked in Refgate,
-- 2 OpenReview citation-bearing claims still lack full-text source files,
 - no citation-bearing claim has been promoted to `checked`.
 
 `reference-evidence-status.json` records the portable source hashes, claim
-coverage, missing sources, and the fail-closed review state. It does not package
+coverage, scope corrections, and the fail-closed review state. It does not package
 third-party PDFs.
 
 ## Independent Reference Review
@@ -62,13 +61,14 @@ node dist/cli/main.js reference-review distribute-private \
 This command rejects missing, ambiguous, symlinked, or hash-mismatched sources.
 Its manifest fixes `public_distribution_allowed=false` and
 `license_review_status=not_assessed`; the resulting directory must not enter a
-public source snapshot without a separate license review. The original two
-missing-source claims remain absent rather than being filled from abstracts.
-The private packet's `reviewer/SOURCE_README.md` lists their citation keys,
-titles, public record URLs, and blocked claim IDs so source collection remains
-explicitly separate from human claim review. The public verification receipt is
-`docs/research/evidence/promotion-reference-review-handoff-v2.json`; it records
-hashes and gate outcomes, not the third-party full texts.
+public source snapshot without a separate license review. Two claims whose exact
+full texts were unavailable were removed from the manuscript and canonical claim
+inventory rather than being filled from metadata or abstracts. The private
+packet's `reviewer/SOURCE_README.md` lists the retained source inventory and
+public record URLs so source handling remains explicitly separate from human
+claim review. The public verification receipt is
+`docs/research/evidence/promotion-reference-review-handoff-v3.json`; it records
+hashes, the scope correction, and gate outcomes, not the third-party full texts.
 
 Preflight a returned human review separately:
 
@@ -82,9 +82,7 @@ node dist/cli/main.js reference-review preflight \
 Preflight verifies exact task coverage, packet hashes, decision-specific
 evidence, and the reviewer's attestations. It does not verify real-world
 identity and never modifies Refgate claim status. Even a fully supported return
-still requires explicit final approval and a separate Refgate import. The two
-claims without full source text remain outside the task file and continue to
-block submission.
+still requires explicit final approval and a separate Refgate import.
 
 ## Build
 

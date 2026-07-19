@@ -12,11 +12,11 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "4eb267e42a7818b93e0be4f2fffab660e27d6337814474a1b476230bcdb6de36"
+          "sha256": "13c451bee829cf684e1fbb728ea2db7e3d54ea0e732f68b02c77a0906b4d17fc"
         },
         {
           "path": "papers/promotion-governance/references.bib",
-          "sha256": "c34f4a8fe8dc45b68bb491f7a0f7d9ff9aec5989fe8fbf874afc37308c5b0d51"
+          "sha256": "c15a3eb5d6a111dc41cab515396ed01b9d1763d341e919d230b32c4cc9cb544d"
         }
       ]
     },
@@ -422,9 +422,24 @@
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-reference-review-handoff-v2.json",
-          "sha256": "a0cf3c13c917e509078e791f1002a1ef47ee930b09ddd8445a06205c8c22e980",
+          "path": "docs/research/evidence/promotion-reference-review-handoff-v3.json",
+          "sha256": "8fcb281086833008979a5b6ce09ee4a221fbe9d1a35052487ff013c5d0bb6425",
           "assertions": [
+            {
+              "pointer": "/private_distribution/source_count",
+              "operator": "equals",
+              "expected": 8
+            },
+            {
+              "pointer": "/source_integrity/source_title_matched_count",
+              "operator": "equals",
+              "expected": 8
+            },
+            {
+              "pointer": "/source_integrity/source_title_gate_passed",
+              "operator": "equals",
+              "expected": true
+            },
             {
               "pointer": "/public_handoff/missing_full_text_claim_count",
               "operator": "equals",
@@ -436,12 +451,12 @@
               "expected": true
             },
             {
-              "pointer": "/archive_extraction_preflight/preflight_passed",
+              "pointer": "/incomplete_review_preflight/preflight_passed",
               "operator": "equals",
               "expected": true
             },
             {
-              "pointer": "/archive_extraction_preflight/claim_gate_passed",
+              "pointer": "/incomplete_review_preflight/claim_gate_passed",
               "operator": "equals",
               "expected": true
             }
@@ -457,7 +472,7 @@
       "evidence": [
         {
           "path": "papers/promotion-governance/submission-status.json",
-          "sha256": "1a054fc6183b2ad831231ff9a91cfa80fc47765fc815def3e26a311535c29610",
+          "sha256": "9e60c7fcb6f127d978fbf1800f69f4d223dc9f5bd6cc48b8e072df2d459671b3",
           "assertions": [
             {
               "pointer": "/paper_ready",
@@ -478,11 +493,11 @@
         },
         {
           "path": "papers/promotion-governance/manuscript.tex",
-          "sha256": "1519db1a12ddd44f385d9671f2041b13d6a822d58c5aa7a1d37b3180b4464cd6"
+          "sha256": "2202f3e6b3e06b347c0dd6dcd5af0bf29bc38e3eefc9eed90766ad57f41bb563"
         },
         {
           "path": "papers/promotion-governance/manuscript.pdf",
-          "sha256": "80ac0b197e557cb550f830db6b9793381d28ff0b5bb4ca422c95b8e2cb34d6b8"
+          "sha256": "aa6d26fc38fedfa259297f512b03118f09297c4c4d21930492161f29f484b235"
         }
       ]
     },

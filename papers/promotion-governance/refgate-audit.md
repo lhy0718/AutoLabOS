@@ -2,9 +2,9 @@
 
 ## Summary
 
-- Entries: 10
-- Blocking issues: 14
-- Warnings: 10
+- Entries: 8
+- Blocking issues: 12
+- Warnings: 8
 
 ## Blocking Issues
 
@@ -19,9 +19,7 @@
 - `CLAIM_NOT_CHECKED` `javaji-etal-2025-ai`: Claim claim-0009 is marked needs_review.
 - `CLAIM_NOT_CHECKED` `riehl2026ara`: Claim claim-0010 is marked needs_review.
 - `CLAIM_NOT_CHECKED` `hu2025reprobench`: Claim claim-0011 is marked needs_review.
-- `CLAIM_NOT_CHECKED` `petel2026madscps`: Claim claim-0012 is marked claim_unchecked.
 - `CLAIM_NOT_CHECKED` `ma2026reflection`: Claim claim-0013 is marked needs_review.
-- `CLAIM_NOT_CHECKED` `nishi2026claimgarden`: Claim claim-0014 is marked claim_unchecked.
 
 ## Warnings
 
@@ -31,10 +29,8 @@
 - `DOI_MISSING` `riehl2026ara`: Lockfile record has no DOI.
 - `ARXIV_FALLBACK` `hu2025reprobench`: Entry uses arXiv fallback rather than final publication BibTeX.
 - `DOI_MISSING` `hu2025reprobench`: Lockfile record has no DOI.
-- `DOI_MISSING` `petel2026madscps`: Lockfile record has no DOI.
 - `ARXIV_FALLBACK` `ma2026reflection`: Entry uses arXiv fallback rather than final publication BibTeX.
 - `DOI_MISSING` `ma2026reflection`: Lockfile record has no DOI.
-- `DOI_MISSING` `nishi2026claimgarden`: Lockfile record has no DOI.
 
 ## Verified Official BibTeX
 
@@ -45,8 +41,7 @@
 
 ## Manual Fallbacks
 
-- `nishi2026claimgarden` — Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.
-- `petel2026madscps` — Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.
+- None
 
 ## arXiv Fallbacks
 
@@ -68,9 +63,7 @@
 - `CLAIM_NOT_CHECKED` `javaji-etal-2025-ai`: Claim claim-0009 is marked needs_review.
 - `CLAIM_NOT_CHECKED` `riehl2026ara`: Claim claim-0010 is marked needs_review.
 - `CLAIM_NOT_CHECKED` `hu2025reprobench`: Claim claim-0011 is marked needs_review.
-- `CLAIM_NOT_CHECKED` `petel2026madscps`: Claim claim-0012 is marked claim_unchecked.
 - `CLAIM_NOT_CHECKED` `ma2026reflection`: Claim claim-0013 is marked needs_review.
-- `CLAIM_NOT_CHECKED` `nishi2026claimgarden`: Claim claim-0014 is marked claim_unchecked.
 
 ## Submission Checklist
 
@@ -80,3 +73,10 @@
 - [ ] Manual fallback entries include fallback reason and field checks.
 - [ ] arXiv fallback entries include version and accessed date.
 - [ ] Important claims have source locations and evidence spans.
+
+## Source Title Check
+
+- Source map: outputs/promotion-governance/reference-review-source-map-v5.tsv
+- Checked sources: 8
+- Passing sources: 8
+- Blocking issues: 0

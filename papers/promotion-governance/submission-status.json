@@ -43,14 +43,14 @@
     }
   },
   "reference_evidence": {
-    "citation_source_count": 10,
-    "citation_bearing_claim_count": 14,
+    "citation_source_count": 8,
+    "citation_bearing_claim_count": 12,
     "full_text_source_count": 8,
     "full_text_evidence_candidate_count": 12,
     "independently_checked_claim_count": 0,
-    "missing_full_text_claim_count": 2,
+    "missing_full_text_claim_count": 0,
     "review_handoff": {
-      "handoff_id": "reference-claim-review-eb8fd03200d305b5",
+      "handoff_id": "reference-claim-review-48e6468ce2f38254",
       "task_count": 12,
       "human_review_completed": false,
       "preflight_passed": false,
@@ -82,7 +82,6 @@
     "three_paper_eligible_real_model_trials_for_manuscript_only_baseline",
     "paper_scale_post_repair_recovery_and_regression_evaluation",
     "independent_review_of_12_full_text_evidence_candidates",
-    "full_text_sources_for_2_openreview_claims",
     "final_refgate_submission_audit_with_zero_blocking_claims",
     "official_acl_review_format_revalidation_after_confirmatory_results"
   ]

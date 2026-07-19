@@ -218,7 +218,8 @@ on clean research bundles?
 ## Paper-worthiness Gate
 
 - The research question is explicit and remains distinct from SAGE,
-  BadScientist, CLAIM-BENCH, MADS-CPS, and end-to-end research benchmarks.
+  BadScientist, CLAIM-BENCH, reproducibility-assessment systems, and end-to-end
+  research benchmarks.
 - The benchmark has frozen manifests, hashes, independent labels, and no split
   leakage.
 - Every held-out mutation has two hash-bound `isolated` audit judgments from

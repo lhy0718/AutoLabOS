@@ -1,53 +1,40 @@
 {
   "schema_version": "1.0",
-  "handoff_id": "reference-claim-review-eb8fd03200d305b5",
+  "handoff_id": "reference-claim-review-48e6468ce2f38254",
   "manuscript_ref": "manuscript.tex",
   "source_inputs": [
     {
       "role": "claims",
       "ref": "refgate_claims.tsv",
-      "sha256": "548df2af4f87a1d9137bba8708ba09c5b2fa20d8bc7ac5b381015e60a1ea3c9d"
+      "sha256": "e098f7a69c6af800a3180b6f300703b382d35cb51e984c3c5516b4f1919809c1"
     },
     {
       "role": "status",
       "ref": "reference-evidence-status.json",
-      "sha256": "18ef8f2c4c9b2003d9542c93fb6daab03d4c8bfc2ad6e25b85594d4e10100821"
+      "sha256": "5c24dd07312cac6c256f86af9fe66721df99c83408d4ea841ac94d6406775b22"
     },
     {
       "role": "lock",
       "ref": "refgate.lock.json",
-      "sha256": "72fc429548d02c5008c61dcc708a6ff7f6840c53370e81d749374a5b2b0fffa2"
+      "sha256": "2faafb1cc4ebe06430f329d9cc3cb604ff4003b73d4ef1fcb28e3bb42c1caf59"
     }
   ],
   "task_count": 12,
-  "missing_full_text_claim_count": 2,
-  "missing_full_text_claims": [
-    {
-      "claim_id": "claim-0012",
-      "citation_key": "petel2026madscps",
-      "source_title": "MADS-CPS: A Machine-Checkable Admissibility Contract for AI Scientists in Autonomous Laboratories",
-      "record_url": "https://openreview.net/forum?id=VrYHFXGyUO"
-    },
-    {
-      "claim_id": "claim-0014",
-      "citation_key": "nishi2026claimgarden",
-      "source_title": "ClaimGarden: Update-Aware Claim-State Control for AI Scientist Workflows",
-      "record_url": "https://openreview.net/forum?id=Y8INhipPQe"
-    }
-  ],
+  "missing_full_text_claim_count": 0,
+  "missing_full_text_claims": [],
   "reviewer_root": "reviewer",
   "files": [
     {
       "path": "reviewer/claim-review-tasks.jsonl",
-      "sha256": "229df68bf916e6b553a9bf10dfab00d5ef5198c9ba4c3311c399738b9e3f5880"
+      "sha256": "feb3455bd041af1fade1c8af0e0ca504adb295ad67856d5752374abd5e8379da"
     },
     {
       "path": "reviewer/review-template.json",
-      "sha256": "0eea2d4079ed732feddd012db7a2ece379e860b6aa68f9ff5c2090f22e1965cf"
+      "sha256": "0661e7613134fb1c45a60148e167e9ac97b8327bf0a8c171d62ff8bbdfd04d82"
     },
     {
       "path": "reviewer/REVIEWER_GUIDE.md",
-      "sha256": "a4eec9cb0102681f7bdb5ca561d306fc47fba2f16b84a869f0af4a2a6560acfa"
+      "sha256": "2f710b1629871614d10c5a83e5efcb4b146b26e109d7ab4a37d4de56881e7c6b"
     }
   ],
   "evidence_boundary": "This packet binds full-text evidence candidates to manuscript claims for independent human review. It contains no third-party PDF, no completed human judgment, no verified reviewer identity, no checked claim, and no paper-readiness decision. Missing full texts remain blocking and are not converted into review tasks."

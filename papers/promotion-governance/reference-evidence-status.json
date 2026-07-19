@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0",
-  "audited_on": "2026-07-18",
+  "audited_on": "2026-07-19",
   "manuscript": "manuscript.tex",
   "submission_gate_passed": false,
   "summary": {
-    "citation_source_count": 10,
-    "citation_bearing_claim_count": 14,
+    "citation_source_count": 8,
+    "citation_bearing_claim_count": 12,
     "full_text_source_count": 8,
     "full_text_evidence_candidate_count": 12,
     "independently_checked_claim_count": 0,
-    "missing_full_text_claim_count": 2
+    "missing_full_text_claim_count": 0
   },
   "review_policy": {
     "candidate_status": "needs_review",
@@ -73,34 +73,19 @@
       "full_text_status": "mapped",
       "pdf_sha256": "2f58f1a6581af9d99432422dccf3cf61f5c263377c1e4550e7333c4a22d7184d",
       "claim_ids": ["claim-0002", "claim-0006"]
-    },
-    {
-      "citation_key": "petel2026madscps",
-      "record_url": "https://openreview.net/forum?id=VrYHFXGyUO",
-      "full_text_status": "missing",
-      "pdf_sha256": null,
-      "claim_ids": ["claim-0012"]
-    },
-    {
-      "citation_key": "nishi2026claimgarden",
-      "record_url": "https://openreview.net/forum?id=Y8INhipPQe",
-      "full_text_status": "missing",
-      "pdf_sha256": null,
-      "claim_ids": ["claim-0014"]
     }
   ],
   "manual_source_alignment": [
     {
       "citation_key": "javaji-etal-2025-ai",
-      "automated_result": "source_title_mismatch",
+      "automated_result": "source_title_match_after_tex_arrow_normalization",
       "first_page_result": "title_aligned_with_bibtex",
-      "cause": "proceedings_header_selected_as_title_candidate",
-      "gate_effect": "recorded_only_no_automatic_override"
+      "cause": "official_bibtex_tex_arrow_macro_rendered_as_unicode",
+      "gate_effect": "source_title_gate_passed"
     }
   ],
   "blocking_requirements": [
     "independent_review_of_12_full_text_evidence_candidates",
-    "full_text_sources_for_2_openreview_claims",
     "final_refgate_submission_audit_with_zero_blocking_claims"
   ]
 }

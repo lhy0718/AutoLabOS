@@ -33,15 +33,13 @@ claim that no adjacent work exists.
 - Reproducibility and admissibility work provides nearby assurance mechanisms.
   Agentic Reproducibility Assessment reconstructs workflow graphs for
   reproducibility assessment. REPRO-Bench evaluates agents against papers and
-  replication packages. MADS-CPS defines a machine-checkable run-level
-  admissibility contract for autonomous laboratories. These are the closest
+  replication packages. These are the closest full-text-verified
   artifact-level neighbors; the remaining distinction is an explicit
   concern-to-promotion decision contract with repair ownership and clean-case
   over-blocking measurement.
 - Recovery work makes node-local failure attribution an insufficient novelty
   claim by itself. SAGE routes experiment failures to hypothesis, design, or
-  implementation interventions. ClaimGarden similarly studies update-aware
-  claim-state control and manuscript export gates.
+  implementation interventions.
 
 Primary records:
 
@@ -54,17 +52,15 @@ Primary records:
 - ResearchClawBench: https://arxiv.org/abs/2606.07591
 - Agentic Reproducibility Assessment: https://arxiv.org/abs/2605.02651
 - REPRO-Bench: https://arxiv.org/abs/2507.18901
-- MADS-CPS: https://openreview.net/forum?id=VrYHFXGyUO
 - SAGE: https://arxiv.org/abs/2606.31478
-- ClaimGarden: https://openreview.net/forum?id=Y8INhipPQe
 
 ## Candidate Comparison
 
 | Candidate | Falsifiable claim | Nearest overlap | Decision |
 | --- | --- | --- | --- |
-| Fail-closed promotion policy | Artifact-bound gates reduce false promotion and concern-acceptance conflict while preserving clean cases | BadScientist, automatic review, MADS-CPS | Selected |
+| Fail-closed promotion policy | Artifact-bound gates reduce false promotion and concern-acceptance conflict while preserving clean cases | BadScientist, automatic review, reproducibility assessment | Selected |
 | Node-local experiment recovery | Structured attribution improves selection of hypothesis, design, or implementation repairs | SAGE directly studies this mechanism | Reject as primary contribution; retain repair localization as a secondary metric |
-| Update-aware claim-state control | Versioned evidence updates prevent stale claims from reaching manuscript export | ClaimGarden directly studies claim-state drift and export gates | Reject as primary contribution; retain stale-state cases in the benchmark |
+| Update-aware claim-state control | Versioned evidence updates prevent stale claims from reaching manuscript export | No full-text-backed nearest comparison retained in the evidence corpus | Reject as primary contribution; retain stale-state cases in the benchmark |
 | End-to-end autonomous research benchmark | A new suite measures full research capability better than paper-only evaluation | PaperBench, ResearchClawBench, AstaBench, ResearchGym, AIRS-Bench | Reject; the space is crowded and exceeds the available curation budget |
 
 ## Research Questions
@@ -769,25 +765,29 @@ change the zero-admission decision.
 
 ### Citation Claim Review Handoff
 
-The manuscript's 14 citation-bearing claims are now separated into 12
-full-text-backed review tasks and two missing-source blockers. A deterministic
-handoff binds the current claim TSV, evidence-status record, Refgate lock, each
-candidate passage, public record URL, source locator, and full-text SHA-256.
-The reviewer package contains no third-party PDF and no controller-local path.
-Its return template leaves all decisions and reviewer identity null and all
-human and independence attestations false.
+The manuscript now has 12 citation-bearing claims, and every claim maps to one
+of eight hash-bound full texts. Two additional OpenReview-only claims were
+removed from the manuscript, bibliography, lockfile, and claim inventory after
+their exact PDFs could not be retrieved from the current environment. Metadata,
+abstracts, and search-index text were not substituted for full-text evidence.
+The resulting zero missing-source count therefore reflects a narrower
+full-text-verifiable claim set, not successful retrieval of those two papers.
+
+A deterministic handoff binds the current claim TSV, evidence-status record,
+Refgate lock, each candidate passage, public record URL, source locator, and
+full-text SHA-256. The public reviewer package contains no third-party PDF and
+no controller-local path. Its return template leaves all decisions and reviewer
+identity null and all human and independence attestations false.
 
 For offline independent review, the general reference-review distribution
-command has also assembled a separate private packet from the eight mapped
-full texts. It deduplicates sources shared by multiple claims, verifies each
-source against the task hash, rejects symbolic links and ambiguous files, and
-closes the complete file inventory. The resulting archive was extracted into a
-fresh directory and passed through the same preflight. Its distribution
-manifest explicitly forbids public release and records that source-license
-review is not assessed, so neither the archive nor the third-party PDFs enter
-the public source snapshot. The packet, archive, missing-source inventory, and
-expected fail-closed preflight are fixed in
-`docs/research/evidence/promotion-reference-review-handoff-v2.json`.
+command assembled a separate private packet from the eight mapped full texts.
+It deduplicates sources shared by multiple claims, verifies each source against
+the task hash, rejects symbolic links and ambiguous files, and closes the
+complete file inventory. Its manifest forbids public release and records that
+source-license review is not assessed, so neither the packet nor the third-party
+PDFs enter the public source snapshot. The current packet, distribution receipt,
+and expected fail-closed preflight are fixed in
+`docs/research/evidence/promotion-reference-review-handoff-v3.json`.
 
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim
@@ -795,23 +795,25 @@ status changes. A completed return must cover all 12 tasks, inspect the full
 source text, and choose `supported`, `rewrite`, `wrong_source`, or
 `missing_source` with decision-specific evidence. Structural preflight does not
 prove real-world reviewer identity and cannot write `checked`; explicit final
-approval and a separate Refgate import remain mandatory. The two unavailable
-OpenReview full texts remain submission blockers rather than being replaced by
-metadata or abstract evidence.
+approval and a separate Refgate import remain mandatory.
 
-The post-preflight import boundary is now executable without creating the
+Refgate now matches all eight mapped first-page titles. The only prior mismatch
+was a normalization defect: an official BibTeX title encoded an arrow as a TeX
+macro while the PDF rendered the same symbol as Unicode. The generic
+normalization fix passes the full Refgate test suite and does not override a
+source mismatch manually. Bibliography and source-integrity gates therefore
+pass; the 12 unchecked human claim decisions remain the only Refgate blockers.
+
+The post-preflight import boundary remains executable without creating the
 missing human decisions. Every preflight emits an incomplete final-approval
 template bound to the exact review-return and report hashes. Import replays the
 closed-packet and review checks, requires every reviewed claim to be supported,
 requires a separately completed human approval, verifies that the source claim
 inventory still matches the handoff hash, and writes a new Refgate import
-candidate rather than overwriting the canonical TSV. Claims omitted because
-their full text is unavailable remain unchecked, and the receipt keeps the
-submission claim gate closed until they are resolved. A same-flow run with the
-current incomplete 12-task template exited nonzero at preflight and import and
-created no import output. Therefore independently reviewed claims, completed
-final approvals, and imported checked statuses all remain zero at this
-checkpoint.
+candidate rather than overwriting the canonical TSV. A same-flow run with the
+current incomplete 12-task template exited nonzero at preflight and created no
+checked status. Therefore independently reviewed claims, completed final
+approvals, and imported checked statuses all remain zero at this checkpoint.
 
 ### Exploratory Instrument Check
 
