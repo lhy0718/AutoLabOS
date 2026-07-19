@@ -440,6 +440,27 @@ A passing artifact audit establishes only the declared byte and JSON contracts.
 It does not independently prove scientific validity, human identity, provider
 identity, or statistical independence.
 
+### Research Validation Profiles
+
+Run a repository-owned, hash-bound command profile when a paper-scale revision
+needs one auditable receipt for build, tests, harness, smoke, plugin, environment,
+isolated paper-build, and page-render checks:
+
+```sh
+autolabos research run-validation \
+  --profile <validation-profile.json> \
+  --out-dir <new-validation-dir>
+```
+
+Profiles declare every required step as a command plus argument vector; shell
+strings and undeclared environment overrides are not used. The runner records
+the profile hash, exit code, timeout, duration, stdout/stderr hashes, declared
+output hashes, and Git state before and after execution. Missing required steps,
+missing outputs, command failures, a changed Git HEAD, or a dirty worktree keep
+the report failed. Command success establishes only the declared validation
+surface and never substitutes for scientific, human-review, licensing,
+reference, or paper-readiness evidence.
+
 ### External Source Projection
 
 External research-agent outputs can be normalized for promotion-benchmark intake without embedding source-specific adapters in public runtime code:

@@ -83,6 +83,7 @@ export type CliAction =
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
   | { kind: "research-pack-verify"; bundleRoot: string }
   | { kind: "research-milestone-verify"; contractPath: string; outDir: string }
+  | { kind: "research-validation-run"; profilePath: string; outDir: string }
   | { kind: "research-help" }
   | { kind: "reference-review-prepare"; claimsPath: string; statusPath: string; lockPath: string; outDir: string }
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
@@ -2041,8 +2042,8 @@ function parseResearchArgs(args: string[]): CliAction {
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     return { kind: "research-help" };
   }
-  if (!["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone"].includes(subcommand)) {
-    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack|verify-pack|verify-milestone> [options]." };
+  if (!["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone", "run-validation"].includes(subcommand)) {
+    return { kind: "error", message: "Usage: research <new|audit|review|improve|pack|verify-pack|verify-milestone|run-validation> [options]." };
   }
   if (args.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
     return { kind: "research-help" };
@@ -2072,7 +2073,8 @@ function parseResearchArgs(args: string[]): CliAction {
     improve: ["--review", "--out-dir"],
     pack: ["--gate", "--review", "--source-dir", "--out-dir"],
     "verify-pack": ["--root"],
-    "verify-milestone": ["--contract", "--out-dir"]
+    "verify-milestone": ["--contract", "--out-dir"],
+    "run-validation": ["--profile", "--out-dir"]
   };
   const unsupported = [...values.keys()].find((key) => !allowedByCommand[subcommand].includes(key));
   if (unsupported) {
@@ -2092,6 +2094,13 @@ function parseResearchArgs(args: string[]): CliAction {
     return contractPath && outDir
       ? { kind: "research-milestone-verify", contractPath, outDir }
       : { kind: "error", message: "research verify-milestone requires --contract <milestone.json> and --out-dir <new-output-dir>." };
+  }
+
+  if (subcommand === "run-validation") {
+    const profilePath = values.get("--profile");
+    return profilePath && outDir
+      ? { kind: "research-validation-run", profilePath, outDir }
+      : { kind: "error", message: "research run-validation requires --profile <validation-profile.json> and --out-dir <new-output-dir>." };
   }
 
   if (subcommand === "new") {

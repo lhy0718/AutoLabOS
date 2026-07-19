@@ -62,6 +62,7 @@ import {
   runResearchImproveCli,
   runResearchNewCli,
   runResearchMilestoneVerificationCli,
+  runResearchValidationCli,
   runResearchPackCli,
   runResearchPackVerificationCli,
   runResearchReviewCli
@@ -89,7 +90,7 @@ function printHelp(): void {
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]",
-    "  autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone> [options]",
+    "  autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone|run-validation> [options]",
     "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
     "  autolabos reference-review preflight --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
@@ -187,7 +188,8 @@ function printResearchHelp(): void {
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
     "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]",
     "  autolabos research verify-pack --root <paper-readiness-bundle-dir>",
-    "  autolabos research verify-milestone --contract <milestone.json> --out-dir <new-output-dir>"
+    "  autolabos research verify-milestone --contract <milestone.json> --out-dir <new-output-dir>",
+    "  autolabos research run-validation --profile <validation-profile.json> --out-dir <new-output-dir>"
   ].join("\n") + "\n");
 }
 
@@ -364,6 +366,15 @@ async function main(): Promise<void> {
     await runResearchMilestoneVerificationCli({
       cwd: process.cwd(),
       contractPath: action.contractPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "research-validation-run") {
+    await runResearchValidationCli({
+      cwd: process.cwd(),
+      profilePath: action.profilePath,
       outDir: action.outDir
     });
     return;

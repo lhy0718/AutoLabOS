@@ -1,0 +1,117 @@
+{
+  "schema_version": "1.0",
+  "profile_id": "paper-scale-release-validation",
+  "required_step_ids": [
+    "build",
+    "full_tests",
+    "web_tests",
+    "harness",
+    "smoke",
+    "plugin_operations",
+    "plugin_release",
+    "global_preflight",
+    "paper_build",
+    "paper_render"
+  ],
+  "steps": [
+    {
+      "id": "build",
+      "command": "npm",
+      "args": ["run", "build"],
+      "cwd": ".",
+      "timeout_ms": 900000,
+      "expected_outputs": []
+    },
+    {
+      "id": "full_tests",
+      "command": "npm",
+      "args": ["test"],
+      "cwd": ".",
+      "timeout_ms": 1800000,
+      "expected_outputs": []
+    },
+    {
+      "id": "web_tests",
+      "command": "npm",
+      "args": ["run", "test:web"],
+      "cwd": ".",
+      "timeout_ms": 900000,
+      "expected_outputs": []
+    },
+    {
+      "id": "harness",
+      "command": "npm",
+      "args": ["run", "validate:harness"],
+      "cwd": ".",
+      "timeout_ms": 300000,
+      "expected_outputs": []
+    },
+    {
+      "id": "smoke",
+      "command": "npm",
+      "args": ["run", "test:smoke:all"],
+      "cwd": ".",
+      "timeout_ms": 1800000,
+      "expected_outputs": []
+    },
+    {
+      "id": "plugin_operations",
+      "command": "npm",
+      "args": [
+        "run",
+        "validate:plugin-operations",
+        "--",
+        "--report",
+        "${VALIDATION_DIR}/step-artifacts/plugin-operations.json"
+      ],
+      "cwd": ".",
+      "timeout_ms": 900000,
+      "expected_outputs": ["step-artifacts/plugin-operations.json"]
+    },
+    {
+      "id": "plugin_release",
+      "command": "npm",
+      "args": ["run", "plugin:release-check"],
+      "cwd": ".",
+      "timeout_ms": 900000,
+      "expected_outputs": []
+    },
+    {
+      "id": "global_preflight",
+      "command": "${CODEX_HOME}/bin/codex-global-preflight",
+      "args": [],
+      "cwd": ".",
+      "timeout_ms": 900000,
+      "expected_outputs": []
+    },
+    {
+      "id": "paper_build",
+      "command": "latexmk",
+      "args": [
+        "-pdf",
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        "-outdir=${VALIDATION_DIR}/paper-build",
+        "manuscript.tex"
+      ],
+      "cwd": "papers/promotion-governance",
+      "timeout_ms": 600000,
+      "expected_outputs": ["paper-build/manuscript.pdf"]
+    },
+    {
+      "id": "paper_render",
+      "command": "pdftoppm",
+      "args": [
+        "-png",
+        "-r",
+        "120",
+        "${VALIDATION_DIR}/paper-build/manuscript.pdf",
+        "${VALIDATION_DIR}/paper-render/page"
+      ],
+      "cwd": ".",
+      "timeout_ms": 600000,
+      "expected_outputs": ["paper-render/page-1.png"]
+    }
+  ],
+  "evidence_boundary": "This repository-owned profile requires the declared build, test, harness, smoke, plugin, global environment, isolated paper-build, and page-render commands. Passing it does not replace milestone evidence, human review, source-license review, reference review, statistical validation, or visual inspection of the rendered PDF pages."
+}

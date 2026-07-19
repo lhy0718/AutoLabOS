@@ -9,6 +9,7 @@ import {
   type ResearchOperationResult
 } from "../core/researchGovernanceOperations.js";
 import { verifyResearchMilestone } from "../core/researchMilestoneAudit.js";
+import { runResearchValidation } from "../core/researchValidationRun.js";
 
 export async function runResearchNewCli(input: {
   cwd: string;
@@ -65,6 +66,31 @@ export async function runResearchMilestoneVerificationCli(input: {
   const result = await verifyResearchMilestone(input);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.report.achieved) process.exitCode = 1;
+}
+
+export async function runResearchValidationCli(input: {
+  cwd: string;
+  profilePath: string;
+  outDir: string;
+}): Promise<void> {
+  const result = await runResearchValidation(input, {
+    onStep: (step) => {
+      process.stdout.write(
+        `[research-validation] ${step.id}: ${step.passed ? "pass" : "fail"} `
+        + `(exit=${step.exit_code}, timeout=${step.timed_out}, ${step.duration_ms} ms)\n`
+      );
+    }
+  });
+  process.stdout.write(`${JSON.stringify({
+    status: result.report.status,
+    passed: result.report.passed,
+    steps: result.report.summary,
+    stable_head: result.report.repository.stable_head,
+    clean_before_and_after: result.report.repository.clean_before_and_after,
+    report_path: result.report_path,
+    summary_path: result.summary_path
+  }, null, 2)}\n`);
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 function printResult<T>(result: ResearchOperationResult<T>): void {
