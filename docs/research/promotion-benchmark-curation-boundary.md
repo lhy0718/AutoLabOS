@@ -77,6 +77,19 @@ requires three distinct pseudonymous roles, exact file inventories, null
 decisions, and false human attestations. Package preparation is not annotation,
 license approval, identity proof, or independence proof.
 
+An initial reviewer may convert only their assigned package into a separate
+resumable workspace. The workspace preserves a copied integrity-valid opaque
+packet, one editable file per candidate, and a separate three-part attestation.
+Its audit distinguishes packet and file integrity from structural completion:
+blank and partial workspaces remain valid working states but are not ready to
+finalize. Finalization requires exact task coverage, complete labels, and
+explicitly true attestations, then emits the existing initial-annotation
+schema. The packet-bound annotation preflight remains mandatory because
+workspace finalization does not validate trial membership, JSON pointers, or
+positive-evidence completeness. Neither workspace progress nor finalization
+establishes real-world identity, independence, label truth, adjudication, or
+confirmatory admission.
+
 Returned files must re-enter through the campaign controller boundary. The
 collector revalidates the immutable campaign and handoff, binds each return to
 the assigned pseudonymous slot and handoff ID, preserves the exact return hash,

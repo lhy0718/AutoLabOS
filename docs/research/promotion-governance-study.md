@@ -630,6 +630,24 @@ and blank-return preflights are recorded in
 `docs/research/evidence/promotion-trial-candidate-review-preflight-v11.json`.
 Transfer hashes remain in the private operator log alongside the archives.
 
+The assigned initial-review package can now be converted into a resumable
+candidate-per-file workspace without modifying the closed campaign. A live v10
+run copied the integrity-valid 72-task opaque packet into a 513-file,
+34,386,861-byte workspace and preserved reviewer packet manifest SHA-256
+`107fe3e611f4ed52724b319b65fa38e1675f676782e7ef6760962c58b17f356c`.
+The first audit reported a valid packet and editable file inventory, zero
+malformed files, 0/72 structurally complete annotations, 72 incomplete
+annotations, and false attestations. It therefore set
+`ready_to_finalize=false`. A finalization attempt exited nonzero and created
+no return file. Synthetic regression tests separately exercise 0/72, 1/72,
+and 72/72 structural states and require the assembled output to pass the
+existing packet-bound annotation preflight. This removes monolithic-file
+friction only; completed human candidate reviews, reviewer-independence
+evidence, and source-license review remain absent. The implementation hashes,
+workspace inventory, audit result, and failed finalization boundary are
+recorded in
+`docs/research/evidence/promotion-trial-candidate-review-workspace-v1.json`.
+
 The controller return path now has an assignment-bound collector. It rechecks
 the pristine campaign and complete handoff, requires the two annotation
 pseudonyms and source-license reviewer pseudonym to match their assigned slots,

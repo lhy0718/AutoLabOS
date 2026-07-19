@@ -49,6 +49,9 @@ export type CliAction =
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-review-campaign"; handoffRoot: string; annotatorIds: string[]; licenseReviewerId: string; outDir: string }
   | { kind: "governance-benchmark-collect-promotion-trial-candidate-review-campaign"; campaignRoot: string; handoffRoot: string; annotationPaths: string[]; licenseReviewPath: string; resolutionPath?: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-worksheet"; handoffRoot: string; annotatorId: string; outputPath: string }
+  | { kind: "governance-benchmark-prepare-promotion-trial-candidate-review-workspace"; packageRoot: string; outDir: string }
+  | { kind: "governance-benchmark-audit-promotion-trial-candidate-review-workspace"; workspaceRoot: string; outDir: string }
+  | { kind: "governance-benchmark-finalize-promotion-trial-candidate-review-workspace"; workspaceRoot: string; outputPath: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-license-worksheet"; handoffRoot: string; reviewerId: string; outputPath: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-annotation"; reviewerRoot: string; annotationPath: string; outDir: string }
   | { kind: "governance-benchmark-preflight-promotion-trial-candidate-license-review"; licenseRoot: string; reviewPath: string; outDir: string }
@@ -391,6 +394,81 @@ export function resolveCliAction(args: string[]): CliAction {
 
   if (first === "governance-benchmark") {
     const subcommand = args[1];
+    if (subcommand === "prepare-promotion-trial-candidate-review-workspace") {
+      let packageRoot: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--package-root" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark prepare-promotion-trial-candidate-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--package-root") packageRoot = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!packageRoot || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --package-root and --out-dir are required." };
+      }
+      return {
+        kind: "governance-benchmark-prepare-promotion-trial-candidate-review-workspace",
+        packageRoot,
+        outDir
+      };
+    }
+    if (subcommand === "audit-promotion-trial-candidate-review-workspace") {
+      let workspaceRoot: string | undefined;
+      let outDir: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--workspace-root" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported governance-benchmark audit-promotion-trial-candidate-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--workspace-root") workspaceRoot = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!workspaceRoot || !outDir) {
+        return { kind: "error", message: "Missing required arguments: --workspace-root and --out-dir are required." };
+      }
+      return {
+        kind: "governance-benchmark-audit-promotion-trial-candidate-review-workspace",
+        workspaceRoot,
+        outDir
+      };
+    }
+    if (subcommand === "finalize-promotion-trial-candidate-review-workspace") {
+      let workspaceRoot: string | undefined;
+      let outputPath: string | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--workspace-root" && token !== "--output") {
+          return { kind: "error", message: `Unsupported governance-benchmark finalize-promotion-trial-candidate-review-workspace argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--workspace-root") workspaceRoot = value;
+        else outputPath = value;
+        index += 1;
+      }
+      if (!workspaceRoot || !outputPath) {
+        return { kind: "error", message: "Missing required arguments: --workspace-root and --output are required." };
+      }
+      return {
+        kind: "governance-benchmark-finalize-promotion-trial-candidate-review-workspace",
+        workspaceRoot,
+        outputPath
+      };
+    }
     if (subcommand !== "seed" && subcommand !== "dry-run" && subcommand !== "batch" && subcommand !== "export-bundles" && subcommand !== "generate-promotion-development" && subcommand !== "export-promotion-development-evidence" && subcommand !== "audit-promotion-source-expansion" && subcommand !== "export-promotion-trial-candidates" && subcommand !== "prepare-promotion-trial-candidate-review-campaign" && subcommand !== "collect-promotion-trial-candidate-review-campaign" && subcommand !== "prepare-promotion-trial-candidate-worksheet" && subcommand !== "prepare-promotion-trial-candidate-license-worksheet" && subcommand !== "preflight-promotion-trial-candidate-annotation" && subcommand !== "preflight-promotion-trial-candidate-license-review" && subcommand !== "adjudicate-promotion-trial-candidate-review" && subcommand !== "prepare-promotion-canonical-curation" && subcommand !== "collect-promotion-canonical-curation" && subcommand !== "project-promotion-source" && subcommand !== "export-promotion-source-normalization" && subcommand !== "export-promotion-source-normalization-batch" && subcommand !== "preflight-promotion-source-normalization-annotation" && subcommand !== "adjudicate-promotion-source-normalization-batch" && subcommand !== "materialize-promotion-source-normalization-batch" && subcommand !== "normalize-promotion-source" && subcommand !== "prepare-promotion-execution-evidence" && subcommand !== "audit-promotion-confirmatory" && subcommand !== "freeze-promotion-confirmatory" && subcommand !== "run-promotion-development-recovery" && subcommand !== "evaluate-promotion-recovery" && subcommand !== "gate-promotion-confirmatory" && subcommand !== "build-promotion" && subcommand !== "run-promotion" && subcommand !== "run-promotion-provider" && subcommand !== "aggregate-promotion-provider-runs" && subcommand !== "export-promotion-prompts" && subcommand !== "import-promotion-responses" && subcommand !== "export-promotion-annotations" && subcommand !== "export-promotion-mutation-audit" && subcommand !== "verify-promotion-mutations" && subcommand !== "adjudicate-promotion" && subcommand !== "analyze-promotion-failures" && subcommand !== "score-promotion") {
       return {
         kind: "error",

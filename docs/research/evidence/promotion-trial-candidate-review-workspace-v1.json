@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "recorded_at": "2026-07-19T02:42:29.617Z",
+  "handoff_id": "public-execution-trace-candidate-handoff-v10",
+  "implementation": {
+    "files": [
+      {
+        "path": "src/core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.ts",
+        "sha256": "50fcf0aed025c479b38799725fcf354d9bc32b8c924b329c13b2553b9571a35a"
+      },
+      {
+        "path": "src/cli/args.ts",
+        "sha256": "e204fa89b6f951f1efb659a5bf5d039f0bebff599722264fdd50b99d7d80e47f"
+      },
+      {
+        "path": "src/cli/governanceBenchmark.ts",
+        "sha256": "79701b68f0b2a2251426a503a1926c5f66c455d291824c97b6253b0ce22f7d89"
+      },
+      {
+        "path": "src/cli/main.ts",
+        "sha256": "9caa85272d6824087d646904826a7d0fc7b0adb940e7fab2b98e9b312ddb286f"
+      }
+    ]
+  },
+  "assigned_package": {
+    "path": "outputs/promotion-governance/trial-candidate-review-campaign-v10/reviewer-a",
+    "annotator_id": "reviewer-alpha",
+    "candidate_count": 72
+  },
+  "workspace": {
+    "path": "outputs/promotion-governance/trial-candidate-review-workspace-v1",
+    "file_count": 513,
+    "byte_count": 34386861,
+    "manifest_path": "outputs/promotion-governance/trial-candidate-review-workspace-v1/review-workspace.json",
+    "manifest_sha256": "ca10ddfa2b7e6f3bd7bf57265cfecbc1897ed5b57976fe0f97b39413386f5f7e",
+    "reviewer_packet_manifest_sha256": "107fe3e611f4ed52724b319b65fa38e1675f676782e7ef6760962c58b17f356c",
+    "closed_campaign_modified": false
+  },
+  "audit": {
+    "path": "outputs/promotion-governance/trial-candidate-review-workspace-audit-v2/review-workspace-audit.json",
+    "sha256": "3f45067e62171629a3db58d872507922361be46af2b884fe75f783e76d583c70",
+    "workspace_valid": true,
+    "packet_integrity_valid": true,
+    "ready_to_finalize": false,
+    "task_count": 72,
+    "completed_annotation_count": 0,
+    "incomplete_annotation_count": 72,
+    "malformed_annotation_count": 0,
+    "attestation_complete": false,
+    "validation_issue_count": 0
+  },
+  "fail_closed_finalization": {
+    "attempted": true,
+    "exit_code": 1,
+    "output_path": "outputs/promotion-governance/trial-candidate-review-return-v2.json",
+    "output_exists": false,
+    "error_summary": "The workspace was not ready to finalize because 0/72 annotations were complete and the human attestation was incomplete."
+  },
+  "research_state": {
+    "completed_human_candidate_review_count": 0,
+    "completed_human_license_review_count": 0,
+    "accepted_candidate_label_count": 0,
+    "canonical_source_count": 0,
+    "confirmatory_admission_count": 0,
+    "paper_ready": false
+  },
+  "evidence_boundary": "This receipt establishes only that an assigned 72-task package can be converted into an integrity-valid resumable workspace and that its blank state fails closed without emitting a return. It contains no completed human label, identity or independence proof, source-license conclusion, legal grant, accepted candidate, canonical source, confirmatory result, or paper-readiness evidence."
+}

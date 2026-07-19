@@ -43,6 +43,13 @@ import {
   inspectPromotionTrialCandidateCampaignReturn
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 import {
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_ATTESTATION,
+  PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_MANIFEST,
+  auditPromotionTrialCandidateReviewWorkspace,
+  finalizePromotionTrialCandidateReviewWorkspace,
+  preparePromotionTrialCandidateReviewWorkspace
+} from "../src/core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.js";
+import {
   PROMOTION_TRIAL_CANDIDATE_ANNOTATION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE,
   PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA,
@@ -50,6 +57,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
   PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
+  parsePromotionTrialCandidateInitialAnnotationSet,
   parsePromotionTrialCandidateLicenseReviewSet,
   type PromotionTrialCandidateHumanLabel,
   type PromotionTrialCandidateInitialAnnotationSet,
@@ -815,10 +823,10 @@ describe("promotion trial-candidate handoff", () => {
       "reviewer-a",
       "annotation-template.json"
     );
-    const reviewerATemplate = JSON.parse(await readFile(
-      reviewerATemplatePath,
-      "utf8"
-    )) as Record<string, any>;
+    const reviewerATemplateBytes = await readFile(reviewerATemplatePath);
+    const reviewerATemplate = JSON.parse(
+      reviewerATemplateBytes.toString("utf8")
+    ) as Record<string, any>;
     expect(reviewerATemplate.independence_attestation).toEqual({
       completed_by_human: false,
       peer_annotations_unseen: false,
@@ -876,6 +884,11 @@ describe("promotion trial-candidate handoff", () => {
       "trial_candidate_review_campaign_inventory_invalid",
       "trial_candidate_review_campaign_reviewer_template_invalid"
     ]));
+    await writeFile(reviewerATemplatePath, reviewerATemplateBytes);
+    expect(await inspectPromotionTrialCandidateReviewCampaign(campaignRoot)).toMatchObject({
+      passed: true,
+      issues: []
+    });
 
     const invalidPairedRoot = path.join(workspace, "parquet-paired-invalid-controller");
     await cp(path.join(workspace, pairedResult.output_dir), invalidPairedRoot, {
@@ -945,6 +958,138 @@ describe("promotion trial-candidate handoff", () => {
       sourceRoot,
       outDir: "parquet-duplicate-handoff"
     })).rejects.toThrow("globally distinct source-native balanced three-trial bases");
+  });
+
+  it("keeps resumable human review blank, partial, and preflight-bound", async () => {
+    const prepared = await preparePromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      packageRoot: "paired-review-campaign/reviewer-a",
+      outDir: "paired-review-workspace"
+    });
+    expect(prepared).toMatchObject({
+      annotator_id: "reviewer-alpha",
+      task_count: 72,
+      output_dir: "paired-review-workspace"
+    });
+
+    const blankAudit = await auditPromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-review-workspace-audit-blank"
+    });
+    expect(blankAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      task_count: 72,
+      completed_annotation_count: 0,
+      incomplete_annotation_count: 72,
+      malformed_annotation_count: 0,
+      attestation_complete: false,
+      packet_integrity_valid: true,
+      validation_issues: []
+    });
+    await expect(finalizePromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outputPath: "paired-review-returns/reviewer-alpha.json"
+    })).rejects.toThrow("not ready to finalize");
+    await expect(access(path.join(
+      workspace,
+      "paired-review-returns/reviewer-alpha.json"
+    ))).rejects.toThrow();
+
+    const workspaceManifest = JSON.parse(await readFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_MANIFEST
+    ), "utf8")) as Record<string, any>;
+    const completeCandidate = async (
+      item: Record<string, string>,
+      rationale: string
+    ): Promise<void> => {
+      const target = path.join(workspace, prepared.output_dir, item.path);
+      const annotation = JSON.parse(await readFile(target, "utf8")) as Record<string, any>;
+      annotation.observations = Object.fromEntries(
+        PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS.map((field) => [field, "negative"])
+      );
+      annotation.rationale = rationale;
+      await writeJsonFile(target, annotation);
+    };
+    await completeCandidate(
+      workspaceManifest.candidate_files[0],
+      "No positive availability observation was established in this contract fixture."
+    );
+    const partialAudit = await auditPromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-review-workspace-audit-partial"
+    });
+    expect(partialAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      completed_annotation_count: 1,
+      incomplete_annotation_count: 71,
+      malformed_annotation_count: 0
+    });
+
+    await Promise.all(workspaceManifest.candidate_files.slice(1).map(
+      (item: Record<string, string>) => completeCandidate(
+        item,
+        "No positive availability observation was established in this contract fixture."
+      )
+    ));
+    await writeJsonFile(path.join(
+      workspace,
+      prepared.output_dir,
+      PROMOTION_TRIAL_CANDIDATE_REVIEW_WORKSPACE_ATTESTATION
+    ), {
+      completed_by_human: true,
+      peer_annotations_unseen: true,
+      controller_map_unseen: true
+    });
+    const completedAudit = await auditPromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outDir: "paired-review-workspace-audit-complete"
+    });
+    expect(completedAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: true,
+      completed_annotation_count: 72,
+      incomplete_annotation_count: 0,
+      malformed_annotation_count: 0,
+      attestation_complete: true
+    });
+
+    const finalized = await finalizePromotionTrialCandidateReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: prepared.output_dir,
+      outputPath: "paired-review-returns/reviewer-alpha.json"
+    });
+    expect(finalized).toMatchObject({
+      annotator_id: "reviewer-alpha",
+      task_count: 72,
+      reviewer_root: "paired-review-workspace/packet",
+      preflight_required: true
+    });
+    const parsed = parsePromotionTrialCandidateInitialAnnotationSet(JSON.parse(
+      await readFile(path.join(workspace, finalized.output_path), "utf8")
+    ) as unknown);
+    expect(parsed.annotations).toHaveLength(72);
+    const preflight = await preflightPromotionTrialCandidateAnnotation({
+      cwd: workspace,
+      reviewerRoot: finalized.reviewer_root,
+      annotationPath: finalized.output_path,
+      outDir: "paired-review-workspace-preflight"
+    });
+    expect(preflight.report).toMatchObject({
+      passed: true,
+      annotator_id: "reviewer-alpha",
+      annotation_count: 72,
+      positive_candidate_count: 0,
+      source_eligible_candidate_count: 0,
+      validation_issues: []
+    });
   });
 
   it("collects only assigned campaign returns and binds the adjudication inputs", async () => {

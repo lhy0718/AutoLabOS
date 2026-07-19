@@ -466,6 +466,18 @@ autolabos governance-benchmark prepare-promotion-trial-candidate-worksheet \
   --annotator-id <pseudonym> \
   --output <review-a.json>
 
+autolabos governance-benchmark prepare-promotion-trial-candidate-review-workspace \
+  --package-root <new-review-campaign>/reviewer-a \
+  --out-dir <reviewer-a-workspace>
+
+autolabos governance-benchmark audit-promotion-trial-candidate-review-workspace \
+  --workspace-root <reviewer-a-workspace> \
+  --out-dir <new-workspace-audit>
+
+autolabos governance-benchmark finalize-promotion-trial-candidate-review-workspace \
+  --workspace-root <reviewer-a-workspace> \
+  --output <review-a.json>
+
 autolabos governance-benchmark prepare-promotion-trial-candidate-license-worksheet \
   --handoff-root <new-handoff-dir> \
   --reviewer-id <pseudonym> \
@@ -546,6 +558,19 @@ attestations remain `false`; the file therefore fails annotation preflight until
 a human reviewer completes it. Run the command separately for each initial
 reviewer, keep their files mutually hidden, and never place completed labels
 inside the closed handoff directory.
+
+For a large assigned reviewer package, the review-workspace command copies the
+integrity-valid opaque packet into a new editable root and splits the blank
+template into one file per candidate plus a separate attestation file. The
+audit command reports blank, partial, malformed, and structurally complete
+counts without treating progress as human evidence. Finalization is refused
+until every candidate is structurally complete and all three attestations are
+explicitly true. It then assembles the existing monolithic annotation schema;
+the resulting file must still pass
+`preflight-promotion-trial-candidate-annotation` against the workspace's
+`packet/` directory before controller-side collection. Workspace completion
+does not prove reviewer identity or independence, validate cited evidence,
+compare reviewers, adjudicate labels, or admit confirmatory evidence.
 
 The source-license worksheet is equally fail-closed: its decision starts as
 `null`, its evidence and rationale are empty, and all attestations are `false`.

@@ -92,6 +92,14 @@ import {
   type CollectPromotionTrialCandidateReviewCampaignInput
 } from "../core/benchmark/promotionBenchmarkTrialCandidateReviewCampaignReturn.js";
 import {
+  auditPromotionTrialCandidateReviewWorkspace,
+  finalizePromotionTrialCandidateReviewWorkspace,
+  preparePromotionTrialCandidateReviewWorkspace,
+  type AuditPromotionTrialCandidateReviewWorkspaceInput,
+  type FinalizePromotionTrialCandidateReviewWorkspaceInput,
+  type PreparePromotionTrialCandidateReviewWorkspaceInput
+} from "../core/benchmark/promotionBenchmarkTrialCandidateReviewWorkspace.js";
+import {
   preparePromotionCanonicalCurationHandoff,
   type PreparePromotionCanonicalCurationHandoffInput
 } from "../core/benchmark/promotionBenchmarkCanonicalCurationHandoff.js";
@@ -745,6 +753,60 @@ export async function runPromotionTrialCandidateAnnotationWorksheetCli(
       `Tasks: ${result.task_count}`,
       `Output: ${result.output_path}`,
       "Status: incomplete by construction; human review and attestation are required before preflight"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateReviewWorkspacePreparationCli(
+  input: PreparePromotionTrialCandidateReviewWorkspaceInput
+): Promise<void> {
+  const result = await preparePromotionTrialCandidateReviewWorkspace(input);
+  process.stdout.write(
+    [
+      "Resumable trial-candidate review workspace prepared",
+      `Handoff: ${result.handoff_id}`,
+      `Annotator ID: ${result.annotator_id}`,
+      `Tasks: ${result.task_count}`,
+      `Workspace: ${result.output_dir}`,
+      `Manifest: ${result.manifest_path}`,
+      "Status: all candidate labels and attestations remain incomplete by construction"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionTrialCandidateReviewWorkspaceAuditCli(
+  input: AuditPromotionTrialCandidateReviewWorkspaceInput
+): Promise<void> {
+  const result = await auditPromotionTrialCandidateReviewWorkspace(input);
+  process.stdout.write(
+    [
+      `Trial-candidate review workspace ${result.report.workspace_valid ? "valid" : "invalid"}`,
+      `Ready to finalize: ${result.report.ready_to_finalize}`,
+      `Completed: ${result.report.completed_annotation_count}/${result.report.task_count}`,
+      `Incomplete: ${result.report.incomplete_annotation_count}`,
+      `Malformed: ${result.report.malformed_annotation_count}`,
+      `Attestation complete: ${result.report.attestation_complete}`,
+      `Report: ${result.report_path}`,
+      `Summary: ${result.summary_path}`,
+      "Evidence boundary: structural progress only; no human identity, semantic preflight, adjudication, or confirmatory admission"
+    ].join("\n") + "\n"
+  );
+  if (!result.report.workspace_valid) process.exitCode = 1;
+}
+
+export async function runPromotionTrialCandidateReviewWorkspaceFinalizationCli(
+  input: FinalizePromotionTrialCandidateReviewWorkspaceInput
+): Promise<void> {
+  const result = await finalizePromotionTrialCandidateReviewWorkspace(input);
+  process.stdout.write(
+    [
+      "Trial-candidate review workspace assembled",
+      `Handoff: ${result.handoff_id}`,
+      `Annotator ID: ${result.annotator_id}`,
+      `Tasks: ${result.task_count}`,
+      `Output: ${result.output_path}`,
+      `Reviewer packet: ${result.reviewer_root}`,
+      "Status: packet-bound annotation preflight remains required before campaign collection"
     ].join("\n") + "\n"
   );
 }

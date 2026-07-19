@@ -954,6 +954,47 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports resumable trial-candidate review workspace operations", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "prepare-promotion-trial-candidate-review-workspace",
+      "--package-root", "outputs/review-campaign/reviewer-a",
+      "--out-dir", "reviews/reviewer-a-workspace"
+    ])).toEqual({
+      kind: "governance-benchmark-prepare-promotion-trial-candidate-review-workspace",
+      packageRoot: "outputs/review-campaign/reviewer-a",
+      outDir: "reviews/reviewer-a-workspace"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-trial-candidate-review-workspace",
+      "--workspace-root", "reviews/reviewer-a-workspace",
+      "--out-dir", "reviews/reviewer-a-workspace-audit"
+    ])).toEqual({
+      kind: "governance-benchmark-audit-promotion-trial-candidate-review-workspace",
+      workspaceRoot: "reviews/reviewer-a-workspace",
+      outDir: "reviews/reviewer-a-workspace-audit"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "finalize-promotion-trial-candidate-review-workspace",
+      "--workspace-root", "reviews/reviewer-a-workspace",
+      "--output", "returns/reviewer-a.json"
+    ])).toEqual({
+      kind: "governance-benchmark-finalize-promotion-trial-candidate-review-workspace",
+      workspaceRoot: "reviews/reviewer-a-workspace",
+      outputPath: "returns/reviewer-a.json"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "audit-promotion-trial-candidate-review-workspace",
+      "--workspace-root", "reviews/reviewer-a-workspace"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--workspace-root and --out-dir")
+    });
+  });
+
   it("supports unreviewed trial-candidate source-license worksheet preparation", () => {
     expect(resolveCliAction([
       "governance-benchmark",
