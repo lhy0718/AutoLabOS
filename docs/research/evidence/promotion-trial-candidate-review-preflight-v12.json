@@ -61,7 +61,9 @@
     "human_annotation_completed_count": 0,
     "human_license_review_completed": false,
     "adjudication_completed": false,
-    "confirmatory_admitted": false
+    "confirmatory_admitted": false,
+    "self_inspection_passed": true,
+    "self_inspection_issue_count": 0
   },
   "blank_license_review": {
     "template_sha256": "aaf4b4731f345b9582af373d800067d3a94ceeb36acef07a70124c009cc3ad47",
@@ -76,6 +78,19 @@
     "preflight_exit_code": 1,
     "preflight_passed": false,
     "preflight_validation_issue": "trial_candidate_license_review_file_invalid"
+  },
+  "campaign_return_preflight": {
+    "receipt_sha256": "ecd71d563bae3e125f473e8a32bc298a549ec4c40a4fd3c0e2a74e5505e1aaa0",
+    "cli_exit_code": 1,
+    "status": "review_return_blocked",
+    "assigned_return_count": 3,
+    "required_return_count": 3,
+    "adjudication_attempted": true,
+    "adjudication_passed": false,
+    "accepted_label_count": 0,
+    "task_count": 72,
+    "source_eligible_candidate_count": 0,
+    "confirmatory_admitted": false
   },
   "progression_gate": {
     "source_only_review_can_open_candidate_progression": false,

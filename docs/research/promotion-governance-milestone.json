@@ -162,7 +162,7 @@
       "evidence": [
         {
           "path": "docs/research/evidence/promotion-trial-candidate-review-preflight-v12.json",
-          "sha256": "3cd26282be72b5c37037315413fe866979293cc84888415446d23bbaa9ac7e27",
+          "sha256": "8a41d6edf7f1e10f6983aa294668b3d7da23dbbc98fe2e9f9938b5a297f4bd86",
           "assertions": [
             {
               "pointer": "/campaign/human_annotation_completed_count",
