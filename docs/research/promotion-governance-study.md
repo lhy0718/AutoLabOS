@@ -811,6 +811,17 @@ expected fail-closed preflight are fixed in the latest receipt. The receiver
 can rerun the same strict package inspector after transfer before extracting
 the reviewer root.
 
+The verified package can also be expanded into a private resumable workspace.
+The workspace preserves the package and handoff hashes, keeps the original
+packet closed, and separates the blank return into one editable file per claim.
+Its audit distinguishes valid partial progress from malformed decisions and
+refuses finalization until all tasks and the human attestation are complete.
+In the same-flow run over the current package, packet integrity and package
+binding passed, all 12 tasks remained incomplete, no attestation was set, and
+finalization exited nonzero without emitting a review return. This workspace
+reduces reviewer handoff friction only; it adds no human judgment, approval,
+checked claim, redistribution permission, or Refgate evidence.
+
 The generated incomplete return fails the same preflight used for future human
 reviews: no reviewer is accepted, the claim gate remains closed, and no claim
 status changes. A completed return must cover all 12 tasks, inspect the full

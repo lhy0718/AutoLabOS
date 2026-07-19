@@ -24,6 +24,14 @@ import {
   REFERENCE_CLAIM_REVIEW_TASKS,
   REFERENCE_CLAIM_REVIEW_TEMPLATE
 } from "../src/core/referenceClaimReview.js";
+import {
+  auditReferenceClaimReviewWorkspace,
+  finalizeReferenceClaimReviewWorkspace,
+  prepareReferenceClaimReviewWorkspace,
+  REFERENCE_CLAIM_REVIEW_WORKSPACE_ATTESTATION,
+  REFERENCE_CLAIM_REVIEW_WORKSPACE_MANIFEST,
+  type ReferenceClaimReviewWorkspaceManifest
+} from "../src/core/referenceClaimReviewWorkspace.js";
 
 const tempDirs: string[] = [];
 const SOURCE_ALPHA_TEXT = "Full source alpha for independent claim review.\n";
@@ -467,6 +475,191 @@ describe("reference claim review handoff", () => {
     expect((await inspectPrivateReferenceClaimReviewPackage(
       path.join(workspace, "private-package")
     )).passed).toBe(true);
+  });
+
+  it("keeps private reference review resumable, fail-closed, and preflight-bound", async () => {
+    const workspace = await createWorkspace();
+    await prepareReferenceClaimReview(reviewInput(workspace, "packet"));
+    await mkdir(path.join(workspace, "sources"));
+    await writeFile(path.join(workspace, "sources", "source-a.txt"), SOURCE_ALPHA_TEXT, "utf8");
+    await prepareReferenceClaimReviewPrivateDistribution({
+      cwd: workspace,
+      packetRoot: "packet",
+      sourceDir: "sources",
+      outDir: "private-distribution"
+    });
+    await packagePrivateReferenceClaimReviewDistribution({
+      cwd: workspace,
+      distributionRoot: "private-distribution",
+      outDir: "private-package"
+    });
+
+    const prepared = await prepareReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      packageRoot: "private-package",
+      outDir: "review-workspace"
+    });
+    expect(prepared).toMatchObject({
+      task_count: 2,
+      output_dir: "review-workspace",
+      public_distribution_allowed: false
+    });
+
+    const blankAudit = await auditReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outDir: "blank-audit"
+    });
+    expect(blankAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      task_count: 2,
+      completed_review_count: 0,
+      incomplete_review_count: 2,
+      malformed_review_count: 0,
+      all_supported_review_set: false,
+      attestation_complete: false,
+      source_package_binding_valid: true,
+      packet_integrity_valid: true,
+      public_distribution_allowed: false,
+      final_approval_completed: false,
+      claim_statuses_modified: false,
+      validation_issues: []
+    });
+    await expect(finalizeReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outputPath: "returns/incomplete-review.json"
+    })).rejects.toThrow("not ready to finalize");
+
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, "review-workspace", REFERENCE_CLAIM_REVIEW_WORKSPACE_MANIFEST),
+      "utf8"
+    )) as ReferenceClaimReviewWorkspaceManifest;
+    const updateTask = async (
+      index: number,
+      decision: "supported" | "rewrite" | "missing_source"
+    ): Promise<void> => {
+      const taskPath = path.join(workspace, "review-workspace", manifest.task_files[index].path);
+      const task = JSON.parse(await readFile(taskPath, "utf8")) as Record<string, unknown>;
+      task.decision = decision;
+      task.source_location = "page 1";
+      task.supporting_passage = "Reviewed passage.";
+      task.proposed_claim_text = decision === "rewrite" ? "Revised neutral claim." : null;
+      task.rationale = "The full source was inspected against the claim.";
+      await writeFile(taskPath, JSON.stringify(task), "utf8");
+    };
+
+    await updateTask(0, "supported");
+    const partialAudit = await auditReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outDir: "partial-audit"
+    });
+    expect(partialAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: false,
+      completed_review_count: 1,
+      incomplete_review_count: 1,
+      malformed_review_count: 0
+    });
+
+    await updateTask(1, "missing_source");
+    const invalidAudit = await auditReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outDir: "invalid-audit"
+    });
+    expect(invalidAudit.report.workspace_valid).toBe(false);
+    expect(invalidAudit.report.validation_issues.map((issue) => issue.code)).toContain(
+      "reference_claim_review_workspace_task_invalid"
+    );
+
+    await updateTask(1, "rewrite");
+    await writeFile(
+      path.join(workspace, "review-workspace", REFERENCE_CLAIM_REVIEW_WORKSPACE_ATTESTATION),
+      JSON.stringify({
+        schema_version: "1.0",
+        reviewer_id: "reviewer-alpha",
+        completed_by_human: true,
+        reviewer_did_not_generate_evidence_candidates: true,
+        full_source_text_inspected: true
+      }),
+      "utf8"
+    );
+    const completeAudit = await auditReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outDir: "complete-audit"
+    });
+    expect(completeAudit.report).toMatchObject({
+      workspace_valid: true,
+      ready_to_finalize: true,
+      completed_review_count: 2,
+      incomplete_review_count: 0,
+      malformed_review_count: 0,
+      decision_counts: {
+        supported: 1,
+        rewrite: 1,
+        wrong_source: 0,
+        missing_source: 0
+      },
+      all_supported_review_set: false,
+      attestation_complete: true,
+      validation_issues: []
+    });
+
+    const finalized = await finalizeReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "review-workspace",
+      outputPath: "returns/review.json"
+    });
+    expect(finalized).toMatchObject({
+      reviewer_id: "reviewer-alpha",
+      task_count: 2,
+      output_path: "returns/review.json",
+      preflight_required: true,
+      final_approval_required: true,
+      claim_statuses_modified: false
+    });
+    const preflight = await preflightReferenceClaimReview({
+      cwd: workspace,
+      packetRoot: finalized.packet_root,
+      reviewPath: finalized.output_path,
+      outDir: "finalized-preflight"
+    });
+    expect(preflight.report).toMatchObject({
+      preflight_passed: true,
+      claim_gate_passed: false,
+      reviewer_id: "reviewer-alpha",
+      task_count: 2,
+      claim_statuses_modified: false
+    });
+
+    await cp(path.join(workspace, "review-workspace"), path.join(workspace, "tampered-workspace"), {
+      recursive: true,
+      errorOnExist: true,
+      force: false
+    });
+    const tamperedTasksPath = path.join(
+      workspace,
+      "tampered-workspace",
+      "packet",
+      REFERENCE_CLAIM_REVIEW_TASKS
+    );
+    await writeFile(tamperedTasksPath, (await readFile(tamperedTasksPath, "utf8")) + "\n", "utf8");
+    const tamperedAudit = await auditReferenceClaimReviewWorkspace({
+      cwd: workspace,
+      workspaceRoot: "tampered-workspace",
+      outDir: "tampered-audit"
+    });
+    expect(tamperedAudit.report).toMatchObject({
+      workspace_valid: false,
+      packet_integrity_valid: false
+    });
+    expect(tamperedAudit.report.validation_issues.map((issue) => issue.code)).toContain(
+      "reference_claim_review_workspace_source_binding_invalid"
+    );
   });
 
   it("fails closed on private package tampering, source tampering, and nested output", async () => {

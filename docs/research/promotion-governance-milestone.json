@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "99430d83a837472fd41e1bb97c2fd03b94f519f3e441bd20907b5f0232c00013"
+          "sha256": "f62656ffd39cc6aff1acef66f7a991c147bab7c1605043d3e0e6ef4bf4fb196f"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -572,6 +572,82 @@
               "expected": true
             }
           ]
+        },
+        {
+          "path": "docs/research/evidence/promotion-reference-review-workspace-v1.json",
+          "sha256": "bd0de01267cd97e509a21fa2ba3f7bc2f566b330cea426c54191a352922c38f6",
+          "assertions": [
+            {
+              "pointer": "/workspace/task_file_count",
+              "operator": "equals",
+              "expected": 12
+            },
+            {
+              "pointer": "/workspace/source_package_binding_valid",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/workspace/packet_integrity_valid",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/workspace/human_decisions_supplied_by_system",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/workspace/human_attestations_set_by_system",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/workspace/final_approvals_supplied_by_system",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/audit/workspace_valid",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/audit/ready_to_finalize",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/audit/completed_review_count",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/audit/incomplete_review_count",
+              "operator": "equals",
+              "expected": 12
+            },
+            {
+              "pointer": "/audit/attestation_complete",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/fail_closed_finalization/exit_code",
+              "operator": "equals",
+              "expected": 1
+            },
+            {
+              "pointer": "/fail_closed_finalization/output_exists",
+              "operator": "equals",
+              "expected": false
+            },
+            {
+              "pointer": "/research_state/paper_ready",
+              "operator": "equals",
+              "expected": false
+            }
+          ]
         }
       ]
     },
@@ -648,7 +724,7 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-v33/research-validation-report.json",
+          "path": "outputs/promotion-governance/final-validation-v34/research-validation-report.json",
           "sha256": null,
           "verifier": "research_validation_report",
           "assertions": [

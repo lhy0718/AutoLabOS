@@ -406,6 +406,18 @@ autolabos reference-review package-private \
 autolabos reference-review verify-private-package \
   --package <private-package-dir>
 
+autolabos reference-review prepare-workspace \
+  --package <private-package-dir> \
+  --out-dir <new-private-workspace-dir>
+
+autolabos reference-review audit-workspace \
+  --workspace <private-workspace-dir> \
+  --out-dir <new-workspace-audit-dir>
+
+autolabos reference-review finalize-workspace \
+  --workspace <private-workspace-dir> \
+  --output <completed-review.json>
+
 autolabos reference-review preflight \
   --packet <handoff-or-private-distribution-dir> \
   --review <completed-review.json> \
@@ -426,6 +438,13 @@ a fresh extraction. The package still contains third-party full text and remains
 private; archive integrity does not establish redistribution permission, human
 review, reviewer identity, or claim support. The receiver should rerun
 `verify-private-package` on the delivered manifest-and-archive directory.
+
+`prepare-workspace` is an optional private reviewer aid that verifies and
+extracts the package, then splits the blank return into resumable per-task
+files. `audit-workspace` reports structural progress without treating partial
+work as evidence. `finalize-workspace` emits a return only after every task
+and the human attestation are complete; it never supplies decisions, identity,
+attestation, final approval, claim status, or Refgate acceptance.
 
 The import revalidates the closed packet, review, preflight, approval, and
 original claims hash. It writes `refgate_claims.reviewed.tsv` and a hash-bound

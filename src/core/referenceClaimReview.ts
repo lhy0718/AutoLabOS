@@ -76,7 +76,7 @@ export interface ReferenceClaimReviewTask {
   evidence_kind: string;
 }
 
-interface ReferenceClaimReviewManifest {
+export interface ReferenceClaimReviewManifest {
   schema_version: "1.0";
   handoff_id: string;
   manuscript_ref: string;
@@ -742,6 +742,37 @@ export async function inspectPrivateReferenceClaimReviewPackage(
     await fs.rm(verificationRoot, { recursive: true, force: true });
   }
   return { passed: issues.length === 0, manifest, issues };
+}
+
+export async function inspectReferenceClaimReviewPacket(
+  rootPath: string
+): Promise<{
+  manifest: ReferenceClaimReviewManifest;
+  tasks: ReferenceClaimReviewTask[];
+  private_distribution_present: boolean;
+}> {
+  const root = path.resolve(rootPath);
+  const manifest = await inspectPacket(root);
+  const tasks = parseTaskJsonl((await readContainedRegularFile(
+    root,
+    path.join(root, REFERENCE_CLAIM_REVIEW_TASKS)
+  )).toString("utf8"));
+  const distribution = await inspectPrivateDistributionIfPresent(root, manifest);
+  return {
+    manifest,
+    tasks,
+    private_distribution_present: distribution !== null
+  };
+}
+
+export async function inspectReferenceClaimReviewReturnFile(
+  packetRootPath: string,
+  reviewPath: string
+): Promise<ReferenceClaimReviewPreflightReport> {
+  return (await inspectReferenceClaimReviewReturn(
+    path.resolve(packetRootPath),
+    path.resolve(reviewPath)
+  )).report;
 }
 
 export async function preflightReferenceClaimReview(

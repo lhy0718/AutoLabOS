@@ -74,6 +74,33 @@ describe("resolveCliAction", () => {
       packageRoot: "private/reviewer-package"
     });
     expect(resolveCliAction([
+      "reference-review", "prepare-workspace",
+      "--package", "private/reviewer-package",
+      "--out-dir", "private/review-workspace"
+    ])).toEqual({
+      kind: "reference-review-prepare-workspace",
+      packageRoot: "private/reviewer-package",
+      outDir: "private/review-workspace"
+    });
+    expect(resolveCliAction([
+      "reference-review", "audit-workspace",
+      "--workspace", "private/review-workspace",
+      "--out-dir", "private/review-workspace-audit"
+    ])).toEqual({
+      kind: "reference-review-audit-workspace",
+      workspaceRoot: "private/review-workspace",
+      outDir: "private/review-workspace-audit"
+    });
+    expect(resolveCliAction([
+      "reference-review", "finalize-workspace",
+      "--workspace", "private/review-workspace",
+      "--output", "returns/review.json"
+    ])).toEqual({
+      kind: "reference-review-finalize-workspace",
+      workspaceRoot: "private/review-workspace",
+      outputPath: "returns/review.json"
+    });
+    expect(resolveCliAction([
       "reference-review", "preflight",
       "--packet", "paper/review-handoff",
       "--review", "returns/review.json",
@@ -121,6 +148,15 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
     expect(resolveCliAction([
       "reference-review", "verify-private-package"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "prepare-workspace", "--package", "private-package"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "audit-workspace", "--workspace", "review-workspace"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
+    expect(resolveCliAction([
+      "reference-review", "finalize-workspace", "--workspace", "review-workspace"
     ])).toMatchObject({ kind: "error", message: expect.stringContaining("requires") });
   });
 

@@ -13,6 +13,15 @@ import {
   type PrepareReferenceClaimReviewPrivateDistributionInput,
   type PreflightReferenceClaimReviewInput
 } from "../core/referenceClaimReview.js";
+import {
+  auditReferenceClaimReviewWorkspace,
+  finalizeReferenceClaimReviewWorkspace,
+  prepareReferenceClaimReviewWorkspace,
+  type AuditReferenceClaimReviewWorkspaceInput,
+  type FinalizeReferenceClaimReviewWorkspaceInput,
+  type PrepareReferenceClaimReviewWorkspaceInput
+} from "../core/referenceClaimReviewWorkspace.js";
+
 
 export async function runReferenceClaimReviewPreparationCli(
   input: PrepareReferenceClaimReviewInput
@@ -108,4 +117,58 @@ export async function runReferenceClaimReviewPrivatePackageVerificationCli(
     "Claim gate passed: false"
   ].join("\n") + "\n");
   if (!inspection.passed) process.exitCode = 1;
+}
+
+export async function runReferenceClaimReviewWorkspacePreparationCli(
+  input: PrepareReferenceClaimReviewWorkspaceInput
+): Promise<void> {
+  const result = await prepareReferenceClaimReviewWorkspace(input);
+  process.stdout.write([
+    "Private reference claim review workspace prepared: " + result.workspace_id,
+    "Package: " + result.package_id,
+    "Handoff: " + result.handoff_id,
+    "Review tasks: " + result.task_count,
+    "Workspace manifest: " + result.manifest_path,
+    "Packet root: " + result.packet_root,
+    "Public distribution allowed: false",
+    "Human review completed: false",
+    "Final approval completed: false",
+    "Claim statuses modified: false"
+  ].join("\n") + "\n");
+}
+
+export async function runReferenceClaimReviewWorkspaceAuditCli(
+  input: AuditReferenceClaimReviewWorkspaceInput
+): Promise<void> {
+  const result = await auditReferenceClaimReviewWorkspace(input);
+  process.stdout.write([
+    "Reference claim review workspace audit: "
+      + (result.report.workspace_valid ? "valid" : "invalid"),
+    "Ready to finalize: " + result.report.ready_to_finalize,
+    "Coverage: " + result.report.completed_review_count + "/" + result.report.task_count,
+    "Malformed reviews: " + result.report.malformed_review_count,
+    "All supported: " + result.report.all_supported_review_set,
+    "Attestation complete: " + result.report.attestation_complete,
+    "Report: " + result.report_path,
+    "Final approval completed: false",
+    "Claim statuses modified: false"
+  ].join("\n") + "\n");
+  if (!result.report.workspace_valid) process.exitCode = 1;
+}
+
+export async function runReferenceClaimReviewWorkspaceFinalizationCli(
+  input: FinalizeReferenceClaimReviewWorkspaceInput
+): Promise<void> {
+  const result = await finalizeReferenceClaimReviewWorkspace(input);
+  process.stdout.write([
+    "Reference claim review return finalized: " + result.output_path,
+    "Workspace: " + result.workspace_id,
+    "Handoff: " + result.handoff_id,
+    "Reviewer: " + result.reviewer_id,
+    "Review tasks: " + result.task_count,
+    "Packet root: " + result.packet_root,
+    "Packet-bound preflight required: true",
+    "Separate final human approval required: true",
+    "Claim statuses modified: false"
+  ].join("\n") + "\n");
 }

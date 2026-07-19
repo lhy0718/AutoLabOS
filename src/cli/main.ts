@@ -78,6 +78,9 @@ import {
   runReferenceClaimReviewPrivatePackageCli,
   runReferenceClaimReviewPrivatePackageVerificationCli,
   runReferenceClaimReviewPrivateDistributionCli,
+  runReferenceClaimReviewWorkspaceAuditCli,
+  runReferenceClaimReviewWorkspaceFinalizationCli,
+  runReferenceClaimReviewWorkspacePreparationCli,
   runReferenceClaimReviewPreflightCli
 } from "./referenceReview.js";
 
@@ -101,6 +104,9 @@ function printHelp(): void {
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
     "  autolabos reference-review package-private --distribution <private-distribution-dir> --out-dir <new-private-package-dir>",
     "  autolabos reference-review verify-private-package --package <private-package-dir>",
+    "  autolabos reference-review prepare-workspace --package <private-package-dir> --out-dir <new-private-workspace>",
+    "  autolabos reference-review audit-workspace --workspace <private-workspace> --out-dir <new-audit-dir>",
+    "  autolabos reference-review finalize-workspace --workspace <private-workspace> --output <completed-review.json>",
     "  autolabos reference-review preflight --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --out-dir <new-preflight-dir>",
     "  autolabos reference-review import --packet <handoff-dir-or-private-distribution-dir> --review <completed-review.json> --preflight <preflight-report.json> --approval <completed-final-approval.json> --claims <refgate_claims.tsv> --out-dir <new-import-dir>",
     "  autolabos governance-benchmark seed --source <path> [--task <id>] [--out-dir outputs/governance-benchmark/seeds] [--reference-only]",
@@ -265,6 +271,33 @@ async function main(): Promise<void> {
     await runReferenceClaimReviewPrivatePackageVerificationCli({
       cwd: process.cwd(),
       packageRoot: action.packageRoot
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-prepare-workspace") {
+    await runReferenceClaimReviewWorkspacePreparationCli({
+      cwd: process.cwd(),
+      packageRoot: action.packageRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-audit-workspace") {
+    await runReferenceClaimReviewWorkspaceAuditCli({
+      cwd: process.cwd(),
+      workspaceRoot: action.workspaceRoot,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "reference-review-finalize-workspace") {
+    await runReferenceClaimReviewWorkspaceFinalizationCli({
+      cwd: process.cwd(),
+      workspaceRoot: action.workspaceRoot,
+      outputPath: action.outputPath
     });
     return;
   }

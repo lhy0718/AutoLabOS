@@ -93,6 +93,9 @@ export type CliAction =
   | { kind: "reference-review-distribute-private"; packetRoot: string; sourceDir: string; outDir: string }
   | { kind: "reference-review-package-private"; distributionRoot: string; outDir: string }
   | { kind: "reference-review-verify-private-package"; packageRoot: string }
+  | { kind: "reference-review-prepare-workspace"; packageRoot: string; outDir: string }
+  | { kind: "reference-review-audit-workspace"; workspaceRoot: string; outDir: string }
+  | { kind: "reference-review-finalize-workspace"; workspaceRoot: string; outputPath: string }
   | { kind: "reference-review-preflight"; packetRoot: string; reviewPath: string; outDir: string }
   | { kind: "reference-review-import"; packetRoot: string; reviewPath: string; preflightReportPath: string; approvalPath: string; claimsPath: string; outDir: string }
   | {
@@ -2063,10 +2066,12 @@ export function resolveCliAction(args: string[]): CliAction {
 function parseReferenceReviewArgs(args: string[]): CliAction {
   const subcommand = args[0];
   if (subcommand !== "prepare" && subcommand !== "distribute-private" && subcommand !== "package-private" && subcommand !== "verify-private-package"
+      && subcommand !== "prepare-workspace" && subcommand !== "audit-workspace"
+      && subcommand !== "finalize-workspace"
       && subcommand !== "preflight" && subcommand !== "import") {
     return {
       kind: "error",
-      message: "Usage: reference-review prepare|distribute-private|package-private|verify-private-package|preflight|import [options]."
+      message: "Usage: reference-review prepare|distribute-private|package-private|verify-private-package|prepare-workspace|audit-workspace|finalize-workspace|preflight|import [options]."
     };
   }
   const values = new Map<string, string>();
@@ -2136,6 +2141,51 @@ function parseReferenceReviewArgs(args: string[]): CliAction {
       : {
           kind: "error",
           message: "reference-review verify-private-package requires --package."
+        };
+  }
+  if (subcommand === "prepare-workspace") {
+    const allowed = new Set(["--package", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review prepare-workspace argument: " + unsupported + "." };
+    }
+    const packageRoot = values.get("--package");
+    const outDir = values.get("--out-dir");
+    return packageRoot && outDir
+      ? { kind: "reference-review-prepare-workspace", packageRoot, outDir }
+      : {
+          kind: "error",
+          message: "reference-review prepare-workspace requires --package and --out-dir."
+        };
+  }
+  if (subcommand === "audit-workspace") {
+    const allowed = new Set(["--workspace", "--out-dir"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review audit-workspace argument: " + unsupported + "." };
+    }
+    const workspaceRoot = values.get("--workspace");
+    const outDir = values.get("--out-dir");
+    return workspaceRoot && outDir
+      ? { kind: "reference-review-audit-workspace", workspaceRoot, outDir }
+      : {
+          kind: "error",
+          message: "reference-review audit-workspace requires --workspace and --out-dir."
+        };
+  }
+  if (subcommand === "finalize-workspace") {
+    const allowed = new Set(["--workspace", "--output"]);
+    const unsupported = [...values.keys()].find((key) => !allowed.has(key));
+    if (unsupported) {
+      return { kind: "error", message: "Unsupported reference-review finalize-workspace argument: " + unsupported + "." };
+    }
+    const workspaceRoot = values.get("--workspace");
+    const outputPath = values.get("--output");
+    return workspaceRoot && outputPath
+      ? { kind: "reference-review-finalize-workspace", workspaceRoot, outputPath }
+      : {
+          kind: "error",
+          message: "reference-review finalize-workspace requires --workspace and --output."
         };
   }
   if (subcommand === "import") {
