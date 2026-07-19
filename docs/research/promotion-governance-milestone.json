@@ -631,6 +631,31 @@
               "pointer": "/incomplete_review_preflight/claim_gate_passed",
               "operator": "equals",
               "expected": true
+            },
+            {
+              "pointer": "/refgate_submission_audit/paper_audit_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/refgate_submission_audit/blocking_issue_codes",
+              "operator": "max_items",
+              "expected": 0
+            },
+            {
+              "pointer": "/refgate_submission_audit/unchecked_claim_count",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/refgate_submission_audit/source_title_blocker_count",
+              "operator": "equals",
+              "expected": 0
+            },
+            {
+              "pointer": "/refgate_submission_audit/missing_source_key_count",
+              "operator": "equals",
+              "expected": 0
             }
           ]
         },
@@ -826,7 +851,7 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/final-validation-v36/research-validation-report.json",
+          "path": "outputs/promotion-governance/final-validation-v37/research-validation-report.json",
           "sha256": null,
           "verifier": "research_validation_report",
           "assertions": [
