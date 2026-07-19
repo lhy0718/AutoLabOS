@@ -664,6 +664,20 @@ preflight, campaign, and blocked-return hashes are recorded in
 Operational self-containment does not establish human identity, independence,
 license permission, adjudication, canonical curation, or confirmatory evidence.
 
+Revision `bb5eb65f517df73cb30905411d7a586aaa4df81e` removes the remaining
+manual archive-construction step. A generic CLI exporter now validates the
+pending campaign before producing deterministic role-isolated archives, then
+rejects non-regular entry types and fresh-extracts every archive to compare its
+file-level SHA tree with the source package. Repeated exports of the same
+campaign were byte-identical. A one-byte archive mutation and a symlink archive
+whose declared SHA was updated were both rejected. The committed-revision v15
+distribution contains 440 files in each candidate-review package and eight in
+the license-review package; no archive contains controller or peer-package
+content. Aggregate hashes and regression outcomes are recorded in
+`docs/research/evidence/promotion-trial-candidate-review-distribution-v15.json`.
+This improves distribution reproducibility only; all human and paper-scale
+progression gates remain closed.
+
 The assigned initial-review package can now be converted into a resumable
 candidate-per-file workspace without modifying the closed campaign. A live v10
 run copied the integrity-valid 72-task opaque packet into a 513-file,

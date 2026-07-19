@@ -1,0 +1,98 @@
+{
+  "schema_version": "1.0",
+  "run_kind": "deterministic_role_isolated_review_distribution",
+  "code_revision": "bb5eb65f517df73cb30905411d7a586aaa4df81e",
+  "upstream_campaign": {
+    "campaign_id": "review-campaign-59ceb652b6fd10279a8f8562",
+    "manifest_sha256": "2207900303735fe5a702d98b6282b60ece9aa7462a830263288422e751dbf2d9",
+    "handoff_id": "public-execution-trace-candidate-handoff-v11",
+    "status": "human_review_pending",
+    "candidate_count": 72,
+    "assignment_count": 3,
+    "human_annotation_completed_count": 0,
+    "human_license_review_completed": false,
+    "adjudication_completed": false,
+    "confirmatory_admitted": false
+  },
+  "distribution": {
+    "distribution_id": "review-distribution-2f3cf7a958cf235ea44e244a",
+    "manifest_sha256": "e1fd7150031eb6902a5ca323bfcf378c8f66856c2df23b111cb8c08cb628f962",
+    "package_count": 3,
+    "self_inspection_passed": true,
+    "deterministic_repeat_exact_match": true,
+    "output_included_in_public_snapshot": false
+  },
+  "packages": [
+    {
+      "slot": "reviewer-a",
+      "role": "initial_candidate_review",
+      "archive_sha256": "fe81e6491d2efa0552f46132a117ab67122599c4f0c91b64e435ec250a9f695a",
+      "archive_bytes": 4206569,
+      "archive_entry_count": 947,
+      "file_count": 440,
+      "single_role_root": true,
+      "regular_file_or_directory_entries_only": true,
+      "controller_content_present": false,
+      "peer_package_content_present": false,
+      "fresh_extraction_exact_tree_match": true
+    },
+    {
+      "slot": "reviewer-b",
+      "role": "initial_candidate_review",
+      "archive_sha256": "62c49b556387a1d9088d6da54b268219190359830c094058071449a4c0ed2d81",
+      "archive_bytes": 4206630,
+      "archive_entry_count": 947,
+      "file_count": 440,
+      "single_role_root": true,
+      "regular_file_or_directory_entries_only": true,
+      "controller_content_present": false,
+      "peer_package_content_present": false,
+      "fresh_extraction_exact_tree_match": true
+    },
+    {
+      "slot": "license-reviewer",
+      "role": "source_license_review",
+      "archive_sha256": "d78c58eb32ceac87be79a9e5615c1531e66477c1cb7ab22381ea3a7bde25b8e1",
+      "archive_bytes": 18391,
+      "archive_entry_count": 11,
+      "file_count": 8,
+      "single_role_root": true,
+      "regular_file_or_directory_entries_only": true,
+      "controller_content_present": false,
+      "peer_package_content_present": false,
+      "fresh_extraction_exact_tree_match": true
+    }
+  ],
+  "aggregate": {
+    "all_single_role_root": true,
+    "all_regular_file_or_directory_entries_only": true,
+    "all_controller_content_absent": true,
+    "all_peer_package_content_absent": true,
+    "all_fresh_extraction_exact_tree_match": true
+  },
+  "regression_validation": {
+    "same_campaign_repeated_export_byte_identical": true,
+    "archive_byte_tampering_detected": true,
+    "hash_updated_symlink_archive_rejected_before_extraction": true,
+    "cli_argument_tests_passed": true,
+    "campaign_integration_tests_passed": true,
+    "public_code_sanitization_passed": true,
+    "harness_validation_passed": true,
+    "build_passed": true
+  },
+  "progression_gate": {
+    "candidate_scoped_review_completed": false,
+    "two_independent_candidate_reviews_completed": false,
+    "candidate_scoped_license_review_completed": false,
+    "canonical_curation_entered": false,
+    "confirmatory_intake_entered": false,
+    "paper_ready": false
+  },
+  "private_artifact_boundary": {
+    "archives_included_in_public_snapshot": false,
+    "candidate_artifacts_included_in_public_snapshot": false,
+    "participant_ids_included_in_public_snapshot": false,
+    "public_snapshot_contains_hashes_and_aggregate_counts_only": true
+  },
+  "evidence_boundary": "This receipt establishes deterministic role-isolated archive export, safe entry-type validation, fresh-extraction equality, and tamper detection for one pending review campaign. It contains no completed human annotation, reviewer identity or independence proof, license conclusion, legal grant, adjudication, canonical source, confirmatory result, or paper-readiness evidence."
+}

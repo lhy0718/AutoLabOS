@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "713ac3a676eafbad01f5e6fddab804aebe3e9f2e40765033627f1d0fdbeeac4a"
+          "sha256": "4eb267e42a7818b93e0be4f2fffab660e27d6337814474a1b476230bcdb6de36"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -213,6 +213,57 @@
               "pointer": "/progression_gate/two_independent_candidate_reviews_completed",
               "operator": "equals",
               "expected": true
+            }
+          ]
+        },
+        {
+          "path": "docs/research/evidence/promotion-trial-candidate-review-distribution-v15.json",
+          "sha256": "c734e6895ef533aabf6822239067124e7da908c4bd9e70ec5ff11a85106db1b3",
+          "assertions": [
+            {
+              "pointer": "/distribution/package_count",
+              "operator": "equals",
+              "expected": 3
+            },
+            {
+              "pointer": "/distribution/self_inspection_passed",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/distribution/deterministic_repeat_exact_match",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/aggregate/all_single_role_root",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/aggregate/all_regular_file_or_directory_entries_only",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/aggregate/all_controller_content_absent",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/aggregate/all_peer_package_content_absent",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/aggregate/all_fresh_extraction_exact_tree_match",
+              "operator": "equals",
+              "expected": true
+            },
+            {
+              "pointer": "/progression_gate/paper_ready",
+              "operator": "equals",
+              "expected": false
             }
           ]
         }
