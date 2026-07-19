@@ -936,6 +936,24 @@ describe("promotion trial-candidate handoff", () => {
       },
       review: { status: null, evidence_refs: [], rationale: "" }
     });
+    const reviewerAReturnGuideText = await readFile(path.join(
+      campaignRoot,
+      "reviewer-a",
+      "RETURN_GUIDE.md"
+    ), "utf8");
+    expect(reviewerAReturnGuideText).toContain(
+      "preflight-promotion-trial-candidate-annotation"
+    );
+    expect(reviewerAReturnGuideText).toContain("--reviewer-root packet");
+    const licenseReturnGuideText = await readFile(path.join(
+      campaignRoot,
+      "license-reviewer",
+      "RETURN_GUIDE.md"
+    ), "utf8");
+    expect(licenseReturnGuideText).toContain(
+      "preflight-promotion-trial-candidate-license-review"
+    );
+    expect(licenseReturnGuideText).toContain("--license-root packet");
     await expect(access(path.join(
       campaignRoot,
       "reviewer-a",

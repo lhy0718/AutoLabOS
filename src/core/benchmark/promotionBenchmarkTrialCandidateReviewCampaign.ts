@@ -785,6 +785,12 @@ function reviewerReturnGuide(): string {
     "4. Set all three independence attestations to true only after personally completing the review under those conditions.",
     "5. Return only the completed annotation JSON for reviewer-side preflight.",
     "",
+    "From this package root, run:",
+    "",
+    "```sh",
+    "autolabos governance-benchmark preflight-promotion-trial-candidate-annotation --reviewer-root packet --annotation <completed-annotation.json> --out-dir <new-preflight-dir>",
+    "```",
+    "",
     "The distributed template is incomplete by construction and is not human evidence."
   ].join("\n") + "\n";
 }
@@ -800,6 +806,12 @@ function licenseReturnGuide(): string {
     "3. Record one allowed status, public evidence references, and a non-empty rationale.",
     "4. Set all three independence attestations to true only after personally completing the review under those conditions.",
     "5. Return only the completed license-review JSON for preflight.",
+    "",
+    "From this package root, run:",
+    "",
+    "```sh",
+    "autolabos governance-benchmark preflight-promotion-trial-candidate-license-review --license-root packet --review <completed-license-review.json> --out-dir <new-preflight-dir>",
+    "```",
     "",
     "The distributed template is incomplete by construction and does not grant redistribution permission."
   ].join("\n") + "\n";
