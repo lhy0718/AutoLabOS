@@ -19,7 +19,10 @@ import {
   preparePromotionTrialCandidateLicenseReviewWorksheet
 } from "./promotionBenchmarkTrialCandidateReview.js";
 import {
-  PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS
+  PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK,
+  PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
+  parsePromotionTrialCandidateLicenseTask,
+  type PromotionTrialCandidateLicenseTask
 } from "./promotionBenchmarkTrialCandidateReviewContract.js";
 import {
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES
@@ -374,7 +377,15 @@ export async function inspectPromotionTrialCandidateReviewCampaign(
           "utf8"
         )) as unknown,
         manifest.handoff_id,
-        licenseAssignment.participant_id
+        licenseAssignment.participant_id,
+        parsePromotionTrialCandidateLicenseTask(JSON.parse(await fs.readFile(
+          path.join(
+            root,
+            licenseAssignment.packet_root,
+            path.basename(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)
+          ),
+          "utf8"
+        )) as unknown)
       );
       if (await hashFile(path.join(root, licenseAssignment.template_path))
           !== licenseAssignment.template_sha256) {
@@ -568,14 +579,17 @@ function validateBlankAnnotationTemplate(
 function validateBlankLicenseTemplate(
   value: unknown,
   handoffId: string,
-  participantId: string
+  participantId: string,
+  task: PromotionTrialCandidateLicenseTask
 ): void {
+  const candidateScoped = task.schema_version === "1.1";
   if (!isRecord(value)
       || !hasExactKeys(value, [
         "schema_version", "handoff_id", "reviewer_id", "label_source",
-        "review_role", "independence_attestation", "review"
+        "review_role", "independence_attestation", "review",
+        ...(candidateScoped ? ["subject_reviews"] : [])
       ])
-      || value.schema_version !== "1.0"
+      || value.schema_version !== task.schema_version
       || value.handoff_id !== handoffId
       || value.reviewer_id !== participantId
       || value.label_source !== "human"
@@ -594,6 +608,28 @@ function validateBlankLicenseTemplate(
       || value.review.evidence_refs.length !== 0
       || value.review.rationale !== "") {
     throw new Error("Invalid blank license template.");
+  }
+  if (!candidateScoped) return;
+  if (!Array.isArray(value.subject_reviews)
+      || value.subject_reviews.length !== task.subjects.length) {
+    throw new Error("Invalid blank candidate-scoped license template.");
+  }
+  const observedSubjectIds: string[] = [];
+  for (const row of value.subject_reviews) {
+    if (!isRecord(row)
+        || !hasExactKeys(row, ["subject_id", "status", "evidence_refs", "rationale"])
+        || !validId(row.subject_id)
+        || row.status !== null
+        || !Array.isArray(row.evidence_refs)
+        || row.evidence_refs.length !== 0
+        || row.rationale !== "") {
+      throw new Error("Invalid blank candidate-scoped license row.");
+    }
+    observedSubjectIds.push(row.subject_id);
+  }
+  const expectedSubjectIds = task.subjects.map((item) => item.subject_id).sort();
+  if (JSON.stringify(observedSubjectIds.sort()) !== JSON.stringify(expectedSubjectIds)) {
+    throw new Error("Blank candidate-scoped license coverage changed.");
   }
 }
 

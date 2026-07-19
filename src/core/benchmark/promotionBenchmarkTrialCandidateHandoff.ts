@@ -25,12 +25,15 @@ import {
   PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS,
   PROMOTION_TRIAL_CANDIDATE_RESOLUTION_SCHEMA,
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
+  parsePromotionTrialCandidateLicenseTask,
   promotionTrialCandidateAnnotationSchema,
   promotionTrialCandidateLicenseReviewerGuide,
   promotionTrialCandidateLicenseReviewSchema,
   promotionTrialCandidateResolutionSchema,
   promotionTrialCandidateReviewerGuide,
-  promotionTrialCandidateReviewRubric
+  promotionTrialCandidateReviewRubric,
+  type PromotionTrialCandidateLicenseSubject,
+  type PromotionTrialCandidateLicenseTask
 } from "./promotionBenchmarkTrialCandidateReviewContract.js";
 
 export const PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST = "trial-candidate-handoff.json";
@@ -243,7 +246,26 @@ interface PromotionTrialCandidateRecipeCommon {
   selection_policy: string;
   materialization_mode: PromotionTrialCandidateMaterialization;
   license_evidence: Array<{ path: string; sha256: string }>;
+  license_provenance?: {
+    path: string;
+    sha256: string;
+  };
   comparison_policy?: PromotionTrialCandidateComparisonPolicy;
+}
+
+interface PromotionTrialCandidateLicenseProvenanceEntry {
+  subject_kind: "base_material" | "operator_output";
+  subject_key: string;
+  source_url: string;
+  source_revision: string | null;
+  declared_license: string | null;
+  evidence_refs: string[];
+  evidence_files: string[];
+}
+
+interface PromotionTrialCandidateLicenseProvenanceCatalog {
+  schema_version: "1.0";
+  entries: PromotionTrialCandidateLicenseProvenanceEntry[];
 }
 
 interface PromotionTrialCandidateComparisonPolicy {
@@ -368,6 +390,9 @@ export async function exportPromotionTrialCandidateHandoff(
   const recipe = parseRecipe(JSON.parse(recipeBytes.toString("utf8")) as unknown);
   const sourceRoot = path.resolve(cwd, input.sourceRoot);
   await assertSourceRoot(sourceRoot, recipe);
+  const licenseProvenance = recipe.license_provenance
+    ? await loadLicenseProvenanceCatalog(sourceRoot, recipe)
+    : null;
   const discovery = await discoverCandidates(sourceRoot, recipe);
   const selection = await selectPrivacySafeBalancedBases(
     sourceRoot,
@@ -432,17 +457,6 @@ export async function exportPromotionTrialCandidateHandoff(
       promotionTrialCandidateReviewRubric(pairedComparison),
       "utf8"
     );
-    await writeJsonFile(
-      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
-      {
-        schema_version: "1.0",
-        handoff_id: recipe.handoff_id,
-        source_url: recipe.source_url,
-        source_revision: recipe.source_revision,
-        evidence_files: licenseEvidencePacketEntries(recipe),
-        required_decision: "distribution_scope"
-      }
-    );
     for (const [index, evidence] of recipe.license_evidence.entries()) {
       const source = resolveContainedFile(sourceRoot, evidence.path);
       if (!source) throw new Error("Source-license evidence escaped the source root: " + evidence.path);
@@ -454,15 +468,19 @@ export async function exportPromotionTrialCandidateHandoff(
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.copyFile(source, target);
     }
-    await writeJsonFile(
-      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
-      promotionTrialCandidateLicenseReviewSchema()
-    );
-    await fs.writeFile(
-      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE),
-      promotionTrialCandidateLicenseReviewerGuide(),
-      "utf8"
-    );
+    if (recipe.license_provenance) {
+      const source = resolveContainedFile(sourceRoot, recipe.license_provenance.path);
+      if (!source) {
+        throw new Error("License provenance catalog escaped the source root.");
+      }
+      const target = path.join(
+        stagingRoot,
+        "license",
+        licenseProvenancePacketEntry(recipe).path
+      );
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.copyFile(source, target);
+    }
     const publicCandidates: PromotionTrialCandidateRecord[] = [];
     const controllerCandidates: ControllerMap["candidates"] = [];
     const taskLines: string[] = [];
@@ -573,6 +591,25 @@ export async function exportPromotionTrialCandidateHandoff(
             required_observations: [...PROMOTION_TRIAL_CANDIDATE_OBSERVATIONS]
           }));
     }
+    const licenseTask = buildLicenseTask(
+      recipe,
+      licenseProvenance,
+      controllerCandidates
+    );
+    const candidateScopedLicense = licenseTask.schema_version === "1.1";
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+      licenseTask
+    );
+    await writeJsonFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_SCHEMA),
+      promotionTrialCandidateLicenseReviewSchema(candidateScopedLicense)
+    );
+    await fs.writeFile(
+      path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE),
+      promotionTrialCandidateLicenseReviewerGuide(candidateScopedLicense),
+      "utf8"
+    );
     await fs.rm(sourceArchiveRoot, { recursive: true, force: true });
     await fs.writeFile(path.join(stagingRoot, PROMOTION_TRIAL_CANDIDATE_TASKS), `${taskLines.join("\n")}\n`, "utf8");
 
@@ -607,7 +644,9 @@ export async function exportPromotionTrialCandidateHandoff(
       handoff_id: recipe.handoff_id,
       task_count: 1,
       files: await inventoryOutputs(licenseRoot),
-      evidence_boundary: "This self-contained packet binds only one public source-license task and its runtime review contract. It contains no candidate artifact, candidate annotation, controller map, license decision, confirmatory admission, or paper-readiness evidence."
+      evidence_boundary: candidateScopedLicense
+        ? "This self-contained packet binds candidate-scoped collection, base-material, and operator-output license subjects plus their runtime review contract. It contains no candidate artifact, candidate annotation, controller map, license decision, confirmatory admission, or paper-readiness evidence."
+        : "This self-contained packet binds only one source-level license task and its runtime review contract. It cannot establish candidate-scoped redistribution coverage and contains no candidate artifact, candidate annotation, controller map, license decision, confirmatory admission, or paper-readiness evidence."
     };
     await writeJsonFile(
       path.join(licenseRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_PACKET_MANIFEST),
@@ -1012,7 +1051,7 @@ export async function inspectPromotionTrialCandidateHandoff(
     });
   }
   try {
-    const task = parseLicenseTask(JSON.parse(await fs.readFile(
+    const task = parsePromotionTrialCandidateLicenseTask(JSON.parse(await fs.readFile(
       path.join(root, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
       "utf8"
     )) as unknown);
@@ -1024,8 +1063,10 @@ export async function inspectPromotionTrialCandidateHandoff(
     if (task.handoff_id !== manifest.handoff_id
         || task.source_url !== manifest.source_url
         || task.source_revision !== manifest.source_revision
-        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
-        || guide !== promotionTrialCandidateLicenseReviewerGuide()) {
+        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema(
+          task.schema_version === "1.1"
+        ))
+        || guide !== promotionTrialCandidateLicenseReviewerGuide(task.schema_version === "1.1")) {
       throw new Error("mismatch");
     }
   } catch {
@@ -1172,9 +1213,9 @@ export async function inspectPromotionTrialCandidateLicensePacket(
     "trial_candidate_license_packet",
     issues
   );
-  let task: ReturnType<typeof parseLicenseTask> | null = null;
+  let task: PromotionTrialCandidateLicenseTask | null = null;
   try {
-    task = parseLicenseTask(JSON.parse(await fs.readFile(path.join(
+    task = parsePromotionTrialCandidateLicenseTask(JSON.parse(await fs.readFile(path.join(
       licenseRoot,
       licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)
     ), "utf8")) as unknown);
@@ -1187,8 +1228,12 @@ export async function inspectPromotionTrialCandidateLicensePacket(
       licensePacketPath(PROMOTION_TRIAL_CANDIDATE_LICENSE_GUIDE)
     ), "utf8");
     if (task.handoff_id !== manifest.handoff_id
-        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
-        || guide !== promotionTrialCandidateLicenseReviewerGuide()) throw new Error("mismatch");
+        || JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema(
+          task.schema_version === "1.1"
+        ))
+        || guide !== promotionTrialCandidateLicenseReviewerGuide(task.schema_version === "1.1")) {
+      throw new Error("mismatch");
+    }
   } catch {
     issues.push({
       code: "trial_candidate_license_packet_contract_invalid",
@@ -1223,6 +1268,8 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
       || value.trials_per_base !== TRIALS_PER_BASE || value.artifact_format !== "json"
       || !nonEmptyString(value.selection_policy)
       || !validSourceEvidenceList(value.license_evidence)
+      || (value.license_provenance !== undefined
+        && !validSourceEvidenceList([value.license_provenance]))
       || (value.materialization_mode !== "git_archive"
         && value.materialization_mode !== "verified_https_blobs"
         && value.materialization_mode !== "huggingface_parquet")) {
@@ -1241,6 +1288,14 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
       path: item.path as string,
       sha256: item.sha256 as string
     })),
+    ...(value.license_provenance === undefined
+      ? {}
+      : {
+          license_provenance: {
+            path: value.license_provenance.path as string,
+            sha256: value.license_provenance.sha256 as string
+          }
+        }),
     ...(value.comparison_policy === undefined
       ? {}
       : { comparison_policy: parseComparisonPolicy(value.comparison_policy) })
@@ -1249,7 +1304,7 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     const allowedKeys = new Set([
       "schema_version", "handoff_id", "source_url", "source_revision",
       "required_base_count", "trials_per_base", "artifact_format",
-      "selection_policy", "materialization_mode", "license_evidence",
+      "selection_policy", "materialization_mode", "license_evidence", "license_provenance",
       "parquet_sources", "columns", "json_columns", "reviewer_columns",
       "operator_pointer", "family_pointer", "family_value_transform", "base_pointer", "trial_pointer",
       "credential_projection", "reviewer_identity_redactions", "comparison_policy"
@@ -1306,7 +1361,7 @@ function parseRecipe(value: unknown): PromotionTrialCandidateRecipe {
     "schema_version", "handoff_id", "source_url", "source_revision",
     "path_scope", "path_pattern", "required_base_count", "trials_per_base",
     "artifact_format", "selection_policy", "materialization_mode",
-    "artifact_url_template", "license_evidence", "comparison_policy"
+    "artifact_url_template", "license_evidence", "license_provenance", "comparison_policy"
   ]);
   if (Object.keys(value).some((key) => !allowedKeys.has(key))
       || !safeRelativePath(value.path_scope)
@@ -1806,37 +1861,6 @@ function parseReviewerTrialGroups(
   return groups;
 }
 
-function parseLicenseTask(value: unknown): {
-  handoff_id: string;
-  source_url: string;
-  source_revision: string;
-  evidence_files: Array<{ path: string; sha256: string }>;
-} {
-  if (!isRecord(value)
-      || Object.keys(value).sort().join("\0") !== [
-        "evidence_files",
-        "handoff_id",
-        "required_decision",
-        "schema_version",
-        "source_revision",
-        "source_url"
-      ].join("\0")
-      || value.schema_version !== "1.0"
-      || !validId(value.handoff_id)
-      || !validHttpsUrl(value.source_url)
-      || !sha1String(value.source_revision)
-      || !validSourceEvidenceList(value.evidence_files)
-      || value.required_decision !== "distribution_scope") {
-    throw new Error("Invalid trial-candidate source-license task.");
-  }
-  return {
-    handoff_id: value.handoff_id,
-    source_url: value.source_url,
-    source_revision: value.source_revision,
-    evidence_files: value.evidence_files
-  };
-}
-
 async function assertPinnedGitSource(gitSourceRoot: string, sourceUrl: string, revision: string): Promise<void> {
   const stat = await fs.lstat(gitSourceRoot).catch(() => null);
   if (!stat?.isDirectory() || stat.isSymbolicLink()) throw new Error("Trial-candidate Git source root must be a regular directory.");
@@ -1860,6 +1884,14 @@ async function assertSourceRoot(
   }
   for (const evidence of recipe.license_evidence) {
     await assertHashBoundSourceFile(sourceRoot, evidence.path, evidence.sha256, MAX_SELECTED_ARTIFACT_BYTES);
+  }
+  if (recipe.license_provenance) {
+    await assertHashBoundSourceFile(
+      sourceRoot,
+      recipe.license_provenance.path,
+      recipe.license_provenance.sha256,
+      MAX_SELECTED_ARTIFACT_BYTES
+    );
   }
   if (recipe.materialization_mode !== "huggingface_parquet") {
     await assertPinnedGitSource(sourceRoot, recipe.source_url, recipe.source_revision);
@@ -2548,6 +2580,218 @@ function licenseEvidencePacketEntries(
   }));
 }
 
+function licenseProvenancePacketEntry(
+  recipe: PromotionTrialCandidateRecipe
+): { path: string; sha256: string } {
+  if (!recipe.license_provenance) {
+    throw new Error("License provenance packet entry requires a declared catalog.");
+  }
+  return {
+    path: "source-evidence/00-provenance-" + path.basename(recipe.license_provenance.path),
+    sha256: recipe.license_provenance.sha256
+  };
+}
+
+function licenseTaskEvidenceEntries(
+  recipe: PromotionTrialCandidateRecipe
+): Array<{ path: string; sha256: string }> {
+  return [
+    ...(recipe.license_provenance ? [licenseProvenancePacketEntry(recipe)] : []),
+    ...licenseEvidencePacketEntries(recipe)
+  ];
+}
+
+async function loadLicenseProvenanceCatalog(
+  sourceRoot: string,
+  recipe: PromotionTrialCandidateRecipe
+): Promise<PromotionTrialCandidateLicenseProvenanceCatalog> {
+  if (!recipe.license_provenance) {
+    throw new Error("License provenance catalog was not declared.");
+  }
+  const source = resolveContainedFile(sourceRoot, recipe.license_provenance.path);
+  if (!source) {
+    throw new Error("License provenance catalog escaped the source root.");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(await fs.readFile(source, "utf8")) as unknown;
+  } catch {
+    throw new Error("License provenance catalog must be valid JSON.");
+  }
+  return parseLicenseProvenanceCatalog(value, recipe);
+}
+
+function parseLicenseProvenanceCatalog(
+  value: unknown,
+  recipe: PromotionTrialCandidateRecipe
+): PromotionTrialCandidateLicenseProvenanceCatalog {
+  if (!isRecord(value)
+      || Object.keys(value).sort().join("\0") !== "entries\0schema_version"
+      || value.schema_version !== "1.0"
+      || !Array.isArray(value.entries)
+      || value.entries.length === 0
+      || value.entries.length > 10_000) {
+    throw new Error("License provenance catalog is invalid.");
+  }
+  const allowedEvidenceFiles = new Set(recipe.license_evidence.map((item) => item.path));
+  const entries = value.entries.map((item) => {
+    if (!isRecord(item)
+        || Object.keys(item).sort().join("\0") !== [
+          "declared_license",
+          "evidence_files",
+          "evidence_refs",
+          "source_revision",
+          "source_url",
+          "subject_key",
+          "subject_kind"
+        ].join("\0")
+        || (item.subject_kind !== "base_material" && item.subject_kind !== "operator_output")
+        || !boundedNonEmptyString(item.subject_key, 1024)
+        || !validHttpsUrl(item.source_url)
+        || (item.source_revision !== null && !boundedNonEmptyString(item.source_revision, 256))
+        || (item.declared_license !== null && !boundedNonEmptyString(item.declared_license, 256))
+        || !Array.isArray(item.evidence_refs)
+        || item.evidence_refs.length > 16
+        || new Set(item.evidence_refs).size !== item.evidence_refs.length
+        || !item.evidence_refs.every(validHttpsUrl)
+        || !Array.isArray(item.evidence_files)
+        || item.evidence_files.length > 16
+        || new Set(item.evidence_files).size !== item.evidence_files.length
+        || !item.evidence_files.every((entry) =>
+          typeof entry === "string" && allowedEvidenceFiles.has(entry))
+        || item.evidence_refs.length + item.evidence_files.length === 0) {
+      throw new Error("License provenance entry is invalid.");
+    }
+    return {
+      subject_kind: item.subject_kind,
+      subject_key: item.subject_key,
+      source_url: item.source_url,
+      source_revision: item.source_revision,
+      declared_license: item.declared_license,
+      evidence_refs: [...item.evidence_refs] as string[],
+      evidence_files: [...item.evidence_files] as string[]
+    } satisfies PromotionTrialCandidateLicenseProvenanceEntry;
+  });
+  if (new Set(entries.map((item) => `${item.subject_kind}\0${item.subject_key}`)).size
+      !== entries.length) {
+    throw new Error("License provenance entries must be unique by subject kind and key.");
+  }
+  return {
+    schema_version: "1.0",
+    entries
+  };
+}
+
+function buildLicenseTask(
+  recipe: PromotionTrialCandidateRecipe,
+  catalog: PromotionTrialCandidateLicenseProvenanceCatalog | null,
+  candidates: ControllerMap["candidates"]
+): PromotionTrialCandidateLicenseTask {
+  const evidenceFiles = licenseTaskEvidenceEntries(recipe);
+  if (!catalog) {
+    return parsePromotionTrialCandidateLicenseTask({
+      schema_version: "1.0",
+      handoff_id: recipe.handoff_id,
+      source_url: recipe.source_url,
+      source_revision: recipe.source_revision,
+      evidence_files: evidenceFiles,
+      required_decision: "distribution_scope"
+    });
+  }
+  const entryByKey = new Map(catalog.entries.map((item) => [
+    `${item.subject_kind}\0${item.subject_key}`,
+    item
+  ]));
+  const packetEvidenceBySource = new Map(recipe.license_evidence.map((item, index) => [
+    item.path,
+    licenseEvidencePacketEntries(recipe)[index].path
+  ]));
+  const catalogEvidencePath = licenseProvenancePacketEntry(recipe).path;
+  const subjects: PromotionTrialCandidateLicenseSubject[] = [];
+  const subjectByCatalogKey = new Map<string, PromotionTrialCandidateLicenseSubject>();
+  const collectionSubject: PromotionTrialCandidateLicenseSubject = {
+    subject_id: licenseSubjectId("source_collection", recipe.source_url, recipe.source_revision),
+    subject_kind: "source_collection",
+    source_url: recipe.source_url,
+    source_revision: recipe.source_revision,
+    declared_license: null,
+    evidence_refs: [recipe.source_url],
+    evidence_files: licenseEvidencePacketEntries(recipe).map((item) => item.path)
+  };
+  subjects.push(collectionSubject);
+
+  const resolveSubject = (
+    subjectKind: "base_material" | "operator_output",
+    subjectKey: string
+  ): PromotionTrialCandidateLicenseSubject => {
+    const lookupKey = `${subjectKind}\0${subjectKey}`;
+    const existing = subjectByCatalogKey.get(lookupKey);
+    if (existing) return existing;
+    const entry = entryByKey.get(lookupKey);
+    if (!entry) {
+      throw new Error(`License provenance is missing selected ${subjectKind} coverage.`);
+    }
+    const subject: PromotionTrialCandidateLicenseSubject = {
+      subject_id: licenseSubjectId(subjectKind, entry.source_url, subjectKey),
+      subject_kind: subjectKind,
+      source_url: entry.source_url,
+      source_revision: entry.source_revision,
+      declared_license: entry.declared_license,
+      evidence_refs: [...entry.evidence_refs],
+      evidence_files: [
+        catalogEvidencePath,
+        ...entry.evidence_files.map((item) => {
+          const packetPath = packetEvidenceBySource.get(item);
+          if (!packetPath) {
+            throw new Error("License provenance references undeclared source evidence.");
+          }
+          return packetPath;
+        })
+      ].filter((item, index, values) => values.indexOf(item) === index)
+    };
+    if (subjects.some((item) => item.subject_id === subject.subject_id)) {
+      throw new Error("License provenance produced a subject identity collision.");
+    }
+    subjects.push(subject);
+    subjectByCatalogKey.set(lookupKey, subject);
+    return subject;
+  };
+
+  const candidateRequirements = candidates.map((candidate) => {
+    const base = resolveSubject("base_material", candidate.base_group);
+    const operators = [
+      candidate.operator_group,
+      ...(candidate.comparator_operator_group ? [candidate.comparator_operator_group] : [])
+    ].map((item) => resolveSubject("operator_output", item));
+    return {
+      candidate_id: candidate.candidate_id,
+      subject_ids: [
+        collectionSubject.subject_id,
+        base.subject_id,
+        ...operators.map((item) => item.subject_id)
+      ]
+    };
+  });
+  return parsePromotionTrialCandidateLicenseTask({
+    schema_version: "1.1",
+    handoff_id: recipe.handoff_id,
+    source_url: recipe.source_url,
+    source_revision: recipe.source_revision,
+    evidence_files: evidenceFiles,
+    required_decision: "candidate_scoped_distribution",
+    subjects,
+    candidate_requirements: candidateRequirements
+  });
+}
+
+function licenseSubjectId(
+  subjectKind: "source_collection" | "base_material" | "operator_output",
+  sourceUrl: string,
+  sourceKey: string
+): string {
+  return `license-subject-${sha256Text([subjectKind, sourceUrl, sourceKey].join("\0")).slice(0, 24)}`;
+}
+
 function decodeParquetRow(
   row: Record<string, any>,
   jsonColumns: readonly string[]
@@ -2960,6 +3204,13 @@ function positiveInteger(value: unknown): value is number {
 
 function nonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function boundedNonEmptyString(value: unknown, maximumLength: number): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.length <= maximumLength
+    && !value.includes("\0");
 }
 
 function isRecord(value: unknown): value is Record<string, any> {

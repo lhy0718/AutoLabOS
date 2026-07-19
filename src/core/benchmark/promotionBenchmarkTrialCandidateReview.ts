@@ -28,18 +28,22 @@ import {
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
   parsePromotionTrialCandidateInitialAnnotationSet,
   parsePromotionTrialCandidateLicenseReviewSet,
+  parsePromotionTrialCandidateLicenseTask,
   parsePromotionTrialCandidateResolutionSet,
   promotionTrialCandidateAnnotationSchema,
   promotionTrialCandidateHumanLabelsEqual,
+  promotionTrialCandidateLicenseTaskIsCandidateScoped,
   promotionTrialCandidateLicenseReviewerGuide,
   promotionTrialCandidateLicenseReviewSchema,
   promotionTrialCandidateReviewerGuide,
   promotionTrialCandidateResolutionSchema,
   promotionTrialCandidateReviewRubric,
+  validatePromotionTrialCandidateLicenseReviewCoverage,
   type PromotionTrialCandidateHumanLabel,
   type PromotionTrialCandidateInitialAnnotationSet,
   type PromotionTrialCandidateLicenseReview,
   type PromotionTrialCandidateLicenseReviewSet,
+  type PromotionTrialCandidateLicenseTask,
   type PromotionTrialCandidateLicenseStatus,
   type PromotionTrialCandidateObservation,
   type PromotionTrialCandidateObservationValue,
@@ -100,8 +104,7 @@ export interface PreparePromotionTrialCandidateLicenseReviewWorksheetInput {
   outputPath: string;
 }
 
-export interface PromotionTrialCandidateLicenseReviewWorksheet {
-  schema_version: "1.0";
+interface PromotionTrialCandidateLicenseReviewWorksheetCommon {
   handoff_id: string;
   reviewer_id: string;
   label_source: "human";
@@ -111,12 +114,31 @@ export interface PromotionTrialCandidateLicenseReviewWorksheet {
     candidate_annotations_unseen: false;
     controller_map_unseen: false;
   };
-  review: {
-    status: null;
-    evidence_refs: [];
-    rationale: "";
-  };
 }
+
+export type PromotionTrialCandidateLicenseReviewWorksheet =
+  | PromotionTrialCandidateLicenseReviewWorksheetCommon & {
+    schema_version: "1.0";
+    review: {
+      status: null;
+      evidence_refs: [];
+      rationale: "";
+    };
+  }
+  | PromotionTrialCandidateLicenseReviewWorksheetCommon & {
+    schema_version: "1.1";
+    review: {
+      status: null;
+      evidence_refs: [];
+      rationale: "";
+    };
+    subject_reviews: Array<{
+      subject_id: string;
+      status: null;
+      evidence_refs: [];
+      rationale: "";
+    }>;
+  };
 
 export interface PreparePromotionTrialCandidateLicenseReviewWorksheetResult {
   handoff_id: string;
@@ -180,6 +202,8 @@ export interface PromotionTrialCandidateLicenseReviewPreflightReport {
   passed: boolean;
   reviewer_id: string | null;
   license_status: PromotionTrialCandidateLicenseStatus | null;
+  license_review_scope: "source_only" | "candidate_scoped";
+  subject_review_count: number;
   evidence_reference_count: number;
   input_sha256: {
     license_packet_manifest: string;
@@ -219,9 +243,11 @@ export interface PromotionTrialCandidateReviewEvidence {
   candidate_count: number;
   double_human_annotation_completed: true;
   human_license_review_recorded: true;
+  license_review_scope: "source_only" | "candidate_scoped";
   source_license_status: PromotionTrialCandidateLicenseStatus;
   source_license_adjudication: {
     reviewer_id: string;
+    subject_review_count: number;
     review: PromotionTrialCandidateLicenseReview;
   };
   observation_counts: Record<PromotionTrialCandidateObservation, Record<PromotionTrialCandidateObservationValue, number>>;
@@ -385,9 +411,8 @@ export async function preparePromotionTrialCandidateLicenseReviewWorksheet(
     "Trial-candidate license review worksheet output"
   );
 
-  const { manifest } = await loadHandoffContract(handoffRoot);
-  const worksheet: PromotionTrialCandidateLicenseReviewWorksheet = {
-    schema_version: "1.0",
+  const { manifest, licenseTask } = await loadHandoffContract(handoffRoot);
+  const common: PromotionTrialCandidateLicenseReviewWorksheetCommon = {
     handoff_id: manifest.handoff_id,
     reviewer_id: input.reviewerId,
     label_source: "human",
@@ -396,13 +421,34 @@ export async function preparePromotionTrialCandidateLicenseReviewWorksheet(
       completed_by_human: false,
       candidate_annotations_unseen: false,
       controller_map_unseen: false
-    },
-    review: {
-      status: null,
-      evidence_refs: [],
-      rationale: ""
     }
   };
+  const worksheet: PromotionTrialCandidateLicenseReviewWorksheet =
+    promotionTrialCandidateLicenseTaskIsCandidateScoped(licenseTask)
+      ? {
+          ...common,
+          schema_version: "1.1",
+          review: {
+            status: null,
+            evidence_refs: [],
+            rationale: ""
+          },
+          subject_reviews: licenseTask.subjects.map((subject) => ({
+            subject_id: subject.subject_id,
+            status: null,
+            evidence_refs: [],
+            rationale: ""
+          }))
+        }
+      : {
+          ...common,
+          schema_version: "1.0",
+          review: {
+            status: null,
+            evidence_refs: [],
+            rationale: ""
+          }
+        };
   await writeJsonFile(outputPath, worksheet);
   return {
     handoff_id: manifest.handoff_id,
@@ -493,9 +539,9 @@ export async function preflightPromotionTrialCandidateLicenseReview(
   }
   await assertFreshOutput(outDir, "Trial-candidate source-license review preflight output");
 
-  const { manifest } = await loadLicensePacketContract(licenseRoot);
+  const { manifest, task } = await loadLicensePacketContract(licenseRoot);
   const issues: PromotionTrialCandidateReviewIssue[] = [];
-  const review = await readLicenseReview(reviewPath, manifest, [], issues);
+  const review = await readLicenseReview(reviewPath, manifest, task, [], issues);
   const contractPaths = licensePacketContractPaths(licenseRoot);
   const report: PromotionTrialCandidateLicenseReviewPreflightReport = {
     schema_version: "1.0",
@@ -504,7 +550,14 @@ export async function preflightPromotionTrialCandidateLicenseReview(
     passed: issues.length === 0 && Boolean(review),
     reviewer_id: review?.reviewer_id || null,
     license_status: review?.review.status || null,
-    evidence_reference_count: review?.review.evidence_refs.length || 0,
+    license_review_scope: task.schema_version === "1.1" ? "candidate_scoped" : "source_only",
+    subject_review_count: review?.schema_version === "1.1" ? review.subject_reviews.length : 0,
+    evidence_reference_count: review
+      ? review.review.evidence_refs.length
+        + (review.schema_version === "1.1"
+          ? review.subject_reviews.reduce((sum, item) => sum + item.evidence_refs.length, 0)
+          : 0)
+      : 0,
     input_sha256: {
       license_packet_manifest: await hashFile(path.join(
         licenseRoot,
@@ -548,7 +601,7 @@ export async function adjudicatePromotionTrialCandidateReview(
   }
   await assertFreshOutput(outDir, "Trial-candidate review adjudication output");
 
-  const { manifest, tasks } = await loadHandoffContract(handoffRoot);
+  const { manifest, tasks, licenseTask } = await loadHandoffContract(handoffRoot);
   const issues: PromotionTrialCandidateReviewIssue[] = [];
   const initialPaths = await Promise.all(input.annotationPaths.map((item, index) =>
     resolveFileInside(cwd, path.resolve(cwd, item), `Trial-candidate annotation ${index + 1}`)));
@@ -612,6 +665,7 @@ export async function adjudicatePromotionTrialCandidateReview(
   const licenseReview = await readLicenseReview(
     licenseReviewPath,
     manifest,
+    licenseTask,
     [...initialIds, ...(resolution ? [resolution.resolver_id] : [])],
     issues
   );
@@ -822,7 +876,10 @@ async function loadReviewerPacketContract(
 
 async function loadLicensePacketContract(
   licenseRoot: string
-): Promise<{ manifest: PromotionTrialCandidateLicensePacketManifest }> {
+): Promise<{
+  manifest: PromotionTrialCandidateLicensePacketManifest;
+  task: PromotionTrialCandidateLicenseTask;
+}> {
   const inspection = await inspectPromotionTrialCandidateLicensePacket(licenseRoot);
   if (!inspection.passed || !inspection.manifest) {
     throw new Error(`Trial-candidate license preflight requires an integrity-valid source-license packet: ${inspection.issues.map((item) => item.code).join(", ") || "unreadable"}.`);
@@ -830,16 +887,27 @@ async function loadLicensePacketContract(
   const contract = licensePacketContractPaths(licenseRoot);
   const schema = JSON.parse(await fs.readFile(contract.licenseSchema, "utf8")) as unknown;
   const guide = await fs.readFile(contract.licenseGuide, "utf8");
-  if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
-      || guide !== promotionTrialCandidateLicenseReviewerGuide()) {
+  const task = parsePromotionTrialCandidateLicenseTask(JSON.parse(await fs.readFile(
+    path.join(licenseRoot, licensePacketFile(PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK)),
+    "utf8"
+  )) as unknown);
+  const candidateScoped = promotionTrialCandidateLicenseTaskIsCandidateScoped(task);
+  if (JSON.stringify(schema) !== JSON.stringify(
+    promotionTrialCandidateLicenseReviewSchema(candidateScoped)
+  )
+      || guide !== promotionTrialCandidateLicenseReviewerGuide(candidateScoped)) {
     throw new Error("Trial-candidate source-license packet does not match the runtime review contract.");
   }
-  return { manifest: inspection.manifest };
+  return { manifest: inspection.manifest, task };
 }
 
 async function loadHandoffContract(
   handoffRoot: string
-): Promise<{ manifest: PromotionTrialCandidateHandoffManifest; tasks: ReviewerTask[] }> {
+): Promise<{
+  manifest: PromotionTrialCandidateHandoffManifest;
+  tasks: ReviewerTask[];
+  licenseTask: PromotionTrialCandidateLicenseTask;
+}> {
   const inspection = await inspectPromotionTrialCandidateHandoff(handoffRoot);
   if (!inspection.passed || !inspection.manifest) {
     throw new Error(`Trial-candidate review requires an integrity-valid handoff: ${inspection.issues.map((item) => item.code).join(", ") || "unreadable"}.`);
@@ -851,14 +919,21 @@ async function loadHandoffContract(
   const licenseSchema = JSON.parse(await fs.readFile(licenseContract.licenseSchema, "utf8")) as unknown;
   const guide = await fs.readFile(reviewerContract.guide, "utf8");
   const licenseGuide = await fs.readFile(licenseContract.licenseGuide, "utf8");
+  const licenseTask = parsePromotionTrialCandidateLicenseTask(JSON.parse(await fs.readFile(
+    path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+    "utf8"
+  )) as unknown);
+  const candidateScopedLicense = promotionTrialCandidateLicenseTaskIsCandidateScoped(licenseTask);
   const rubric = await fs.readFile(reviewerContract.rubric, "utf8");
   if (JSON.stringify(schema) !== JSON.stringify(promotionTrialCandidateAnnotationSchema())
       || JSON.stringify(resolutionSchema) !== JSON.stringify(promotionTrialCandidateResolutionSchema())
-      || JSON.stringify(licenseSchema) !== JSON.stringify(promotionTrialCandidateLicenseReviewSchema())
+      || JSON.stringify(licenseSchema) !== JSON.stringify(
+        promotionTrialCandidateLicenseReviewSchema(candidateScopedLicense)
+      )
       || guide !== promotionTrialCandidateReviewerGuide(
         inspection.manifest.comparison_mode === "paired_operator"
       )
-      || licenseGuide !== promotionTrialCandidateLicenseReviewerGuide()
+      || licenseGuide !== promotionTrialCandidateLicenseReviewerGuide(candidateScopedLicense)
       || rubric !== promotionTrialCandidateReviewRubric(
         inspection.manifest.comparison_mode === "paired_operator"
       )) {
@@ -886,7 +961,7 @@ async function loadHandoffContract(
       throw new Error(`Trial-candidate reviewer task does not match the manifest: ${task.candidate_id}.`);
     }
   }
-  return { manifest: inspection.manifest, tasks };
+  return { manifest: inspection.manifest, tasks, licenseTask };
 }
 
 async function readInitialAnnotation(
@@ -959,6 +1034,7 @@ async function readResolution(
 async function readLicenseReview(
   reviewPath: string,
   manifest: Pick<PromotionTrialCandidateHandoffManifest, "handoff_id">,
+  task: PromotionTrialCandidateLicenseTask,
   excludedReviewerIds: string[],
   issues: PromotionTrialCandidateReviewIssue[]
 ): Promise<PromotionTrialCandidateLicenseReviewSet | null> {
@@ -967,6 +1043,7 @@ async function readLicenseReview(
     const bytes = await fs.readFile(reviewPath);
     assertPromotionArtifactPrivacySafe(path.basename(reviewPath), bytes);
     review = parsePromotionTrialCandidateLicenseReviewSet(JSON.parse(bytes.toString("utf8")) as unknown);
+    validatePromotionTrialCandidateLicenseReviewCoverage(review, task);
   } catch (error) {
     issues.push({
       code: "trial_candidate_license_review_file_invalid",
@@ -1078,15 +1155,19 @@ function buildReviewEvidence(
     if (allObservationsPositive(item.label)) positiveCandidateCount += 1;
     if (sourceEligibilityObservationsPositive(item.label)) sourceEligibleCandidateCount += 1;
   }
-  const redistributablePositiveCandidateCount = license.review.status === "redistribution_permitted"
+  const candidateScopedLicense = license.schema_version === "1.1";
+  const redistributable = candidateScopedLicense
+    && license.review.status === "redistribution_permitted";
+  const redistributablePositiveCandidateCount = redistributable
     ? positiveCandidateCount
     : 0;
-  const redistributableSourceEligibleCandidateCount = license.review.status === "redistribution_permitted"
+  const redistributableSourceEligibleCandidateCount = redistributable
     ? sourceEligibleCandidateCount
     : 0;
   const floorMet = redistributableSourceEligibleCandidateCount >= manifest.required_base_candidate_count;
   const remainingBlockers = [
-    ...(license.review.status === "redistribution_permitted" ? [] : ["redistribution_permission_unresolved"]),
+    ...(candidateScopedLicense ? [] : ["candidate_scoped_license_coverage_missing"]),
+    ...(redistributable ? [] : ["redistribution_permission_unresolved"]),
     ...(sourceEligibleCandidateCount === tasks.length ? [] : ["candidate_source_requirements_unmet"]),
     "canonical_source_projection",
     "confirmatory_intake_freeze"
@@ -1098,9 +1179,11 @@ function buildReviewEvidence(
     candidate_count: tasks.length,
     double_human_annotation_completed: true,
     human_license_review_recorded: true,
+    license_review_scope: candidateScopedLicense ? "candidate_scoped" : "source_only",
     source_license_status: license.review.status,
     source_license_adjudication: {
       reviewer_id: license.reviewer_id,
+      subject_review_count: license.schema_version === "1.1" ? license.subject_reviews.length : 0,
       review: license.review
     },
     observation_counts: counts,
@@ -1344,7 +1427,8 @@ async function readReviewAdmissionArtifacts(
   const positiveCandidateCount = rows.filter((row) => allObservationsPositive({
     observations: row.observations
   })).length;
-  const redistributable = evidence.source_license_status === "redistribution_permitted";
+  const redistributable = evidence.license_review_scope === "candidate_scoped"
+    && evidence.source_license_status === "redistribution_permitted";
   if (JSON.stringify(observationCounts) !== JSON.stringify(evidence.observation_counts)
       || positiveCandidateCount !== evidence.positive_candidate_count
       || sourceEligibleCandidateIds.length !== evidence.source_eligible_candidate_count
@@ -1417,7 +1501,13 @@ function validReviewEvidenceSummary(
         && value.source_license_status !== "local_evaluation_only"
         && value.source_license_status !== "redistribution_prohibited"
         && value.source_license_status !== "uncertain")
+      || (value.license_review_scope !== "source_only"
+        && value.license_review_scope !== "candidate_scoped")
       || !isRecord(value.source_license_adjudication)
+      || !validCandidateCount(value.source_license_adjudication.subject_review_count, 512)
+      || (value.license_review_scope === "source_only"
+        ? value.source_license_adjudication.subject_review_count !== 0
+        : value.source_license_adjudication.subject_review_count <= 0)
       || !validId(value.source_license_adjudication.reviewer_id)
       || !isRecord(value.source_license_adjudication.review)
       || value.source_license_adjudication.review.status !== value.source_license_status
@@ -1451,7 +1541,8 @@ function validReviewEvidenceSummary(
       return false;
     }
   }
-  const redistributable = value.source_license_status === "redistribution_permitted";
+  const redistributable = value.license_review_scope === "candidate_scoped"
+    && value.source_license_status === "redistribution_permitted";
   if ((redistributable
         && (value.redistributable_positive_candidate_count !== value.positive_candidate_count
           || value.redistributable_source_eligible_candidate_count !== value.source_eligible_candidate_count))
@@ -1462,6 +1553,7 @@ function validReviewEvidenceSummary(
   }
   const expectedFloor = value.redistributable_source_eligible_candidate_count >= candidateCount;
   const expectedBlockers = [
+    ...(value.license_review_scope === "candidate_scoped" ? [] : ["candidate_scoped_license_coverage_missing"]),
     ...(redistributable ? [] : ["redistribution_permission_unresolved"]),
     ...(value.source_eligible_candidate_count === candidateCount
       ? []
@@ -1515,6 +1607,8 @@ function renderLicenseReviewPreflightSummary(
     `- Review file: ${reviewName}`,
     `- Reviewer ID: ${report.reviewer_id || "unresolved"}`,
     `- License status: ${report.license_status || "unresolved"}`,
+    `- Review scope: ${report.license_review_scope}`,
+    `- Subject reviews: ${report.subject_review_count}`,
     `- Evidence references: ${report.evidence_reference_count}`,
     "",
     "## Validation Issues",

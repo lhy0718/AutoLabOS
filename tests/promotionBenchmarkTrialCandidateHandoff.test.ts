@@ -59,6 +59,7 @@ import {
   PROMOTION_TRIAL_CANDIDATE_RUBRIC,
   parsePromotionTrialCandidateInitialAnnotationSet,
   parsePromotionTrialCandidateLicenseReviewSet,
+  parsePromotionTrialCandidateLicenseTask,
   type PromotionTrialCandidateHumanLabel,
   type PromotionTrialCandidateInitialAnnotationSet,
   type PromotionTrialCandidateLicenseReviewSet
@@ -297,6 +298,36 @@ describe("promotion trial-candidate handoff", () => {
     })).rejects.toThrow("paired six-trial");
     await expect(access(path.join(workspace, "unpaired-review-campaign"))).rejects.toThrow();
   }, 30_000);
+
+  it("rejects provenance that omits selected base-material subjects", async () => {
+    const recipePath = path.join(workspace, "incomplete-provenance-recipe.json");
+    await writeRecipe(recipePath, {
+      revision,
+      pathPattern: "^records/(?<operator>[^/]+)/(?<family>[^/]+)/(?<base>[^/]+)/(?<trial>[^/]+)/trace\\.json$"
+    });
+    const provenancePath = path.join(gitSourceRoot, "LICENSE_PROVENANCE.json");
+    const provenance = JSON.parse(await readFile(provenancePath, "utf8")) as Record<string, any>;
+    provenance.entries = provenance.entries.filter((entry: Record<string, any>) =>
+      entry.subject_kind === "operator_output");
+    const provenanceBytes = Buffer.from(`${JSON.stringify(provenance, null, 2)}\n`, "utf8");
+    await writeFile(provenancePath, provenanceBytes);
+    const recipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
+    recipe.license_provenance.sha256 = createHash("sha256")
+      .update(provenanceBytes)
+      .digest("hex");
+    await writeFile(recipePath, `${JSON.stringify(recipe, null, 2)}\n`, "utf8");
+
+    await expect(exportPromotionTrialCandidateHandoff({
+      cwd: workspace,
+      recipePath: "incomplete-provenance-recipe.json",
+      sourceRoot: gitSourceRoot,
+      outDir: "incomplete-provenance-handoff"
+    })).rejects.toThrow("missing selected base_material coverage");
+    await expect(access(path.join(
+      workspace,
+      "incomplete-provenance-handoff"
+    ))).rejects.toThrow();
+  });
 
   it("rejects a source route with fewer than three operator groups", async () => {
     const recipePath = path.join(workspace, "two-operator-recipe.json");
@@ -692,8 +723,44 @@ describe("promotion trial-candidate handoff", () => {
       nativeColumnResult.output_dir
     ))).toMatchObject({ passed: true, issues: [] });
 
+    const pairedProvenance = {
+      schema_version: "1.0",
+      entries: [
+        ...Array.from({ length: 4 }, (_, familyIndex) =>
+          Array.from({ length: 20 }, (_, baseIndex) => ({
+            subject_kind: "base_material",
+            subject_key: `family-${familyIndex}-base-${baseIndex}`,
+            source_url: `https://example.org/materials/family-${familyIndex}-base-${baseIndex}`,
+            source_revision: "a".repeat(40),
+            declared_license: "fixture-permission",
+            evidence_refs: ["https://example.org/licenses/fixture-permission"],
+            evidence_files: ["README.md"]
+          }))).flat(),
+        ...Array.from({ length: 3 }, (_, operatorIndex) => ({
+          subject_kind: "operator_output",
+          subject_key: `operator-${operatorIndex}`,
+          source_url: `https://example.org/operators/operator-${operatorIndex}`,
+          source_revision: "a".repeat(40),
+          declared_license: "fixture-permission",
+          evidence_refs: ["https://example.org/licenses/fixture-permission"],
+          evidence_files: ["README.md"]
+        }))
+      ]
+    };
+    const pairedProvenanceBytes = Buffer.from(
+      `${JSON.stringify(pairedProvenance, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(sourceRoot, "LICENSE_PROVENANCE.json"),
+      pairedProvenanceBytes
+    );
     const pairedRecipe = JSON.parse(await readFile(recipePath, "utf8")) as Record<string, any>;
     pairedRecipe.handoff_id = "candidate-handoff-parquet-paired";
+    pairedRecipe.license_provenance = {
+      path: "LICENSE_PROVENANCE.json",
+      sha256: createHash("sha256").update(pairedProvenanceBytes).digest("hex")
+    };
     pairedRecipe.comparison_policy = {
       mode: "paired_operator",
       groups_per_base: 2,
@@ -719,6 +786,10 @@ describe("promotion trial-candidate handoff", () => {
       path.join(workspace, pairedResult.reviewer_dir, "candidate-tasks.jsonl"),
       "utf8"
     )).split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as Record<string, any>);
+    const pairedLicenseTask = parsePromotionTrialCandidateLicenseTask(JSON.parse(await readFile(
+      path.join(workspace, pairedResult.license_reviewer_dir, "source-license-task.json"),
+      "utf8"
+    )) as unknown);
     const pairedTrials = pairedManifest.candidates.flatMap((candidate: Record<string, any>) => [
       ...candidate.trials,
       ...candidate.comparator_trials
@@ -757,6 +828,20 @@ describe("promotion trial-candidate handoff", () => {
       && task.trial_groups[1].group_id === "group-b"
       && task.trial_groups.flatMap((group: Record<string, any>) => group.trial_ids).join("\0")
         === task.trial_ids.join("\0"))).toBe(true);
+    expect(pairedLicenseTask.schema_version).toBe("1.1");
+    if (pairedLicenseTask.schema_version !== "1.1") {
+      throw new Error("Expected a candidate-scoped license task.");
+    }
+    expect(pairedLicenseTask.subjects).toHaveLength(76);
+    expect(pairedLicenseTask.candidate_requirements).toHaveLength(72);
+    expect(pairedLicenseTask.subjects.filter((item) =>
+      item.subject_kind === "source_collection")).toHaveLength(1);
+    expect(pairedLicenseTask.subjects.filter((item) =>
+      item.subject_kind === "base_material")).toHaveLength(72);
+    expect(pairedLicenseTask.subjects.filter((item) =>
+      item.subject_kind === "operator_output")).toHaveLength(3);
+    expect(pairedLicenseTask.candidate_requirements.every((item) =>
+      item.subject_ids.length === 4)).toBe(true);
     expect(pairedReviewerFiles.join("\n")).not.toMatch(/operator-[0-9]|family-[0-9]|parquet_path/u);
     expect(await inspectPromotionTrialCandidateHandoff(path.join(
       workspace,
@@ -1359,7 +1444,7 @@ describe("promotion trial-candidate handoff", () => {
 
   it("preflights one complete source-license review without candidate annotations", async () => {
     const handoffRoot = path.join(workspace, "handoff");
-    await writeLicenseReview(
+    const completeReview = await writeLicenseReview(
       path.join(workspace, "reviews", "license", "complete-review.json"),
       handoffRoot,
       "license-reviewer-preflight"
@@ -1376,14 +1461,87 @@ describe("promotion trial-candidate handoff", () => {
       outDir: "reviews/license/complete-preflight"
     });
 
+    if (completeReview.schema_version !== "1.1") {
+      throw new Error("Expected a candidate-scoped fixture review.");
+    }
     expect(result.report).toMatchObject({
       passed: true,
       reviewer_id: "license-reviewer-preflight",
       license_status: "uncertain",
+      license_review_scope: "candidate_scoped",
+      subject_review_count: completeReview.subject_reviews.length,
       evidence_reference_count: 0,
       validation_issues: []
     });
     expect(Object.values(result.report.input_sha256).every((value) => /^[a-f0-9]{64}$/u.test(value))).toBe(true);
+    const incompleteReview = {
+      ...completeReview,
+      subject_reviews: completeReview.subject_reviews.slice(1)
+    };
+    await writeFile(
+      path.join(workspace, "reviews", "license", "missing-subject-review.json"),
+      `${JSON.stringify(incompleteReview, null, 2)}\n`,
+      "utf8"
+    );
+    const incomplete = await preflightPromotionTrialCandidateLicenseReview({
+      cwd: workspace,
+      licenseRoot: "isolated-license-packet",
+      reviewPath: "reviews/license/missing-subject-review.json",
+      outDir: "reviews/license/missing-subject-preflight"
+    });
+    expect(incomplete.report.passed).toBe(false);
+    expect(incomplete.report.validation_issues.map((issue) => issue.code)).toContain(
+      "trial_candidate_license_review_file_invalid"
+    );
+  });
+
+  it("does not promote a source-only permission review as candidate-scoped coverage", async () => {
+    const handoffRoot = path.join(workspace, "parquet-handoff");
+    await writeHumanAnnotation(
+      path.join(workspace, "source-only-a.json"),
+      handoffRoot,
+      "source-only-reviewer-a",
+      { allCandidatesSourceEligible: true }
+    );
+    await writeHumanAnnotation(
+      path.join(workspace, "source-only-b.json"),
+      handoffRoot,
+      "source-only-reviewer-b",
+      { allCandidatesSourceEligible: true }
+    );
+    await writeLicenseReview(
+      path.join(workspace, "source-only-license.json"),
+      handoffRoot,
+      "source-only-license-reviewer",
+      {
+        status: "redistribution_permitted",
+        evidenceRefs: ["https://example.org/source-license"]
+      }
+    );
+    const result = await adjudicatePromotionTrialCandidateReview({
+      cwd: workspace,
+      handoffRoot: "parquet-handoff",
+      annotationPaths: ["source-only-a.json", "source-only-b.json"],
+      licenseReviewPath: "source-only-license.json",
+      outDir: "source-only-adjudication"
+    });
+    const evidence = JSON.parse(await readFile(
+      path.join(workspace, "source-only-adjudication", PROMOTION_TRIAL_CANDIDATE_REVIEW_EVIDENCE),
+      "utf8"
+    )) as Record<string, any>;
+
+    expect(result.report.passed).toBe(true);
+    expect(evidence).toMatchObject({
+      license_review_scope: "source_only",
+      source_license_status: "redistribution_permitted",
+      source_eligible_candidate_count: 72,
+      redistributable_source_eligible_candidate_count: 0,
+      candidate_review_progression_floor_met: false,
+      remaining_blockers: expect.arrayContaining([
+        "candidate_scoped_license_coverage_missing",
+        "redistribution_permission_unresolved"
+      ])
+    });
   });
 
   it("requires observation-specific citations and existing JSON Pointers for positive labels", async () => {
@@ -2381,7 +2539,34 @@ async function writeRecipe(
     artifactUrlTemplate?: string;
   }
 ): Promise<void> {
-  const licenseBytes = await readFile(path.join(path.dirname(target), "source-repository", "LICENSE"));
+  const sourceRoot = path.join(path.dirname(target), "source-repository");
+  const licenseBytes = await readFile(path.join(sourceRoot, "LICENSE"));
+  const licenseReference = "https://example.org/licenses/fixture-permission";
+  const provenance = {
+    schema_version: "1.0",
+    entries: [
+      ...Array.from({ length: 20 }, (_, index) => ({
+        subject_kind: "base_material",
+        subject_key: `base-${index.toString().padStart(2, "0")}`,
+        source_url: `https://example.org/materials/base-${index.toString().padStart(2, "0")}`,
+        source_revision: input.revision,
+        declared_license: "fixture-permission",
+        evidence_refs: [licenseReference],
+        evidence_files: ["LICENSE"]
+      })),
+      ...Array.from({ length: 3 }, (_, index) => ({
+        subject_kind: "operator_output",
+        subject_key: `operator-${String.fromCharCode(97 + index)}`,
+        source_url: `https://example.org/operators/operator-${String.fromCharCode(97 + index)}`,
+        source_revision: input.revision,
+        declared_license: "fixture-permission",
+        evidence_refs: [licenseReference],
+        evidence_files: ["LICENSE"]
+      }))
+    ]
+  };
+  const provenanceBytes = Buffer.from(`${JSON.stringify(provenance, null, 2)}\n`, "utf8");
+  await writeFile(path.join(sourceRoot, "LICENSE_PROVENANCE.json"), provenanceBytes);
   await writeFile(target, `${JSON.stringify({
     schema_version: "1.1",
     handoff_id: "candidate-handoff-neutral",
@@ -2398,6 +2583,10 @@ async function writeRecipe(
       path: "LICENSE",
       sha256: createHash("sha256").update(licenseBytes).digest("hex")
     }],
+    license_provenance: {
+      path: "LICENSE_PROVENANCE.json",
+      sha256: createHash("sha256").update(provenanceBytes).digest("hex")
+    },
     ...(input.artifactUrlTemplate ? { artifact_url_template: input.artifactUrlTemplate } : {})
   }, null, 2)}\n`, "utf8");
 }
@@ -2478,8 +2667,17 @@ async function writeLicenseReview(
     path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_HANDOFF_MANIFEST),
     "utf8"
   )) as Record<string, any>;
-  const review: PromotionTrialCandidateLicenseReviewSet = {
-    schema_version: "1.0",
+  const task = parsePromotionTrialCandidateLicenseTask(JSON.parse(await readFile(
+    path.join(handoffRoot, PROMOTION_TRIAL_CANDIDATE_LICENSE_TASK),
+    "utf8"
+  )) as unknown);
+  const status = options.status || "uncertain";
+  const evidenceRefs = options.evidenceRefs || [];
+  const rationale = status === "redistribution_permitted"
+    ? "The neutral fixture binds the declared HTTPS permission reference."
+    : "The neutral contract fixture does not establish redistribution permission.";
+  const review = parsePromotionTrialCandidateLicenseReviewSet({
+    schema_version: task.schema_version,
     handoff_id: manifest.handoff_id,
     reviewer_id: reviewerId,
     label_source: "human",
@@ -2490,13 +2688,21 @@ async function writeLicenseReview(
       controller_map_unseen: true
     },
     review: {
-      status: options.status || "uncertain",
-      evidence_refs: options.evidenceRefs || [],
-      rationale: options.status === "redistribution_permitted"
-        ? "The neutral fixture binds the declared HTTPS permission reference."
-        : "The neutral contract fixture does not establish redistribution permission."
-    }
-  };
+      status,
+      evidence_refs: evidenceRefs,
+      rationale
+    },
+    ...(task.schema_version === "1.1"
+      ? {
+          subject_reviews: task.subjects.map((subject) => ({
+            subject_id: subject.subject_id,
+            status,
+            evidence_refs: evidenceRefs,
+            rationale
+          }))
+        }
+      : {})
+  });
   await writeFile(target, `${JSON.stringify(review, null, 2)}\n`, "utf8");
   return review;
 }

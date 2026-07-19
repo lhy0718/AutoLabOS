@@ -52,6 +52,48 @@ export interface PromotionTrialCandidateLicenseReview {
   rationale: string;
 }
 
+export type PromotionTrialCandidateLicenseSubjectKind =
+  | "source_collection"
+  | "base_material"
+  | "operator_output";
+
+export interface PromotionTrialCandidateLicenseSubject {
+  subject_id: string;
+  subject_kind: PromotionTrialCandidateLicenseSubjectKind;
+  source_url: string;
+  source_revision: string | null;
+  declared_license: string | null;
+  evidence_refs: string[];
+  evidence_files: string[];
+}
+
+export interface PromotionTrialCandidateSourceOnlyLicenseTask {
+  schema_version: "1.0";
+  handoff_id: string;
+  source_url: string;
+  source_revision: string;
+  evidence_files: Array<{ path: string; sha256: string }>;
+  required_decision: "distribution_scope";
+}
+
+export interface PromotionTrialCandidateScopedLicenseTask {
+  schema_version: "1.1";
+  handoff_id: string;
+  source_url: string;
+  source_revision: string;
+  evidence_files: Array<{ path: string; sha256: string }>;
+  required_decision: "candidate_scoped_distribution";
+  subjects: PromotionTrialCandidateLicenseSubject[];
+  candidate_requirements: Array<{
+    candidate_id: string;
+    subject_ids: string[];
+  }>;
+}
+
+export type PromotionTrialCandidateLicenseTask =
+  | PromotionTrialCandidateSourceOnlyLicenseTask
+  | PromotionTrialCandidateScopedLicenseTask;
+
 export interface PromotionTrialCandidateInitialAnnotationSet {
   schema_version: "1.0";
   handoff_id: string;
@@ -79,7 +121,7 @@ export interface PromotionTrialCandidateResolutionSet {
   resolutions: PromotionTrialCandidateHumanLabel[];
 }
 
-export interface PromotionTrialCandidateLicenseReviewSet {
+export interface PromotionTrialCandidateSourceOnlyLicenseReviewSet {
   schema_version: "1.0";
   handoff_id: string;
   reviewer_id: string;
@@ -92,6 +134,27 @@ export interface PromotionTrialCandidateLicenseReviewSet {
   };
   review: PromotionTrialCandidateLicenseReview;
 }
+
+export interface PromotionTrialCandidateScopedLicenseReviewSet {
+  schema_version: "1.1";
+  handoff_id: string;
+  reviewer_id: string;
+  label_source: "human";
+  review_role: "source_license";
+  independence_attestation: {
+    completed_by_human: true;
+    candidate_annotations_unseen: true;
+    controller_map_unseen: true;
+  };
+  review: PromotionTrialCandidateLicenseReview;
+  subject_reviews: Array<PromotionTrialCandidateLicenseReview & {
+    subject_id: string;
+  }>;
+}
+
+export type PromotionTrialCandidateLicenseReviewSet =
+  | PromotionTrialCandidateSourceOnlyLicenseReviewSet
+  | PromotionTrialCandidateScopedLicenseReviewSet;
 
 const OBSERVATION_VALUES = new Set<PromotionTrialCandidateObservationValue>([
   "positive",
@@ -179,20 +242,113 @@ export function parsePromotionTrialCandidateResolutionSet(
   };
 }
 
+export function parsePromotionTrialCandidateLicenseTask(
+  value: unknown
+): PromotionTrialCandidateLicenseTask {
+  if (!isRecord(value)
+      || !validId(value.handoff_id)
+      || !validHttpsUrl(value.source_url)
+      || !sha1String(value.source_revision)
+      || !validTaskEvidenceFiles(value.evidence_files)) {
+    throw new Error("Trial-candidate source-license task is invalid.");
+  }
+  const evidenceFiles = (value.evidence_files as Array<Record<string, unknown>>).map((item) => ({
+    path: item.path as string,
+    sha256: item.sha256 as string
+  }));
+  if (value.schema_version === "1.0") {
+    if (!hasExactKeys(value, [
+      "schema_version",
+      "handoff_id",
+      "source_url",
+      "source_revision",
+      "evidence_files",
+      "required_decision"
+    ]) || value.required_decision !== "distribution_scope") {
+      throw new Error("Trial-candidate source-only license task is invalid.");
+    }
+    return {
+      schema_version: "1.0",
+      handoff_id: value.handoff_id,
+      source_url: value.source_url as string,
+      source_revision: value.source_revision,
+      evidence_files: evidenceFiles,
+      required_decision: "distribution_scope"
+    };
+  }
+  if (value.schema_version !== "1.1"
+      || !hasExactKeys(value, [
+        "schema_version",
+        "handoff_id",
+        "source_url",
+        "source_revision",
+        "evidence_files",
+        "required_decision",
+        "subjects",
+        "candidate_requirements"
+      ])
+      || value.required_decision !== "candidate_scoped_distribution"
+      || !Array.isArray(value.subjects)
+      || value.subjects.length < 3
+      || value.subjects.length > 512
+      || !Array.isArray(value.candidate_requirements)
+      || value.candidate_requirements.length === 0
+      || value.candidate_requirements.length > 512) {
+    throw new Error("Trial-candidate candidate-scoped license task is invalid.");
+  }
+  const evidencePaths = new Set(evidenceFiles.map((item) => item.path));
+  const subjects = value.subjects.map((item) => parseLicenseSubject(item, evidencePaths));
+  const subjectById = new Map(subjects.map((item) => [item.subject_id, item]));
+  if (subjectById.size !== subjects.length) {
+    throw new Error("Candidate-scoped license subjects must be unique.");
+  }
+  const requirements = value.candidate_requirements.map((item) =>
+    parseLicenseCandidateRequirement(item, subjectById));
+  if (new Set(requirements.map((item) => item.candidate_id)).size !== requirements.length) {
+    throw new Error("Candidate-scoped license requirements must contain unique candidates.");
+  }
+  const collectionSubjects = subjects.filter((item) => item.subject_kind === "source_collection");
+  if (collectionSubjects.length !== 1
+      || collectionSubjects[0].source_url !== value.source_url
+      || collectionSubjects[0].source_revision !== value.source_revision) {
+    throw new Error("Candidate-scoped licensing requires one task-bound source collection.");
+  }
+  const usage = new Map(subjects.map((item) => [item.subject_id, 0]));
+  for (const requirement of requirements) {
+    const requiredSubjects = requirement.subject_ids.map((id) => subjectById.get(id) as PromotionTrialCandidateLicenseSubject);
+    if (requiredSubjects.filter((item) => item.subject_kind === "source_collection").length !== 1
+        || requiredSubjects.filter((item) => item.subject_kind === "base_material").length !== 1
+        || requiredSubjects.filter((item) => item.subject_kind === "operator_output").length < 1) {
+      throw new Error("Every candidate requires collection, base-material, and operator-output license subjects.");
+    }
+    for (const subjectId of requirement.subject_ids) {
+      usage.set(subjectId, (usage.get(subjectId) || 0) + 1);
+    }
+  }
+  if (subjects.some((item) => (usage.get(item.subject_id) || 0) === 0)
+      || collectionSubjects.some((item) => usage.get(item.subject_id) !== requirements.length)) {
+    throw new Error("Candidate-scoped license subjects must have exact candidate coverage.");
+  }
+  const usedEvidenceFiles = new Set(subjects.flatMap((item) => item.evidence_files));
+  if ([...evidencePaths].some((item) => !usedEvidenceFiles.has(item))) {
+    throw new Error("Every task evidence file must support at least one license subject.");
+  }
+  return {
+    schema_version: "1.1",
+    handoff_id: value.handoff_id,
+    source_url: value.source_url,
+    source_revision: value.source_revision,
+    evidence_files: evidenceFiles,
+    required_decision: "candidate_scoped_distribution",
+    subjects,
+    candidate_requirements: requirements
+  };
+}
+
 export function parsePromotionTrialCandidateLicenseReviewSet(
   value: unknown
 ): PromotionTrialCandidateLicenseReviewSet {
   if (!isRecord(value)
-      || !hasExactKeys(value, [
-        "schema_version",
-        "handoff_id",
-        "reviewer_id",
-        "label_source",
-        "review_role",
-        "independence_attestation",
-        "review"
-      ])
-      || value.schema_version !== "1.0"
       || !validId(value.handoff_id)
       || !validId(value.reviewer_id)
       || value.label_source !== "human"
@@ -200,19 +356,85 @@ export function parsePromotionTrialCandidateLicenseReviewSet(
       || !validLicenseAttestation(value.independence_attestation)) {
     throw new Error("Trial-candidate source-license review set is invalid.");
   }
-  return {
-    schema_version: "1.0",
+  const common = {
     handoff_id: value.handoff_id,
     reviewer_id: value.reviewer_id,
-    label_source: "human",
-    review_role: "source_license",
+    label_source: "human" as const,
+    review_role: "source_license" as const,
     independence_attestation: {
-      completed_by_human: true,
-      candidate_annotations_unseen: true,
-      controller_map_unseen: true
+      completed_by_human: true as const,
+      candidate_annotations_unseen: true as const,
+      controller_map_unseen: true as const
     },
     review: parseLicenseReview(value.review)
   };
+  if (value.schema_version === "1.0") {
+    if (!hasExactKeys(value, [
+      "schema_version",
+      "handoff_id",
+      "reviewer_id",
+      "label_source",
+      "review_role",
+      "independence_attestation",
+      "review"
+    ])) {
+      throw new Error("Trial-candidate source-only license review set is invalid.");
+    }
+    return {
+      schema_version: "1.0",
+      ...common
+    };
+  }
+  if (value.schema_version !== "1.1"
+      || !hasExactKeys(value, [
+        "schema_version",
+        "handoff_id",
+        "reviewer_id",
+        "label_source",
+        "review_role",
+        "independence_attestation",
+        "review",
+        "subject_reviews"
+      ])
+      || !Array.isArray(value.subject_reviews)
+      || value.subject_reviews.length === 0
+      || value.subject_reviews.length > 512) {
+    throw new Error("Trial-candidate candidate-scoped license review set is invalid.");
+  }
+  const subjectReviews = value.subject_reviews.map(parseLicenseSubjectReview);
+  if (new Set(subjectReviews.map((item) => item.subject_id)).size !== subjectReviews.length
+      || common.review.status !== aggregateLicenseStatuses(
+        subjectReviews.map((item) => item.status)
+      )) {
+    throw new Error("Candidate-scoped license reviews require unique subjects and a conservative aggregate status.");
+  }
+  return {
+    schema_version: "1.1",
+    ...common,
+    subject_reviews: subjectReviews
+  };
+}
+
+export function validatePromotionTrialCandidateLicenseReviewCoverage(
+  review: PromotionTrialCandidateLicenseReviewSet,
+  task: PromotionTrialCandidateLicenseTask
+): void {
+  if (review.schema_version !== task.schema_version) {
+    throw new Error("Source-license review scope does not match the task scope.");
+  }
+  if (task.schema_version === "1.0") return;
+  const scopedReview = review as PromotionTrialCandidateScopedLicenseReviewSet;
+  const expected = task.subjects.map((item) => item.subject_id).sort();
+  const observed = scopedReview.subject_reviews.map((item) => item.subject_id).sort();
+  if (JSON.stringify(expected) !== JSON.stringify(observed)) {
+    throw new Error("Candidate-scoped source-license review must cover every declared subject exactly once.");
+  }
+}
+
+export function promotionTrialCandidateLicenseTaskIsCandidateScoped(
+  task: PromotionTrialCandidateLicenseTask
+): task is PromotionTrialCandidateScopedLicenseTask {
+  return task.schema_version === "1.1";
 }
 
 export function promotionTrialCandidateHumanLabelsEqual(
@@ -350,10 +572,37 @@ export function promotionTrialCandidateResolutionSchema(): Record<string, unknow
   };
 }
 
-export function promotionTrialCandidateLicenseReviewSchema(): Record<string, unknown> {
+export function promotionTrialCandidateLicenseReviewSchema(
+  candidateScoped = false
+): Record<string, unknown> {
+  const licenseReview = {
+    type: "object",
+    additionalProperties: false,
+    required: ["status", "evidence_refs", "rationale"],
+    properties: {
+      status: {
+        type: "string",
+        enum: [
+          "redistribution_permitted",
+          "local_evaluation_only",
+          "redistribution_prohibited",
+          "uncertain"
+        ]
+      },
+      evidence_refs: {
+        type: "array",
+        maxItems: 16,
+        uniqueItems: true,
+        items: { type: "string", minLength: 1, maxLength: 2048 }
+      },
+      rationale: { type: "string", minLength: 1, maxLength: 4000 }
+    }
+  };
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
-    title: "Promotion Trial Candidate Source-License Human Review",
+    title: candidateScoped
+      ? "Promotion Trial Candidate-Scoped Source-License Human Review"
+      : "Promotion Trial Candidate Source-License Human Review",
     type: "object",
     additionalProperties: false,
     required: [
@@ -363,10 +612,11 @@ export function promotionTrialCandidateLicenseReviewSchema(): Record<string, unk
       "label_source",
       "review_role",
       "independence_attestation",
-      "review"
+      "review",
+      ...(candidateScoped ? ["subject_reviews"] : [])
     ],
     properties: {
-      schema_version: { const: "1.0" },
+      schema_version: { const: candidateScoped ? "1.1" : "1.0" },
       handoff_id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,127}$" },
       reviewer_id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,127}$" },
       label_source: { const: "human" },
@@ -381,29 +631,24 @@ export function promotionTrialCandidateLicenseReviewSchema(): Record<string, unk
           controller_map_unseen: { const: true }
         }
       },
-      review: {
-        type: "object",
-        additionalProperties: false,
-        required: ["status", "evidence_refs", "rationale"],
-        properties: {
-          status: {
-            type: "string",
-            enum: [
-              "redistribution_permitted",
-              "local_evaluation_only",
-              "redistribution_prohibited",
-              "uncertain"
-            ]
-          },
-          evidence_refs: {
-            type: "array",
-            maxItems: 16,
-            uniqueItems: true,
-            items: { type: "string", minLength: 1, maxLength: 2048 }
-          },
-          rationale: { type: "string", minLength: 1, maxLength: 4000 }
-        }
-      }
+      review: licenseReview,
+      ...(candidateScoped
+        ? {
+            subject_reviews: {
+              type: "array",
+              minItems: 1,
+              maxItems: 512,
+              items: {
+                ...licenseReview,
+                required: ["subject_id", "status", "evidence_refs", "rationale"],
+                properties: {
+                  subject_id: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{0,127}$" },
+                  ...licenseReview.properties
+                }
+              }
+            }
+          }
+        : {})
     }
   };
 }
@@ -483,15 +728,25 @@ export function promotionTrialCandidateReviewerGuide(pairedOperator = false): st
   ].join("\n");
 }
 
-export function promotionTrialCandidateLicenseReviewerGuide(): string {
+export function promotionTrialCandidateLicenseReviewerGuide(
+  candidateScoped = false
+): string {
   return [
     "# Source-License Review Guide",
     "",
-    "Review only `source-license-task.json`, `license-review-schema.json`, and public source-license or permission evidence for the exact URL and revision in the task.",
+    candidateScoped
+      ? "Review every subject in `source-license-task.json` using `license-review-schema.json` and the task-declared public evidence."
+      : "Review only `source-license-task.json`, `license-review-schema.json`, and public source-license or permission evidence for the exact URL and revision in the task.",
     "Do not inspect candidate artifacts, candidate annotations, peer decisions, or the controller map.",
-    "Use `redistribution_permitted` only when an HTTPS license or permission reference directly supports redistribution of the selected source material. Absence of a license is not permission.",
+    candidateScoped
+      ? "Assess the collection, each selected base material, and every operator-output condition. Do not infer one subject's permission from another subject."
+      : "This source-only task cannot establish candidate-scoped redistribution coverage.",
+    "Use `redistribution_permitted` only when an HTTPS license or permission reference directly supports redistribution of that subject. Absence of a license is not permission.",
     "Use `local_evaluation_only` when local inspection is supportable but redistribution is not, `redistribution_prohibited` when direct evidence prohibits it, and `uncertain` when the available evidence cannot establish a status.",
-    "Create one JSON review that validates against `license-review-schema.json`. Pseudonymous identity and attestations support process checking but do not prove real-world identity, expertise, or legal authority.",
+    candidateScoped
+      ? "Complete every `subject_reviews` row exactly once. Set the top-level status conservatively: prohibited before uncertain, uncertain before local-only, and local-only before permitted."
+      : "Create one JSON review that validates against `license-review-schema.json`.",
+    "Pseudonymous identity and attestations support process checking but do not prove real-world identity, expertise, or legal authority.",
     "This review records a human evidence assessment; AutoLabOS does not turn it into a legal grant or confirmatory admission.",
     ""
   ].join("\n");
@@ -568,6 +823,145 @@ function parseLicenseReview(value: unknown): PromotionTrialCandidateLicenseRevie
     evidence_refs: value.evidence_refs.map((item) => String(item).trim()),
     rationale: value.rationale.trim()
   };
+}
+
+function parseLicenseSubject(
+  value: unknown,
+  evidencePaths: ReadonlySet<string>
+): PromotionTrialCandidateLicenseSubject {
+  if (!isRecord(value)
+      || !hasExactKeys(value, [
+        "subject_id",
+        "subject_kind",
+        "source_url",
+        "source_revision",
+        "declared_license",
+        "evidence_refs",
+        "evidence_files"
+      ])
+      || !validId(value.subject_id)
+      || (value.subject_kind !== "source_collection"
+        && value.subject_kind !== "base_material"
+        && value.subject_kind !== "operator_output")
+      || !validHttpsUrl(value.source_url)
+      || (value.source_revision !== null && !boundedText(value.source_revision, 256))
+      || (value.declared_license !== null && !boundedText(value.declared_license, 256))
+      || !Array.isArray(value.evidence_refs)
+      || value.evidence_refs.length > 16
+      || new Set(value.evidence_refs).size !== value.evidence_refs.length
+      || !value.evidence_refs.every(validHttpsUrl)
+      || !Array.isArray(value.evidence_files)
+      || value.evidence_files.length > 16
+      || new Set(value.evidence_files).size !== value.evidence_files.length
+      || !value.evidence_files.every((item) =>
+        typeof item === "string" && evidencePaths.has(item))
+      || value.evidence_refs.length + value.evidence_files.length === 0) {
+    throw new Error("Candidate-scoped license subject is invalid.");
+  }
+  return {
+    subject_id: value.subject_id,
+    subject_kind: value.subject_kind,
+    source_url: value.source_url as string,
+    source_revision: value.source_revision,
+    declared_license: value.declared_license,
+    evidence_refs: [...value.evidence_refs] as string[],
+    evidence_files: [...value.evidence_files] as string[]
+  };
+}
+
+function parseLicenseCandidateRequirement(
+  value: unknown,
+  subjectById: ReadonlyMap<string, PromotionTrialCandidateLicenseSubject>
+): PromotionTrialCandidateScopedLicenseTask["candidate_requirements"][number] {
+  if (!isRecord(value)
+      || !hasExactKeys(value, ["candidate_id", "subject_ids"])
+      || !validId(value.candidate_id)
+      || !Array.isArray(value.subject_ids)
+      || value.subject_ids.length < 3
+      || value.subject_ids.length > 16
+      || new Set(value.subject_ids).size !== value.subject_ids.length
+      || !value.subject_ids.every((item) =>
+        typeof item === "string" && subjectById.has(item))) {
+    throw new Error("Candidate-scoped license requirement is invalid.");
+  }
+  return {
+    candidate_id: value.candidate_id,
+    subject_ids: [...value.subject_ids] as string[]
+  };
+}
+
+function parseLicenseSubjectReview(
+  value: unknown
+): PromotionTrialCandidateScopedLicenseReviewSet["subject_reviews"][number] {
+  if (!isRecord(value)
+      || !hasExactKeys(value, ["subject_id", "status", "evidence_refs", "rationale"])
+      || !validId(value.subject_id)) {
+    throw new Error("Candidate-scoped license subject review is invalid.");
+  }
+  return {
+    subject_id: value.subject_id,
+    ...parseLicenseReview({
+      status: value.status,
+      evidence_refs: value.evidence_refs,
+      rationale: value.rationale
+    })
+  };
+}
+
+export function aggregatePromotionTrialCandidateLicenseStatuses(
+  statuses: readonly PromotionTrialCandidateLicenseStatus[]
+): PromotionTrialCandidateLicenseStatus {
+  if (statuses.length === 0) {
+    throw new Error("At least one license status is required for aggregation.");
+  }
+  if (statuses.includes("redistribution_prohibited")) return "redistribution_prohibited";
+  if (statuses.includes("uncertain")) return "uncertain";
+  if (statuses.includes("local_evaluation_only")) return "local_evaluation_only";
+  return "redistribution_permitted";
+}
+
+function aggregateLicenseStatuses(
+  statuses: readonly PromotionTrialCandidateLicenseStatus[]
+): PromotionTrialCandidateLicenseStatus {
+  return aggregatePromotionTrialCandidateLicenseStatuses(statuses);
+}
+
+function validTaskEvidenceFiles(value: unknown): boolean {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 32) return false;
+  const paths = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item)
+        || !hasExactKeys(item, ["path", "sha256"])
+        || !validLicenseEvidencePath(item.path)
+        || !sha256String(item.sha256)
+        || paths.has(item.path)) {
+      return false;
+    }
+    paths.add(item.path);
+  }
+  return true;
+}
+
+function validLicenseEvidencePath(value: unknown): value is string {
+  if (typeof value !== "string"
+      || value.length === 0
+      || value.length > 512
+      || value.startsWith("/")
+      || value.includes("\\")
+      || value.includes("\0")) {
+    return false;
+  }
+  const segments = value.split("/");
+  return segments[0] === "source-evidence"
+    && segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function sha1String(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{40}$/u.test(value);
+}
+
+function sha256String(value: unknown): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 }
 
 function validInitialAttestation(value: unknown): boolean {

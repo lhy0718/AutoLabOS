@@ -66,7 +66,16 @@ identities. They separately decide:
 A separate human license reviewer inspects only the pinned source-license
 packet and public permission evidence. Candidate reviewers do not receive the
 source identity, controller map, or license decision, and the license reviewer
-does not receive candidate annotations.
+does not receive candidate artifacts or annotations.
+
+Paper-scale candidate admission requires a hash-bound provenance catalog that
+covers the source collection, every selected base material, and every primary or
+comparator operator-output condition. The license task maps these subjects to
+opaque candidate IDs without exposing the controller map. The reviewer decides
+every task subject exactly once, and the aggregate status is computed
+conservatively. A source-level review without this catalog remains useful for
+local audit but cannot establish candidate-scoped redistribution coverage or
+open the candidate-review progression floor.
 
 The runtime materializes this separation as an immutable pending review
 campaign. Two reviewer package roots receive identical opaque six-trial packet
