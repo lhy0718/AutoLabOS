@@ -13,6 +13,9 @@ const contract = {
     "MetaHarnessPatchPlan",
     "PaperReadinessBundle"
   ],
+  sidecarArtifacts: [
+    "ModelReviewBundle"
+  ],
   commandIntents: ["research:new", "research:audit", "research:review", "research:improve", "research:pack"],
   invariant: "External outputs are untrusted evidence until AutoLabOS gates classify them."
 };

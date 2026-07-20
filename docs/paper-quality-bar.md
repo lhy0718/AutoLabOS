@@ -18,6 +18,7 @@ When `write_paper` succeeds:
 - `paper/paper_readiness.json` should exist.
 - `paper/paper_critique.json` must exist (post-draft critique artifact).
 - `paper/claim_evidence_table.json` should exist when major claims are present.
+- A valid, exact-gate-bound `ModelReviewBundle` must be supplied when multi-agent review is requested or the target is paper-scale.
 
 ## 2) Critique artifact requirements
 The structured critique artifact (`paper_critique.json`) is emitted at two stages:
@@ -38,6 +39,8 @@ Each critique artifact must include:
 `review` emits a pre-draft critique before allowing progression to `write_paper`.
 If the evidence package is insufficient, `review` recommends backtrack instead of advance.
 When a governed brief declares a minimum evidence floor, `review` should also honor the brief's paper ceiling instead of allowing a `research_memo`-grade run to drift into drafting.
+
+For paper-scale or explicitly requested multi-agent review, Codex plugin orchestration first binds the exact deterministic `A0` gate, then runs the independent specialist and meta-review protocol in `docs/model-review-protocol.md`. The CLI accepts the resulting sidecar, verifies its structure and hashes, and merges it conservatively. The resulting `A2` meta review may preserve or add blockers and may lower readiness, but it cannot clear an `A0` blocker or change the deterministic claim ceiling.
 
 ### Post-draft critique (write_paper)
 After drafting, `write_paper` emits a post-draft critique that can:
@@ -104,12 +107,43 @@ Before drafting, review output should be structurally complete:
 - decision and revision artifacts are present when decisioning is active
 - `review/minimum_gate.json` includes reviewer-grade paper-scale diagnostics when evidence is underpowered
 - `review/node_strengthening_recommendations.json` maps those diagnostics to the upstream node that should be strengthened
+- `ReviewReport.reviewer_assurance` records `A0_deterministic` or a bundle-hash-bound `A2_model_conservative` panel, with `can_promote=false`, `can_downgrade=true`, and `human_authority=false`
 - readiness state explicitly distinguishes:
   - `system_validation_note`
   - `research_memo`
   - `paper_scale_candidate`
   - `paper_ready`
   - `blocked_for_paper_scale`
+
+## Model-review gate for paper-scale work
+
+A valid `ModelReviewBundle` must contain five independently executed initial
+reviews with these roles:
+
+- `claim_evidence`: verifies claim scope, artifact and citation support, and the
+  applicable claim ceiling
+- `methodology`: checks design validity, controls, comparators, confounds, and
+  interpretation boundaries
+- `statistics`: checks estimands, sample adequacy, uncertainty, repeated trials,
+  procedures, and quantitative reporting
+- `reproducibility`: checks executable artifacts, environment and data lineage,
+  seeds, logs, manifests, and rerun sufficiency
+- `adversarial`: develops the strongest plausible rejection case and searches
+  for leakage, contradictions, hidden assumptions, and unsupported promotion
+
+All five roles use the strongest available frontier model and highest available
+reasoning tier under active runtime policy. They receive the same immutable
+inputs and exact `GateReport` hash, and their initial outputs are not shared.
+Each records model, provider, reasoning, and execution provenance.
+
+A separate meta reviewer runs only after the five outputs are validated and
+hashed. It binds every output hash, preserves all material disagreements, and
+emits at most an `A2` conservative disposition. Missing roles, provenance,
+isolation, exact gate binding, or meta reconciliation are paper-scale blockers.
+
+Model reviews and human reviews are separate artifacts. A model review must not
+set human identity, attestation, approval, or legal/redistribution permission.
+Never generate the human review or final approval.
 
 ## 5) Paper-ready minimum gate
 For a manuscript to be marked `paper_ready=true`, all of the following should hold:
@@ -165,6 +199,8 @@ At minimum:
 - related work should not be purely metadata-level when stronger evidence is available
 - if full-text grounding is limited, the manuscript should say so explicitly
 - for method-centered papers, canonical method papers must be collected or the review gate should record a related-work gap
+- model citation review may mark a claim supported only after directly reading hash-bound full text and recording a precise page, section, table, figure, or paragraph location
+- model license screening may bind direct public license evidence, but absent such evidence the source remains `local_only` or `uncertain` and redistribution permission remains unresolved
 
 ## 9) Method/result consistency
 The method and result sections must agree on what was actually run.

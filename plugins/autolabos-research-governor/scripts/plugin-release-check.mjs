@@ -153,6 +153,11 @@ function main() {
     artifacts: contract?.artifacts,
     commandIntents: contract?.commandIntents
   }));
+  checks.push(check(
+    "contract_lists_model_review_sidecar",
+    Array.isArray(contract?.sidecarArtifacts) && contract.sidecarArtifacts.includes("ModelReviewBundle"),
+    { sidecarArtifacts: contract?.sidecarArtifacts }
+  ));
 
   const dogfoodResult = runNode("plugins/autolabos-research-governor/scripts/dogfood-audit.mjs");
   const dogfood = dogfoodResult.status === 0 ? parseJsonObject(dogfoodResult.stdout) : undefined;

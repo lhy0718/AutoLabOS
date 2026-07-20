@@ -83,7 +83,7 @@ export type CliAction =
   | { kind: "audit-help" }
   | { kind: "research-new"; briefPath: string; outDir?: string }
   | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
-  | { kind: "research-review"; gatePath: string; outDir?: string }
+  | { kind: "research-review"; gatePath: string; modelReviewBundlePath?: string; outDir?: string }
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
   | { kind: "research-pack-verify"; bundleRoot: string }
@@ -2301,7 +2301,7 @@ function parseResearchArgs(args: string[]): CliAction {
   const allowedByCommand: Record<string, string[]> = {
     new: ["--brief", "--out-dir"],
     audit: ["--run", "--external", "--draft", "--log", "--out-dir"],
-    review: ["--gate", "--out-dir"],
+    review: ["--gate", "--model-review", "--out-dir"],
     improve: ["--review", "--out-dir"],
     pack: ["--gate", "--review", "--source-dir", "--out-dir"],
     "verify-pack": ["--root"],
@@ -2356,8 +2356,14 @@ function parseResearchArgs(args: string[]): CliAction {
   }
   if (subcommand === "review") {
     const gatePath = values.get("--gate");
+    const modelReviewBundlePath = values.get("--model-review");
     return gatePath
-      ? { kind: "research-review", gatePath, outDir }
+      ? {
+          kind: "research-review",
+          gatePath,
+          ...(modelReviewBundlePath ? { modelReviewBundlePath } : {}),
+          outDir
+        }
       : { kind: "error", message: "research review requires --gate <gate-report.json>." };
   }
   if (subcommand === "improve") {

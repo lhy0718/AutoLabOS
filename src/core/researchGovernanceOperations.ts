@@ -3,6 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { runPaperReadinessAudit, type PaperReadinessAuditInput } from "./audit/paperReadinessAudit.js";
+import { parseModelReviewBundle } from "./modelReviewProtocol.js";
 import {
   buildBriefCompletenessArtifact,
   buildResearchBriefTemplate,
@@ -116,14 +117,36 @@ export async function runResearchReview(input: {
   cwd: string;
   gatePath: string;
   outDir?: string;
+  modelReviewBundlePath?: string;
 }): Promise<ResearchOperationResult<ReviewReportArtifact>> {
-  const gate = await readTypedArtifact<GateReportArtifact>(input.cwd, input.gatePath, "GateReport");
-  const review = buildReviewReportArtifact(gate);
+  const gateFile = await readTypedArtifactFile<GateReportArtifact>(input.cwd, input.gatePath, "GateReport");
+  const gateSha256 = createHash("sha256").update(gateFile.bytes).digest("hex");
+  let modelReviewBundlePath: string | undefined;
+  let review: ReviewReportArtifact;
+  if (input.modelReviewBundlePath) {
+    modelReviewBundlePath = resolveWithinCwd(input.cwd, input.modelReviewBundlePath);
+    const bundleBytes = await fs.readFile(modelReviewBundlePath);
+    const bundleValue = parseJsonArtifact(bundleBytes, "ModelReviewBundle");
+    const modelReviewBundle = parseModelReviewBundle(bundleValue, {
+      artifact_id: gateFile.artifact.artifact_id,
+      sha256: gateSha256
+    });
+    review = buildReviewReportArtifact(gateFile.artifact, {
+      modelReviewBundle,
+      modelReviewBundleSha256: createHash("sha256").update(bundleBytes).digest("hex"),
+      gateReportSha256: gateSha256
+    });
+  } else {
+    review = buildReviewReportArtifact(gateFile.artifact);
+  }
   assertValidArtifact(review);
   const outDir = resolveOutputDir(input.cwd, input.outDir, "review");
   const outputPath = path.join(outDir, "review-report.json");
   await writeJsonFile(outputPath, review);
-  return operationResult(input.cwd, outputPath, review, [resolveWithinCwd(input.cwd, input.gatePath)]);
+  return operationResult(input.cwd, outputPath, review, [
+    gateFile.absolutePath,
+    ...(modelReviewBundlePath ? [modelReviewBundlePath] : [])
+  ]);
 }
 
 export async function runResearchImprove(input: {
@@ -248,8 +271,17 @@ function operationResult<T>(cwd: string, outputPath: string, artifact: T, relate
 }
 
 async function readTypedArtifact<T>(cwd: string, artifactPath: string, expectedType: string): Promise<T> {
+  return (await readTypedArtifactFile<T>(cwd, artifactPath, expectedType)).artifact;
+}
+
+async function readTypedArtifactFile<T>(
+  cwd: string,
+  artifactPath: string,
+  expectedType: string
+): Promise<{ artifact: T; bytes: Buffer; absolutePath: string }> {
   const absolutePath = resolveWithinCwd(cwd, artifactPath);
-  const payload = JSON.parse(await fs.readFile(absolutePath, "utf8")) as unknown;
+  const bytes = await fs.readFile(absolutePath);
+  const payload = parseJsonArtifact(bytes, expectedType);
   const validation = validateResearchGovernanceArtifact(payload);
   if (!validation.ok) {
     throw new Error(`Invalid ${expectedType}: ${validation.issues.map((issue) => `${issue.path} ${issue.message}`).join("; ")}`);
@@ -257,7 +289,15 @@ async function readTypedArtifact<T>(cwd: string, artifactPath: string, expectedT
   if (!payload || typeof payload !== "object" || (payload as { artifact_type?: unknown }).artifact_type !== expectedType) {
     throw new Error(`Expected ${expectedType} artifact.`);
   }
-  return payload as T;
+  return { artifact: payload as T, bytes, absolutePath };
+}
+
+function parseJsonArtifact(bytes: Buffer, label: string): unknown {
+  try {
+    return JSON.parse(bytes.toString("utf8")) as unknown;
+  } catch {
+    throw new Error(`Invalid ${label}: artifact must contain valid JSON.`);
+  }
 }
 
 function assertValidArtifact(artifact: unknown): void {

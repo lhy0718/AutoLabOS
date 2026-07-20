@@ -20,6 +20,13 @@ export const RESEARCH_GOVERNANCE_ARTIFACTS = [
 
 export type ResearchGovernanceArtifact = (typeof RESEARCH_GOVERNANCE_ARTIFACTS)[number];
 
+export const RESEARCH_GOVERNANCE_SIDECAR_ARTIFACTS = [
+  "ModelReviewBundle"
+] as const;
+
+export type ResearchGovernanceSidecarArtifact =
+  (typeof RESEARCH_GOVERNANCE_SIDECAR_ARTIFACTS)[number];
+
 export type ResearchGovernanceCommandId =
   | "research:new"
   | "research:audit"

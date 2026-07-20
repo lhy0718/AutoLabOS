@@ -26,7 +26,7 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 
 - `research:new`: create or repair a governed research brief.
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
-- `research:review`: review paper readiness, claim ceilings, downgrade class, and upstream repair targets.
+- `research:review`: run deterministic gates and bound model review for paper readiness, claim ceilings, downgrade class, and upstream repair targets.
 - `research:improve`: map failures to node-local prompt, skill, or validator strengthening.
 - `research:pack`: export a traceable paper-readiness bundle and independently verify it before distribution.
 
@@ -36,8 +36,30 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 - `EvidenceBundle`: collected literature, run outputs, metrics, logs, drafts, and provenance imported as evidence candidates.
 - `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift.
 - `ReviewReport`: claim-evidence alignment, readiness class, downgrade decision, and repair target.
+- `ModelReviewBundle`: exact-gate-bound independent specialist reviews, model/provider/reasoning/execution provenance, preserved disagreement, and conservative meta reconciliation.
 - `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, or validator strengthening plan with rollback expectations.
 - `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
+
+## Decision Authority
+
+- `A0 deterministic` owns schema, hash, inventory, evidence-floor, blocker, and maximum claim/readiness-ceiling checks.
+- `A1 model advisory` provides specialist critique, screening, uncertainty, and repair recommendations without changing deterministic gates.
+- `A2 model conservative` reconciles model findings and may add blockers, lower readiness within the deterministic ceiling, or route work upstream. It cannot remove an `A0` blocker, change or raise the deterministic ceiling, create external evidence, create human attestation, or create legal or redistribution permission.
+- `A3 human authority` is a separately recorded identified human review, final approval, attestation, or authorized legal/redistribution decision. It is never inferred from a model artifact.
+
+New or corrected evidence must be bound and rerun through `A0`; later authority does not rewrite deterministic gate history.
+
+## Model Review Execution
+
+When the user requests multi-agent review, or when `research:review` evaluates a paper-scale target, the plugin must use the strongest available frontier model and highest available reasoning tier under active provider/runtime policy. It records requested and effective routing rather than silently substituting a weaker route.
+
+Five `A1` reviewers run in parallel with independent initial context: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`. They receive identical immutable input and the exact `GateReport` SHA-256. Initial outputs are not shared with peers, and every output records model, provider, reasoning, and execution provenance.
+
+After all five outputs pass structural and hash validation, a separate meta reviewer binds the same gate and every initial output hash. It preserves disagreements, records unresolved positions, and emits at most an `A2` conservative reconciliation. Missing roles, provenance, isolation, exact binding, or reconciliation block model-based paper-scale promotion.
+
+Model review is a separate artifact, not a human review surrogate. Never generate the human review or final approval. Candidate, reference, and license material may receive explicitly model-authored screening or adjudication, but human identity and attestation fields remain unset. Citation support requires direct reading of bound full text and a precise evidence location. License screening requires direct public license evidence; otherwise status remains `local_only` or `uncertain`, with no inferred redistribution permission.
+
+`docs/model-review-protocol.md` is the canonical `ModelReviewBundle` field and verification contract.
 
 ## Adapter Strategy
 
@@ -50,6 +72,7 @@ Adapter categories:
 - experiment execution and orchestration
 - code reproduction and benchmark assessment
 - paper review and rebuttal assistance
+- candidate, reference, and license model screening
 - fully automated research-system output import
 
 No adapter may skip baseline requirements, claim-evidence mapping, reproducibility checks, or paper-readiness review.
@@ -62,6 +85,11 @@ available, delegates execution without a shell, and emits a blocking
 `GateReport` when the dependency is missing. The CLI owns deterministic
 artifact validation and reuse of the existing brief, audit, review, and
 meta-harness logic.
+
+`research review` accepts an optional `--model-review
+<model-review-bundle.json>` sidecar. The sidecar becomes required by policy for
+paper-scale or explicitly requested multi-agent review and remains subordinate
+to the required deterministic `--gate` artifact.
 
 All normalized artifacts use schema version `1.0`. Paths in public artifacts
 are workspace-relative or placeholder-based, and `research:improve` defaults
@@ -92,3 +120,5 @@ The dogfood report is a `research:improve` surface: failed checks map to the sma
 - Do not encode one historical experiment in public source, tests, docs, or plugin examples.
 - Do not treat external agent success as research success.
 - Do not treat compiled manuscripts as paper-ready without review gates.
+- Do not present `A1` or `A2` model output as `A3` human review, final approval, attestation, or legal/redistribution permission.
+- Do not let model reconciliation erase deterministic blockers, raise the deterministic ceiling, or hide reviewer disagreement.

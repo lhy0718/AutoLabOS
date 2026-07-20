@@ -11,6 +11,11 @@ import {
   type ResearchGovernanceArtifact,
   type ResearchGovernanceCommandId
 } from "./researchGovernanceContract.js";
+import {
+  collectModelReviewFindings,
+  parseModelReviewBundle,
+  type ModelReviewBundle
+} from "./modelReviewProtocol.js";
 
 export type ResearchGovernanceVerdict = "pass" | "needs-review" | "blocked";
 export type ResearchReadinessClass =
@@ -94,6 +99,18 @@ export interface ReviewRepairTarget {
   recheck_condition?: string;
 }
 
+export interface ReviewerAssurance {
+  tier: "A0_deterministic" | "A2_model_conservative";
+  panel_size: number;
+  model_review_bundle_sha256: string | null;
+  independent_contexts: boolean;
+  adjudicator_present: boolean;
+  can_promote: false;
+  can_downgrade: true;
+  human_authority: false;
+  limitations: string[];
+}
+
 export interface ReviewReportArtifact extends ResearchGovernanceArtifactBase {
   artifact_type: "ReviewReport";
   command_intent: "research:review";
@@ -105,6 +122,13 @@ export interface ReviewReportArtifact extends ResearchGovernanceArtifactBase {
   blocking_issues: GateFinding[];
   non_blocking_issues: GateFinding[];
   repair_targets: ReviewRepairTarget[];
+  reviewer_assurance: ReviewerAssurance;
+}
+
+export interface BuildReviewReportArtifactOptions {
+  modelReviewBundle?: ModelReviewBundle;
+  modelReviewBundleSha256?: string;
+  gateReportSha256?: string;
 }
 
 export interface MetaHarnessPatchTarget extends ReviewRepairTarget {
@@ -337,29 +361,68 @@ export function buildGateReportArtifact(input: {
   };
 }
 
-export function buildReviewReportArtifact(gate: GateReportArtifact, now?: Date): ReviewReportArtifact {
-  const blockingIssues = gate.findings.filter((finding) => finding.severity === "blocker");
-  const nonBlockingIssues = gate.findings.filter((finding) => finding.severity === "warning");
-  const readinessClass = inferReadinessClass(gate);
-  const repairTargets = gate.findings.map(mapFindingToRepairTarget);
+export function buildReviewReportArtifact(gate: GateReportArtifact, now?: Date): ReviewReportArtifact;
+export function buildReviewReportArtifact(
+  gate: GateReportArtifact,
+  options?: BuildReviewReportArtifactOptions,
+  now?: Date
+): ReviewReportArtifact;
+export function buildReviewReportArtifact(
+  gate: GateReportArtifact,
+  optionsOrNow?: BuildReviewReportArtifactOptions | Date,
+  now?: Date
+): ReviewReportArtifact {
+  const options = optionsOrNow instanceof Date ? undefined : optionsOrNow;
+  const generatedAt = optionsOrNow instanceof Date ? optionsOrNow : now;
+  if (!options?.modelReviewBundle
+      && (options?.modelReviewBundleSha256 || options?.gateReportSha256)) {
+    throw new Error("Model review hashes require a ModelReviewBundle.");
+  }
+  if (options?.modelReviewBundle
+      && (!options.modelReviewBundleSha256 || !options.gateReportSha256)) {
+    throw new Error("A2 model review requires exact GateReport and ModelReviewBundle SHA-256 digests.");
+  }
+  const modelReviewBundle = options?.modelReviewBundle
+    ? parseModelReviewBundle(options.modelReviewBundle, {
+        artifact_id: gate.artifact_id,
+        sha256: options.gateReportSha256 as string
+      })
+    : undefined;
+  const modelReviewBundleSha256 = modelReviewBundle
+    ? options?.modelReviewBundleSha256 as string
+    : null;
+  if (modelReviewBundleSha256 !== null && !/^[a-f0-9]{64}$/u.test(modelReviewBundleSha256)) {
+    throw new Error("modelReviewBundleSha256 must be a lowercase SHA-256 digest.");
+  }
+
+  const modelFindings = modelReviewBundle ? collectModelReviewFindings(modelReviewBundle) : [];
+  const findings = mergeGateFindingsConservatively([...gate.findings, ...modelFindings]);
+  const verdict = conservativeReviewVerdict(gate.verdict, modelFindings);
+  const deterministicReadiness = inferReadinessClass(gate);
+  const readinessClass = conservativeReviewReadiness(deterministicReadiness, verdict, modelFindings);
+  const blockingIssues = findings.filter((finding) => finding.severity === "blocker");
+  const nonBlockingIssues = findings.filter((finding) => finding.severity === "warning");
+  const repairTargets = findings.map(mapFindingToRepairTarget);
+  const reviewerAssurance = buildReviewerAssurance(modelReviewBundle, modelReviewBundleSha256);
   return {
     ...baseArtifact("ReviewReport", "research:review", {
       sourceMode: "governance_artifact",
       sourceLabel: "GateReport",
       artifactRefs: [gate.artifact_id, ...gate.provenance.artifact_refs],
-      seed: JSON.stringify({ verdict: gate.verdict, readinessClass, repairTargets }),
-      now
+      seed: JSON.stringify({ verdict, readinessClass, repairTargets, reviewerAssurance }),
+      now: generatedAt
     }),
     artifact_type: "ReviewReport",
     command_intent: "research:review",
-    verdict: gate.verdict,
+    verdict,
     gate_report_id: gate.artifact_id,
     readiness_class: readinessClass,
-    paper_ready: readinessClass === "paper_ready" && gate.verdict === "pass",
+    paper_ready: readinessClass === "paper_ready" && verdict === "pass",
     claim_ceiling: gate.claim_ceiling,
     blocking_issues: blockingIssues,
     non_blocking_issues: nonBlockingIssues,
-    repair_targets: repairTargets
+    repair_targets: repairTargets,
+    reviewer_assurance: reviewerAssurance
   };
 }
 
@@ -499,6 +562,99 @@ function inferReadinessClass(gate: GateReportArtifact): ResearchReadinessClass {
   if (gate.claim_ceiling === "paper_scale_candidate" || gate.verdict === "pass") return "paper_scale_candidate";
   if (gate.claim_ceiling === "system_validation_note") return "system_validation_note";
   return "research_memo";
+}
+
+function conservativeReviewVerdict(
+  deterministicVerdict: ResearchGovernanceVerdict,
+  modelFindings: readonly GateFinding[]
+): ResearchGovernanceVerdict {
+  if (modelFindings.some((finding) => finding.severity === "blocker")) return "blocked";
+  if (deterministicVerdict === "pass"
+      && modelFindings.some((finding) => finding.severity === "warning")) {
+    return "needs-review";
+  }
+  return deterministicVerdict;
+}
+
+function conservativeReviewReadiness(
+  deterministicReadiness: ResearchReadinessClass,
+  verdict: ResearchGovernanceVerdict,
+  modelFindings: readonly GateFinding[]
+): ResearchReadinessClass {
+  if (verdict === "blocked") return "blocked_for_paper_scale";
+  if (deterministicReadiness === "paper_ready"
+      && modelFindings.some((finding) => finding.severity === "warning")) {
+    return "paper_scale_candidate";
+  }
+  return deterministicReadiness;
+}
+
+function buildReviewerAssurance(
+  bundle: ModelReviewBundle | undefined,
+  bundleSha256: string | null
+): ReviewerAssurance {
+  if (!bundle) {
+    return {
+      tier: "A0_deterministic",
+      panel_size: 0,
+      model_review_bundle_sha256: null,
+      independent_contexts: false,
+      adjudicator_present: false,
+      can_promote: false,
+      can_downgrade: true,
+      human_authority: false,
+      limitations: [
+        "Reviewer assurance is limited to deterministic GateReport checks.",
+        "No independent model contexts, model adjudicator, or human authority are asserted."
+      ]
+    };
+  }
+  if (!bundleSha256) {
+    throw new Error("A2 model review requires a ModelReviewBundle SHA-256 digest.");
+  }
+  return {
+    tier: "A2_model_conservative",
+    panel_size: bundle.reviewers.length,
+    model_review_bundle_sha256: bundleSha256,
+    independent_contexts: true,
+    adjudicator_present: true,
+    can_promote: false,
+    can_downgrade: true,
+    human_authority: false,
+    limitations: [
+      "Model review is advisory and cannot promote beyond the deterministic GateReport.",
+      "Model consensus is not evidence and cannot create external evidence or human authority.",
+      "Context isolation and execution provenance are schema-validated attestations; provider receipts and prompt separation are not operationally verified by this report."
+    ]
+  };
+}
+
+function mergeGateFindingsConservatively(findings: readonly GateFinding[]): GateFinding[] {
+  const byKey = new Map<string, GateFinding>();
+  for (const finding of findings) {
+    const key = `${finding.code}\u0000${finding.message}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, { ...finding, evidence_refs: [...finding.evidence_refs] });
+      continue;
+    }
+    byKey.set(key, {
+      code: existing.code,
+      severity: existing.severity === "blocker" || finding.severity === "blocker" ? "blocker" : "warning",
+      message: existing.message,
+      evidence_refs: uniqueStrings([...existing.evidence_refs, ...finding.evidence_refs]),
+      ...(existing.target_node || finding.target_node
+        ? { target_node: existing.target_node || finding.target_node }
+        : {}),
+      ...(existing.target_surface || finding.target_surface
+        ? { target_surface: existing.target_surface || finding.target_surface }
+        : {}),
+      ...(existing.recheck_condition || finding.recheck_condition
+        ? { recheck_condition: existing.recheck_condition || finding.recheck_condition }
+        : {})
+    });
+  }
+  return [...byKey.values()];
 }
 
 function mapFindingToRepairTarget(finding: GateFinding): ReviewRepairTarget {
@@ -658,7 +814,11 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
     requireString("gate_report_id");
     requireString("readiness_class");
     requireArray("blocking_issues");
+    requireArray("non_blocking_issues");
     requireArray("repair_targets");
+    if ("reviewer_assurance" in value) {
+      validateReviewerAssuranceShape(value.reviewer_assurance, issues);
+    }
   } else if (artifactType === "MetaHarnessPatchPlan") {
     requireString("review_report_id");
     requireArray("targets");
@@ -687,6 +847,104 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
     if (!isRecord(value.portability)) {
       issues.push({ code: "invalid_shape", path: "$.portability", message: "PaperReadinessBundle requires portability status." });
     }
+  }
+}
+
+function validateReviewerAssuranceShape(
+  value: unknown,
+  issues: ArtifactValidationIssue[]
+): void {
+  const currentPath = "$.reviewer_assurance";
+  if (!isRecord(value)) {
+    issues.push({
+      code: "invalid_shape",
+      path: currentPath,
+      message: "ReviewReport requires reviewer_assurance."
+    });
+    return;
+  }
+  const expectedFields = [
+    "tier",
+    "panel_size",
+    "model_review_bundle_sha256",
+    "independent_contexts",
+    "adjudicator_present",
+    "can_promote",
+    "can_downgrade",
+    "human_authority",
+    "limitations"
+  ];
+  if (Object.keys(value).sort().join("\0") !== expectedFields.sort().join("\0")) {
+    issues.push({
+      code: "invalid_shape",
+      path: currentPath,
+      message: "reviewer_assurance fields do not match the schema."
+    });
+  }
+  if (value.tier !== "A0_deterministic" && value.tier !== "A2_model_conservative") {
+    issues.push({ code: "invalid_shape", path: `${currentPath}.tier`, message: "Unknown reviewer assurance tier." });
+  }
+  if (!Number.isInteger(value.panel_size) || Number(value.panel_size) < 0) {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.panel_size`,
+      message: "panel_size must be a non-negative integer."
+    });
+  }
+  if (typeof value.independent_contexts !== "boolean") {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.independent_contexts`,
+      message: "independent_contexts must be boolean."
+    });
+  }
+  if (typeof value.adjudicator_present !== "boolean") {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.adjudicator_present`,
+      message: "adjudicator_present must be boolean."
+    });
+  }
+  if (value.can_promote !== false || value.can_downgrade !== true || value.human_authority !== false) {
+    issues.push({
+      code: "invalid_shape",
+      path: currentPath,
+      message: "reviewer_assurance must forbid promotion, allow downgrade, and disclaim human authority."
+    });
+  }
+  if (!Array.isArray(value.limitations)
+      || value.limitations.length === 0
+      || !value.limitations.every((item) => typeof item === "string" && item.trim().length > 0)) {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.limitations`,
+      message: "reviewer_assurance limitations must contain non-empty text."
+    });
+  }
+
+  if (value.tier === "A0_deterministic"
+      && (value.panel_size !== 0
+        || value.model_review_bundle_sha256 !== null
+        || value.independent_contexts !== false
+        || value.adjudicator_present !== false)) {
+    issues.push({
+      code: "invalid_shape",
+      path: currentPath,
+      message: "A0_deterministic cannot assert a model panel, bundle hash, independent contexts, or adjudicator."
+    });
+  }
+  if (value.tier === "A2_model_conservative"
+      && (!Number.isInteger(value.panel_size)
+        || Number(value.panel_size) < 5
+        || typeof value.model_review_bundle_sha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(value.model_review_bundle_sha256)
+        || value.independent_contexts !== true
+        || value.adjudicator_present !== true)) {
+    issues.push({
+      code: "invalid_shape",
+      path: currentPath,
+      message: "A2_model_conservative requires at least five independent model reviewers and an adjudicator-bound bundle hash."
+    });
   }
 }
 

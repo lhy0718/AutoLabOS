@@ -117,6 +117,7 @@ const artifactNames = [
   "MetaHarnessPatchPlan",
   "PaperReadinessBundle"
 ];
+const sidecarArtifactNames = ["ModelReviewBundle"];
 
 const marketplaceEntry = Array.isArray(marketplace.plugins)
   ? marketplace.plugins.find((entry) => entry && entry.name === manifest.name)
@@ -159,11 +160,11 @@ const checks = [
   check("plugin_readme_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => pluginReadmeText.includes(id)), {
     commandIntents
   }),
-  check("plugin_readme_documents_all_artifacts", artifactNames.every((artifact) => pluginReadmeText.includes(artifact))),
+  check("plugin_readme_documents_all_artifacts", [...artifactNames, ...sidecarArtifactNames].every((artifact) => pluginReadmeText.includes(artifact))),
   check("governance_doc_documents_all_command_intents", commandIntents.length > 0 && commandIntents.every((id) => governanceDocText.includes(id)), {
     commandIntents
   }),
-  check("governance_doc_documents_all_artifacts", artifactNames.every((artifact) => governanceDocText.includes(artifact))),
+  check("governance_doc_documents_all_artifacts", [...artifactNames, ...sidecarArtifactNames].every((artifact) => governanceDocText.includes(artifact))),
   check("governance_doc_documents_self_dogfood", governanceDocText.includes("Self-Dogfood Loop") && governanceDocText.includes("npm run plugin:dogfood")),
   check("governance_doc_documents_doctor", governanceDocText.includes("npm run plugin:doctor") && governanceDocText.includes("installed Codex plugin cache") && governanceDocText.includes("--strict")),
   check("governance_doc_documents_release_check", governanceDocText.includes("npm run plugin:release-check") && governanceDocText.includes("npm run plugin:sync-cache") && governanceDocText.includes("dry-run")),
@@ -187,11 +188,12 @@ const checks = [
   check("pilot_acceptance_matrix_tracks_all_milestones", ["Report retention", "Fault matrix", "Hermetic cache", "Operations preflight"].every((label) => pilotAcceptanceDoc.includes(`| ${label} |`))),
   check("bridge_acceptance_separates_fixture_and_installed_modes", bridgeAcceptanceSource.includes("repo_plugin_bridge_fixture_cli") && bridgeAcceptanceSource.includes("installed_plugin_cache_bridge") && bridgeAcceptanceSource.includes("installed_bridge_matches_repo") && bridgeAcceptanceSource.includes("--installed") && bridgeProxySource.includes("dist") && acceptanceHarnessSource.includes("runResearchGovernanceAcceptance")),
   check("plugin_bridge_executes_all_research_intents", ["new", "audit", "review", "improve", "pack", "verify-pack", "verify-milestone"].every((intent) => pluginBridgeSource.includes(`"${intent}"`)) && pluginBridgeSource.includes("autolabos_cli_dependency_missing") && pluginBridgeSource.includes('["research", intent')),
-  check("print_contract_lists_artifacts", artifactNames.every((artifact) => printContractSource.includes(artifact))),
+  check("print_contract_lists_artifacts", [...artifactNames, ...sidecarArtifactNames].every((artifact) => printContractSource.includes(artifact))),
   check("print_contract_outputs_expected_contract", printedContract.pluginName === manifest.name
     && printedContract.primarySurface === "codex_plugin"
     && printedContract.schemaVersion === "1.0"
     && arraysEqual(printedContract.artifacts, artifactNames)
+    && arraysEqual(printedContract.sidecarArtifacts, sidecarArtifactNames)
     && arraysEqual(printedContract.commandIntents, commandIntents)
     && typeof printedContract.invariant === "string"
     && printedContract.invariant.includes("untrusted evidence"), {

@@ -26,6 +26,7 @@ export async function runResearchAuditCli(input: PaperReadinessAuditInput): Prom
 export async function runResearchReviewCli(input: {
   cwd: string;
   gatePath: string;
+  modelReviewBundlePath?: string;
   outDir?: string;
 }): Promise<void> {
   printResult(await runResearchReview(input));

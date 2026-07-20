@@ -50,7 +50,7 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 - Checkpoints and run context are persisted under each run directory.
 - Design/execution experiment contracts live in `experiment_portfolio.json` and `run_manifest.json`.
 - Managed-bundle matrix slices, when materialized, are persisted as `trial_group_matrix.json` plus per-slice `trial_group_metrics/*.json`.
-- Transition/gate decisions remain inspectable through artifacts such as `transition_recommendation.json`, `analysis/evidence_scale_assessment.json`, `review/*`, and `paper/write_paper_eligibility.json`.
+- Transition/gate decisions remain inspectable through artifacts such as `transition_recommendation.json`, `analysis/evidence_scale_assessment.json`, `review/*`, a bound `ModelReviewBundle` when used, and `paper/write_paper_eligibility.json`.
 
 Quality checks should be deterministic and file-based whenever possible.
 
@@ -85,6 +85,30 @@ Top-level progression to paper-writing behavior should preserve the distinction 
 - paper readiness
 
 A paper-scale outcome requires evidence beyond successful orchestration, including baseline/comparator presence, real experiment execution, quantitative comparison, and claim-to-evidence linkage.
+
+### Decision authority hierarchy
+
+Review decisions use four explicit authority tiers:
+
+- `A0 deterministic` validates schemas, hashes, closed inventories, required evidence, and mechanical gate predicates. It establishes blockers and the maximum permitted claim/readiness ceiling.
+- `A1 model advisory` produces specialist critique, screening, uncertainty, and repair recommendations without mutating deterministic gates.
+- `A2 model conservative` reconciles model findings and may preserve or add blockers, lower readiness within the deterministic ceiling, or route work upstream. It cannot remove an `A0` blocker, change or raise the deterministic ceiling, create missing external evidence, create human attestation, or create legal or redistribution permission.
+- `A3 human authority` records an identified human review, final approval, attestation, or an authorized legal/redistribution decision in a separate hash-bound artifact. Model output cannot impersonate this tier.
+
+The hierarchy is monotone with respect to deterministic blockers. New or corrected evidence must be hash-bound and evaluated again at `A0`; neither model nor human prose rewrites gate history.
+
+### Paper-scale model review topology
+
+When `research:review` is paper-scale or the user requests multi-agent review, Codex plugin orchestration follows `docs/model-review-protocol.md`; the CLI validates and conservatively imports the resulting sidecar:
+
+1. Freeze the exact `GateReport` bytes and closed input manifest.
+2. Select the strongest available frontier model and highest available reasoning tier under active provider/runtime policy, recording requested and effective routing.
+3. Execute five initial `A1` roles in parallel: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`.
+4. Give every role identical immutable inputs and the same gate SHA-256, while withholding all peer outputs during the initial pass.
+5. Hash and validate all initial outputs, then run a separate meta reviewer bound to those five hashes and the same gate hash.
+6. Preserve disagreements in a ledger and emit a structurally and hash-verified `ModelReviewBundle` with at most `A2` authority.
+
+Missing roles, provenance, isolation evidence, exact hash binding, or meta reconciliation block model-based paper-scale promotion. Model review remains distinct from any `A3` human artifact. Never generate the human review or final approval.
 
 Page-budget semantics should also remain explicit:
 
@@ -191,7 +215,7 @@ ExplorationManager는 기존 노드 핸들러 내부에서 초기화되고, 자�
 - `run_experiments` → tree node 실행
 - `analyze_results` → evidence 수집, Gate 1+2(결정론적), promotion gate, writeup manifest 생성
 - `figure_audit` → Gate 3(vision LLM critique) + 전체 audit 집계 → `figure_audit_summary.json`
-- `review` → figure audit 결과 반영, strongest defensible branch 판정
+- `review` → figure audit 결과 반영, A0 gate에 hash-bound된 5개 독립 A1 specialist와 후속 A2 meta review를 통한 strongest defensible branch 판정
 
 ### figure_audit 노드를 별도 추가한 이유
 
@@ -230,6 +254,6 @@ severe mismatch는 review decision을 `revise` 이상으로 격상시킨다.
 차이점:
 - AutoLabOS는 governed fixed graph를 유지하며 exploration tree가 그 안에 내장된다. `figure_audit`는 Gate 3의 독립 체크포인트 필요성 때문에 추가된 노드이며, exploration engine 자체가 상위 workflow를 늘리는 방식은 아니다.
 - single-change enforcement와 baseline lock이 필수 gate다.
-- review gate가 단순 LLM 점수가 아닌 5-specialist panel + 2-layer 구조다.
+- review gate가 단순 LLM 점수가 아닌 A0 deterministic gate + 5개 독립 A1 specialist + 후속 A2 meta reviewer 구조다.
 - checkpointed resume와 audit trail이 핵심 요구사항이다.
 - Figure Auditor가 별도 노드로 분리되어 비동기 vision critique를 독립 resume 가능하게 한다.

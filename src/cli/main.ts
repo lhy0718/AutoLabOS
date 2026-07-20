@@ -204,12 +204,15 @@ function printResearchHelp(): void {
     "Usage:",
     "  autolabos research new --brief <path> [--out-dir <dir>]",
     "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>]) [--out-dir <dir>]",
-    "  autolabos research review --gate <gate-report.json> [--out-dir <dir>]",
+    "  autolabos research review --gate <gate-report.json> [--model-review <model-review-bundle.json>] [--out-dir <dir>]",
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
     "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]",
     "  autolabos research verify-pack --root <paper-readiness-bundle-dir>",
     "  autolabos research verify-milestone --contract <milestone.json> --out-dir <new-output-dir>",
-    "  autolabos research run-validation --profile <validation-profile.json> --out-dir <new-output-dir>"
+    "  autolabos research run-validation --profile <validation-profile.json> --out-dir <new-output-dir>",
+    "",
+    "A2:",
+    "  --model-review supplies an optional conservative critique bundle alongside the required gate."
   ].join("\n") + "\n");
 }
 
@@ -401,7 +404,12 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "research-review") {
-    await runResearchReviewCli({ cwd: process.cwd(), gatePath: action.gatePath, outDir: action.outDir });
+    await runResearchReviewCli({
+      cwd: process.cwd(),
+      gatePath: action.gatePath,
+      modelReviewBundlePath: action.modelReviewBundlePath,
+      outDir: action.outDir
+    });
     return;
   }
 

@@ -55,7 +55,7 @@ The bundled bridge delegates deterministic work to the installed AutoLabOS CLI:
 ```sh
 npm run plugin:research -- --check
 npm run plugin:research -- audit --external <artifact-root> --out-dir outputs/research-governance/audit
-npm run plugin:research -- review --gate outputs/research-governance/audit/gate-report.json
+npm run plugin:research -- review --gate outputs/research-governance/audit/gate-report.json --model-review <model-review-bundle.json>
 npm run plugin:research -- improve --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- pack --gate outputs/research-governance/audit/gate-report.json --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- verify-pack --root outputs/research-governance/pack
@@ -70,7 +70,7 @@ verdict is a valid governance outcome and is preserved through packaging.
 
 - `research:new`: create or repair a governed research brief.
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
-- `research:review`: review paper readiness, claim ceilings, downgrade class, and repair targets.
+- `research:review`: run deterministic gates and bound model review for paper readiness, claim ceilings, downgrade class, and repair targets.
 - `research:improve`: map gate or review failures to node-local strengthening.
 - `research:pack`: export a traceable paper-readiness bundle.
 
@@ -89,8 +89,50 @@ nonzero until every required item passes.
 - `EvidenceBundle`
 - `GateReport`
 - `ReviewReport`
+- `ModelReviewBundle`
 - `MetaHarnessPatchPlan`
 - `PaperReadinessBundle`
+
+## Model Review Authority
+
+AutoLabOS separates four authority tiers:
+
+- `A0 deterministic`: schema, hash, inventory, evidence-floor, blocker, and
+  maximum claim/readiness-ceiling decisions.
+- `A1 model advisory`: specialist critique, screening, uncertainty, and repair
+  recommendations that cannot mutate a deterministic gate.
+- `A2 model conservative`: model reconciliation that may add blockers or lower
+  readiness within the deterministic ceiling, but cannot clear an `A0` blocker, change the deterministic
+  ceiling, create external evidence, create human attestation, or create legal
+  or redistribution permission.
+- `A3 human authority`: separately recorded human review, final approval,
+  attestation, or an authorized legal/redistribution decision.
+
+When a user requests multi-agent review, or when `research:review` evaluates a
+paper-scale target, the plugin uses the strongest available frontier model and
+highest available reasoning tier under the active runtime policy. It launches
+five independent initial roles in parallel: claim/evidence, methodology,
+statistics, reproducibility, and adversarial review. Initial outputs are not
+shared among reviewers. Each output binds the exact `GateReport` hash and
+records model, provider, reasoning, and execution provenance.
+
+A separate meta reviewer runs only after all five outputs are normalized,
+hash-bound, and structurally validated. It reconciles the panel without deleting disagreements and emits a
+`ModelReviewBundle` with at most `A2` authority. Incomplete or unbound panels
+remain non-promoting `A1` advice. Model review is a separate artifact and is
+never represented as human review. Never generate the human review or final
+approval.
+
+The resulting `ReviewReport.reviewer_assurance` binds the exact bundle hash and
+keeps `can_promote=false`, `can_downgrade=true`, and
+`human_authority=false`.
+
+Candidate, reference, and license material may receive clearly labeled model
+screening or adjudication. Citation support requires direct full-text reading,
+a bound full-text hash, and a precise evidence location. Redistribution remains
+`local_only` or `uncertain` unless direct public license evidence is bound; a
+model cannot create permission. The complete field and verification contract
+is in `docs/model-review-protocol.md`.
 
 ## Governance Boundary
 

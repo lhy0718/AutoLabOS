@@ -7,6 +7,7 @@ import {
   RESEARCH_GOVERNANCE_INVARIANTS,
   RESEARCH_GOVERNANCE_PLUGIN_NAME,
   RESEARCH_GOVERNANCE_SCHEMA_VERSION,
+  RESEARCH_GOVERNANCE_SIDECAR_ARTIFACTS,
   RESEARCH_GOVERNANCE_POSITIONING
 } from "../src/core/researchGovernanceContract.js";
 import { validateResearchGovernanceArtifact } from "../src/core/researchGovernanceArtifacts.js";
@@ -30,6 +31,7 @@ describe("research governance contract", () => {
       "MetaHarnessPatchPlan",
       "PaperReadinessBundle"
     ]);
+    expect(RESEARCH_GOVERNANCE_SIDECAR_ARTIFACTS).toEqual(["ModelReviewBundle"]);
     expect(RESEARCH_GOVERNANCE_COMMANDS.map((command) => command.id)).toEqual([
       "research:new",
       "research:audit",

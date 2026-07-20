@@ -14,6 +14,7 @@ Reproducibility claims must be backed by concrete artifacts.
 - Objective evaluation (`objective_evaluation.json`)
 - Result synthesis (`result_analysis.json`, optional synthesis artifact)
 - Transition decision (`transition_recommendation.json`)
+- Deterministic review gate and, when multi-agent or paper-scale review applies, the bound `ModelReviewBundle`
 - Paper trace outputs (`paper/main.tex`, `paper/references.bib`, `paper/evidence_links.json`)
 
 ## 2) Run-state traceability
@@ -28,12 +29,49 @@ For each run, preserve:
 - key gate/recovery artifacts (`transition_recommendation.json`, `collect_background_job.json` when present)
 - key generated artifacts in `.autolabos/runs/<run_id>/...`, including trial-group matrix artifacts when present
 
-## 3) Reproducibility claim language
+## 3) Model-review reproducibility
+
+Model-assisted review is reproducible only when its inputs, topology, and
+provenance are inspectable:
+
+- Freeze the exact deterministic `GateReport` bytes and record their SHA-256.
+- Record a closed, ordered input manifest with path, media type, source kind,
+  byte count, and SHA-256 for every reviewed artifact.
+- Bind each of the five required initial role outputs to the same gate and input
+  hashes. Record `initial_output_shared=false`, distinct execution IDs, and one
+  parallel-group ID; no initial input may contain peer output.
+- Record provider, model ID and revision when available, requested and effective
+  reasoning tier, executor, attempt, timestamps, prompt hash, tool/source-access
+  policy, status, and output hash for every initial and meta review.
+- Start the meta reviewer only after all five initial outputs are validated.
+  Bind the exact five output hashes, preserve disagreements and unresolved
+  positions, and keep the effective ceiling at or below the `A0` ceiling.
+- Bind the exact supplied bundle bytes into
+  `ReviewReport.reviewer_assurance.model_review_bundle_sha256` and require
+  `can_promote=false`, `can_downgrade=true`, and `human_authority=false`.
+- If the gate bytes or any input bytes change, invalidate the bundle and rerun
+  the entire panel. Reusing prose against a new hash is not reproducible review.
+- Keep model review (`A1`/`A2`) separate from human review (`A3`). Model output
+  cannot create human attestation, final approval, external evidence, or legal
+  or redistribution permission.
+
+Candidate, reference, and license screening may be automated when the result is
+explicitly model-authored and hash-bound. Citation findings must record the
+directly read full-text hash and exact evidence location. License findings must
+bind direct public license evidence; otherwise portability remains
+`local_only` or `uncertain`. Private full text may remain outside a public
+bundle, but its hash and evidence location must remain verifiable by an
+authorized reviewer.
+
+The complete `ModelReviewBundle` field and verifier contract is defined in
+`docs/model-review-protocol.md`.
+
+## 4) Reproducibility claim language
 
 - If required artifacts are missing, do not claim reproducibility is satisfied.
 - Use weaker language when evidence is partial.
 
-## 4) Validation workspace location
+## 5) Validation workspace location
 
 Validation and test runs should not write transient state into the repository checkout.
 
@@ -48,7 +86,7 @@ Validation and test runs should not write transient state into the repository ch
   run artifacts in `<validation-workspace>/.autolabos/...` and public outputs in
   `<validation-workspace>/outputs/...`.
 
-## 5) Contributor workflow
+## 6) Contributor workflow
 
 Before marking work complete:
 
@@ -58,7 +96,7 @@ Before marking work complete:
 
 For long-running or resumed runs, `npm run validate:harness` also audits checkpoint/resume consistency across `runs.json`, `run_record.json`, `checkpoints/latest.json`, and numbered checkpoint records when those surfaces exist. This audit is not evidence of month-long autonomous completion; it only verifies that restart-critical state is inspectable and monotonic enough to investigate or resume safely.
 
-## 6) Validation surfaces
+## 7) Validation surfaces
 
 - Runtime diagnostics: `/doctor` in TUI and web Doctor tab (environment + workspace harness checks).
 - CI/internal gate: `npm run validate:harness` (issue log format + workspace/test run artifact structure, including event logs and portfolio/manifest contracts).

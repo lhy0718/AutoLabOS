@@ -1,8 +1,18 @@
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
+
+import {
+  REQUIRED_MODEL_REVIEW_ROLES,
+  hashModelReviewAdjudicatorInput,
+  hashModelReviewOutput,
+  type ModelReviewBundle,
+  type ModelReviewerProvenance,
+  type ModelReviewRole
+} from "../src/core/modelReviewProtocol.js";
 
 import { resolveCliAction } from "../src/cli/args.js";
 import {
@@ -689,6 +699,70 @@ describe("research governance operations", () => {
     ]));
   });
 
+  it("creates an A2 review only from a byte-bound conservative model review bundle", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-model-review-bound-"));
+    const external = path.join(workspace, "external-artifacts");
+    tempDirs.push(workspace);
+    await writeCompleteExternalBundle(external);
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+    const gatePath = path.join(workspace, gateResult.output_path);
+    const gateBytes = await readFile(gatePath);
+    const gateSha256 = createHash("sha256").update(gateBytes).digest("hex");
+    const modelReviewBundle = makeModelReviewBundle(gateResult.artifact.artifact_id, gateSha256);
+    const modelReviewBundlePath = path.join(workspace, "model-review-bundle.json");
+    await writeJson(modelReviewBundlePath, modelReviewBundle);
+    const modelReviewBundleBytes = await readFile(modelReviewBundlePath);
+
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      modelReviewBundlePath: "model-review-bundle.json",
+      outDir: "outputs/governance/review"
+    });
+
+    expect(gateResult.artifact.verdict).toBe("pass");
+    expect(reviewResult.artifact.verdict).toBe("blocked");
+    expect(reviewResult.artifact.claim_ceiling).toBe(gateResult.artifact.claim_ceiling);
+    expect(reviewResult.artifact.paper_ready).toBe(false);
+    expect(reviewResult.artifact.blocking_issues).toContainEqual(expect.objectContaining({
+      code: "model_robustness_gap",
+      severity: "blocker"
+    }));
+    expect(reviewResult.artifact.non_blocking_issues).toContainEqual(expect.objectContaining({
+      code: "model_claim_scope_warning",
+      severity: "warning"
+    }));
+    expect(reviewResult.artifact.repair_targets).toContainEqual(expect.objectContaining({
+      finding_code: "model_robustness_gap",
+      target_node: "run_experiments"
+    }));
+    expect(reviewResult.artifact.reviewer_assurance).toEqual(expect.objectContaining({
+      tier: "A2_model_conservative",
+      panel_size: 5,
+      model_review_bundle_sha256: createHash("sha256").update(modelReviewBundleBytes).digest("hex"),
+      independent_contexts: true,
+      adjudicator_present: true,
+      can_promote: false,
+      can_downgrade: true,
+      human_authority: false
+    }));
+    expect(reviewResult.related_paths).toContain("model-review-bundle.json");
+
+    modelReviewBundle.gate_report.sha256 = digest("different-gate-report-bytes");
+    await writeJson(modelReviewBundlePath, modelReviewBundle);
+    await expect(runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      modelReviewBundlePath: "model-review-bundle.json",
+      outDir: "outputs/governance/review-tampered"
+    })).rejects.toThrow("does not match the supplied GateReport bytes");
+  });
+
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-complete-"));
     const external = path.join(workspace, "external-artifacts");
@@ -751,6 +825,85 @@ async function writeCompleteExternalBundle(root: string): Promise<void> {
   await writeJson(path.join(root, "paper", "claim_evidence_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "claim_status_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "evidence_links.json"), { claims: [] });
+}
+
+function makeModelReviewBundle(gateReportId: string, gateSha256: string): ModelReviewBundle {
+  const bundle: ModelReviewBundle = {
+    schema_version: "1.0",
+    artifact_type: "ModelReviewBundle",
+    gate_report: {
+      artifact_id: gateReportId,
+      sha256: gateSha256
+    },
+    policy: {
+      consensus_is_evidence: false,
+      may_override_deterministic_gate: false,
+      may_create_external_evidence: false
+    },
+    reviewers: REQUIRED_MODEL_REVIEW_ROLES.map((role, index) => ({
+      reviewer_id: `reviewer-${role.replace(/_/gu, "-")}`,
+      role,
+      provenance: makeModelProvenance(role, index),
+      findings: role === "claim_evidence"
+        ? [{
+            code: "model_claim_scope_warning",
+            severity: "warning" as const,
+            message: "The broadest claim should remain scoped to the measured comparison.",
+            evidence_refs: ["gate-report.json#/checks"],
+            target_node: "analyze_results" as const,
+            target_surface: "validator" as const,
+            recheck_condition: "The claim matches the measured comparison."
+          }]
+        : []
+    })),
+    adjudicator: {
+      reviewer_id: "reviewer-meta",
+      role: "meta_reviewer",
+      provenance: makeModelProvenance("meta_reviewer", REQUIRED_MODEL_REVIEW_ROLES.length),
+      findings: [{
+        code: "model_robustness_gap",
+        severity: "blocker",
+        message: "The reported comparison lacks an executed robustness check.",
+        evidence_refs: ["gate-report.json#/findings"],
+        target_node: "run_experiments",
+        target_surface: "validator",
+        recheck_condition: "An executed robustness check is bound to the gate."
+      }]
+    }
+  };
+  bindReviewHashes(bundle);
+  return bundle;
+}
+
+function makeModelProvenance(
+  role: ModelReviewRole | "meta_reviewer",
+  index: number
+): ModelReviewerProvenance {
+  return {
+    actor: "model",
+    provider: "<model-provider>",
+    model: "<frontier-model>",
+    reasoning_effort: "high",
+    execution_id: `execution-${role.replace(/_/gu, "-")}`,
+    context_isolated: true,
+    input_sha256: digest(`input-${index}`),
+    output_sha256: digest(`output-${index}`)
+  };
+}
+
+function digest(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function bindReviewHashes(bundle: ModelReviewBundle): void {
+  for (const reviewer of bundle.reviewers) {
+    reviewer.provenance.output_sha256 = hashModelReviewOutput(reviewer);
+  }
+  bundle.adjudicator.provenance.input_sha256 = hashModelReviewAdjudicatorInput(
+    bundle.gate_report,
+    bundle.reviewers
+  );
+  bundle.adjudicator.provenance.output_sha256 = hashModelReviewOutput(bundle.adjudicator);
 }
 
 async function writeGovernancePack(workspace: string): Promise<string> {

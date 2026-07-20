@@ -1166,6 +1166,57 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports optional A2 model-review evidence for research review", () => {
+    expect(resolveCliAction([
+      "research", "review",
+      "--gate", "artifacts/gate-report.json",
+      "--out-dir", "outputs/review"
+    ])).toEqual({
+      kind: "research-review",
+      gatePath: "artifacts/gate-report.json",
+      outDir: "outputs/review"
+    });
+    expect(resolveCliAction([
+      "research", "review",
+      "--gate", "artifacts/gate-report.json",
+      "--model-review", "artifacts/model-review-bundle.json",
+      "--out-dir", "outputs/review"
+    ])).toEqual({
+      kind: "research-review",
+      gatePath: "artifacts/gate-report.json",
+      modelReviewBundlePath: "artifacts/model-review-bundle.json",
+      outDir: "outputs/review"
+    });
+  });
+
+  it("fails closed on malformed research review arguments", () => {
+    expect(resolveCliAction([
+      "research", "review",
+      "--gate", "artifacts/gate-report.json",
+      "--model-review", "artifacts/model-review-bundle.json",
+      "--model-review", "artifacts/second-model-review-bundle.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Duplicate research argument: --model-review")
+    });
+    expect(resolveCliAction([
+      "research", "review",
+      "--gate", "artifacts/gate-report.json",
+      "--model-review"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Missing value for --model-review")
+    });
+    expect(resolveCliAction([
+      "research", "review",
+      "--gate", "artifacts/gate-report.json",
+      "--unsupported", "value"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("Unsupported research review argument: --unsupported")
+    });
+  });
+
   it("supports unreviewed trial-candidate source-license worksheet preparation", () => {
     expect(resolveCliAction([
       "governance-benchmark",
