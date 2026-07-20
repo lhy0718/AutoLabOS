@@ -12,7 +12,7 @@ import {
   type ResearchGovernanceCommandId
 } from "./researchGovernanceContract.js";
 import {
-  collectModelReviewFindings,
+  collectAdjudicatedModelReviewFindings,
   parseModelReviewBundle,
   type ModelReviewBundle
 } from "./modelReviewProtocol.js";
@@ -67,7 +67,7 @@ export interface GateFinding {
   message: string;
   evidence_refs: string[];
   target_node?: GovernedResearchNode;
-  target_surface?: "prompt" | "validator" | "skill";
+  target_surface?: "prompt" | "validator" | "skill" | "policy" | "runtime";
   recheck_condition?: string;
 }
 
@@ -76,12 +76,14 @@ export interface GateReportArtifact extends ResearchGovernanceArtifactBase {
   command_intent: "research:audit";
   verdict: ResearchGovernanceVerdict;
   evidence_bundle_id: string;
+  evidence_bundle_sha256?: string;
+  input_bindings: EvidenceBundleFile[];
   claim_ceiling: string;
   checks: {
     baseline_comparator: string;
     result_table_complete_rows: number;
     result_table_rows: number;
-    severe_figure_mismatches: number;
+    severe_figure_mismatches: number | null;
     unsupported_claims: number;
     citation_support_issues: number;
     done_condition: string;
@@ -93,7 +95,7 @@ export interface GateReportArtifact extends ResearchGovernanceArtifactBase {
 export interface ReviewRepairTarget {
   finding_code: string;
   target_node: GovernedResearchNode;
-  target_surface: "prompt" | "validator" | "skill";
+  target_surface: "prompt" | "validator" | "skill" | "policy" | "runtime";
   reason: string;
   evidence_refs: string[];
   recheck_condition?: string;
@@ -101,7 +103,10 @@ export interface ReviewRepairTarget {
 
 export interface ReviewerAssurance {
   tier: "A0_deterministic" | "A2_model_conservative";
+  adjudication_policy: "deterministic_only" | "meta_findings_only";
   panel_size: number;
+  specialist_finding_count: number;
+  adjudicated_finding_count: number;
   model_review_bundle_sha256: string | null;
   independent_contexts: boolean;
   adjudicator_present: boolean;
@@ -240,7 +245,8 @@ export function buildResearchBriefArtifact(input: {
 
 export function buildEvidenceBundleArtifact(
   summary: PaperReadinessAuditSummary,
-  now?: Date
+  now?: Date,
+  boundFiles?: EvidenceBundleFile[]
 ): EvidenceBundleArtifact {
   const refs = uniqueStrings([
     summary.outputs.summary_path,
@@ -257,12 +263,18 @@ export function buildEvidenceBundleArtifact(
     portableArtifactRef(summary.outputs.claim_evidence_path)
   ]);
   const sourceMode = summary.input.mode === "external" ? "external" : "run";
+  const files = normalizeEvidenceBundleFiles(
+    boundFiles || refs.map((artifactPath) => ({
+      path: artifactPath,
+      required: requiredRefs.has(artifactPath)
+    }))
+  );
   return {
     ...baseArtifact("EvidenceBundle", "research:audit", {
       sourceMode,
       sourceLabel: summary.input.mode === "external" ? "<external-artifact-root>" : "<run-artifact-root>",
-      artifactRefs: refs,
-      seed: JSON.stringify({ input: summary.input, outputs: summary.outputs }),
+      artifactRefs: uniqueStrings([...refs, ...files.map((file) => file.path)]),
+      seed: JSON.stringify({ input: summary.input, outputs: summary.outputs, files }),
       now
     }),
     artifact_type: "EvidenceBundle",
@@ -270,21 +282,26 @@ export function buildEvidenceBundleArtifact(
     intake_status: summary.top_blockers.some((finding) => finding.code === "artifact_contract_incomplete")
       ? "partial"
       : "complete",
-    files: refs.map((artifactPath) => ({
-      path: artifactPath,
-      required: requiredRefs.has(artifactPath)
-    })),
-    missing_artifacts: summary.top_blockers
-      .filter((finding) => finding.code === "artifact_contract_incomplete")
-      .map((finding) => finding.message)
+    files,
+    missing_artifacts: summary.artifact_contract
+      ? summary.artifact_contract.required_artifacts
+          .filter((artifact) => artifact.status === "missing_or_empty")
+          .map((artifact) => artifact.path)
+      : summary.top_blockers
+          .filter((finding) => finding.code === "artifact_contract_incomplete")
+          .map((finding) => finding.message)
   };
 }
 
 export function buildGateReportArtifact(input: {
   summary: PaperReadinessAuditSummary;
   evidenceBundle: EvidenceBundleArtifact;
+  evidenceBundleSha256: string;
   now?: Date;
 }): GateReportArtifact {
+  if (!/^[a-f0-9]{64}$/u.test(input.evidenceBundleSha256)) {
+    throw new Error("evidenceBundleSha256 must be a lowercase SHA-256 digest.");
+  }
   const summary = input.summary;
   const researchScaleByKey = new Map(summary.research_scale_findings.map((finding) => [
     `${finding.code}\u0000${finding.message}`,
@@ -334,18 +351,30 @@ export function buildGateReportArtifact(input: {
       evidence_refs: [portableArtifactRef(finding.evidence_path)]
     }))
   ]);
+  const inputBindings = input.evidenceBundle.files.filter(
+    (file): file is EvidenceBundleFile & { sha256: string; bytes: number } =>
+      typeof file.sha256 === "string" && Number.isInteger(file.bytes)
+  );
   return {
     ...baseArtifact("GateReport", "research:audit", {
       sourceMode: "governance_artifact",
       sourceLabel: "EvidenceBundle",
       artifactRefs: [input.evidenceBundle.artifact_id, portableArtifactRef(summary.outputs.summary_path)],
-      seed: JSON.stringify({ verdict: summary.verdict, findings }),
+      seed: JSON.stringify({
+        evidence_bundle_id: input.evidenceBundle.artifact_id,
+        evidence_bundle_sha256: input.evidenceBundleSha256,
+        verdict: summary.verdict,
+        findings,
+        input_bindings: inputBindings
+      }),
       now: input.now
     }),
     artifact_type: "GateReport",
     command_intent: "research:audit",
     verdict: normalizeVerdict(summary.verdict),
     evidence_bundle_id: input.evidenceBundle.artifact_id,
+    evidence_bundle_sha256: input.evidenceBundleSha256,
+    input_bindings: inputBindings,
     claim_ceiling: summary.claim_ceiling.allowed_level,
     checks: {
       baseline_comparator: summary.baseline_comparator_status.status,
@@ -395,7 +424,9 @@ export function buildReviewReportArtifact(
     throw new Error("modelReviewBundleSha256 must be a lowercase SHA-256 digest.");
   }
 
-  const modelFindings = modelReviewBundle ? collectModelReviewFindings(modelReviewBundle) : [];
+  const modelFindings = modelReviewBundle
+    ? collectAdjudicatedModelReviewFindings(modelReviewBundle)
+    : [];
   const findings = mergeGateFindingsConservatively([...gate.findings, ...modelFindings]);
   const verdict = conservativeReviewVerdict(gate.verdict, modelFindings);
   const deterministicReadiness = inferReadinessClass(gate);
@@ -596,7 +627,10 @@ function buildReviewerAssurance(
   if (!bundle) {
     return {
       tier: "A0_deterministic",
+      adjudication_policy: "deterministic_only",
       panel_size: 0,
+      specialist_finding_count: 0,
+      adjudicated_finding_count: 0,
       model_review_bundle_sha256: null,
       independent_contexts: false,
       adjudicator_present: false,
@@ -614,7 +648,13 @@ function buildReviewerAssurance(
   }
   return {
     tier: "A2_model_conservative",
+    adjudication_policy: "meta_findings_only",
     panel_size: bundle.reviewers.length,
+    specialist_finding_count: bundle.reviewers.reduce(
+      (count, reviewer) => count + reviewer.findings.length,
+      0
+    ),
+    adjudicated_finding_count: bundle.adjudicator.findings.length,
     model_review_bundle_sha256: bundleSha256,
     independent_contexts: true,
     adjudicator_present: true,
@@ -624,6 +664,7 @@ function buildReviewerAssurance(
     limitations: [
       "Model review is advisory and cannot promote beyond the deterministic GateReport.",
       "Model consensus is not evidence and cannot create external evidence or human authority.",
+      "Specialist findings remain preserved in ModelReviewBundle; only meta-reviewer findings affect ReviewReport readiness and repair targets.",
       "Context isolation and execution provenance are schema-validated attestations; provider receipts and prompt separation are not operationally verified by this report."
     ]
   };
@@ -694,6 +735,9 @@ function mapFindingToRepairTarget(finding: GateFinding): ReviewRepairTarget {
   } else if (/(citation|reference)/u.test(normalized)) {
     targetNode = "analyze_papers";
     targetSurface = "validator";
+  }
+  if (finding.target_surface) {
+    targetSurface = finding.target_surface;
   }
 
   return {
@@ -805,11 +849,30 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
   } else if (artifactType === "EvidenceBundle") {
     requireArray("files");
     requireArray("missing_artifacts");
+    if (Array.isArray(value.files)) {
+      validateEvidenceBundleFiles(value.files, "$.files", false, issues);
+    }
   } else if (artifactType === "GateReport") {
     requireString("evidence_bundle_id");
     requireString("claim_ceiling");
     requireArray("findings");
     requireArray("next_actions");
+    if ("evidence_bundle_sha256" in value
+        && (typeof value.evidence_bundle_sha256 !== "string"
+          || !/^[a-f0-9]{64}$/u.test(value.evidence_bundle_sha256))) {
+      issues.push({
+        code: "invalid_shape",
+        path: "$.evidence_bundle_sha256",
+        message: "evidence_bundle_sha256 must be a lowercase SHA-256 digest."
+      });
+    }
+    if ("input_bindings" in value) {
+      if (Array.isArray(value.input_bindings)) {
+        validateEvidenceBundleFiles(value.input_bindings, "$.input_bindings", true, issues);
+      } else {
+        requireArray("input_bindings");
+      }
+    }
   } else if (artifactType === "ReviewReport") {
     requireString("gate_report_id");
     requireString("readiness_class");
@@ -850,6 +913,69 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
   }
 }
 
+function validateEvidenceBundleFiles(
+  files: unknown[],
+  currentPath: string,
+  requireBinding: boolean,
+  issues: ArtifactValidationIssue[]
+): void {
+  const seenPaths = new Set<string>();
+  files.forEach((value, index) => {
+    const itemPath = `${currentPath}[${index}]`;
+    if (!isRecord(value)
+        || typeof value.path !== "string"
+        || typeof value.required !== "boolean") {
+      issues.push({
+        code: "invalid_shape",
+        path: itemPath,
+        message: "Evidence file entries require path and required fields."
+      });
+      return;
+    }
+    if (seenPaths.has(value.path)) {
+      issues.push({
+        code: "invalid_shape",
+        path: `${itemPath}.path`,
+        message: `Evidence file path must be unique: ${value.path}`
+      });
+    }
+    seenPaths.add(value.path);
+    const hasSha = typeof value.sha256 === "string" && /^[a-f0-9]{64}$/u.test(value.sha256);
+    const hasBytes = Number.isInteger(value.bytes) && Number(value.bytes) >= 0;
+    if (requireBinding && (!hasSha || !hasBytes)) {
+      issues.push({
+        code: "invalid_shape",
+        path: itemPath,
+        message: "GateReport input bindings require lowercase SHA-256 and non-negative byte length."
+      });
+    } else if (("sha256" in value || "bytes" in value) && (!hasSha || !hasBytes)) {
+      issues.push({
+        code: "invalid_shape",
+        path: itemPath,
+        message: "Evidence file hash and byte length must be supplied together."
+      });
+    }
+  });
+}
+
+function normalizeEvidenceBundleFiles(files: readonly EvidenceBundleFile[]): EvidenceBundleFile[] {
+  const byPath = new Map<string, EvidenceBundleFile>();
+  for (const file of files) {
+    const artifactPath = portableArtifactRef(file.path);
+    const existing = byPath.get(artifactPath);
+    const candidate: EvidenceBundleFile = {
+      path: artifactPath,
+      required: file.required || existing?.required === true,
+      ...(typeof file.sha256 === "string" ? { sha256: file.sha256 } : {}),
+      ...(Number.isInteger(file.bytes) ? { bytes: file.bytes } : {})
+    };
+    if (!existing || candidate.sha256 || !existing.sha256) {
+      byPath.set(artifactPath, candidate);
+    }
+  }
+  return [...byPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
 function validateReviewerAssuranceShape(
   value: unknown,
   issues: ArtifactValidationIssue[]
@@ -865,7 +991,10 @@ function validateReviewerAssuranceShape(
   }
   const expectedFields = [
     "tier",
+    "adjudication_policy",
     "panel_size",
+    "specialist_finding_count",
+    "adjudicated_finding_count",
     "model_review_bundle_sha256",
     "independent_contexts",
     "adjudicator_present",
@@ -874,15 +1003,34 @@ function validateReviewerAssuranceShape(
     "human_authority",
     "limitations"
   ];
-  if (Object.keys(value).sort().join("\0") !== expectedFields.sort().join("\0")) {
+  const priorFields = expectedFields.filter((field) =>
+    field !== "adjudication_policy"
+    && field !== "specialist_finding_count"
+    && field !== "adjudicated_finding_count"
+  );
+  const actualFieldKey = Object.keys(value).sort().join("\0");
+  const currentFieldKey = [...expectedFields].sort().join("\0");
+  const priorFieldKey = [...priorFields].sort().join("\0");
+  const currentAssurance = actualFieldKey === currentFieldKey;
+  const priorAssurance = actualFieldKey === priorFieldKey;
+  if (!currentAssurance && !priorAssurance) {
     issues.push({
       code: "invalid_shape",
       path: currentPath,
-      message: "reviewer_assurance fields do not match the schema."
+      message: "reviewer_assurance fields do not match the current or prior schema."
     });
   }
   if (value.tier !== "A0_deterministic" && value.tier !== "A2_model_conservative") {
     issues.push({ code: "invalid_shape", path: `${currentPath}.tier`, message: "Unknown reviewer assurance tier." });
+  }
+  if (currentAssurance
+      && value.adjudication_policy !== "deterministic_only"
+      && value.adjudication_policy !== "meta_findings_only") {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.adjudication_policy`,
+      message: "Unknown model-review adjudication policy."
+    });
   }
   if (!Number.isInteger(value.panel_size) || Number(value.panel_size) < 0) {
     issues.push({
@@ -890,6 +1038,16 @@ function validateReviewerAssuranceShape(
       path: `${currentPath}.panel_size`,
       message: "panel_size must be a non-negative integer."
     });
+  }
+  if (currentAssurance) {
+    for (const field of ["specialist_finding_count", "adjudicated_finding_count"] as const) {
+      if (Number.isInteger(value[field]) && Number(value[field]) >= 0) continue;
+      issues.push({
+        code: "invalid_shape",
+        path: `${currentPath}.${field}`,
+        message: `${field} must be a non-negative integer.`
+      });
+    }
   }
   if (typeof value.independent_contexts !== "boolean") {
     issues.push({
@@ -924,6 +1082,9 @@ function validateReviewerAssuranceShape(
 
   if (value.tier === "A0_deterministic"
       && (value.panel_size !== 0
+        || (currentAssurance && value.adjudication_policy !== "deterministic_only")
+        || (currentAssurance && value.specialist_finding_count !== 0)
+        || (currentAssurance && value.adjudicated_finding_count !== 0)
         || value.model_review_bundle_sha256 !== null
         || value.independent_contexts !== false
         || value.adjudicator_present !== false)) {
@@ -934,7 +1095,8 @@ function validateReviewerAssuranceShape(
     });
   }
   if (value.tier === "A2_model_conservative"
-      && (!Number.isInteger(value.panel_size)
+      && ((currentAssurance && value.adjudication_policy !== "meta_findings_only")
+        || !Number.isInteger(value.panel_size)
         || Number(value.panel_size) < 5
         || typeof value.model_review_bundle_sha256 !== "string"
         || !/^[a-f0-9]{64}$/u.test(value.model_review_bundle_sha256)

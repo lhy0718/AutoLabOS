@@ -28,6 +28,9 @@ gate runs again.
 review or when the review target is paper-scale:
 
 1. Freeze the deterministic `GateReport` bytes and a closed input manifest.
+   The manifest contains the exact `GateReport`, the exact `EvidenceBundle`,
+   and every path declared by `GateReport.input_bindings`. Every present
+   reviewed input is required and carries its SHA-256 and byte length.
 2. Select the strongest available frontier model and the highest available
    reasoning tier allowed by the active provider, account, and runtime policy.
    Record both the requested and effective routing. Do not silently substitute
@@ -84,6 +87,17 @@ the strict bundle shape.
 `--gate`, not from a reconstructed object. `gate_report.artifact_id` must match
 that artifact. A mismatch invalidates the complete model review.
 
+New `research:audit` outputs bind each available reviewed input by portable
+path, SHA-256, and byte length in `EvidenceBundle.files` and
+`GateReport.input_bindings`. External intake records the same bindings in
+`external-intake-manifest.json`, together with portable source-to-copy alias
+mappings. `GateReport.evidence_bundle_sha256` binds the exact serialized
+`EvidenceBundle` bytes. The `EvidenceBundle` and `GateReport` artifact IDs
+therefore change when a copied manuscript, result, citation-status file, or
+other audited input changes. Older gate artifacts without `input_bindings` or
+the evidence-bundle digest remain parseable for compatibility, but must be
+regenerated before a new paper-scale review.
+
 Each reviewer's `provenance.input_sha256` declares the hash of the exact bytes
 dispatched to that execution. Initial role envelopes may differ in role
 instructions, but they must contain the same immutable evidence inventory and
@@ -137,12 +151,19 @@ paper-scale review.
 Each `findings` entry requires `code`, `severity` (`blocker` or `warning`),
 `message`, and portable `evidence_refs`. It may also include `target_node`,
 `target_surface`, and `recheck_condition`.
+`target_surface` is limited to `prompt`, `skill`, `validator`, `policy`,
+or `runtime`; this lets the meta harness route a systemic enforcement defect
+without changing the fixed top-level node contract.
 
 All specialist records remain intact in the bundle after adjudication. The
-adjudicator must emit a finding for every material conflict, cite the opposing
-specialist evidence references, state whether the conflict is resolved, and
-preserve unresolved positions as blockers or warnings. Model consensus cannot
-replace evidence, and reconciliation never deletes a minority finding.
+adjudicator must emit a finding for every adopted blocker or warning and every
+material conflict, cite the relevant specialist evidence references, state
+whether a conflict is resolved, and preserve unresolved positions as blockers
+or warnings. `ReviewReport` imports only these adjudicated findings; raw
+specialist findings remain inspectable in `ModelReviewBundle` and are not
+duplicated automatically into readiness or repair targets. Model consensus
+cannot replace evidence, and reconciliation never deletes a specialist record
+from the bundle.
 
 ### `ReviewReport` assurance projection
 
@@ -152,7 +173,10 @@ replace evidence, and reconciliation never deletes a minority finding.
 | Field | Contract |
 | --- | --- |
 | `tier` | `A0_deterministic` without a model sidecar; `A2_model_conservative` only after a valid bundle is accepted. |
+| `adjudication_policy` | `deterministic_only` for `A0`; `meta_findings_only` for `A2`. |
 | `panel_size` | Zero for `A0`; otherwise the accepted specialist count. |
+| `specialist_finding_count` | Total raw findings retained across the specialist records. |
+| `adjudicated_finding_count` | Findings emitted by the meta reviewer and imported into `ReviewReport`. |
 | `model_review_bundle_sha256` | `null` for `A0`; otherwise the SHA-256 of the exact supplied bundle bytes. |
 | `independent_contexts` | `true` only when every bundle record declares isolated execution and has a unique execution ID. This is a validated bundle assertion, not cryptographic proof of provider isolation. |
 | `adjudicator_present` | `true` only when the distinct meta reviewer is present and valid. |
@@ -166,10 +190,11 @@ blockers or warnings may lower the verdict/readiness projection, but model
 findings cannot raise it.
 
 For schema-version compatibility, a previously generated `ReviewReport` that
-does not contain `reviewer_assurance` is interpreted as previous-version deterministic
-review with no model-panel assurance. Every newly generated report records the
-field explicitly; absence never implies `A1`, `A2`, independent contexts, or
-human authority.
+does not contain `reviewer_assurance` is interpreted as previous-version
+deterministic review with no model-panel assurance. The validator also accepts
+the prior assurance shape without the three adjudication/count fields. Every
+newly generated report records the current fields explicitly; absence never
+implies `A1`, `A2`, independent contexts, or human authority.
 
 ## Candidate, reference, and license review
 
@@ -196,6 +221,9 @@ external evidence, legal authority, or permission that the gate requires.
 ## Execution and verification procedure
 
 1. Run `A0` validation and freeze the exact gate and closed input manifest.
+   The manifest must include the exact `EvidenceBundle` and every path in
+   `GateReport.input_bindings`; omission of any bound input invalidates A2
+   review.
 2. Record the model availability snapshot and selected provider, model, and
    reasoning tier in execution receipts before dispatch.
 3. Dispatch the five initial roles in one parallel group with peer-output
@@ -211,7 +239,8 @@ external evidence, legal authority, or permission that the gate requires.
    independence, and expected-gate validation before importing any finding.
 7. Verify operational receipts: strongest-available routing, initial
    non-sharing, meta input binding, output hashes, disagreement preservation,
-   and the monotone `A0`/`A2` ceiling.
+   adopted meta findings, and the monotone `A0`/`A2` ceiling. Confirm that the
+   gate input bindings still match the reviewed bytes.
 8. Pass the valid sidecar with
    `research review --gate <gate-report.json> --model-review <model-review-bundle.json>`.
    Verify that `reviewer_assurance` binds the exact bundle hash and keeps
@@ -228,6 +257,9 @@ A `ModelReviewBundle` is invalid when any of the following holds:
 - an initial prompt or input contains another initial reviewer's output, or
   `context_isolated` is not `true`
 - the supplied gate artifact ID or exact-byte SHA-256 differs
+- the exact `EvidenceBundle` is omitted, its digest differs, any
+  `GateReport.input_bindings` path is omitted, or a present reviewed input is
+  marked optional
 - model, provider, reasoning, or execution provenance is missing
 - the meta reviewer did not bind all five validated output hashes in its input
 - a disagreement was discarded or silently collapsed

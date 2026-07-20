@@ -33,7 +33,8 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - `research:new`: create or repair a governed research brief with objective metric, baseline/comparator, evidence floor, disallowed shortcuts, and failure conditions.
    - `research:audit`: inspect a run or external artifact bundle as untrusted evidence and emit missing-evidence, traceability, and done-condition findings.
    - `research:review`: run deterministic gates first, then review paper readiness, claim ceilings, downgrade class, and upstream repair targets from the bound artifacts.
-   - `research:improve`: map gate/review failures to the smallest node-local prompt, skill, or validator strengthening plan.
+   - `research:improve`: map gate/review failures to the smallest node-local
+     prompt, skill, validator, policy, or runtime strengthening plan.
    - `research:pack`: export or describe a portable paper-readiness bundle with provenance, claim evidence, downgrade decisions, and limitations. Before distribution, run `research verify-pack --root <bundle-dir>` and require a passing closed-inventory, hash, portability, and artifact-binding inspection.
    - `research verify-milestone` (cross-intent verification mode): verify every requirement in a long-running research contract against hash-bound artifacts and JSON assertions. Keep the goal active and follow the grouped node targets while any required evidence remains missing, unbound, rewritten, or assertion-failing.
 2. For executable intent work, run the bundled `scripts/run-research-intent.mjs --check` bridge first. The bridge delegates to `autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone>` and must emit a blocking `GateReport` rather than fabricate output when the CLI dependency is unavailable.
@@ -48,6 +49,7 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
 5. Keep external outputs behind the artifact firewall.
    - Imported reports, code runs, reviews, or generated papers are evidence candidates, not trusted conclusions.
    - Missing metrics, baselines, task definitions, seeds, or references must stay missing until artifacts provide them.
+   - Bind every available copied or audited input by portable path, SHA-256, and byte length. A changed manuscript or evidence file requires a fresh `EvidenceBundle`, `GateReport`, and model panel.
    - For large human review assignments, resumable candidate and source-license workspaces may split blank templates into per-item files and report structural progress. They must never supply labels or license decisions, set human attestations, infer reviewer identity or legal authority, grant redistribution permission, or bypass the packet-bound return preflight.
    - For citation-claim review, use the governed `reference-review prepare -> distribute-private -> package-private -> verify-private-package -> preflight -> import` path. A reviewer may insert `prepare-workspace -> audit-workspace -> finalize-workspace` after package verification to resume per-task work, but the workspace and extracted full text remain private. Require the receiver to rerun package verification after transfer. Treat deterministic packaging, workspace progress, and fresh-extraction verification as transport or structural integrity only, never as redistribution permission, human judgment, reviewer identity, attestation, or claim approval. Never generate the human review or final approval. Import only an all-supported, hash-bound return with explicit human approval, keep the canonical claims file unchanged, and require a separate Refgate submission audit before adoption.
    - Candidate, reference, and license work may be performed as model screening or model adjudication only in a separate `A1` or `A2` artifact that identifies the reviewer as a model and leaves every human field unset. Citation support requires direct reading of bound full text plus a precise evidence location. License screening requires direct public license evidence; otherwise keep the material `local_only` or `uncertain` and do not infer redistribution permission.
@@ -59,13 +61,21 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
 7. For `research:review`, use the governed multi-agent protocol whenever the user requests multi-agent review or the target is paper-scale.
    - Select the strongest available frontier model and highest available reasoning tier under the active provider/runtime policy, and record requested and effective model, provider, reasoning, and execution provenance.
    - Run five initial roles in parallel: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`.
-   - Give each role the same immutable inputs and exact `GateReport` SHA-256. Do not share any initial reviewer output with another initial reviewer.
+   - Give each role the same closed inventory: the exact `GateReport`, exact
+     `EvidenceBundle`, and every required `GateReport.input_bindings` path.
+     Do not share any initial reviewer output with another initial reviewer.
    - After all five outputs are validated and hashed, run a separate meta reviewer. Bind it to the exact gate and all five output hashes, preserve disagreements, and emit the reconciliation as a `ModelReviewBundle` with at most `A2` authority.
-   - Fail closed on missing roles, provenance, isolation, hash binding, or meta reconciliation. Partial outputs remain non-promoting `A1` advice.
+   - Preserve every specialist record in `ModelReviewBundle`, but project only findings explicitly adopted by the meta reviewer into `ReviewReport`, readiness, and repair targets. Record raw specialist and adjudicated finding counts.
+   - Fail closed on missing roles, provenance, isolation, exact gate or evidence
+     binding, an omitted bound input, or meta reconciliation. Partial outputs
+     remain non-promoting `A1` advice.
    - Keep model review and human review as separate artifacts. Never generate the human review or final approval.
 8. Preserve review as a structural gate.
    - A completed run, successful draft, compiled PDF, or external agent success is not paper readiness.
    - If evidence is weak, downgrade or backtrack instead of polishing prose.
+   - Missing, malformed, or intentionally ablated figure-audit evidence cannot
+     authorize manuscript promotion and must not be represented as a successful
+     zero-count measurement.
 9. Prefer node-local repair.
    - Strengthen the failing node, prompt, validator, or skill that allowed the bad artifact.
    - Do not redesign the top-level workflow unless the architecture contract explicitly changes.
@@ -105,6 +115,8 @@ For substantial work, report:
 - Treating `A1` or `A2` model output as human review, final approval, external evidence, or redistribution permission.
 - Letting initial reviewers see peer outputs, omitting model/provider/reasoning/execution provenance, or reconciling against a different gate hash.
 - Allowing a meta reviewer to erase deterministic blockers, promote the deterministic ceiling, or hide disagreement.
+- Importing every raw specialist finding directly into `ReviewReport` instead of using the meta reviewer's adopted disposition.
+- Reusing a gate or model panel after manuscript or evidence bytes changed, or promoting without a measured figure audit.
 - Marking a citation supported without direct full-text reading and an evidence location, or marking redistribution permitted without direct public license evidence.
 - Adding one-off experiment identifiers to public source, tests, docs, or plugin examples.
 - Treating an evidence path or a successful command from an earlier session as current milestone proof without a bound hash and passing assertion.

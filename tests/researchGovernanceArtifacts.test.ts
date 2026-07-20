@@ -34,6 +34,7 @@ function makeGateReport(): GateReportArtifact {
     },
     verdict: "blocked",
     evidence_bundle_id: "evidence_bundle_fixture",
+    input_bindings: [],
     claim_ceiling: "research_memo_without_quantitative_claims",
     checks: {
       baseline_comparator: "missing",
@@ -109,6 +110,21 @@ function makeModelReviewBundle(gateReportId: string, gateSha256: string): ModelR
         target_node: "run_experiments",
         target_surface: "validator",
         recheck_condition: "An executed robustness check is bound to the gate."
+      }, {
+        code: "claim_scope_warning",
+        severity: "warning",
+        message: "The broadest claim should remain scoped to the measured result.",
+        evidence_refs: ["gate-report.json#/checks"],
+        target_node: "analyze_results",
+        target_surface: "validator",
+        recheck_condition: "The claim matches the measured result."
+      }, {
+        code: "replay_contract_unbound",
+        severity: "blocker",
+        message: "The runner and dependency environment are not bound for replay.",
+        evidence_refs: ["gate-report.json#/input_bindings"],
+        target_surface: "runtime",
+        recheck_condition: "A clean replay reproduces the governed output."
       }]
     }
   };
@@ -156,7 +172,10 @@ describe("research governance artifacts", () => {
     expect(review.paper_ready).toBe(false);
     expect(review.reviewer_assurance).toEqual(expect.objectContaining({
       tier: "A0_deterministic",
+      adjudication_policy: "deterministic_only",
       panel_size: 0,
+      specialist_finding_count: 0,
+      adjudicated_finding_count: 0,
       model_review_bundle_sha256: null,
       independent_contexts: false,
       adjudicator_present: false,
@@ -204,11 +223,19 @@ describe("research governance artifacts", () => {
     }));
     expect(review.repair_targets).toEqual(expect.arrayContaining([
       expect.objectContaining({ finding_code: "robustness_check_missing", target_node: "run_experiments" }),
-      expect.objectContaining({ finding_code: "claim_scope_warning", target_node: "analyze_results" })
+      expect.objectContaining({ finding_code: "claim_scope_warning", target_node: "analyze_results" }),
+      expect.objectContaining({
+        finding_code: "replay_contract_unbound",
+        target_node: "implement_experiments",
+        target_surface: "runtime"
+      })
     ]));
     expect(review.reviewer_assurance).toEqual({
       tier: "A2_model_conservative",
+      adjudication_policy: "meta_findings_only",
       panel_size: 5,
+      specialist_finding_count: 1,
+      adjudicated_finding_count: 3,
       model_review_bundle_sha256: bundleSha256,
       independent_contexts: true,
       adjudicator_present: true,
@@ -218,6 +245,7 @@ describe("research governance artifacts", () => {
       limitations: expect.arrayContaining([
         expect.stringContaining("cannot promote"),
         expect.stringContaining("not evidence"),
+        expect.stringContaining("only meta-reviewer findings"),
         expect.stringContaining("not operationally verified")
       ])
     });
@@ -241,6 +269,16 @@ describe("research governance artifacts", () => {
   it("accepts previous-version ReviewReport artifacts without model-review assurance", () => {
     const review = buildReviewReportArtifact(makeGateReport()) as unknown as Record<string, unknown>;
     delete review.reviewer_assurance;
+
+    expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
+  });
+
+  it("accepts the prior reviewer assurance shape before adjudication counters were added", () => {
+    const review = buildReviewReportArtifact(makeGateReport()) as unknown as Record<string, unknown>;
+    const assurance = review.reviewer_assurance as Record<string, unknown>;
+    delete assurance.adjudication_policy;
+    delete assurance.specialist_finding_count;
+    delete assurance.adjudicated_finding_count;
 
     expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
   });

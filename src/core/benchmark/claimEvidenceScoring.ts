@@ -11,6 +11,7 @@ export interface ClaimEvidenceScore {
   major_claim_count: number;
   supported_claim_count: number;
   unsupported_claim_count: number;
+  blocked_claim_count: number;
   claim_to_evidence_coverage: number | null;
   issues: ClaimEvidenceScoringIssue[];
 }
@@ -19,6 +20,7 @@ export interface ScoreClaimEvidenceArtifactsInput {
   claimEvidenceTableArtifact?: unknown;
   claimStatusTableArtifact?: unknown;
   evidenceLinksArtifact?: unknown;
+  availableArtifactRefs?: readonly string[];
 }
 
 interface NormalizedClaimEvidenceRow {
@@ -55,6 +57,7 @@ export function scoreClaimEvidenceArtifacts(
       major_claim_count: 0,
       supported_claim_count: 0,
       unsupported_claim_count: 0,
+      blocked_claim_count: 0,
       claim_to_evidence_coverage: null,
       issues: [
         {
@@ -69,30 +72,57 @@ export function scoreClaimEvidenceArtifacts(
   const tableById = new Map(tableClaims.map((claim) => [claim.claim_id, claim] as const));
   const statusById = new Map(statusRows.map((claim) => [claim.claim_id, claim] as const));
   const evidenceLinksById = new Map(evidenceLinkClaims.map((claim) => [claim.claim_id, claim] as const));
+  const availableArtifactRefs = input.availableArtifactRefs
+    ? new Set(input.availableArtifactRefs.map(normalizeArtifactRef))
+    : undefined;
   let supported = 0;
   let unsupported = 0;
+  let blockedCount = 0;
   const issues: ClaimEvidenceScoringIssue[] = [];
 
   for (const claimId of [...claimIds].sort()) {
     const tableClaim = tableById.get(claimId);
     const statusClaim = statusById.get(claimId);
     const evidenceLinkClaim = evidenceLinksById.get(claimId);
-    const evidenceRefs = [
+    const artifactRefs = [
       ...(tableClaim?.artifact_refs ?? []),
+      ...(statusClaim?.artifact_refs ?? []),
+      ...(evidenceLinkClaim?.artifact_refs ?? [])
+    ].filter(Boolean);
+    const resolvedArtifactRefs = availableArtifactRefs
+      ? artifactRefs.filter((reference) => availableArtifactRefs.has(normalizeArtifactRef(reference)))
+      : artifactRefs;
+    const evidenceRefs = [
+      ...resolvedArtifactRefs,
       ...(tableClaim?.citation_refs ?? []),
       ...(tableClaim?.evidence_ids ?? []),
-      ...(statusClaim?.artifact_refs ?? []),
       ...(statusClaim?.citation_refs ?? []),
-      ...(evidenceLinkClaim?.artifact_refs ?? []),
       ...(evidenceLinkClaim?.citation_refs ?? []),
       ...(evidenceLinkClaim?.evidence_ids ?? [])
     ].filter(Boolean);
     const status = statusClaim?.status;
     const blocked = status === "blocked";
-    const unsupportedByStatus = blocked || status === "unverified";
+    const unsupportedByStatus = status === "unverified";
     const supportedByStatus = status === "verified" || status === "inferred";
     const hasSupport = evidenceRefs.length > 0;
-    const isSupported = supportedByStatus || (hasSupport && !unsupportedByStatus);
+    const declaredSupport = artifactRefs.length > 0
+      || (tableClaim?.citation_refs.length ?? 0) > 0
+      || (tableClaim?.evidence_ids.length ?? 0) > 0
+      || (statusClaim?.citation_refs.length ?? 0) > 0
+      || (evidenceLinkClaim?.citation_refs.length ?? 0) > 0
+      || (evidenceLinkClaim?.evidence_ids.length ?? 0) > 0;
+    if (blocked) {
+      blockedCount += 1;
+      issues.push({
+        code: "claim_evidence_blocked",
+        claim_id: claimId,
+        message: "Claim " + claimId + " is prospectively blocked and is not counted as an asserted unsupported claim."
+      });
+      continue;
+    }
+    const isSupported = availableArtifactRefs
+      ? hasSupport && !unsupportedByStatus
+      : supportedByStatus || (hasSupport && !unsupportedByStatus);
 
     if (isSupported) {
       supported += 1;
@@ -101,9 +131,15 @@ export function scoreClaimEvidenceArtifacts(
 
     unsupported += 1;
     issues.push({
-      code: blocked ? "claim_evidence_blocked" : hasSupport ? "claim_evidence_unverified" : "claim_evidence_missing",
+      code: declaredSupport && !hasSupport
+          ? "claim_evidence_unavailable"
+          : hasSupport
+            ? "claim_evidence_unverified"
+            : "claim_evidence_missing",
       claim_id: claimId,
-      message: hasSupport
+      message: declaredSupport && !hasSupport
+        ? `Claim ${claimId} references artifacts that are not present in the frozen audit input.`
+        : hasSupport
         ? `Claim ${claimId} has evidence references but remains unverified or blocked.`
         : `Claim ${claimId} has no artifact, citation, or evidence references.`
     });
@@ -114,7 +150,10 @@ export function scoreClaimEvidenceArtifacts(
     major_claim_count: claimIds.size,
     supported_claim_count: supported,
     unsupported_claim_count: unsupported,
-    claim_to_evidence_coverage: claimIds.size > 0 ? round2(supported / claimIds.size) : null,
+    blocked_claim_count: blockedCount,
+    claim_to_evidence_coverage: supported + unsupported > 0
+      ? round2(supported / (supported + unsupported))
+      : null,
     issues
   };
 }
@@ -203,6 +242,10 @@ function normalizeStringArray(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function normalizeArtifactRef(value: string): string {
+  return value.trim().replace(/\\/gu, "/").replace(/^\.\//u, "");
 }
 
 function round2(value: number): number {

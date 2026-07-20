@@ -29,6 +29,7 @@ export interface ClaimEvidenceExport {
     major_claim_count: number;
     supported_claim_count: number;
     unsupported_claim_count: number;
+    blocked_claim_count: number;
     claim_to_evidence_coverage: number | null;
   };
   claims: ClaimEvidenceExportRow[];
@@ -68,6 +69,7 @@ export function buildClaimEvidenceExport(input: ClaimEvidenceExportInput): Claim
       major_claim_count: input.claimEvidenceScore.major_claim_count,
       supported_claim_count: input.claimEvidenceScore.supported_claim_count,
       unsupported_claim_count: input.claimEvidenceScore.unsupported_claim_count,
+      blocked_claim_count: input.claimEvidenceScore.blocked_claim_count,
       claim_to_evidence_coverage: input.claimEvidenceScore.claim_to_evidence_coverage
     },
     claims: [...rows.values()]
@@ -116,13 +118,16 @@ function normalizeStatus(value: string | undefined, issueCodes: string[]): Claim
   if (value === "blocked") {
     return "blocked";
   }
+  if (issueCodes.length > 0) {
+    return "unsupported";
+  }
   if (value === "unverified") {
     return "unverified";
   }
   if (value === "verified" || value === "inferred") {
     return "supported";
   }
-  return issueCodes.length > 0 ? "unsupported" : "unknown";
+  return "unknown";
 }
 
 function mergeClaimRows(rows: PartialClaimRow[]): Map<string, PartialClaimRow> {

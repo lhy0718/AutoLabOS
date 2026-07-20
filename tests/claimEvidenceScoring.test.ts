@@ -49,8 +49,9 @@ describe("claim evidence scoring", () => {
       measured: true,
       major_claim_count: 2,
       supported_claim_count: 1,
-      unsupported_claim_count: 1,
-      claim_to_evidence_coverage: 0.5
+      unsupported_claim_count: 0,
+      blocked_claim_count: 1,
+      claim_to_evidence_coverage: 1
     });
     expect(score.issues).toEqual([
       expect.objectContaining({
@@ -85,6 +86,35 @@ describe("claim evidence scoring", () => {
     expect(score.supported_claim_count).toBe(1);
     expect(score.unsupported_claim_count).toBe(0);
     expect(score.claim_to_evidence_coverage).toBe(1);
+  });
+
+  it("does not count artifact paths that are absent from the frozen audit input", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{
+          claim_id: "c1",
+          artifact_refs: ["reports/result.json"],
+          citation_refs: [],
+          evidence_ids: []
+        }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{
+          claim_id: "c1",
+          status: "verified",
+          artifact_refs: ["reports/result.json"],
+          citation_refs: []
+        }]
+      },
+      availableArtifactRefs: ["paper/main.tex"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.unsupported_claim_count).toBe(1);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_evidence_unavailable",
+      claim_id: "c1"
+    }));
   });
 
   it("feeds governance scorer metrics without reporting unmeasured placeholders", () => {

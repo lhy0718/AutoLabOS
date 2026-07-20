@@ -61,7 +61,24 @@ describe("figure audit scoring", () => {
     expect(score).toMatchObject({
       measured: false,
       audit_status: "ablated",
+      figure_count: null,
+      issue_count: null,
+      severe_mismatch_count: null,
+      review_block_required: null,
       skipped_reason: "figure_audit_ablated"
+    });
+  });
+
+  it("does not encode a missing audit as a clean zero-count result", () => {
+    const score = scoreFigureAudit({});
+
+    expect(score).toMatchObject({
+      measured: false,
+      audit_status: "missing",
+      figure_count: null,
+      issue_count: null,
+      severe_mismatch_count: null,
+      review_block_required: null
     });
   });
 });

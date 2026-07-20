@@ -198,6 +198,25 @@ describe("research governance operations", () => {
       externalRoot: external,
       outDir: "outputs/governance/audit"
     });
+    const manuscriptBinding = gateResult.artifact.input_bindings.find(
+      (binding) => binding.path.endsWith("/paper/main.tex")
+    );
+    expect(manuscriptBinding).toMatchObject({
+      sha256: createHash("sha256").update("\\section{Related Work}\n").digest("hex"),
+      bytes: Buffer.byteLength("\\section{Related Work}\n")
+    });
+    expect(new Set(gateResult.artifact.input_bindings.map((binding) => binding.path)).size)
+      .toBe(gateResult.artifact.input_bindings.length);
+    expect(gateResult.artifact.input_bindings.every((binding) => binding.required)).toBe(true);
+    expect(gateResult.artifact.input_bindings.some((binding) =>
+      binding.path.startsWith("paper/")
+    )).toBe(false);
+    const evidenceBundleBytes = await readFile(
+      path.join(workspace, "outputs", "governance", "audit", "evidence-bundle.json")
+    );
+    expect(gateResult.artifact.evidence_bundle_sha256).toBe(
+      createHash("sha256").update(evidenceBundleBytes).digest("hex")
+    );
     const reviewResult = await runResearchReview({
       cwd: workspace,
       gatePath: gateResult.output_path,
@@ -221,7 +240,10 @@ describe("research governance operations", () => {
       expect.objectContaining({ finding_code: "citation_support_gap", target_node: "analyze_papers" }),
       expect.objectContaining({ finding_code: "citation_support_gap", target_node: "collect_papers" }),
       expect.objectContaining({ finding_code: "reference_full_text_missing", target_node: "collect_papers" }),
-      expect.objectContaining({ finding_code: "unsupported_claim", target_node: "run_experiments" })
+      expect.objectContaining({
+        finding_code: "academic_claim_evidence_blocked:held-out-effect:run_experiments",
+        target_node: "run_experiments"
+      })
     ]));
     expect(improveResult.artifact.targets).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -240,6 +262,37 @@ describe("research governance operations", () => {
         proposed_change: expect.stringContaining("missing evidence item")
       })
     ]));
+  });
+
+  it("changes evidence and gate identities when audited manuscript bytes change", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-stale-binding-"));
+    const external = path.join(workspace, "academic-package");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    const manuscriptPath = path.join(external, "manuscript.tex");
+    await writeFile(manuscriptPath, "\\section{Method}\nVersion A.\n", "utf8");
+
+    const first = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit-a"
+    });
+    await writeFile(manuscriptPath, "\\section{Method}\nVersion B.\n", "utf8");
+    const second = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit-b"
+    });
+    const firstBinding = first.artifact.input_bindings.find(
+      (binding) => binding.path.endsWith("/paper/main.tex")
+    );
+    const secondBinding = second.artifact.input_bindings.find(
+      (binding) => binding.path.endsWith("/paper/main.tex")
+    );
+
+    expect(firstBinding?.sha256).not.toBe(secondBinding?.sha256);
+    expect(first.artifact.evidence_bundle_id).not.toBe(second.artifact.evidence_bundle_id);
+    expect(first.artifact.artifact_id).not.toBe(second.artifact.artifact_id);
   });
 
   it("blocks active runs even when stale paper-scale artifacts look complete", async () => {
@@ -407,8 +460,12 @@ describe("research governance operations", () => {
       recheck_condition: "Observed repeated-run evidence reaches the governed minimum."
     }));
     expect(evidenceBundle.files).toEqual(expect.arrayContaining([
-      expect.objectContaining({ path: "review/paper_scale_diagnostics.json" }),
-      expect.objectContaining({ path: "review/node_strengthening_recommendations.json" })
+      expect.objectContaining({
+        path: "runs/governed-research-run/review/paper_scale_diagnostics.json"
+      }),
+      expect.objectContaining({
+        path: "runs/governed-research-run/review/node_strengthening_recommendations.json"
+      })
     ]));
     expect(reviewResult.artifact.repair_targets).toEqual(expect.arrayContaining([
       expect.objectContaining({ target_node: "run_experiments" }),
@@ -807,6 +864,7 @@ async function writeCompleteExternalBundle(root: string): Promise<void> {
     "utf8"
   );
   await writeJson(path.join(root, "figure_audit", "figure_audit_summary.json"), {
+    audited_at: "2026-07-20T00:00:00.000Z",
     figure_count: 1,
     issues: [],
     severe_mismatch_count: 0,
@@ -868,6 +926,14 @@ function makeModelReviewBundle(gateReportId: string, gateSha256: string): ModelR
         target_node: "run_experiments",
         target_surface: "validator",
         recheck_condition: "An executed robustness check is bound to the gate."
+      }, {
+        code: "model_claim_scope_warning",
+        severity: "warning",
+        message: "The broadest claim should remain scoped to the measured comparison.",
+        evidence_refs: ["gate-report.json#/checks"],
+        target_node: "analyze_results",
+        target_surface: "validator",
+        recheck_condition: "The claim matches the measured comparison."
       }]
     }
   };

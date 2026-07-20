@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   REQUIRED_MODEL_REVIEW_ROLES,
+  collectAdjudicatedModelReviewFindings,
   collectModelReviewFindings,
   hashModelReviewAdjudicatorInput,
   hashModelReviewBundle,
@@ -36,6 +37,9 @@ describe("model review protocol", () => {
     expect(parsed.adjudicator.role).toBe("meta_reviewer");
     expect(collectModelReviewFindings(parsed)).toEqual([
       expect.objectContaining({ code: "claim_scope_warning", severity: "warning" }),
+      expect.objectContaining({ code: "adversarial_evidence_gap", severity: "blocker" })
+    ]);
+    expect(collectAdjudicatedModelReviewFindings(parsed)).toEqual([
       expect.objectContaining({ code: "adversarial_evidence_gap", severity: "blocker" })
     ]);
     expect(hashModelReviewBundle(JSON.stringify(parsed))).toMatch(/^[a-f0-9]{64}$/u);
@@ -156,7 +160,7 @@ function makeModelReviewBundle(): ModelReviewBundle {
             message: "A reported claim should remain scoped to the measured comparison.",
             evidence_refs: ["gate-report.json#/checks/unsupported_claims"],
             target_node: "analyze_results" as const,
-            target_surface: "validator" as const,
+            target_surface: "policy" as const,
             recheck_condition: "The claim remains within the measured comparison."
           }]
         : []
@@ -171,7 +175,7 @@ function makeModelReviewBundle(): ModelReviewBundle {
         message: "The strongest interpretation lacks a bound robustness check.",
         evidence_refs: ["gate-report.json#/findings"],
         target_node: "run_experiments",
-        target_surface: "validator",
+        target_surface: "runtime",
         recheck_condition: "A bound robustness check is present in executed artifacts."
       }]
     }

@@ -126,6 +126,130 @@ describe("paper-readiness audit", () => {
     expect(summary.result_table_completeness.paper_ready_allowed).toBe(false);
   });
 
+  it("blocks an external package without a governed done-condition source", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-no-done-condition-"));
+    const external = path.join(workspace, "external-package");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "manuscript.tex"), "\\section{Method}\n", "utf8");
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/no-done-condition-audit"
+    });
+
+    expect(summary.done_condition.status).toBe("unmeasured");
+    expect(summary.done_condition.failure_count).toBeGreaterThan(0);
+    expect(summary.top_blockers).toContainEqual(expect.objectContaining({
+      code: "done_condition_unmeasured"
+    }));
+    expect(summary.autonomy_metrics.reproducibility_score.value).toBeLessThan(1);
+  });
+
+  it("blocks quantitative result assertions below a quantitative claim ceiling", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-quantitative-ceiling-"));
+    const external = path.join(workspace, "external-package");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await writeFile(
+      path.join(external, "manuscript.tex"),
+      "\\section{Results}\nAccuracy was 0.70 and F1 was 1.00.\n",
+      "utf8"
+    );
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/quantitative-ceiling-audit"
+    });
+
+    expect(summary.claim_ceiling.allowed_level).toBe("research_memo_without_quantitative_claims");
+    expect(summary.top_blockers).toContainEqual(expect.objectContaining({
+      code: "manuscript_quantitative_claim_ceiling_conflict"
+    }));
+    expect(summary.next_action_checklist).toContain(
+      "Remove unsupported quantitative result assertions or bind recomputable result evidence before rerunning write_paper."
+    );
+  });
+
+  it.each([
+    {
+      name: "missing",
+      prepare: async (summaryPath: string) => {
+        await rm(summaryPath, { force: true });
+      },
+      expectedBlocker: "figure_audit_missing_or_malformed"
+    },
+    {
+      name: "malformed",
+      prepare: async (summaryPath: string) => {
+        await writeFile(summaryPath, JSON.stringify({ severe_mismatch_count: 0 }), "utf8");
+      },
+      expectedBlocker: "figure_audit_missing_or_malformed"
+    }
+  ])("fails closed when figure audit evidence is $name", async ({ prepare, expectedBlocker }) => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-figure-missing-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await prepare(path.join(runRoot, "figure_audit", "figure_audit_summary.json"));
+    await writeJson(path.join(runRoot, "paper", "paper_readiness.json"), {
+      paper_ready: true,
+      readiness_state: "paper_ready"
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/figure-missing-audit"
+    });
+
+    expect(summary.verdict).toBe("blocked");
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toContain(expectedBlocker);
+    expect(summary.figure_result_caption_mismatch.manuscript_promotion_allowed).toBe(false);
+    expect(summary.done_condition.status).toBe("fail");
+    expect(summary.done_condition.failure_count).toBeGreaterThan(0);
+    const doneCondition = JSON.parse(
+      await readFile(
+        path.join(workspace, "outputs", "figure-missing-audit", "done-condition-audit.json"),
+        "utf8"
+      )
+    ) as { failures: string[] };
+    expect(doneCondition.failures).toContain(
+      "A measured figure audit is required for manuscript promotion"
+    );
+  });
+
+  it("keeps the no-figure-audit condition evaluable but bars manuscript promotion", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-figure-ablation-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await rm(path.join(runRoot, "figure_audit", "figure_audit_summary.json"), { force: true });
+    await writeJson(path.join(runRoot, "governance_condition.json"), {
+      name: "no_figure_audit",
+      expected_paper_ready: false,
+      allowed_weak_output_states: ["paper_ready=false", "system_validation_note"]
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/figure-ablation-audit"
+    });
+
+    expect(summary.scorer_outputs.figure_audit.audit_status).toBe("ablated");
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toContain("figure_audit_ablated");
+    expect(summary.figure_result_caption_mismatch.manuscript_promotion_allowed).toBe(false);
+  });
+
   it("audits runtime comparison-summary result tables without treating them as missing", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-live-result-table-"));
     tempDirs.push(workspace);
@@ -205,6 +329,42 @@ describe("paper-readiness audit", () => {
     expect(summary.next_action_checklist.join("\n")).toContain("manuscript as unaccepted");
   });
 
+  it("does not infer write_paper completion or failed-run visibility from manuscript presence", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-unmeasured-completion-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        {
+          metric: "primary_score",
+          baseline: 0.4,
+          comparator: 0.5,
+          delta: 0.1,
+          direction: "higher_better"
+        }
+      ]
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/unmeasured-completion-audit"
+    });
+    const doneCondition = JSON.parse(
+      await readFile(
+        path.join(workspace, "outputs", "unmeasured-completion-audit", "done-condition-audit.json"),
+        "utf8"
+      )
+    ) as { checks: Array<{ id: string; passed: boolean | null }> };
+
+    expect(summary.paper_readiness.write_paper_completed).toBe(false);
+    expect(
+      doneCondition.checks.find((check) => check.id === "failed_run_visibility_required")?.passed
+    ).toBeNull();
+    expect(
+      doneCondition.checks.find((check) => check.id === "write_paper_not_paper_ready")?.passed
+    ).toBeNull();
+  });
+
   it("uses portable placeholders when run and output roots are outside cwd", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-portable-roots-"));
     const repoRoot = path.join(workspace, "repo");
@@ -260,6 +420,10 @@ describe("paper-readiness audit", () => {
 
     expect(summary.top_blockers.map((blocker) => blocker.code)).not.toContain("artifact_contract_incomplete");
     expect(summary.scorer_outputs.governance_score.dimension_scores.artifact_completeness).toBe(2);
+    expect(summary.artifact_contract?.passed).toBe(true);
+    expect(summary.artifact_contract?.required_artifacts.every(
+      (artifact) => artifact.status === "present"
+    )).toBe(true);
   });
 
   it("fails the done-condition audit when paper_ready hides known blockers", async () => {

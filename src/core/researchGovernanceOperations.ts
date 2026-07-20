@@ -19,6 +19,7 @@ import {
   portableArtifactRef,
   validateResearchGovernanceArtifact,
   type GateReportArtifact,
+  type EvidenceBundleFile,
   type MetaHarnessPatchPlanArtifact,
   type PaperReadinessBundleArtifact,
   type ResearchBriefArtifact,
@@ -40,6 +41,23 @@ export interface ResearchOperationResult<T> {
 }
 
 const DEFAULT_OUTPUT_ROOT = path.join("outputs", "research-governance");
+const REVIEW_INPUT_RELATIVE_PATHS = [
+  "governance_condition.json",
+  "result_table.json",
+  "evidence_store.jsonl",
+  "run_record.json",
+  "events.jsonl",
+  "figure_audit/figure_audit_summary.json",
+  "paper/main.tex",
+  "paper/references.bib",
+  "paper/claim_evidence_table.json",
+  "paper/claim_status_table.json",
+  "paper/evidence_links.json",
+  "paper/academic_claim_evidence_map.json",
+  "paper/reference_evidence_status.json",
+  "paper/submission_status.json",
+  "paper/refgate_claims.tsv"
+] as const;
 const PACK_ALLOWLIST = [
   "audit-summary.json",
   "blockers.json",
@@ -102,8 +120,17 @@ export async function runResearchAudit(
 ): Promise<ResearchOperationResult<GateReportArtifact>> {
   const outDir = resolveOutputDir(input.cwd, input.outDir, "audit");
   const summary = await runPaperReadinessAudit({ ...input, outDir: path.relative(input.cwd, outDir) });
-  const evidenceBundle = buildEvidenceBundleArtifact(summary);
-  const gateReport = buildGateReportArtifact({ summary, evidenceBundle });
+  const evidenceSkeleton = buildEvidenceBundleArtifact(summary);
+  const boundFiles = await bindEvidenceBundleFiles(input.cwd, summary.input.run_root, evidenceSkeleton.files);
+  const evidenceBundle = buildEvidenceBundleArtifact(summary, undefined, boundFiles);
+  const evidenceBundleSha256 = createHash("sha256")
+    .update(`${JSON.stringify(evidenceBundle, null, 2)}\n`)
+    .digest("hex");
+  const gateReport = buildGateReportArtifact({
+    summary,
+    evidenceBundle,
+    evidenceBundleSha256
+  });
   assertValidArtifact(evidenceBundle);
   assertValidArtifact(gateReport);
   const evidencePath = path.join(outDir, "evidence-bundle.json");
@@ -111,6 +138,66 @@ export async function runResearchAudit(
   await writeJsonFile(evidencePath, evidenceBundle);
   await writeJsonFile(gatePath, gateReport);
   return operationResult(input.cwd, gatePath, gateReport, [evidencePath, path.join(outDir, "audit-summary.json")]);
+}
+
+async function bindEvidenceBundleFiles(
+  cwd: string,
+  runRootRef: string,
+  declaredFiles: readonly EvidenceBundleFile[]
+): Promise<EvidenceBundleFile[]> {
+  const candidates = new Map<string, EvidenceBundleFile>();
+  for (const file of declaredFiles) {
+    candidates.set(file.path, { ...file });
+  }
+  if (isPortableRelativePath(runRootRef)) {
+    for (const relativePath of REVIEW_INPUT_RELATIVE_PATHS) {
+      const artifactPath = path.posix.join(runRootRef.replace(/\\/gu, "/"), relativePath);
+      if (!candidates.has(artifactPath)) {
+        candidates.set(artifactPath, { path: artifactPath, required: false });
+      }
+    }
+  }
+
+  const bound: EvidenceBundleFile[] = [];
+  for (const file of candidates.values()) {
+    if (!isPortableRelativePath(file.path)) {
+      bound.push(file);
+      continue;
+    }
+    let boundPath = file.path.replace(/\\/gu, "/");
+    let absolutePath = resolveWithinCwd(cwd, file.path);
+    if (!(await fileExists(absolutePath))
+        && isPortableRelativePath(runRootRef)
+        && !file.path.startsWith(`${runRootRef.replace(/\\/gu, "/")}/`)) {
+      const runRelativePath = path.posix.join(
+        runRootRef.replace(/\\/gu, "/"),
+        file.path.replace(/\\/gu, "/")
+      );
+      absolutePath = resolveWithinCwd(cwd, runRelativePath);
+      boundPath = runRelativePath;
+    }
+    if (!(await fileExists(absolutePath))) {
+      if (file.required) bound.push(file);
+      continue;
+    }
+    const stat = await fs.stat(absolutePath);
+    if (!stat.isFile()) continue;
+    const bytes = await fs.readFile(absolutePath);
+    bound.push({
+      path: boundPath,
+      required: true,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      bytes: bytes.byteLength
+    });
+  }
+  return bound;
+}
+
+function isPortableRelativePath(value: string): boolean {
+  return Boolean(value)
+    && !value.startsWith("<")
+    && !path.isAbsolute(value)
+    && !value.split(/[\\/]/u).some((segment) => segment === "..");
 }
 
 export async function runResearchReview(input: {

@@ -4,10 +4,10 @@ import type { GovernanceBenchmarkConditionName } from "./governanceCondition.js"
 export interface FigureAuditScore {
   measured: boolean;
   audit_status: "pass" | "warn" | "fail" | "ablated" | "missing";
-  figure_count: number;
-  issue_count: number;
-  severe_mismatch_count: number;
-  review_block_required: boolean;
+  figure_count: number | null;
+  issue_count: number | null;
+  severe_mismatch_count: number | null;
+  review_block_required: boolean | null;
   figure_result_mismatch_rate: number | null;
   skipped_reason?: string;
 }
@@ -20,10 +20,10 @@ export function scoreFigureAudit(input: {
     return {
       measured: false,
       audit_status: "ablated",
-      figure_count: 0,
-      issue_count: 0,
-      severe_mismatch_count: 0,
-      review_block_required: false,
+      figure_count: null,
+      issue_count: null,
+      severe_mismatch_count: null,
+      review_block_required: null,
       figure_result_mismatch_rate: null,
       skipped_reason: "figure_audit_ablated"
     };
@@ -33,10 +33,10 @@ export function scoreFigureAudit(input: {
     return {
       measured: false,
       audit_status: "missing",
-      figure_count: 0,
-      issue_count: 0,
-      severe_mismatch_count: 0,
-      review_block_required: false,
+      figure_count: null,
+      issue_count: null,
+      severe_mismatch_count: null,
+      review_block_required: null,
       figure_result_mismatch_rate: null,
       skipped_reason: "figure_audit_summary_missing_or_malformed"
     };

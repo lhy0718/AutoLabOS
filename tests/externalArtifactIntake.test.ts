@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -89,6 +90,24 @@ describe("external artifact audit intake", () => {
     expect(manifestRaw).not.toContain("secret/notes.txt");
     expect(manifestRaw).toContain("paper/draft.md");
     expect(manifestRaw).toContain("logs/external.log");
+    const manifest = JSON.parse(manifestRaw) as {
+      copied_files: string[];
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+      copied_file_mappings: Array<{
+        source_ref: string;
+        copied_path: string;
+        sha256: string;
+        bytes: number;
+      }>;
+    };
+    expect(manifest.copied_file_bindings.map((binding) => binding.path)).toEqual(manifest.copied_files);
+    expect(manifest.copied_file_bindings.every(
+      (binding) => /^[a-f0-9]{64}$/u.test(binding.sha256) && binding.bytes > 0
+    )).toBe(true);
+    expect(manifest.copied_file_mappings).toContainEqual(expect.objectContaining({
+      source_ref: "<explicit-draft>",
+      copied_path: "paper/draft.md"
+    }));
 
     const claimExport = await readFile(path.join(workspace, "outputs", "audit-external", "claim-evidence-table.json"), "utf8");
     expect(claimExport).toContain("claim_accuracy_delta");
@@ -173,9 +192,8 @@ describe("external artifact audit intake", () => {
       expect.objectContaining({ claim_id: "claim-a", target_node: "analyze_papers" }),
       expect.objectContaining({ claim_id: "claim-b", target_node: "collect_papers" })
     ]));
-    expect(summary.unsupported_claims).toContainEqual(expect.objectContaining({
-      claim_id: "effect-claim",
-      target_node: "run_experiments"
+    expect(summary.unsupported_claims).not.toContainEqual(expect.objectContaining({
+      claim_id: "effect-claim"
     }));
     expect(summary.research_scale_findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "reference_full_text_missing", target_node: "collect_papers" }),
@@ -190,7 +208,16 @@ describe("external artifact audit intake", () => {
     const manifest = JSON.parse(await readFile(
       path.join(workspace, "outputs", "academic-audit", "external-intake-manifest.json"),
       "utf8"
-    )) as { copied_files: string[] };
+    )) as {
+      copied_files: string[];
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+      copied_file_mappings: Array<{
+        source_ref: string;
+        copied_path: string;
+        sha256: string;
+        bytes: number;
+      }>;
+    };
     expect(manifest.copied_files).toEqual(expect.arrayContaining([
       "paper/main.tex",
       "paper/references.bib",
@@ -199,6 +226,17 @@ describe("external artifact audit intake", () => {
       "paper/submission_status.json",
       "paper/refgate_claims.tsv"
     ]));
+    expect(manifest.copied_file_bindings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "paper/main.tex",
+        sha256: createHash("sha256").update("\\section{Method}\n").digest("hex")
+      })
+    ]));
+    expect(manifest.copied_file_mappings).toContainEqual(expect.objectContaining({
+      source_ref: "manuscript.tex",
+      copied_path: "paper/main.tex",
+      sha256: createHash("sha256").update("\\section{Method}\n").digest("hex")
+    }));
     expect(JSON.stringify(manifest)).not.toContain(external);
   });
 

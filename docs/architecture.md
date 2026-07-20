@@ -95,18 +95,20 @@ Review decisions use four explicit authority tiers:
 - `A2 model conservative` reconciles model findings and may preserve or add blockers, lower readiness within the deterministic ceiling, or route work upstream. It cannot remove an `A0` blocker, change or raise the deterministic ceiling, create missing external evidence, create human attestation, or create legal or redistribution permission.
 - `A3 human authority` records an identified human review, final approval, attestation, or an authorized legal/redistribution decision in a separate hash-bound artifact. Model output cannot impersonate this tier.
 
-The hierarchy is monotone with respect to deterministic blockers. New or corrected evidence must be hash-bound and evaluated again at `A0`; neither model nor human prose rewrites gate history.
+The hierarchy is monotone with respect to deterministic blockers. New or corrected evidence must be hash-bound and evaluated again at `A0`; neither model nor human prose rewrites gate history. Fresh `EvidenceBundle` and `GateReport` artifacts bind each available audited input by portable path, SHA-256, and byte length so stale manuscript or evidence bytes cannot inherit a prior review gate.
 
 ### Paper-scale model review topology
 
 When `research:review` is paper-scale or the user requests multi-agent review, Codex plugin orchestration follows `docs/model-review-protocol.md`; the CLI validates and conservatively imports the resulting sidecar:
 
-1. Freeze the exact `GateReport` bytes and closed input manifest.
+1. Freeze the exact `GateReport`, exact `EvidenceBundle`, and every required
+   `GateReport.input_bindings` path as the closed input manifest.
 2. Select the strongest available frontier model and highest available reasoning tier under active provider/runtime policy, recording requested and effective routing.
 3. Execute five initial `A1` roles in parallel: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`.
-4. Give every role identical immutable inputs and the same gate SHA-256, while withholding all peer outputs during the initial pass.
+4. Give every role that identical closed inventory and the same gate SHA-256,
+   while withholding all peer outputs during the initial pass.
 5. Hash and validate all initial outputs, then run a separate meta reviewer bound to those five hashes and the same gate hash.
-6. Preserve disagreements in a ledger and emit a structurally and hash-verified `ModelReviewBundle` with at most `A2` authority.
+6. Preserve every specialist record in `ModelReviewBundle`, require the meta reviewer to emit each adopted finding, and project only those meta findings into `ReviewReport` and repair targets with at most `A2` authority.
 
 Missing roles, provenance, isolation evidence, exact hash binding, or meta reconciliation block model-based paper-scale promotion. Model review remains distinct from any `A3` human artifact. Never generate the human review or final approval.
 
@@ -222,7 +224,7 @@ ExplorationManager는 기존 노드 핸들러 내부에서 초기화되고, 자�
 Gate 1+2는 결정론적이고 실행 시간이 1초 미만이므로 `analyze_results` 후처리로 충분하다.
 Gate 3(vision LLM)는 실행 시간이 분 단위이고 비동기 LLM 호출이며 타임아웃/실패가 가능하다.
 Gate 3 실패 시 `analyze_results` 전체를 재실행해야 하는 책임 혼재를 피하고, `analyze_results 완료 / figure_audit 미완` 상태를 독립 체크포인트로 resume할 수 있어야 한다.
-`figure_auditor.enabled=false`이면 `figure_audit` 노드는 pass-through로 동작해 기존 경로와 동일한 결과를 낸다.
+`figure_auditor.enabled=false`이면 `figure_audit` 노드는 workflow compatibility를 위해 pass-through로 동작할 수 있지만, 그 ablation 결과는 manuscript promotion을 승인할 수 없다.
 
 ### Baseline Lock과 Single-Change Enforcement
 
@@ -241,7 +243,7 @@ claim ceiling (`paperMinimumGate.ts`)은 claim-evidence 정합성을 검사한�
 `figure_audit`는 `analyze_results` 완료 후, review 입력 전에 동작하는 품질 gate다.
 역할은 미적 개선이 아니라 증거 정합성(`evidence_alignment`), 가독성, 게재 가능성(`publication_readiness`) 판정이다.
 `empirical_validity_impact`와 `publication_readiness`는 별도 필드로 분리 저장된다.
-severe mismatch는 review decision을 `revise` 이상으로 격상시킨다.
+severe mismatch는 review decision을 `revise` 이상으로 격상시킨다. measured audit가 없거나 결과가 malformed 또는 ablated이면 manuscript promotion은 fail-closed로 차단된다.
 
 ### AI-Scientist-v2와의 차이
 

@@ -326,6 +326,11 @@ async function writeCanonicalArtifacts(
     `${JSON.stringify({ id: "evidence-primary", metric_evidence_present: true })}\n`,
     "utf8"
   );
+  await writeFile(
+    path.join(root, "research_brief.md"),
+    "# Research Brief\n\n## Paper-worthiness Gate\n\nPaper-ready promotion requires the complete governed artifact contract.\n",
+    "utf8"
+  );
   await writeJsonFile(path.join(root, "design_contracts.json"), {
     sota_ranking_claimed: false,
     sota_evidence_present: false

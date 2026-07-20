@@ -44,6 +44,7 @@ export interface PaperReadinessAuditUnsupportedClaim {
   claim_id: string;
   message: string;
   status?: string;
+  declared_status?: string;
   statement?: string;
   target_node?: string;
   evidence_path?: string;
@@ -62,7 +63,7 @@ export interface PaperReadinessAuditResearchScaleFinding {
   severity: "blocker" | "warning";
   message: string;
   target_node?: string;
-  target_surface?: "prompt" | "validator" | "skill";
+  target_surface?: "prompt" | "validator" | "skill" | "policy" | "runtime";
   evidence_path: string;
   recheck_condition?: string;
 }
@@ -81,6 +82,13 @@ export interface PaperReadinessAuditSummary {
   input: {
     mode: "run" | "external";
     run_root: string;
+  };
+  artifact_contract?: {
+    passed: boolean;
+    required_artifacts: Array<{
+      path: string;
+      status: "present" | "missing_or_empty";
+    }>;
   };
   outputs: {
     report_path: string;
@@ -111,7 +119,7 @@ export interface PaperReadinessAuditSummary {
   };
   figure_result_caption_mismatch: {
     status: FigureAuditScore["audit_status"];
-    severe_mismatch_count: number;
+    severe_mismatch_count: number | null;
     manuscript_promotion_allowed: boolean;
   };
   citation_support_issues: PaperReadinessAuditUnsupportedClaim[];
@@ -161,6 +169,7 @@ export interface PaperReadinessAuditSummary {
 
 interface LoadedRunArtifacts {
   runRoot: string;
+  availableArtifactRefs: string[];
   condition: GovernanceBenchmarkConditionName;
   resultTable: unknown;
   claimEvidenceTable: unknown;
@@ -183,6 +192,7 @@ interface LoadedRunArtifacts {
   governanceConditionPayload: Record<string, unknown> | undefined;
   researchBriefText: string | undefined;
   mainTexExists: boolean;
+  mainTexText: string | undefined;
   academicClaimEvidenceMap: Record<string, unknown> | undefined;
   academicReferenceEvidenceStatus: Record<string, unknown> | undefined;
   academicSubmissionStatus: Record<string, unknown> | undefined;
@@ -267,11 +277,21 @@ async function buildAuditSummary(input: {
     condition: input.artifacts.condition,
     requireGovernanceConditionArtifact: Boolean(input.artifacts.governanceConditionPayload)
   });
+  const missingRequiredArtifacts = new Set(contract.issues
+    .filter((issue) => issue.code === "governance_required_artifact_missing")
+    .map((issue) => issue.file_path));
+  const artifactContractEntries = contract.required_artifacts.map((artifactPath) => ({
+    path: artifactPath,
+    status: missingRequiredArtifacts.has(artifactPath)
+      ? "missing_or_empty" as const
+      : "present" as const
+  }));
   const resultTable = scoreResultTableArtifact(input.artifacts.resultTable);
   const claimEvidence = scoreClaimEvidenceArtifacts({
     claimEvidenceTableArtifact: input.artifacts.claimEvidenceTable,
     claimStatusTableArtifact: input.artifacts.claimStatusTable,
-    evidenceLinksArtifact: input.artifacts.evidenceLinks
+    evidenceLinksArtifact: input.artifacts.evidenceLinks,
+    availableArtifactRefs: input.artifacts.availableArtifactRefs
   });
   const figureAudit = scoreFigureAudit({
     summary: input.artifacts.figureAuditSummary,
@@ -309,20 +329,18 @@ async function buildAuditSummary(input: {
   const runFailureDetail = getRunFailureDetail(input.artifacts.runExperimentsVerifierReport);
   const failedRunHidden = failedRun && paperReady;
   const writePaperStatus = getWritePaperStatus(input.artifacts.runRecord);
-  const writePaperCompleted = isWritePaperCompleted({
-    status: writePaperStatus,
-    mainTexExists: input.artifacts.mainTexExists
-  });
+  const writePaperCompleted = isWritePaperCompleted(writePaperStatus);
   const writePaperFailed = writePaperStatus === "failed" || writePaperStatus === "error";
   const writePaperFailureMessage = getWritePaperFailureMessage(input.artifacts.runRecord);
   const blockers: PaperReadinessAuditBlocker[] = [];
   const rulesApplied: string[] = [];
 
   if (contract.issues.length > 0) {
+    const affectedPaths = [...new Set(contract.issues.map((issue) => issue.file_path))].sort();
     blockers.push({
       code: "artifact_contract_incomplete",
       severity: "blocker",
-      message: `${contract.issues.length} required governance artifact(s) are missing or empty.`,
+      message: `${contract.issues.length} required governance artifact issue(s): ${affectedPaths.join(", ")}.`,
       source: "governanceArtifactContract"
     });
   }
@@ -369,7 +387,19 @@ async function buildAuditSummary(input: {
       source: "claimEvidenceScoring"
     });
   }
-  if (figureAudit.severe_mismatch_count > 0 || figureAudit.review_block_required) {
+  if (!figureAudit.measured) {
+    rulesApplied.push("figure audit 없음 또는 ablation -> manuscript promotion 차단");
+    blockers.push({
+      code: figureAudit.audit_status === "ablated"
+        ? "figure_audit_ablated"
+        : "figure_audit_missing_or_malformed",
+      severity: "blocker",
+      message: figureAudit.audit_status === "ablated"
+        ? "Figure audit is intentionally ablated; this comparison condition cannot authorize manuscript promotion."
+        : "Figure audit evidence is missing or malformed; manuscript promotion fails closed.",
+      source: "figureAuditScoring"
+    });
+  } else if ((figureAudit.severe_mismatch_count ?? 0) > 0 || figureAudit.review_block_required === true) {
     rulesApplied.push("figure/result mismatch 존재 -> manuscript promotion 차단");
     blockers.push({
       code: "figure_result_caption_mismatch",
@@ -459,6 +489,32 @@ async function buildAuditSummary(input: {
       source: "literatureDiscoveryAudit"
     });
   }
+  const fallbackOnly = evidenceStore.deterministicFallbackUsed
+    && !evidenceStore.nonFallbackMetricEvidencePresent;
+  const doneConditionAudit = evaluateDoneConditionAudit({
+    governanceCondition: input.artifacts.governanceConditionPayload,
+    researchBriefText: input.artifacts.researchBriefText,
+    paperReady,
+    writePaperCompleted,
+    missingBaselineOrComparator: resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0,
+    resultTableReady: resultTable.measured && resultTable.complete_row_count > 0,
+    fallbackOnlyEvidence: fallbackOnly,
+    failedRunHidden,
+    runStatusKnown: Boolean(runStatus),
+    unsupportedClaimCount: claimEvidence.unsupported_claim_count,
+    citationSupportIssueCount: citationSupportIssues.length,
+    figureAuditReady: figureAudit.measured,
+    figureMismatchPresent:
+      (figureAudit.severe_mismatch_count ?? 0) > 0 || figureAudit.review_block_required === true
+  });
+  if (!doneConditionAudit.measured) {
+    blockers.push({
+      code: "done_condition_unmeasured",
+      severity: "blocker",
+      message: "No governed done-condition source is available; completion cannot be evaluated.",
+      source: "doneConditionAudit"
+    });
+  }
   if (paperReady && blockers.some((blocker) => blocker.severity === "blocker")) {
     blockers.push({
       code: "false_paper_ready_blocked",
@@ -478,16 +534,37 @@ async function buildAuditSummary(input: {
     missing_required_artifact_count: contract.issues.length,
     missing_baseline_detected: resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0,
     missing_baseline_passed: paperReady && (resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0),
-    figure_result_mismatch_count: figureAudit.severe_mismatch_count,
-    repair_action_count: blockers.length
+    figure_result_mismatch_count: figureAudit.severe_mismatch_count ?? 0,
+    repair_action_count: blockers.length,
+    placeholder: contract.issues.length > 0,
+    unmeasured_reason: contract.issues.length > 0 ? "incomplete_artifact_contract" : undefined
   });
 
   const allowedLevel = resolveAllowedClaimLevel({
     blockers,
     resultTable,
     citationSupportIssues,
-    fallbackOnly: evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent
+    fallbackOnly
   });
+  if (allowedLevel === "research_memo_without_quantitative_claims"
+      && containsQuantitativeResultClaim(input.artifacts.mainTexText)) {
+    rulesApplied.push("quantitative claim ceiling -> manuscript result assertions blocked");
+    blockers.push({
+      code: "manuscript_quantitative_claim_ceiling_conflict",
+      severity: "blocker",
+      message: "The manuscript contains quantitative result assertions while the computed claim ceiling disallows quantitative claims.",
+      source: "claimCeilingAudit"
+    });
+  }
+  const declaredAcademicCeiling = stringValue(input.artifacts.academicClaimEvidenceMap?.claim_ceiling);
+  if (declaredAcademicCeiling && declaredAcademicCeiling !== allowedLevel) {
+    blockers.push({
+      code: "claim_ceiling_conflict",
+      severity: "blocker",
+      message: `Declared academic claim ceiling ${declaredAcademicCeiling} conflicts with computed ceiling ${allowedLevel}.`,
+      source: "claimCeilingAudit"
+    });
+  }
   const verdict = resolveVerdict(blockers);
   const relativeOutDir = relativePath(input.cwd, input.outDir, "<output>");
   const claimEvidenceExport = buildClaimEvidenceExport({
@@ -518,22 +595,8 @@ async function buildAuditSummary(input: {
     paperReady,
     blockers
   });
-  const fallbackOnly = evidenceStore.deterministicFallbackUsed && !evidenceStore.nonFallbackMetricEvidencePresent;
-  const doneConditionAudit = evaluateDoneConditionAudit({
-    governanceCondition: input.artifacts.governanceConditionPayload,
-    researchBriefText: input.artifacts.researchBriefText,
-    paperReady,
-    writePaperCompleted,
-    missingBaselineOrComparator: resultTable.missing_baseline_count > 0 || resultTable.missing_comparator_count > 0,
-    resultTableReady: resultTable.measured && resultTable.complete_row_count > 0,
-    fallbackOnlyEvidence: fallbackOnly,
-    failedRunHidden,
-    unsupportedClaimCount: claimEvidence.unsupported_claim_count,
-    citationSupportIssueCount: citationSupportIssues.length,
-    figureMismatchPresent: figureAudit.severe_mismatch_count > 0 || figureAudit.review_block_required
-  });
-  const requiredOutputCount = input.externalIntakeManifestPresent ? 10 : 9;
-  const presentOutputCount = requiredOutputCount;
+  const requiredOutputCount = contract.required_artifacts.length;
+  const presentOutputCount = Math.max(0, requiredOutputCount - missingRequiredArtifacts.size);
   const autonomyMetrics = computeAuditAutonomyMetrics({
     timeline: auditTimeline,
     blockerCount: blockers.filter((blocker) => blocker.severity === "blocker").length,
@@ -555,6 +618,10 @@ async function buildAuditSummary(input: {
     input: {
       mode: input.external ? "external" : "run",
       run_root: relativePath(input.cwd, input.artifacts.runRoot, "<run-artifact-root>")
+    },
+    artifact_contract: {
+      passed: contract.passed,
+      required_artifacts: artifactContractEntries
     },
     outputs: {
       report_path: path.posix.join(relativeOutDir, "paper-readiness-audit.md"),
@@ -592,7 +659,10 @@ async function buildAuditSummary(input: {
     figure_result_caption_mismatch: {
       status: figureAudit.audit_status,
       severe_mismatch_count: figureAudit.severe_mismatch_count,
-      manuscript_promotion_allowed: figureAudit.severe_mismatch_count === 0 && !figureAudit.review_block_required
+      manuscript_promotion_allowed:
+        figureAudit.measured
+        && figureAudit.severe_mismatch_count === 0
+        && !figureAudit.review_block_required
     },
     citation_support_issues: citationSupportIssues,
     design_contract_findings: designContractFindings,
@@ -667,6 +737,7 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
   const explicitClaimStatusTable = await readOptionalJson(path.join(runRoot, "paper", "claim_status_table.json"));
   return {
     runRoot,
+    availableArtifactRefs: await listRegularArtifactRefs(runRoot),
     condition: parseConditionName(conditionPayload),
     resultTable: await readOptionalJson(path.join(runRoot, "result_table.json")),
     claimEvidenceTable: explicitClaimEvidenceTable ?? normalizeAcademicClaimEvidenceTable(academicClaimEvidenceMap),
@@ -699,11 +770,45 @@ async function loadRunArtifacts(runRoot: string): Promise<LoadedRunArtifacts> {
     governanceConditionPayload: conditionPayload,
     researchBriefText: await readResearchBriefText(runRoot),
     mainTexExists: await fileExists(path.join(runRoot, "paper", "main.tex")),
+    mainTexText: await readOptionalText(path.join(runRoot, "paper", "main.tex")),
     academicClaimEvidenceMap,
     academicReferenceEvidenceStatus,
     academicSubmissionStatus,
     referenceClaimInventory
   };
+}
+
+async function listRegularArtifactRefs(runRoot: string): Promise<string[]> {
+  const refs: string[] = [];
+  const pending: Array<{ absolute: string; relative: string }> = [
+    { absolute: runRoot, relative: "" }
+  ];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current) continue;
+    let entries: Array<{
+      name: string;
+      isDirectory(): boolean;
+      isFile(): boolean;
+    }>;
+    try {
+      entries = await fs.readdir(current.absolute, { withFileTypes: true, encoding: "utf8" });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const relative = current.relative
+        ? path.posix.join(current.relative, entry.name)
+        : entry.name;
+      const absolute = path.join(current.absolute, entry.name);
+      if (entry.isDirectory()) {
+        pending.push({ absolute, relative });
+      } else if (entry.isFile()) {
+        refs.push(relative.replace(/\\/gu, "/"));
+      }
+    }
+  }
+  return refs.sort();
 }
 
 function normalizeAcademicClaimEvidenceTable(
@@ -795,14 +900,19 @@ function collectUnsupportedClaims(
   const academicById = new Map(recordArray(artifacts.academicClaimEvidenceMap?.claims)
     .map((claim) => [stringValue(claim.claim_id), claim] as const)
     .filter((entry): entry is [string, Record<string, unknown>] => Boolean(entry[0])));
-  return claimEvidence.issues.map((issue) => {
+  return claimEvidence.issues
+    .filter((issue) => issue.code !== "claim_evidence_blocked")
+    .map((issue) => {
     const academicClaim = academicById.get(issue.claim_id);
     const missingEvidence = stringArray(academicClaim?.missing_evidence);
     const academicallyBlocked = stringValue(academicClaim?.status) === "blocked";
     return {
       claim_id: issue.claim_id,
       message: issue.message,
-      status: byId.get(issue.claim_id)?.status,
+      status: academicallyBlocked ? "blocked" : "unsupported",
+      ...(byId.get(issue.claim_id)?.status
+        ? { declared_status: byId.get(issue.claim_id)?.status }
+        : {}),
       statement: byId.get(issue.claim_id)?.statement,
       ...(academicallyBlocked
         ? {
@@ -812,7 +922,7 @@ function collectUnsupportedClaims(
           }
         : {})
     };
-  });
+    });
 }
 
 function collectCitationSupportIssues(
@@ -1112,6 +1222,19 @@ function collectExecutionIntegrityFindings(
   const executedBudget = recordValue(artifacts.runRecord?.executed_budget);
   const plannedTrials = numberValue(plannedBudget?.trials);
   const executedTrials = numberValue(executedBudget?.trials);
+  const developmentEvidence = recordValue(artifacts.academicSubmissionStatus?.development_evidence);
+  const externalTrialCount = numberValue(developmentEvidence?.real_model_trial_count);
+  const externalExecutionStatus = stringValue(developmentEvidence?.execution_provenance_status);
+
+  if (externalTrialCount > 0 && externalExecutionStatus !== "verified") {
+    findings.push({
+      code: "reported_trial_provenance_unverified",
+      severity: "blocker",
+      message: `The academic package reports ${externalTrialCount} model trial(s), but execution provenance is ${externalExecutionStatus || "unreported"}.`,
+      evidence_path: path.posix.join("paper", "submission_status.json"),
+      target_node: "run_experiments"
+    });
+  }
 
   if (plannedTrials > 1) {
     const trials = recordArray(artifacts.experimentEvidence?.trials);
@@ -1322,6 +1445,16 @@ function buildNextActions(blockers: PaperReadinessAuditBlocker[]): string[] {
       actions.add("Map each major claim to artifact, result, citation, or mark it blocked/downgraded.");
     } else if (blocker.code === "citation_support_missing") {
       actions.add("Attach and verify citation support or downgrade related-work statements.");
+    } else if (blocker.code === "done_condition_unmeasured") {
+      actions.add("Provide a governed done-condition source and rerun the completion audit.");
+    } else if (blocker.code === "claim_ceiling_conflict") {
+      actions.add("Align the declared academic claim ceiling with the computed evidence ceiling before review.");
+    } else if (blocker.code === "manuscript_quantitative_claim_ceiling_conflict") {
+      actions.add("Remove unsupported quantitative result assertions or bind recomputable result evidence before rerunning write_paper.");
+    } else if (blocker.code === "figure_audit_missing_or_malformed") {
+      actions.add("Produce a valid figure_audit_summary.json and rerun figure_audit before manuscript promotion.");
+    } else if (blocker.code === "figure_audit_ablated") {
+      actions.add("Use a figure-audit-enabled condition before manuscript promotion; the ablation is evaluation-only.");
     } else if (blocker.code === "figure_result_caption_mismatch") {
       actions.add("Repair figure/result/caption mismatches and rerun figure_audit before review.");
     } else if (blocker.code === "hidden_failed_run") {
@@ -1576,19 +1709,34 @@ function getWritePaperNodeRecord(value: Record<string, unknown> | undefined): Re
     : undefined;
 }
 
-function isWritePaperCompleted(input: {
-  status: string | undefined;
-  mainTexExists: boolean;
-}): boolean {
-  if (input.status) {
-    return input.status === "completed";
-  }
-  return input.mainTexExists;
+function isWritePaperCompleted(status: string | undefined): boolean {
+  return status === "completed";
+}
+
+function containsQuantitativeResultClaim(manuscript: string | undefined): boolean {
+  if (!manuscript) return false;
+  const text = manuscript.replace(/(^|[^\\])%.*$/gmu, "$1");
+  const resultSections = [...text.matchAll(
+    /\\(?:sub)*section\*?\{[^}]*(?:result|evaluation|experiment|finding|validation|analysis|study|development)[^}]*\}([\s\S]*?)(?=\\(?:sub)*section\*?\{|\\end\{document\}|$)/giu
+  )].map((match) => match[1] || "");
+  const candidate = resultSections.join("\n");
+  if (!candidate.trim()) return false;
+  return /\b\d+(?:\.\d+)?\s*(?:\\%|%)|(?<![A-Za-z0-9_])(?:0?\.\d+)(?![A-Za-z0-9_])|\b\d+\s*\/\s*\d+\b|\b(?:accuracy|precision|recall|f1|bleu|rouge|perplexity|p[- ]?value|confidence interval|effect size)\b[^\n.]{0,100}\d/iu
+    .test(candidate);
 }
 
 async function readOptionalJson<T = unknown>(filePath: string): Promise<T | undefined> {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8")) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readOptionalText(filePath: string): Promise<string | undefined> {
+  try {
+    const value = await fs.readFile(filePath, "utf8");
+    return value.trim() ? value : undefined;
   } catch {
     return undefined;
   }

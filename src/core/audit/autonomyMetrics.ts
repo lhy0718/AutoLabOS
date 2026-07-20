@@ -95,7 +95,7 @@ export function computeAuditAutonomyMetrics(input: {
     reproducibility_score: {
       measured: input.requiredOutputCount > 0,
       value: input.requiredOutputCount > 0 ? reproducibilityScore : null,
-      note: "Required audit output presence ratio for this audit bundle."
+      note: "Required pre-audit governance artifact presence ratio for the reviewed run bundle."
     },
     policy_note: "Autonomy metrics are run-level audit signals only; they are not paper-readiness claims unless backed by artifacts."
   };

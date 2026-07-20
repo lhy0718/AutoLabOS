@@ -95,7 +95,7 @@ const GOVERNED_RESEARCH_NODES = new Set<GovernedResearchNode>([
   "review",
   "write_paper"
 ]);
-const FINDING_SURFACES = new Set(["prompt", "validator", "skill"]);
+const FINDING_SURFACES = new Set(["prompt", "validator", "skill", "policy", "runtime"]);
 
 export function validateModelReviewBundle(
   value: unknown,
@@ -220,6 +220,10 @@ export function collectModelReviewFindings(bundle: ModelReviewBundle): GateFindi
     ...bundle.reviewers.flatMap((reviewer) => reviewer.findings),
     ...bundle.adjudicator.findings
   ].map(cloneFinding);
+}
+
+export function collectAdjudicatedModelReviewFindings(bundle: ModelReviewBundle): GateFinding[] {
+  return bundle.adjudicator.findings.map(cloneFinding);
 }
 
 export function hashModelReviewBundle(bytes: string | Buffer): string {

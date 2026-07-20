@@ -27,17 +27,19 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 - `research:new`: create or repair a governed research brief.
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
 - `research:review`: run deterministic gates and bound model review for paper readiness, claim ceilings, downgrade class, and upstream repair targets.
-- `research:improve`: map failures to node-local prompt, skill, or validator strengthening.
+- `research:improve`: map failures to the smallest node-local prompt, skill,
+  validator, policy, or runtime strengthening.
 - `research:pack`: export a traceable paper-readiness bundle and independently verify it before distribution.
 
 ## Artifact Contract
 
 - `ResearchBrief`: execution contract with baseline, evidence floor, disallowed shortcuts, and failure conditions.
-- `EvidenceBundle`: collected literature, run outputs, metrics, logs, drafts, and provenance imported as evidence candidates.
-- `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift.
+- `EvidenceBundle`: collected literature, run outputs, metrics, logs, drafts, and provenance imported as evidence candidates, with available input bytes bound by portable path, SHA-256, and byte length.
+- `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift, transitively bound to those audited inputs through its evidence-bundle ID and explicit input bindings.
 - `ReviewReport`: claim-evidence alignment, readiness class, downgrade decision, and repair target.
 - `ModelReviewBundle`: exact-gate-bound independent specialist reviews, model/provider/reasoning/execution provenance, preserved disagreement, and conservative meta reconciliation.
-- `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, or validator strengthening plan with rollback expectations.
+- `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, validator, policy,
+  or runtime strengthening plan with rollback expectations.
 - `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
 
 ## Decision Authority
@@ -53,9 +55,20 @@ New or corrected evidence must be bound and rerun through `A0`; later authority 
 
 When the user requests multi-agent review, or when `research:review` evaluates a paper-scale target, the plugin must use the strongest available frontier model and highest available reasoning tier under active provider/runtime policy. It records requested and effective routing rather than silently substituting a weaker route.
 
-Five `A1` reviewers run in parallel with independent initial context: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`. They receive identical immutable input and the exact `GateReport` SHA-256. Initial outputs are not shared with peers, and every output records model, provider, reasoning, and execution provenance.
+Five `A1` reviewers run in parallel with independent initial context:
+`claim_evidence`, `methodology`, `statistics`, `reproducibility`, and
+`adversarial`. They receive the identical closed inventory: the exact
+`GateReport`, exact `EvidenceBundle`, and every required
+`GateReport.input_bindings` path. Initial outputs are not shared with peers,
+and every output records model, provider, reasoning, and execution provenance.
 
 After all five outputs pass structural and hash validation, a separate meta reviewer binds the same gate and every initial output hash. It preserves disagreements, records unresolved positions, and emits at most an `A2` conservative reconciliation. Missing roles, provenance, isolation, exact binding, or reconciliation block model-based paper-scale promotion.
+
+The strict `ModelReviewBundle` preserves every specialist record. Only findings
+explicitly adopted by the meta reviewer are projected into `ReviewReport`,
+readiness, and repair targets, preventing repeated specialist observations from
+becoming duplicate final blockers. Reviewer assurance records both raw
+specialist and adjudicated finding counts.
 
 Model review is a separate artifact, not a human review surrogate. Never generate the human review or final approval. Candidate, reference, and license material may receive explicitly model-authored screening or adjudication, but human identity and attestation fields remain unset. Citation support requires direct reading of bound full text and a precise evidence location. License screening requires direct public license evidence; otherwise status remains `local_only` or `uncertain`, with no inferred redistribution permission.
 
@@ -101,6 +114,11 @@ portability metadata, and hashes the resulting public bytes.
 requires a closed regular-file inventory, recomputes every byte count and
 SHA-256 digest, and rechecks the gate, review, readiness, and claim-ceiling
 bindings without creating a new top-level command intent.
+
+External intake copies only allowlisted artifacts and records SHA-256 and byte
+length for each copied file. Fresh audits propagate those bindings into the
+`EvidenceBundle` and `GateReport`; changing manuscript or evidence bytes
+invalidates prior model review and requires a fresh gate and panel.
 
 `research verify-milestone` is likewise a cross-intent verification mode. It
 keeps a long-running objective open until every declared hash and assertion

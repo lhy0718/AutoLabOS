@@ -35,6 +35,14 @@ Model-assisted review is reproducible only when its inputs, topology, and
 provenance are inspectable:
 
 - Freeze the exact deterministic `GateReport` bytes and record their SHA-256.
+- Require fresh `EvidenceBundle.files` and `GateReport.input_bindings` entries
+  with portable path, byte count, and SHA-256 for every available audited
+  input. External intake must record matching `copied_file_bindings` and
+  portable source-to-copy mappings, and the gate must bind the exact
+  `EvidenceBundle` byte digest.
+- Treat every present reviewed input as required. The audit summary must
+  enumerate the complete required artifact contract and its per-path status;
+  a generic missing-count message is not a reproducible inventory.
 - Record a closed, ordered input manifest with path, media type, source kind,
   byte count, and SHA-256 for every reviewed artifact.
 - Bind each of the five required initial role outputs to the same gate and input
@@ -49,8 +57,21 @@ provenance are inspectable:
 - Bind the exact supplied bundle bytes into
   `ReviewReport.reviewer_assurance.model_review_bundle_sha256` and require
   `can_promote=false`, `can_downgrade=true`, and `human_authority=false`.
+- Preserve every raw specialist finding in `ModelReviewBundle`, but project
+  only the meta reviewer's adopted findings into `ReviewReport`, readiness,
+  and repair targets. Record both specialist and adjudicated finding counts.
 - If the gate bytes or any input bytes change, invalidate the bundle and rerun
   the entire panel. Reusing prose against a new hash is not reproducible review.
+- A paper-scale review manifest must contain the exact gate, exact evidence
+  bundle, and every gate input binding. A present path string that is absent
+  from this frozen inventory cannot count as claim support.
+- Do not encode absent or unmeasured evidence as a successful zero. Missing,
+  malformed, or ablated figure evidence uses null measurements and remains a
+  promotion blocker; paper-ready-only done-condition checks are explicitly
+  not evaluated when promotion was not requested.
+- Keep prospective blocked claims separate from asserted unsupported claims in
+  aggregate metrics. Preserve their missing-evidence blockers and do not treat
+  that accounting separation as evidence or readiness promotion.
 - Keep model review (`A1`/`A2`) separate from human review (`A3`). Model output
   cannot create human attestation, final approval, external evidence, or legal
   or redistribution permission.

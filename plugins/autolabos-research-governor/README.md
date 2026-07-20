@@ -116,6 +116,10 @@ statistics, reproducibility, and adversarial review. Initial outputs are not
 shared among reviewers. Each output binds the exact `GateReport` hash and
 records model, provider, reasoning, and execution provenance.
 
+The shared closed inventory contains the exact `GateReport`, exact
+`EvidenceBundle`, and every required `GateReport.input_bindings` path.
+Changing or omitting any of those bytes invalidates the panel.
+
 A separate meta reviewer runs only after all five outputs are normalized,
 hash-bound, and structurally validated. It reconciles the panel without deleting disagreements and emits a
 `ModelReviewBundle` with at most `A2` authority. Incomplete or unbound panels
@@ -123,9 +127,17 @@ remain non-promoting `A1` advice. Model review is a separate artifact and is
 never represented as human review. Never generate the human review or final
 approval.
 
+Every specialist record remains in `ModelReviewBundle`, but only findings
+adopted by the meta reviewer enter `ReviewReport`, readiness, and repair
+targets. This preserves the independent record without multiplying duplicate
+findings. Fresh audits bind available input files by portable path, SHA-256,
+and byte length; changed input bytes require a new gate and complete panel.
+Meta-harness repair targets may use the controlled surfaces `prompt`, `skill`,
+`validator`, `policy`, and `runtime`.
+
 The resulting `ReviewReport.reviewer_assurance` binds the exact bundle hash and
-keeps `can_promote=false`, `can_downgrade=true`, and
-`human_authority=false`.
+records the adjudication policy and raw/adjudicated finding counts while
+keeping `can_promote=false`, `can_downgrade=true`, and `human_authority=false`.
 
 Candidate, reference, and license material may receive clearly labeled model
 screening or adjudication. Citation support requires direct full-text reading,

@@ -4,7 +4,7 @@ export interface DoneConditionCheck {
   id: string;
   label: string;
   severity: "error" | "warning";
-  passed: boolean;
+  passed: boolean | null;
   detail: string;
 }
 
@@ -30,8 +30,10 @@ export function evaluateDoneConditionAudit(input: {
   resultTableReady: boolean;
   fallbackOnlyEvidence: boolean;
   failedRunHidden: boolean;
+  runStatusKnown?: boolean;
   unsupportedClaimCount: number;
   citationSupportIssueCount: number;
+  figureAuditReady: boolean;
   figureMismatchPresent: boolean;
 }): DoneConditionAudit {
   const declaredSource = input.governanceCondition
@@ -43,20 +45,33 @@ export function evaluateDoneConditionAudit(input: {
   const measured = declaredSource !== "none";
   const checks: DoneConditionCheck[] = [
     {
+      id: "done_condition_source_declared",
+      label: "A governed done-condition source is required",
+      severity: "error",
+      passed: measured,
+      detail: measured
+        ? `Done-condition source: ${declaredSource}.`
+        : "No governance condition or research brief done-condition source was available."
+    },
+    {
       id: "write_paper_not_paper_ready",
       label: "write_paper completion is not accepted as paper-ready by itself",
       severity: "error",
-      passed: !(input.writePaperCompleted && input.paperReady && hasPaperReadyBlocker(input)),
+      passed: input.writePaperCompleted
+        ? !(input.paperReady && hasPaperReadyBlocker(input))
+        : null,
       detail: input.writePaperCompleted
         ? "write_paper completed; paper-ready still depends on evidence gates."
-        : "write_paper did not complete, so no manuscript-completion shortcut is present."
+        : "Not evaluated because no durable write_paper completion was available."
     },
     {
       id: "baseline_comparator_required_for_paper_ready",
       label: "Paper-ready comparative claims require baseline/comparator evidence",
       severity: "error",
-      passed: !input.paperReady || !input.missingBaselineOrComparator,
-      detail: input.missingBaselineOrComparator
+      passed: input.paperReady ? !input.missingBaselineOrComparator : null,
+      detail: !input.paperReady
+        ? "Not evaluated because manuscript promotion is not requested."
+        : input.missingBaselineOrComparator
         ? "Baseline or comparator evidence is missing."
         : "Baseline/comparator evidence is not missing."
     },
@@ -64,8 +79,10 @@ export function evaluateDoneConditionAudit(input: {
       id: "result_table_required_for_paper_ready",
       label: "Paper-ready status requires a complete result table",
       severity: "error",
-      passed: !input.paperReady || input.resultTableReady,
-      detail: input.resultTableReady
+      passed: input.paperReady ? input.resultTableReady : null,
+      detail: !input.paperReady
+        ? "Not evaluated because manuscript promotion is not requested."
+        : input.resultTableReady
         ? "Result table has at least one complete metric row."
         : "Result table is missing or incomplete."
     },
@@ -73,8 +90,10 @@ export function evaluateDoneConditionAudit(input: {
       id: "fallback_only_blocks_quantitative_done",
       label: "Fallback-only evidence cannot satisfy quantitative paper-ready completion",
       severity: "error",
-      passed: !input.paperReady || !input.fallbackOnlyEvidence,
-      detail: input.fallbackOnlyEvidence
+      passed: input.paperReady ? !input.fallbackOnlyEvidence : null,
+      detail: !input.paperReady
+        ? "Not evaluated because manuscript promotion is not requested."
+        : input.fallbackOnlyEvidence
         ? "Only fallback evidence is available."
         : "No fallback-only evidence condition is active."
     },
@@ -82,31 +101,50 @@ export function evaluateDoneConditionAudit(input: {
       id: "failed_run_visibility_required",
       label: "Failed run visibility is required",
       severity: "error",
-      passed: !input.failedRunHidden,
-      detail: input.failedRunHidden
-        ? "A failed run is hidden behind paper_ready=true."
-        : "No hidden failed-run paper-ready contradiction was detected."
+      passed: input.runStatusKnown === true ? !input.failedRunHidden : null,
+      detail: input.runStatusKnown !== true
+        ? "Not evaluated because no durable run status was available."
+        : input.failedRunHidden
+          ? "A failed run is hidden behind paper_ready=true."
+          : "The durable run status does not hide a failed execution."
     },
     {
       id: "unsupported_claims_block_paper_ready",
       label: "Unsupported claims block paper-ready completion",
       severity: "error",
-      passed: !input.paperReady || input.unsupportedClaimCount === 0,
-      detail: `Unsupported claim count: ${input.unsupportedClaimCount}.`
+      passed: input.paperReady ? input.unsupportedClaimCount === 0 : null,
+      detail: input.paperReady
+        ? `Unsupported claim count: ${input.unsupportedClaimCount}.`
+        : `Not evaluated for manuscript promotion; unsupported claim count: ${input.unsupportedClaimCount}.`
     },
     {
       id: "citation_support_required_for_related_work",
       label: "Related-work claims require citation support",
       severity: "warning",
-      passed: !input.paperReady || input.citationSupportIssueCount === 0,
-      detail: `Citation support issue count: ${input.citationSupportIssueCount}.`
+      passed: input.paperReady ? input.citationSupportIssueCount === 0 : null,
+      detail: input.paperReady
+        ? `Citation support issue count: ${input.citationSupportIssueCount}.`
+        : `Not evaluated for manuscript promotion; citation support issue count: ${input.citationSupportIssueCount}.`
+    },
+    {
+      id: "figure_audit_required_for_manuscript_promotion",
+      label: "A measured figure audit is required for manuscript promotion",
+      severity: "error",
+      passed: input.paperReady ? input.figureAuditReady : null,
+      detail: !input.paperReady
+        ? "Not evaluated because manuscript promotion is not requested."
+        : input.figureAuditReady
+        ? "A measured figure audit is available."
+        : "Figure audit evidence is missing, malformed, or intentionally ablated."
     },
     {
       id: "figure_mismatch_blocks_manuscript_promotion",
       label: "Figure/result/caption mismatch blocks manuscript promotion",
       severity: "error",
-      passed: !input.paperReady || !input.figureMismatchPresent,
-      detail: input.figureMismatchPresent
+      passed: input.paperReady ? !input.figureMismatchPresent : null,
+      detail: !input.paperReady
+        ? "Not evaluated because manuscript promotion is not requested."
+        : input.figureMismatchPresent
         ? "Figure audit reports a mismatch or review block."
         : "No figure mismatch blocker is active."
     },
@@ -122,6 +160,9 @@ export function evaluateDoneConditionAudit(input: {
   ];
 
   if (!measured) {
+    const failures = checks
+      .filter((check) => check.severity === "error" && check.passed === false)
+      .map((check) => check.label);
     return {
       version: 1,
       generated_at: new Date().toISOString(),
@@ -130,14 +171,14 @@ export function evaluateDoneConditionAudit(input: {
       declared_source: "none",
       allowed_weak_output_states: allowedWeakOutputStates,
       checks,
-      failures: [],
+      failures,
       warnings: ["No governance condition or research brief done-condition source was available."],
       policy_note: policyNote()
     };
   }
 
-  const failures = checks.filter((check) => check.severity === "error" && !check.passed).map((check) => check.label);
-  const warnings = checks.filter((check) => check.severity === "warning" && !check.passed).map((check) => check.label);
+  const failures = checks.filter((check) => check.severity === "error" && check.passed === false).map((check) => check.label);
+  const warnings = checks.filter((check) => check.severity === "warning" && check.passed === false).map((check) => check.label);
   return {
     version: 1,
     generated_at: new Date().toISOString(),
@@ -158,6 +199,7 @@ function hasPaperReadyBlocker(input: {
   fallbackOnlyEvidence: boolean;
   failedRunHidden: boolean;
   unsupportedClaimCount: number;
+  figureAuditReady: boolean;
   figureMismatchPresent: boolean;
 }): boolean {
   return input.missingBaselineOrComparator
@@ -165,6 +207,7 @@ function hasPaperReadyBlocker(input: {
     || input.fallbackOnlyEvidence
     || input.failedRunHidden
     || input.unsupportedClaimCount > 0
+    || !input.figureAuditReady
     || input.figureMismatchPresent;
 }
 

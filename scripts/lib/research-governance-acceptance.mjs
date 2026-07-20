@@ -39,6 +39,7 @@ function writeCompleteExternalBundle(root) {
     "utf8"
   );
   writeJson(path.join(root, "figure_audit", "figure_audit_summary.json"), {
+    audited_at: "2026-07-20T00:00:00.000Z",
     figure_count: 1,
     issues: [],
     severe_mismatch_count: 0,

@@ -245,6 +245,11 @@ async function writeCleanBundle(root: string): Promise<void> {
     `${JSON.stringify({ id: "evidence-primary", metric: "primary_score", metric_evidence_present: true })}\n`,
     "utf8"
   );
+  await writeFile(
+    path.join(root, "research_brief.md"),
+    "# Research Brief\n\n## Paper-worthiness Gate\n\nPaper-ready promotion requires the complete governed artifact contract.\n",
+    "utf8"
+  );
   await writeJson(path.join(root, "figure_audit", "figure_audit_summary.json"), {
     audited_at: "2026-07-16T00:00:00.000Z",
     figure_count: 1,

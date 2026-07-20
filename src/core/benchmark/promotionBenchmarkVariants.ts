@@ -70,7 +70,7 @@ export function promotionVariantDefinitions(): PromotionVariantDefinition[] {
     {
       mutation_family: "claim_evidence_conflict",
       operations: [
-        { op: "set_json_pointer", path: "paper/claim_status_table.json", pointer: "/claims/0/status", value: "blocked" },
+        { op: "set_json_pointer", path: "paper/claim_status_table.json", pointer: "/claims/0/status", value: "verified" },
         { op: "set_json_pointer", path: "paper/claim_status_table.json", pointer: "/claims/0/artifact_refs", value: [] },
         { op: "set_json_pointer", path: "paper/claim_status_table.json", pointer: "/claims/0/citation_refs", value: [] },
         { op: "set_json_pointer", path: "paper/claim_evidence_table.json", pointer: "/claims/0/artifact_refs", value: [] },

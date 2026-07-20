@@ -123,6 +123,11 @@ async function writeCleanBaseBundle(root: string, baseId: string, delta: number,
     `${JSON.stringify({ id: `evidence-${baseIndex + 1}`, metric: `primary_score_${baseIndex + 1}`, metric_evidence_present: true })}\n`,
     "utf8"
   );
+  await fs.writeFile(
+    path.join(root, "research_brief.md"),
+    "# Research Brief\n\n## Paper-worthiness Gate\n\nPaper-ready promotion requires the complete governed artifact contract.\n",
+    "utf8"
+  );
   await writeJsonFile(path.join(root, "experiment_evidence.json"), {
     trials: [
       { trial_id: `trial-${baseIndex + 1}-a`, score: baseline + delta - 0.01 },

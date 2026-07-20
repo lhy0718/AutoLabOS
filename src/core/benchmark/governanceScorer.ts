@@ -13,6 +13,7 @@ export interface GovernanceTaskScoreInput {
   figure_result_mismatch_count?: number;
   repair_action_count?: number;
   placeholder?: boolean;
+  unmeasured_reason?: string;
 }
 
 export interface GovernanceTaskScore {
@@ -86,7 +87,7 @@ export function scoreGovernanceTask(input: GovernanceTaskScoreInput): Governance
       total_score: null,
       dimension_scores: {},
       metrics: null,
-      skipped_reason: "placeholder_not_measured"
+      skipped_reason: input.unmeasured_reason || "placeholder_not_measured"
     };
   }
 

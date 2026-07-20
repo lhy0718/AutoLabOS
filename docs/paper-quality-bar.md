@@ -18,6 +18,9 @@ When `write_paper` succeeds:
 - `paper/paper_readiness.json` should exist.
 - `paper/paper_critique.json` must exist (post-draft critique artifact).
 - `paper/claim_evidence_table.json` should exist when major claims are present.
+- A measured and valid `figure_audit/figure_audit_summary.json` must exist
+  before manuscript promotion; missing, malformed, or intentionally ablated
+  figure audit evidence fails closed.
 - A valid, exact-gate-bound `ModelReviewBundle` must be supplied when multi-agent review is requested or the target is paper-scale.
 
 ## 2) Critique artifact requirements
@@ -40,7 +43,7 @@ Each critique artifact must include:
 If the evidence package is insufficient, `review` recommends backtrack instead of advance.
 When a governed brief declares a minimum evidence floor, `review` should also honor the brief's paper ceiling instead of allowing a `research_memo`-grade run to drift into drafting.
 
-For paper-scale or explicitly requested multi-agent review, Codex plugin orchestration first binds the exact deterministic `A0` gate, then runs the independent specialist and meta-review protocol in `docs/model-review-protocol.md`. The CLI accepts the resulting sidecar, verifies its structure and hashes, and merges it conservatively. The resulting `A2` meta review may preserve or add blockers and may lower readiness, but it cannot clear an `A0` blocker or change the deterministic claim ceiling.
+For paper-scale or explicitly requested multi-agent review, Codex plugin orchestration first binds the exact deterministic `A0` gate, including its audited-input hashes, then runs the independent specialist and meta-review protocol in `docs/model-review-protocol.md`. The CLI accepts the resulting sidecar and verifies its structure and hashes. All specialist findings remain in the sidecar, while only findings adopted by the `A2` meta reviewer enter `ReviewReport`, readiness, and repair targets. The meta review may preserve or add blockers and may lower readiness, but it cannot clear an `A0` blocker or change the deterministic claim ceiling.
 
 ### Post-draft critique (write_paper)
 After drafting, `write_paper` emits a post-draft critique that can:
@@ -101,13 +104,27 @@ For papers that make experimental claims, `paper/claim_evidence_table.json` shou
 If the manuscript makes claims that cannot be mapped back to evidence,
 the review stage should block paper-ready status.
 
+An evidence reference counts only when it resolves inside the gate's frozen
+review inventory. Exported claim status is canonical: a scorer-level
+`unsupported` or `blocked` decision cannot be overwritten by a more
+optimistic declared source status. When the deterministic ceiling is
+`research_memo_without_quantitative_claims`, quantitative assertions in
+results, evaluation, experiments, findings, validation, analysis, or study
+sections block manuscript promotion until they are removed or bound to
+recomputable evidence.
+
+A prospectively blocked claim is reported separately from an affirmative
+unsupported manuscript claim. It does not inflate the unsupported-claim or
+claim-violation count, but its declared missing-evidence requirements continue
+to block promotion until verified.
+
 ## 4) Review packet handoff discipline
 Before drafting, review output should be structurally complete:
 - review packet has core sections (`readiness`, `checks`, `suggested_actions`)
 - decision and revision artifacts are present when decisioning is active
 - `review/minimum_gate.json` includes reviewer-grade paper-scale diagnostics when evidence is underpowered
 - `review/node_strengthening_recommendations.json` maps those diagnostics to the upstream node that should be strengthened
-- `ReviewReport.reviewer_assurance` records `A0_deterministic` or a bundle-hash-bound `A2_model_conservative` panel, with `can_promote=false`, `can_downgrade=true`, and `human_authority=false`
+- `ReviewReport.reviewer_assurance` records `A0_deterministic` or a bundle-hash-bound `A2_model_conservative` panel, its adjudication policy, raw/adjudicated finding counts, and `can_promote=false`, `can_downgrade=true`, and `human_authority=false`
 - readiness state explicitly distinguishes:
   - `system_validation_note`
   - `research_memo`
@@ -138,7 +155,9 @@ Each records model, provider, reasoning, and execution provenance.
 
 A separate meta reviewer runs only after the five outputs are validated and
 hashed. It binds every output hash, preserves all material disagreements, and
-emits at most an `A2` conservative disposition. Missing roles, provenance,
+emits every adopted finding and at most an `A2` conservative disposition. Raw
+specialist findings stay in `ModelReviewBundle`; only meta findings are
+projected into the final report. Missing roles, provenance,
 isolation, exact gate binding, or meta reconciliation are paper-scale blockers.
 
 Model reviews and human reviews are separate artifacts. A model review must not
@@ -162,6 +181,7 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 12. Positive headline gains are not explainable by a single changed evaluation example.
 13. Positive tuning claims have repeated-seed support or are explicitly downgraded.
 14. Evaluation sample sizes are large enough for the claimed genre, not merely enough for a smoke or preflight run.
+15. A measured figure audit confirms that figures, result tables, captions, and underlying evidence are mutually consistent.
 
 ## 6) Automatic downgrade / block conditions
 The manuscript must not be labeled `paper_ready` when any of the following is true:
@@ -177,6 +197,9 @@ The manuscript must not be labeled `paper_ready` when any of the following is tr
 - optimizer steps or training examples are only sufficient for pipeline validation, while the manuscript claims a tuning effect
 - the manuscript is mostly generated filler around weak artifacts
 - a governed brief explicitly required stronger evidence than the run actually produced
+- figure audit evidence is missing, malformed, intentionally ablated, or reports a blocking figure/result/caption mismatch
+- quantitative manuscript assertions remain under a deterministic
+  non-quantitative claim ceiling
 
 In such cases, downgrade to one of:
 - `system_validation_note`
