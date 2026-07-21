@@ -1785,6 +1785,43 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("parses controlled generation and deterministic certification commands", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "generate-promotion-controlled",
+      "--seed", "split-seed",
+      "--development-base-count", "3",
+      "--test-base-count", "7",
+      "--out-dir", "outputs/controlled"
+    ])).toEqual({
+      kind: "governance-benchmark-generate-promotion-controlled",
+      seed: "split-seed",
+      developmentBaseBundleCount: 3,
+      testBaseBundleCount: 7,
+      outDir: "outputs/controlled"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "certify-promotion-deterministic",
+      "--development-suite", "development/suite.json",
+      "--test-suite", "test/suite.json",
+      "--out-dir", "outputs/certified"
+    ])).toEqual({
+      kind: "governance-benchmark-certify-promotion-deterministic",
+      developmentSuitePath: "development/suite.json",
+      testSuitePath: "test/suite.json",
+      outDir: "outputs/certified"
+    });
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "certify-promotion-deterministic",
+      "--development-suite", "development/suite.json"
+    ])).toMatchObject({
+      kind: "error",
+      message: expect.stringContaining("--test-suite")
+    });
+  });
+
   it("rejects init subcommand", () => {
     const action = resolveCliAction(["init"]);
     expect(action.kind).toBe("error");

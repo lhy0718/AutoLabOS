@@ -34,6 +34,14 @@ import {
   type GenerateSyntheticPromotionCorpusInput
 } from "../core/benchmark/promotionBenchmarkSyntheticCorpus.js";
 import {
+  generateControlledPromotionBenchmark,
+  type GenerateControlledPromotionBenchmarkInput
+} from "../core/benchmark/promotionBenchmarkControlledCorpus.js";
+import {
+  certifyPromotionDeterministicOracle,
+  type CertifyPromotionDeterministicOracleInput
+} from "../core/benchmark/promotionBenchmarkDeterministicOracleCertification.js";
+import {
   auditPromotionConfirmatoryIntake,
   freezePromotionConfirmatoryCorpus,
   type AuditPromotionConfirmatoryIntakeInput,
@@ -604,6 +612,39 @@ export async function runSyntheticPromotionCorpusCli(
       `Cases: ${result.case_count}`,
       `Recipe: ${result.recipe_path}`,
       "Evidence class: synthetic development; not paper-claim eligible"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runControlledPromotionBenchmarkCli(
+  input: GenerateControlledPromotionBenchmarkInput
+): Promise<void> {
+  const result = await generateControlledPromotionBenchmark(input);
+  process.stdout.write(
+    [
+      `Controlled promotion benchmark generated: ${result.benchmark_id}`,
+      `Development: ${result.development_base_bundle_count} bases, ${result.development_case_count} cases`,
+      `Held-out test: ${result.test_base_bundle_count} bases, ${result.test_case_count} cases`,
+      `Paper-claim eligible: ${result.paper_claim_eligible}`,
+      `Certified suite: ${result.certified_suite_path}`,
+      `Oracle report: ${result.oracle_report_path}`,
+      "Claim ceiling: registered fault families only; external naturalistic validation not run"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionDeterministicCertificationCli(
+  input: CertifyPromotionDeterministicOracleInput
+): Promise<void> {
+  const result = await certifyPromotionDeterministicOracle(input);
+  process.stdout.write(
+    [
+      `Deterministic promotion suite certified: ${result.suite_id}`,
+      `Development cases: ${result.development_case_count}`,
+      `Held-out test cases: ${result.test_case_count}`,
+      `Paper-claim eligible: ${result.paper_claim_eligible}`,
+      `Suite: ${result.suite_path}`,
+      `Oracle report: ${result.oracle_report_path}`
     ].join("\n") + "\n"
   );
 }

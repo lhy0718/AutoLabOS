@@ -136,6 +136,46 @@ describe("promotion confirmatory gate", () => {
     expect(assessment.hypotheses.every((item) => item.status === "supported")).toBe(true);
   });
 
+  it("admits a human-free controlled benchmark with oracle-bound held-out families", () => {
+    const fixture = makeControlledAssessmentFixture();
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment).toMatchObject({
+      blockers: [],
+      readiness: "paper_scale_candidate",
+      claim_class: "confirmatory_signal"
+    });
+    expect(fixture.loaded.manifest.adjudication_provenance).toBeUndefined();
+    expect(fixture.loaded.manifest.confirmatory_freeze_provenance).toBeUndefined();
+  });
+
+  it("fails closed when controlled evidence loses deterministic oracle provenance", () => {
+    const fixture = makeControlledAssessmentFixture();
+    delete fixture.loaded.manifest.deterministic_oracle_provenance;
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "confirmatory_deterministic_oracle_provenance_missing",
+      target_node: "design_experiments"
+    }));
+  });
+
+  it("fails closed when one system omits a held-out mutation family", () => {
+    const fixture = makeControlledAssessmentFixture();
+    fixture.score.systems[0]!.by_mutation_family.pop();
+
+    const assessment = assessPromotionConfirmatoryEvidence(fixture);
+
+    expect(assessment.readiness).toBe("blocked_for_paper_scale");
+    expect(assessment.blockers).toContainEqual(expect.objectContaining({
+      code: "held_out_mutation_family_score_incomplete",
+      evidence_ref: fixture.score.systems[0]!.system_id,
+      target_node: "analyze_results"
+    }));
+  });
+
   it("rejects provider repetitions that are not eligible for paper claims", () => {
     const fixture = makeAssessmentFixture(true);
     fixture.providerAggregate.paper_claim_evidence_eligible = false;
@@ -372,6 +412,9 @@ function makeAssessmentFixture(h1Supported: boolean): {
       schema_version: "1.0",
       suite_id: "confirmatory-fixture",
       evidence_class: "external_real_run",
+      evaluation_regime: "naturalistic_human_adjudicated",
+      claim_ceiling: "naturalistic_generalization_supported",
+      external_validation_status: "passed",
       paper_claim_eligible: true,
       adjudication_status: "double_adjudicated",
       mutation_isolation_status: "double_verified",
@@ -392,6 +435,9 @@ function makeAssessmentFixture(h1Supported: boolean): {
     generated_at: "2026-01-01T00:00:00.000Z",
     suite_id: loaded.manifest.suite_id,
     evidence_class: "external_real_run",
+    evaluation_regime: "naturalistic_human_adjudicated",
+    claim_ceiling: "naturalistic_generalization_supported",
+    external_validation_status: "passed",
     paper_claim_eligible: true,
     adjudication_status: "double_adjudicated",
     mutation_isolation_status: "double_verified",
@@ -478,6 +524,114 @@ function makeAssessmentFixture(h1Supported: boolean): {
     inputPredictionsSha256,
     systemRunManifestSha256
   };
+}
+
+function makeControlledAssessmentFixture(): ReturnType<typeof makeAssessmentFixture> {
+  const fixture = makeAssessmentFixture(true);
+  const variants = promotionVariantDefinitions();
+  const clean = variants.find((variant) => !variant.mutation_family);
+  const testVariants = variants.filter((variant) => variant.mutation_family).slice(0, 5);
+  const developmentFamilies = variants
+    .filter((variant) => variant.mutation_family)
+    .slice(5)
+    .map((variant) => variant.mutation_family as string);
+  if (!clean || testVariants.length !== 5 || developmentFamilies.length === 0) {
+    throw new Error("Controlled fixture requires one clean variant and held-out fault families.");
+  }
+  const testFamilies = testVariants.map((variant) => variant.mutation_family as string);
+  const baseCount = CONFIRMATORY_CASE_COUNT / (testFamilies.length + 1);
+  const cases: PromotionBenchmarkCaseManifest[] = [];
+  for (let baseIndex = 0; baseIndex < baseCount; baseIndex += 1) {
+    for (const [variantIndex, variant] of [clean, ...testVariants].entries()) {
+      cases.push({
+        schema_version: "1.0",
+        case_id: "controlled-case-" + baseIndex + "-" + variantIndex,
+        base_bundle_id: "controlled-base-" + baseIndex,
+        split: "test",
+        artifact_root: "artifacts/controlled-case-" + baseIndex + "-" + variantIndex,
+        source_sha256: repeatedHash(baseIndex + 1001),
+        artifact_sha256: repeatedHash((baseIndex * (testFamilies.length + 1) + variantIndex) + 2001),
+        ...(variant.mutation_family ? { mutation_family: variant.mutation_family } : {}),
+        gold: variant.gold
+      });
+    }
+  }
+  fixture.loaded.cases = cases;
+  fixture.loaded.case_artifact_roots = Object.fromEntries(
+    cases.map((item) => [item.case_id, item.artifact_root])
+  );
+  fixture.loaded.manifest = {
+    schema_version: "1.0",
+    suite_id: "controlled-confirmatory-fixture",
+    evidence_class: "deterministic_fault_injection_test",
+    evaluation_regime: "controlled_deterministic_fault_injection",
+    claim_ceiling: "registered_fault_families_only",
+    external_validation_status: "not_run",
+    paper_claim_eligible: true,
+    adjudication_status: "unreviewed",
+    mutation_isolation_status: "oracle_verified",
+    execution_provenance_status: "unverified",
+    deterministic_oracle_provenance: {
+      schema_version: "1.0",
+      method: "registry_bound_independent_oracle",
+      protocol_revision: "1.0",
+      development_suite_ref: "oracle/development-suite/suite.json",
+      development_suite_snapshot_sha256: "1".repeat(64),
+      development_suite_tree_sha256: "2".repeat(64),
+      test_case_set_sha256: "3".repeat(64),
+      registry_manifest_ref: "oracle/registry-manifest.json",
+      registry_manifest_sha256: "4".repeat(64),
+      gold_manifest_ref: "oracle/gold-manifest.json",
+      gold_manifest_sha256: "5".repeat(64),
+      split_manifest_ref: "oracle/split-manifest.json",
+      split_manifest_sha256: "6".repeat(64),
+      oracle_report_ref: "oracle/oracle-report.json",
+      oracle_report_sha256: "7".repeat(64),
+      development_case_count: 120,
+      test_case_count: CONFIRMATORY_CASE_COUNT,
+      development_base_bundle_count: 24,
+      test_base_bundle_count: baseCount,
+      development_mutation_families: developmentFamilies,
+      test_mutation_families: testFamilies
+    },
+    cases: cases.map((item) => "cases/" + item.case_id + ".json")
+  };
+  fixture.score.suite_id = fixture.loaded.manifest.suite_id;
+  fixture.score.evidence_class = "deterministic_fault_injection_test";
+  fixture.score.evaluation_regime = "controlled_deterministic_fault_injection";
+  fixture.score.claim_ceiling = "registered_fault_families_only";
+  fixture.score.external_validation_status = "not_run";
+  fixture.score.adjudication_status = "unreviewed";
+  fixture.score.mutation_isolation_status = "oracle_verified";
+  fixture.score.execution_provenance_status = "unverified";
+  fixture.score.source_diversity_status = "unspecified";
+  fixture.score.case_count = CONFIRMATORY_CASE_COUNT;
+  fixture.score.prediction_count = fixture.score.systems.reduce(
+    (total, system) => total + CONFIRMATORY_CASE_COUNT * system.trial_count,
+    0
+  );
+  for (const system of fixture.score.systems) {
+    system.prediction_count = CONFIRMATORY_CASE_COUNT * system.trial_count;
+    system.covered_case_count = CONFIRMATORY_CASE_COUNT;
+    system.expected_case_count = CONFIRMATORY_CASE_COUNT;
+    system.clean_case_count = baseCount;
+    system.by_mutation_family = testFamilies.map((family) => ({
+      mutation_family: family,
+      case_count: baseCount,
+      prediction_count: baseCount * system.trial_count,
+      exact_decision_accuracy: 0.8,
+      false_paper_ready_rate: 0.2,
+      blocker_recall: 0.8,
+      repair_owner_exact_match_accuracy: 0.8
+    }));
+  }
+  fixture.providerAggregate.suite_id = fixture.loaded.manifest.suite_id;
+  fixture.recovery.study_id = fixture.loaded.manifest.suite_id;
+  fixture.recovery.evaluation_regime = "controlled_deterministic_fault_injection";
+  fixture.recovery.claim_ceiling = "registered_fault_families_only";
+  fixture.recovery.original_fault_case_count = baseCount * testFamilies.length;
+  fixture.recovery.covered_fault_case_count = baseCount * testFamilies.length;
+  return fixture;
 }
 
 function confirmatoryFreezeProvenance(baseCount: number, caseCount: number) {

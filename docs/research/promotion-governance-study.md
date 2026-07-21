@@ -11,6 +11,18 @@ The selected research direction evaluates whether artifact-grounded,
 machine-checkable promotion gates reduce concern-acceptance conflicts without
 over-blocking clean research bundles.
 
+## Current Evaluation Regime
+
+The primary confirmatory path is
+`controlled_deterministic_fault_injection`. Registered fault definitions
+produce mechanical gold, a separately implemented oracle replays every
+mutation, and entire fault families plus source/base identities are held out
+from development. Human adjudication is not required for this metric-gold
+path. Its claim ceiling is `registered_fault_families_only` and external
+naturalistic validation remains `not_run`. The human curation, license,
+and normalization work described below is retained as an optional naturalistic
+and redistribution extension.
+
 ## Search Snapshot
 
 Literature and system coverage was checked on 2026-07-16 against primary
@@ -908,10 +920,10 @@ drift, or a missing blocker-to-node recommendation.
 ### Confirmatory Decision Boundary
 
 The implementation now separates benchmark score validity from paper-scale
-claim eligibility. The confirmatory gate revalidates three source provider-run
+claim eligibility. The confirmatory gate revalidates three provider-run
 manifests, merges only their hash-verified manuscript-only predictions,
 recomputes all system and paired metrics, checks the frozen sample and
-source-family contracts, and consumes a post-repair manifest whose recovery
+regime-specific source-family or held-out-fault-family contracts, and consumes a post-repair manifest whose recovery
 and clean-control regression rates are derived from raw suites and predictions.
 It also emits the same `paper_scale_diagnostics.json` and
 `node_strengthening_recommendations.json` shapes used by the promotion
@@ -943,8 +955,8 @@ clean-control regression 0.0. These values verify the recovery runner, hash
 bindings, pair coverage, and metric arithmetic; they do not establish autonomous
 repair quality. The confirmatory gate binds the recovery report but retains
 `paper_ready=false` and `post_repair_evidence_not_verified` because both suites
-remain synthetic, unadjudicated, and artifact-execution-ineligible for paper
-claims.
+remain development-only, lack controlled oracle certification, and are
+ineligible for paper claims.
 
 ### Long-Horizon Completion Contract
 
@@ -958,14 +970,12 @@ artifacts remain explicitly hash-unbound until they are produced and reviewed;
 missing, rewritten, unbound, or assertion-failing evidence keeps the milestone
 incomplete and routes the requirement back to its declared node.
 
-A clean-revision audit of the current workspace passed 5 of 12 requirements:
-literature and research-question grounding, the synthetic development
-instrument, the 72-base candidate trace floor, and three hash-bound local
-real-model development trials, plus final validation and clean revision. The
-other seven requirements
-remain incomplete and are grouped under `analyze_papers`,
-`design_experiments`, `review`, `run_experiments`, and `write_paper`.
-No failed item was promoted from path existence alone.
+A new milestone audit must be run after the controlled contract change. The
+required path now centers the oracle-certified benchmark, real-model
+repetition, complete recovery, reference checks, manuscript review, and final
+validation. Historical candidate-review and canonical-curation receipts remain
+available as naturalistic-extension evidence but no longer satisfy or block
+the controlled primary requirement.
 
 The contract separates implemented instrument evidence from confirmatory
 evidence. Its audit can verify artifact bytes and declared values but cannot
@@ -974,11 +984,10 @@ or empirical independence.
 
 ## Minimum Publishable Experiment
 
-- At least 72 source-hash-distinct base bundles covering positive, null, and
-  negative outcomes, drawn from at least three declared source families and
-  three declared operator groups with no group above 50 percent.
-- At least 720 held-out cases total. At the 72-base floor, each base contributes
-  one clean control and one variant from every required fault family.
+- At least 72 test bases and 720 held-out cases total, with one clean control
+  and one case from every declared test fault family per base.
+- Source-, base-, and fault-family-disjoint development/test partitions with a
+  passing independent replay oracle over every case.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded
   comparisons.
 - At least one gate ablation and one post-repair rerun for every original fault
@@ -986,9 +995,8 @@ or empirical independence.
 - Three independent provider runs per manuscript-only case when that condition
   is used for external claims.
 - Raw decisions, concerns, manifests, hashes, costs, and failures preserved.
-- A passing hash-bound execution-provenance audit for every base bundle.
-- Two independent mutation-isolation audit files and the hash-bound verifier
-  report preserved.
+- Registry, gold, split, oracle report, development-suite, and test-case-set
+  hashes preserved in the certified suite.
 
 ## Kill Signals
 
@@ -997,7 +1005,8 @@ or empirical independence.
 - The presence checklist matches the full policy within five percentage points
   on both false promotion and clean-case accuracy.
 - Counterfactual mutations are detectable from superficial filenames or labels.
-- Held-out labels cannot be independently adjudicated.
+- Held-out mutation families, registry-derived gold, or independent replay
+  cannot be verified without leakage.
 - A nearest-neighbor publication already evaluates the same artifact-level
   concern-to-promotion binding under comparable conditions.
 

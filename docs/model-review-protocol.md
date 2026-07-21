@@ -17,6 +17,15 @@ impersonate either one.
 | `A2` | Model conservative | Reconcile model findings, preserve or add blockers, lower readiness within the deterministic claim ceiling, and route work to repair, backtrack, or human review. | Cannot remove or waive an `A0` blocker, change the incoming deterministic ceiling, create missing external evidence, create human attestation, or create legal or redistribution permission. |
 | `A3` | Human authority | Provide an identified human review, final approval, attestation, or an authorized legal/redistribution decision when the governed process requires one. | Must be recorded in a separate human-authored, hash-bound artifact. It cannot be inferred or synthesized from model output, and new evidence must still be re-evaluated by `A0`. |
 
+`A3` is conditional rather than a universal paper-scale transition. For
+`controlled_deterministic_fault_injection`, A0 may establish metric gold
+without a human label when the registered fault definitions, derived gold,
+independent mutation replay, development/test suite hashes, and disjoint
+fault-family/source split all verify. The resulting ceiling is
+`registered_fault_families_only`. Naturalistic labels, external
+generalization, human identity or attestation, and legal or redistribution
+decisions still require the corresponding external or A3 evidence.
+
 The tier number is not an unrestricted override order. In particular, neither
 `A2` nor `A3` edits deterministic history. A later actor may provide new bound
 evidence or an authorized decision, after which the applicable deterministic

@@ -33,8 +33,9 @@ the audit passed all development cases; an advisory-only ablation still
 accepted every defective case despite detecting its concerns. These results
 are instrument validation, not empirical evidence for general effectiveness:
 the suite is synthetic, unreviewed, and explicitly ineligible for paper-level
-claims. We specify the independently adjudicated, real-model experiment
-needed to test the central hypothesis.
+claims. We specify an oracle-certified controlled experiment with held-out
+fault families and repeated real-model evaluation needed to test the central
+hypothesis without treating human adjudication as metric gold.
 \end{abstract}
 
 \section{Introduction}
@@ -60,8 +61,8 @@ and cost trade-offs follow.
 
 The contribution at the present evidence level is a protocol and tested
 instrumentation, not a confirmed performance claim. We provide (i) a portable
-artifact-bundle task with explicit promotion and repair labels, (ii) leakage and
-adjudication gates, (iii) baselines that isolate detection from action binding,
+artifact-bundle task with explicit promotion and repair labels, (ii) leakage
+and independent-oracle gates, (iii) baselines that isolate detection from action binding,
 and (iv) a development failure analysis that routes audit misses back to the
 responsible workflow stages.
 
@@ -105,17 +106,15 @@ manifest. The evaluated system returns one decision from \texttt{promote},
 concerns with severity and evidence paths; and the workflow stages responsible
 for repair. Gold labels remain outside the visible artifact tree.
 
-Every suite declares an evidence class, adjudication status,
-mutation-isolation status, and paper-claim eligibility. A paper-eligible suite
-must be independently double adjudicated and have double-verified mutation
-isolation.
+Every suite declares an evidence class, evaluation regime, claim ceiling,
+adjudication status, mutation-isolation status, and paper-claim eligibility.
+The controlled regime derives gold from a frozen fault registry and requires
+an independently implemented oracle to replay each mutation and verify the
+resulting artifact hash. Its claim ceiling is limited to registered fault
+families and it cannot claim external validation. A separate naturalistic
+regime retains independent human adjudication and external source provenance.
 All variants derived from one base bundle remain in the same split, and source
-content hashes detect renamed duplicates across splits. The confirmatory intake
-freezer rejects fewer than 72 source-hash-distinct bases, duplicate source
-trees, insufficient source-family or operator-group diversity, and bundles
-that cannot support every registered mutation. It derives opaque base
-identities from source hashes and emits only held-out cases with provisional
-\texttt{needs\_review} labels and \texttt{paper\_claim\_eligible=false}.
+content hashes detect renamed duplicates across splits.
 
 \subsection{Fault families and controls}
 
@@ -124,13 +123,14 @@ with variants covering missing comparison evidence, repeated-run provenance,
 hidden failed execution, declared-versus-executed budget mismatch,
 result--figure conflict, claim--evidence conflict, citation support mismatch,
 stale persisted state, and unsupported claim strength. Each mutation records
-before and after hashes. The implementation exports each mutated artifact with
-its clean pair, declared family, and operations under an opaque audit ID. Two
-separate auditors must label every pair as isolated; either auditor can mark a
-pair confounded and block progression. The verifier binds records to suite,
-case, artifact, and mutation-manifest hashes. Promotion-label reviewers remain
-blind to mutation metadata, and their declared IDs cannot overlap the mutation
-auditor IDs.
+before and after hashes. For controlled evaluation, the implementation assigns
+entire fault families to development or test, derives case gold from the
+registry, and verifies every clean and mutated artifact by independent replay.
+Certification binds registry, gold, split, oracle-report, and development-suite
+hashes; any mismatch quarantines the suite. Evaluated systems receive only the
+artifact view, and blind manuscript requests omit case, family, path, oracle,
+and gold metadata. Naturalistic evaluation can additionally use separate
+mutation auditors and promotion-label reviewers.
 
 \subsection{Comparison conditions}
 
@@ -202,32 +202,35 @@ F1 of 1.00 on the generated cases.
 
 \section{Confirmatory Study and Readiness Gate}
 
-The frozen confirmatory study requires at least 72 source-hash-distinct base
-bundles and 720 held-out cases. Each base contributes one clean control and one
-variant from every registered fault family. The corpus must span at least three
-declared source families and three operator groups, with no group contributing
-more than half of the bases. Each base binds run configuration, events,
-metrics, review decision, command, and execution logs by hash. The intake gate
-rejects failed or non-real modes, fewer than three distinct source trials, hash
-drift, and duplicate run identities or execution fingerprints. This verifies
-the declared artifact record, not the real-world occurrence of execution. Two
-reviewers must adjudicate held-out promotion labels, and separate reviewers
-must verify mutation isolation without access to system predictions.
-Pseudonymous IDs enforce record-level role separation but do not prove
-real-world identity, so an external assignment log is also required. The
-manuscript-only condition requires three preserved real-model trials per case.
-Remote API trials retain hashed provider receipts; local trials retain an exact
-model-artifact digest and hash-bound runtime receipts. At least one post-repair
-rerun per fault family must measure recovery and regression. Raw requests,
-responses, decisions, failures, manifests, hashes, latency, and cost must be
-retained.
+The controlled confirmatory study requires at least 720 held-out cases. Entire
+registered fault families are assigned to either development or test before
+outcomes are observed; base identities and source hashes are also disjoint.
+Every test base contributes one clean control and one case from each held-out
+test family. Certification independently replays all development and test
+mutations from their clean controls, verifies registry-derived gold, and binds
+the complete case set and split manifests by hash. A certified suite may become
+paper-claim eligible for registered fault families without human label
+adjudication, but it remains explicitly unvalidated on naturally occurring
+defects.
+
+The manuscript-only condition requires three preserved real-model trials per
+case. Remote API trials retain hashed provider receipts; local trials retain an
+exact model-artifact digest and hash-bound runtime receipts. Deterministic
+baselines and ablations use versioned, hash-bound system-run manifests. At
+least one post-repair rerun per original fault case must measure recovery and
+clean-control regression. Raw requests, responses, decisions, failures,
+manifests, hashes, latency, and cost must be retained. The confirmatory gate
+checks held-out family coverage for every system and trial, recomputes metrics
+from predictions, and cannot raise the claim ceiling beyond the registered
+families.
 
 The central hypothesis is that fail-closed governance lowers false promotion
 by at least 20 absolute percentage points relative to the presence checklist
 while retaining at least 90 percent clean-case promotion. The study is stopped
 or downgraded if the full policy blocks more than 10 percent of clean bundles,
 if the checklist is within five points on both primary safety and clean-case
-metrics, if mutations leak labels, or if independent adjudication is absent.
+metrics, if mutations leak labels, if oracle replay or split isolation fails,
+or if required real-model and recovery evidence is incomplete.
 
 \section{Limitations and Ethical Considerations}
 
@@ -246,9 +249,10 @@ Promotion governance treats paper readiness as an evidence-bound transition
 rather than a by-product of workflow completion. The implementation and
 development suite show that this distinction is measurable and that detected
 failures can drive targeted audit strengthening. They do not yet show that the
-policy generalizes. Independent artifact curation, adjudication, real-model
-review, and a frozen confirmatory run are required before advancing beyond a
-research memo.
+policy generalizes. An oracle-certified controlled suite, repeated real-model
+review, complete recovery evidence, and a frozen confirmatory run are required
+before advancing beyond a research memo. Naturalistic generalization remains a
+separate claim that would require independently curated external evidence.
 
 \bibliography{references}
 

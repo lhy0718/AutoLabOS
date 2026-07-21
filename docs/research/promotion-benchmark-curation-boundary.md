@@ -52,7 +52,31 @@ One operator with repeated rows is useful for a holdout but does not establish a
 paired comparison. Row identity alone does not prove independent stochastic
 sampling; reviewers must record whether the repeated executions are comparable.
 
-## Human Review Gate
+## Controlled Deterministic Certification Gate
+
+The primary controlled benchmark does not require human review to establish
+metric gold. It may bypass the candidate-curation path only when all of the
+following are verified:
+
+- fault definitions and clean-control gold are frozen in the registered
+  variant manifest;
+- development and test partitions are disjoint by mutation family, base ID,
+  and source hash;
+- a separately implemented oracle replays every declared mutation from the
+  clean control and matches the emitted artifact tree;
+- registry, gold, split, oracle-report, development-suite, and test-case-set
+  hashes are bound in the certified suite;
+- evaluated prompts omit case IDs, mutation families, oracle records, and gold;
+- the suite declares
+  `evaluation_regime=controlled_deterministic_fault_injection` and
+  `claim_ceiling=registered_fault_families_only`.
+
+Certification failure quarantines the input and emits no certified suite.
+Passing this gate establishes only controlled registered-fault labels. It does
+not establish naturalistic labels, source-license permission, or external
+generalization.
+
+## Naturalistic Human Review Gate
 
 Two independent reviewers must inspect opaque packets without controller
 identities. They separately decide:
@@ -181,12 +205,14 @@ underlying agents.
 
 ## Admission And Freeze
 
-Confirmatory admission remains zero until all 72 task bases pass the paired
-comparison, license, double-review, curation, integrity, diversity, and leakage
-checks. The complete candidate set, mutation policy, evaluator, baselines,
-metrics, and analysis plan must then be frozen before confirmatory outcomes are
-read. A failed gate causes explicit backtracking or downgrade, never cosmetic
-paper completion.
+Naturalistic confirmatory admission remains zero until all 72 task bases pass
+the paired comparison, license, double-review, curation, integrity, diversity,
+and leakage checks. Controlled confirmatory admission instead follows the
+deterministic certification gate above and never inherits naturalistic or
+redistribution claims. In both regimes, the complete case set, evaluator,
+baselines, metrics, and analysis plan must be frozen before confirmatory
+outcomes are read. A failed gate causes explicit backtracking or downgrade,
+never cosmetic paper completion.
 
 The runtime now enforces this boundary through two intake tiers. Schema
 `1.0` is normalized to `provisional` and retains a 20-base development

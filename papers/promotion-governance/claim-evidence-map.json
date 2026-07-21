@@ -4,7 +4,7 @@
   "claims": [
     {
       "claim_id": "protocol-contract",
-      "claim": "The implementation validates suite confinement, split leakage, artifact hashes, complete per-trial coverage, and adjudication metadata.",
+      "claim": "The implementation validates suite confinement, split leakage, artifact hashes, complete per-trial coverage, and explicit human or deterministic gold provenance.",
       "status": "supported_by_code_and_tests",
       "artifact_refs": [
         "src/core/benchmark/promotionBenchmark.ts",
@@ -13,6 +13,18 @@
         "tests/promotionBenchmark.test.ts",
         "tests/promotionBenchmarkBuilder.test.ts",
         "tests/promotionBenchmarkAdjudication.test.ts"
+      ]
+    },
+    {
+      "claim_id": "deterministic-oracle-contract",
+      "claim": "The implementation can generate source-, base-, and fault-family-disjoint development and test suites, derive gold from a frozen fault registry, independently replay every mutation, quarantine drift, and keep controlled claims below the registered-fault-family ceiling without human adjudication.",
+      "status": "supported_by_code_and_tests",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkControlledCorpus.ts",
+        "src/core/benchmark/promotionBenchmarkDeterministicOracleCertification.ts",
+        "src/core/benchmark/promotionBenchmarkDeterministicOracleContract.ts",
+        "tests/promotionBenchmarkDeterministicOracle.test.ts",
+        "tests/promotionBenchmarkConfirmatoryGate.test.ts"
       ]
     },
     {
@@ -83,20 +95,26 @@
       ]
     },
     {
-      "claim_id": "general-effectiveness",
-      "claim": "Fail-closed promotion governance generalizes to independently curated research bundles and real manuscript-only reviewers.",
+      "claim_id": "registered-fault-family-effectiveness",
+      "claim": "Fail-closed promotion governance reduces false promotion on held-out registered fault families while retaining clean controls.",
       "status": "blocked",
       "missing_evidence": [
-        "completed_independent_double_human_candidate_review",
-        "completed_source_license_review",
-        "completed_canonical_curation_and_verification",
-        "double_adjudicated_held_out_suite",
-        "double_verified_mutation_isolation",
-        "artifact_verified_execution_provenance",
-        "at_least_72_source_hash_distinct_base_bundles",
+        "oracle_certified_controlled_test_suite",
         "at_least_720_held_out_cases",
         "three_paper_eligible_real_model_trials",
+        "complete_comparator_and_ablation_predictions",
         "post_repair_recovery_runs"
+      ]
+    },
+    {
+      "claim_id": "naturalistic-generalization",
+      "claim": "Controlled benchmark results generalize to naturally occurring defects in independently curated external research bundles.",
+      "status": "blocked",
+      "missing_evidence": [
+        "external_naturalistic_corpus",
+        "independent_human_labels",
+        "external_source_and_license_provenance",
+        "prespecified_external_validation_analysis"
       ]
     }
   ]

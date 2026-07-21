@@ -30,8 +30,9 @@ null, and negative research outcomes.
 - Use base-bundle-disjoint development and test splits.
 - Do not encode case identifiers, model names, benchmark names, condition
   markers, or expected metrics in runtime source.
-- Do not use deterministic replay, smoke fixtures, or Codex mock outputs as
-  external empirical evidence.
+- Treat deterministic oracle replay as controlled benchmark provenance, not as
+  a model outcome or external naturalistic evidence. Smoke fixtures and Codex
+  mock outputs remain ineligible as empirical model results.
 - Preserve raw decisions, logs, failures, costs, hashes, and repair outcomes.
 - Do not fabricate independent annotation, provider repetitions, or
   statistical significance.
@@ -44,17 +45,17 @@ null, and negative research outcomes.
 4. Implement ungated, presence-checklist, manuscript-only, full-policy, and
    ablation conditions.
 5. Run a development pilot and repair benchmark validity failures.
-6. Complete a prospective clustered precision analysis, then collect at least
-   72 source-hash-distinct real-run bundles across at least
-   three declared source families and three declared operator groups, cap every
-   family and group at half of the sample, verify hash-bound execution
-   provenance and preserved license evidence, and freeze them with an
-   end-to-end `declared_stratified` marker into a provisional
-   clean-plus-nine held-out corpus, obtain blind double adjudication and a
-   separately blinded double mutation-isolation audit. Hash-freeze evaluated
-   implementations, prompts, policies, thresholds, statistical code, and
-   environments before confirmatory labels or outcomes are revealed; then
-   execute the comparison systems and compute the preregistered estimates.
+6. Complete a prospective clustered precision analysis, assign entire
+   registered fault families to development or test, generate source- and
+   base-disjoint partitions, and certify the test suite with an independently
+   implemented artifact-replay oracle. Require at least 720 held-out cases and
+   enough test bases to satisfy both that case floor and the preregistered
+   base-level precision analysis. Hash-freeze the registry, derived gold,
+   split, development suite, evaluated implementations, prompts, policies,
+   thresholds, statistical code, and environments before outcomes are
+   revealed; then execute comparison systems and compute the preregistered
+   estimates. Treat naturalistic human-adjudicated validation as a separate
+   extension, not a prerequisite for controlled metric gold.
 7. Run review and meta-harness gates, then draft only within the measured
    evidence ceiling.
 
@@ -102,8 +103,8 @@ on clean research bundles?
   with deterministic, inspectable mutation operators.
 - Ungated and presence-checklist baselines are inexpensive and reproducible.
 - A real manuscript-only provider condition can be run over the held-out set
-  within a bounded API budget; without it, the paper ceiling remains below an
-  external empirical workshop claim.
+  within a bounded API budget; without it, the paper ceiling remains below a
+  controlled empirical workshop claim.
 - Paired variants provide a direct decision signal and support paired
   statistical analysis.
 
@@ -130,11 +131,9 @@ on clean research bundles?
 - Protocol: paired clean/counterfactual evaluation with base-bundle-disjoint
   development and test splits.
 - Minimum scale: a prospective precision analysis at the base-bundle level
-  determines the final sample, subject to a floor of 72 source-hash-distinct
-  base bundles from at least three
-  declared source families and three declared operator groups, with no family
-  or group above 50 percent; at least 720 held-out cases across nine blocking
-  fault families and all clean controls.
+  determines the final sample, subject to a floor of 72 test bases and 720
+  held-out cases. Each test base contains one clean control and exactly one
+  case from every test-only registered fault family.
 - Limitation: mutation-based cases approximate real research failures and must
   be separated from naturally occurring live-run evidence in reporting.
 
@@ -152,18 +151,19 @@ on clean research bundles?
 
 ## Confirmatory Decision Contract
 
-- Target population: portable research-run bundles produced by declared public
-  research-agent or workflow families. Mutation stress tests and naturally
-  occurring defects form separate strata; the fixed mutation prevalence is
-  never reported as a deployment prevalence estimate.
+- Target population: portable artifact bundles transformed by the registered
+  controlled fault operators. Naturally occurring defects form a separate
+  external-validation regime; the fixed mutation prevalence is never reported
+  as a deployment prevalence estimate.
 - Independent unit: the source-hash-distinct base bundle. Clean and defective
   variants are clustered within the base; repeated stochastic trials are
   nested within system, case, and base and are never counted as independent
   cases.
-- Gold labels: a policy-independent scientific-readiness rubric is frozen
-  before evaluation. Two blinded annotators label promotion eligibility,
-  blocking concern severity, and repair owner without seeing system outputs or
-  condition identity; a distinct adjudicator resolves disagreements.
+- Gold labels: the policy-independent registered fault definitions and clean
+  control are frozen before evaluation. Gold is derived mechanically and a
+  separately implemented oracle replays every mutation and verifies registry,
+  artifact, and label agreement. Human labels are required only for a separate
+  naturalistic extension.
 - Decision mapping: `promote` is acceptance. `needs_review`, `downgrade`,
   and `block` are non-promotion. False promotion is `promote` on a gold
   ineligible case. Clean retention is `promote` on a gold eligible clean
@@ -178,14 +178,14 @@ on clean research bundles?
   repetition count and paired dispatch schedule. Primary rates average
   case-trial indicators within base before equal weighting across bases.
   Between-trial disagreement and variance are secondary outcomes.
-- Freeze boundary: before confirmatory inventory or labels are revealed,
-  freeze hashes for every evaluated implementation, prompt, policy, threshold,
-  comparator, mutation recipe, scorer, statistical script, dependency lock,
-  and runtime image. Any post-freeze change invalidates the confirmatory pass.
-- Generalization: report registered-fault stress results separately from
-  natural defects and prespecified leave-one-source-family,
-  leave-one-operator-group, and leave-one-schema-family-out analyses. No
-  cross-family claim is allowed without the corresponding untouched stratum.
+- Freeze boundary: before confirmatory outcomes are revealed, freeze hashes for
+  the registry, derived gold, split manifest, oracle report, development and
+  test suites, every evaluated implementation, prompt, policy, threshold,
+  comparator, scorer, statistical script, dependency lock, and runtime image.
+  Any post-freeze change invalidates the confirmatory pass.
+- Generalization: the primary claim is limited to held-out registered fault
+  families. Natural defects and source/operator/schema transfer are separately
+  named external-validation questions and cannot inherit the controlled result.
 - Primary inference: estimate the paired base-level difference in false
   promotion between the full policy and matched comparator, and the full
   policy's clean retention. Use base-clustered intervals with a frozen
@@ -210,13 +210,12 @@ on clean research bundles?
 ## Minimum Acceptable Evidence
 
 - A prospective clustered precision report that justifies the final base count,
-  with a floor of 72 source-hash-distinct base bundles and 720 held-out cases,
-  split by base bundle, with a clean control and all nine required fault-family
-  variants per base.
-- At least three declared source families and three declared operator groups,
-  no family or group above half of the base bundles, family-stratified metrics,
-  and leave-one-family-out sensitivity analysis.
-- All required fault families and clean positive, null, and negative controls.
+  with a floor of 72 test bases and 720 held-out cases.
+- A source-, base-, and fault-family-disjoint development/test split bound by
+  hash, with no test fault family exposed during development.
+- One clean control and one case from every declared test fault family for each
+  test base, plus complete held-out-family metrics for every system and trial.
+- A passing independent oracle report covering every development and test case.
 - One post-repair rerun for every original fault case, covering every fault
   family without selective case omission.
 - Three complete real-model runs per manuscript-only test case when that
@@ -228,8 +227,9 @@ on clean research bundles?
   RNG, and confidence-bound decision contract.
 - At least one independently implemented artifact-aware comparator receiving
   the same closed inventory and output schema as the proposed policy.
-- Separately reported natural-defect and registered-mutation strata, including
-  prespecified held-out family/operator/schema analyses.
+- An explicit `registered_fault_families_only` claim ceiling and
+  `external_validation_status=not_run` until separate naturalistic
+  evidence exists.
 - Raw counts and effect sizes reported even when significance tests are
   inconclusive.
 - No signal: less than five percentage points difference from the presence
@@ -271,10 +271,10 @@ on clean research bundles?
 
 ## Paper Ceiling If Evidence Remains Weak
 
-- Without a real manuscript-only provider comparison or independent held-out
-  label adjudication: `research_memo`.
-- With complete deterministic comparisons but fewer than 72 base bundles or 720
-  variants: `blocked_for_paper_scale`.
+- Without a real manuscript-only provider comparison or a passing deterministic
+  oracle certification: `research_memo`.
+- With complete deterministic comparisons but fewer than 72 test bases or 720
+  cases: `blocked_for_paper_scale`.
 - With only internal dry-run or smoke evidence: `system_validation_note`.
 - A failed primary hypothesis remains publishable only as a bounded negative
   result when the benchmark and baselines satisfy the minimum evidence bar.
@@ -297,10 +297,10 @@ on clean research bundles?
 - The research question is explicit and remains distinct from SAGE,
   BadScientist, CLAIM-BENCH, reproducibility-assessment systems, and end-to-end
   research benchmarks.
-- The benchmark has frozen manifests, hashes, independent labels, and no split
-  leakage.
-- Every held-out mutation has two hash-bound `isolated` audit judgments from
-  declared auditors separate from promotion-label adjudicators.
+- The benchmark has frozen registry, gold, split, oracle, suite, and artifact
+  hashes with no source, base, or fault-family leakage.
+- Every held-out mutation has a successful independent artifact replay and
+  exact registry/gold match.
 - Ungated, checklist, and full-policy conditions are executed on the held-out
   set.
 - Manuscript-only claims rely on complete real-model runs rather than mocks.
@@ -318,7 +318,8 @@ on clean research bundles?
 - The checklist matches the full policy within five percentage points on both
   false promotion and clean-case accuracy.
 - Mutation variants contain superficial leakage or undeclared secondary faults.
-- Independent held-out label adjudication cannot be obtained.
+- Independent oracle replay or held-out fault-family isolation cannot be
+  established.
 - Only internal workflow validation is completed and no reportable benchmark
   evidence is executed.
 
@@ -335,5 +336,5 @@ not part of the scientific evidence for this study.
   decision rubric but not the hidden run artifacts?
 - How much of the full-policy gain comes from deterministic artifact checks
   rather than the transition-binding mechanism?
-- Can two independent reviewers adjudicate the held-out gold labels before the
-  confirmatory run?
+- Which naturalistic corpus, if any, should be evaluated later without
+  weakening the registered-fault-family claim boundary?

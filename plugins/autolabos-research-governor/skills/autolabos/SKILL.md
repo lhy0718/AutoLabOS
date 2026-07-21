@@ -59,6 +59,15 @@ The standalone AutoLabOS TUI/web workflow remains a reference implementation and
    - `A1 model advisory` may critique, screen, and recommend repairs without mutating gates.
    - `A2 model conservative` may preserve or add blockers, lower readiness within the deterministic ceiling, or route work, but cannot clear an `A0` blocker, change the deterministic ceiling, create missing external evidence, create human attestation, or create legal or redistribution permission.
    - `A3 human authority` remains a separate identified and hash-bound human artifact. Model review is never labeled as human review.
+   - A3 is conditional, not universal. For a controlled fault-injection
+     benchmark, A0 may establish metric gold through a frozen registry,
+     independently implemented artifact-replay oracle, hash-bound development
+     and test suites, and a source- and fault-family-disjoint split. That path
+     must declare `evaluation_regime=controlled_deterministic_fault_injection`,
+     keep `claim_ceiling=registered_fault_families_only`, and must not claim
+     external validation. A3 remains required for naturalistic labels, human
+     identity or attestation, legal or redistribution permission, and claims
+     of generalization beyond the registered fault families.
 7. For `research:review`, use the governed multi-agent protocol whenever the user requests multi-agent review or the target is paper-scale.
    - Select the strongest available frontier model and highest available reasoning tier under the active provider/runtime policy, and record requested and effective model, provider, reasoning, and execution provenance.
    - Run five initial roles in parallel: `claim_evidence`, `methodology`, `statistics`, `reproducibility`, and `adversarial`.
@@ -114,6 +123,9 @@ For substantial work, report:
 - Treating reference-review preflight as canonical claim approval, or fabricating the human review or final approval needed for import.
 - Treating a resumable review workspace as completed human evidence, or auto-filling labels, license decisions, or attestations.
 - Treating `A1` or `A2` model output as human review, final approval, external evidence, or redistribution permission.
+- Requiring human adjudication for registry-derived deterministic gold after
+  independent oracle replay, or using that exemption to claim naturalistic
+  generalization.
 - Letting initial reviewers see peer outputs, omitting model/provider/reasoning/execution provenance, or reconciling against a different gate hash.
 - Allowing a meta reviewer to erase deterministic blockers, promote the deterministic ceiling, or hide disagreement.
 - Importing every raw specialist finding directly into `ReviewReport` instead of using the meta reviewer's adopted disposition.

@@ -11,18 +11,20 @@ Earth as checked on 2026-07-18.
 
 Current blockers:
 
-- no 72-base independently curated confirmatory corpus,
-- no 720-case held-out confirmatory suite,
-- no artifact-verified execution provenance for 72 source-hash-distinct bases,
-- no completed double-human candidate review or source-license decision,
-- no completed canonical curation and independent verification,
-- no double-adjudicated held-out labels,
-- no independent mutation-isolation audit,
+- no preserved oracle-certified 720-case controlled confirmatory suite,
+- no completed source-, base-, and fault-family-disjoint split receipt for the
+  final confirmatory corpus,
 - no three-trial paper-eligible real-model manuscript-only baseline,
+- no complete controlled comparator and ablation result set,
 - no paper-scale post-repair recovery evaluation,
+- no passing controlled confirmatory gate or five-role model/meta-review bundle,
 - 12 citation-bearing claims have hash-bound full-text evidence candidates but
   remain independently unchecked in Refgate,
 - no citation-bearing claim has been promoted to `checked`.
+
+Human candidate adjudication and source-license review are not blockers for the
+controlled metric-gold path. They remain prerequisites only for a separate
+naturalistic-corpus or redistribution claim.
 
 `reference-evidence-status.json` records the portable source hashes, claim
 coverage, scope corrections, and the fail-closed review state. It does not package
@@ -135,6 +137,20 @@ raw predictions, and score outputs used by the development table. The
 failure-to-node recommendations. These files are evaluator-debugging evidence,
 not confirmatory benchmark data.
 
+Generate a fresh controlled development/test split and independently certified
+test suite with:
+
+```bash
+node dist/cli/main.js governance-benchmark generate-promotion-controlled \
+  --out-dir "$WORKDIR/controlled"
+```
+
+The certified manifest must declare
+`evaluation_regime=controlled_deterministic_fault_injection`,
+`claim_ceiling=registered_fault_families_only`, and
+`external_validation_status=not_run`. This command establishes the
+benchmark and gold provenance contract; it does not create real-model outcomes.
+
 To recompute the checked-in score from the preserved predictions, generate and
 build a fresh development suite as above, then run:
 
@@ -146,6 +162,23 @@ node dist/cli/main.js governance-benchmark score-promotion \
 ```
 
 ## Confirmatory Boundary
+
+### Controlled Primary Study
+
+The primary workshop study uses the certified controlled suite. Entire
+registered fault families are held out from development, and the split also
+separates base IDs and source hashes. The independent oracle replays every
+mutation, verifies registry-derived gold and artifact hashes, and quarantines
+any drift. Human adjudication is not used as metric gold.
+
+After certification, run all deterministic systems and ablations from the
+versioned system protocol, run the blind manuscript-only condition three times
+with a real model, execute complete post-repair and clean-control reruns, then
+run the confirmatory gate. Passing this path supports only claims about the
+registered held-out fault families. It does not establish naturally occurring
+defect prevalence or cross-domain generalization.
+
+### Optional Naturalistic Extension
 
 Complete the paired 72-candidate review campaign with two independent
 candidate reviewers and a distinct source-license reviewer. Only a passing,

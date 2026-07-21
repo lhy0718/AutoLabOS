@@ -164,6 +164,21 @@ Model reviews and human reviews are separate artifacts. A model review must not
 set human identity, attestation, approval, or legal/redistribution permission.
 Never generate the human review or final approval.
 
+### Evaluation provenance and claim ceiling
+
+Absence of human adjudication is not itself a paper blocker when the benchmark
+uses `controlled_deterministic_fault_injection` and the gate verifies a
+frozen fault registry, registry-derived gold, an independently implemented
+artifact-replay oracle, hash-bound development/test suites, and a source- and
+fault-family-disjoint split. Such a manuscript must keep
+`claim_ceiling=registered_fault_families_only` and state that external
+naturalistic validation was not run.
+
+Human evidence remains mandatory when a claim depends on naturalistic labels,
+human identity or attestation, external curation judgment, legal authority, or
+redistribution permission. Controlled evidence must never be relabeled as
+human-reviewed evidence.
+
 ## 5) Paper-ready minimum gate
 For a manuscript to be marked `paper_ready=true`, all of the following should hold:
 
@@ -185,12 +200,14 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 
 ## 6) Automatic downgrade / block conditions
 The manuscript must not be labeled `paper_ready` when any of the following is true:
-- no executed external experiment
+- no executed real-system comparison on either an externally grounded task or
+  a certified controlled benchmark
 - no baseline or comparator
 - no result table or recoverable quantitative comparison
 - claims exceed evidence
 - related work is too shallow to support positioning
-- the main contribution is really pipeline validation rather than research on an external task
+- the main contribution is only pipeline validation rather than a falsifiable
+  comparison on an external task or certified controlled benchmark
 - the evidence is only a single thin run with no repeated-trial or robustness support
 - the headline result is a one-example gain on a tiny evaluation set
 - repeated-seed support is missing for a positive tuning claim

@@ -26,6 +26,25 @@ The runtime must explicitly distinguish:
 
 A successful run is not automatically paper-worthy evidence.
 
+### Evaluation regimes
+
+Paper-scale evidence may use either of two explicit regimes:
+
+- `controlled_deterministic_fault_injection`: cases are produced from a
+  frozen fault registry, gold labels are derived mechanically, an independently
+  implemented oracle replays every artifact mutation, and development/test
+  partitions are disjoint by fault family, base identity, and source hash.
+  Human adjudication is not required for metric gold in this regime. Its
+  maximum claim ceiling is `registered_fault_families_only` and external
+  validation must remain `not_run` or `failed` until separate evidence exists.
+- `naturalistic_human_adjudicated`: cases represent naturally occurring
+  or externally curated defects. Independent human labels, mutation checks,
+  source provenance, and any required license decisions remain part of the
+  evidence contract.
+
+Never infer naturalistic generalization, human attestation, or redistribution
+permission from the controlled regime.
+
 ## 3) Required artifact expectations
 
 ### A. `run_experiments` success expectations
@@ -70,7 +89,7 @@ For brief-governed runs, this includes honoring the brief's paper ceiling and mi
 ## 4) Paper-scale experiment minimum gate
 For an experiment result to count as paper-scale candidate evidence, all of the following must hold:
 
-1. A task or dataset is clearly identified.
+1. A task, dataset, or certified controlled benchmark object is clearly identified.
 2. An objective metric is clearly identified.
 3. At least one baseline or comparator is explicit.
 4. At least one executed comparison result exists.
@@ -130,7 +149,7 @@ but they must not be elevated into experimental evidence sections of a paper.
 `review` should emit `blocked_for_paper_scale` or an equivalent downgrade when any of the following is true:
 - no explicit baseline or comparator
 - no recoverable quantitative result
-- no external task/dataset grounding
+- neither external task/dataset grounding nor a certified controlled benchmark
 - no link from experiment artifacts to the stated research question
 - the “experiment” is mostly workflow validation
 - the evidence is only a single thin run with no repeated-trial or robustness signal
@@ -156,9 +175,10 @@ A schema-valid score report is not a paper-scale acceptance decision.
   artifacts were parseable, complete for the systems that were present, and
   successfully scored.
 - Require a separate artifact-backed confirmatory gate to verify the
-  preregistered sample floor, full case matrix, comparator roles, ablation,
-  repeated provider evidence, post-repair reruns, family-stratified analysis,
-  and claim-evidence eligibility.
+  preregistered sample floor, regime-specific case matrix, comparator roles,
+  ablation, repeated provider evidence, post-repair reruns, the applicable
+  source-family or held-out-fault-family analysis, and claim-evidence
+  eligibility.
 - Recompute provider aggregation, benchmark metrics, recovery rate, and
   clean-control regression from referenced raw artifacts. Do not accept
   operator-entered summary values.

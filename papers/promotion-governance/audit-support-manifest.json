@@ -33,8 +33,8 @@
     },
     {
       "path": "src/core/benchmark/promotionBenchmark.ts",
-      "sha256": "26ea9d8d841b0ec64a95169ed9fc2d0a4951c016f089c4435df717163e43a10d",
-      "bytes": 88238
+      "sha256": "a63673baadfe2af57aa8c838b553ab488042985951366bd964a887e7ff4a8e7d",
+      "bytes": 93638
     },
     {
       "path": "src/core/benchmark/promotionBenchmarkAdjudication.ts",

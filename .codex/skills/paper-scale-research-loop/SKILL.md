@@ -29,6 +29,21 @@ Use this skill when the user asks to:
 ## Required research discipline
 Keep the broad topic fixed, but allow hypotheses and experiment design to evolve.
 
+Classify the evaluation regime before deciding whether human evidence is
+required:
+
+- `controlled_deterministic_fault_injection` may use registry-derived gold
+  without human adjudication when an independently implemented oracle replays
+  every mutation, binds the registry/gold/split/report hashes, proves
+  development/test source and fault-family disjointness, and keeps the claim
+  ceiling at `registered_fault_families_only`.
+- `naturalistic_human_adjudicated` requires the existing independent human
+  label, mutation-isolation, source, and license evidence whenever the claim
+  generalizes to naturally occurring defects or redistributable external data.
+- Do not downgrade a valid controlled benchmark merely because A3 human review
+  is absent. Do downgrade any attempt to turn controlled results into
+  naturalistic or legal claims without the corresponding external evidence.
+
 Always evaluate:
 - broad topic
 - current hypothesis
@@ -88,3 +103,4 @@ When a review gate blocks paper-scale progression, treat the block as a governed
 - Do not over-credit abstract-only or plan-only runs.
 - Do not call something paper-ready unless the evidence supports it.
 - Prefer the strongest validated branch, not the most verbose one.
+- Never relabel deterministic oracle evidence as human adjudication.

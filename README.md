@@ -345,6 +345,26 @@ Paper readiness is not a single binary prompt judgment.
 
 `paper_readiness.json` can include an `overall_score`. It should be read as a run-quality signal inside the system, not as a universal scientific benchmark. Some advanced evaluation and self-improvement flows use that score to compare runs or candidate prompt mutations.
 
+### Controlled Promotion Benchmark
+
+The controlled benchmark path does not require human adjudication for labels
+that are mechanically determined by registered fault injection:
+
+```sh
+autolabos governance-benchmark generate-promotion-controlled \
+  --out-dir outputs/governance-benchmark/promotion-controlled
+```
+
+This command creates disjoint development and test source bundles, holds out
+entire fault families, derives gold from the frozen registry, and certifies the
+test suite with a separately implemented artifact-replay oracle. The certified
+suite records
+`evaluation_regime=controlled_deterministic_fault_injection`,
+`claim_ceiling=registered_fault_families_only`, and
+`external_validation_status=not_run`. Human review remains a separate
+path for naturalistic defect labels, external generalization, identity or
+attestation, and license or redistribution decisions.
+
 ---
 
 ## Advanced Self-Improvement Capabilities

@@ -82,6 +82,9 @@ export interface PromotionConfirmatoryGateReport {
   schema_version: "1.0";
   generated_at: string;
   suite_id: string;
+  evaluation_regime: PromotionBenchmarkScoreReport["evaluation_regime"];
+  claim_ceiling: PromotionBenchmarkScoreReport["claim_ceiling"];
+  external_validation_status: PromotionBenchmarkScoreReport["external_validation_status"];
   readiness: PromotionConfirmatoryReadiness;
   paper_ready: false;
   claim_class: "confirmatory_signal" | "mixed_or_weak_signal" | "null_or_counterevidence" | "not_evaluable";
@@ -357,6 +360,9 @@ export async function evaluatePromotionConfirmatoryGate(
     schema_version: "1.0",
     generated_at: new Date().toISOString(),
     suite_id: score.report.suite_id,
+    evaluation_regime: score.report.evaluation_regime,
+    claim_ceiling: score.report.claim_ceiling,
+    external_validation_status: score.report.external_validation_status,
     readiness,
     paper_ready: false,
     claim_class: assessment.claim_class,
@@ -476,6 +482,7 @@ function inspectConfirmatoryEvidence(input: {
   systemRunManifestSha256: string | null;
   issues: PromotionConfirmatoryGateIssue[];
 }): void {
+  const controlledDeterministic = isControlledDeterministicEvaluation(input.loaded, input.score);
   const allRoleIds = [
     input.roles.ungated,
     input.roles.checklist,
@@ -546,48 +553,78 @@ function inspectConfirmatoryEvidence(input: {
   if (!input.score.passed) {
     addIssue(input.issues, "score_validation_failed", "Promotion benchmark score validation failed.", "run_experiments");
   }
-  const freezeProvenance = input.loaded?.manifest.confirmatory_freeze_provenance;
-  if (!freezeProvenance
-      || freezeProvenance.intake_tier !== "paper_scale"
-      || !freezeProvenance.candidate_review
-      || !freezeProvenance.upstream_evidence_inventory_sha256
-      || !freezeProvenance.upstream_evidence_file_count
-      || freezeProvenance.case_count !== input.score.case_count
-      || freezeProvenance.base_bundle_count !== countBaseBundles(input.loaded)
-      || freezeProvenance.candidate_review.source_eligible_candidate_count
-        !== freezeProvenance.base_bundle_count) {
-    addIssue(
-      input.issues,
-      "confirmatory_freeze_provenance_missing",
-      "Confirmatory evidence requires a hash-bound paper-scale freeze covering every suite base and case.",
-      "design_experiments"
-    );
-  }
-  const adjudicationProvenance = input.loaded?.manifest.adjudication_provenance;
-  if (!adjudicationProvenance
-      || adjudicationProvenance.case_count !== input.score.case_count
-      || !adjudicationProvenance.source_suite_evidence
-      || adjudicationProvenance.source_suite_evidence.case_manifests.length !== input.score.case_count
-      || adjudicationProvenance.mutation_audit_report_sha256 === null) {
-    addIssue(
-      input.issues,
-      "confirmatory_adjudication_provenance_missing",
-      "Confirmatory evidence requires hash-bound source-suite, double-annotation, adjudicated-label, and mutation-audit provenance.",
-      "review"
-    );
-  }
-  if (input.score.evidence_class !== "external_real_run"
-      || !input.score.paper_claim_eligible
-      || input.score.adjudication_status !== "double_adjudicated"
-      || input.score.mutation_isolation_status !== "double_verified"
-      || input.score.execution_provenance_status !== "artifact_verified"
-      || input.score.source_diversity_status !== "declared_stratified") {
-    addIssue(
-      input.issues,
-      "confirmatory_evidence_status_ineligible",
-      "The suite must be external-real, paper-claim-eligible, double-adjudicated, double-mutation-verified, artifact-verified, and declared-stratified.",
-      "review"
-    );
+  const deterministicProvenance = input.loaded?.manifest.deterministic_oracle_provenance;
+  if (controlledDeterministic) {
+    if (!deterministicProvenance
+        || deterministicProvenance.test_case_count !== input.score.case_count
+        || deterministicProvenance.test_base_bundle_count !== countBaseBundles(input.loaded)) {
+      addIssue(
+        input.issues,
+        "confirmatory_deterministic_oracle_provenance_missing",
+        "Controlled confirmatory evidence requires a hash-bound registry, gold manifest, disjoint split, development suite, and independent oracle report.",
+        "design_experiments"
+      );
+    }
+    if (input.score.evidence_class !== "deterministic_fault_injection_test"
+        || !input.score.paper_claim_eligible
+        || input.score.adjudication_status !== "unreviewed"
+        || input.score.mutation_isolation_status !== "oracle_verified"
+        || input.score.evaluation_regime !== "controlled_deterministic_fault_injection"
+        || input.score.claim_ceiling !== "registered_fault_families_only"
+        || input.score.external_validation_status === "passed") {
+      addIssue(
+        input.issues,
+        "confirmatory_deterministic_evidence_status_ineligible",
+        "Controlled evidence must be oracle-verified, paper-claim-eligible for registered fault families, explicitly non-human-adjudicated, and must not claim external validation.",
+        "review"
+      );
+    }
+  } else {
+    const freezeProvenance = input.loaded?.manifest.confirmatory_freeze_provenance;
+    if (!freezeProvenance
+        || freezeProvenance.intake_tier !== "paper_scale"
+        || !freezeProvenance.candidate_review
+        || !freezeProvenance.upstream_evidence_inventory_sha256
+        || !freezeProvenance.upstream_evidence_file_count
+        || freezeProvenance.case_count !== input.score.case_count
+        || freezeProvenance.base_bundle_count !== countBaseBundles(input.loaded)
+        || freezeProvenance.candidate_review.source_eligible_candidate_count
+          !== freezeProvenance.base_bundle_count) {
+      addIssue(
+        input.issues,
+        "confirmatory_freeze_provenance_missing",
+        "Naturalistic confirmatory evidence requires a hash-bound paper-scale freeze covering every suite base and case.",
+        "design_experiments"
+      );
+    }
+    const adjudicationProvenance = input.loaded?.manifest.adjudication_provenance;
+    if (!adjudicationProvenance
+        || adjudicationProvenance.case_count !== input.score.case_count
+        || !adjudicationProvenance.source_suite_evidence
+        || adjudicationProvenance.source_suite_evidence.case_manifests.length !== input.score.case_count
+        || adjudicationProvenance.mutation_audit_report_sha256 === null) {
+      addIssue(
+        input.issues,
+        "confirmatory_adjudication_provenance_missing",
+        "Naturalistic confirmatory evidence requires hash-bound source-suite, double-annotation, adjudicated-label, and mutation-audit provenance.",
+        "review"
+      );
+    }
+    if (input.score.evidence_class !== "external_real_run"
+        || !input.score.paper_claim_eligible
+        || input.score.adjudication_status !== "double_adjudicated"
+        || input.score.mutation_isolation_status !== "double_verified"
+        || input.score.execution_provenance_status !== "artifact_verified"
+        || input.score.source_diversity_status !== "declared_stratified"
+        || input.score.evaluation_regime === "controlled_deterministic_fault_injection"
+        || input.score.claim_ceiling === "registered_fault_families_only") {
+      addIssue(
+        input.issues,
+        "confirmatory_evidence_status_ineligible",
+        "Naturalistic evidence must be external-real, paper-claim-eligible, double-adjudicated, double-mutation-verified, artifact-verified, and declared-stratified.",
+        "review"
+      );
+    }
   }
   if (input.score.case_count < MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES) {
     addIssue(
@@ -608,17 +645,24 @@ function inspectConfirmatoryEvidence(input: {
       "design_experiments"
     );
   }
-  inspectCaseMatrix(input.loaded, input.issues);
-  if (input.score.source_family_analysis.availability !== "complete"
-      || input.score.source_family_analysis.family_count < MINIMUM_SOURCE_FAMILY_COUNT) {
-    addIssue(
-      input.issues,
-      "source_family_analysis_incomplete",
-      "At least three source families with complete family-stratified analysis are required.",
-      "design_experiments"
-    );
+  const requiredMutationFamilies = controlledDeterministic
+    ? deterministicProvenance?.test_mutation_families
+    : undefined;
+  inspectCaseMatrix(input.loaded, input.issues, requiredMutationFamilies);
+  if (controlledDeterministic) {
+    inspectHeldOutMutationFamilies(input.score, input.loaded, requiredMutationFamilies, input.issues);
+  } else {
+    if (input.score.source_family_analysis.availability !== "complete"
+        || input.score.source_family_analysis.family_count < MINIMUM_SOURCE_FAMILY_COUNT) {
+      addIssue(
+        input.issues,
+        "source_family_analysis_incomplete",
+        "At least three source families with complete family-stratified analysis are required.",
+        "design_experiments"
+      );
+    }
+    inspectLeaveOneFamilyOut(input.score, input.roles, input.issues);
   }
-  inspectLeaveOneFamilyOut(input.score, input.roles, input.issues);
 
   const systemById = new Map(input.score.systems.map((system) => [system.system_id, system]));
   if (!sameStringSet([...systemById.keys()], allRoleIds)) {
@@ -681,10 +725,11 @@ function inspectConfirmatoryEvidence(input: {
 
 function inspectCaseMatrix(
   suite: LoadedPromotionBenchmarkSuite | undefined,
-  issues: PromotionConfirmatoryGateIssue[]
+  issues: PromotionConfirmatoryGateIssue[],
+  requiredMutationFamilies?: string[]
 ): void {
   if (!suite) return;
-  const requiredFamilies = promotionVariantDefinitions()
+  const requiredFamilies = requiredMutationFamilies || promotionVariantDefinitions()
     .flatMap((variant) => variant.mutation_family ? [variant.mutation_family] : []);
   const byBase = new Map<string, typeof suite.cases>();
   for (const benchmarkCase of suite.cases) {
@@ -708,12 +753,68 @@ function inspectCaseMatrix(
       addIssue(
         issues,
         "confirmatory_case_matrix_incomplete",
-        "Each base bundle requires one clean control and exactly one case from every required fault family.",
+        "Each base bundle requires one clean control and exactly one case from every fault family required by its evaluation regime.",
         "design_experiments",
         baseId
       );
     }
   }
+}
+
+function inspectHeldOutMutationFamilies(
+  report: PromotionBenchmarkScoreReport,
+  suite: LoadedPromotionBenchmarkSuite | undefined,
+  requiredFamilies: string[] | undefined,
+  issues: PromotionConfirmatoryGateIssue[]
+): void {
+  if (!suite || !requiredFamilies || requiredFamilies.length === 0) {
+    addIssue(
+      issues,
+      "held_out_mutation_family_contract_missing",
+      "Controlled confirmatory evidence requires a non-empty held-out mutation-family contract.",
+      "design_experiments"
+    );
+    return;
+  }
+  const expected = [...requiredFamilies].sort();
+  const actual = [...new Set(suite.cases.flatMap((item) =>
+    item.mutation_family ? [item.mutation_family] : []))].sort();
+  if (!sameStringSet(actual, expected)) {
+    addIssue(
+      issues,
+      "held_out_mutation_family_suite_mismatch",
+      "The test suite must contain exactly the mutation families declared by deterministic oracle provenance.",
+      "design_experiments"
+    );
+  }
+  const baseCount = countBaseBundles(suite);
+  for (const system of report.systems) {
+    const metricsByFamily = new Map(system.by_mutation_family.map((item) => [item.mutation_family, item]));
+    if (!sameStringSet([...metricsByFamily.keys()], expected)
+        || expected.some((family) => {
+          const metrics = metricsByFamily.get(family);
+          return !metrics
+            || metrics.case_count !== baseCount
+            || metrics.prediction_count !== baseCount * system.trial_count;
+        })) {
+      addIssue(
+        issues,
+        "held_out_mutation_family_score_incomplete",
+        "Every scored system must cover each held-out mutation family for every base and trial.",
+        "analyze_results",
+        system.system_id
+      );
+    }
+  }
+}
+
+function isControlledDeterministicEvaluation(
+  suite: LoadedPromotionBenchmarkSuite | undefined,
+  score: PromotionBenchmarkScoreReport
+): boolean {
+  return suite?.manifest.evaluation_regime === "controlled_deterministic_fault_injection"
+    || score.evaluation_regime === "controlled_deterministic_fault_injection"
+    || Boolean(suite?.manifest.deterministic_oracle_provenance);
 }
 
 function inspectLeaveOneFamilyOut(
@@ -947,7 +1048,7 @@ function addIssue(
 
 function targetForSuiteIssue(code: string): string {
   if (/adjudicat|mutation|paper_claim|evidence_class/u.test(code)) return "review";
-  if (/source|family|operator|split|case/u.test(code)) return "design_experiments";
+  if (/source|family|operator|split|case|oracle|gold|registry/u.test(code)) return "design_experiments";
   return "run_experiments";
 }
 
@@ -958,6 +1059,9 @@ function renderGateMarkdown(report: PromotionConfirmatoryGateReport): string {
     "- Readiness: " + report.readiness,
     "- Paper ready: false",
     "- Claim class: " + report.claim_class,
+    "- Evaluation regime: " + report.evaluation_regime,
+    "- Claim ceiling: " + report.claim_ceiling,
+    "- External validation: " + report.external_validation_status,
     "- Cases: " + report.case_count,
     "- Base bundles: " + report.base_bundle_count,
     "- Source families: " + report.source_family_count,

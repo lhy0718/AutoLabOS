@@ -19,12 +19,18 @@ Each case contains:
 - responsible workflow nodes,
 - source, mutation, and resulting artifact hashes.
 
-Each suite also declares an evidence class, paper-claim eligibility,
-adjudication status, and mutation-isolation status. A recipe with
-`paper_claim_eligible=true` is rejected unless
-`adjudication_status=double_adjudicated` and
-`mutation_isolation_status=double_verified`, and
-`execution_provenance_status=artifact_verified`.
+Each suite also declares an evidence class, evaluation regime, claim ceiling,
+paper-claim eligibility, adjudication status, and mutation-isolation status.
+Paper eligibility has two non-interchangeable provenance paths:
+
+- `naturalistic_human_adjudicated` requires independent double
+  adjudication, double-verified mutation isolation, artifact-verified
+  execution, and source-diversity evidence.
+- `controlled_deterministic_fault_injection` requires a frozen
+  registered-fault manifest, registry-derived gold, an independently
+  implemented artifact-replay oracle, hash-bound development and test suites,
+  and source-, base-, and fault-family-disjoint partitions. It remains limited
+  to `claim_ceiling=registered_fault_families_only`.
 
 All variants of one base bundle must remain in one split. Source hashes are also
 checked across splits, so renaming an identical base bundle does not bypass the
@@ -52,10 +58,11 @@ A confirmatory suite should include clean controls and paired variants spanning:
 - unsupported claim strength.
 
 Fault names and artifact contents must not reveal the gold decision to the
-evaluated system. Human adjudicators should verify that each mutation introduces
-only the declared fault family. This mutation-isolation audit is a separate
-role from blind promotion-label adjudication because the latter must not see
-the declared mutation family.
+evaluated system. Naturalistic suites use independent human mutation and label
+review. Controlled suites instead require the independent oracle to replay
+each registered mutation and verify that the resulting artifact tree and gold
+label exactly match the frozen registry. Neither path exposes family, case,
+oracle, or gold metadata in provider requests.
 
 ## Build And Score
 
@@ -89,7 +96,42 @@ Its `corpus-manifest.json` sets `paper_claim_eligible=false`,
 `execution_provenance_status=unverified`. It must not be reported as
 confirmatory evidence.
 
-## Freeze Confirmatory Intake
+## Controlled Deterministic Corpus
+
+Generate and certify a human-free controlled benchmark in one command:
+
+```bash
+node dist/cli/main.js governance-benchmark generate-promotion-controlled \
+  --seed <stable-split-seed> \
+  --out-dir outputs/governance-benchmark/promotion-controlled
+```
+
+The generator assigns entire registered fault families to either development
+or test, creates source- and base-disjoint partitions, and selects enough test
+bases to meet the 720-case floor. Certification independently replays every
+mutation from each clean control and binds:
+
+- `oracle/registry-manifest.json`
+- `oracle/gold-manifest.json`
+- `oracle/split-manifest.json`
+- `oracle/oracle-report.json`
+- `oracle/development-suite/suite.json`
+
+Any registry, gold, split, artifact, or replay mismatch produces an
+`oracle-quarantine-report.json` and no certified suite. A passing suite
+may be paper-claim eligible only for registered fault families; it does not
+claim naturalistic generalization or external validation.
+
+Existing provisional partitions can be certified separately:
+
+```bash
+node dist/cli/main.js governance-benchmark certify-promotion-deterministic \
+  --development-suite <development-suite.json> \
+  --test-suite <test-suite.json> \
+  --out-dir <new-certified-suite>
+```
+
+## Naturalistic Confirmatory Intake
 
 The intake contract has two explicit tiers. Schema `1.0` is a 20-base,
 200-case provisional tier for source-route and evaluator validation. It can
@@ -252,7 +294,7 @@ node dist/cli/main.js governance-benchmark import-promotion-responses \
 Only `requests.jsonl` is provider input. Keep `private-request-map.json` outside
 the provider context.
 
-## Independent Mutation-Isolation Audit
+## Naturalistic Mutation-Isolation Audit
 
 Mutation auditors inspect a clean/mutated artifact pair together with the
 declared mutation family and operations. They do not receive promotion labels,
@@ -284,7 +326,7 @@ promotion-label adjudicator. Pseudonymous IDs enforce record-level separation;
 they do not prove real-world human identity, so study operations must retain an
 external assignment log outside the public benchmark bundle.
 
-## Blind Double Adjudication
+## Naturalistic Blind Double Adjudication
 
 Export an annotation pack before exposing any provisional gold labels or
 mutation metadata to reviewers:

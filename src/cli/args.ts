@@ -44,6 +44,8 @@ export type CliAction =
   | { kind: "governance-benchmark-verify-promotion-mutations"; suitePath: string; privateMapPath: string; auditPaths: string[]; outDir: string }
   | { kind: "governance-benchmark-adjudicate-promotion"; suitePath: string; privateMapPath: string; annotationPaths: string[]; resolutionPath?: string; mutationAuditReportPath?: string; outDir: string }
   | { kind: "governance-benchmark-generate-promotion-development"; outDir: string; baseBundleCount?: number }
+  | { kind: "governance-benchmark-generate-promotion-controlled"; outDir: string; seed?: string; developmentBaseBundleCount?: number; testBaseBundleCount?: number }
+  | { kind: "governance-benchmark-certify-promotion-deterministic"; developmentSuitePath: string; testSuitePath: string; outDir: string }
   | { kind: "governance-benchmark-audit-promotion-source-expansion"; inventoryPath: string; outDir: string }
   | { kind: "governance-benchmark-export-promotion-trial-candidates"; recipePath: string; sourceRoot: string; outDir: string }
   | { kind: "governance-benchmark-prepare-promotion-trial-candidate-review-campaign"; handoffRoot: string; annotatorIds: string[]; licenseReviewerId: string; outDir: string }
@@ -641,6 +643,68 @@ export function resolveCliAction(args: string[]): CliAction {
       return {
         kind: "governance-benchmark-export-promotion-trial-candidate-review-distribution",
         campaignRoot,
+        outDir
+      };
+    }
+    if (subcommand === "generate-promotion-controlled") {
+      let outDir = "outputs/governance-benchmark/promotion-controlled";
+      let seed: string | undefined;
+      let developmentBaseBundleCount: number | undefined;
+      let testBaseBundleCount: number | undefined;
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--out-dir" && token !== "--seed"
+            && token !== "--development-base-count" && token !== "--test-base-count") {
+          return { kind: "error", message: `Unsupported generate-promotion-controlled argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--out-dir") outDir = value;
+        else if (token === "--seed") seed = value;
+        else {
+          const count = Number(value);
+          if (!Number.isInteger(count) || count < 1) {
+            return { kind: "error", message: `${token} must be a positive integer.` };
+          }
+          if (token === "--development-base-count") developmentBaseBundleCount = count;
+          else testBaseBundleCount = count;
+        }
+        index += 1;
+      }
+      return {
+        kind: "governance-benchmark-generate-promotion-controlled",
+        outDir,
+        ...(seed ? { seed } : {}),
+        ...(developmentBaseBundleCount !== undefined ? { developmentBaseBundleCount } : {}),
+        ...(testBaseBundleCount !== undefined ? { testBaseBundleCount } : {})
+      };
+    }
+    if (subcommand === "certify-promotion-deterministic") {
+      let developmentSuitePath: string | undefined;
+      let testSuitePath: string | undefined;
+      let outDir = "outputs/governance-benchmark/promotion-deterministic-certified";
+      for (let index = 2; index < args.length; index += 1) {
+        const token = args[index];
+        if (token !== "--development-suite" && token !== "--test-suite" && token !== "--out-dir") {
+          return { kind: "error", message: `Unsupported certify-promotion-deterministic argument: ${token}` };
+        }
+        const value = args[index + 1];
+        if (!value) return { kind: "error", message: `Missing value for ${token}.` };
+        if (token === "--development-suite") developmentSuitePath = value;
+        else if (token === "--test-suite") testSuitePath = value;
+        else outDir = value;
+        index += 1;
+      }
+      if (!developmentSuitePath || !testSuitePath) {
+        return {
+          kind: "error",
+          message: "certify-promotion-deterministic requires --development-suite and --test-suite."
+        };
+      }
+      return {
+        kind: "governance-benchmark-certify-promotion-deterministic",
+        developmentSuitePath,
+        testSuitePath,
         outDir
       };
     }

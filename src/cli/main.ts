@@ -25,6 +25,8 @@ import {
   runPromotionProviderCli,
   runPromotionProviderAggregationCli,
   runSyntheticPromotionCorpusCli,
+  runControlledPromotionBenchmarkCli,
+  runPromotionDeterministicCertificationCli,
   runPromotionSourceExpansionAuditCli,
   runPromotionTrialCandidateHandoffExportCli,
   runPromotionTrialCandidateReviewCampaignCli,
@@ -116,6 +118,8 @@ function printHelp(): void {
     "  autolabos governance-benchmark batch --seeds <path> [--task <id>] [--condition gated|ungated] [--out-dir outputs/governance-benchmark/batch]",
     "  autolabos governance-benchmark export-bundles --source <outputs/run> [--source <outputs/run>] [--max 3] [--out-dir outputs/governance-benchmark/demo-bundles]",
     "  autolabos governance-benchmark generate-promotion-development [--base-count <positive-integer>] [--out-dir outputs/governance-benchmark/promotion-development-corpus]",
+    "  autolabos governance-benchmark generate-promotion-controlled [--seed <value>] [--development-base-count <n>] [--test-base-count <n>] [--out-dir outputs/governance-benchmark/promotion-controlled]",
+    "  autolabos governance-benchmark certify-promotion-deterministic --development-suite <suite.json> --test-suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-deterministic-certified]",
     "  autolabos governance-benchmark export-promotion-development-evidence --corpus-manifest <corpus-manifest.json> --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --score <promotion-score.json> --gate <promotion-confirmatory-gate.json> --recommendations <node-strengthening-recommendations.json> --output <evidence.json>",
     "  autolabos governance-benchmark audit-promotion-source-expansion --inventory <source-inventory.json> --out-dir <new-audit-dir>",
     "  autolabos governance-benchmark export-promotion-trial-candidates --recipe <portable-source-recipe.json> --source-root <hash-bound-local-source> --out-dir <new-handoff-dir>",
@@ -869,6 +873,27 @@ async function main(): Promise<void> {
       cwd: process.cwd(),
       recipePath: action.recipePath,
       freezeManifestPath: action.freezeManifestPath,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-generate-promotion-controlled") {
+    await runControlledPromotionBenchmarkCli({
+      cwd: process.cwd(),
+      outDir: action.outDir,
+      seed: action.seed,
+      developmentBaseBundleCount: action.developmentBaseBundleCount,
+      testBaseBundleCount: action.testBaseBundleCount
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-certify-promotion-deterministic") {
+    await runPromotionDeterministicCertificationCli({
+      cwd: process.cwd(),
+      developmentSuitePath: action.developmentSuitePath,
+      testSuitePath: action.testSuitePath,
       outDir: action.outDir
     });
     return;

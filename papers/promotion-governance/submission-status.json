@@ -14,7 +14,7 @@
     "camera_ready_deadline": "2026-09-14T23:59:00-12:00",
     "workshop_date": "2026-10-29",
     "deadline_status_at_verification": "open",
-    "critical_path": "independent_human_candidate_and_license_review_then_canonical_curation_and_real_provider_execution"
+    "critical_path": "oracle_certified_controlled_suite_then_real_provider_repetition_recovery_and_final_review"
   },
   "template_status": "official_acl_review_style_packaged_build_and_layout_validated",
   "template_provenance": {
@@ -41,6 +41,21 @@
       "clean_control_regression_rate": 0,
       "paper_claim_evidence_eligible": false
     }
+  },
+  "confirmatory_evaluation_contract": {
+    "evaluation_regime": "controlled_deterministic_fault_injection",
+    "claim_ceiling": "registered_fault_families_only",
+    "external_validation_status": "not_run",
+    "human_adjudication_required_for_metric_gold": false,
+    "naturalistic_extension_status": "not_run",
+    "certified_suite_status": "generated_and_oracle_verified_local",
+    "development_base_bundle_count": 24,
+    "development_case_count": 120,
+    "test_base_bundle_count": 120,
+    "test_case_count": 720,
+    "oracle_verified_case_count": 840,
+    "source_and_fault_family_disjoint": true,
+    "submission_bundle_binding_status": "pending"
   },
   "reference_evidence": {
     "citation_source_count": 8,
@@ -71,16 +86,12 @@
     "status_artifact": "reference-evidence-status.json"
   },
   "blocking_requirements": [
-    "completed_independent_double_human_candidate_review",
-    "completed_source_license_review",
-    "completed_canonical_curation_and_verification",
-    "at_least_72_source_hash_distinct_base_bundles",
-    "at_least_720_held_out_cases",
-    "artifact_verified_execution_provenance_for_each_base",
-    "double_adjudicated_gold_labels",
-    "double_verified_mutation_isolation",
+    "oracle_certified_controlled_suite_bound_into_final_reproducibility_bundle",
+    "complete_controlled_comparator_and_ablation_predictions",
     "three_paper_eligible_real_model_trials_for_manuscript_only_baseline",
     "paper_scale_post_repair_recovery_and_regression_evaluation",
+    "confirmatory_gate_pass_with_registered_fault_family_claim_ceiling",
+    "five_role_model_review_and_meta_review",
     "independent_review_of_12_full_text_evidence_candidates",
     "final_refgate_submission_audit_with_zero_blocking_claims",
     "official_acl_review_format_revalidation_after_confirmatory_results"

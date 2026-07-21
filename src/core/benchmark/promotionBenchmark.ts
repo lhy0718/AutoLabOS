@@ -16,6 +16,14 @@ import {
   parsePromotionConfirmatoryFreezeProvenance,
   type PromotionConfirmatoryFreezeProvenance
 } from "./promotionBenchmarkConfirmatoryFreeze.js";
+import {
+  parsePromotionDeterministicOracleProvenance,
+  verifyPromotionDeterministicOracleEvidence,
+  type PromotionBenchmarkClaimCeiling,
+  type PromotionBenchmarkDeterministicOracleProvenance,
+  type PromotionBenchmarkEvaluationRegime,
+  type PromotionBenchmarkExternalValidationStatus
+} from "./promotionBenchmarkDeterministicOracleContract.js";
 
 export { hashPromotionArtifactTree } from "./promotionArtifactTree.js";
 
@@ -23,9 +31,13 @@ export const PROMOTION_DECISIONS = ["promote", "needs_review", "downgrade", "blo
 
 export type PromotionDecision = typeof PROMOTION_DECISIONS[number];
 export type PromotionBenchmarkSplit = "development" | "test";
-export type PromotionBenchmarkEvidenceClass = "synthetic_development" | "human_adjudicated_test" | "external_real_run";
+export type PromotionBenchmarkEvidenceClass =
+  | "synthetic_development"
+  | "human_adjudicated_test"
+  | "deterministic_fault_injection_test"
+  | "external_real_run";
 export type PromotionBenchmarkAdjudicationStatus = "unreviewed" | "single_annotator" | "double_adjudicated";
-export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified";
+export type PromotionBenchmarkMutationIsolationStatus = "unreviewed" | "double_verified" | "oracle_verified";
 export type PromotionBenchmarkExecutionProvenanceStatus = "unverified" | "artifact_verified";
 
 export interface PromotionBenchmarkSourceSuiteCaseEvidence {
@@ -70,8 +82,12 @@ export interface PromotionBenchmarkSuiteManifest {
   mutation_isolation_status?: PromotionBenchmarkMutationIsolationStatus;
   execution_provenance_status?: PromotionBenchmarkExecutionProvenanceStatus;
   source_diversity_status?: PromotionBenchmarkSourceDiversityStatus;
+  evaluation_regime?: PromotionBenchmarkEvaluationRegime;
+  claim_ceiling?: PromotionBenchmarkClaimCeiling;
+  external_validation_status?: PromotionBenchmarkExternalValidationStatus;
   confirmatory_freeze_provenance?: PromotionConfirmatoryFreezeProvenance;
   adjudication_provenance?: PromotionBenchmarkAdjudicationProvenance;
+  deterministic_oracle_provenance?: PromotionBenchmarkDeterministicOracleProvenance;
   cases: string[];
 }
 
@@ -215,6 +231,9 @@ export interface PromotionBenchmarkScoreReport {
   mutation_isolation_status: PromotionBenchmarkMutationIsolationStatus | "unspecified";
   execution_provenance_status: PromotionBenchmarkExecutionProvenanceStatus | "unspecified";
   source_diversity_status: PromotionBenchmarkSourceDiversityStatus | "unspecified";
+  evaluation_regime: PromotionBenchmarkEvaluationRegime | "unspecified";
+  claim_ceiling: PromotionBenchmarkClaimCeiling | "unspecified";
+  external_validation_status: PromotionBenchmarkExternalValidationStatus | "unspecified";
   suite_ref: string;
   prediction_ref: string;
   passed: boolean;
@@ -357,6 +376,17 @@ export async function loadPromotionBenchmarkSuite(
       issues
     );
   }
+  if (manifest.deterministic_oracle_provenance) {
+    issues.push(...await verifyPromotionDeterministicOracleEvidence({
+      suiteRoot,
+      manifest,
+      cases,
+      caseArtifactRoots,
+      provenance: manifest.deterministic_oracle_provenance,
+      loadSuite: loadPromotionBenchmarkSuite,
+      hashSuiteSnapshot: hashPromotionBenchmarkSuiteSnapshot
+    }));
+  }
   if (manifest.source_diversity_status === "declared_stratified") {
     issues.push(...inspectPromotionSourceDiversity(cases).issues);
   }
@@ -450,6 +480,9 @@ export async function scorePromotionBenchmarkFromFiles(
     mutation_isolation_status: loaded.suite?.manifest.mutation_isolation_status || "unspecified",
     execution_provenance_status: loaded.suite?.manifest.execution_provenance_status || "unspecified",
     source_diversity_status: loaded.suite?.manifest.source_diversity_status || "unspecified",
+    evaluation_regime: loaded.suite?.manifest.evaluation_regime || "unspecified",
+    claim_ceiling: loaded.suite?.manifest.claim_ceiling || "unspecified",
+    external_validation_status: loaded.suite?.manifest.external_validation_status || "unspecified",
     suite_ref: portableRef(cwd, suitePath, "<external-suite>"),
     prediction_ref: portableRef(cwd, predictionsPath, "<external-predictions>"),
     passed: issues.length === 0,
@@ -957,6 +990,9 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
     `- Mutation isolation: ${report.mutation_isolation_status}`,
     `- Execution provenance: ${report.execution_provenance_status}`,
     `- Source diversity: ${report.source_diversity_status}`,
+    `- Evaluation regime: ${report.evaluation_regime}`,
+    `- Claim ceiling: ${report.claim_ceiling}`,
+    `- External validation: ${report.external_validation_status}`,
     "",
     "## System Summary",
     "",
@@ -1117,6 +1153,22 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({ code: "suite_source_diversity_status_invalid", message: "Suite source_diversity_status is invalid." });
     return undefined;
   }
+  if (value.evaluation_regime !== undefined && !isPromotionEvaluationRegime(value.evaluation_regime)) {
+    issues.push({ code: "suite_evaluation_regime_invalid", message: "Suite evaluation_regime is invalid." });
+    return undefined;
+  }
+  if (value.claim_ceiling !== undefined && !isPromotionClaimCeiling(value.claim_ceiling)) {
+    issues.push({ code: "suite_claim_ceiling_invalid", message: "Suite claim_ceiling is invalid." });
+    return undefined;
+  }
+  if (value.external_validation_status !== undefined
+      && !isPromotionExternalValidationStatus(value.external_validation_status)) {
+    issues.push({
+      code: "suite_external_validation_status_invalid",
+      message: "Suite external_validation_status is invalid."
+    });
+    return undefined;
+  }
   const adjudicationProvenance = value.adjudication_provenance === undefined
     ? undefined
     : parseAdjudicationProvenance(value.adjudication_provenance);
@@ -1124,6 +1176,16 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     issues.push({
       code: "suite_adjudication_provenance_invalid",
       message: "Suite adjudication_provenance must bind the source suite, two independent annotations, labels, and mutation audit inputs."
+    });
+    return undefined;
+  }
+  const deterministicOracleProvenance = value.deterministic_oracle_provenance === undefined
+    ? undefined
+    : parsePromotionDeterministicOracleProvenance(value.deterministic_oracle_provenance);
+  if (value.deterministic_oracle_provenance !== undefined && !deterministicOracleProvenance) {
+    issues.push({
+      code: "suite_deterministic_oracle_provenance_invalid",
+      message: "Suite deterministic_oracle_provenance must bind the registry, gold, split, oracle report, and development suite."
     });
     return undefined;
   }
@@ -1137,18 +1199,33 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     });
     return undefined;
   }
-  if (value.paper_claim_eligible === true
-      && (value.adjudication_status !== "double_adjudicated"
-        || value.mutation_isolation_status !== "double_verified"
-        || value.execution_provenance_status !== "artifact_verified"
-        || value.source_diversity_status !== "declared_stratified")) {
+  if (adjudicationProvenance && deterministicOracleProvenance) {
     issues.push({
-      code: "suite_paper_claim_eligibility_unverified",
-      message: "Paper-claim-eligible suites require artifact-verified execution provenance, declared source stratification, double adjudication, and double-verified mutation isolation."
+      code: "suite_gold_provenance_ambiguous",
+      message: "Human adjudication and deterministic oracle provenance are mutually exclusive."
     });
     return undefined;
   }
-  if (value.paper_claim_eligible === true
+  const deterministicStatusEligible = value.evidence_class === "deterministic_fault_injection_test"
+    && value.evaluation_regime === "controlled_deterministic_fault_injection"
+    && value.claim_ceiling === "registered_fault_families_only"
+    && value.adjudication_status === "unreviewed"
+    && value.mutation_isolation_status === "oracle_verified"
+    && Boolean(deterministicOracleProvenance)
+    && !adjudicationProvenance;
+  const humanStatusEligible = value.adjudication_status === "double_adjudicated"
+    && value.mutation_isolation_status === "double_verified"
+    && value.execution_provenance_status === "artifact_verified"
+    && value.source_diversity_status === "declared_stratified"
+    && !deterministicOracleProvenance;
+  if (value.paper_claim_eligible === true && !humanStatusEligible && !deterministicStatusEligible) {
+    issues.push({
+      code: "suite_paper_claim_eligibility_unverified",
+      message: "Paper-claim eligibility requires either verified human adjudication or a registry-bound deterministic fault-injection oracle."
+    });
+    return undefined;
+  }
+  if (value.paper_claim_eligible === true && humanStatusEligible
       && (!adjudicationProvenance
         || adjudicationProvenance.mutation_audit_report_sha256 === null
         || !adjudicationProvenance.source_suite_evidence)) {
@@ -1158,13 +1235,24 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     });
     return undefined;
   }
-  if (value.paper_claim_eligible === true
+  if (value.paper_claim_eligible === true && humanStatusEligible
       && (!confirmatoryFreezeProvenance
         || confirmatoryFreezeProvenance.intake_tier !== "paper_scale"
         || !confirmatoryFreezeProvenance.candidate_review)) {
     issues.push({
       code: "suite_paper_claim_freeze_provenance_missing",
       message: "Paper-claim-eligible suites require a hash-bound paper-scale confirmatory freeze."
+    });
+    return undefined;
+  }
+  if (deterministicOracleProvenance
+      && (!deterministicStatusEligible
+        || confirmatoryFreezeProvenance
+        || value.external_validation_status === "passed"
+        || value.claim_ceiling === "naturalistic_generalization_supported")) {
+    issues.push({
+      code: "suite_deterministic_oracle_scope_invalid",
+      message: "Deterministic oracle suites are limited to controlled fault injection and registered-family claims."
     });
     return undefined;
   }
@@ -1177,10 +1265,16 @@ function parseSuiteManifest(value: unknown, issues: PromotionBenchmarkValidation
     ...(value.mutation_isolation_status ? { mutation_isolation_status: value.mutation_isolation_status } : {}),
     ...(value.execution_provenance_status ? { execution_provenance_status: value.execution_provenance_status } : {}),
     ...(value.source_diversity_status ? { source_diversity_status: value.source_diversity_status } : {}),
+    ...(value.evaluation_regime ? { evaluation_regime: value.evaluation_regime } : {}),
+    ...(value.claim_ceiling ? { claim_ceiling: value.claim_ceiling } : {}),
+    ...(value.external_validation_status ? { external_validation_status: value.external_validation_status } : {}),
     ...(confirmatoryFreezeProvenance
       ? { confirmatory_freeze_provenance: confirmatoryFreezeProvenance }
       : {}),
     ...(adjudicationProvenance ? { adjudication_provenance: adjudicationProvenance } : {}),
+    ...(deterministicOracleProvenance
+      ? { deterministic_oracle_provenance: deterministicOracleProvenance }
+      : {}),
     cases: stringArray(value.cases) || []
   };
 }
@@ -2004,7 +2098,10 @@ function isPromotionDecision(value: unknown): value is PromotionDecision {
 }
 
 function isPromotionEvidenceClass(value: unknown): value is PromotionBenchmarkEvidenceClass {
-  return value === "synthetic_development" || value === "human_adjudicated_test" || value === "external_real_run";
+  return value === "synthetic_development"
+    || value === "human_adjudicated_test"
+    || value === "deterministic_fault_injection_test"
+    || value === "external_real_run";
 }
 
 function isPromotionAdjudicationStatus(value: unknown): value is PromotionBenchmarkAdjudicationStatus {
@@ -2012,11 +2109,25 @@ function isPromotionAdjudicationStatus(value: unknown): value is PromotionBenchm
 }
 
 function isPromotionMutationIsolationStatus(value: unknown): value is PromotionBenchmarkMutationIsolationStatus {
-  return value === "unreviewed" || value === "double_verified";
+  return value === "unreviewed" || value === "double_verified" || value === "oracle_verified";
 }
 
 function isPromotionExecutionProvenanceStatus(value: unknown): value is PromotionBenchmarkExecutionProvenanceStatus {
   return value === "unverified" || value === "artifact_verified";
+}
+
+function isPromotionEvaluationRegime(value: unknown): value is PromotionBenchmarkEvaluationRegime {
+  return value === "naturalistic_human_adjudicated"
+    || value === "controlled_deterministic_fault_injection";
+}
+
+function isPromotionClaimCeiling(value: unknown): value is PromotionBenchmarkClaimCeiling {
+  return value === "registered_fault_families_only"
+    || value === "naturalistic_generalization_supported";
+}
+
+function isPromotionExternalValidationStatus(value: unknown): value is PromotionBenchmarkExternalValidationStatus {
+  return value === "not_run" || value === "passed" || value === "failed";
 }
 
 function nonEmptyString(value: unknown): value is string {

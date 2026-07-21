@@ -97,6 +97,14 @@ Review decisions use four explicit authority tiers:
 
 The hierarchy is monotone with respect to deterministic blockers. New or corrected evidence must be hash-bound and evaluated again at `A0`; neither model nor human prose rewrites gate history. Fresh `EvidenceBundle` and `GateReport` artifacts bind each available audited input by portable path, SHA-256, and byte length so stale manuscript or evidence bytes cannot inherit a prior review gate.
 
+A3 is required only when the governed claim depends on human or legal
+authority. A controlled deterministic benchmark may establish metric gold at
+A0 when a frozen registry, independent artifact-replay oracle, hash-bound gold
+and split manifests, and held-out source/fault-family separation all verify.
+That path is limited to `registered_fault_families_only`; it cannot establish
+naturalistic generalization, reviewer identity, attestation, or redistribution
+permission.
+
 ### Paper-scale model review topology
 
 When `research:review` is paper-scale or the user requests multi-agent review, Codex plugin orchestration follows `docs/model-review-protocol.md`; the CLI validates and conservatively imports the resulting sidecar:

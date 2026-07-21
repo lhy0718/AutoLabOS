@@ -69,6 +69,8 @@ export interface PromotionRecoveryReport {
   generated_at: string;
   study_id: string;
   system_id: string;
+  evaluation_regime: "naturalistic_human_adjudicated" | "controlled_deterministic_fault_injection" | "unspecified";
+  claim_ceiling: "registered_fault_families_only" | "naturalistic_generalization_supported" | "unspecified";
   passed: boolean;
   recovery_manifest_sha256: string;
   original_suite_id: string;
@@ -180,8 +182,10 @@ export async function evaluatePromotionBenchmarkRecovery(
   appendLoadIssues(issues, repairedLoaded.issues, "repaired");
   appendLoadIssues(issues, originalPredictionLoad.issues, "original");
   appendLoadIssues(issues, repairedPredictionLoad.issues, "repaired");
-  inspectSuiteEligibility(originalLoaded.suite, "original", issues, true);
-  inspectSuiteEligibility(repairedLoaded.suite, "repaired", issues, false);
+  const controlledDeterministic = originalLoaded.suite?.manifest.evaluation_regime
+    === "controlled_deterministic_fault_injection";
+  inspectSuiteEligibility(originalLoaded.suite, "original", issues, true, controlledDeterministic);
+  inspectSuiteEligibility(repairedLoaded.suite, "repaired", issues, false, controlledDeterministic);
   inspectSystemRunProtocol(originalSystemRun, manifest.system_id, "original", issues);
   inspectSystemRunProtocol(repairedSystemRun, manifest.system_id, "repaired", issues);
   if (originalLoaded.suite?.manifest.suite_id !== manifest.study_id) {
@@ -259,8 +263,16 @@ export async function evaluatePromotionBenchmarkRecovery(
     });
   }
 
-  const requiredFamilies = promotionVariantDefinitions()
-    .flatMap((variant) => variant.mutation_family ? [variant.mutation_family] : []);
+  const requiredFamilies = controlledDeterministic
+    ? originalLoaded.suite?.manifest.deterministic_oracle_provenance?.test_mutation_families || []
+    : promotionVariantDefinitions()
+      .flatMap((variant) => variant.mutation_family ? [variant.mutation_family] : []);
+  if (controlledDeterministic && requiredFamilies.length === 0) {
+    issues.push({
+      code: "deterministic_required_fault_families_missing",
+      message: "Controlled recovery requires the held-out fault families bound by deterministic oracle provenance."
+    });
+  }
   const coveredFamilies = [...new Set(
     pairs
       .filter((pair) => pair.valid && pair.pair_kind === "fault_repair" && pair.mutation_family)
@@ -317,6 +329,8 @@ export async function evaluatePromotionBenchmarkRecovery(
     generated_at: new Date().toISOString(),
     study_id: manifest.study_id,
     system_id: manifest.system_id,
+    evaluation_regime: originalLoaded.suite?.manifest.evaluation_regime || "unspecified",
+    claim_ceiling: originalLoaded.suite?.manifest.claim_ceiling || "unspecified",
     passed: issues.length === 0,
     recovery_manifest_sha256: await sha256File(manifestPath),
     original_suite_id: originalLoaded.suite?.manifest.suite_id || "<invalid-suite>",
@@ -377,9 +391,39 @@ function inspectSuiteEligibility(
   suite: LoadedPromotionBenchmarkSuite | undefined,
   prefix: string,
   issues: PromotionRecoveryIssue[],
-  requirePaperClaimEligibility: boolean
+  requirePaperClaimEligibility: boolean,
+  controlledDeterministic: boolean
 ): void {
   if (!suite) return;
+  if (controlledDeterministic) {
+    if (suite.manifest.evaluation_regime !== "controlled_deterministic_fault_injection"
+        || suite.manifest.claim_ceiling !== "registered_fault_families_only"
+        || suite.manifest.evidence_class !== "deterministic_fault_injection_test"
+        || suite.manifest.adjudication_status !== "unreviewed") {
+      issues.push({
+        code: prefix + "_deterministic_recovery_contract_required",
+        message: "Controlled recovery suites must preserve the deterministic evaluation regime, registered-family claim ceiling, and non-human-adjudicated evidence class."
+      });
+    }
+    if (requirePaperClaimEligibility) {
+      if (suite.manifest.paper_claim_eligible !== true
+          || suite.manifest.mutation_isolation_status !== "oracle_verified"
+          || !suite.manifest.deterministic_oracle_provenance) {
+        issues.push({
+          code: prefix + "_deterministic_oracle_eligibility_required",
+          message: "The original controlled suite must be paper-claim-eligible and independently oracle-verified."
+        });
+      }
+    } else if (suite.manifest.paper_claim_eligible === true
+        || suite.manifest.deterministic_oracle_provenance
+        || suite.manifest.execution_provenance_status !== "artifact_verified") {
+      issues.push({
+        code: prefix + "_deterministic_repair_evidence_invalid",
+        message: "A repaired controlled suite must be artifact-verified recovery evidence and must not inherit the original oracle certification or paper eligibility."
+      });
+    }
+    return;
+  }
   if (suite.manifest.evidence_class !== "external_real_run") {
     issues.push({ code: prefix + "_external_real_run_required", message: "Recovery requires external real-run suites." });
   }

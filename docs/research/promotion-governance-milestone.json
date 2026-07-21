@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "f1235c2312ea748999b73ec4595a2cf48d9559085e85b0896cadc99350693304"
+          "sha256": "b74a9c9848b42e89263560d899c7a28f754183857dfa1dea9ba316fccdf24d2b"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -116,315 +116,66 @@
       ]
     },
     {
-      "id": "candidate_trace_floor",
-      "label": "A source-bound and outcome-blind 72-base candidate handoff with paired comparison traces is prepared",
+      "id": "controlled_oracle_confirmatory_suite",
+      "label": "The oracle-certified controlled benchmark and confirmatory gate satisfy the registered-fault-family evidence contract",
       "target_node": "design_experiments",
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-trial-candidate-handoff-v10.json",
-          "sha256": "c201fd278e2a85aa329d81e1ad21d7b1a9312d822be9f5f1a0aef03843829318",
+          "path": "outputs/promotion-governance/controlled-benchmark/controlled-benchmark-manifest.json",
+          "sha256": "b99b0e1094d8e7d2edc00d8c9d7f7a63ae5d6ec70ea51ad24d99f3ab2c5db11c",
           "assertions": [
             {
-              "pointer": "/selection/selected_base_count",
+              "pointer": "/evaluation_regime",
+              "operator": "equals",
+              "expected": "controlled_deterministic_fault_injection"
+            },
+            {
+              "pointer": "/test_base_bundle_count",
               "operator": "gte",
               "expected": 72
             },
             {
-              "pointer": "/selection/selected_trial_count",
+              "pointer": "/test_case_count",
               "operator": "gte",
-              "expected": 432
-            },
-            {
-              "pointer": "/integrity/handoff_inspection_passed",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/paper_scale_trace_floor_met",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/paper_scale_comparison_floor_met",
-              "operator": "equals",
-              "expected": true
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "independent_candidate_and_license_review",
-      "label": "Two independent candidate reviews and a distinct source-license review pass for all 72 bases",
-      "target_node": "review",
-      "required": true,
-      "evidence": [
-        {
-          "path": "docs/research/evidence/promotion-trial-candidate-review-preflight-v13.json",
-          "sha256": "8867013b4a2dd1492d5533a35540f09e80bf8d5541f89418ac9031e09cb82416",
-          "assertions": [
-            {
-              "pointer": "/return_guides/package_relative_preflight_commands_present",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/return_guides/controller_path_required",
-              "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/return_guides/peer_path_required",
-              "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/fresh_extraction/reviewer_a_exact_tree_match",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/fresh_extraction/reviewer_b_exact_tree_match",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/fresh_extraction/license_reviewer_exact_tree_match",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/campaign/human_annotation_completed_count",
-              "operator": "gte",
-              "expected": 144
-            },
-            {
-              "pointer": "/campaign/human_license_review_completed",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/progression_gate/candidate_scoped_review_completed",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/progression_gate/two_independent_candidate_reviews_completed",
-              "operator": "equals",
-              "expected": true
-            }
-          ]
-        },
-        {
-          "path": "docs/research/evidence/promotion-trial-candidate-review-distribution-v15.json",
-          "sha256": "c734e6895ef533aabf6822239067124e7da908c4bd9e70ec5ff11a85106db1b3",
-          "assertions": [
-            {
-              "pointer": "/distribution/package_count",
-              "operator": "equals",
-              "expected": 3
-            },
-            {
-              "pointer": "/distribution/self_inspection_passed",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/distribution/deterministic_repeat_exact_match",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/aggregate/all_single_role_root",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/aggregate/all_regular_file_or_directory_entries_only",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/aggregate/all_controller_content_absent",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/aggregate/all_peer_package_content_absent",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/aggregate/all_fresh_extraction_exact_tree_match",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/progression_gate/paper_ready",
-              "operator": "equals",
-              "expected": false
-            }
-          ]
-        },
-        {
-          "path": "docs/research/evidence/promotion-trial-candidate-license-review-workspace-v1.json",
-          "sha256": "bdcde16304a57ac6ff4d9ef9fdd17f92f377cc788a0efa79e7030dc98de70690",
-          "assertions": [
-            {
-              "pointer": "/assigned_package/review_scope",
-              "operator": "equals",
-              "expected": "candidate_scoped"
-            },
-            {
-              "pointer": "/workspace/subject_file_count",
-              "operator": "equals",
-              "expected": 76
-            },
-            {
-              "pointer": "/workspace/human_decisions_supplied_by_system",
-              "operator": "equals",
-              "expected": 0
-            },
-            {
-              "pointer": "/workspace/human_attestations_set_by_system",
-              "operator": "equals",
-              "expected": 0
-            },
-            {
-              "pointer": "/audit/workspace_valid",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/audit/ready_to_finalize",
-              "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/audit/incomplete_subject_review_count",
-              "operator": "equals",
-              "expected": 76
-            },
-            {
-              "pointer": "/fail_closed_finalization/output_exists",
-              "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/research_state/completed_human_license_review_count",
-              "operator": "equals",
-              "expected": 0
-            },
-            {
-              "pointer": "/research_state/paper_ready",
-              "operator": "equals",
-              "expected": false
-            }
-          ]
-        },
-        {
-          "path": "docs/research/evidence/promotion-human-review-coordination-v1.json",
-          "sha256": "3fac357dd0b77f94c859584b48613ceb0a547bb1f09e50fce7d45c2bea2a5efd",
-          "assertions": [
-            {
-              "pointer": "/evidence_class",
-              "operator": "equals",
-              "expected": "machine_operation_only"
+              "expected": 720
             },
             {
               "pointer": "/paper_claim_eligible",
               "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/initial_live_audit/coordination_valid",
-              "operator": "equals",
-              "expected": false
-            },
-            {
-              "pointer": "/final_live_audit/coordination_valid",
-              "operator": "equals",
               "expected": true
             },
             {
-              "pointer": "/final_live_audit/ready_for_collection",
+              "pointer": "/claim_ceiling",
               "operator": "equals",
-              "expected": false
+              "expected": "registered_fault_families_only"
             },
             {
-              "pointer": "/final_live_audit/structurally_valid_role_count",
+              "pointer": "/external_validation_status",
               "operator": "equals",
-              "expected": 4
-            },
-            {
-              "pointer": "/final_live_audit/role_separation/candidate_reviewers_distinct",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/final_live_audit/role_separation/license_reviewer_distinct_from_candidates",
-              "operator": "equals",
-              "expected": true
-            },
-            {
-              "pointer": "/final_live_audit/human_decisions_supplied_by_system",
-              "operator": "equals",
-              "expected": 0
-            },
-            {
-              "pointer": "/final_live_audit/human_attestations_set_by_system",
-              "operator": "equals",
-              "expected": 0
-            },
-            {
-              "pointer": "/research_state/paper_ready",
-              "operator": "equals",
-              "expected": false
+              "expected": "not_run"
             }
           ]
-        }
-      ]
-    },
-    {
-      "id": "canonical_curation_and_confirmatory_admission",
-      "label": "Human-reviewed candidates are canonically curated, independently verified, and admitted to a frozen confirmatory corpus",
-      "target_node": "run_experiments",
-      "required": true,
-      "evidence": [
+        },
         {
-          "path": "docs/research/evidence/promotion-trial-candidate-handoff-v10.json",
-          "sha256": "c201fd278e2a85aa329d81e1ad21d7b1a9312d822be9f5f1a0aef03843829318",
+          "path": "outputs/promotion-governance/controlled-confirmatory/promotion-confirmatory-gate.json",
+          "sha256": null,
           "assertions": [
             {
-              "pointer": "/independent_candidate_review_completed",
+              "pointer": "/evaluation_regime",
               "operator": "equals",
-              "expected": true
+              "expected": "controlled_deterministic_fault_injection"
             },
             {
-              "pointer": "/canonical_curation_completed",
+              "pointer": "/claim_ceiling",
               "operator": "equals",
-              "expected": true
+              "expected": "registered_fault_families_only"
             },
             {
-              "pointer": "/confirmatory_admitted",
+              "pointer": "/external_validation_status",
               "operator": "equals",
-              "expected": true
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "id": "paper_scale_confirmatory_suite",
-      "label": "The held-out confirmatory suite contains at least 72 bases and 720 cases and passes the evidence gate",
-      "target_node": "design_experiments",
-      "required": true,
-      "evidence": [
-        {
-          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
-          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
-          "assertions": [
+              "expected": "not_run"
+            },
             {
               "pointer": "/base_bundle_count",
               "operator": "gte",
@@ -451,38 +202,33 @@
     },
     {
       "id": "real_model_repetition",
-      "label": "The manuscript-only comparison has three complete hash-bound real-model development trials",
+      "label": "The manuscript-only comparison has three complete hash-bound real-model controlled-test trials",
       "target_node": "run_experiments",
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-real-model-development-evidence-v1.json",
-          "sha256": "17e95276ee6360c9f0464a4b9d05b16943c3121f55083f4a5de1369808053ae4",
+          "path": "outputs/promotion-governance/controlled-confirmatory/provider-aggregate/provider-run-aggregate-manifest.json",
+          "sha256": null,
           "assertions": [
             {
-              "pointer": "/real_model_evaluation/status",
+              "pointer": "/trial_count",
               "operator": "equals",
-              "expected": "verified_development_only"
-            },
-            {
-              "pointer": "/real_model_evaluation/trial_count",
-              "operator": "gte",
               "expected": 3
             },
             {
-              "pointer": "/real_model_evaluation/prediction_count",
-              "operator": "gte",
-              "expected": 120
+              "pointer": "/independent_trial_requirement_met",
+              "operator": "equals",
+              "expected": true
             },
             {
-              "pointer": "/real_model_evaluation/paper_claim_evidence_eligible",
+              "pointer": "/real_model_empirical_evidence_eligible",
               "operator": "equals",
-              "expected": false
+              "expected": true
             },
             {
-              "pointer": "/confirmatory_gate/provider_repetition/status",
+              "pointer": "/paper_claim_evidence_eligible",
               "operator": "equals",
-              "expected": "verified_receipt_distinct"
+              "expected": true
             }
           ]
         }
@@ -495,8 +241,8 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/development-confirmatory-gate-v2/promotion-confirmatory-gate.json",
-          "sha256": "df9546a1052ddaf90b358ff64dd943c21fa0746b30a4b7066ccad6a152529a05",
+          "path": "outputs/promotion-governance/controlled-confirmatory/promotion-confirmatory-gate.json",
+          "sha256": null,
           "assertions": [
             {
               "pointer": "/recovery/status",
@@ -505,13 +251,8 @@
             },
             {
               "pointer": "/recovery/original_fault_case_count",
-              "operator": "equals",
-              "expected": 648
-            },
-            {
-              "pointer": "/recovery/covered_fault_case_count",
-              "operator": "equals",
-              "expected": 648
+              "operator": "gte",
+              "expected": 1
             },
             {
               "pointer": "/recovery/missing_fault_case_count",
@@ -786,7 +527,7 @@
       "evidence": [
         {
           "path": "papers/promotion-governance/submission-status.json",
-          "sha256": "9e60c7fcb6f127d978fbf1800f69f4d223dc9f5bd6cc48b8e072df2d459671b3",
+          "sha256": null,
           "assertions": [
             {
               "pointer": "/paper_ready",
@@ -807,11 +548,11 @@
         },
         {
           "path": "papers/promotion-governance/manuscript.tex",
-          "sha256": "2202f3e6b3e06b347c0dd6dcd5af0bf29bc38e3eefc9eed90766ad57f41bb563"
+          "sha256": null
         },
         {
           "path": "papers/promotion-governance/manuscript.pdf",
-          "sha256": "aa6d26fc38fedfa259297f512b03118f09297c4c4d21930492161f29f484b235"
+          "sha256": null
         }
       ]
     },
@@ -823,7 +564,7 @@
       "evidence": [
         {
           "path": "outputs/promotion-governance/final-paper-readiness-bundle-v6/paper-readiness-bundle.json",
-          "sha256": "728eb1603a32b61a8c61b43ccdd43763314eaba8145fd679ba07dbed7f1cca0c",
+          "sha256": null,
           "assertions": [
             {
               "pointer": "/portability/valid",

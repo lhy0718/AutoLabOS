@@ -50,7 +50,7 @@ export async function generateSyntheticPromotionCorpus(
       const delta = deltas[baseIndex % deltas.length];
       const baseId = `base-development-${baseIndex + 1}`;
       const sourceRoot = path.join(stagingRoot, "base-bundles", baseId);
-      await writeCleanBaseBundle(sourceRoot, baseId, delta, baseIndex);
+      await writeSyntheticPromotionBaseBundle(sourceRoot, baseId, delta, baseIndex);
       for (const [variantIndex, variant] of variants.entries()) {
         cases.push({
           case_id: `development-${baseIndex + 1}-${variantIndex + 1}`,
@@ -103,7 +103,12 @@ export async function generateSyntheticPromotionCorpus(
   };
 }
 
-async function writeCleanBaseBundle(root: string, baseId: string, delta: number, baseIndex: number): Promise<void> {
+export async function writeSyntheticPromotionBaseBundle(
+  root: string,
+  baseId: string,
+  delta: number,
+  baseIndex: number
+): Promise<void> {
   await fs.mkdir(path.join(root, "figure_audit"), { recursive: true });
   await fs.mkdir(path.join(root, "review"), { recursive: true });
   await fs.mkdir(path.join(root, "paper"), { recursive: true });
