@@ -32,10 +32,6 @@ const accuracyObjective: ObjectiveMetricProfile = {
   assumptions: []
 };
 
-function chars(values: number[]): string {
-  return String.fromCharCode(...values);
-}
-
 describe("designExperimentsPanel", () => {
   it("blocks reporting-integrity audits that drift away from a model-quality objective", () => {
     const modelQuality = candidate({
@@ -118,14 +114,14 @@ describe("designExperimentsPanel", () => {
         "accuracy_delta_vs_baseline"
       ],
       evaluation_steps: [
-        "Produce at least one completed source training batch covering the 8 rank x parameter_y conditions with real metrics.",
+        "Produce at least one completed source training batch covering the 8 parameter x x parameter_y conditions with real metrics.",
         "Construct audit packets from those outputs without inventing new accuracy values."
       ]
     });
     const factorial = candidate({
       id: "factorial",
       title: "Staged full 4x2 factorial with promotion gate to paper-ready evidence",
-      plan_summary: "Run the complete rank x parameter_y design under a staged evidence plan.",
+      plan_summary: "Run the complete parameter x x parameter_y design under a staged evidence plan.",
       metrics: ["Primary: avg_accuracy and delta_avg_accuracy_vs_baseline_pp", "benchmark_task_a_accuracy"]
     });
 
@@ -196,7 +192,7 @@ describe("designExperimentsPanel", () => {
       id: "one_seed_pilot",
       title: "One-seed factorial audit pilot",
       plan_summary:
-        "Run a one-seed audit pilot to validate local training, parseable tables, failure visibility, and claim-downgrade logic. The pilot ceiling is explicit: it cannot support paper-ready rank, dropout, interaction, or model-quality claims because it has only one training seed per cell.",
+        "Run a one-seed audit pilot to validate local training, parseable tables, failure visibility, and claim-downgrade logic. The pilot ceiling is explicit: it cannot support paper-ready parameter x, parameter y, interaction, or model-quality claims because it has only one training seed per cell.",
       metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "failed_run_visibility_pass"],
       implementation_notes: ["Use one seed per condition and label the output as pilot evidence only."],
       evaluation_steps: ["If all cells complete, use this pilot to authorize repeated-seed design; do not use it as final evidence."],
@@ -220,7 +216,7 @@ describe("designExperimentsPanel", () => {
   });
 
   it("blocks easier designs that explicitly abandon the requested interaction claim", () => {
-    const regularizationAxis = chars([100, 114, 111, 112, 111, 117, 116]);
+    const regularizationAxis = "regularization";
     const interactionFactorial = candidate({
       id: "interaction_factorial",
       title: "Repeated-seed condition-parameter interaction factorial",

@@ -890,7 +890,7 @@ describe("manuscriptQuality style lint", () => {
       {
         heading: "Supplementary Experimental Details",
         paragraphs: [
-          "The full planning space covered rank and parameter_y cells, while the confirmatory stage focused on the cells that fit the live validation budget."
+          "The full planning space covered parameter x and parameter_y cells, while the confirmatory stage focused on the cells that fit the live validation budget."
         ]
       }
     ];
@@ -920,7 +920,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Supplementary Experimental Details",
                 paragraph_index: 0,
-                excerpt: "The full planning space covered rank and parameter_y cells",
+                excerpt: "The full planning space covered parameter x and parameter_y cells",
                 reason: "This is the local appendix paragraph."
               }
             ]

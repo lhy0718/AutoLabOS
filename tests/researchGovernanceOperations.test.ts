@@ -21,7 +21,8 @@ import {
   runResearchImprove,
   runResearchNew,
   runResearchPack,
-  runResearchReview
+  runResearchReview,
+  verifyExternalIntakeManifestBindings
 } from "../src/core/researchGovernanceOperations.js";
 
 const tempDirs: string[] = [];
@@ -84,7 +85,7 @@ describe("research governance operations", () => {
     });
 
     expect(result.artifact.artifact_type).toBe("ResearchBrief");
-    expect(result.artifact.schema_version).toBe("1.0");
+    expect(result.artifact.schema_version).toBe("2.0");
     expect(result.artifact.completeness.paper_scale_ready).toBe(false);
     expect(result.artifact.validation.errors.length).toBeGreaterThan(0);
     expect(result.output_path).toBe("outputs/governance/new/research-brief.json");
@@ -122,6 +123,9 @@ describe("research governance operations", () => {
     expect(gateResult.artifact.verdict).toBe("blocked");
     expect(reviewResult.artifact.readiness_class).toBe("blocked_for_paper_scale");
     expect(reviewResult.artifact.paper_ready).toBe(false);
+    expect(reviewResult.artifact.reviewer_assurance.gate_report_sha256).toBe(
+      createHash("sha256").update(await readFile(path.join(workspace, gateResult.output_path))).digest("hex")
+    );
     expect(improveResult.artifact.apply_mode).toBe("plan_only");
     expect(improveResult.artifact.targets.length).toBeGreaterThan(0);
     expect(improveResult.artifact.targets).toEqual(expect.arrayContaining([
@@ -227,8 +231,12 @@ describe("research governance operations", () => {
       reviewPath: reviewResult.output_path,
       outDir: "outputs/governance/improve"
     });
+    const reviewReportBytes = await readFile(path.resolve(workspace, reviewResult.output_path));
 
     expect(gateResult.artifact.checks.citation_support_issues).toBe(2);
+    expect(improveResult.artifact.review_report_sha256).toBe(
+      createHash("sha256").update(reviewReportBytes).digest("hex")
+    );
     expect(gateResult.artifact.findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "citation_support_gap", target_node: "analyze_papers" }),
       expect.objectContaining({ code: "citation_support_gap", target_node: "collect_papers" }),
@@ -293,6 +301,112 @@ describe("research governance operations", () => {
     expect(firstBinding?.sha256).not.toBe(secondBinding?.sha256);
     expect(first.artifact.evidence_bundle_id).not.toBe(second.artifact.evidence_bundle_id);
     expect(first.artifact.artifact_id).not.toBe(second.artifact.artifact_id);
+  });
+
+  it("requires every frozen external intake binding in EvidenceBundle and GateReport", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-external-bindings-"));
+    const external = path.join(workspace, "external-package");
+    const supportRoot = path.join(workspace, "support-root");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await mkdir(path.join(supportRoot, "src"), { recursive: true });
+    await writeFile(path.join(external, "manuscript.tex"), "\\section{Method}\n", "utf8");
+    const supportContent = "export const evidenceContract = true;\n";
+    await writeFile(path.join(supportRoot, "src", "evidence-contract.ts"), supportContent, "utf8");
+    const supportManifestPath = path.join(workspace, "support-manifest.json");
+    await writeJson(supportManifestPath, {
+      schema_version: "1.0",
+      files: [{
+        path: "src/evidence-contract.ts",
+        sha256: createHash("sha256").update(supportContent).digest("hex"),
+        bytes: Buffer.byteLength(supportContent)
+      }]
+    });
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      supportRoot,
+      supportManifestPath,
+      outDir: "outputs/governance/audit"
+    });
+    const manifest = JSON.parse(await readFile(
+      path.join(workspace, "outputs", "governance", "audit", "external-intake-manifest.json"),
+      "utf8"
+    )) as {
+      run_root: string;
+      copied_files: string[];
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    const evidenceBundle = JSON.parse(await readFile(
+      path.join(workspace, "outputs", "governance", "audit", "evidence-bundle.json"),
+      "utf8"
+    )) as { files: Array<{ path: string; sha256?: string; bytes?: number; required: boolean }> };
+
+    expect(manifest.copied_file_bindings.map((binding) => binding.path)).toEqual(manifest.copied_files);
+    for (const binding of manifest.copied_file_bindings) {
+      const expectedPath = path.posix.join(manifest.run_root, binding.path);
+      const expectedBinding = {
+        path: expectedPath,
+        sha256: binding.sha256,
+        bytes: binding.bytes,
+        required: true
+      };
+      expect(gateResult.artifact.input_bindings).toContainEqual(expectedBinding);
+      expect(evidenceBundle.files).toContainEqual(expectedBinding);
+    }
+  });
+
+  it("rejects external intake inventory gaps, unbound files, and frozen byte drift", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-research-external-drift-"));
+    const external = path.join(workspace, "external-package");
+    tempDirs.push(workspace);
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "manuscript.tex"), "\\section{Results}\n", "utf8");
+    await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      outDir: "outputs/governance/audit"
+    });
+
+    const manifestPath = path.join(
+      workspace,
+      "outputs",
+      "governance",
+      "audit",
+      "external-intake-manifest.json"
+    );
+    const originalManifest = await readFile(manifestPath, "utf8");
+    const manifest = JSON.parse(originalManifest) as {
+      run_root: string;
+      copied_files: string[];
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    const verifyInput = {
+      cwd: workspace,
+      manifestPath,
+      runRoot: manifest.run_root
+    };
+
+    await expect(verifyExternalIntakeManifestBindings(verifyInput)).resolves.toHaveLength(
+      manifest.copied_files.length
+    );
+    await writeJson(manifestPath, {
+      ...manifest,
+      copied_file_bindings: manifest.copied_file_bindings.slice(1)
+    });
+    await expect(verifyExternalIntakeManifestBindings(verifyInput)).rejects.toThrow("closed inventory");
+
+    await writeFile(manifestPath, originalManifest, "utf8");
+    const runRoot = path.join(workspace, ...manifest.run_root.split("/"));
+    const unboundPath = path.join(runRoot, "unbound-support.txt");
+    await writeFile(unboundPath, "unbound\n", "utf8");
+    await expect(verifyExternalIntakeManifestBindings(verifyInput)).rejects.toThrow("closed inventory");
+    await rm(unboundPath);
+
+    const boundPath = path.join(runRoot, ...manifest.copied_file_bindings[0].path.split("/"));
+    await writeFile(boundPath, `${await readFile(boundPath, "utf8")}drift\n`, "utf8");
+    await expect(verifyExternalIntakeManifestBindings(verifyInput)).rejects.toThrow("binding drift");
   });
 
   it("blocks active runs even when stale paper-scale artifacts look complete", async () => {
@@ -538,10 +652,11 @@ describe("research governance operations", () => {
     const taskName = ["Task", "Alpha"].join("");
     const modelName = ["Model", "1B"].join("-");
     const conditionName = ["condition", "4", "parameter", "0"].join("_");
+    const traceId = ["trace", "fixture", "alpha"].join("_");
     await writeJson(path.join(workspace, "outputs", "governance", "audit", "audit-summary.json"), {
       task_id: runId,
       statement: `A comparison on ${taskName} used ${modelName} and ${conditionName}.`,
-      trace_id: "evt_1778330583786_5f19307b",
+      trace_id: traceId,
       contract_path: "done-condition-audit.json"
     });
 
@@ -566,8 +681,9 @@ describe("research governance operations", () => {
     expect(packedText).toContain("<task-id>");
     expect(packedText).toContain("<model-id>");
     expect(packedText).toContain("<condition-id>");
-    expect(packedText).toContain("evt_1778330583786_5f19307b");
-    expect(packedText).toContain("done-condition-audit.json");
+    expect(packedText).not.toContain(traceId);
+    expect(packedText).toContain("<trace-id>");
+    expect(packedText).toContain("done-<condition-id>.json");
   });
 
   it("keeps explicit gate and review artifacts when source files target the same bundle paths", async () => {
@@ -637,7 +753,7 @@ describe("research governance operations", () => {
       reviewPath: reviewResult.output_path,
       sourceDir: "manuscript-source",
       outDir: "outputs/governance/pack"
-    })).rejects.toThrow("contains no supported governance sidecar artifacts");
+    })).rejects.toThrow("requires --source-dir/evidence-bundle.json");
     await expect(readFile(
       path.join(workspace, "outputs", "governance", "pack", "paper-readiness-bundle.json"),
       "utf8"
@@ -690,7 +806,7 @@ describe("research governance operations", () => {
     const packRoot = await writeGovernancePack(workspace);
     const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
     const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-    const privatePath = path.posix.join(String.fromCharCode(47), "home", "example", "workspace-item");
+    const privatePath = path.posix.join(path.posix.sep, "home", "example", "workspace-item");
     manifest.limitations.push(`Inspect ${privatePath} before release.`);
     await writeJson(manifestPath, manifest);
 
@@ -801,6 +917,7 @@ describe("research governance operations", () => {
     expect(reviewResult.artifact.reviewer_assurance).toEqual(expect.objectContaining({
       tier: "A2_model_conservative",
       panel_size: 5,
+      gate_report_sha256: gateSha256,
       model_review_bundle_sha256: createHash("sha256").update(modelReviewBundleBytes).digest("hex"),
       independent_contexts: true,
       adjudicator_present: true,
@@ -818,6 +935,133 @@ describe("research governance operations", () => {
       modelReviewBundlePath: "model-review-bundle.json",
       outDir: "outputs/governance/review-tampered"
     })).rejects.toThrow("does not match the supplied GateReport bytes");
+  });
+
+  it("requires the exact fixed-path ModelReviewBundle sidecar for A2 packs", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-model-review-pack-source-"));
+    tempDirs.push(workspace);
+    const fixture = await writeA2ReviewFixture(workspace);
+    const packInput = {
+      cwd: workspace,
+      gatePath: fixture.gateResult.output_path,
+      reviewPath: fixture.reviewResult.output_path,
+      sourceDir: fixture.sourceDir,
+      outDir: "outputs/governance/pack"
+    };
+
+    await expect(runResearchPack(packInput)).rejects.toThrow(
+      "model-review-bundle.json directly under --source-dir"
+    );
+
+    const sourceSidecarPath = path.join(workspace, fixture.sourceDir, "model-review-bundle.json");
+    await writeFile(sourceSidecarPath, Buffer.concat([
+      fixture.modelReviewBundleBytes,
+      Buffer.from("\n", "utf8")
+    ]));
+    await expect(runResearchPack(packInput)).rejects.toThrow(
+      "sidecar SHA-256 does not match ReviewReport reviewer_assurance"
+    );
+
+    await writeFile(sourceSidecarPath, fixture.modelReviewBundleBytes);
+    const packResult = await runResearchPack(packInput);
+    const packedSidecarPath = path.join(
+      workspace,
+      "outputs",
+      "governance",
+      "pack",
+      "artifacts",
+      "model-review-bundle.json"
+    );
+    expect(await readFile(packedSidecarPath)).toEqual(fixture.modelReviewBundleBytes);
+    expect(packResult.artifact.files).toContainEqual(expect.objectContaining({
+      path: "artifacts/model-review-bundle.json",
+      sha256: fixture.reviewResult.artifact.reviewer_assurance.model_review_bundle_sha256
+    }));
+    await expect(inspectPaperReadinessBundle({
+      cwd: workspace,
+      bundleRoot: "outputs/governance/pack"
+    })).resolves.toEqual(expect.objectContaining({ verdict: "pass", issues: [] }));
+  });
+
+  it("rejects missing or byte-tampered EvidenceBundle sidecars during packing", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-evidence-pack-tamper-"));
+    tempDirs.push(workspace);
+    const fixture = await writeA2ReviewFixture(workspace);
+    const evidencePath = path.join(workspace, fixture.sourceDir, "evidence-bundle.json");
+    const evidenceBytes = await readFile(evidencePath);
+    const packInput = {
+      cwd: workspace,
+      gatePath: fixture.gateResult.output_path,
+      reviewPath: fixture.reviewResult.output_path,
+      sourceDir: fixture.sourceDir,
+      outDir: "outputs/governance/pack"
+    };
+
+    await rm(evidencePath);
+    await expect(runResearchPack(packInput)).rejects.toThrow(
+      "evidence-bundle.json to be a regular, non-symbolic-link file"
+    );
+
+    await writeFile(evidencePath, Buffer.concat([evidenceBytes, Buffer.from("\n", "utf8")]));
+    await expect(runResearchPack(packInput)).rejects.toThrow(
+      "EvidenceBundle sidecar SHA-256 does not match"
+    );
+  });
+
+  it("rejects a semantically tampered A2 ReviewReport even when its artifact id is preserved", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-review-pack-tamper-"));
+    tempDirs.push(workspace);
+    const fixture = await writeA2ReviewFixture(workspace);
+    await writeFile(
+      path.join(workspace, fixture.sourceDir, "model-review-bundle.json"),
+      fixture.modelReviewBundleBytes
+    );
+    const reviewPath = path.join(workspace, fixture.reviewResult.output_path);
+    const review = JSON.parse(await readFile(reviewPath, "utf8"));
+    const preservedArtifactId = review.artifact_id;
+    review.paper_ready = true;
+    await writeJson(reviewPath, review);
+
+    await expect(runResearchPack({
+      cwd: workspace,
+      gatePath: fixture.gateResult.output_path,
+      reviewPath: fixture.reviewResult.output_path,
+      sourceDir: fixture.sourceDir,
+      outDir: "outputs/governance/pack"
+    })).rejects.toThrow("does not exactly match its bound gate and ModelReviewBundle reconstruction");
+    expect(review.artifact_id).toBe(preservedArtifactId);
+  });
+
+  it("detects A2 packed sidecar tampering even when the manifest file hash is updated", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-model-review-pack-tamper-"));
+    tempDirs.push(workspace);
+    const packRoot = await writeA2GovernancePack(workspace);
+    const sidecarPath = path.join(packRoot, "artifacts", "model-review-bundle.json");
+    const tamperedBytes = Buffer.concat([
+      await readFile(sidecarPath),
+      Buffer.from("\n", "utf8")
+    ]);
+    await writeFile(sidecarPath, tamperedBytes);
+    const manifestPath = path.join(packRoot, "paper-readiness-bundle.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      files: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    const sidecarBinding = manifest.files.find(
+      (binding) => binding.path === "artifacts/model-review-bundle.json"
+    );
+    if (!sidecarBinding) throw new Error("A2 fixture did not bind its ModelReviewBundle sidecar.");
+    sidecarBinding.sha256 = createHash("sha256").update(tamperedBytes).digest("hex");
+    sidecarBinding.bytes = tamperedBytes.byteLength;
+    await writeJson(manifestPath, manifest);
+
+    const inspection = await inspectPaperReadinessBundle({ cwd: workspace, bundleRoot: packRoot });
+
+    expect(inspection.verdict).toBe("fail");
+    expect(inspection.issues).toContainEqual(expect.objectContaining({
+      code: "artifact_binding_mismatch",
+      path: "artifacts/model-review-bundle.json",
+      message: expect.stringContaining("reviewer_assurance.model_review_bundle_sha256")
+    }));
   });
 
   it("advances a structurally complete external bundle only to its supported claim ceiling", async () => {
@@ -970,6 +1214,50 @@ function bindReviewHashes(bundle: ModelReviewBundle): void {
     bundle.reviewers
   );
   bundle.adjudicator.provenance.output_sha256 = hashModelReviewOutput(bundle.adjudicator);
+}
+
+async function writeA2ReviewFixture(workspace: string) {
+  const external = path.join(workspace, "external-artifacts");
+  await writeCompleteExternalBundle(external);
+  const gateResult = await runResearchAudit({
+    cwd: workspace,
+    externalRoot: external,
+    outDir: "outputs/governance/audit"
+  });
+  const gateBytes = await readFile(path.join(workspace, gateResult.output_path));
+  const gateSha256 = createHash("sha256").update(gateBytes).digest("hex");
+  const modelReviewBundle = makeModelReviewBundle(gateResult.artifact.artifact_id, gateSha256);
+  const modelReviewBundlePath = path.join(workspace, "model-review-input.json");
+  await writeJson(modelReviewBundlePath, modelReviewBundle);
+  const modelReviewBundleBytes = await readFile(modelReviewBundlePath);
+  const reviewResult = await runResearchReview({
+    cwd: workspace,
+    gatePath: gateResult.output_path,
+    modelReviewBundlePath: "model-review-input.json",
+    outDir: "outputs/governance/review"
+  });
+  return {
+    gateResult,
+    reviewResult,
+    modelReviewBundleBytes,
+    sourceDir: "outputs/governance/audit"
+  };
+}
+
+async function writeA2GovernancePack(workspace: string): Promise<string> {
+  const fixture = await writeA2ReviewFixture(workspace);
+  await writeFile(
+    path.join(workspace, fixture.sourceDir, "model-review-bundle.json"),
+    fixture.modelReviewBundleBytes
+  );
+  await runResearchPack({
+    cwd: workspace,
+    gatePath: fixture.gateResult.output_path,
+    reviewPath: fixture.reviewResult.output_path,
+    sourceDir: fixture.sourceDir,
+    outDir: "outputs/governance/pack"
+  });
+  return path.join(workspace, "outputs", "governance", "pack");
 }
 
 async function writeGovernancePack(workspace: string): Promise<string> {

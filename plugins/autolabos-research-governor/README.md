@@ -9,6 +9,22 @@ The plugin does not promise that a completed workflow or compiled draft is a
 paper-ready result. External outputs remain untrusted evidence until AutoLabOS
 gates classify them.
 
+## Installation
+
+From a clean checkout, run these commands at the repository root:
+
+```sh
+codex plugin marketplace add .
+codex plugin add autolabos-research-governor@autolabos-local
+codex plugin list
+```
+
+The first command registers this repository's local marketplace. The second
+installs and enables the plugin from that marketplace. The final command should
+show the plugin as installed and enabled. Run the install command again after a
+plugin version or cachebuster change, then start a new Codex thread so the
+updated skill is loaded.
+
 ## First Run
 
 Run these commands from the repository root when installing, changing, or
@@ -54,7 +70,7 @@ The bundled bridge delegates deterministic work to the installed AutoLabOS CLI:
 
 ```sh
 npm run plugin:research -- --check
-npm run plugin:research -- audit --external <artifact-root> --out-dir outputs/research-governance/audit
+npm run plugin:research -- audit --external <artifact-root> --support-root <repository-root> --support-manifest <support-manifest.json> --out-dir outputs/research-governance/audit
 npm run plugin:research -- review --gate outputs/research-governance/audit/gate-report.json --model-review <model-review-bundle.json>
 npm run plugin:research -- improve --review outputs/research-governance/review/review-report.json
 npm run plugin:research -- pack --gate outputs/research-governance/audit/gate-report.json --review outputs/research-governance/review/review-report.json
@@ -62,7 +78,9 @@ npm run plugin:research -- verify-pack --root outputs/research-governance/pack
 npm run plugin:research -- verify-milestone --contract <milestone.json> --out-dir <new-milestone-audit-dir>
 ```
 
-The bridge emits a blocking `GateReport` when the `autolabos` CLI is unavailable.
+When claims cite files outside `<artifact-root>`, the audit command requires an explicit support manifest with schema version `1.0` and entries containing a portable relative `path`, lowercase SHA-256, and byte count. AutoLabOS copies only those exact bytes into the closed intake inventory; path escape, symlinks, collisions, missing files, and hash or size drift fail closed. Omit both support flags when the artifact bundle is already self-contained.
+
+The bridge emits a blocking `PluginDependencyReport`, not a research `GateReport`, when the `autolabos` CLI is unavailable.
 It never substitutes a fabricated audit result. A blocked or downgraded research
 verdict is a valid governance outcome and is preserved through packaging.
 
@@ -92,6 +110,9 @@ nonzero until every required item passes.
 - `ModelReviewBundle`
 - `MetaHarnessPatchPlan`
 - `PaperReadinessBundle`
+
+Operational failures use a separate `PluginDependencyReport`. It is not a
+research artifact and cannot stand in for a `GateReport`.
 
 ## Model Review Authority
 

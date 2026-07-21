@@ -863,7 +863,8 @@ describe("objective metric propagation", () => {
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("Primary objective: accuracy at least 0.9.");
-    expect(tex).toContain("Objective metric met: accuracy=0.91 >= 0.9.");
+    expect(tex).not.toContain("Objective metric met:");
+    expect(tex).toContain("Accuracy & 0.91");
     expect(tex).toContain("The selected experimental design is Accuracy benchmark");
     expect(tex).toContain("\\begin{table}[t]");
     expect(tex).toContain("Selected reported metrics from the structured results analysis.");
@@ -2647,7 +2648,7 @@ describe("objective metric propagation", () => {
           results: [
             {
               recipe: "baseline",
-              adapter_type: "none",
+              method_type: "none",
               status: "completed",
               mean_accuracy: 0.546875,
               benchmark_task_a_accuracy: 0.53125,
@@ -2656,7 +2657,7 @@ describe("objective metric propagation", () => {
             },
             {
               recipe: "candidate_condition_a",
-              adapter_type: "adapter",
+              method_type: "configuration",
               status: "completed",
               mean_accuracy: 0.546875,
               benchmark_task_a_accuracy: 0.53125,
@@ -2677,9 +2678,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter should improve zero-shot accuracy",
-          causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "adapter target module scope",
+          hypothesis: "configuration should improve zero-shot accuracy",
+          causal_mechanism: "A tuned configuration should improve task accuracy",
+          single_change: "configuration target module scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -2802,9 +2803,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A broader target adapter recipe should improve zero-shot accuracy",
-          causal_mechanism: "Targeting additional modules should improve adaptation",
-          single_change: "adapter target module scope",
+          hypothesis: "A broader candidate configuration should improve zero-shot accuracy",
+          causal_mechanism: "Changing the configured components should improve adaptation",
+          single_change: "candidate component scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -2923,9 +2924,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter should improve zero-shot accuracy",
-          causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "adapter target module scope",
+          hypothesis: "configuration should improve zero-shot accuracy",
+          causal_mechanism: "A tuned configuration should improve task accuracy",
+          single_change: "configuration target module scope",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -3047,9 +3048,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter should improve zero-shot accuracy",
-          causal_mechanism: "A tuned adapter should improve task accuracy",
-          single_change: "adapter rank",
+          hypothesis: "configuration should improve zero-shot accuracy",
+          causal_mechanism: "A tuned configuration should improve task accuracy",
+          single_change: "condition parameter x",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -3185,9 +3186,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter method should improve mean accuracy",
-          causal_mechanism: "Adapter training should improve downstream accuracy",
-          single_change: "adapter method",
+          hypothesis: "configuration method should improve mean accuracy",
+          causal_mechanism: "Configuration training should improve downstream accuracy",
+          single_change: "configuration method",
           confounded: false,
           expected_metric_effect: "Higher mean accuracy than baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -3414,7 +3415,7 @@ describe("objective metric propagation", () => {
           conditions: [
             {
               marker: "baseline_condition",
-              rank: 8,
+              condition_parameter_x: 8,
               parameter_y: 0,
               status: "success",
               average_accuracy: 0.5,
@@ -3423,7 +3424,7 @@ describe("objective metric propagation", () => {
             },
             {
               marker: "baseline_condition5",
-              rank: 8,
+              condition_parameter_x: 8,
               parameter_y: 0.05,
               status: "success",
               average_accuracy: 0.5,
@@ -3432,7 +3433,7 @@ describe("objective metric propagation", () => {
             },
             {
               marker: "candidate_condition_f",
-              rank: 32,
+              condition_parameter_x: 32,
               parameter_y: 0,
               status: "success",
               average_accuracy: 0.3125,
@@ -3562,7 +3563,7 @@ describe("objective metric propagation", () => {
           conditions: [
             {
               marker: "baseline_condition",
-              rank: 8,
+              condition_parameter_x: 8,
               parameter_y: 0,
               status: "ok",
               average_accuracy: 0.333334,
@@ -3576,7 +3577,7 @@ describe("objective metric propagation", () => {
             },
             {
               marker: "candidate_condition_f5",
-              rank: 32,
+              condition_parameter_x: 32,
               parameter_y: 0.05,
               status: "ok",
               average_accuracy: 0.416666,
@@ -3774,9 +3775,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "Lower rank should improve average accuracy over the locked baseline",
-          causal_mechanism: "Rank affects adapter generalization",
-          single_change: "rank",
+          hypothesis: "Lower parameter x should improve average accuracy over the locked baseline",
+          causal_mechanism: "Parameter x affects configuration generalization",
+          single_change: "parameter x",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
           abort_condition: "Abort on missing confidence intervals",
@@ -3878,7 +3879,7 @@ describe("objective metric propagation", () => {
             status: "success",
             average_accuracy: 0.625,
             accuracy_delta_vs_baseline: 0.0625,
-            rank: 8,
+            condition_parameter_x: 8,
             parameter_y: 0,
             tasks: {
               benchmark_task_a: { accuracy: 0.875 },
@@ -3891,7 +3892,7 @@ describe("objective metric propagation", () => {
               status: "success",
               average_accuracy: 0.5625,
               accuracy_delta_vs_baseline: 0,
-              rank: 4,
+              condition_parameter_x: 4,
               parameter_y: 0,
               tasks: {
                 benchmark_task_a: { accuracy: 0.75 },
@@ -3903,7 +3904,7 @@ describe("objective metric propagation", () => {
               status: "success",
               average_accuracy: 0.625,
               accuracy_delta_vs_baseline: 0.0625,
-              rank: 8,
+              condition_parameter_x: 8,
               parameter_y: 0,
               tasks: {
                 benchmark_task_a: { accuracy: 0.875 },
@@ -3924,8 +3925,8 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A tuned adapter condition should improve over the unmodified baseline",
-          causal_mechanism: "adapter training changes downstream accuracy",
+          hypothesis: "A tuned configured condition should improve over the unmodified baseline",
+          causal_mechanism: "configuration training changes downstream accuracy",
           single_change: "condition-parameter condition",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than baseline",
@@ -4056,8 +4057,8 @@ describe("objective metric propagation", () => {
                 }
               }
             },
-            adapter_baseline: {
-              name: "adapter_baseline",
+            configured_baseline: {
+              name: "configured_baseline",
               status: "completed",
               accuracy_delta_vs_baseline: -0.015625,
               evaluation: {
@@ -4122,8 +4123,8 @@ describe("objective metric propagation", () => {
           run_id: runId,
           created_at: new Date().toISOString(),
           hypothesis: "A non-baseline candidate condition should improve accuracy",
-          causal_mechanism: "Adapter choice changes zero-shot accuracy",
-          single_change: "adapter recipe",
+          causal_mechanism: "Candidate choice changes zero-shot accuracy",
+          single_change: "candidate configuration",
           confounded: false,
           expected_metric_effect: "Higher accuracy than the named tuned baseline",
           abort_condition: "Abort on missing condition evidence",
@@ -4171,7 +4172,7 @@ describe("objective metric propagation", () => {
     };
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
       source: "metrics.conditions",
-      label: "stronger candidate vs adapter baseline"
+      label: "stronger candidate vs configured baseline"
     });
     expect(analysisRaw.results_table).toEqual(
       expect.arrayContaining([
@@ -4266,7 +4267,7 @@ describe("objective metric propagation", () => {
             },
             {
               name: "candidate_condition_a",
-              condition_type: "adapter_instruction_tuned",
+              condition_type: "parameterized_method",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.2734375 },
                 benchmark_task_b: { accuracy: 0.5234375 }
@@ -4275,7 +4276,7 @@ describe("objective metric propagation", () => {
             },
             {
               name: "candidate_condition_b",
-              condition_type: "adapter_instruction_tuned",
+              condition_type: "parameterized_method",
               evaluation: {
                 benchmark_task_a: { accuracy: 0.265625 },
                 benchmark_task_b: { accuracy: 0.53125 }
@@ -4296,9 +4297,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter tuning should improve zero-shot accuracy",
-          causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
-          single_change: "adapter rank",
+          hypothesis: "configuration tuning should improve zero-shot accuracy",
+          causal_mechanism: "Configuration training should improve downstream benchmark accuracy",
+          single_change: "condition parameter x",
           confounded: false,
           expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -4446,9 +4447,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "adapter tuning should improve zero-shot accuracy",
-          causal_mechanism: "Adapter training should improve downstream benchmark accuracy",
-          single_change: "adapter method",
+          hypothesis: "configuration tuning should improve zero-shot accuracy",
+          causal_mechanism: "Configuration training should improve downstream benchmark accuracy",
+          single_change: "configuration method",
           confounded: false,
           expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
           abort_condition: "Abort if accuracy regresses",
@@ -4574,9 +4575,9 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "Higher adapter rank should improve average zero-shot accuracy under fixed compute.",
-          causal_mechanism: "More adapter capacity can fit the small instruction-tuning signal.",
-          single_change: "adapter rank",
+          hypothesis: "Higher condition parameter x should improve average zero-shot accuracy under fixed compute.",
+          causal_mechanism: "More configuration capacity can fit the small instruction-tuning signal.",
+          single_change: "condition parameter x",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than the locked baseline condition",
           abort_condition: "Abort if required conditions do not complete.",
@@ -4720,8 +4721,8 @@ describe("objective metric propagation", () => {
           version: 1,
           run_id: runId,
           created_at: new Date().toISOString(),
-          hypothesis: "A adapter condition should improve average accuracy over the locked baseline.",
-          causal_mechanism: "Adapter configuration affects instruction-tuning transfer.",
+          hypothesis: "A configured condition should improve average accuracy over the locked baseline.",
+          causal_mechanism: "Configuration configuration affects instruction-tuning transfer.",
           single_change: "condition-parameter grid",
           confounded: false,
           expected_metric_effect: "Higher average accuracy than the locked baseline condition",

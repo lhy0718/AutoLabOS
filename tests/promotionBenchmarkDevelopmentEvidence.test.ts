@@ -193,7 +193,7 @@ async function createDevelopmentFlow(options: {
             concerns: [{
               code: "insufficient_manuscript_evidence",
               severity: "blocking",
-              evidence_refs: ["manuscript"]
+              evidence_refs: ["paper/main.tex"]
             }],
             repair_owners: ["review"]
           }),

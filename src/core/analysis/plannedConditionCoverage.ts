@@ -214,10 +214,11 @@ function isExcludedReferenceCondition(
     asString(row.condition_type),
     asString(row.type),
     asString(row.kind),
-    asString(row.adapter_type),
+    asString(row.method_type),
+    asString(row.configuration_type),
     asString(row.recipe_type),
-    asString(asRecord(row.adapter).adapter_type),
-    asString(asRecord(row.adapter).method)
+    asString(asRecord(row.configuration).type),
+    asString(asRecord(row.configuration).method)
   ]
     .filter((value): value is string => Boolean(value))
     .join(" ")
@@ -228,12 +229,12 @@ function isExcludedReferenceCondition(
     return true;
   }
   const training = asRecord(row.training);
-  const adapter = asRecord(row.adapter);
+  const configuration = asRecord(row.configuration);
   const trainableParams =
     asNumber(training.trainable_params) ??
     asNumber(training.trainable_parameters) ??
-    asNumber(adapter.trainable_params) ??
-    asNumber(adapter.trainable_parameters);
+    asNumber(configuration.trainable_params) ??
+    asNumber(configuration.trainable_parameters);
   return labels.includes("baseline") && (training.skipped === true || trainableParams === 0);
 }
 

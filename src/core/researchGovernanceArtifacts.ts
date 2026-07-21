@@ -16,6 +16,7 @@ import {
   parseModelReviewBundle,
   type ModelReviewBundle
 } from "./modelReviewProtocol.js";
+import { createPrivateMachinePathPattern } from "./privateMachinePath.js";
 
 export type ResearchGovernanceVerdict = "pass" | "needs-review" | "blocked";
 export type ResearchReadinessClass =
@@ -76,7 +77,7 @@ export interface GateReportArtifact extends ResearchGovernanceArtifactBase {
   command_intent: "research:audit";
   verdict: ResearchGovernanceVerdict;
   evidence_bundle_id: string;
-  evidence_bundle_sha256?: string;
+  evidence_bundle_sha256: string;
   input_bindings: EvidenceBundleFile[];
   claim_ceiling: string;
   checks: {
@@ -107,6 +108,7 @@ export interface ReviewerAssurance {
   panel_size: number;
   specialist_finding_count: number;
   adjudicated_finding_count: number;
+  gate_report_sha256: string;
   model_review_bundle_sha256: string | null;
   independent_contexts: boolean;
   adjudicator_present: boolean;
@@ -147,6 +149,7 @@ export interface MetaHarnessPatchPlanArtifact extends ResearchGovernanceArtifact
   command_intent: "research:improve";
   apply_mode: "plan_only";
   review_report_id: string;
+  review_report_sha256: string;
   targets: MetaHarnessPatchTarget[];
 }
 
@@ -208,16 +211,7 @@ const ARTIFACT_TYPES = new Set<ResearchGovernanceArtifact>([
 ]);
 
 const SENSITIVE_FIELD_PATTERN = /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|private[_-]?key|credential|secret)/iu;
-const PRIVATE_PATH_PATTERN = new RegExp(
-  `(?:^|\\s)(?:${[
-    String.fromCharCode(47, 104, 111, 109, 101, 47),
-    String.fromCharCode(47, 85, 115, 101, 114, 115, 47),
-    String.fromCharCode(47, 109, 110, 116, 47),
-    String.fromCharCode(47, 116, 109, 112, 47),
-    "[A-Za-z]:\\\\"
-  ].join("|")})`,
-  "u"
-);
+const PRIVATE_PATH_PATTERN = createPrivateMachinePathPattern();
 
 export function buildResearchBriefArtifact(input: {
   markdown: string;
@@ -403,18 +397,23 @@ export function buildReviewReportArtifact(
 ): ReviewReportArtifact {
   const options = optionsOrNow instanceof Date ? undefined : optionsOrNow;
   const generatedAt = optionsOrNow instanceof Date ? optionsOrNow : now;
-  if (!options?.modelReviewBundle
-      && (options?.modelReviewBundleSha256 || options?.gateReportSha256)) {
-    throw new Error("Model review hashes require a ModelReviewBundle.");
+  if (!options?.modelReviewBundle && options?.modelReviewBundleSha256) {
+    throw new Error("A ModelReviewBundle SHA-256 digest requires a ModelReviewBundle.");
   }
   if (options?.modelReviewBundle
       && (!options.modelReviewBundleSha256 || !options.gateReportSha256)) {
     throw new Error("A2 model review requires exact GateReport and ModelReviewBundle SHA-256 digests.");
   }
+  const gateReportSha256 = options?.gateReportSha256
+    ?? sha256(`${JSON.stringify(gate, null, 2)}\n`);
+  if (!/^[a-f0-9]{64}$/u.test(gateReportSha256)) {
+    throw new Error("gateReportSha256 must be a lowercase SHA-256 digest.");
+  }
+  assertGateEvidenceBinding(gate);
   const modelReviewBundle = options?.modelReviewBundle
     ? parseModelReviewBundle(options.modelReviewBundle, {
         artifact_id: gate.artifact_id,
-        sha256: options.gateReportSha256 as string
+        sha256: gateReportSha256
       })
     : undefined;
   const modelReviewBundleSha256 = modelReviewBundle
@@ -434,13 +433,25 @@ export function buildReviewReportArtifact(
   const blockingIssues = findings.filter((finding) => finding.severity === "blocker");
   const nonBlockingIssues = findings.filter((finding) => finding.severity === "warning");
   const repairTargets = findings.map(mapFindingToRepairTarget);
-  const reviewerAssurance = buildReviewerAssurance(modelReviewBundle, modelReviewBundleSha256);
+  const reviewerAssurance = buildReviewerAssurance(
+    modelReviewBundle,
+    modelReviewBundleSha256,
+    gateReportSha256
+  );
   return {
     ...baseArtifact("ReviewReport", "research:review", {
       sourceMode: "governance_artifact",
       sourceLabel: "GateReport",
       artifactRefs: [gate.artifact_id, ...gate.provenance.artifact_refs],
-      seed: JSON.stringify({ verdict, readinessClass, repairTargets, reviewerAssurance }),
+      seed: JSON.stringify({
+        gate_report_id: gate.artifact_id,
+        gate_report_sha256: gateReportSha256,
+        claim_ceiling: gate.claim_ceiling,
+        verdict,
+        readinessClass,
+        repairTargets,
+        reviewerAssurance
+      }),
       now: generatedAt
     }),
     artifact_type: "ReviewReport",
@@ -459,8 +470,12 @@ export function buildReviewReportArtifact(
 
 export function buildMetaHarnessPatchPlanArtifact(
   review: ReviewReportArtifact,
-  now?: Date
+  now?: Date,
+  reviewReportSha256?: string
 ): MetaHarnessPatchPlanArtifact {
+  const boundReviewSha256 = reviewReportSha256 || createHash("sha256")
+    .update(`${JSON.stringify(review, null, 2)}\n`)
+    .digest("hex");
   const targets = review.repair_targets.map((target) => ({
     ...target,
     proposed_change: proposedChangeForTarget(target),
@@ -472,13 +487,14 @@ export function buildMetaHarnessPatchPlanArtifact(
       sourceMode: "governance_artifact",
       sourceLabel: "ReviewReport",
       artifactRefs: [review.artifact_id, review.gate_report_id],
-      seed: JSON.stringify(targets),
+      seed: JSON.stringify({ review_report_sha256: boundReviewSha256, targets }),
       now
     }),
     artifact_type: "MetaHarnessPatchPlan",
     command_intent: "research:improve",
     apply_mode: "plan_only",
     review_report_id: review.artifact_id,
+    review_report_sha256: boundReviewSha256,
     targets
   };
 }
@@ -622,7 +638,8 @@ function conservativeReviewReadiness(
 
 function buildReviewerAssurance(
   bundle: ModelReviewBundle | undefined,
-  bundleSha256: string | null
+  bundleSha256: string | null,
+  gateReportSha256: string
 ): ReviewerAssurance {
   if (!bundle) {
     return {
@@ -631,6 +648,7 @@ function buildReviewerAssurance(
       panel_size: 0,
       specialist_finding_count: 0,
       adjudicated_finding_count: 0,
+      gate_report_sha256: gateReportSha256,
       model_review_bundle_sha256: null,
       independent_contexts: false,
       adjudicator_present: false,
@@ -655,6 +673,7 @@ function buildReviewerAssurance(
       0
     ),
     adjudicated_finding_count: bundle.adjudicator.findings.length,
+    gate_report_sha256: gateReportSha256,
     model_review_bundle_sha256: bundleSha256,
     independent_contexts: true,
     adjudicator_present: true,
@@ -668,6 +687,33 @@ function buildReviewerAssurance(
       "Context isolation and execution provenance are schema-validated attestations; provider receipts and prompt separation are not operationally verified by this report."
     ]
   };
+}
+
+function assertGateEvidenceBinding(gate: GateReportArtifact): void {
+  if (typeof gate.evidence_bundle_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(gate.evidence_bundle_sha256)) {
+    throw new Error(
+      "Research review requires GateReport.evidence_bundle_sha256 to bind the exact EvidenceBundle bytes."
+    );
+  }
+  if (!Array.isArray(gate.input_bindings) || gate.input_bindings.length === 0) {
+    throw new Error("Research review requires non-empty GateReport.input_bindings.");
+  }
+  const invalidBindingIndex = gate.input_bindings.findIndex((binding) => (
+    !binding
+    || typeof binding.path !== "string"
+    || !isPortableEvidenceBindingPath(binding.path)
+    || binding.required !== true
+    || typeof binding.sha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(binding.sha256)
+    || !Number.isSafeInteger(binding.bytes)
+    || Number(binding.bytes) < 0
+  ));
+  if (invalidBindingIndex >= 0) {
+    throw new Error(
+      `Research review requires every GateReport.input_bindings entry to be portable, required, and fully SHA-256/byte bound; invalid entry at index ${invalidBindingIndex}.`
+    );
+  }
 }
 
 function mergeGateFindingsConservatively(findings: readonly GateFinding[]): GateFinding[] {
@@ -855,23 +901,27 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
   } else if (artifactType === "GateReport") {
     requireString("evidence_bundle_id");
     requireString("claim_ceiling");
+    requireString("evidence_bundle_sha256");
+    requireArray("input_bindings");
     requireArray("findings");
     requireArray("next_actions");
-    if ("evidence_bundle_sha256" in value
-        && (typeof value.evidence_bundle_sha256 !== "string"
-          || !/^[a-f0-9]{64}$/u.test(value.evidence_bundle_sha256))) {
+    if (typeof value.evidence_bundle_sha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(value.evidence_bundle_sha256)) {
       issues.push({
         code: "invalid_shape",
         path: "$.evidence_bundle_sha256",
         message: "evidence_bundle_sha256 must be a lowercase SHA-256 digest."
       });
     }
-    if ("input_bindings" in value) {
-      if (Array.isArray(value.input_bindings)) {
-        validateEvidenceBundleFiles(value.input_bindings, "$.input_bindings", true, issues);
-      } else {
-        requireArray("input_bindings");
+    if (Array.isArray(value.input_bindings)) {
+      if (value.input_bindings.length === 0) {
+        issues.push({
+          code: "invalid_shape",
+          path: "$.input_bindings",
+          message: "GateReport requires at least one fully bound evidence input."
+        });
       }
+      validateEvidenceBundleFiles(value.input_bindings, "$.input_bindings", true, issues);
     }
   } else if (artifactType === "ReviewReport") {
     requireString("gate_report_id");
@@ -879,12 +929,22 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
     requireArray("blocking_issues");
     requireArray("non_blocking_issues");
     requireArray("repair_targets");
-    if ("reviewer_assurance" in value) {
-      validateReviewerAssuranceShape(value.reviewer_assurance, issues);
-    }
+    validateGateFindingArray(value.blocking_issues, "$.blocking_issues", "blocker", issues);
+    validateGateFindingArray(value.non_blocking_issues, "$.non_blocking_issues", "warning", issues);
+    validateRepairTargetArray(value.repair_targets, "$.repair_targets", false, issues);
+    validateReviewerAssuranceShape(value.reviewer_assurance, issues);
   } else if (artifactType === "MetaHarnessPatchPlan") {
     requireString("review_report_id");
+    requireString("review_report_sha256");
     requireArray("targets");
+    if (typeof value.review_report_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.review_report_sha256)) {
+      issues.push({
+        code: "invalid_shape",
+        path: "$.review_report_sha256",
+        message: "review_report_sha256 must be a lowercase SHA-256 digest."
+      });
+    }
+    validateRepairTargetArray(value.targets, "$.targets", true, issues);
     if (value.apply_mode !== "plan_only") {
       issues.push({ code: "invalid_shape", path: "$.apply_mode", message: "MetaHarnessPatchPlan must default to plan_only." });
     }
@@ -913,6 +973,96 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
   }
 }
 
+const REPAIR_TARGET_SURFACES = new Set(["prompt", "validator", "skill", "policy", "runtime"]);
+
+function validateGateFindingArray(
+  value: unknown,
+  basePath: string,
+  expectedSeverity: "blocker" | "warning",
+  issues: ArtifactValidationIssue[]
+): void {
+  if (!Array.isArray(value)) return;
+  value.forEach((entry, index) => {
+    const entryPath = `${basePath}[${index}]`;
+    if (!isRecord(entry)) {
+      issues.push({ code: "invalid_shape", path: entryPath, message: "Finding must be an object." });
+      return;
+    }
+    for (const field of ["code", "message"] as const) {
+      if (typeof entry[field] !== "string" || !entry[field].trim()) {
+        issues.push({ code: "invalid_shape", path: `${entryPath}.${field}`, message: `${field} must be a non-empty string.` });
+      }
+    }
+    if (entry.severity !== expectedSeverity) {
+      issues.push({ code: "invalid_shape", path: `${entryPath}.severity`, message: `Finding severity must be ${expectedSeverity}.` });
+    }
+    validateEvidenceRefs(entry.evidence_refs, `${entryPath}.evidence_refs`, issues);
+    if (entry.target_node !== undefined && !normalizeGovernedNode(entry.target_node)) {
+      issues.push({ code: "invalid_shape", path: `${entryPath}.target_node`, message: "target_node must name a governed research node." });
+    }
+    if (entry.target_surface !== undefined && !REPAIR_TARGET_SURFACES.has(String(entry.target_surface))) {
+      issues.push({ code: "invalid_shape", path: `${entryPath}.target_surface`, message: "target_surface is not supported." });
+    }
+  });
+}
+
+function validateRepairTargetArray(
+  value: unknown,
+  basePath: string,
+  patchTarget: boolean,
+  issues: ArtifactValidationIssue[]
+): void {
+  if (!Array.isArray(value)) return;
+  value.forEach((entry, index) => {
+    const entryPath = `${basePath}[${index}]`;
+    if (!isRecord(entry)) {
+      issues.push({ code: "invalid_shape", path: entryPath, message: "Repair target must be an object." });
+      return;
+    }
+    for (const field of ["finding_code", "reason"] as const) {
+      if (typeof entry[field] !== "string" || !entry[field].trim()) {
+        issues.push({ code: "invalid_shape", path: `${entryPath}.${field}`, message: `${field} must be a non-empty string.` });
+      }
+    }
+    if (!normalizeGovernedNode(entry.target_node)) {
+      issues.push({ code: "invalid_shape", path: `${entryPath}.target_node`, message: "target_node must name a governed research node." });
+    }
+    if (!REPAIR_TARGET_SURFACES.has(String(entry.target_surface))) {
+      issues.push({ code: "invalid_shape", path: `${entryPath}.target_surface`, message: "target_surface is not supported." });
+    }
+    validateEvidenceRefs(entry.evidence_refs, `${entryPath}.evidence_refs`, issues);
+    if (patchTarget) {
+      for (const field of ["proposed_change", "rollback_condition"] as const) {
+        if (typeof entry[field] !== "string" || !entry[field].trim()) {
+          issues.push({ code: "invalid_shape", path: `${entryPath}.${field}`, message: `${field} must be a non-empty string.` });
+        }
+      }
+      if (!Array.isArray(entry.validation_commands) || entry.validation_commands.length === 0
+          || entry.validation_commands.some((command) => typeof command !== "string" || !command.trim())) {
+        issues.push({ code: "invalid_shape", path: `${entryPath}.validation_commands`, message: "validation_commands must contain non-empty commands." });
+      }
+    }
+  });
+}
+
+function validateEvidenceRefs(value: unknown, valuePath: string, issues: ArtifactValidationIssue[]): void {
+  if (!Array.isArray(value) || value.length === 0
+      || value.some((ref) => typeof ref !== "string" || !ref.trim())) {
+    issues.push({ code: "invalid_shape", path: valuePath, message: "evidence_refs must contain at least one non-empty reference." });
+  }
+}
+
+function isPortableEvidenceBindingPath(value: string): boolean {
+  const normalized = path.posix.normalize(value);
+  return value.length > 0
+    && value === normalized
+    && !value.includes("\\")
+    && !value.startsWith("<")
+    && !path.posix.isAbsolute(value)
+    && !/^[A-Za-z]:\//u.test(value)
+    && !value.split("/").some((segment) => !segment || segment === "." || segment === "..");
+}
+
 function validateEvidenceBundleFiles(
   files: unknown[],
   currentPath: string,
@@ -931,6 +1081,13 @@ function validateEvidenceBundleFiles(
         message: "Evidence file entries require path and required fields."
       });
       return;
+    }
+    if (requireBinding && !isPortableEvidenceBindingPath(value.path)) {
+      issues.push({
+        code: "invalid_shape",
+        path: `${itemPath}.path`,
+        message: "GateReport input binding paths must be normalized portable relative paths."
+      });
     }
     if (seenPaths.has(value.path)) {
       issues.push({
@@ -995,6 +1152,7 @@ function validateReviewerAssuranceShape(
     "panel_size",
     "specialist_finding_count",
     "adjudicated_finding_count",
+    "gate_report_sha256",
     "model_review_bundle_sha256",
     "independent_contexts",
     "adjudicator_present",
@@ -1003,21 +1161,14 @@ function validateReviewerAssuranceShape(
     "human_authority",
     "limitations"
   ];
-  const priorFields = expectedFields.filter((field) =>
-    field !== "adjudication_policy"
-    && field !== "specialist_finding_count"
-    && field !== "adjudicated_finding_count"
-  );
   const actualFieldKey = Object.keys(value).sort().join("\0");
   const currentFieldKey = [...expectedFields].sort().join("\0");
-  const priorFieldKey = [...priorFields].sort().join("\0");
   const currentAssurance = actualFieldKey === currentFieldKey;
-  const priorAssurance = actualFieldKey === priorFieldKey;
-  if (!currentAssurance && !priorAssurance) {
+  if (!currentAssurance) {
     issues.push({
       code: "invalid_shape",
       path: currentPath,
-      message: "reviewer_assurance fields do not match the current or prior schema."
+      message: "reviewer_assurance fields must match the current schema exactly."
     });
   }
   if (value.tier !== "A0_deterministic" && value.tier !== "A2_model_conservative") {
@@ -1048,6 +1199,15 @@ function validateReviewerAssuranceShape(
         message: `${field} must be a non-negative integer.`
       });
     }
+  }
+  if (currentAssurance
+      && (typeof value.gate_report_sha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(value.gate_report_sha256))) {
+    issues.push({
+      code: "invalid_shape",
+      path: `${currentPath}.gate_report_sha256`,
+      message: "gate_report_sha256 must bind the exact GateReport bytes."
+    });
   }
   if (typeof value.independent_contexts !== "boolean") {
     issues.push({

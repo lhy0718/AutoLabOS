@@ -394,8 +394,7 @@ export function synthesizeRelativeMetrics(
     }
   }
 
-  // Strategy 1b: conditions object map with nested evaluation payloads, e.g.
-  // `conditions: { base: { evaluation: { primary_mean_accuracy } }, adapter: ... }`.
+  // Strategy 1b: conditions object map with nested evaluation payloads.
   if (conditions && typeof conditions === "object" && !Array.isArray(conditions)) {
     const conditionEntries = Object.entries(conditions as Record<string, unknown>).filter(
       ([, value]) => value && typeof value === "object" && !Array.isArray(value)
@@ -510,7 +509,7 @@ export function synthesizeRelativeMetrics(
     }
   }
 
-  // Strategy 4: recipe/condition result rows, e.g. adapter-style runners that emit
+  // Strategy 4: recipe/condition result rows that emit
   // `results: [{ recipe, kind, mean_zero_shot_accuracy, ... }]`.
   const results = metrics.results;
   if (Array.isArray(results) && results.length >= 2) {
@@ -592,8 +591,8 @@ function baselineConditionScore(name: string, record: Record<string, unknown>): 
     /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(labels);
   const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(labels);
   const tunedBaseline =
-    /(?:^|[_\s-])(?:adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(labels) ||
-    /(?:^|[_\s-])baseline[\w\s-]*(?:adapter|tuned|locked)(?:[_\s-]|$)/u.test(labels);
+    /(?:^|[_\s-])(?:tuned|locked|configured)[\w\s-]*baseline(?:[_\s-]|$)/u.test(labels) ||
+    /(?:^|[_\s-])baseline[\w\s-]*(?:tuned|locked|configured)(?:[_\s-]|$)/u.test(labels);
 
   if (tunedBaseline && !referenceBaseline) {
     return 4;

@@ -92,7 +92,7 @@ export function runResearchGovernanceAcceptance({
     const run = (args) => parseSuccessfulResult(executeResearch(args), workspace, args);
 
     const newResult = run(["new", "--brief", "Brief.md", "--out-dir", "outputs/new"]);
-    assertCheck(checks, "new_emits_versioned_incomplete_brief", newResult.artifact.schema_version === "1.0"
+    assertCheck(checks, "new_emits_versioned_incomplete_brief", newResult.artifact.schema_version === "2.0"
       && newResult.artifact.artifact_type === "ResearchBrief"
       && newResult.artifact.completeness.paper_scale_ready === false);
 
@@ -108,7 +108,7 @@ export function runResearchGovernanceAcceptance({
       "--out-dir", "outputs/weak/pack"
     ]);
     const weakPackVerification = run(["verify-pack", "--root", "outputs/weak/pack"]);
-    writeJson(path.join(workspace, "incompatible-gate.json"), { ...weakGate.artifact, schema_version: "2.0" });
+    writeJson(path.join(workspace, "incompatible-gate.json"), { ...weakGate.artifact, schema_version: "3.0" });
     const versionFailure = executeResearch([
       "review",
       "--gate", "incompatible-gate.json",
@@ -117,7 +117,7 @@ export function runResearchGovernanceAcceptance({
     const versionStderr = versionFailure.stderr || "";
     assertCheck(checks, "schema_version_mismatch_is_concise_and_blocking", versionFailure.status === 1
       && versionStderr.includes("Invalid GateReport")
-      && versionStderr.includes("Expected schema version 1.0")
+      && versionStderr.includes("Expected schema version 2.0")
       && !versionStderr.includes("\n    at ")
       && !versionStderr.includes(repoRoot)
       && !versionStderr.includes(workspace));

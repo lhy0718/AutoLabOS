@@ -101,9 +101,10 @@ export function scoreClaimEvidenceArtifacts(
       ...(evidenceLinkClaim?.evidence_ids ?? [])
     ].filter(Boolean);
     const status = statusClaim?.status;
-    const blocked = status === "blocked";
+    const developmentOnly = status === "development_only" || status === "inferred";
+    const blocked = status === "blocked" || developmentOnly;
     const unsupportedByStatus = status === "unverified";
-    const supportedByStatus = status === "verified" || status === "inferred";
+    const supportedByStatus = status === "verified";
     const hasSupport = evidenceRefs.length > 0;
     const declaredSupport = artifactRefs.length > 0
       || (tableClaim?.citation_refs.length ?? 0) > 0
@@ -116,7 +117,9 @@ export function scoreClaimEvidenceArtifacts(
       issues.push({
         code: "claim_evidence_blocked",
         claim_id: claimId,
-        message: "Claim " + claimId + " is prospectively blocked and is not counted as an asserted unsupported claim."
+        message: developmentOnly
+          ? "Claim " + claimId + " is development-only and cannot count as paper-level support."
+          : "Claim " + claimId + " is prospectively blocked and is not counted as an asserted unsupported claim."
       });
       continue;
     }

@@ -1,6 +1,11 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
+import {
+  detectAclTemplatePackage,
+  extractLatexBibliographyStyle
+} from "./aclTemplate.js";
+
 export type ParsedLatexTemplate = {
   sourcePath: string;
   preDocumentPreamble: string;
@@ -118,10 +123,6 @@ function extractCustomCommands(preamble: string): string[] {
   );
 }
 
-function extractBibliographyStyle(raw: string): string | null {
-  return raw.match(/\\bibliographystyle\{([^}]+)\}/)?.[1]?.trim() ?? null;
-}
-
 function extractPreamble(raw: string, documentClass: string): string {
   const beginDocument = raw.match(/\\begin\{document\}/);
   const boundary = beginDocument?.index ?? raw.length;
@@ -166,7 +167,7 @@ export async function loadLatexTemplate(templatePath: string): Promise<ParsedLat
     packages: extractPackages(preamble),
     sectionOrder: extractSectionOrder(raw),
     customCommands: extractCustomCommands(preamble),
-    bibliographyStyle: extractBibliographyStyle(raw)
+    bibliographyStyle: extractLatexBibliographyStyle(raw)
   };
 }
 
@@ -185,20 +186,22 @@ export function deriveLatexTemplatePolicy(parsedTemplate: ParsedLatexTemplate | 
       && /\\documentclass(?:\[[^\]]*\])?\{(?:neurips|icml|iclr|aaai|acl)[^}]*\}/i.test(parsedTemplate.documentClass)
     );
   const usesAclPackage = parsedTemplate.packages.some((packageLine) =>
-    /\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/u.test(packageLine)
+    detectAclTemplatePackage(packageLine) !== null
   );
   return {
     appendixFormat:
-      parsedTemplate.columnLayout === 1
+      usesAclPackage
+        ? "double_column"
+        : parsedTemplate.columnLayout === 1
         ? "single_column"
         : inferredTwoColumnDefault || usesAclPackage
           ? "double_column"
           : null,
     estimatedWordsPerPage:
-      parsedTemplate.columnLayout === 1
+      usesAclPackage
+        ? 520
+        : parsedTemplate.columnLayout === 1
         ? 700
-        : usesAclPackage
-          ? 520
         : inferredTwoColumnDefault
           ? 650
           : null

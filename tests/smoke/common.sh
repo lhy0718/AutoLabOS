@@ -3,7 +3,7 @@
 SMOKE_ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_VALIDATION_ROOT="${AUTOLABOS_VALIDATION_WORKSPACE_ROOT:-$(cd "${SMOKE_ROOT_DIR}/.." && pwd)/.autolabos-validation}"
 SMOKE_WORK_DIR="${SMOKE_VALIDATION_ROOT}/smoke-workspace"
-SMOKE_DEFAULT_RUN_ID="9727e56e-19bc-46bb-bf5c-88d3be06af0d"
+SMOKE_DEFAULT_RUN_ID="smoke-run-default"
 readonly SMOKE_SCENARIO_ORDER=(
   pending
   execute

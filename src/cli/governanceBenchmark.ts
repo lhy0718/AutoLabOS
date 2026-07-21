@@ -1055,6 +1055,7 @@ export async function runPromotionSourceNormalizationBatchAdjudicationCli(
       "Evidence boundary: structural coverage and pseudonymous role separation do not prove real-world reviewer identity or independence"
     ].join("\n") + "\n"
   );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationBatchMaterializationCli(
@@ -1071,6 +1072,7 @@ export async function runPromotionSourceNormalizationBatchMaterializationCli(
       "Evidence boundary: batch success requires every item to pass source, execution, license, and mutation inspection"
     ].join("\n") + "\n"
   );
+  if (!result.report.passed) process.exitCode = 1;
 }
 
 export async function runPromotionSourceNormalizationCli(

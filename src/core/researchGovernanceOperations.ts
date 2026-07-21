@@ -3,7 +3,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { runPaperReadinessAudit, type PaperReadinessAuditInput } from "./audit/paperReadinessAudit.js";
-import { parseModelReviewBundle } from "./modelReviewProtocol.js";
+import { parseModelReviewBundle, type ModelReviewBundle } from "./modelReviewProtocol.js";
 import {
   buildBriefCompletenessArtifact,
   buildResearchBriefTemplate,
@@ -19,6 +19,7 @@ import {
   portableArtifactRef,
   validateResearchGovernanceArtifact,
   type GateReportArtifact,
+  type EvidenceBundleArtifact,
   type EvidenceBundleFile,
   type MetaHarnessPatchPlanArtifact,
   type PaperReadinessBundleArtifact,
@@ -41,6 +42,8 @@ export interface ResearchOperationResult<T> {
 }
 
 const DEFAULT_OUTPUT_ROOT = path.join("outputs", "research-governance");
+const EVIDENCE_BUNDLE_SIDECAR = "evidence-bundle.json";
+const MODEL_REVIEW_BUNDLE_SIDECAR = "model-review-bundle.json";
 const REVIEW_INPUT_RELATIVE_PATHS = [
   "governance_condition.json",
   "result_table.json",
@@ -76,8 +79,9 @@ const PACK_ALLOWLIST = [
 ] as const;
 
 const RUN_UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/giu;
-const CONDITION_IDENTIFIER_PATTERN = /\b(?:condition|rank|dropout)[_-]\d[a-z0-9._-]*\b/giu;
-const PARAMETER_VALUE_PATTERN = /\b(?:rank|dropout)\s+\d+(?:\.\d+)?\b/giu;
+const CONDITION_IDENTIFIER_PATTERN = /\bcondition[_-][a-z0-9][a-z0-9_-]*\b/giu;
+const TRACE_IDENTIFIER_PATTERN = /\b(?:event|evt|request|req|resp|span|thread|thr|trace)_(?=[A-Za-z0-9._-]*\d)[A-Za-z0-9][A-Za-z0-9._-]{11,}\b/gu;
+const PARAMETER_VALUE_PATTERN = /\b(?:condition\s+)?(?:parameter|factor)(?:[_\s-]+[a-z][a-z0-9_-]*)?\s*(?:=|:)?\s*\d+(?:\.\d+)?\b/giu;
 const MODEL_IDENTIFIER_PATTERN = /\b[A-Za-z][A-Za-z0-9._-]*[-_.]\d+(?:\.\d+)?[BbMm]\b/gu;
 const UPPER_HYPHEN_ENTITY_PATTERN = /\b[A-Z]{2,}(?:-[A-Za-z][A-Za-z0-9]*)+\b/gu;
 const CAMEL_CASE_ENTITY_PATTERN = /\b[A-Z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+\b/gu;
@@ -89,7 +93,7 @@ const PUBLIC_CONTRACT_TOKENS = new Set([
   "MetaHarnessPatchPlan",
   "PaperReadinessBundle"
 ]);
-const RUN_IDENTIFIER_FIELD_PATTERN = /^(?:run|task|model|benchmark|condition)(?:_id|_name)?$/iu;
+const RUN_IDENTIFIER_FIELD_PATTERN = /^(?:run|task|model|benchmark|condition|event|trace|span|request|thread)(?:_id|_name)?$/iu;
 
 export async function runResearchNew(input: {
   cwd: string;
@@ -120,8 +124,19 @@ export async function runResearchAudit(
 ): Promise<ResearchOperationResult<GateReportArtifact>> {
   const outDir = resolveOutputDir(input.cwd, input.outDir, "audit");
   const summary = await runPaperReadinessAudit({ ...input, outDir: path.relative(input.cwd, outDir) });
+  const externalIntakeBindings = summary.outputs.external_intake_manifest_path
+    ? await verifyExternalIntakeManifestBindings({
+        cwd: input.cwd,
+        manifestPath: summary.outputs.external_intake_manifest_path,
+        runRoot: summary.input.run_root
+      })
+    : [];
   const evidenceSkeleton = buildEvidenceBundleArtifact(summary);
-  const boundFiles = await bindEvidenceBundleFiles(input.cwd, summary.input.run_root, evidenceSkeleton.files);
+  const boundFiles = await bindEvidenceBundleFiles(
+    input.cwd,
+    summary.input.run_root,
+    [...evidenceSkeleton.files, ...externalIntakeBindings]
+  );
   const evidenceBundle = buildEvidenceBundleArtifact(summary, undefined, boundFiles);
   const evidenceBundleSha256 = createHash("sha256")
     .update(`${JSON.stringify(evidenceBundle, null, 2)}\n`)
@@ -183,14 +198,160 @@ async function bindEvidenceBundleFiles(
     const stat = await fs.stat(absolutePath);
     if (!stat.isFile()) continue;
     const bytes = await fs.readFile(absolutePath);
+    const observedSha256 = createHash("sha256").update(bytes).digest("hex");
+    if ((typeof file.sha256 === "string" || Number.isInteger(file.bytes))
+        && (file.sha256 !== observedSha256 || file.bytes !== bytes.byteLength)) {
+      throw new Error(
+        `Evidence binding drift for ${file.path}: declared SHA-256/bytes do not match actual bytes.`
+      );
+    }
     bound.push({
       path: boundPath,
       required: true,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
+      sha256: observedSha256,
       bytes: bytes.byteLength
     });
   }
   return bound;
+}
+
+export async function verifyExternalIntakeManifestBindings(input: {
+  cwd: string;
+  manifestPath: string;
+  runRoot: string;
+}): Promise<EvidenceBundleFile[]> {
+  const manifestPath = resolveWithinCwd(input.cwd, input.manifestPath);
+  const manifestStat = await fs.lstat(manifestPath).catch(() => null);
+  if (!manifestStat || !manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+    throw new Error("External intake manifest must be a regular, non-symbolic-link file.");
+  }
+  const payload = parseJsonArtifact(await fs.readFile(manifestPath), "external intake manifest");
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new Error("External intake manifest must be a JSON object.");
+  }
+  const manifest = payload as Record<string, unknown>;
+  if (manifest.version !== 1
+      || typeof manifest.run_root !== "string"
+      || !Array.isArray(manifest.copied_files)
+      || !Array.isArray(manifest.copied_file_bindings)) {
+    throw new Error(
+      "External intake manifest requires version, run_root, copied_files, and copied_file_bindings."
+    );
+  }
+  const expectedRunRoot = input.runRoot.replace(/\\/gu, "/");
+  if (manifest.run_root !== expectedRunRoot || !isPortableRelativePath(expectedRunRoot)) {
+    throw new Error("External intake manifest run_root does not match the audited frozen run root.");
+  }
+
+  const copiedFiles = manifest.copied_files.map((value, index) => {
+    if (typeof value !== "string") {
+      throw new Error(`External intake manifest copied_files[${index}] must be a string.`);
+    }
+    return normalizeFrozenIntakePath(value, `copied_files[${index}]`);
+  });
+  const copiedBindings = manifest.copied_file_bindings.map((value, index) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`External intake manifest copied_file_bindings[${index}] must be an object.`);
+    }
+    const binding = value as Record<string, unknown>;
+    if (typeof binding.path !== "string"
+        || typeof binding.sha256 !== "string"
+        || !/^[a-f0-9]{64}$/u.test(binding.sha256)
+        || typeof binding.bytes !== "number"
+        || !Number.isSafeInteger(binding.bytes)
+        || binding.bytes < 0) {
+      throw new Error(
+        `External intake manifest copied_file_bindings[${index}] has an invalid path, sha256, or bytes field.`
+      );
+    }
+    return {
+      path: normalizeFrozenIntakePath(binding.path, `copied_file_bindings[${index}].path`),
+      sha256: binding.sha256,
+      bytes: binding.bytes
+    };
+  });
+  const copiedFileSet = new Set(copiedFiles);
+  const bindingPathSet = new Set(copiedBindings.map((binding) => binding.path));
+  if (copiedFileSet.size !== copiedFiles.length
+      || bindingPathSet.size !== copiedBindings.length
+      || copiedFiles.length !== copiedBindings.length
+      || copiedFiles.some((file, index) => copiedBindings[index]?.path !== file)) {
+    throw new Error(
+      "External intake manifest copied_files and copied_file_bindings must form the same ordered closed inventory."
+    );
+  }
+
+  const runRoot = resolveWithinCwd(input.cwd, expectedRunRoot);
+  const runRootStat = await fs.lstat(runRoot).catch(() => null);
+  if (!runRootStat || !runRootStat.isDirectory() || runRootStat.isSymbolicLink()) {
+    throw new Error("External intake frozen run root must be a regular, non-symbolic-link directory.");
+  }
+  const actualFiles = await inventoryFrozenExternalFiles(runRoot, runRoot);
+  const expectedFiles = [...copiedFiles].sort();
+  if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+    throw new Error(
+      "External intake frozen files do not match the manifest copied_files closed inventory."
+    );
+  }
+
+  const verifiedBindings: EvidenceBundleFile[] = [];
+  for (const binding of copiedBindings) {
+    const absolutePath = path.join(runRoot, ...binding.path.split("/"));
+    const stat = await fs.lstat(absolutePath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`External intake frozen file is not a regular file: ${binding.path}`);
+    }
+    const bytes = await fs.readFile(absolutePath);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    if (bytes.byteLength !== binding.bytes || sha256 !== binding.sha256) {
+      throw new Error(
+        `External intake binding drift for ${binding.path}: manifest SHA-256/bytes do not match frozen bytes.`
+      );
+    }
+    verifiedBindings.push({
+      path: portableInputLabel(
+        input.cwd,
+        absolutePath,
+        `<external-artifact-root>/${binding.path}`
+      ),
+      sha256,
+      bytes: bytes.byteLength,
+      required: true
+    });
+  }
+  return verifiedBindings;
+}
+
+function normalizeFrozenIntakePath(value: string, field: string): string {
+  const normalized = value.replace(/\\/gu, "/");
+  if (!normalized
+      || normalized !== value
+      || normalized !== path.posix.normalize(normalized)
+      || path.posix.isAbsolute(normalized)
+      || normalized.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error(`External intake manifest ${field} must be a portable relative path.`);
+  }
+  return normalized;
+}
+
+async function inventoryFrozenExternalFiles(root: string, current: string): Promise<string[]> {
+  const files: string[] = [];
+  const entries = await fs.readdir(current, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const absolutePath = path.join(current, entry.name);
+    const relativePath = path.relative(root, absolutePath).replace(/\\/gu, "/");
+    if (entry.isSymbolicLink()) {
+      throw new Error(`External intake frozen inventory contains a symbolic link: ${relativePath}`);
+    }
+    if (entry.isDirectory()) {
+      files.push(...await inventoryFrozenExternalFiles(root, absolutePath));
+    } else if (entry.isFile()) {
+      files.push(relativePath);
+    } else {
+      throw new Error(`External intake frozen inventory contains a non-regular entry: ${relativePath}`);
+    }
+  }
+  return files.sort();
 }
 
 function isPortableRelativePath(value: string): boolean {
@@ -224,7 +385,9 @@ export async function runResearchReview(input: {
       gateReportSha256: gateSha256
     });
   } else {
-    review = buildReviewReportArtifact(gateFile.artifact);
+    review = buildReviewReportArtifact(gateFile.artifact, {
+      gateReportSha256: gateSha256
+    });
   }
   assertValidArtifact(review);
   const outDir = resolveOutputDir(input.cwd, input.outDir, "review");
@@ -241,13 +404,17 @@ export async function runResearchImprove(input: {
   reviewPath: string;
   outDir?: string;
 }): Promise<ResearchOperationResult<MetaHarnessPatchPlanArtifact>> {
-  const review = await readTypedArtifact<ReviewReportArtifact>(input.cwd, input.reviewPath, "ReviewReport");
-  const patchPlan = buildMetaHarnessPatchPlanArtifact(review);
+  const reviewFile = await readTypedArtifactFile<ReviewReportArtifact>(input.cwd, input.reviewPath, "ReviewReport");
+  const patchPlan = buildMetaHarnessPatchPlanArtifact(
+    reviewFile.artifact,
+    undefined,
+    createHash("sha256").update(reviewFile.bytes).digest("hex")
+  );
   assertValidArtifact(patchPlan);
   const outDir = resolveOutputDir(input.cwd, input.outDir, "improve");
   const outputPath = path.join(outDir, "meta-harness-patch-plan.json");
   await writeJsonFile(outputPath, patchPlan);
-  return operationResult(input.cwd, outputPath, patchPlan, [resolveWithinCwd(input.cwd, input.reviewPath)]);
+  return operationResult(input.cwd, outputPath, patchPlan, [reviewFile.absolutePath]);
 }
 
 export async function runResearchPack(input: {
@@ -257,19 +424,41 @@ export async function runResearchPack(input: {
   sourceDir?: string;
   outDir?: string;
 }): Promise<ResearchOperationResult<PaperReadinessBundleArtifact>> {
-  const gate = await readTypedArtifact<GateReportArtifact>(input.cwd, input.gatePath, "GateReport");
-  const review = await readTypedArtifact<ReviewReportArtifact>(input.cwd, input.reviewPath, "ReviewReport");
+  const gateFile = await readTypedArtifactFile<GateReportArtifact>(input.cwd, input.gatePath, "GateReport");
+  const reviewFile = await readTypedArtifactFile<ReviewReportArtifact>(
+    input.cwd,
+    input.reviewPath,
+    "ReviewReport"
+  );
+  const gate = gateFile.artifact;
+  const review = reviewFile.artifact;
   if (review.gate_report_id !== gate.artifact_id) {
     throw new Error("ReviewReport does not reference the supplied GateReport.");
+  }
+  if (review.claim_ceiling !== gate.claim_ceiling) {
+    throw new Error("ReviewReport claim_ceiling does not match the supplied GateReport.");
   }
 
   const outDir = resolveOutputDir(input.cwd, input.outDir, "pack");
   const sourceDir = input.sourceDir
     ? resolveWithinCwd(input.cwd, input.sourceDir)
-    : path.dirname(resolveWithinCwd(input.cwd, input.gatePath));
+    : path.dirname(gateFile.absolutePath);
+  const evidenceBundleSidecar = await loadEvidenceBundleSidecarForPack({
+    gate,
+    sourceDir
+  });
+  const modelReviewSidecar = await loadModelReviewSidecarForPack({
+    gate,
+    gateBytes: gateFile.bytes,
+    review,
+    sourceDir
+  });
   if (input.sourceDir) {
-    const supplementalFiles = PACK_ALLOWLIST.filter((relative) =>
+    const supplementalFiles: string[] = PACK_ALLOWLIST.filter((relative) =>
       relative !== "gate-report.json" && relative !== "review-report.json");
+    if (modelReviewSidecar) {
+      supplementalFiles.push(MODEL_REVIEW_BUNDLE_SIDECAR);
+    }
     const supplementalFileExists = await Promise.all(supplementalFiles.map((relative) =>
       fileExists(path.join(sourceDir, relative))));
     if (!supplementalFileExists.some(Boolean)) {
@@ -286,8 +475,32 @@ export async function runResearchPack(input: {
   const redactedFiles: string[] = [];
   const limitations = review.blocking_issues.map((finding) => finding.message);
   const candidates = uniqueCandidateFiles([
-    { source: resolveWithinCwd(input.cwd, input.gatePath), relative: "gate-report.json", redactIdentifiers: false },
-    { source: resolveWithinCwd(input.cwd, input.reviewPath), relative: "review-report.json", redactIdentifiers: false },
+    {
+      source: gateFile.absolutePath,
+      relative: "gate-report.json",
+      redactIdentifiers: false,
+      frozenBytes: gateFile.bytes
+    },
+    {
+      source: reviewFile.absolutePath,
+      relative: "review-report.json",
+      redactIdentifiers: false,
+      frozenBytes: reviewFile.bytes
+    },
+    {
+      source: evidenceBundleSidecar.absolutePath,
+      relative: EVIDENCE_BUNDLE_SIDECAR,
+      redactIdentifiers: false,
+      frozenBytes: evidenceBundleSidecar.bytes
+    },
+    ...(modelReviewSidecar
+      ? [{
+          source: modelReviewSidecar.absolutePath,
+          relative: MODEL_REVIEW_BUNDLE_SIDECAR,
+          redactIdentifiers: false,
+          frozenBytes: modelReviewSidecar.bytes
+        }]
+      : []),
     ...PACK_ALLOWLIST.map((relative) => ({
       source: path.join(sourceDir, relative),
       relative,
@@ -296,8 +509,15 @@ export async function runResearchPack(input: {
   ]);
 
   for (const candidate of candidates) {
-    if (!(await fileExists(candidate.source))) continue;
-    const raw = await fs.readFile(candidate.source);
+    let raw = candidate.frozenBytes;
+    if (!raw) {
+      const stat = await fs.lstat(candidate.source).catch(() => null);
+      if (!stat) continue;
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`Research pack sidecar must be a regular, non-symbolic-link file: ${candidate.relative}`);
+      }
+      raw = await fs.readFile(candidate.source);
+    }
     const text = raw.toString("utf8");
     if (containsNonPortableResearchText(text)) {
       portabilityIssues.push(`Excluded ${candidate.relative} because it contains non-portable or sensitive text.`);
@@ -322,6 +542,13 @@ export async function runResearchPack(input: {
   if (files.length === 0) {
     throw new Error("No portable governance artifacts were available for packaging.");
   }
+  if (!files.some((file) => file.path === `artifacts/${EVIDENCE_BUNDLE_SIDECAR}`)) {
+    throw new Error("Research pack could not preserve the required EvidenceBundle sidecar bytes.");
+  }
+  if (modelReviewSidecar
+      && !files.some((file) => file.path === `artifacts/${MODEL_REVIEW_BUNDLE_SIDECAR}`)) {
+    throw new Error("A2 pack could not preserve the required ModelReviewBundle sidecar bytes.");
+  }
   const bundle = buildPaperReadinessBundleArtifact({
     gate,
     review,
@@ -334,6 +561,133 @@ export async function runResearchPack(input: {
   const outputPath = path.join(outDir, "paper-readiness-bundle.json");
   await writeJsonFile(outputPath, bundle);
   return operationResult(input.cwd, outputPath, bundle, files.map((file) => path.join(outDir, file.path)));
+}
+
+interface FrozenEvidenceBundleSidecar {
+  absolutePath: string;
+  bytes: Buffer;
+  bundle: EvidenceBundleArtifact;
+}
+
+async function loadEvidenceBundleSidecarForPack(input: {
+  gate: GateReportArtifact;
+  sourceDir: string;
+}): Promise<FrozenEvidenceBundleSidecar> {
+  const absolutePath = path.join(input.sourceDir, EVIDENCE_BUNDLE_SIDECAR);
+  const stat = await fs.lstat(absolutePath).catch(() => null);
+  if (!stat || !stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(
+      `Research pack requires --source-dir/${EVIDENCE_BUNDLE_SIDECAR} to be a regular, non-symbolic-link file.`
+    );
+  }
+  const bytes = await fs.readFile(absolutePath);
+  if (containsNonPortableResearchText(bytes.toString("utf8"))) {
+    throw new Error("EvidenceBundle sidecar contains non-portable or sensitive text.");
+  }
+  const observedSha256 = createHash("sha256").update(bytes).digest("hex");
+  if (observedSha256 !== input.gate.evidence_bundle_sha256) {
+    throw new Error("EvidenceBundle sidecar SHA-256 does not match GateReport.evidence_bundle_sha256.");
+  }
+  const payload = parseJsonArtifact(bytes, "EvidenceBundle");
+  const validation = validateResearchGovernanceArtifact(payload);
+  if (!validation.ok || (payload as { artifact_type?: unknown }).artifact_type !== "EvidenceBundle") {
+    throw new Error("EvidenceBundle sidecar is not a valid EvidenceBundle artifact.");
+  }
+  const bundle = payload as EvidenceBundleArtifact;
+  if (bundle.artifact_id !== input.gate.evidence_bundle_id) {
+    throw new Error("EvidenceBundle sidecar artifact_id does not match GateReport.evidence_bundle_id.");
+  }
+  const bundleBindings = bundle.files.filter(
+    (file): file is EvidenceBundleFile & { sha256: string; bytes: number } =>
+      typeof file.sha256 === "string" && Number.isSafeInteger(file.bytes)
+  );
+  if (JSON.stringify(bundleBindings) !== JSON.stringify(input.gate.input_bindings)) {
+    throw new Error("EvidenceBundle bound files do not exactly match GateReport.input_bindings.");
+  }
+  return { absolutePath, bytes, bundle };
+}
+
+interface FrozenModelReviewSidecar {
+  absolutePath: string;
+  bytes: Buffer;
+  bundle: ModelReviewBundle;
+}
+
+async function loadModelReviewSidecarForPack(input: {
+  gate: GateReportArtifact;
+  gateBytes: Buffer;
+  review: ReviewReportArtifact;
+  sourceDir: string;
+}): Promise<FrozenModelReviewSidecar | undefined> {
+  const assurance = (input.review as {
+    reviewer_assurance?: ReviewReportArtifact["reviewer_assurance"];
+  }).reviewer_assurance;
+  if (!assurance) {
+    throw new Error("Research pack requires ReviewReport.reviewer_assurance.");
+  }
+
+  const gateSha256 = createHash("sha256").update(input.gateBytes).digest("hex");
+  const assuranceGateSha256 = (assurance as { gate_report_sha256?: unknown }).gate_report_sha256;
+  if (typeof assuranceGateSha256 === "string") {
+    if (assuranceGateSha256 !== gateSha256) {
+      throw new Error(
+        "ReviewReport reviewer_assurance.gate_report_sha256 does not match the supplied GateReport bytes."
+      );
+    }
+  } else if (assurance.tier === "A2_model_conservative") {
+    throw new Error("A2 pack requires ReviewReport reviewer_assurance.gate_report_sha256.");
+  } else {
+    return undefined;
+  }
+
+  if (assurance.tier === "A0_deterministic") {
+    const rebuiltReview = buildReviewReportArtifact(
+      input.gate,
+      { gateReportSha256: gateSha256 },
+      new Date(input.review.generated_at)
+    );
+    if (JSON.stringify(rebuiltReview) !== JSON.stringify(input.review)) {
+      throw new Error("A0 ReviewReport does not exactly match its deterministic GateReport reconstruction.");
+    }
+    return undefined;
+  }
+
+  const absolutePath = path.join(input.sourceDir, MODEL_REVIEW_BUNDLE_SIDECAR);
+  const stat = await fs.lstat(absolutePath).catch(() => null);
+  if (!stat) {
+    throw new Error(
+      `A2 pack requires ${MODEL_REVIEW_BUNDLE_SIDECAR} directly under --source-dir.`
+    );
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(
+      `A2 pack requires --source-dir/${MODEL_REVIEW_BUNDLE_SIDECAR} to be a regular, non-symbolic-link file.`
+    );
+  }
+
+  const bytes = await fs.readFile(absolutePath);
+  if (containsNonPortableResearchText(bytes.toString("utf8"))) {
+    throw new Error("A2 ModelReviewBundle sidecar contains non-portable or sensitive text.");
+  }
+  const bundleSha256 = createHash("sha256").update(bytes).digest("hex");
+  if (bundleSha256 !== assurance.model_review_bundle_sha256) {
+    throw new Error(
+      "A2 ModelReviewBundle sidecar SHA-256 does not match ReviewReport reviewer_assurance."
+    );
+  }
+  const bundle = parseModelReviewBundle(
+    parseJsonArtifact(bytes, "ModelReviewBundle"),
+    { artifact_id: input.gate.artifact_id, sha256: gateSha256 }
+  );
+  const rebuiltReview = buildReviewReportArtifact(input.gate, {
+    modelReviewBundle: bundle,
+    modelReviewBundleSha256: bundleSha256,
+    gateReportSha256: gateSha256
+  }, new Date(input.review.generated_at));
+  if (JSON.stringify(rebuiltReview) !== JSON.stringify(input.review)) {
+    throw new Error("A2 ReviewReport does not exactly match its bound gate and ModelReviewBundle reconstruction.");
+  }
+  return { absolutePath, bytes, bundle };
 }
 
 function resolveOutputDir(cwd: string, outDir: string | undefined, intent: string): string {
@@ -394,9 +748,14 @@ function assertValidArtifact(artifact: unknown): void {
   }
 }
 
-function uniqueCandidateFiles(
-  candidates: Array<{ source: string; relative: string; redactIdentifiers: boolean }>
-): Array<{ source: string; relative: string; redactIdentifiers: boolean }> {
+interface PackCandidate {
+  source: string;
+  relative: string;
+  redactIdentifiers: boolean;
+  frozenBytes?: Buffer;
+}
+
+function uniqueCandidateFiles(candidates: PackCandidate[]): PackCandidate[] {
   const seenSources = new Set<string>();
   const seenDestinations = new Set<string>();
   return candidates.filter((candidate) => {
@@ -456,12 +815,14 @@ function identifierPlaceholder(key: string): string {
   if (normalized.startsWith("run")) return "<run-id>";
   if (normalized.startsWith("model")) return "<model-id>";
   if (normalized.startsWith("condition")) return "<condition-id>";
+  if (/^(?:event|trace|span|request|thread)/u.test(normalized)) return "<trace-id>";
   return "<task-id>";
 }
 
 function redactFreeText(value: string): string {
   return value
     .replace(RUN_UUID_PATTERN, "<run-id>")
+    .replace(TRACE_IDENTIFIER_PATTERN, "<trace-id>")
     .replace(CONDITION_IDENTIFIER_PATTERN, "<condition-id>")
     .replace(PARAMETER_VALUE_PATTERN, "<parameter-value>")
     .replace(MODEL_IDENTIFIER_PATTERN, "<model-id>")

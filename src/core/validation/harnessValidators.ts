@@ -8,6 +8,10 @@ import {
   RunValidationScope
 } from "../../types.js";
 import { fileExists } from "../../utils/fs.js";
+import {
+  ACL_BIBLIOGRAPHY_STYLE,
+  inspectAclTemplateSurface
+} from "../latex/aclTemplate.js";
 
 export interface HarnessValidationIssue {
   code: string;
@@ -1406,11 +1410,12 @@ async function validatePaperSurfaceContract(input: {
     return;
   }
 
-  const aclPackage = tex.match(/\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/iu)?.[0] || "";
-  const usesAclTemplate = aclPackage.length > 0;
-  const bibliographyStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || "";
+  const aclSurface = inspectAclTemplateSurface(tex);
+  const aclPackage = aclSurface.template?.packageCommand || "";
+  const usesAclTemplate = aclSurface.template !== null;
+  const bibliographyStyle = aclSurface.explicitBibliographyStyle || "";
 
-  if (usesAclTemplate && bibliographyStyle !== "acl_natbib") {
+  if (aclSurface.hasBibliographyStyleMismatch) {
     input.issues.push({
       code: "paper_acl_bibliography_style_mismatch",
       message:
@@ -1419,7 +1424,10 @@ async function validatePaperSurfaceContract(input: {
       filePath: input.mainTexPath,
       runId: input.runId
     });
-  } else if (usesAclTemplate && !(await fileExists(path.join(input.runDir, "paper", "acl_natbib.bst")))) {
+  } else if (
+    usesAclTemplate
+    && !(await fileExists(path.join(input.runDir, "paper", `${ACL_BIBLIOGRAPHY_STYLE}.bst`)))
+  ) {
     input.issues.push({
       code: "paper_acl_bibliography_style_file_missing",
       message:
@@ -1437,7 +1445,7 @@ async function validatePaperSurfaceContract(input: {
     });
   }
 
-  if (usesAclTemplate && /\\(?:noindent\s*)?textbf\{Keywords:\}|\\keywords\{/iu.test(tex)) {
+  if (aclSurface.hasExcludedKeywords) {
     input.issues.push({
       code: "paper_acl_template_absent_keywords",
       message:

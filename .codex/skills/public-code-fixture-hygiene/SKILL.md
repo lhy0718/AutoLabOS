@@ -19,7 +19,7 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 ## Rules
 
 - Do not hardcode one-off runner names, model IDs, dataset names, benchmark names, or condition markers as system defaults or test contracts.
-- Use neutral fixture names such as `run_instruction_study`, `benchmark_task_a`, `benchmark_task_b`, `baseline_condition`, and `candidate_condition_a`.
+- Use neutral fixture names such as `run_parameterized_study`, `benchmark_task_a`, `benchmark_task_b`, `baseline_condition`, and `candidate_condition_a`.
 - Keep real experiment names inside run artifacts or user-provided inputs, not reusable source logic.
 - If compatibility behavior for older artifacts is still needed, express it through generic alias/adapter behavior rather than naming a specific old experiment.
 - Do not allow paper-writing fallbacks to invent a specific model, benchmark pair, method setting, or condition marker.

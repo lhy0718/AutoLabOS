@@ -8,6 +8,7 @@ import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
 import { runEvolveCli } from "./evolveRun.js";
 import { runPaperReadinessAuditCli } from "./audit.js";
+import { resolvePortableExternalAuditOutputDir } from "../core/audit/externalArtifactIntake.js";
 import {
   runGovernanceBenchmarkBatchCli,
   runGovernanceBenchmarkDryRunCli,
@@ -99,7 +100,7 @@ function printHelp(): void {
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
-    "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]",
+    "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--support-root <root> --support-manifest <manifest.json>]) [--out-dir outputs/audit]",
     "  autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone|run-validation> [options]",
     "  autolabos reference-review prepare --claims <refgate_claims.tsv> --status <reference-evidence-status.json> --lock <refgate.lock.json> --out-dir <new-handoff-dir>",
     "  autolabos reference-review distribute-private --packet <handoff-dir> --source-dir <citation-key-named-full-text-dir> --out-dir <new-private-distribution-dir>",
@@ -175,11 +176,12 @@ function printAuditHelp(): void {
     "",
     "Usage:",
     "  autolabos audit --run <run-artifact-root> [--out-dir outputs/audit]",
-    "  autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--out-dir outputs/audit]",
+    "  autolabos audit --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--support-root <root> --support-manifest <manifest.json>] [--out-dir outputs/audit]",
     "",
     "Examples:",
     "  autolabos audit --run .autolabos/runs/<run-id> --out-dir outputs/audit/<run-id>",
     "  autolabos audit --external <external-artifact-root> --draft <draft.md> --log <run.log> --out-dir outputs/audit/external",
+    "  autolabos audit --external <external-artifact-root> --support-root <root> --support-manifest <manifest.json> --out-dir outputs/audit/external",
     "",
     "Outputs:",
     "  paper-readiness-audit.md",
@@ -203,7 +205,7 @@ function printResearchHelp(): void {
     "",
     "Usage:",
     "  autolabos research new --brief <path> [--out-dir <dir>]",
-    "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>]) [--out-dir <dir>]",
+    "  autolabos research audit (--run <run-root> | --external <artifact-root> [--draft <draft>] [--log <log>] [--support-root <root> --support-manifest <manifest.json>]) [--out-dir <dir>]",
     "  autolabos research review --gate <gate-report.json> [--model-review <model-review-bundle.json>] [--out-dir <dir>]",
     "  autolabos research improve --review <review-report.json> [--out-dir <dir>]",
     "  autolabos research pack --gate <gate-report.json> --review <review-report.json> [--source-dir <audit-artifact-dir>] [--out-dir <dir>]",
@@ -375,12 +377,18 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "audit") {
+    const cwd = process.cwd();
+    if (action.externalRoot && action.outDir) {
+      resolvePortableExternalAuditOutputDir(cwd, action.outDir);
+    }
     await runPaperReadinessAuditCli({
-      cwd: process.cwd(),
+      cwd,
       runRoot: action.runRoot,
       externalRoot: action.externalRoot,
       draftPath: action.draftPath,
       logPath: action.logPath,
+      supportRoot: action.supportRoot,
+      supportManifestPath: action.supportManifestPath,
       outDir: action.outDir
     });
     return;
@@ -392,12 +400,18 @@ async function main(): Promise<void> {
   }
 
   if (action.kind === "research-audit") {
+    const cwd = process.cwd();
+    if (action.externalRoot && action.outDir) {
+      resolvePortableExternalAuditOutputDir(cwd, action.outDir);
+    }
     await runResearchAuditCli({
-      cwd: process.cwd(),
+      cwd,
       runRoot: action.runRoot,
       externalRoot: action.externalRoot,
       draftPath: action.draftPath,
       logPath: action.logPath,
+      supportRoot: action.supportRoot,
+      supportManifestPath: action.supportManifestPath,
       outDir: action.outDir
     });
     return;

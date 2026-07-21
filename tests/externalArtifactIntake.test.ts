@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { materializeExternalAuditArtifacts } from "../src/core/audit/externalArtifactIntake.js";
 import { runPaperReadinessAudit } from "../src/core/audit/paperReadinessAudit.js";
 
 const tempDirs: string[] = [];
@@ -114,6 +115,213 @@ describe("external artifact audit intake", () => {
     expect(claimExport).toContain("artifact_or_citation_linked");
   });
 
+  it("copies only explicitly hash-bound support files into the frozen inventory", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-support-audit-workspace-"));
+    const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-support-audit-source-"));
+    const supportRoot = path.join(workspace, "support-root");
+    tempDirs.push(workspace, external);
+    await mkdir(path.join(supportRoot, "src"), { recursive: true });
+    const supportContent = "export const contract = true;\n";
+    await writeFile(path.join(supportRoot, "src", "validator.ts"), supportContent, "utf8");
+    await writeFile(path.join(external, "claim-evidence-map.json"), JSON.stringify({
+      schema_version: "1.0",
+      claim_ceiling: "system_validation_note",
+      claims: [{
+        claim_id: "contract-claim",
+        claim: "The validator enforces the declared contract.",
+        status: "supported_by_code_and_tests",
+        artifact_refs: ["src/validator.ts"]
+      }]
+    }), "utf8");
+    const supportManifestPath = path.join(workspace, "support-manifest.json");
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{
+        path: "src/validator.ts",
+        sha256: createHash("sha256").update(supportContent).digest("hex"),
+        bytes: Buffer.byteLength(supportContent)
+      }]
+    }), "utf8");
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: external,
+      supportRoot,
+      supportManifestPath,
+      outDir: "outputs/support-audit"
+    });
+
+    expect(summary.unsupported_claims).not.toContainEqual(expect.objectContaining({ claim_id: "contract-claim" }));
+    expect(await readFile(
+      path.join(workspace, "outputs", "support-audit", "_external-intake", "run-artifacts", "src", "validator.ts"),
+      "utf8"
+    )).toBe(supportContent);
+    const manifestRaw = await readFile(
+      path.join(workspace, "outputs", "support-audit", "external-intake-manifest.json"),
+      "utf8"
+    );
+    const manifest = JSON.parse(manifestRaw) as {
+      copied_files: string[];
+      copied_file_mappings: Array<{ source_ref: string; copied_path: string }>;
+      explicit_inputs: { support_manifest: boolean; support_file_count: number };
+    };
+    expect(manifest.copied_files).toEqual(expect.arrayContaining([
+      "src/validator.ts",
+      "intake/support-manifest.json"
+    ]));
+    expect(manifest.copied_file_mappings).toContainEqual(expect.objectContaining({
+      source_ref: "support:src/validator.ts",
+      copied_path: "src/validator.ts"
+    }));
+    expect(manifest.explicit_inputs).toMatchObject({ support_manifest: true, support_file_count: 1 });
+    expect(manifestRaw).not.toContain(supportRoot);
+  });
+
+  it.each([
+    { destination: "paper/draft.md", explicitInput: "draft" },
+    { destination: "logs/external.log", explicitInput: "log" },
+    { destination: "intake/support-manifest.json", explicitInput: undefined }
+  ] as const)("rejects reserved support destination $destination before copying", async ({
+    destination,
+    explicitInput
+  }) => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-support-collision-workspace-"));
+    tempDirs.push(workspace);
+    const external = path.join(workspace, "external");
+    const supportRoot = path.join(workspace, "support-root");
+    const outputDir = path.join(workspace, "outputs", "collision-audit");
+    const runRoot = path.join(outputDir, "_external-intake", "run-artifacts");
+    const sentinelPath = path.join(runRoot, "sentinel.txt");
+    await mkdir(external, { recursive: true });
+    await mkdir(path.dirname(path.join(supportRoot, destination)), { recursive: true });
+    await mkdir(runRoot, { recursive: true });
+    await writeFile(path.join(external, "result_table.json"), "[]\n", "utf8");
+    await writeFile(sentinelPath, "preserve\n", "utf8");
+
+    const supportContent = "bound support evidence\n";
+    await writeFile(path.join(supportRoot, destination), supportContent, "utf8");
+    const supportManifestPath = path.join(workspace, "declared-support.json");
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{
+        path: destination,
+        sha256: createHash("sha256").update(supportContent).digest("hex"),
+        bytes: Buffer.byteLength(supportContent)
+      }]
+    }), "utf8");
+
+    const draftPath = explicitInput === "draft" ? path.join(workspace, "explicit-draft.md") : undefined;
+    const logPath = explicitInput === "log" ? path.join(workspace, "explicit.log") : undefined;
+    if (draftPath) {
+      await writeFile(draftPath, "# Explicit draft\n", "utf8");
+    }
+    if (logPath) {
+      await writeFile(logPath, "explicit log\n", "utf8");
+    }
+
+    await expect(materializeExternalAuditArtifacts({
+      cwd: workspace,
+      outDir: outputDir,
+      externalRoot: external,
+      draftPath,
+      logPath,
+      supportRoot,
+      supportManifestPath
+    })).rejects.toThrow(`reserved intake destination: ${destination}`);
+
+    expect(await readFile(sentinelPath, "utf8")).toBe("preserve\n");
+    await expect(readFile(path.join(runRoot, "result_table.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("rejects output directories outside cwd before writing intake artifacts", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-output-boundary-workspace-"));
+    tempDirs.push(workspace);
+    const external = path.join(workspace, "external");
+    const outsideOutput = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside`);
+    tempDirs.push(outsideOutput);
+    await mkdir(external, { recursive: true });
+    await writeFile(path.join(external, "result_table.json"), "[]\n", "utf8");
+
+    await expect(materializeExternalAuditArtifacts({
+      cwd: workspace,
+      outDir: path.relative(workspace, outsideOutput),
+      externalRoot: external
+    })).rejects.toThrow("output directory must be within cwd");
+
+    await expect(readFile(
+      path.join(outsideOutput, "_external-intake", "run-artifacts", "result_table.json"),
+      "utf8"
+    )).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(stat(outsideOutput)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects support binding drift, path traversal, and symlinks", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-support-reject-workspace-"));
+    const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-support-reject-source-"));
+    const supportRoot = path.join(workspace, "support-root");
+    tempDirs.push(workspace, external);
+    await mkdir(supportRoot, { recursive: true });
+    await writeFile(path.join(supportRoot, "evidence.json"), "{}\n", "utf8");
+    const supportManifestPath = path.join(workspace, "support-manifest.json");
+
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{ path: "evidence.json", sha256: "0".repeat(64), bytes: 3 }]
+    }), "utf8");
+    await expect(runPaperReadinessAudit({
+      cwd: workspace, externalRoot: external, supportRoot, supportManifestPath, outDir: "outputs/drift"
+    })).rejects.toThrow("support binding mismatch");
+
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{ path: "../evidence.json", sha256: "0".repeat(64), bytes: 3 }]
+    }), "utf8");
+    await expect(runPaperReadinessAudit({
+      cwd: workspace, externalRoot: external, supportRoot, supportManifestPath, outDir: "outputs/traversal"
+    })).rejects.toThrow("portable and relative");
+
+    const linkedPath = path.join(supportRoot, "linked.json");
+    await symlink(path.join(supportRoot, "evidence.json"), linkedPath);
+    const linkedContent = await readFile(linkedPath);
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{
+        path: "linked.json",
+        sha256: createHash("sha256").update(linkedContent).digest("hex"),
+        bytes: linkedContent.byteLength
+      }]
+    }), "utf8");
+    await expect(runPaperReadinessAudit({
+      cwd: workspace, externalRoot: external, supportRoot, supportManifestPath, outDir: "outputs/symlink"
+    })).rejects.toThrow("contains a symlink");
+  });
+
+  it("rejects symlinked external roots and allowlisted source files", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-external-symlink-workspace-"));
+    const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-external-symlink-source-"));
+    const linkedRoot = path.join(workspace, "linked-external");
+    tempDirs.push(workspace, external);
+    await writeFile(path.join(external, "result_table.json"), "[]\n", "utf8");
+    await symlink(external, linkedRoot);
+
+    await expect(runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: linkedRoot,
+      outDir: "outputs/root-symlink"
+    })).rejects.toThrow("artifact root must be a real directory");
+
+    const regularRoot = path.join(workspace, "regular-external");
+    await mkdir(regularRoot, { recursive: true });
+    await symlink(path.join(external, "result_table.json"), path.join(regularRoot, "result_table.json"));
+    await expect(runPaperReadinessAudit({
+      cwd: workspace,
+      externalRoot: regularRoot,
+      outDir: "outputs/file-symlink"
+    })).rejects.toThrow("regular files only");
+  });
+
   it("normalizes a root academic package and audits its submission and reference gates", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-audit-workspace-"));
     const external = await mkdtemp(path.join(os.tmpdir(), "autolabos-academic-audit-source-"));
@@ -198,6 +406,7 @@ describe("external artifact audit intake", () => {
     expect(summary.research_scale_findings).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "reference_full_text_missing", target_node: "collect_papers" }),
       expect.objectContaining({ code: "reference_claim_review_incomplete", target_node: "analyze_papers" }),
+      expect.objectContaining({ code: "reference_submission_gate_not_passed", target_node: "analyze_papers" }),
       expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:run_experiments", target_node: "run_experiments" }),
       expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:collect_papers", target_node: "collect_papers" }),
       expect.objectContaining({ code: "academic_claim_evidence_blocked:effect-claim:review", target_node: "review" }),

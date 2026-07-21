@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os
 import pty
-import json
 import re
 import select
 import signal
@@ -33,7 +32,7 @@ def wait_for(fd: int, pattern: str, timeout: float, buffer_text: str) -> str:
         joined += data.decode("utf-8", errors="ignore")
         if regex.search(joined):
             return joined
-    print(f"FAIL: pattern not found before timeout: {pattern}")
+    print(f"FAIL: pattern not found: {pattern}")
     if joined:
         print("---- recent buffer ----")
         print(joined[-6000:])
@@ -57,38 +56,20 @@ def run_doctor_pattern_selftest() -> int:
     if not re.search(DOCTOR_HARNESS_PATTERN, previous):
         print("FAIL: doctor harness pattern did not preserve older harness output")
         return 1
-    print("PASS: p6 doctor output pattern self-test")
+    print("PASS: live-validation doctor output pattern self-test")
     return 0
 
 def send_line(fd: int, text: str) -> None:
     os.write(fd, text.encode("utf-8") + b"\n")
 
 
-def load_run_record(workspace: Path, run_id: str) -> dict:
-    record_path = workspace / ".autolabos" / "runs" / run_id / "run_record.json"
-    try:
-        return json.loads(record_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"FAIL: could not inspect run record for expected run id: {exc}")
-        raise SystemExit(1)
-
-
-def current_node(record: dict) -> str:
-    return str(record.get("currentNode") or record.get("graph", {}).get("currentNode") or "")
-
-
-def node_status(record: dict, node: str) -> str:
-    return str(record.get("graph", {}).get("nodeStates", {}).get(node, {}).get("status", ""))
-
-
 def main() -> int:
-    if os.environ.get("AUTOLABOS_P6_DOCTOR_PATTERN_SELFTEST", "") == "1":
+    if os.environ.get("AUTOLABOS_VALIDATION_DOCTOR_PATTERN_SELFTEST", "") == "1":
         return run_doctor_pattern_selftest()
     repo_root = Path(__file__).resolve().parents[1]
-    default_workspace = repo_root.parent / ".autolabos-validation" / "p6-paper-ready-live"
-    workspace = Path(os.environ.get("AUTOLABOS_P6_WORKSPACE", str(default_workspace))).resolve()
-    output_dir = Path(os.environ.get("AUTOLABOS_P6_PREFLIGHT_OUT", str(repo_root / "outputs" / "p6-preflight"))).resolve()
-    expected_run_id = os.environ.get("AUTOLABOS_P6_RUN_ID", "").strip()
+    default_workspace = repo_root.parent / ".autolabos-validation" / "live-validation"
+    workspace = Path(os.environ.get("AUTOLABOS_VALIDATION_WORKSPACE", str(default_workspace))).resolve()
+    output_dir = Path(os.environ.get("AUTOLABOS_VALIDATION_PREFLIGHT_OUT", str(repo_root / "outputs" / "live-validation-preflight"))).resolve()
     dist_main = repo_root / "dist" / "cli" / "main.js"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -98,27 +79,6 @@ def main() -> int:
     if not dist_main.exists():
         print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
         return 1
-    if expected_run_id:
-        runs_json = workspace / ".autolabos" / "runs" / "runs.json"
-        try:
-            if expected_run_id not in runs_json.read_text(encoding="utf-8"):
-                print(f"FAIL: expected run id not present in run store: {expected_run_id}")
-                return 1
-        except Exception as exc:
-            print(f"FAIL: could not inspect run store for expected run id: {exc}")
-            return 1
-        record = load_run_record(workspace, expected_run_id)
-        node = current_node(record)
-        if record.get("status") == "running" and node_status(record, node) == "running":
-            output_path = output_dir / "p6-resume-check-output.txt"
-            output_path.write_text(
-                f"SKIP_TUI_ACTIVE_RUNNING run={expected_run_id} node={node}\n",
-                encoding="utf-8"
-            )
-            print(
-                "PASS: P6 run is actively running; skipped opening a TUI resume-check so the live node is not interrupted."
-            )
-            return 0
 
     env = os.environ.copy()
     env["COLUMNS"] = "220"
@@ -139,20 +99,17 @@ def main() -> int:
 
     buffer_text = ""
     try:
-        node_pattern = (
-            r"(collect_papers|analyze_papers|generate_hypotheses|design_experiments|"
-            r"implement_experiments|run_experiments|analyze_results|figure_audit|review|write_paper)"
+        buffer_text = wait_for(
+            master_fd,
+            r"(Research Brief workflow is ready|Start with /new to create a Research Brief\.|Add steering, or wait for the next (?:run or )?approval\.|collect_papers pending)",
+            40,
+            buffer_text,
         )
-        ready_pattern = (
-            rf"({node_pattern} (needs_approval|pending|completed|failed)|"
-            r"Add steering, or wait for the next (?:run or )?approval\.|Research Brief workflow is ready)"
-        )
-        buffer_text = wait_for(master_fd, ready_pattern, 40, buffer_text)
         send_line(master_fd, "/doctor")
-        buffer_text = wait_for(master_fd, DOCTOR_CHECK_PATTERN, 60, buffer_text)
-        buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 60, buffer_text)
+        buffer_text = wait_for(master_fd, DOCTOR_CHECK_PATTERN, 40, buffer_text)
+        buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 40, buffer_text)
         send_line(master_fd, "/quit")
-        buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
+        buffer_text = wait_for(master_fd, r"Bye", 10, buffer_text)
     finally:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
@@ -167,12 +124,12 @@ def main() -> int:
         except OSError:
             pass
 
-    output_path = output_dir / "p6-resume-check-output.txt"
+    output_path = output_dir / "doctor-pty-output.txt"
     output_path.write_text(buffer_text, encoding="utf-8")
     if "[ATTN] readiness:" in buffer_text or "[FAIL] harness-validation:" in buffer_text:
-        print(f"FAIL: resumed /doctor completed with attention/fail status; see {output_path}")
+        print(f"FAIL: /doctor completed with attention/fail status; see {output_path}")
         return 1
-    print(f"PASS: P6 resumed session and /doctor completed; output={output_path}")
+    print(f"PASS: /doctor completed through Python PTY fallback; output={output_path}")
     return 0
 
 

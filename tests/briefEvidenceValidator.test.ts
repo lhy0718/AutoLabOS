@@ -211,7 +211,7 @@ describe("briefEvidenceValidator", () => {
       report: makeReport({
         plan_context: {
           selected_design: {
-            baselines: ["locked_adapter"],
+            baselines: ["locked_baseline"],
             implementation_notes: [
               "Planned tuned conditions: locked standard tuned baseline; candidate condition a; candidate condition b; candidate condition c."
             ],

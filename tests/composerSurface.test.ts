@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import path from "node:path";
 
 import { buildFrame, RenderFrameInput } from "../src/tui/renderFrame.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
@@ -204,7 +205,7 @@ describe("footer status line v2", () => {
 
   it("shows workspace basename in footer", () => {
     const frame = buildFrame(makeInput({
-      workspaceLabel: "/Users/test/my-project",
+      workspaceLabel: path.join(path.sep, "Users", "example", "my-project"),
       footerItems: ["idle"]
     }));
     const plain = frame.lines.map((l) => stripAnsi(l));

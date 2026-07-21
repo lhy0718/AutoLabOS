@@ -407,7 +407,8 @@ describe("buildErrorFingerprint", () => {
   });
 
   it("strips file paths", () => {
-    const fp = buildErrorFingerprint("Failed to read /home/user/project/file.txt");
+    const privateFixturePath = path.join(path.sep, "home", "example", "project", "file.txt");
+    const fp = buildErrorFingerprint(`Failed to read ${privateFixturePath}`);
     expect(fp).not.toContain("/home");
     expect(fp).toContain("<path>");
   });

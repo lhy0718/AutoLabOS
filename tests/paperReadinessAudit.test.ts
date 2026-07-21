@@ -585,6 +585,92 @@ describe("paper-readiness audit", () => {
     expect(distinctSummary.execution_integrity_findings.map((finding) => finding.code))
       .not.toContain("repeated_run_provenance_missing");
   });
+
+  it("blocks missing or reused seeds when the run declares a planned seed schedule", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-seed-provenance-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ],
+      runRecord: { id: "seed-provenance-case", status: "completed", executed_budget: { trials: 3 } }
+    });
+    await writeJson(path.join(runRoot, "run_config.json"), {
+      planned_budget: { trials: 3 },
+      planned_seeds: [11, 22, 33]
+    });
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: [
+        { trial_id: "trial-a", seed: 11 },
+        { trial_id: "trial-b" },
+        { trial_id: "trial-c", seed: 11 }
+      ]
+    });
+    const incompleteSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/incomplete-seed-audit"
+    });
+    expect(incompleteSummary.execution_integrity_findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "repeated_run_provenance_missing", target_node: "run_experiments" })
+    ]));
+
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: [
+        { trial_id: "trial-a", seed: 11 },
+        { trial_id: "trial-b", seed: 22 },
+        { trial_id: "trial-c", seed: 33 }
+      ]
+    });
+    const completeSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/complete-seed-audit"
+    });
+    expect(completeSummary.execution_integrity_findings.map((finding) => finding.code))
+      .not.toContain("repeated_run_provenance_missing");
+  });
+
+  it("accepts a complete condition-by-seed matrix and rejects a reused pair", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-condition-seed-matrix-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ],
+      runRecord: { id: "condition-seed-case", status: "completed", executed_budget: { trials: 6 } }
+    });
+    await writeJson(path.join(runRoot, "run_config.json"), {
+      planned_budget: { trials: 6 },
+      planned_seeds: [11, 22, 33]
+    });
+    const completeTrials = ["condition-alpha", "condition-beta"].flatMap((condition) =>
+      [11, 22, 33].map((seed) => ({ condition_id: condition, seed }))
+    );
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), { trials: completeTrials });
+
+    const completeSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/complete-condition-seed-audit"
+    });
+    expect(completeSummary.execution_integrity_findings.map((finding) => finding.code))
+      .not.toContain("repeated_run_provenance_missing");
+
+    await writeJson(path.join(runRoot, "experiment_evidence.json"), {
+      trials: completeTrials.map((trial, index) => index === completeTrials.length - 1
+        ? { condition_id: "condition-beta", seed: 22 }
+        : trial)
+    });
+    const reusedSummary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/reused-condition-seed-audit"
+    });
+    expect(reusedSummary.execution_integrity_findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "repeated_run_provenance_missing", target_node: "run_experiments" })
+    ]));
+  });
 });
 
 async function writeMinimalAuditRun(

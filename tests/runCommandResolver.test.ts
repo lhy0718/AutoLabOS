@@ -193,7 +193,7 @@ describe("resolveRunCommand", () => {
     const publicDir = path.join(workspace, "public-runner");
     mkdirSync(publicDir, { recursive: true });
     const conditionRunner = path.join(publicDir, "run_condition.py");
-    const studyRunner = path.join(publicDir, "run_instruction_study.py");
+    const studyRunner = path.join(publicDir, "run_parameterized_study.py");
     writeFileSync(
       conditionRunner,
       [
@@ -256,7 +256,7 @@ describe("resolveRunCommand", () => {
     const publicDir = path.join(workspace, "public-runner");
     mkdirSync(publicDir, { recursive: true });
     const conditionRunner = path.join(publicDir, "run_condition.py");
-    const studyRunner = path.join(publicDir, "run_instruction_study.py");
+    const studyRunner = path.join(publicDir, "run_parameterized_study.py");
     const runCommand = path.join(publicDir, "run_command.sh");
     writeFileSync(
       conditionRunner,

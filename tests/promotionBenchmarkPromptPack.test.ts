@@ -74,7 +74,7 @@ describe("promotion benchmark manuscript-only prompt pack", () => {
     const responses = privateMap.requests.map((request) => ({
       request_id: request.request_id,
       decision: "needs_review",
-      concerns: [{ code: "manuscript_evidence_uncertain", severity: "warning", evidence_refs: ["manuscript"] }],
+      concerns: [{ code: "manuscript_evidence_uncertain", severity: "warning", evidence_refs: ["paper/main.tex"] }],
       repair_owners: ["review"],
       latency_ms: 12,
       cost_usd: 0.001

@@ -401,8 +401,13 @@ export async function scorePromotionBenchmarkFromFiles(
     validPredictions.push(prediction);
   }
 
+  const traceableConcerns = await collectTraceableConcerns(
+    validPredictions,
+    loaded.suite?.case_artifact_roots || {},
+    issues
+  );
   const systems = [...groupBy(validPredictions, (prediction) => prediction.system_id).entries()]
-    .map(([systemId, rows]) => scoreSystem(systemId, rows, cases))
+    .map(([systemId, rows]) => scoreSystem(systemId, rows, cases, traceableConcerns))
     .sort((left, right) => left.system_id.localeCompare(right.system_id));
   for (const system of systems) {
     if (system.coverage_rate < 1) {
@@ -431,7 +436,8 @@ export async function scorePromotionBenchmarkFromFiles(
   const sourceFamilyAnalysis = scoreSourceFamilyAnalysis(
     validPredictions,
     cases,
-    loaded.suite?.manifest.suite_id || "invalid-suite"
+    loaded.suite?.manifest.suite_id || "invalid-suite",
+    traceableConcerns
   );
 
   const report: PromotionBenchmarkScoreReport = {
@@ -483,7 +489,8 @@ export async function loadPromotionBenchmarkPredictions(
 function scoreSystem(
   systemId: string,
   predictions: PromotionBenchmarkPrediction[],
-  cases: PromotionBenchmarkCaseManifest[]
+  cases: PromotionBenchmarkCaseManifest[],
+  traceableConcerns: ReadonlySet<PromotionBenchmarkConcernPrediction>
 ): PromotionBenchmarkSystemMetrics {
   const caseById = new Map(cases.map((benchmarkCase) => [benchmarkCase.case_id, benchmarkCase] as const));
   const confusion = emptyConfusion();
@@ -532,7 +539,7 @@ function scoreSystem(
       if (setsEqual(new Set(benchmarkCase.gold.repair_owners), new Set(prediction.repair_owners))) repairExact += 1;
     }
     concernCount += prediction.concerns.length;
-    tracedConcernCount += prediction.concerns.filter((concern) => (concern.evidence_refs?.length || 0) > 0).length;
+    tracedConcernCount += prediction.concerns.filter((concern) => traceableConcerns.has(concern)).length;
     if (isNonNegativeFinite(prediction.latency_ms)) latencies.push(prediction.latency_ms);
     if (isNonNegativeFinite(prediction.cost_usd)) costs.push(prediction.cost_usd);
   }
@@ -675,7 +682,8 @@ function scorePairedComparisons(
 function scoreSourceFamilyAnalysis(
   predictions: PromotionBenchmarkPrediction[],
   cases: PromotionBenchmarkCaseManifest[],
-  suiteId: string
+  suiteId: string,
+  traceableConcerns: ReadonlySet<PromotionBenchmarkConcernPrediction>
 ): PromotionBenchmarkSourceFamilyAnalysis {
   if (cases.length === 0) {
     return unavailableSourceFamilyAnalysis();
@@ -706,7 +714,8 @@ function scoreSourceFamilyAnalysis(
         systems: systemIds.map((systemId) => scoreSystem(
           systemId,
           familyPredictions.filter((prediction) => prediction.system_id === systemId),
-          familyCases
+          familyCases,
+          traceableConcerns
         ))
       };
     });
@@ -796,7 +805,9 @@ function metricObservation(
   }
   if (metric === "concern_acceptance_conflict") {
     const hasBlockingConcern = prediction.concerns.some((concern) => concern.severity === "blocking");
-    return hasBlockingConcern ? Number(prediction.decision === "promote") : null;
+    return hasBlockingConcern || benchmarkCase.gold.blocking_concerns.length > 0
+      ? Number(prediction.decision === "promote")
+      : null;
   }
   if (metric === "clean_case_promotion") {
     return benchmarkCase.gold.decision === "promote" ? Number(prediction.decision === "promote") : null;
@@ -1804,6 +1815,53 @@ async function readPredictions(filePath: string, issues: PromotionBenchmarkValid
     }
   }
   return predictions;
+}
+
+async function collectTraceableConcerns(
+  predictions: PromotionBenchmarkPrediction[],
+  artifactRoots: Record<string, string>,
+  issues: PromotionBenchmarkValidationIssue[]
+): Promise<Set<PromotionBenchmarkConcernPrediction>> {
+  const traceable = new Set<PromotionBenchmarkConcernPrediction>();
+  for (const prediction of predictions) {
+    const artifactRoot = artifactRoots[prediction.case_id];
+    if (!artifactRoot) continue;
+    for (const concern of prediction.concerns) {
+      const refs = concern.evidence_refs || [];
+      if (refs.length === 0) continue;
+      const validity = await Promise.all(refs.map((evidenceRef) =>
+        validConcernEvidenceRef(artifactRoot, evidenceRef)));
+      validity.forEach((valid, index) => {
+        if (valid) return;
+        issues.push({
+          code: "prediction_evidence_ref_invalid",
+          message: "Prediction evidence_refs must resolve to regular, non-symbolic-link files inside the case artifact root.",
+          ref: `${prediction.system_id}:${prediction.trial_id}:${prediction.case_id}:${concern.code}:${refs[index]}`
+        });
+      });
+      if (validity.every(Boolean)) traceable.add(concern);
+    }
+  }
+  return traceable;
+}
+
+async function validConcernEvidenceRef(artifactRoot: string, evidenceRef: string): Promise<boolean> {
+  const fileRef = evidenceRef.split("#", 1)[0];
+  if (!fileRef
+      || fileRef !== fileRef.trim()
+      || fileRef.includes("\\")
+      || path.isAbsolute(fileRef)
+      || path.posix.normalize(fileRef) !== fileRef) {
+    return false;
+  }
+  const resolved = resolveContainedPath(artifactRoot, fileRef);
+  if (!resolved) return false;
+  try {
+    const stat = await fs.lstat(resolved);
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
 }
 
 function parsePrediction(

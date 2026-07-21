@@ -209,9 +209,10 @@ function isInsufficientPaperScaleEvidence(
   const explicitPilotOnly =
     /\b(?:pilot|preflight|audit)\s+ceiling\b/u.test(text) ||
     /\b(?:pilot|preflight)\s+(?:only|stage|record|evidence)\b/u.test(text) ||
-    /\b(?:cannot|can\s+not)\s+support\s+(?:paper[- ]ready|paper[- ]scale|rank|dropout|interaction|model[- ]quality|directional)\s+(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
-    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?(?:dropout[- ]interaction|rank[- ]dropout|condition[- ]parameter\s+interaction|interaction)\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
-    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|statistical significance|rank recommendation|interaction claim)\b/u.test(text);
+    /\b(?:cannot|can\s+not)\s+support\s+(?:paper[- ]ready|paper[- ]scale|interaction|model[- ]quality|directional|parameter[- ]selection)\s+(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
+    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?(?:condition[- ]parameter\s+interaction|factor\s+interaction|interaction)\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
+    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?[^.!?]{0,48}\binteraction\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
+    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|statistical significance|parameter recommendation|interaction claim)\b/u.test(text);
   const oneSeedOnly =
     /\bone[- ]seed\b/u.test(text) ||
     /\bonly\s+one\s+(?:training\s+)?seed\b/u.test(text) ||
@@ -250,7 +251,7 @@ function isLikelyObjectiveDrift(
     /\bnot\s+a\s+model[- ]quality\s+experiment\b/u.test(candidateText) ||
     /\bdoes\s+not\s+answer\s+the\s+model[- ]quality\s+hypothesis\b/u.test(candidateText);
   const modelExperimentSurface =
-    /\b(adapter|factorial|benchmark|task|dataset|training condition|train\/eval|condition sweep|parameter sweep)\b/u.test(candidateText);
+    /\b(factorial|benchmark|task|dataset|training condition|train\/eval|condition sweep|parameter sweep)\b/u.test(candidateText);
   const primaryQualityMetric = candidate.metrics
     .slice(0, 2)
     .some((metric) => /\b(avg accuracy|mean accuracy|accuracy|f1|auc|rouge|bleu|pass@?1|delta.*baseline)\b/u.test(metric.toLowerCase().replace(/[_-]+/g, " ")));

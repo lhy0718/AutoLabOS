@@ -55,6 +55,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(report.checks.map((item: { id: string }) => item.id)).toEqual(
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
+        "plugin_readme_documents_clean_install",
         "plugin_readme_documents_all_command_intents",
         "ci_workflow_runs_operations_preflight",
         "operations_preflight_blocks_partial_promotion",
@@ -104,6 +105,10 @@ describe("AutoLabOS Codex plugin contract", () => {
     const text = fs.readFileSync(readmePath, "utf8");
 
     expect(text).toContain("## First Run");
+    expect(text).toContain("## Installation");
+    expect(text).toContain("codex plugin marketplace add .");
+    expect(text).toContain("codex plugin add autolabos-research-governor@autolabos-local");
+    expect(text).toContain("codex plugin list");
     expect(text).toContain("npm run plugin:contract");
     expect(text).toContain("npm run plugin:dogfood");
     expect(text).toContain("npm run plugin:doctor");
@@ -113,6 +118,7 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("npm run plugin:research -- --check");
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
+    expect(text).toContain("PluginDependencyReport");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);
@@ -213,7 +219,7 @@ process.stdout.write(JSON.stringify(process.argv.slice(2)));
     }
   });
 
-  it("emits a blocking gate report when the executable CLI dependency is unavailable", () => {
+  it("emits a blocking dependency report without fabricating a research gate", () => {
     const result = spawnSync(process.execPath, [
       path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs"),
       "--check"
@@ -225,7 +231,9 @@ process.stdout.write(JSON.stringify(process.argv.slice(2)));
     const report = JSON.parse(result.stdout);
 
     expect(result.status).toBe(1);
-    expect(report.artifact_type).toBe("GateReport");
+    expect(report.artifact_type).toBe("PluginDependencyReport");
+    expect(report.check_intent).toBe("plugin:dependency");
+    expect(report).not.toHaveProperty("evidence_bundle_id");
     expect(report.verdict).toBe("blocked");
     expect(report.findings).toContainEqual(expect.objectContaining({
       code: "autolabos_cli_dependency_missing"

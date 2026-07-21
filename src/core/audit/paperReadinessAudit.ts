@@ -30,6 +30,8 @@ export interface PaperReadinessAuditInput {
   externalRoot?: string;
   draftPath?: string;
   logPath?: string;
+  supportRoot?: string;
+  supportManifestPath?: string;
   outDir?: string;
 }
 
@@ -230,7 +232,9 @@ export async function runPaperReadinessAudit(
         outDir,
         externalRoot: input.externalRoot,
         draftPath: input.draftPath,
-        logPath: input.logPath
+        logPath: input.logPath,
+        supportRoot: input.supportRoot,
+        supportManifestPath: input.supportManifestPath
       })
     : undefined;
   const runRoot = externalIntake
@@ -846,7 +850,7 @@ function normalizeAcademicClaimStatusTable(
 
 function normalizeAcademicClaimStatus(status: string | undefined): string {
   if (status === "supported_by_code_and_tests") return "verified";
-  if (status === "development_only") return "inferred";
+  if (status === "development_only") return "development_only";
   if (status === "blocked") return "blocked";
   return "unverified";
 }
@@ -1121,6 +1125,17 @@ function collectAcademicPackageFindings(
   const missingFullTextCount = numberValue(referenceSummary?.missing_full_text_claim_count);
   const claimCount = numberValue(referenceSummary?.citation_bearing_claim_count);
   const checkedClaimCount = numberValue(referenceSummary?.independently_checked_claim_count);
+  if (referenceStatus && referenceStatus.submission_gate_passed !== true) {
+    findings.push({
+      code: "reference_submission_gate_not_passed",
+      severity: "blocker",
+      message: "The reference evidence status does not report a passing authoritative submission gate.",
+      target_node: "analyze_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "reference_evidence_status.json"),
+      recheck_condition: "The independently verified reference submission gate reports submission_gate_passed=true."
+    });
+  }
   if (missingFullTextCount > 0) {
     findings.push({
       code: "reference_full_text_missing",
@@ -1243,11 +1258,26 @@ function collectExecutionIntegrityFindings(
       ? plannedTrials
       : provenanceKeys.filter((value) => !value).length;
     const distinctProvenanceCount = new Set(provenanceKeys.filter((value) => value.length > 0)).size;
-    if (trials.length < plannedTrials || missingProvenanceCount > 0 || distinctProvenanceCount < plannedTrials) {
+    const plannedSeeds = provenanceScalarArray(
+      artifacts.runConfig?.planned_seeds ?? plannedBudget?.seeds
+    );
+    const seedScheduleIncomplete = plannedSeeds.length > 0 && !hasCompleteConditionSeedSchedule({
+      trials,
+      plannedTrials,
+      plannedSeeds
+    });
+    if (
+      trials.length < plannedTrials
+      || missingProvenanceCount > 0
+      || distinctProvenanceCount < plannedTrials
+      || seedScheduleIncomplete
+    ) {
       findings.push({
         code: "repeated_run_provenance_missing",
         severity: "blocker",
-        message: `Repeated-run contract declares ${plannedTrials} trial(s), but distinct trial-level provenance is incomplete, missing, or reused.`,
+        message: seedScheduleIncomplete
+          ? `Repeated-run contract declares ${plannedTrials} trial(s), but planned and executed seed provenance is incomplete, reused, or inconsistent.`
+          : `Repeated-run contract declares ${plannedTrials} trial(s), but distinct trial-level provenance is incomplete, missing, or reused.`,
         evidence_path: "experiment_evidence.json",
         target_node: "run_experiments"
       });
@@ -1280,11 +1310,81 @@ function collectExecutionIntegrityFindings(
 }
 
 function trialProvenanceKey(value: Record<string, unknown>): string {
-  for (const key of ["trial_id", "run_id", "seed", "seed_id", "random_seed", "evaluation_seed"]) {
+  for (const key of ["trial_id", "run_id"]) {
     if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === null || value[key] === "") continue;
     return `${key}:${String(value[key])}`;
   }
+  const seed = trialSeedValue(value);
+  if (seed) {
+    const condition = trialConditionValue(value);
+    return condition ? `condition:${condition}|seed:${seed}` : `seed:${seed}`;
+  }
   return "";
+}
+
+function trialSeedValue(value: Record<string, unknown>): string {
+  for (const key of ["seed", "seed_id", "random_seed", "evaluation_seed"]) {
+    if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === null || value[key] === "") continue;
+    return String(value[key]);
+  }
+  return "";
+}
+
+function trialConditionValue(value: Record<string, unknown>): string {
+  for (const key of ["condition_id", "condition", "condition_marker", "configuration_id", "variant_id"]) {
+    if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === null || value[key] === "") continue;
+    return String(value[key]);
+  }
+  return "";
+}
+
+function hasCompleteConditionSeedSchedule(input: {
+  trials: Record<string, unknown>[];
+  plannedTrials: number;
+  plannedSeeds: string[];
+}): boolean {
+  const plannedSeedSet = new Set(input.plannedSeeds);
+  if (
+    plannedSeedSet.size === 0
+    || input.trials.length !== input.plannedTrials
+    || input.plannedTrials % plannedSeedSet.size !== 0
+  ) {
+    return false;
+  }
+
+  const expectedConditionCount = input.plannedTrials / plannedSeedSet.size;
+  const groups = new Map<string, string[]>();
+  for (const trial of input.trials) {
+    const seed = trialSeedValue(trial);
+    const declaredCondition = trialConditionValue(trial);
+    if (!seed || (expectedConditionCount > 1 && !declaredCondition)) return false;
+    const condition = declaredCondition || "<single-condition>";
+    const seeds = groups.get(condition) || [];
+    seeds.push(seed);
+    groups.set(condition, seeds);
+  }
+
+  if (groups.size !== expectedConditionCount) return false;
+  for (const seeds of groups.values()) {
+    if (seeds.length !== plannedSeedSet.size || !sameStringSet([...plannedSeedSet], seeds)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function provenanceScalarArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item) => (typeof item === "string" && item.trim().length > 0) || (typeof item === "number" && Number.isFinite(item)))
+        .map((item) => String(item).trim())
+    : [];
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return leftSet.size === rightSet.size && [...leftSet].every((value) => rightSet.has(value));
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

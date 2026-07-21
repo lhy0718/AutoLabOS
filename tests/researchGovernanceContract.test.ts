@@ -15,7 +15,7 @@ import { validateResearchGovernanceArtifact } from "../src/core/researchGovernan
 describe("research governance contract", () => {
   it("positions AutoLabOS as a plugin-first governance harness", () => {
     expect(RESEARCH_GOVERNANCE_PLUGIN_NAME).toBe("autolabos-research-governor");
-    expect(RESEARCH_GOVERNANCE_SCHEMA_VERSION).toBe("1.0");
+    expect(RESEARCH_GOVERNANCE_SCHEMA_VERSION).toBe("2.0");
     expect(RESEARCH_GOVERNANCE_POSITIONING.primarySurface).toBe("codex_plugin");
     expect(RESEARCH_GOVERNANCE_POSITIONING.autolabosRole).toBe("governed_research_harness");
     expect(RESEARCH_GOVERNANCE_POSITIONING.standaloneWorkflowRole).toBe("reference_workflow");
@@ -52,7 +52,7 @@ describe("research governance contract", () => {
 
   it("rejects paper-readiness bundles with duplicate archive paths", () => {
     const validation = validateResearchGovernanceArtifact({
-      schema_version: "1.0",
+      schema_version: "2.0",
       artifact_type: "PaperReadinessBundle",
       artifact_id: "paper_readiness_bundle_fixture",
       generated_at: "2026-01-01T00:00:00.000Z",

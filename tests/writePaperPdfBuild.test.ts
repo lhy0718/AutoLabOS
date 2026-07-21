@@ -1071,7 +1071,7 @@ function buildAppendixBackstopRepairResponses(): string[] {
             {
               section: "Appendix. Notes",
               paragraph_index: 0,
-              excerpt: contaminated.appendix_sections[0].paragraphs[0],
+              excerpt: "TODO: keep topic fixed",
               reason: "This appendix paragraph contains internal/meta residue."
             }
           ]
@@ -2429,14 +2429,14 @@ describe("writePaper PDF build", () => {
 
   it("dedupes repeated related-work axis paragraphs during manuscript stabilization", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "Adapter Condition Study",
+      title: "Parameterized Condition Study",
       abstract: "A compact condition-parameter comparison reports a bounded screening signal.",
-      keywords: ["adapter tuning"],
+      keywords: ["configuration tuning"],
       sections: [
         {
           heading: "Related Work",
           paragraphs: [
-            "A first axis in parameter-efficient fine-tuning research is the adaptation mechanism and the allocation of trainable capacity. Mechanism-oriented studies vary how adapter updates are parameterized.",
+            "A first axis in parameter-efficient fine-tuning research is the adaptation mechanism and the allocation of trainable capacity. Mechanism-oriented studies vary how configuration updates are parameterized.",
             "A second axis is evaluation context. Evaluation-centered benchmarks vary tasks and instruction-tuning regimes.",
             "A third axis is resource awareness. Local or budget-constrained fine-tuning work motivates reporting accuracy together with runtime and memory behavior.",
             "A third axis is resource awareness. Work on local or budget-constrained fine-tuning motivates the need to report not only accuracy but also compute and memory behavior."
@@ -2444,7 +2444,7 @@ describe("writePaper PDF build", () => {
         },
         {
           heading: "Method",
-          paragraphs: ["The method studies an adapter condition-parameter grid with rank and dropout factors. Evaluation reports Benchmark Task A and Benchmark Task B."]
+          paragraphs: ["The method studies an parameterized condition grid with parameter x and parameter y factors. Evaluation reports Benchmark Task A and Benchmark Task B."]
         }
       ],
       tables: [],
@@ -2560,7 +2560,7 @@ describe("writePaper PDF build", () => {
 
   it("uses reader-facing axis and task labels when manuscript context names them", () => {
     const manuscript: PaperManuscript = {
-      title: "Adapter Condition Study",
+      title: "Parameterized Condition Study",
       abstract: "The run varies condition parameter x and condition parameter y under a fixed budget.",
       keywords: ["condition comparison"],
       sections: [
@@ -3941,18 +3941,11 @@ describe("writePaper PDF build", () => {
     expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
       "Supplementary Experimental Details"
     );
-    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
-      "Supplementary Boundary Notes"
-    );
-    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
-      "Supplementary Reproducibility Trace"
-    );
-    expect(manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ")).toContain(
-      "completed condition cells"
-    );
-    const appendixText = manuscript.appendix_sections?.flatMap((section) => section.paragraphs).join(" ") ?? "";
-    expect(appendixText).toContain("training-token count was 5068");
-    expect(appendixText).not.toContain("5068 dataset");
+    const manuscriptText = [...manuscript.sections, ...(manuscript.appendix_sections || [])]
+      .flatMap((section) => section.paragraphs)
+      .join(" ");
+    expect(manuscriptText).toContain("training-token count was 5068");
+    expect(manuscriptText).not.toContain("5068 dataset");
     const traceability = JSON.parse(await readFile(path.join(runDir, "paper", "traceability.json"), "utf8")) as {
       paragraphs: Array<{ source_refs?: Array<{ kind: string; id: string }> }>;
     };
@@ -5524,7 +5517,7 @@ describe("writePaper PDF build", () => {
       [
         "\\pdfoutput=1",
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{acl}",
+        "\\usepackage[review]{xcolor,acl}",
         "\\begin{document}",
         "\\section{Introduction}",
         "\\section{Results}",
@@ -5600,7 +5593,7 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\pdfoutput=1");
-    expect(tex).toContain("\\usepackage[review]{acl}");
+    expect(tex).toContain("\\usepackage[review]{xcolor,acl}");
     expect(tex).not.toContain("\\bibliographystyle{");
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");

@@ -122,15 +122,18 @@ describe("latexTemplateLoader", () => {
     expect(policy.estimatedWordsPerPage).toBe(650);
   });
 
-  it("uses a conservative page-density estimate for ACL package templates", async () => {
+  it.each([
+    ["the current lowercase ACL package", "\\usepackage[review]{acl}"],
+    ["a year-specific ACL package", "\\usepackage[review]{ACL2023}"]
+  ] as const)("uses the ACL page policy for %s", async (_label, packageLine) => {
     const workspace = await createWorkspace();
-    const templatePath = path.join(workspace, "templates", "acl2023.tex");
+    const templatePath = path.join(workspace, "templates", "acl-template.tex");
     await mkdir(path.dirname(templatePath), { recursive: true });
     await writeFile(
       templatePath,
       [
-        "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\documentclass{article}",
+        packageLine,
         "\\begin{document}",
         "\\section{Introduction}",
         "\\end{document}"

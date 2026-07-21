@@ -17,6 +17,10 @@ import { ensureDir, fileExists } from "../../utils/fs.js";
 import { buildPublicAnalysisDir, buildPublicPaperDir } from "../publicArtifacts.js";
 import type { ConstraintProfile } from "../runConstraints.js";
 import {
+  ACL_BIBLIOGRAPHY_STYLE,
+  detectAclTemplatePackage
+} from "../latex/aclTemplate.js";
+import {
   ObjectiveMetricEvaluation,
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
@@ -2322,8 +2326,8 @@ function summarizeSeedResultForPaperContext(seedResult: Record<string, unknown>)
     ...pickRecordFields(seedResult, [
       "seed",
       "condition_marker",
-      "rank",
-      "parameter_y",
+      "condition_parameter_x",
+      "condition_parameter_y",
       "average_accuracy",
       "accuracy_delta_vs_baseline",
       "completed",
@@ -3303,12 +3307,7 @@ function compactAppendixTableLabels<T extends { rows: PaperManuscriptVisualRow[]
 }
 
 function sanitizeAppendixTableLabel(label: string): string {
-  const cleaned = sanitizePaperNarrativeText(label).replace(/\s+/gu, " ").trim();
-  const dropout = cleaned.match(/^Dropout\s+([0-9]+)\s+([0-9]+)\s+Included$/iu);
-  if (dropout) {
-    return `Dropout = ${dropout[1]}.${dropout[2]} included`;
-  }
-  return cleaned;
+  return sanitizePaperNarrativeText(label).replace(/\s+/gu, " ").trim();
 }
 
 function isNonReaderFacingFinalParagraph(heading: string, paragraph: string): boolean {
@@ -3367,373 +3366,32 @@ function sanitizeFinalPaperKeywords(keywords: string[] | undefined): string[] {
 
 function sanitizeFinalPaperAbstract(abstract: string): string {
   const cleaned = sanitizePaperNarrativeText(abstract);
-  if (
-    /\bThe draft integrates\b/iu.test(cleaned)
-    || /-\s*Primary metric:/iu.test(cleaned)
-    || /\bclaim[- ]?scope correctness\b/iu.test(cleaned)
-    || /\breview gating\b/iu.test(cleaned)
-    || /\bpaper[- ]?readiness audit\b/iu.test(cleaned)
-    || /\bcurrent workflow\b/iu.test(cleaned)
-  ) {
-    return "This paper reports a bounded experimental run under a fixed local budget. It states the selected artifact metadata, configured conditions, baseline or comparator, evaluation scope, result table, and uncertainty limits while treating small-sample evidence as a screening signal rather than as a general rule.";
-  }
-  return cleaned;
+  return isReaderHostileFinalPaperParagraph(cleaned)
+    ? "This study reports an evidence-bounded experiment with an explicit comparison, evaluation scope, and limitations."
+    : cleaned;
 }
 
 function softenFinalLmBenchmarkPilotTitle(title: string): string {
   const cleaned = sanitizePaperNarrativeText(title);
-  if (
-    !cleaned
-    || /^plan\s*\d+\s*:/iu.test(cleaned)
-    || /…/u.test(cleaned)
-    || cleaned.length > 110
-    || /\b(?:result[- ]?gating|benchmark-ba|workflow|audit|paper[- ]?readiness|pre[- ]?registered result)\b/iu.test(cleaned)
-    || (
-    /\btrade[- ]?offs?\b/iu.test(cleaned)
-    && /\b(?:adapter|rank|parameter_y|parameter-efficient|instruction tuning)\b/iu.test(cleaned)
-    )
-  ) {
-    return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
+  if (!cleaned || cleaned.length > 110 || /\b(?:workflow|audit|paper[- ]?readiness|result[- ]?gating)\b/iu.test(cleaned)) {
+    return "A Governed Experimental Study Under a Fixed Resource Budget";
   }
   return cleaned;
 }
 
-function sanitizeFinalPaperParagraph(heading: string, paragraph: string, index: number): string {
-  paragraph = repairBrokenFinalPaperSentence(heading, paragraph);
-  paragraph = removeConflictingBackboneAssertion(heading, paragraph);
-  paragraph = repairFinalTableAvailabilityClaim(heading, paragraph);
-  paragraph = repairFinalClaimCeilingAndInternalLanguage(heading, paragraph);
-  paragraph = paragraph
-    .replace(/\bparameter-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "parameter-efficient")
-    .replace(/\bmemory-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "memory-efficient")
-    .replace(/\bcost-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "cost-efficient")
-    .replace(/\bcompute-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "compute-efficient")
-    .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
-    .replace(/\bStudy\s+how\s+[^.]{10,180}\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "condition choices under a fixed local compute budget")
-    .replace(/\bhigher-rank zero-dropout\b/giu, "high-rank zero-dropout")
-    .replace(/\bmachine-readable result reporting\b/giu, "transparent result reporting")
+function sanitizeFinalPaperParagraph(_heading: string, paragraph: string, _index: number): string {
+  const cleaned = sanitizePaperNarrativeText(paragraph)
+    .replace(/\b(?:final|full|public)\s+paper\s+should\s+(?:include|cite|expose|report|add|provide)\b[^.]*\.?/giu, "")
     .replace(/\s+/gu, " ")
     .trim();
-  if (/^introduction$/iu.test(heading)) {
-    if (/^This draft studies\b/iu.test(paragraph)) {
-      return "This paper reports a fixed-budget experimental pilot. It identifies the selected artifacts, configured comparison set, baseline or comparator, evaluation tasks, condition coverage, and uncertainty limits while treating the result as a screening study rather than as a statistically definitive conclusion.";
-    }
-    if (/\b-\s*Primary metric:/iu.test(paragraph) || /\bfailed-run visibility\b/iu.test(paragraph)) {
-      return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, and uncertainty limits visible while treating resource measurements as feasibility diagnostics rather than efficiency evidence.";
-    }
-    if (/^This paper studies how adapter condition parameters interact\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^Parameter-efficient fine-tuning is commonly used\b/iu.test(paragraph) && index > 0) {
-      return "";
-    }
-  }
-  if (/^results$/iu.test(heading)) {
-    paragraph = paragraph
-      .replace(/\bcomparator average accuracy\b/giu, "leading-row average accuracy")
-      .replace(/\breported Pareto frontier\b/giu, "reported accuracy-completion summary")
-      .replace(/\b(?:runtime\/VRAM|runtime and VRAM|runtime\s+and\s+peak[-\s]?VRAM) frontier\b/giu, "runtime/VRAM trade-off claim")
-      .replace(/\bPareto frontier\b/giu, "accuracy-completion summary")
-      .replace(/\bPareto analysis\b/giu, "resource-aware screening analysis")
-      .replace(/\bPareto\b/giu, "resource-aware screening");
-    if (/^Execution accounting indicates\b/iu.test(paragraph) && /\bExecution accounting\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (
-      /\bTable\s+1\b/iu.test(paragraph) &&
-      /\b(?:completed[-\s]?seed count|seed[-\s]?count|uncertainty width)\b/iu.test(paragraph) &&
-      /\b(?:preserves|contains|shows|reports|keeps|displays)\b/iu.test(paragraph)
-    ) {
-      return "Table 1 reports the condition-mean comparison rows and task-level accuracies. Seed-count metadata, uncertainty construction, and resource aggregation remain supporting-record details rather than visible table columns.";
-    }
-    if (
-      /\bcomplete per-task baseline decomposition\b/iu.test(paragraph) &&
-      /\bTable\s+1\b/iu.test(paragraph)
-    ) {
-      paragraph = paragraph.replace(
-        /\bcomplete per-task baseline decomposition\b/giu,
-        "complete per-seed or uncertainty-resolved baseline decomposition"
-      );
-    }
-    if (
-      /\bNo broader replication is reported\b/iu.test(paragraph) &&
-      /\bdocumented gain therefore remains a single-run preflight observation\b/iu.test(paragraph)
-    ) {
-      return "No broader replication is reported here, so the documented gain remains a single-run preflight observation.";
-    }
-    if (
-      /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(paragraph)
-    ) {
-      return "";
-    }
-    if (/^Resource reporting is therefore separated from accuracy reporting\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^The archived comparison exceeded the configured screening threshold\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^The exposed condition-level intervals remain wide\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^Operational measurements are retained as execution checks\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^At the dataset level, the best reported condition\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^The completed grid is therefore interpreted as a screening comparison\b/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^The results are therefore organized around comparable rows\b/iu.test(paragraph)) {
-      return "";
-    }
-  }
-  if (/^method$/iu.test(heading)) {
-    paragraph = paragraph
-      .replace(/\brun contract\b/giu, "study design")
-      .replace(/\bartifact metadata\b/giu, "study metadata")
-      .replace(
-        /\bThe preserved protocol notes Repeat each condition across multiple seeded runs and report run-to-run variance\.,?\s*so the method description distinguishes the planned budget from the executed repeated comparison\./giu,
-        "Condition-level means are compared against the locked reference, while seeded runs expose variation rather than selecting a favorable example."
-      );
-    if (
-      /^The protocol records\b/iu.test(paragraph)
-      || /^The fixed search space includes\b/iu.test(paragraph)
-      || /\bRepeat each condition across multiple seeded runs\b/iu.test(paragraph)
-    ) {
-      return "";
-    }
-  }
-  if (/^conclusion$/iu.test(heading)) {
-    paragraph = paragraph.replace(
-      /\bA submission-ready continuation should provide\b/giu,
-      "A follow-up replication would need"
-    );
-  }
-  if (/^limitations$/iu.test(heading)) {
-    if (/^The 36-run workload may exceed the desired first preflight local budget\.?$/iu.test(paragraph)) {
-      return "";
-    }
-    if (/^A second limitation is resource granularity\b/iu.test(paragraph)) {
-      return "";
-    }
-  }
-  if (isReaderHostileFinalPaperParagraph(paragraph)) {
-    if (/^introduction$/iu.test(heading)) {
-      return "The contribution is a cautious local preflight over a configured condition set. It keeps the baseline or comparator, completed condition coverage, and uncertainty limits visible while treating resource measurements as feasibility diagnostics rather than efficiency evidence.";
-    }
-    if (/^discussion$/iu.test(heading)) {
-      return "The practical implication is limited but useful: under this local budget, condition parameters should be treated as jointly testable choices, and any larger recommendation should wait for a rerun with more evaluation examples, more seeds, and condition-level resource aggregation.";
-    }
-    if (/^conclusion$/iu.test(heading)) {
-      return "The study therefore supports a narrow next step: rerun the leading observed condition under a larger and better instrumented protocol before treating the observed gain as stable.";
-    }
-    return "";
-  }
-  return sanitizeFinalRelatedWorkParagraph(heading, paragraph, index);
-}
-
-function repairBrokenFinalPaperSentence(heading: string, paragraph: string): string {
-  return paragraph
-    .replace(
-      /\bsupplemental\s+No\s+broader\s+replication\b/giu,
-      "no broader replication"
-    )
-    .replace(/\bA\s+No broader replication\b/giu, "No broader replication")
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-function removeConflictingBackboneAssertion(heading: string, paragraph: string): string {
-  if (!/^method$/iu.test(heading)) {
-    return paragraph;
-  }
-  return paragraph
-    .replace(
-      /\bThe executed run used the selected backbone as the selected backbone\.\s*/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. "
-    )
-    .replace(
-      /\bThe run record lists the selected backbone in configuration metadata,\s*while the compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\.\s*/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means. "
-    )
-    .replace(
-      /\b(?:the\s+)?compact public summary still leaves preferred-versus-fallback execution provenance ambiguous\b/giu,
-      "the executed metrics record identifies the selected backbone as the selected backbone"
-    )
-    .replace(
-      /\b(?:The\s+)?summary records all eight rank-by-parameter_y conditions as completed,\s*but it does not securely identify whether the reported metrics came from the preferred or fallback backbone,\s*so backbone-specific interpretation is intentionally limited\.?/giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
-    )
-    .replace(
-      /\bThe reported analyzed execution did not preserve the resolved model identifier,\s*so we avoid stronger model-specific interpretation than the archived summary allows and treat the result as evidence from a small locally runnable instruction-tuning target\.?/giu,
-      "The archived execution summary identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
-    )
-    .replace(
-      /\bThe run plan preferred the selected backbone and specified the configured fallback backbone as a fallback if the preferred model failed preflight\.\s*However,\s*the compact reported summary does not identify which of those models produced the analyzed record\./giu,
-      "The run plan preferred the selected backbone and specified the configured fallback backbone as a fallback if the preferred model failed preflight. The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run."
-    )
-    .replace(
-      /\bThe compact record also does not identify the actual base model used for the analyzed run\b/giu,
-      "The compact record identifies the selected backbone as the selected backbone but leaves some implementation details outside the main summary"
-    )
-    .replace(/\s+/gu, " ")
-    .trim();
-}
-
-function repairFinalClaimCeilingAndInternalLanguage(heading: string, paragraph: string): string {
-  let repaired = paragraph
-    .replace(/\bbounded claim ceiling\b/giu, "bounded interpretation")
-    .replace(/\bclaim downgrade correctness\b/giu, "claim-scope correctness")
-    .replace(/\bclaim-downgrade\b/giu, "claim-scope adjustment")
-    .replace(/\breview gating\b/giu, "review checks")
-    .replace(/\bpaper-readiness audit\b/giu, "paper-scale review")
-    .replace(/\bresult-table integrity\b/giu, "result-table consistency")
-    .replace(/\bwriting-context summary\b/giu, "available reporting summary")
-    .replace(/\bwriting-context record\b/giu, "available reporting record")
-    .replace(/\bwriting-context\b/giu, "available reporting")
-    .replace(/\breader-facing Results should therefore be read\b/giu, "Results should therefore be read")
-    .replace(/\breader-facing manuscript\b/giu, "manuscript")
-    .replace(/\bwriting bundle\b/giu, "reported evidence")
-    .replace(/\bmanuscript-process\b/giu, "supplementary reporting")
-    .replace(/\bwriting-process\b/giu, "supplementary reporting")
-    .replace(/\binternal note\b/giu, "summary statement")
-    .replace(
-      /\bThe prespecified baseline-relative accuracy target was met(?:\s*\([^)]*\))?;?\s*condition-level values in Table 1 provide the main numeric support\.?/giu,
-      "The archived comparison exceeded the configured screening threshold by point estimate; condition-level values in Table 1 provide the main numeric support, but the result remains a screening signal rather than a stable success claim."
-    )
-    .replace(
-      /\bThe prespecified baseline-relative target was met by point estimate\.?/giu,
-      "The archived comparison exceeded the configured screening threshold by point estimate, but the result remains a bounded screening signal."
-    )
-    .replace(
-      /\b(?:final|full|public)\s+paper\s+should\s+(?:include|cite|expose|report|add|provide)\b[^.]*\.?/giu,
-      ""
-    )
-    .replace(
-      /\b(?:citation\s+to[- ]?do|to[- ]?do[- ]?like\s+statements?|public\s+citations\s+should\s+include|needs\s+final\s+citation|bibliography\s+is\s+not\s+final)\b[^.]*\.?/giu,
-      ""
-    )
-    .replace(
-      /\bwith the same repeated-seed accounting used for the rest of the grid\b/giu,
-      "with the same condition-completion accounting used for the rest of the grid"
-    )
-    .replace(
-      /\bsame repeated-seed accounting used for the rest of the grid\b/giu,
-      "same condition-completion accounting used for the rest of the grid"
-    )
-    .replace(
-      /\bThe repeated-seed structure makes the condition labels more informative than a one-run ablation\./giu,
-      "The condition-grid structure makes the condition labels more informative than a single headline comparison."
-    )
-    .replace(
-      /\brepeated-seed structure\b/giu,
-      "condition-grid structure"
-    )
-    .replace(/\brepeated-seed accounting\b/giu, "condition-completion accounting")
-    .replace(/\brepeated-seed coverage\b/giu, "cross-seed coverage")
-    .replace(
-      /\bIn that narrow sense,\s*the observed comparison supports the same motivation for explicit rank sweeps that appears in prior low-budget adapter reports,\s*although the present evidence remains limited to one compact record\./giu,
-      "In that narrow sense, the observed comparison supports explicit rank sweeps in the next experiment, although the present evidence remains limited to one compact record."
-    )
-    .replace(
-      /\bThe compact record also omits several implementation details that would normally be standard in an empirical paper,\s*including optimizer choice,\s*learning-rate schedule,\s*batch size,\s*and an unambiguous statement of the executed base model\.\s*These omissions materially narrow reproducibility and interpretability\./giu,
-      "The compact record still omits several implementation details that would normally be standard in an empirical paper, including optimizer family, scheduler details beyond the scalar learning rate, adapter target modules, adapter scaling, and interval-construction details. These omissions materially narrow reproducibility and interpretability."
-    );
-
-  if (/^results$/iu.test(heading)) {
-    repaired = repaired.replace(
-      /\bprior low-budget adapter reports\b/giu,
-      "the preregistered rank-sweep motivation"
-    );
-  }
-  return repaired.replace(/\s+/gu, " ").trim();
-}
-
-function repairFinalTableAvailabilityClaim(heading: string, paragraph: string): string {
-  let repaired = paragraph
-    .replace(
-      /\bA remaining reporting limitation is that the writing bundle exposes detailed numeric comparisons for the best cell,\s*but not a full published table for all eight cells;\s*the study can therefore support claims about coverage and the best observed comparison more confidently than claims about the complete ordering of the grid\./giu,
-      "Table 1 reports all reported condition mean accuracies, while the compact record still lacks complete per-cell uncertainty, resource, and auxiliary-metric tables. The study can therefore support claims about condition coverage and the best observed comparison more confidently than claims about the complete interaction surface."
-    )
-    .replace(
-      /\bBecause the reported analyses surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the condition-parameter response surface\./giu,
-      "Table 1 reports all reported condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the condition-parameter response surface."
-    )
-    .replace(
-      /\bBecause the reported analysis surfaces a best-cell comparison rather than a complete per-condition table,\s*this should be read as a reported observation from the present preflight record,\s*not as a full characterization of the condition-parameter response surface\./giu,
-      "Table 1 reports all reported condition mean accuracies, while the current compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables. The reported best-cell comparison should therefore be read as a preflight observation rather than a full characterization of the condition-parameter response surface."
-    )
-    .replace(
-      /\b(?:the\s+)?(?:reported analyses|reported analysis|available summary|compact summary)\s+(?:surfaces|surface|does not expose|do not expose)\s+(?:a best-cell comparison rather than )?(?:a complete|the full)\s+per-condition table\b/giu,
-      "Table 1 reports all reported condition mean accuracies, while the compact record does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
-    )
-    .replace(
-      /\bthe currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate,\s*such as direct numerical comparisons of candidate condition b with and without parameter_y or baseline condition with and without parameter_y\b/giu,
-      "the currently exposed record provides condition means but not complete per-cell uncertainty, resource, or auxiliary-metric tables needed for a formal interaction estimate"
-    )
-    .replace(
-      /\bReplication with multiple seeds,\s*a fully exposed per-condition table,\s*and reconciled model metadata would be the natural next steps before any scale-up claim\b/giu,
-      "Replication with multiple seeds, complete per-cell uncertainty and resource tables, and reconciled model metadata would be the natural next steps before any scale-up claim"
-    )
-    .replace(
-      /\ba fully exposed per-condition table\b/giu,
-      "complete per-cell uncertainty and resource tables"
-    )
-    .replace(
-      /\ba fully exposed table of all eight cells\b/giu,
-      "complete per-cell uncertainty and resource tables for all eight cells"
-    )
-    .replace(
-      /\ba full per-condition numerical table\b/giu,
-      "complete per-cell uncertainty and resource tables"
-    )
-    .replace(
-      /\b(?:does not expose|do not expose|does not provide|do not provide)\s+(?:a|the)\s+(?:complete|full)\s+(?:per-condition|eight-cell|cell-by-cell)\s+(?:mean\s+)?(?:accuracy\s+)?table\b/giu,
-      "does not expose complete per-cell uncertainty, resource, or auxiliary-metric tables"
-    )
-    .replace(
-      /\bthe paper does not expose a complete per-condition table\b/giu,
-      "Table 1 exposes the complete condition-mean table"
-    );
-  if (/^results$/iu.test(heading)) {
-    repaired = repaired.replace(
-      /\bonly a best-cell comparison is available\b/giu,
-      "the complete condition-mean table and the best-cell comparison are both available"
-    );
-  }
-  return repaired.replace(/\s+/gu, " ").trim();
+  return isReaderHostileFinalPaperParagraph(cleaned) ? "" : cleaned;
 }
 
 function isReaderHostileFinalPaperParagraph(paragraph: string): boolean {
   return (
-    /\b(result-table consistency|result-table integrity|bounded claim ceiling|claim-scope correctness|claim-downgrade|pre-registered result-gating|paper-readiness audit|review gating|reader-facing prose|submission quality|local cleanup pass|final checklist before submission|manuscript-process|workflow intervention|failed-run visibility)\b/iu.test(paragraph)
-    || /\b(?:final|full|public)\s+paper\s+should\s+(?:include|cite|expose|report|add|provide)\b/iu.test(paragraph)
-    || /\b(?:citation\s+to[- ]?do|to[- ]?do[- ]?like\s+statements?|public\s+citations\s+should\s+include|needs\s+final\s+citation|bibliography\s+is\s+not\s+final)\b/iu.test(paragraph)
-    || /\b-\s*(?:Primary|Secondary) metric:/iu.test(paragraph)
-    || /\bThe main gap is that current artifacts\b/iu.test(paragraph)
-    || /\bThe current workflow provides\b/iu.test(paragraph)
-    || /\bP6\b/u.test(paragraph)
-    || /\bThe wording is deliberately scoped so that a reader can separate completed evidence from future work\b/iu.test(paragraph)
-    || /\bThis\s+study\s+addresses\s+Study\s+how\b/iu.test(paragraph)
-    || /\blocal preflight run uses a cached\b/iu.test(paragraph)
-    || /\bpaper-readiness\s+inspect\b/iu.test(paragraph)
-    || /\b7B-class\s+run\s+is\s+a\s+later\s+scale-up\s+target\b/iu.test(paragraph)
-  );
-}
-
-function sanitizeFinalRelatedWorkParagraph(heading: string, paragraph: string, index: number): string {
-  if (!/related\s+work/iu.test(heading) || !isReaderHostileFinalRelatedWorkParagraph(paragraph)) {
-    return paragraph;
-  }
-  return index % 2 === 0
-    ? "Nearby method-family, task-design, and evaluation studies provide context for feasibility, benchmark sensitivity, and design choices, but they do not replace the locked baseline comparison in this study."
-    : "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.";
-}
-
-function isReaderHostileFinalRelatedWorkParagraph(paragraph: string): boolean {
-  return /\b(?:literature discovery|stateful coordination|agent coordination|genetic algorithm|abstract-only fallback|planner timed out|planner-timeout|full-text fallback|GIFT is|Published as a conference paper|D\s+E\s+L\s+O\s*RA|conversation(?:al)?-style interaction|advancement of artificial gen|comparison axes concern work on literature discovery|The most relevant prior-work axis is work on literature discovery|supplied literature|supplied notes|The exploration extends to advanced fine-tuning techniques|generating both|For instance, fine-tuning|The most relevant comparison axes concern)\b/iu.test(
-    paragraph
+    /\b(?:reader-facing prose|submission quality|local cleanup pass|final checklist before submission|workflow intervention|paper-readiness audit|review gating)\b/iu.test(paragraph)
+    || /\b(?:citation\s+to[- ]?do|needs\s+final\s+citation|bibliography\s+is\s+not\s+final)\b/iu.test(paragraph)
+    || /\b(?:the current workflow|the draft integrates|according to the prompt|this document)\b/iu.test(paragraph)
   );
 }
 
@@ -5653,7 +5311,7 @@ function inferRunArtifactRefsForClaim(
   const unlinkedExperimentClaim =
     claim.evidence_ids.length === 0
     && claim.citation_paper_ids.length === 0
-    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|rank|parameter_y|benchmark|model|dataset/iu.test(text);
+    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|parameter|factor|benchmark|model|dataset/iu.test(text);
   if (!experimentSection && !unlinkedExperimentClaim) {
     return [];
   }
@@ -5663,9 +5321,9 @@ function inferRunArtifactRefsForClaim(
   const hasLatestResults = Boolean(bundle.latestResults);
   const hasExperimentPlan = Boolean(bundle.experimentPlan?.rawText || bundle.experimentPlan?.selectedTitle);
   const resultLike =
-    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|benchmark_task_a|benchmark_task_b|condition|rank|parameter_y|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
+    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|benchmark_task_a|benchmark_task_b|condition|parameter|factor|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
   const methodLike =
-    /method|protocol|design|dataset|model|backbone|model|dataset|seed|condition|rank|parameter_y|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
+    /method|protocol|design|dataset|model|backbone|seed|condition|parameter|factor|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
   const runStateLike =
     /completed|failed|run visibility|failed attempts|execution status|run identifier|command line|environment|reproducib/iu.test(text);
 
@@ -5678,7 +5336,7 @@ function inferRunArtifactRefsForClaim(
   if (hasLatestResults && resultLike) {
     refs.push("latest_results.json");
   }
-  if (runStateLike || (hasResultAnalysis && /completed|failed|25 train|five cells|five seeds|seed/i.test(text))) {
+  if (runStateLike || (hasResultAnalysis && /completed|failed|training runs?|cells?|seeds?/i.test(text))) {
     refs.push("run_record.json");
   }
   if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|benchmark_task_a|benchmark_task_b|completed|failed/iu.test(text)) {
@@ -6363,6 +6021,8 @@ def render_with_matplotlib(figure):
 
     condition_rows = build_condition_grid_rows(bars)
     if condition_rows:
+        axis_x_label = str(figure.get("condition_axis_x_label") or "Factor x")
+        axis_y_label = str(figure.get("condition_axis_y_label") or "Factor y")
         parameter_x_values = sorted(set(row["parameter_x"] for row in condition_rows))
         parameter_y_values = sorted(set(row["parameter_y"] for row in condition_rows))
         fig, ax = plt.subplots(figsize=(3.45, 2.25))
@@ -6380,7 +6040,7 @@ def render_with_matplotlib(figure):
                 linewidth=1.3,
                 markersize=4.3,
                 color=colors[index % len(colors)],
-                label=f"parameter y {parameter_y:g}",
+                label=f"{axis_y_label} {parameter_y:g}",
             )
         baseline = next((row for row in condition_rows if row["is_baseline"]), None)
         if baseline:
@@ -6400,7 +6060,7 @@ def render_with_matplotlib(figure):
         y_max = min(1.0, max(y_values) + 0.08)
         ax.set_ylim(y_min, y_max if y_max > y_min else y_min + 0.1)
         ax.set_xticks(parameter_x_values, labels=[f"{parameter_x:g}" for parameter_x in parameter_x_values])
-        ax.set_xlabel("Parameter x", fontsize=8)
+        ax.set_xlabel(axis_x_label, fontsize=8)
         ax.set_ylabel("Average\naccuracy", fontsize=8, rotation=0, labelpad=30, va="center")
         ax.set_title("Accuracy across condition grid", fontsize=9, pad=6)
         ax.grid(axis="y", color="#d9d9d9", linewidth=0.6)
@@ -6516,28 +6176,30 @@ def render_figure(figure):
     plot_w = width - margin_l - margin_r
     plot_h = height - margin_t - margin_b
     if condition_rows:
+        axis_x_label = str(figure.get("condition_axis_x_label") or "Factor x")
+        axis_y_label = str(figure.get("condition_axis_y_label") or "Factor y")
         margin_l, margin_r, margin_t, margin_b = 56, 20, 32, 36
         plot_w = width - margin_l - margin_r
         plot_h = height - margin_t - margin_b
-        ranks = sorted(set(row["rank"] for row in condition_rows))
-        parameter_ys = sorted(set(row["parameter_y"] for row in condition_rows))
+        x_values = sorted(set(row["parameter_x"] for row in condition_rows))
+        y_groups = sorted(set(row["parameter_y"] for row in condition_rows))
         y_values = [row["accuracy"] for row in condition_rows]
         y_min = max(0.0, min(y_values) - 0.05)
         y_max = min(1.0, max(y_values) + 0.08)
         if y_max <= y_min:
             y_max = y_min + 0.1
-        rank_min = min(ranks)
-        rank_max = max(ranks)
-        rank_span = max(rank_max - rank_min, 1.0)
-        def x_for(rank):
-            return margin_l + ((rank - rank_min) / rank_span) * plot_w
+        x_min = min(x_values)
+        x_max = max(x_values)
+        x_span = max(x_max - x_min, 1.0)
+        def x_for(value):
+            return margin_l + ((value - x_min) / x_span) * plot_w
         def y_for(value):
             return margin_b + ((value - y_min) / (y_max - y_min)) * plot_h
         colors = [(0.231, 0.400, 0.722), (0.784, 0.373, 0.000), (0.239, 0.604, 0.314)]
         content = []
         content.append("1 1 1 rg 0 0 306 190 re f\n")
         content.append(text_cmd(10, 176, "Accuracy across condition grid", 8.5))
-        content.append(text_cmd(130, 8, "adapter rank", 6, (0.12, 0.12, 0.12)))
+        content.append(text_cmd(130, 8, axis_x_label, 6, (0.12, 0.12, 0.12)))
         content.append(text_cmd(margin_l, 158, "Mean accuracy", 5.8, (0.12, 0.12, 0.12)))
         content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
         content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))
@@ -6546,32 +6208,32 @@ def render_figure(figure):
             y = y_for(value)
             content.append(stroke_line_cmd(margin_l, y, margin_l + plot_w, y, (0.85, 0.85, 0.85), 0.2))
             content.append(text_cmd(24, y - 2, f"{value:.2f}", 5.5, (0.18, 0.18, 0.18)))
-        for rank in ranks:
-            x = x_for(rank)
+        for x_value in x_values:
+            x = x_for(x_value)
             content.append(stroke_line_cmd(x, margin_b, x, margin_b - 3, (0, 0, 0), 0.25))
-            content.append(text_cmd(x - 4, 22, f"{rank:g}", 5.8, (0.18, 0.18, 0.18)))
+            content.append(text_cmd(x - 4, 22, f"{x_value:g}", 5.8, (0.18, 0.18, 0.18)))
         legend_x = 198
         legend_y = 166
-        for index, parameter_y in enumerate(parameter_ys):
+        for index, y_group in enumerate(y_groups):
             color = colors[index % len(colors)]
-            series = [row for row in condition_rows if row["parameter_y"] == parameter_y]
-            series.sort(key=lambda row: row["rank"])
+            series = [row for row in condition_rows if row["parameter_y"] == y_group]
+            series.sort(key=lambda row: row["parameter_x"])
             previous = None
             for row in series:
-                point = (x_for(row["rank"]), y_for(row["accuracy"]))
+                point = (x_for(row["parameter_x"]), y_for(row["accuracy"]))
                 if previous:
                     content.append(stroke_line_cmd(previous[0], previous[1], point[0], point[1], color, 0.9))
                 content.append(marker_cmd(point[0], point[1], color, 4.0))
                 previous = point
             content.append(marker_cmd(legend_x, legend_y - index * 10, color, 4.0))
-            content.append(text_cmd(legend_x + 7, legend_y - 2 - index * 10, f"parameter_y {parameter_y:g}", 6, (0.05, 0.05, 0.05)))
+            content.append(text_cmd(legend_x + 7, legend_y - 2 - index * 10, f"{axis_y_label} {y_group:g}", 6, (0.05, 0.05, 0.05)))
         baseline = next((row for row in condition_rows if row["is_baseline"]), None)
         if baseline:
-            bx, by = x_for(baseline["rank"]), y_for(baseline["accuracy"])
+            bx, by = x_for(baseline["parameter_x"]), y_for(baseline["accuracy"])
             content.append(marker_cmd(bx, by, (0.05, 0.05, 0.05), 7.0, True))
             content.append(text_cmd(bx + 4, by + 7, "baseline", 5.8, (0.05, 0.05, 0.05)))
         best = max(condition_rows, key=lambda row: row["accuracy"])
-        best_x, best_y = x_for(best["rank"]), y_for(best["accuracy"])
+        best_x, best_y = x_for(best["parameter_x"]), y_for(best["accuracy"])
         content.append(text_cmd(max(margin_l, best_x - 24), min(height - 42, best_y + 10), f"best {best['accuracy']:.3f}", 5.8, (0.05, 0.05, 0.05)))
         stream = "".join(content).encode("latin-1", "replace")
         objects = [
@@ -6723,13 +6385,13 @@ function buildPaperRenderValidation(input: {
   if (maxRepeatedCitationBundleCount >= 3) {
     failOrWarn(
       "repeated_citation_bundle",
-      `The same citation bundle is rendered ${maxRepeatedCitationBundleCount} times in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}), which makes references look mechanically repeated.`,
+      `The same citation-bearing paragraph is rendered ${maxRepeatedCitationBundleCount} times in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}), which makes the manuscript look mechanically repeated.`,
       false
     );
   } else if (maxRepeatedCitationBundleCount > 1) {
     failOrWarn(
       "repeated_citation_bundle",
-      `The same citation bundle is rendered more than once in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}); review whether repeated citations are necessary.`
+      `The same citation-bearing paragraph is rendered more than once in ${repeatedCitationBundles[0].section} (${repeatedCitationBundles[0].bundle}); remove duplicate prose while preserving claim-level citations.`
     );
   }
   const repeatedLongSentences = detectRepeatedLongSentences(input.tex);
@@ -6920,18 +6582,19 @@ function checkFinalTexBibliographyStyle(
 }
 
 function expectedBibliographyStyleForTemplate(parsedTemplate: ParsedLatexTemplate | null): string | null {
-  const explicitStyle = parsedTemplate?.bibliographyStyle?.trim();
-  if (explicitStyle) {
-    return explicitStyle;
-  }
   const templateSurface = [
     parsedTemplate?.preDocumentPreamble || "",
     parsedTemplate?.documentClass || "",
     parsedTemplate?.preamble || "",
     ...(parsedTemplate?.packages || [])
   ].join("\n");
-  if (/\\usepackage(?:\[[^\]]*\])?\{acl\d{4}\}/iu.test(templateSurface)) {
-    return "acl_natbib";
+  const aclTemplate = detectAclTemplatePackage(templateSurface);
+  if (aclTemplate?.bibliographyStyleOwner === "document") {
+    return ACL_BIBLIOGRAPHY_STYLE;
+  }
+  const explicitStyle = parsedTemplate?.bibliographyStyle?.trim();
+  if (explicitStyle) {
+    return explicitStyle;
   }
   return null;
 }
@@ -6945,7 +6608,7 @@ function currentAclTemplateOwnsBibliographyStyle(
     parsedTemplate?.preamble || "",
     ...(parsedTemplate?.packages || [])
   ].join("\n");
-  return /\\usepackage(?:\[[^\]]*\])?\{acl\}/iu.test(templateSurface);
+  return detectAclTemplatePackage(templateSurface)?.bibliographyStyleOwner === "package";
 }
 
 function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; count: number; section: string }> {
@@ -6954,29 +6617,23 @@ function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; cou
   const repeated: Array<{ bundle: string; count: number; section: string }> = [];
   for (const chunk of effectiveChunks) {
     const section = chunk.match(/\\section(?:\[[^\]]*\])?\{([^}]+)\}/u)?.[1]?.trim() || "the rendered manuscript";
-    const counts = new Map<string, number>();
-    for (const match of chunk.matchAll(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]+)\}/gu)) {
-      const bundle = normalizeCitationBundle(match[1]);
-      if (!bundle) {
-        continue;
-      }
-      counts.set(bundle, (counts.get(bundle) || 0) + 1);
+    const counts = new Map<string, { bundle: string; count: number }>();
+    for (const paragraph of chunk.split(/\n\s*\n/gu)) {
+      const bundles = [...paragraph.matchAll(/\\cite[a-zA-Z*]*(?:\[[^\]]*\]){0,2}\{([^}]+)\}/gu)]
+        .map((match) => normalizeCitationBundle(match[1]))
+        .filter(Boolean);
+      if (bundles.length === 0) continue;
+      const normalizedParagraph = paragraph.replace(/\s+/gu, " ").trim();
+      if (!normalizedParagraph) continue;
+      const current = counts.get(normalizedParagraph) || { bundle: bundles.join(";"), count: 0 };
+      current.count += 1;
+      counts.set(normalizedParagraph, current);
     }
-    repeated.push(
-      ...Array.from(counts.entries())
-        .map(([bundle, count]) => ({ bundle, count, section }))
-        .filter((item) => {
-          const keyCount = item.bundle.split(",").filter(Boolean).length;
-          return keyCount > 1 ? item.count > 1 : item.count > 2;
-        })
-    );
+    repeated.push(...Array.from(counts.values())
+      .filter((item) => item.count > 1)
+      .map((item) => ({ ...item, section })));
   }
-  return repeated
-    .filter((item) => {
-      const keyCount = item.bundle.split(",").filter(Boolean).length;
-      return keyCount > 1 ? item.count > 1 : item.count > 2;
-    })
-    .sort((a, b) => b.count - a.count || a.section.localeCompare(b.section) || a.bundle.localeCompare(b.bundle));
+  return repeated.sort((a, b) => b.count - a.count || a.section.localeCompare(b.section) || a.bundle.localeCompare(b.bundle));
 }
 
 function normalizeCitationBundle(raw: string): string {

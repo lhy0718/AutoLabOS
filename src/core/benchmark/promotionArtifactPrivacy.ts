@@ -1,26 +1,18 @@
 import path from "node:path";
 
+import {
+  createPrivateMachinePathPattern,
+  createPrivateMachinePathValuePattern
+} from "../privateMachinePath.js";
+
 const MAX_SCANNABLE_TEXT_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_NODES = 1_000_000;
 const MAX_JSON_DEPTH = 512;
 
 const SENSITIVE_PATH_PATTERN = /(?:^|\/)(?:\.env(?:\..*)?|.*api[-_]?keys?.*|.*credentials?.*|.*private[-_]?keys?.*|.*secrets?.*|id_(?:rsa|dsa|ecdsa|ed25519)|.*\.(?:pem|p12|pfx|key))$/iu;
 const SENSITIVE_FIELD_PATTERN = /^(?:api[-_]?keys?|access[-_]?tokens?|refresh[-_]?tokens?|auth[-_]?tokens?|client[-_]?secrets?|passwords?|private[-_]?keys?|credentials?|secrets?)$/iu;
-const PRIVATE_PATH_ROOTS = [
-  String.fromCharCode(47, 104, 111, 109, 101, 47),
-  String.fromCharCode(47, 85, 115, 101, 114, 115, 47),
-  String.fromCharCode(47, 109, 110, 116, 47),
-  String.fromCharCode(47, 116, 109, 112, 47),
-  "[A-Za-z]:\\\\"
-].join("|");
-const PRIVATE_PATH_PATTERN = new RegExp(
-  `(?:^|[\\s\"'=:])(?:${PRIVATE_PATH_ROOTS})`,
-  "u"
-);
-const PRIVATE_PATH_VALUE_PATTERN = new RegExp(
-  `(^|[\\s\"'=:])(?:${PRIVATE_PATH_ROOTS})[^\\s\"'<>\\]}),;]*`,
-  "gu"
-);
+const PRIVATE_PATH_PATTERN = createPrivateMachinePathPattern();
+const PRIVATE_PATH_VALUE_PATTERN = createPrivateMachinePathValuePattern();
 const SECRET_TEXT_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u,
   /\bAKIA[0-9A-Z]{16}\b/u,
@@ -220,9 +212,9 @@ function redactCredentialLikeValuesInString(
 }
 
 function redactPrivatePathsInString(value: string, state: { redactions: number }): string {
-  return value.replace(PRIVATE_PATH_VALUE_PATTERN, (_match, prefix: string) => {
+  return value.replace(PRIVATE_PATH_VALUE_PATTERN, () => {
     state.redactions += 1;
-    return `${prefix}<private-path>`;
+    return "<private-path>";
   });
 }
 

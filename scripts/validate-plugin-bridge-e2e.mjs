@@ -136,8 +136,10 @@ function main() {
     {
       id: "bridge_dependency_report_is_versioned",
       passed: dependency.report?.schema_version === "1.0"
-        && dependency.report?.artifact_type === "GateReport"
-        && dependency.report?.checks?.done_condition === "pass"
+        && dependency.report?.artifact_type === "PluginDependencyReport"
+        && dependency.report?.check_intent === "plugin:dependency"
+        && dependency.report?.checks?.cli_available === true
+        && dependency.report?.checks?.research_intents_compatible === true
     }
   ];
   if (preflightChecks.some((item) => !item.passed)) {

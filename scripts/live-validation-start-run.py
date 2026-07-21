@@ -63,7 +63,7 @@ def run_doctor_pattern_selftest() -> int:
     if not re.search(DOCTOR_HARNESS_PATTERN, previous):
         print("FAIL: doctor harness pattern did not preserve older harness output")
         return 1
-    print("PASS: p6 doctor output pattern self-test")
+    print("PASS: live-validation doctor output pattern self-test")
     return 0
 
 def send_line(fd: int, text: str) -> None:
@@ -85,15 +85,15 @@ def latest_run_id(workspace: Path) -> str | None:
 
 
 def main() -> int:
-    if os.environ.get("AUTOLABOS_P6_DOCTOR_PATTERN_SELFTEST", "") == "1":
+    if os.environ.get("AUTOLABOS_VALIDATION_DOCTOR_PATTERN_SELFTEST", "") == "1":
         return run_doctor_pattern_selftest()
     repo_root = Path(__file__).resolve().parents[1]
-    default_workspace = repo_root.parent / ".autolabos-validation" / "p6-paper-ready-live"
-    workspace = Path(os.environ.get("AUTOLABOS_P6_WORKSPACE", str(default_workspace))).resolve()
-    output_dir = Path(os.environ.get("AUTOLABOS_P6_PREFLIGHT_OUT", str(repo_root / "outputs" / "p6-preflight"))).resolve()
-    brief_path = os.environ.get("AUTOLABOS_P6_BRIEF", "briefs/p6-paper-ready-validation-brief.md")
+    default_workspace = repo_root.parent / ".autolabos-validation" / "live-validation"
+    workspace = Path(os.environ.get("AUTOLABOS_VALIDATION_WORKSPACE", str(default_workspace))).resolve()
+    output_dir = Path(os.environ.get("AUTOLABOS_VALIDATION_PREFLIGHT_OUT", str(repo_root / "outputs" / "live-validation-preflight"))).resolve()
+    brief_path = os.environ.get("AUTOLABOS_VALIDATION_BRIEF", "briefs/live-validation-brief.md")
     dist_main = repo_root / "dist" / "cli" / "main.js"
-    timeout = float(os.environ.get("AUTOLABOS_P6_START_TIMEOUT_SEC", "1800"))
+    timeout = float(os.environ.get("AUTOLABOS_VALIDATION_START_TIMEOUT_SEC", "1800"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not workspace.exists():
@@ -157,12 +157,12 @@ def main() -> int:
             pass
 
     run_id = latest_run_id(workspace)
-    output_path = output_dir / "p6-live-start-output.txt"
-    run_id_path = output_dir / "p6-live-run-id.txt"
+    output_path = output_dir / "live-validation-start-output.txt"
+    run_id_path = output_dir / "live-validation-run-id.txt"
     output_path.write_text(buffer_text, encoding="utf-8")
     if run_id:
         run_id_path.write_text(run_id + "\n", encoding="utf-8")
-    print(f"PASS: P6 live run started and reached first stop; run_id={run_id or 'unknown'}")
+    print(f"PASS: Validation live run started and reached first stop; run_id={run_id or 'unknown'}")
     print(f"Output: {output_path}")
     return 0
 

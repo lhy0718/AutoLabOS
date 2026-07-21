@@ -1944,7 +1944,7 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
+    expect(streamSearchPapers).toHaveBeenCalledTimes(2);
     expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
       query: '"tabular classification" +("classical machine learning" | baseline)'
     });
@@ -2845,7 +2845,7 @@ describe("collectPapers bibtex", () => {
     await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
     const strictQuery = '+("test-time scaling" | "inference-time scaling" | "test-time compute") +("small language model" | "small language models") +("math word problems" | "arithmetic reasoning" | "GSM8K")';
-    const broaderQuery = '+"small language models" +"test-time reasoning"';
+    const broaderQuery = '+"efficient test-time reasoning" +"small language models"';
     const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
       if (request.query === strictQuery) {
         yield [{ paperId: "paper-1", title: "Strict query singleton", authors: ["Alice Kim"] }];

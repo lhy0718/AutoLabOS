@@ -379,7 +379,7 @@ describe("paperMinimumGate", () => {
       conditions: [
         {
           marker: "baseline_condition",
-          rank: 8,
+          condition_parameter_x: 8,
           parameter_y: 0,
           steps_completed: 4,
           per_task_metrics: {
@@ -390,7 +390,7 @@ describe("paperMinimumGate", () => {
         },
         {
           marker: "candidate_condition_f5",
-          rank: 32,
+          condition_parameter_x: 32,
           parameter_y: 0.05,
           steps_completed: 4,
           per_task_metrics: {

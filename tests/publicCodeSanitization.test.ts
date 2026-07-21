@@ -4,236 +4,223 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ROOT = process.cwd();
-const CODE_DIRS = ["src", "tests", "docs", "scripts", "benchmarks", "node-prompts", "plugins", path.join(".codex", "skills")];
-const SHIPPED_CODE_DIRS = ["src", "docs", "scripts", "benchmarks", "node-prompts", "plugins", path.join(".codex", "skills")];
-const ROOT_PUBLIC_TEXT_FILES = ["ISSUES.md"];
-const TEXT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".md", ".json", ".jsonl", ".yaml", ".yml", ".tex"]);
+const SANITIZER_TEST_PATH = path.join("tests", "publicCodeSanitization.test.ts");
+const PUBLIC_DIRS = [
+  ".agents",
+  "src",
+  "tests",
+  "docs",
+  "scripts",
+  "papers",
+  "benchmarks",
+  "node-prompts",
+  "plugins",
+  "web",
+  ".github",
+  path.join(".codex", "skills")
+];
+const TEXT_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+  ".md",
+  ".json",
+  ".jsonl",
+  ".yaml",
+  ".yml",
+  ".tex",
+  ".py",
+  ".sh",
+  ".example"
+]);
+const ROOT_TEXT_FILENAMES = new Set([".gitattributes", ".gitignore"]);
+const HISTORICAL_AUDIT_FILES = new Set(["ISSUES.md"]);
 
-function walkCodeFiles(dir: string): string[] {
+function walkTextFiles(dir: string): string[] {
   const absolute = path.join(ROOT, dir);
   if (!fs.existsSync(absolute)) {
     return [];
   }
-  const entries = fs.readdirSync(absolute, { withFileTypes: true });
-  return entries.flatMap((entry) => {
-    const entryPath = path.join(dir, entry.name);
+  return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (["node_modules", "dist", ".git"].includes(entry.name)) {
-        return [];
-      }
-      return walkCodeFiles(entryPath);
+      const portablePath = relativePath.split(path.sep).join("/");
+      const localRefgateCache = portablePath.endsWith("/.refgate/cache");
+      return ["node_modules", "dist", ".git"].includes(entry.name) || localRefgateCache
+        ? []
+        : walkTextFiles(relativePath);
     }
-    if (!entry.isFile() || !TEXT_EXTENSIONS.has(path.extname(entry.name))) {
-      return [];
-    }
-    return [entryPath];
+    return entry.isFile() && TEXT_EXTENSIONS.has(path.extname(entry.name)) ? [relativePath] : [];
   });
 }
 
-function chars(values: number[]): string {
-  return String.fromCharCode(...values);
+function publicTextFiles(options: { includeAuditLog?: boolean } = {}): string[] {
+  const dirs = PUBLIC_DIRS;
+  const rootFiles = fs.readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && (
+      TEXT_EXTENSIONS.has(path.extname(entry.name))
+      || ROOT_TEXT_FILENAMES.has(entry.name)
+    ))
+    .map((entry) => entry.name);
+  return [...new Set([...dirs.flatMap(walkTextFiles), ...rootFiles])].filter((relativePath) => {
+    if (relativePath === SANITIZER_TEST_PATH) {
+      return false;
+    }
+    return options.includeAuditLog || !HISTORICAL_AUDIT_FILES.has(relativePath);
+  });
 }
 
-const CONDITION_MARKER_PREFIX = chars([114, 97, 110, 107, 95]);
-const CONDITION_MARKER_MIDDLE = chars([95, 100, 114, 111, 112, 111, 117, 116, 95]);
-const NUMERIC_CONDITION_MARKER_PREFIX = chars([99, 111, 110, 100, 105, 116, 105, 111, 110, 95]);
-const NUMERIC_CONDITION_MARKER_MIDDLE = chars([95, 112, 97, 114, 97, 109, 101, 116, 101, 114, 95]);
-
-function conditionMarker(rank: number, parameter_yCode: string): string {
-  return `${CONDITION_MARKER_PREFIX}${rank}${CONDITION_MARKER_MIDDLE}${parameter_yCode}`;
+function collectPatternOffenders(
+  files: string[],
+  patterns: ReadonlyArray<{ kind: string; pattern: RegExp }>
+): Array<{ relativePath: string; kind: string }> {
+  return files.flatMap((relativePath) => {
+    const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    return patterns
+      .filter(({ pattern }) => {
+        pattern.lastIndex = 0;
+        return pattern.test(source);
+      })
+      .map(({ kind }) => ({ relativePath, kind }));
+  });
 }
 
-function numericConditionMarker(parameter_x: number, parameter_yCode: string): string {
-  return `${NUMERIC_CONDITION_MARKER_PREFIX}${parameter_x}${NUMERIC_CONDITION_MARKER_MIDDLE}${parameter_yCode}`;
+const GENERIC_ENTRYPOINT_TOKENS = new Set([
+  "all",
+  "analysis",
+  "and",
+  "baseline",
+  "bounded",
+  "candidate",
+  "comparison",
+  "condition",
+  "configured",
+  "control",
+  "dynamic",
+  "experiment",
+  "failure",
+  "finalize",
+  "first",
+  "full",
+  "grid",
+  "local",
+  "locked",
+  "ordered",
+  "parameterized",
+  "planned",
+  "primary",
+  "public",
+  "real",
+  "safe",
+  "secondary",
+  "seed",
+  "single",
+  "study",
+  "sweep",
+  "validation",
+  "workflow"
+]);
+
+function collectExperimentSpecificEntrypoints(
+  files: string[]
+): Array<{ relativePath: string; identifier: string; domainTokens: string[] }> {
+  const entrypointPattern = /\b(?:run|execute|orchestrate)_([a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)*)_(?:study|sweep|experiment)\b/gu;
+  return files.flatMap((relativePath) => {
+    const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    return [...source.matchAll(entrypointPattern)].flatMap((match) => {
+      const domainTokens = match[1].split("_").filter((token) => !GENERIC_ENTRYPOINT_TOKENS.has(token));
+      return domainTokens.length > 0
+        ? [{ relativePath, identifier: match[0], domainTokens }]
+        : [];
+    });
+  });
 }
 
 describe("public code sanitization", () => {
-  it("does not expose one-off experiment identifiers in public source, tests, docs, or local skills", () => {
-    const banned = [
-      chars([114, 117, 110, 95, 112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121]),
-      chars([101, 120, 101, 99, 117, 116, 101, 95, 112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121]),
-      chars([114, 117, 110, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 115, 116, 117, 100, 121]),
-      chars([114, 117, 110, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 101, 120, 112, 101, 114, 105, 109, 101, 110, 116, 46, 112, 121]),
-      chars([114, 117, 110, 95, 108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 115, 116, 117, 100, 121]),
-      chars([101, 120, 101, 99, 117, 116, 101, 95, 108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 115, 116, 117, 100, 121]),
-      chars([114, 117, 110, 95, 108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 115, 119, 101, 101, 112]),
-      chars([101, 120, 101, 99, 117, 116, 101, 95, 108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97, 95, 114, 97, 110, 107, 95, 100, 114, 111, 112, 111, 117, 116, 95, 115, 119, 101, 101, 112]),
-      chars([114, 117, 110, 95, 108, 111, 114, 97, 95, 99, 111, 110, 100, 105, 116, 105, 111, 110]),
-      chars([95, 114, 117, 110, 95, 108, 111, 114, 97, 95, 99, 111, 110, 100, 105, 116, 105, 111, 110]),
-      chars([101, 120, 101, 99, 117, 116, 101, 95, 108, 111, 114, 97, 95, 99, 111, 110, 100, 105, 116, 105, 111, 110]),
-      chars([80, 69, 70, 84, 82, 101, 99, 105, 112, 101]),
-      chars([80, 101, 102, 116, 82, 101, 99, 105, 112, 101]),
-      chars([80, 69, 70, 84, 82, 101, 99, 105, 112, 101, 67, 111, 110, 102, 105, 103]),
-      chars([80, 101, 102, 116, 82, 101, 99, 105, 112, 101, 67, 111, 110, 102, 105, 103]),
-      chars([80, 69, 70, 84, 95, 82, 69, 67, 73, 80, 69, 83]),
-      chars([80, 69, 70, 84, 95, 82, 69, 67, 73, 80, 69, 95, 68, 69, 70, 73, 78, 73, 84, 73, 79, 78, 83]),
-      chars([114, 117, 110, 95, 112, 101, 102, 116, 95, 114, 101, 99, 105, 112, 101, 95, 115, 116, 117, 100, 121]),
-      chars([114, 117, 110, 95, 112, 101, 102, 116, 95, 114, 101, 99, 105, 112, 101, 95, 99, 111, 109, 112, 97, 114, 105, 115, 111, 110]),
-      chars([114, 117, 110, 95, 98, 97, 115, 101, 108, 105, 110, 101, 95, 97, 110, 100, 95, 112, 101, 102, 116, 95, 114, 101, 99, 105, 112, 101, 115]),
-      chars([108, 111, 99, 107, 101, 100, 95, 112, 101, 102, 116]),
-      chars([112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121, 95, 114, 101, 115, 117, 108, 116, 115]),
-      chars([112, 101, 102, 116, 95, 114, 117, 110, 110, 101, 114]),
-      chars([76, 111, 99, 107, 101, 100, 80, 101, 102, 116, 83, 116, 117, 100, 121]),
-      chars([114, 101, 112, 97, 105, 114, 76, 111, 99, 107, 101, 100, 80, 101, 102, 116, 83, 116, 117, 100, 121]),
-      chars([110, 111, 114, 109, 97, 108, 105, 122, 101, 76, 111, 99, 107, 101, 100, 80, 101, 102, 116, 83, 116, 117, 100, 121]),
-      chars([99, 111, 109, 112, 97, 114, 101, 95, 112, 101, 102, 116, 95, 114, 101, 99, 105, 112, 101, 115]),
-      chars([112, 101, 102, 116, 45, 114, 101, 99, 105, 112, 101]),
-      chars([108, 111, 114, 97, 45, 114, 97, 110, 107, 45, 100, 114, 111, 112, 111, 117, 116]),
-      chars([97, 114, 99, 95, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
-      chars([104, 101, 108, 108, 97, 115, 119, 97, 103]),
-      chars([97, 108, 108, 101, 110, 97, 105, 47, 97, 105, 50, 95, 97, 114, 99]),
-      chars([121, 97, 104, 109, 97, 47, 97, 108, 112, 97, 99, 97, 45, 99, 108, 101, 97, 110, 101, 100]),
-      chars([116, 97, 116, 115, 117, 45, 108, 97, 98, 47, 97, 108, 112, 97, 99, 97]),
-      chars([97, 105, 50, 95, 97, 114, 99]),
-      chars([112, 97, 112, 101, 114, 95, 97, 114, 99]),
-      chars([97, 114, 99, 95, 101, 118, 97, 108, 95, 115, 97, 109, 112, 108, 101, 115]),
-      chars([97, 114, 99, 95, 101, 118, 97, 108, 95, 101, 120, 97, 109, 112, 108, 101, 115]),
-      chars([97, 114, 99, 95, 97, 99, 99, 117, 114, 97, 99, 121]),
-      chars([68, 69, 70, 65, 85, 76, 84, 95, 65, 82, 67, 95, 69, 86, 65, 76, 95, 83, 65, 77, 80, 76, 69, 83]),
-      chars([108, 111, 97, 100, 95, 97, 114, 99, 95, 100, 97, 116, 97, 115, 101, 116]),
-      chars([65, 82, 67, 45, 67, 104, 97, 108, 108, 101, 110, 103, 101]),
-      chars([72, 101, 108, 108, 97, 83, 119, 97, 103]),
-      chars([81, 119, 101, 110, 47, 81, 119, 101, 110, 50, 46, 53]),
-      chars([81, 119, 101, 110, 50, 46, 53, 45, 49, 46, 53, 66]),
-      chars([84, 105, 110, 121, 76, 108, 97, 109, 97]),
-      chars([65, 108, 112, 97, 99, 97, 32, 67, 108, 101, 97, 110]),
-      chars([76, 111, 82, 65, 32, 114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116]),
-      chars([76, 111, 82, 65, 32, 114, 97, 110, 107, 32, 100, 114, 111, 112, 111, 117, 116]),
-      chars([76, 111, 82, 65, 32, 114, 97, 110, 107, 32, 97, 110, 100, 32, 100, 114, 111, 112, 111, 117, 116]),
-      chars([114, 97, 110, 107, 95, 56, 95, 100, 114, 111, 112, 111, 117, 116, 95, 48, 95, 48]),
-      chars([114, 97, 110, 107, 45, 51, 50]),
-      chars([100, 114, 111, 112, 111, 117, 116, 45, 48, 46, 48, 53]),
-      chars([114, 97, 110, 107, 32, 51, 50]),
-      chars([114, 97, 110, 107, 32, 56]),
-      chars([114, 97, 110, 107, 45, 51, 50]),
-      chars([114, 97, 110, 107, 45, 56]),
-      chars([114, 97, 110, 107, 95, 51, 50]),
-      chars([114, 97, 110, 107, 95, 56]),
-      chars([114, 97, 110, 107, 56, 95, 100, 114, 111, 112, 111, 117, 116, 48]),
-      chars([100, 114, 111, 112, 111, 117, 116, 32, 48, 46, 48, 53]),
-      chars([114, 97, 110, 107, 32, 51, 50, 32, 47, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48, 46, 48, 53]),
-      chars([114, 97, 110, 107, 32, 51, 50, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48, 32, 48, 53]),
-      chars([114, 97, 110, 107, 32, 49, 54, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48]),
-      chars([114, 97, 110, 107, 32, 52, 32, 100, 114, 111, 112, 111, 117, 116, 32, 48]),
-      chars([114, 97, 110, 107, 61, 56]),
-      chars([114, 97, 110, 107, 56, 45, 100, 114, 111, 112]),
-      chars([100, 114, 111, 112, 111, 117, 116, 61, 48, 46, 48, 53]),
-      chars([65, 82, 67, 32, 67, 104, 97, 108, 108, 101, 110, 103, 101]),
-      chars([72, 101, 108, 108, 97, 32, 83, 119, 97, 103]),
-      chars([80, 69, 70, 84, 32, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 32, 116, 117, 110, 105, 110, 103]),
-      chars([112, 101, 102, 116, 95, 97, 100, 97, 112, 116, 101, 114, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 116, 117, 110, 101, 100]),
-      chars([80, 69, 70, 84, 32, 114, 117, 110, 110, 101, 114]),
-      chars([80, 69, 70, 84, 32, 99, 111, 110, 100, 105, 116, 105, 111, 110]),
-      chars([80, 69, 70, 84, 32, 115, 116, 117, 100, 121]),
-      chars([66, 97, 115, 101, 108, 105, 110, 101, 45, 102, 105, 114, 115, 116, 32, 80, 69, 70, 84]),
-      chars([82, 101, 99, 111, 118, 101, 114, 101, 100, 32, 99, 97, 99, 104, 101, 100, 32, 102, 117, 108, 108, 32, 116, 101, 120, 116]),
-      chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
-      chars([76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 47, 80, 69, 70, 84]),
-      chars([114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116, 44, 32, 76, 111, 82, 65, 47, 81, 76, 111, 82, 65, 44, 32, 80, 69, 70, 84]),
-      chars([80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
-      chars([97, 100, 97, 112, 116, 101, 114, 95, 113, 118, 95, 114, 56]),
-      chars([112, 101, 102, 116, 95, 116, 121, 112, 101]),
-      chars([97, 100, 97, 112, 116, 101, 114, 95, 114, 97, 110, 107]),
-      chars([97, 100, 97, 112, 116, 101, 114, 95, 100, 114, 111, 112, 111, 117, 116]),
-      chars([118, 97, 110, 105, 108, 108, 97, 32, 97, 100, 97, 112, 116, 101, 114]),
-      chars([100, 101, 99, 111, 109, 112, 111, 115, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
-      chars([115, 116, 97, 98, 105, 108, 105, 122, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
-      chars([114, 97, 110, 107, 45, 115, 116, 97, 98, 105, 108, 105, 122, 101, 100, 32, 97, 100, 97, 112, 116, 101, 114]),
-      chars([105, 100, 101, 110, 116, 105, 102, 121, 45, 119, 104, 105, 99, 104, 45, 108, 105, 103, 104, 116, 119, 101, 105, 103, 104, 116, 45, 112, 97, 114, 97, 109, 101, 116, 101, 114, 45, 101, 102, 102, 105, 99, 105, 101, 110, 116, 45, 105, 45, 55, 51, 48, 53, 48, 102, 56, 53]),
-      chars([100, 97, 116, 97, 115, 101, 116, 95, 116, 111, 95, 98, 101, 95, 115, 101, 108, 101, 99, 116, 101, 100]),
-      conditionMarker(4, "0_0"),
-      conditionMarker(4, "0_05"),
-      conditionMarker(8, "0_0"),
-      conditionMarker(8, "0_05"),
-      conditionMarker(16, "0_0"),
-      conditionMarker(16, "0_05"),
-      conditionMarker(32, "0_0"),
-      conditionMarker(32, "0_05"),
-      numericConditionMarker(4, "0_0"),
-      numericConditionMarker(4, "0_05"),
-      numericConditionMarker(8, "0_0"),
-      numericConditionMarker(8, "0_05"),
-      numericConditionMarker(16, "0_0"),
-      numericConditionMarker(16, "0_05"),
-      numericConditionMarker(32, "0_0"),
-      numericConditionMarker(32, "0_05")
+  it("rejects experiment-specific entrypoints and encoded numeric condition names", () => {
+    const files = publicTextFiles();
+    const structuralHardcodingPatterns = [
+      {
+        kind: "encoded_numeric_condition_name",
+        pattern:
+          /\b(?!(?:condition|score)_)[a-z][a-z0-9]*_\d+(?:_\d+)?_(?!to_)[a-z][a-z0-9]*_\d+(?:_\d+)?\b/giu
+      },
+      {
+        kind: "encoded_literal_from_character_codes",
+        pattern: /String\.fromCharCode\(\s*\d+(?:\s*,\s*\d+){3,}\s*\)/gu
+      }
     ];
 
-    const bannedPatterns = [
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 117, 110, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([101, 120, 101, 99, 117, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([111, 114, 99, 104, 101, 115, 116, 114, 97, 116, 101, 95, 112, 101, 102, 116, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([114, 101, 112, 97, 105, 114, 80, 121, 116, 104, 111, 110, 76, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([95, 97, 117, 116, 111, 108, 97, 98, 111, 115, 95, 108, 111, 114, 97, 95])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 99, 107, 101, 100, 95, 108, 111, 114, 97])}[A-Za-z0-9_]*`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${chars([108, 111, 114, 97, 95, 114, 97, 110, 107])}(?:$|[^A-Za-z0-9_])`, "u"),
-      new RegExp(String.raw`(?:^|[^A-Za-z0-9_])${NUMERIC_CONDITION_MARKER_PREFIX}\d+${NUMERIC_CONDITION_MARKER_MIDDLE}[A-Za-z0-9_]+`, "u"),
-      new RegExp(String.raw`${chars([65, 71, 66, 45])}\d+`, "u")
-    ];
-
-    const scanFiles = [...CODE_DIRS.flatMap(walkCodeFiles), ...ROOT_PUBLIC_TEXT_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)))];
-    const offenders = scanFiles.flatMap((relativePath) => {
-      const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-      const literalOffenders = banned
-        .filter((pattern) => text.includes(pattern))
-        .map((pattern) => ({ relativePath, pattern }));
-      const patternOffenders = bannedPatterns
-        .filter((pattern) => pattern.test(text))
-        .map((pattern) => ({ relativePath, pattern: pattern.source }));
-      return [...literalOffenders, ...patternOffenders];
-    });
-
-    expect(offenders).toEqual([]);
+    expect(collectExperimentSpecificEntrypoints(files)).toEqual([]);
+    expect(collectPatternOffenders(files, structuralHardcodingPatterns)).toEqual([]);
   });
 
-  it("does not bake one-off pilot output details into shipped source, docs, or local skills", () => {
-    const bannedLiterals = [
-      chars([82, 101, 99, 111, 118, 101, 114, 101, 100, 32, 99, 97, 99, 104, 101, 100, 32, 102, 117, 108, 108, 32, 116, 101, 120, 116]),
-      chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101]),
-      chars([114, 97, 110, 107, 47, 100, 114, 111, 112, 111, 117, 116]),
-      chars([114, 97, 110, 107, 45, 100, 114, 111, 112, 111, 117, 116]),
-      chars([97, 114, 99, 95, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
-      chars([104, 101, 108, 108, 97, 115, 119, 97, 103]),
-      chars([84, 105, 110, 121, 76, 108, 97, 109, 97]),
-      chars([113, 95, 112, 114, 111, 106]),
-      chars([107, 95, 112, 114, 111, 106]),
-      chars([118, 95, 112, 114, 111, 106]),
-      chars([111, 95, 112, 114, 111, 106]),
-      chars([103, 97, 116, 101, 95, 112, 114, 111, 106]),
-      chars([117, 112, 95, 112, 114, 111, 106]),
-      chars([100, 111, 119, 110, 95, 112, 114, 111, 106]),
-      chars([108, 101, 97, 114, 110, 105, 110, 103, 32, 114, 97, 116, 101, 32, 48, 46, 48, 48, 48, 50]),
-      chars([103, 114, 97, 100, 105, 101, 110, 116, 32, 97, 99, 99, 117, 109, 117, 108, 97, 116, 105, 111, 110, 32, 52]),
-      chars([52, 32, 111, 112, 116, 105, 109, 105, 122, 101, 114, 32, 115, 116, 101, 112, 115]),
-      chars([54, 32, 111, 112, 116, 105, 109, 105, 122, 101, 114, 32, 115, 116, 101, 112, 115]),
-      chars([52, 56, 32, 116, 114, 97, 105, 110, 105, 110, 103, 32, 101, 120, 97, 109, 112, 108, 101, 115]),
-      chars([51, 50, 32, 116, 114, 97, 105, 110, 105, 110, 103, 32, 101, 120, 97, 109, 112, 108, 101, 115]),
-      chars([53, 48, 54, 56]),
-      chars([48, 46, 54, 52, 49, 55]),
-      chars([48, 46, 48, 56, 51, 51]),
-      chars([102, 105, 118, 101, 32, 114, 101, 112, 101, 97, 116, 101, 100, 32, 99, 101, 108, 108, 115]),
-      chars([102, 105, 118, 101, 32, 115, 101, 101, 100, 115, 32, 112, 101, 114, 32, 99, 101, 108, 108])
+  it("rejects live service identifiers and developer-machine paths in public text", () => {
+    const patterns = [
+      {
+        kind: "uuid",
+        pattern: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/giu
+      },
+      {
+        kind: "request_id",
+        pattern: /\b(?:req|request|resp)_[A-Za-z0-9]{20,}\b/gu
+      },
+      {
+        kind: "thread_id",
+        pattern: /\b(?:thread|thr)_[A-Za-z0-9]{20,}\b/gu
+      },
+      {
+        kind: "event_trace_id",
+        pattern: /\b(?:event|evt|span|trace)_(?=[A-Za-z0-9._-]*\d)[A-Za-z0-9][A-Za-z0-9._-]{11,}\b/gu
+      },
+      {
+        kind: "posix_developer_home",
+        pattern: /(?:^|[\s"'`(])\/(?:home|Users)\/[A-Za-z0-9._-]+\//gmu
+      },
+      {
+        kind: "windows_developer_home",
+        pattern: /\b[A-Za-z]:\\Users\\[A-Za-z0-9._-]+\\/gu
+      },
+      {
+        kind: "macos_private_temp",
+        pattern: /(?:^|[\s"'`(])\/(?:private\/)?var\/folders\/[A-Za-z0-9._-]+\//gmu
+      }
     ];
-    const offenders = SHIPPED_CODE_DIRS.flatMap(walkCodeFiles).flatMap((relativePath) => {
-      const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-      return bannedLiterals
-        .filter((literal) => text.toLocaleLowerCase().includes(literal.toLocaleLowerCase()))
-        .map((literal) => ({ relativePath, pattern: literal }));
-    });
+    const files = publicTextFiles();
 
-    expect(offenders).toEqual([]);
+    expect(files).toContain("README.md");
+    expect(files).toContain(".env.example");
+    expect(files).toContain(path.join(".agents", "plugins", "marketplace.json"));
+    expect(files).toContain(path.join(".github", "workflows", "ci.yml"));
+    expect(files).toContain(path.join("web", "src", "App.tsx"));
+    expect(files).toContain(path.join("tests", "implementationLocalizer.test.ts"));
+    expect(files).toContain(path.join("scripts", "live-validation-start-run.py"));
+    expect(collectPatternOffenders(files, patterns)).toEqual([]);
   });
 
-  it("does not expose retired compatibility terminology in public source, tests, docs, or local skills", () => {
-    const retiredCompatibilityTerm = chars([108, 101, 103, 97, 99, 121]);
-    const scanFiles = [...CODE_DIRS.flatMap(walkCodeFiles), ...ROOT_PUBLIC_TEXT_FILES.filter((file) => fs.existsSync(path.join(ROOT, file)))];
-    const offenders = scanFiles.flatMap((relativePath) => {
-      const text = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
-      return text.toLocaleLowerCase().includes(retiredCompatibilityTerm)
-        ? [{ relativePath, pattern: retiredCompatibilityTerm }]
-        : [];
-    });
+  it("keeps verification immutable and free of source-repair hooks", () => {
+    const source = fs.readFileSync(
+      path.join(ROOT, "src", "core", "agents", "implementSessionManager.ts"),
+      "utf8"
+    );
+    const start = source.indexOf("  private async verifyAttempt(");
+    const end = source.indexOf("\n  }\n}\n\nasync function writeImplementProgressStatus", start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+    const verifyAttemptSource = source.slice(start, end);
+    expect(verifyAttemptSource).toContain("this.deps.aci.runTests");
+    expect(verifyAttemptSource).not.toMatch(/\b(?:writeFile|appendFile|applyPatch|replaceFile)\b/u);
+    expect(verifyAttemptSource).not.toMatch(/\brepair[A-Z][A-Za-z0-9]*\s*\(/u);
+  });
+
+  it("does not retain retired compatibility terminology in public files", () => {
+    const offenders = collectPatternOffenders(publicTextFiles({ includeAuditLog: true }), [
+      { kind: "retired_compatibility_term", pattern: /\blegacy\b/giu }
+    ]);
 
     expect(offenders).toEqual([]);
   });

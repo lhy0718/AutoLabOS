@@ -172,7 +172,7 @@ function buildManuscriptOnlyPrompt(manuscript: string): string {
     "Assess the manuscript for research-paper promotion using only the manuscript text below.",
     "Do not assume access to run artifacts, hidden benchmark labels, prior conversation, or external tools.",
     "Return one JSON object with exactly these fields:",
-    '{"decision":"promote|needs_review|downgrade|block","concerns":[{"code":"string","severity":"blocking|warning","evidence_refs":["manuscript"]}],"repair_owners":["workflow_node"]}',
+    '{"decision":"promote|needs_review|downgrade|block","concerns":[{"code":"string","severity":"blocking|warning","evidence_refs":["paper/main.tex"]}],"repair_owners":["workflow_node"]}',
     "Use blocking concerns only when the manuscript itself establishes a blocking defect.",
     "<manuscript>",
     manuscript || "[NO MANUSCRIPT ARTIFACT]",

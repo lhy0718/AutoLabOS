@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
 import { resolveCliAction } from "../src/cli/args.js";
@@ -27,9 +29,34 @@ describe("resolveCliAction", () => {
     expect(resolveCliAction(["--help"]).kind).toBe("help");
   });
 
+  it("supports governance benchmark help at the command and subcommand levels", () => {
+    expect(resolveCliAction(["governance-benchmark", "--help"]).kind).toBe("help");
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-provider",
+      "--help"
+    ]).kind).toBe("help");
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "gate-promotion-confirmatory",
+      "-h"
+    ]).kind).toBe("help");
+  });
+
   it("supports audit-specific help", () => {
     expect(resolveCliAction(["audit", "--help"]).kind).toBe("audit-help");
     expect(resolveCliAction(["audit", "-h"]).kind).toBe("audit-help");
+  });
+
+  it("prints support intake options in audit-specific help", () => {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx", "src/cli/main.ts", "audit", "--help"],
+      { cwd: process.cwd(), encoding: "utf8" }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("[--support-root <root> --support-manifest <manifest.json>]");
   });
 
   it("supports reference claim review handoff and preflight", () => {
@@ -220,6 +247,8 @@ describe("resolveCliAction", () => {
       externalRoot: undefined,
       draftPath: undefined,
       logPath: undefined,
+      supportRoot: undefined,
+      supportManifestPath: undefined,
       outDir: undefined
     });
     expect(resolveCliAction(["audit", "--external", "incoming/run-a", "--draft", "incoming/draft.md", "--log", "incoming/run.log"])).toEqual({
@@ -228,8 +257,42 @@ describe("resolveCliAction", () => {
       externalRoot: "incoming/run-a",
       draftPath: "incoming/draft.md",
       logPath: "incoming/run.log",
+      supportRoot: undefined,
+      supportManifestPath: undefined,
       outDir: undefined
     });
+  });
+
+  it("parses explicit support-manifest intake only for external audits", () => {
+    expect(resolveCliAction([
+      "audit",
+      "--external", "incoming/package",
+      "--support-root", ".",
+      "--support-manifest", "incoming/support-manifest.json"
+    ])).toMatchObject({
+      kind: "audit",
+      supportRoot: ".",
+      supportManifestPath: "incoming/support-manifest.json"
+    });
+    expect(resolveCliAction([
+      "research",
+      "audit",
+      "--external", "incoming/package",
+      "--support-root", ".",
+      "--support-manifest", "incoming/support-manifest.json"
+    ])).toMatchObject({
+      kind: "research-audit",
+      supportRoot: ".",
+      supportManifestPath: "incoming/support-manifest.json"
+    });
+    expect(resolveCliAction([
+      "audit", "--external", "incoming/package", "--support-root", "."
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("supplied together") });
+    expect(resolveCliAction([
+      "research", "audit", "--run", "outputs/run-a",
+      "--support-root", ".",
+      "--support-manifest", "support.json"
+    ])).toMatchObject({ kind: "error", message: expect.stringContaining("require --external") });
   });
 
   it("requires exactly one paper-readiness audit input", () => {

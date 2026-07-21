@@ -140,7 +140,7 @@ describe("ImplementationLocalizer", () => {
       topic: "Classical machine learning baselines for tabular classification on small public datasets.",
       objectiveMetric: "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution.",
       constraints: [],
-      planExcerpt: "run_id: f86bfc2a-475f-4ca0-a340-14a497ab7719",
+      planExcerpt: "run_id: run-localization-alpha",
       hypothesesExcerpt: "Use a lightweight sklearn runner.",
       previousFailureSummary:
         `Local verification could not start because required artifact(s) were not materialized for python3 -m py_compile ` +
@@ -156,8 +156,9 @@ describe("ImplementationLocalizer", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-localizer-planhint-"));
     tempDirs.push(workspace);
 
-    const currentOutput = path.join(workspace, "outputs", "cpu-only-classical-tabular-classification-baseli-f86bfc2a");
-    const siblingOutput = path.join(workspace, "outputs", "classical-tabular-classification-baselines-on-sm-b1b6b29d");
+    const runId = ["11111111", "2222", "4333", "8444", "555555555555"].join("-");
+    const currentOutput = path.join(workspace, "outputs", "selected-run-output-11111111");
+    const siblingOutput = path.join(workspace, "outputs", "neighbor-run-output-22222222");
     mkdirSync(path.join(currentOutput, "experiment"), { recursive: true });
     mkdirSync(path.join(siblingOutput, "experiment"), { recursive: true });
 
@@ -174,7 +175,7 @@ describe("ImplementationLocalizer", () => {
       objectiveMetric: "macro-F1",
       constraints: [],
       planExcerpt: [
-        "run_id: f86bfc2a-475f-4ca0-a340-14a497ab7719",
+        `run_id: ${runId}`,
         "public_outputs: outputs",
         "selected_design: current"
       ].join("\n"),
@@ -194,7 +195,7 @@ describe("ImplementationLocalizer", () => {
     const experimentDir = path.join(outputRoot, "experiment");
     mkdirSync(experimentDir, { recursive: true });
 
-    const runnerPath = path.join(experimentDir, "run_instruction_study.py");
+    const runnerPath = path.join(experimentDir, "run_parameterized_study.py");
     writeFileSync(path.join(outputRoot, "manifest.json"), "{\"current\":true}\n", "utf8");
     writeFileSync(
       runnerPath,
@@ -209,8 +210,8 @@ describe("ImplementationLocalizer", () => {
     const localizer = new ImplementationLocalizer(new LocalAciAdapter());
     const result = await localizer.localize({
       workspaceRoot: workspace,
-      goal: "Repair the generated adapter runner after run_experiments failed.",
-      topic: "adapter instruction tuning repair",
+      goal: "Repair the generated configuration runner after run_experiments failed.",
+      topic: "parameterized method repair",
       objectiveMetric: "accuracy_delta_vs_baseline",
       constraints: [],
       planExcerpt: "Fix the generated experiment runner in the active output bundle.",

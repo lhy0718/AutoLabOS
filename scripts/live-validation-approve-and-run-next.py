@@ -173,10 +173,10 @@ def helper_timeout_message(node: str, timeout: float, max_wall_seconds: float | 
     effective_timeout = max_wall_seconds if max_wall_seconds is not None else timeout
     if max_wall_seconds is not None and int(max_wall_seconds) != int(timeout):
         return (
-            f"P6 helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds "
+            f"Validation helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds "
             f"(base idle timeout {int(timeout)} seconds)."
         )
-    return f"P6 helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds."
+    return f"Validation helper timed out waiting for {node} stop boundary after {int(effective_timeout)} seconds."
 
 
 def relative_existing_files(root: Path, directory_name: str) -> list[str]:
@@ -337,7 +337,7 @@ def build_staged_llm_resume_manifest(run_dir: Path, node: str, message: str, now
         return None
     manifest = {
         "status": "resumable",
-        "reason": "p6_helper_timeout",
+        "reason": "validation_helper_timeout",
         "node": node,
         "message": message,
         "updatedAt": now,
@@ -412,18 +412,18 @@ def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, mes
             status_record = {}
         status_record.update({
             "status": "failed",
-            "stage": "p6_helper_timeout",
+            "stage": "validation_helper_timeout",
             "message": message,
             "lastError": message,
             "updatedAt": now,
         })
         write_json_atomic(status_path, status_record)
     resume_manifest_path = persist_staged_llm_resume_manifest(run_dir, node, message, now)
-    diagnostic_path = run_dir / node / "p6_helper_timeout.json"
+    diagnostic_path = run_dir / node / "validation_helper_timeout.json"
     diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
     diagnostic_payload = {
         "status": "failed",
-        "reason": "p6_helper_timeout",
+        "reason": "validation_helper_timeout",
         "node": node,
         "message": message,
         "updatedAt": now,
@@ -448,7 +448,7 @@ def persist_helper_timeout_boundary(workspace: Path, run_id: str, node: str, mes
 
 def model_usage_limit_message(node: str) -> str:
     return (
-        f"P6 helper observed a model usage-limit boundary for {node}; "
+        f"Validation helper observed a model usage-limit boundary for {node}; "
         "switch models or wait for quota reset before retrying."
     )
 
@@ -488,17 +488,17 @@ def persist_model_usage_limit_boundary(workspace: Path, run_id: str, node: str) 
             status_record = {}
         status_record.update({
             "status": "failed",
-            "stage": "p6_model_usage_limit",
+            "stage": "validation_model_usage_limit",
             "message": message,
             "lastError": message,
             "updatedAt": now,
         })
         write_json_atomic(status_path, status_record)
-    diagnostic_path = run_dir / node / "p6_model_usage_limit.json"
+    diagnostic_path = run_dir / node / "validation_model_usage_limit.json"
     diagnostic_path.parent.mkdir(parents=True, exist_ok=True)
     write_json_atomic(diagnostic_path, {
         "status": "failed",
-        "reason": "p6_model_usage_limit",
+        "reason": "validation_model_usage_limit",
         "node": node,
         "message": message,
         "updatedAt": now,
@@ -618,7 +618,7 @@ def command_line_contains_live_run(cmdline: str, workspace: Path, run_id: str) -
         for token in (
             "AutoLabOS/dist/cli/main.js",
             "dist/cli/main.js",
-            "p6-approve-and-run-next.py",
+            "live-validation-approve-and-run-next.py",
             "run_command.sh",
             ".autolabos/runs",
         )
@@ -669,7 +669,7 @@ def reconcile_stale_running_before_attach(
     if has_live_process_for_run(workspace, run_id):
         return False
     message = (
-        f"P6 helper found stale running state for {node}: no live AutoLabOS process matched "
+        f"Validation helper found stale running state for {node}: no live AutoLabOS process matched "
         f"run {run_id} after {int(age_seconds)} seconds; marking a helper-timeout boundary before attach."
     )
     return persist_helper_timeout_boundary(workspace, run_id, node, message)
@@ -972,7 +972,7 @@ def wait_for_stop_boundary(
 
 
 def run_selftest() -> int:
-    run_id = "run-p6"
+    run_id = "run-validation"
     args = "--top-n 12"
     analyze_running = {
         "status": "running",
@@ -1001,11 +1001,11 @@ def run_selftest() -> int:
     expectations = [
         (
             build_continue_command(analyze_running, run_id, "analyze_papers", args),
-            "/agent run analyze_papers run-p6 --top-n 12",
+            "/agent run analyze_papers run-validation --top-n 12",
         ),
         (
             build_continue_command(analyze_running_with_error, run_id, "analyze_papers", args),
-            "/agent retry analyze_papers run-p6",
+            "/agent retry analyze_papers run-validation",
         ),
         (build_continue_command(collect_needs_approval, run_id, "analyze_papers", args), "/approve"),
         (build_continue_command(analyze_needs_approval, run_id, "analyze_papers", args), "/approve"),
@@ -1115,13 +1115,13 @@ def run_selftest() -> int:
         if timeout_record.get("status") != "paused" or timeout_state.get("status") != "failed":
             print("FAIL: helper timeout boundary did not pause and fail the running node")
             return 1
-        if timeout_status.get("status") != "failed" or timeout_status.get("stage") != "p6_helper_timeout":
+        if timeout_status.get("status") != "failed" or timeout_status.get("stage") != "validation_helper_timeout":
             print("FAIL: helper timeout boundary did not close the node status file")
             return 1
         if timeout_state.get("lastError") != "helper timeout":
             print("FAIL: helper timeout boundary did not preserve the diagnostic")
             return 1
-        if not (record_dir / timeout_node / "p6_helper_timeout.json").exists():
+        if not (record_dir / timeout_node / "validation_helper_timeout.json").exists():
             print("FAIL: helper timeout diagnostic artifact was not written")
             return 1
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -1164,7 +1164,7 @@ def run_selftest() -> int:
         if not observe_manifest_path.exists():
             print("FAIL: observe-only helper timeout did not write a staged_llm resume manifest")
             return 1
-        observe_diagnostic = json.loads((node_dir / "p6_helper_timeout.json").read_text(encoding="utf-8"))
+        observe_diagnostic = json.loads((node_dir / "validation_helper_timeout.json").read_text(encoding="utf-8"))
         if observe_diagnostic.get("resume_manifest") != "implement_experiments/staged_llm_resume_manifest.json":
             print("FAIL: observe-only helper timeout diagnostic did not link the resume manifest")
             return 1
@@ -1285,13 +1285,13 @@ def run_selftest() -> int:
         if usage_record.get("status") != "paused" or usage_state.get("status") != "failed":
             print("FAIL: model usage-limit boundary did not pause and fail the running node")
             return 1
-        if usage_status.get("status") != "failed" or usage_status.get("stage") != "p6_model_usage_limit":
+        if usage_status.get("status") != "failed" or usage_status.get("stage") != "validation_model_usage_limit":
             print("FAIL: model usage-limit boundary did not close the node status file")
             return 1
         if "usage-limit" not in usage_state.get("lastError", ""):
             print("FAIL: model usage-limit boundary did not preserve the diagnostic")
             return 1
-        if not (record_dir / usage_node / "p6_model_usage_limit.json").exists():
+        if not (record_dir / usage_node / "validation_model_usage_limit.json").exists():
             print("FAIL: model usage-limit diagnostic artifact was not written")
             return 1
     if not should_observe_active_running(analyze_running, force_run_active=False):
@@ -1332,10 +1332,10 @@ def run_selftest() -> int:
         if stale_record.get("status") != "paused" or node_status(stale_record, stale_node) != "failed":
             print("FAIL: stale running reconciliation did not pause and fail the node")
             return 1
-        if stale_status.get("status") != "failed" or stale_status.get("stage") != "p6_helper_timeout":
+        if stale_status.get("status") != "failed" or stale_status.get("stage") != "validation_helper_timeout":
             print("FAIL: stale running reconciliation did not close node-local status")
             return 1
-        if not (stale_node_dir / "p6_helper_timeout.json").exists():
+        if not (stale_node_dir / "validation_helper_timeout.json").exists():
             print("FAIL: stale running reconciliation did not write diagnostic artifact")
             return 1
     if is_active_running(analyze_needs_approval):
@@ -1516,31 +1516,31 @@ def run_selftest() -> int:
         print("FAIL: approve handoff should observe the pending transition target")
         return 1
     if expand_command_override("/agent retry {next_node} {run_id}", run_id, "implement_experiments") != (
-        "/agent retry implement_experiments run-p6"
+        "/agent retry implement_experiments run-validation"
     ):
         print("FAIL: command override placeholders were not expanded")
         return 1
-    if not command_override_replaces_continue_command("/agent retry implement_experiments run-p6"):
+    if not command_override_replaces_continue_command("/agent retry implement_experiments run-validation"):
         print("FAIL: slash command override was not recognized as a command replacement")
         return 1
-    if command_override_replaces_continue_command("Steering implement_experiments for run-p6"):
+    if command_override_replaces_continue_command("Steering implement_experiments for run-validation"):
         print("FAIL: text steering override was incorrectly treated as a command replacement")
         return 1
     if expand_command_override("Steer {next_node} for {run_id}", run_id, "implement_experiments") != (
-        "Steer implement_experiments for run-p6"
+        "Steer implement_experiments for run-validation"
     ):
         print("FAIL: text command override placeholders were not expanded")
         return 1
-    if command_override_replaces_continue_command("  Steer implement_experiments for run-p6"):
+    if command_override_replaces_continue_command("  Steer implement_experiments for run-validation"):
         print("FAIL: indented text steering override was incorrectly treated as a command replacement")
         return 1
-    print("PASS: p6 continue command selection self-test")
+    print("PASS: live-validation continue command selection self-test")
     return 0
 
 
 def run_resume_manifest_selftest() -> int:
-    with tempfile.TemporaryDirectory(prefix="autolabos-p6-resume-manifest-") as tmp:
-        run_dir = Path(tmp) / ".autolabos" / "runs" / "run-p6"
+    with tempfile.TemporaryDirectory(prefix="autolabos-live-validation-resume-manifest-") as tmp:
+        run_dir = Path(tmp) / ".autolabos" / "runs" / "run-validation"
         node_dir = run_dir / "implement_experiments"
         response_dir = node_dir / "unit_chunk_responses"
         section_dir = node_dir / "unit_sections"
@@ -1622,30 +1622,30 @@ def run_resume_manifest_selftest() -> int:
         ):
             print("FAIL: resume manifest leaked derived Python cache or candidate artifacts")
             return 1
-    print("PASS: p6 staged_llm resume manifest self-test")
+    print("PASS: live-validation staged_llm resume manifest self-test")
     return 0
 
 
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
-    default_workspace = repo_root.parent / ".autolabos-validation" / "p6-paper-ready-live"
-    workspace = Path(os.environ.get("AUTOLABOS_P6_WORKSPACE", str(default_workspace))).resolve()
-    output_dir = Path(os.environ.get("AUTOLABOS_P6_PREFLIGHT_OUT", str(repo_root / "outputs" / "p6-preflight"))).resolve()
-    run_id = os.environ.get("AUTOLABOS_P6_RUN_ID", "").strip()
-    next_node = os.environ.get("AUTOLABOS_P6_NEXT_NODE", "analyze_papers").strip()
+    default_workspace = repo_root.parent / ".autolabos-validation" / "live-validation"
+    workspace = Path(os.environ.get("AUTOLABOS_VALIDATION_WORKSPACE", str(default_workspace))).resolve()
+    output_dir = Path(os.environ.get("AUTOLABOS_VALIDATION_PREFLIGHT_OUT", str(repo_root / "outputs" / "live-validation-preflight"))).resolve()
+    run_id = os.environ.get("AUTOLABOS_VALIDATION_RUN_ID", "").strip()
+    next_node = os.environ.get("AUTOLABOS_VALIDATION_NEXT_NODE", "analyze_papers").strip()
     default_node_args = "--top-n 12" if next_node == "analyze_papers" else ""
-    node_args = os.environ.get("AUTOLABOS_P6_NEXT_NODE_ARGS", default_node_args).strip()
-    command_override = os.environ.get("AUTOLABOS_P6_COMMAND", "").strip()
-    timeout = float(os.environ.get("AUTOLABOS_P6_NEXT_TIMEOUT_SEC", "3600"))
-    max_wall_seconds = float(os.environ.get("AUTOLABOS_P6_NEXT_MAX_WALL_SEC", str(max(timeout, timeout * 4))))
-    handoff_grace_seconds = float(os.environ.get("AUTOLABOS_P6_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
-    stale_running_seconds = float(os.environ.get("AUTOLABOS_P6_STALE_RUNNING_SEC", "3600"))
+    node_args = os.environ.get("AUTOLABOS_VALIDATION_NEXT_NODE_ARGS", default_node_args).strip()
+    command_override = os.environ.get("AUTOLABOS_VALIDATION_COMMAND", "").strip()
+    timeout = float(os.environ.get("AUTOLABOS_VALIDATION_NEXT_TIMEOUT_SEC", "3600"))
+    max_wall_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_NEXT_MAX_WALL_SEC", str(max(timeout, timeout * 4))))
+    handoff_grace_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
+    stale_running_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_STALE_RUNNING_SEC", "3600"))
     dist_main = repo_root / "dist" / "cli" / "main.js"
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / f"p6-continue-{next_node}-output.txt"
+    output_path = output_dir / f"live-validation-continue-{next_node}-output.txt"
 
     if not run_id:
-        print("FAIL: AUTOLABOS_P6_RUN_ID is required")
+        print("FAIL: AUTOLABOS_VALIDATION_RUN_ID is required")
         return 1
     if not workspace.exists():
         print(f"FAIL: workspace does not exist: {workspace}")
@@ -1653,7 +1653,7 @@ def main() -> int:
     if not dist_main.exists():
         print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
         return 1
-    if os.environ.get("AUTOLABOS_P6_DISABLE_STALE_RUNNING_RECONCILE", "") != "1":
+    if os.environ.get("AUTOLABOS_VALIDATION_DISABLE_STALE_RUNNING_RECONCILE", "") != "1":
         if reconcile_stale_running_before_attach(
             workspace,
             run_id,
@@ -1661,7 +1661,7 @@ def main() -> int:
         ):
             print(f"INFO: reconciled stale running state before attaching to run {run_id}.")
     record_before = load_run_record(workspace, run_id)
-    force_run_active = os.environ.get("AUTOLABOS_P6_FORCE_RUN_ACTIVE", "") == "1"
+    force_run_active = os.environ.get("AUTOLABOS_VALIDATION_FORCE_RUN_ACTIVE", "") == "1"
     active_running_before = should_observe_active_running(record_before, force_run_active=force_run_active)
     if force_run_active and is_active_running(record_before):
         next_node = current_node(record_before) or next_node
@@ -1793,7 +1793,7 @@ def main() -> int:
         terminate_process_group(proc)
         if persist_helper_timeout_boundary(workspace, run_id, wait_node, timeout_message):
             print(f"INFO: persisted helper-timeout boundary for {wait_node}.")
-        print(f"FAIL: P6 continue timed out waiting for {exc.pattern}; output={output_path}")
+        print(f"FAIL: Validation continue timed out waiting for {exc.pattern}; output={output_path}")
         return 1
     finally:
         terminate_process_group(proc)
@@ -1803,13 +1803,13 @@ def main() -> int:
             pass
 
     output_path.write_text(buffer_text, encoding="utf-8")
-    print(f"PASS: P6 approved current gate and attempted {next_node}; output={output_path}")
+    print(f"PASS: Validation approved current gate and attempted {next_node}; output={output_path}")
     return 0
 
 
 if __name__ == "__main__":
-    if os.environ.get("AUTOLABOS_P6_CONTINUE_SELFTEST") == "1":
+    if os.environ.get("AUTOLABOS_VALIDATION_CONTINUE_SELFTEST") == "1":
         raise SystemExit(run_selftest())
-    if os.environ.get("AUTOLABOS_P6_RESUME_MANIFEST_SELFTEST") == "1":
+    if os.environ.get("AUTOLABOS_VALIDATION_RESUME_MANIFEST_SELFTEST") == "1":
         raise SystemExit(run_resume_manifest_selftest())
     raise SystemExit(main())

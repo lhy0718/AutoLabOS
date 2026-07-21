@@ -79,10 +79,10 @@ export type CliAction =
   | { kind: "governance-benchmark-export-promotion-development-evidence"; corpusManifestPath: string; suitePath: string; predictionsPath: string; systemRunManifestPath: string; scoreReportPath: string; gateReportPath: string; recommendationsPath: string; outputPath: string }
   | { kind: "governance-benchmark-analyze-promotion-failures"; suitePath: string; predictionsPath: string; systemId: string; outDir: string }
   | { kind: "governance-benchmark-score-promotion"; suitePath: string; predictionsPath: string; outDir?: string }
-  | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
+  | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; supportRoot?: string; supportManifestPath?: string; outDir?: string }
   | { kind: "audit-help" }
   | { kind: "research-new"; briefPath: string; outDir?: string }
-  | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; outDir?: string }
+  | { kind: "research-audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; supportRoot?: string; supportManifestPath?: string; outDir?: string }
   | { kind: "research-review"; gatePath: string; modelReviewBundlePath?: string; outDir?: string }
   | { kind: "research-improve"; reviewPath: string; outDir?: string }
   | { kind: "research-pack"; gatePath: string; reviewPath: string; sourceDir?: string; outDir?: string }
@@ -338,6 +338,8 @@ export function resolveCliAction(args: string[]): CliAction {
     let externalRoot: string | undefined;
     let draftPath: string | undefined;
     let logPath: string | undefined;
+    let supportRoot: string | undefined;
+    let supportManifestPath: string | undefined;
     let outDir: string | undefined;
     for (let index = 1; index < args.length; index += 1) {
       const token = args[index];
@@ -377,6 +379,16 @@ export function resolveCliAction(args: string[]): CliAction {
         index += 1;
         continue;
       }
+      if (token === "--support-root" || token === "--support-manifest") {
+        const value = args[index + 1];
+        if (!value || value.startsWith("--")) {
+          return { kind: "error", message: `Missing value for ${token}.` };
+        }
+        if (token === "--support-root") supportRoot = value;
+        else supportManifestPath = value;
+        index += 1;
+        continue;
+      }
       if (token === "--out-dir") {
         const value = args[index + 1];
         if (!value) {
@@ -394,16 +406,22 @@ export function resolveCliAction(args: string[]): CliAction {
     if ([runRoot, externalRoot].filter(Boolean).length !== 1) {
       return {
         kind: "error",
-        message: "Usage: audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>]) [--out-dir outputs/audit]."
+        message: "Usage: audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--support-root <root> --support-manifest <manifest.json>]) [--out-dir outputs/audit]."
       };
     }
-    if (!externalRoot && (draftPath || logPath)) {
-      return { kind: "error", message: "--draft and --log require --external <artifact-root>." };
+    if (Boolean(supportRoot) !== Boolean(supportManifestPath)) {
+      return { kind: "error", message: "--support-root and --support-manifest must be supplied together." };
     }
-    return { kind: "audit", runRoot, externalRoot, draftPath, logPath, outDir };
+    if (!externalRoot && (draftPath || logPath || supportRoot || supportManifestPath)) {
+      return { kind: "error", message: "--draft, --log, --support-root, and --support-manifest require --external <artifact-root>." };
+    }
+    return { kind: "audit", runRoot, externalRoot, draftPath, logPath, supportRoot, supportManifestPath, outDir };
   }
 
   if (first === "governance-benchmark") {
+    if (args.slice(1).some((arg) => arg === "--help" || arg === "-h")) {
+      return { kind: "help" };
+    }
     const subcommand = args[1];
     if (subcommand === "prepare-promotion-trial-candidate-review-workspace") {
       let packageRoot: string | undefined;
@@ -2300,7 +2318,7 @@ function parseResearchArgs(args: string[]): CliAction {
 
   const allowedByCommand: Record<string, string[]> = {
     new: ["--brief", "--out-dir"],
-    audit: ["--run", "--external", "--draft", "--log", "--out-dir"],
+    audit: ["--run", "--external", "--draft", "--log", "--support-root", "--support-manifest", "--out-dir"],
     review: ["--gate", "--model-review", "--out-dir"],
     improve: ["--review", "--out-dir"],
     pack: ["--gate", "--review", "--source-dir", "--out-dir"],
@@ -2346,13 +2364,18 @@ function parseResearchArgs(args: string[]): CliAction {
     const externalRoot = values.get("--external");
     const draftPath = values.get("--draft");
     const logPath = values.get("--log");
+    const supportRoot = values.get("--support-root");
+    const supportManifestPath = values.get("--support-manifest");
     if ([runRoot, externalRoot].filter(Boolean).length !== 1) {
       return { kind: "error", message: "research audit requires exactly one of --run or --external." };
     }
-    if (!externalRoot && (draftPath || logPath)) {
-      return { kind: "error", message: "research audit --draft and --log require --external." };
+    if (Boolean(supportRoot) !== Boolean(supportManifestPath)) {
+      return { kind: "error", message: "research audit --support-root and --support-manifest must be supplied together." };
     }
-    return { kind: "research-audit", runRoot, externalRoot, draftPath, logPath, outDir };
+    if (!externalRoot && (draftPath || logPath || supportRoot || supportManifestPath)) {
+      return { kind: "error", message: "research audit --draft, --log, --support-root, and --support-manifest require --external." };
+    }
+    return { kind: "research-audit", runRoot, externalRoot, draftPath, logPath, supportRoot, supportManifestPath, outDir };
   }
   if (subcommand === "review") {
     const gatePath = values.get("--gate");

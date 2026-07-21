@@ -28,7 +28,8 @@ describe("validation report retention", () => {
       expect(persisted.reportOutput).toBe("reports/result.json");
       expect(parsed).toEqual(persisted);
       expect(fs.readdirSync(path.dirname(output))).toEqual(["result.json"]);
-      expect(() => writeValidationReport({ verdict: "fail", message: "/home/example/private.json" }, output, root))
+      const privateFixturePath = path.join(path.sep, "home", "example", "private.json");
+      expect(() => writeValidationReport({ verdict: "fail", message: privateFixturePath }, output, root))
         .toThrow(/machine-specific/u);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });

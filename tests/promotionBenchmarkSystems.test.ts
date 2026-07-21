@@ -216,7 +216,7 @@ describe("promotion benchmark systems", () => {
       {
         code: "required_artifact_missing",
         severity: "blocking",
-        evidence_refs: ["paper/paper_readiness.json"]
+        evidence_refs: []
       },
       {
         code: "required_artifact_unparseable",

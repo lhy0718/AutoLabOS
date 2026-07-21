@@ -11,10 +11,10 @@ Usage rules:
 ## Now
 
 - Make live-validation temp workspace builders emit `run_status.json` with `validation_scope=live_fixture`.
-  - Current temp workspaces can still look noisier than intended in `/doctor` because legacy fixtures do not emit the new scope marker.
+  - Current temp workspaces can still look noisier than intended in `/doctor` because older fixtures do not emit the new scope marker.
   - Keep this additive; do not weaken the default governed-run validator.
 
-- Decide whether to add an additive backfill helper for legacy runs that predate `run_status.json`.
+- Decide whether to add an additive backfill helper for older runs that predate `run_status.json`.
   - Current behavior is honest fallback projection.
   - Follow-up is whether a bounded backfill would improve operator surfaces without pretending old runs had artifacts they never wrote.
 

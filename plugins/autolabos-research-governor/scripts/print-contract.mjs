@@ -2,7 +2,7 @@
 
 const contract = {
   pluginName: "autolabos-research-governor",
-  schemaVersion: "1.0",
+  schemaVersion: "2.0",
   primarySurface: "codex_plugin",
   standaloneWorkflowRole: "reference_workflow",
   artifacts: [
@@ -15,6 +15,9 @@ const contract = {
   ],
   sidecarArtifacts: [
     "ModelReviewBundle"
+  ],
+  operationalArtifacts: [
+    "PluginDependencyReport"
   ],
   commandIntents: ["research:new", "research:audit", "research:review", "research:improve", "research:pack"],
   invariant: "External outputs are untrusted evidence until AutoLabOS gates classify them."

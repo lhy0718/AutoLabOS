@@ -23,7 +23,7 @@ import {
 describe("generatePublicRunReadme", () => {
   let tmpDir: string;
   const run = {
-    id: "abc12345-dead-beef-cafe-0123456789ab",
+    id: "run-public-output-alpha",
     title: "Test Run Title",
     topic: "Adaptive reasoning under budget",
     objectiveMetric: "accuracy",

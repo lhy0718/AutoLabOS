@@ -437,6 +437,7 @@ describe("AgentOrchestrator (state graph)", () => {
 
   it("feeds run_experiments failure context back into implement_experiments after rollback", async () => {
     let implementCalls = 0;
+    let runCalls = 0;
     const seenFeedback: string[] = [];
     const registry = new DeterministicRegistry({
       implement_experiments: {
@@ -460,6 +461,15 @@ describe("AgentOrchestrator (state graph)", () => {
       run_experiments: {
         id: "run_experiments",
         execute: async ({ run }) => {
+          runCalls += 1;
+          if (implementCalls > 1) {
+            return {
+              status: "success",
+              summary: "Repaired implementation produced governed experiment evidence.",
+              needsApproval: false,
+              toolCallsUsed: 1
+            };
+          }
           const memory = new RunContextMemory(run.memoryRefs.runContextPath);
           await memory.put("implement_experiments.runner_feedback", {
             source: "run_experiments",
@@ -489,13 +499,22 @@ describe("AgentOrchestrator (state graph)", () => {
 
     const result = await orchestrator.runAgent(run.id, "implement_experiments");
     expect(result.result.status).toBe("success");
+    expect(implementCalls).toBe(2);
+    expect(runCalls).toBeGreaterThan(1);
+    const failedRunCalls = runCalls;
+
+    await orchestrator.approveCurrent(run.id);
+    await orchestrator.runCurrentAgentWithOptions(run.id, { stopAfterApprovalBoundary: true });
 
     const latest = await store.getRun(run.id);
     expect(implementCalls).toBe(2);
+    expect(runCalls).toBe(failedRunCalls + 1);
     expect(seenFeedback[0]).toBe("");
     expect(seenFeedback[1]).toContain("metrics output");
-    expect(latest?.currentNode).toBe("run_experiments");
+    expect(GRAPH_NODE_ORDER.indexOf(latest?.currentNode || "collect_papers"))
+      .toBeGreaterThanOrEqual(GRAPH_NODE_ORDER.indexOf("analyze_results"));
     expect(latest?.graph.nodeStates.implement_experiments.status).toBe("completed");
+    expect(latest?.graph.nodeStates.run_experiments.status).toBe("completed");
     expect(latest?.graph.rollbackCounters.run_experiments).toBe(1);
     expect(latest?.graph.retryCounters.run_experiments ?? 0).toBe(0);
   });

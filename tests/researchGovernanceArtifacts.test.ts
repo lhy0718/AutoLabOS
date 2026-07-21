@@ -22,7 +22,7 @@ import {
 
 function makeGateReport(): GateReportArtifact {
   return {
-    schema_version: "1.0",
+    schema_version: "2.0",
     artifact_type: "GateReport",
     artifact_id: "gate_report_fixture",
     generated_at: "2026-07-10T00:00:00.000Z",
@@ -34,7 +34,13 @@ function makeGateReport(): GateReportArtifact {
     },
     verdict: "blocked",
     evidence_bundle_id: "evidence_bundle_fixture",
-    input_bindings: [],
+    evidence_bundle_sha256: digest("exact-evidence-bundle-bytes"),
+    input_bindings: [{
+      path: "frozen-inputs/result-table.json",
+      sha256: digest("exact-result-table-bytes"),
+      bytes: 128,
+      required: true
+    }],
     claim_ceiling: "research_memo_without_quantitative_claims",
     checks: {
       baseline_comparator: "missing",
@@ -132,6 +138,16 @@ function makeModelReviewBundle(gateReportId: string, gateSha256: string): ModelR
   return bundle;
 }
 
+function bindGateEvidence(gate: GateReportArtifact): void {
+  gate.evidence_bundle_sha256 = digest("exact-evidence-bundle-bytes");
+  gate.input_bindings = [{
+    path: "frozen-inputs/result-table.json",
+    sha256: digest("exact-result-table-bytes"),
+    bytes: 128,
+    required: true
+  }];
+}
+
 function makeModelProvenance(
   role: ModelReviewRole | "meta_reviewer",
   index: number
@@ -189,9 +205,33 @@ describe("research governance artifacts", () => {
       expect.objectContaining({ finding_code: "figure_result_caption_mismatch", target_node: "figure_audit" })
     ]));
     expect(plan.apply_mode).toBe("plan_only");
+    expect(plan.review_report_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(plan.targets.every((target) => target.validation_commands.length > 0)).toBe(true);
     expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
     expect(validateResearchGovernanceArtifact(plan).ok).toBe(true);
+  });
+
+  it("rejects malformed nested review targets and unbound patch plans", () => {
+    const invalidReview = buildReviewReportArtifact(makeGateReport(), new Date("2026-07-10T00:01:00.000Z"));
+    invalidReview.repair_targets[0].target_node = "publish_paper" as never;
+    invalidReview.blocking_issues[0].evidence_refs = [];
+
+    const reviewValidation = validateResearchGovernanceArtifact(invalidReview);
+    expect(reviewValidation.ok).toBe(false);
+    expect(reviewValidation.issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "$.repair_targets[0].target_node" }),
+      expect.objectContaining({ path: "$.blocking_issues[0].evidence_refs" })
+    ]));
+
+    const validReview = buildReviewReportArtifact(makeGateReport(), new Date("2026-07-10T00:01:00.000Z"));
+    const invalidPlan = buildMetaHarnessPatchPlanArtifact(validReview, new Date("2026-07-10T00:02:00.000Z"));
+    invalidPlan.review_report_sha256 = "unbound";
+
+    const planValidation = validateResearchGovernanceArtifact(invalidPlan);
+    expect(planValidation.ok).toBe(false);
+    expect(planValidation.issues).toContainEqual(expect.objectContaining({
+      path: "$.review_report_sha256"
+    }));
   });
 
   it("merges model findings conservatively without raising deterministic verdict or claim ceiling", () => {
@@ -199,6 +239,7 @@ describe("research governance artifacts", () => {
     gate.verdict = "pass";
     gate.claim_ceiling = "paper_ready";
     gate.findings = [];
+    bindGateEvidence(gate);
     const gateSha256 = digest("exact-gate-report-bytes");
     const bundle = makeModelReviewBundle(gate.artifact_id, gateSha256);
     const bundleSha256 = digest("exact-model-review-bundle-bytes");
@@ -236,6 +277,7 @@ describe("research governance artifacts", () => {
       panel_size: 5,
       specialist_finding_count: 1,
       adjudicated_finding_count: 3,
+      gate_report_sha256: gateSha256,
       model_review_bundle_sha256: bundleSha256,
       independent_contexts: true,
       adjudicator_present: true,
@@ -252,6 +294,64 @@ describe("research governance artifacts", () => {
     expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
   });
 
+  it("rejects review over unbound, empty, non-portable, or partially bound GateReport evidence", () => {
+    const gate = makeGateReport();
+    delete (gate as Partial<GateReportArtifact>).evidence_bundle_sha256;
+    gate.input_bindings = [];
+    const gateSha256 = digest("previous-unbound-gate-report-bytes");
+    const bundle = makeModelReviewBundle(gate.artifact_id, gateSha256);
+    const options = {
+      modelReviewBundle: bundle,
+      modelReviewBundleSha256: digest("model-review-bundle-bytes"),
+      gateReportSha256: gateSha256
+    };
+
+    expect(() => buildReviewReportArtifact(gate, options)).toThrow("evidence_bundle_sha256");
+
+    gate.evidence_bundle_sha256 = digest("evidence-bundle-bytes");
+    expect(() => buildReviewReportArtifact(gate, options)).toThrow("non-empty GateReport.input_bindings");
+
+    gate.input_bindings = [{
+      path: "frozen-inputs/result-table.json",
+      required: true
+    }];
+    expect(() => buildReviewReportArtifact(gate, options)).toThrow("fully SHA-256/byte bound");
+
+    gate.input_bindings = [{
+      path: "../outside/result-table.json",
+      sha256: digest("exact-result-table-bytes"),
+      bytes: 128,
+      required: true
+    }];
+    expect(() => buildReviewReportArtifact(gate, options)).toThrow("portable");
+  });
+
+  it("binds A0 ReviewReport identity to gate id, exact bytes, and claim ceiling", () => {
+    const gate = makeGateReport();
+    const gateSha256 = digest("gate-report-bytes-a");
+    const review = buildReviewReportArtifact(gate, { gateReportSha256: gateSha256 });
+    const differentGateId = buildReviewReportArtifact(
+      { ...gate, artifact_id: "gate_report_other" },
+      { gateReportSha256: gateSha256 }
+    );
+    const differentGateBytes = buildReviewReportArtifact(
+      gate,
+      { gateReportSha256: digest("gate-report-bytes-b") }
+    );
+    const differentClaimCeiling = buildReviewReportArtifact(
+      { ...gate, claim_ceiling: "system_validation_note" },
+      { gateReportSha256: gateSha256 }
+    );
+
+    expect(review.reviewer_assurance.gate_report_sha256).toBe(gateSha256);
+    expect(new Set([
+      review.artifact_id,
+      differentGateId.artifact_id,
+      differentGateBytes.artifact_id,
+      differentClaimCeiling.artifact_id
+    ])).toHaveLength(4);
+  });
+
   it("rejects malformed reviewer assurance in ReviewReport artifacts", () => {
     const review = buildReviewReportArtifact(makeGateReport()) as unknown as Record<string, unknown>;
     const assurance = review.reviewer_assurance as Record<string, unknown>;
@@ -266,26 +366,46 @@ describe("research governance artifacts", () => {
     }));
   });
 
-  it("accepts previous-version ReviewReport artifacts without model-review assurance", () => {
+  it("rejects previous-version ReviewReport artifacts without model-review assurance", () => {
     const review = buildReviewReportArtifact(makeGateReport()) as unknown as Record<string, unknown>;
     delete review.reviewer_assurance;
 
-    expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
+    expect(validateResearchGovernanceArtifact(review).ok).toBe(false);
   });
 
-  it("accepts the prior reviewer assurance shape before adjudication counters were added", () => {
+  it("rejects the prior reviewer assurance shape before adjudication counters were added", () => {
     const review = buildReviewReportArtifact(makeGateReport()) as unknown as Record<string, unknown>;
     const assurance = review.reviewer_assurance as Record<string, unknown>;
     delete assurance.adjudication_policy;
     delete assurance.specialist_finding_count;
     delete assurance.adjudicated_finding_count;
+    delete assurance.gate_report_sha256;
 
-    expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
+    expect(validateResearchGovernanceArtifact(review).ok).toBe(false);
+  });
+
+  it("rejects GateReport artifacts without exact portable evidence bindings", () => {
+    const missingDigest = makeGateReport() as unknown as Record<string, unknown>;
+    delete missingDigest.evidence_bundle_sha256;
+    expect(validateResearchGovernanceArtifact(missingDigest).ok).toBe(false);
+
+    const emptyBindings = makeGateReport() as unknown as Record<string, unknown>;
+    emptyBindings.input_bindings = [];
+    expect(validateResearchGovernanceArtifact(emptyBindings).ok).toBe(false);
+
+    const nonPortableBinding = makeGateReport() as unknown as Record<string, unknown>;
+    nonPortableBinding.input_bindings = [{
+      path: "../outside/result-table.json",
+      sha256: digest("exact-result-table-bytes"),
+      bytes: 128,
+      required: true
+    }];
+    expect(validateResearchGovernanceArtifact(nonPortableBinding).ok).toBe(false);
   });
 
   it("rejects unsupported versions, machine-local paths, and sensitive fields", () => {
     const gate = makeGateReport() as unknown as Record<string, unknown>;
-    gate.schema_version = "2.0";
+    gate.schema_version = "1.0";
     gate.provenance = {
       source_mode: "external",
       source_label: path.posix.join(path.sep, "home", "example", "private-run"),

@@ -497,6 +497,44 @@ describe("harness validators", () => {
     expect(codes).toContain("paper_acl_bibliography_style_file_missing");
   });
 
+  it("accepts the bibliography style owned by lowercase acl while still rejecting keywords", async () => {
+    const runDir = createTempRunDir("autolabos-harness-validator-current-acl-");
+    await mkdir(path.join(runDir, "paper"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\documentclass{article}",
+        "\\usepackage[review]{acl}",
+        "\\begin{document}",
+        "\\keywords{evaluation, reproducibility}",
+        "\\section{Related Work}",
+        "Prior work supports the framing. \\cite{paperA}",
+        "\\bibliography{references}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "paper", "references.bib"),
+      "@article{paperA, title={Method A}}\n",
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "paper", "acl_natbib.bst"), "% fixture style\n", "utf8");
+
+    const result = await validateRunArtifactStructure({
+      runId: "run-paper-current-acl",
+      runDir,
+      nodeStates: makeNodeStates({
+        write_paper: "completed"
+      })
+    });
+
+    const codes = result.issues.map((item) => item.code);
+    expect(codes).not.toContain("paper_acl_bibliography_style_mismatch");
+    expect(codes).not.toContain("paper_acl_bibliography_style_file_missing");
+    expect(codes).toContain("paper_acl_template_absent_keywords");
+  });
+
   it("reports missing metrics/objective artifacts when later nodes are marked completed", async () => {
     const runDir = createTempRunDir("autolabos-harness-validator-run-");
     await writeJson(path.join(runDir, "run_experiments_verify_report.json"), { status: "pass" });

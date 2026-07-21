@@ -489,75 +489,24 @@ function buildDeterministicPhraseBundleQueries(value: string | undefined): strin
 
   const queries: string[] = [];
   const seen = new Set<string>();
-  const pushQuery = (query: string | undefined) => {
+  const quoted = (phrase: string): string => '"' + phrase + '"';
+  const pushQuery = (query: string) => {
     const normalized = normalizeLiteratureQuery(query);
-    if (!normalized) {
-      return;
-    }
+    if (!normalized) return;
     const key = normalized.toLowerCase();
-    if (seen.has(key)) {
-      return;
+    if (!seen.has(key)) {
+      seen.add(key);
+      queries.push(normalized);
     }
-    seen.add(key);
-    queries.push(normalized);
   };
-  const quoted = (phrase: string): string => `"${phrase}"`;
-  const adapter = phrases.find((phrase) => /^(low-rank adaptation|adapter)$/iu.test(phrase)) || undefined;
-  const instructionTuning =
-    phrases.find((phrase) => /^instruction (?:fine-)?tuning$/iu.test(phrase)) || undefined;
-  const modelFamily = phrases.find((phrase) => /\bmistral(?:\s+7b)?\b/iu.test(phrase)) || undefined;
-  const adapterAxes = Array.from(
-    new Set(
-      phrases.filter((phrase) => /^(adapter rank|adapter parameter_y)$/iu.test(phrase))
-    )
-  );
-  const anchor = phrases.find((phrase) => /language models?$/iu.test(phrase)) || phrases[0];
-  const reasoning =
-    phrases.find((phrase) => /test-time|reasoning|reasoners?|math reasoning/iu.test(phrase)) || undefined;
-  const adaptive = phrases.find((phrase) => /^adaptive\b/iu.test(phrase)) || undefined;
-  const structured = phrases.find((phrase) => /^structured\b/iu.test(phrase)) || undefined;
-  const budget = phrases.find((phrase) => /budget|inference/iu.test(phrase)) || undefined;
 
-  if (adapter && instructionTuning) {
-    pushQuery(`+${quoted(adapter)} +${quoted(instructionTuning)}`);
+  if (phrases.length === 1) {
+    pushQuery("+" + quoted(phrases[0]));
+  } else {
+    for (const phrase of phrases.slice(1, 5)) {
+      pushQuery("+" + quoted(phrases[0]) + " +" + quoted(phrase));
+    }
   }
-  if (adapter && instructionTuning && modelFamily) {
-    pushQuery(`+${quoted(adapter)} +${quoted(instructionTuning)} +${quoted(modelFamily)}`);
-  }
-  if (adapter && adapterAxes.length > 0) {
-    pushQuery(
-      adapterAxes.length === 1
-        ? `+${quoted(adapter)} +${quoted(adapterAxes[0])}`
-        : `+${quoted(adapter)} +(${adapterAxes.map((phrase) => quoted(phrase)).join(" | ")})`
-    );
-  }
-  if (instructionTuning && modelFamily) {
-    pushQuery(`+${quoted(instructionTuning)} +${quoted(modelFamily)}`);
-  }
-
-  if (anchor && reasoning && anchor !== reasoning) {
-    pushQuery(`+${quoted(anchor)} +${quoted(reasoning)}`);
-  }
-
-  const alternatives = Array.from(new Set([adaptive, structured].filter((candidate): candidate is string => Boolean(candidate))));
-  if (anchor && alternatives.length === 1) {
-    pushQuery(`+${quoted(alternatives[0])} +${quoted(anchor)}`);
-  } else if (anchor && alternatives.length > 1) {
-    pushQuery(`(${alternatives.map((phrase) => quoted(phrase)).join(" | ")}) +${quoted(anchor)}`);
-  }
-
-  if (anchor && budget) {
-    const third = reasoning && reasoning !== budget ? ` +${quoted(reasoning)}` : "";
-    pushQuery(`+${quoted(budget)} +${quoted(anchor)}${third}`);
-  }
-
-  if (queries.length === 0 && phrases.length >= 2) {
-    pushQuery(`+${quoted(phrases[0])} +${quoted(phrases[1])}`);
-  }
-  if (queries.length === 0 && phrases.length >= 1) {
-    pushQuery(`+${quoted(phrases[0])}`);
-  }
-
   return queries.slice(0, 4);
 }
 
@@ -567,65 +516,31 @@ function collectDeterministicResearchPhrases(value: string | undefined): string[
     return [];
   }
 
+  const stopwords = new Set([
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "for", "from", "how", "in", "into",
+    "investigate", "measure", "of", "on", "or", "study", "the", "through", "to", "under", "using", "with"
+  ]);
+  const tokens = text
+    .match(/[a-z0-9]+(?:-[a-z0-9]+)*/gu)
+    ?.filter((token) => token.length > 1 && !stopwords.has(token)) || [];
   const phrases: string[] = [];
-  const pushPhrase = (phrase: string | undefined) => {
+  const pushPhrase = (phrase: string) => {
     const normalized = normalizeLiteratureQuery(phrase)?.toLowerCase();
-    if (!normalized) {
-      return;
-    }
-    if (normalized.split(/\s+/u).length > 3) {
-      return;
-    }
-    if (!phrases.includes(normalized)) {
+    if (normalized && !phrases.includes(normalized)) {
       phrases.push(normalized);
     }
   };
 
-  if (/\bsmall\s+language\s+models?\b/u.test(text)) {
-    pushPhrase("small language models");
-  } else if (/\blanguage\s+models?\b/u.test(text)) {
-    pushPhrase("language models");
+  const quotedPhrases = Array.from(text.matchAll(/["']([^"']{2,80})["']/gu));
+  for (const match of quotedPhrases) {
+    pushPhrase(match[1]);
   }
-
-  if (/\badapter\b/u.test(text) || /\blow[-\s]?rank adaptation\b/u.test(text)) {
-    pushPhrase("low-rank adaptation");
+  for (let index = 0; index < tokens.length && phrases.length < 6; index += 3) {
+    pushPhrase(tokens.slice(index, index + 3).join(" "));
   }
-  if (/\binstruction\b/u.test(text) && /\b(?:fine[-\s]?tuning|tuning)\b/u.test(text)) {
-    pushPhrase("instruction tuning");
+  if (phrases.length === 0 && tokens.length > 0) {
+    pushPhrase(tokens.slice(0, 3).join(" "));
   }
-  if (/\bmistral(?:[-\s]?7b)?(?:[-\s]?v?\d+(?:\.\d+)*)?\b/u.test(text)) {
-    pushPhrase("mistral 7b");
-  }
-  if (/\badapter\b/u.test(text) && /\brank\b/u.test(text)) {
-    pushPhrase("adapter rank");
-  }
-  if (/\badapter\b/u.test(text) && /\bparameter_y\b/u.test(text)) {
-    pushPhrase("adapter parameter_y");
-  }
-
-  if (/\btest[-\s]?time\b/u.test(text) && /\breason/u.test(text)) {
-    pushPhrase("test-time reasoning");
-  } else if (/\btest[-\s]?time\b/u.test(text) && /\bstrateg/u.test(text)) {
-    pushPhrase("test-time strategies");
-  } else if (/\breason/u.test(text)) {
-    pushPhrase("reasoning");
-  }
-
-  if (/\badaptive\b/u.test(text) && (/\btest[-\s]?time\b/u.test(text) || /\breason/u.test(text) || /\binference\b/u.test(text))) {
-    pushPhrase("adaptive reasoning");
-  }
-  if (/\bstructured\b/u.test(text) && (/\btest[-\s]?time\b/u.test(text) || /\breason/u.test(text) || /\binference\b/u.test(text))) {
-    pushPhrase("structured reasoning");
-  }
-  if (/\b(?:budget[-\s]?aware|inference\s+budgets?|constrained\s+inference)\b/u.test(text)) {
-    pushPhrase("inference budget");
-  }
-  if (/\bgsm8k\b/u.test(text)) {
-    pushPhrase("GSM8K");
-  } else if (/\bmath\b/u.test(text) && /\breason/u.test(text)) {
-    pushPhrase("math reasoning");
-  }
-
   return phrases.slice(0, 6);
 }
 

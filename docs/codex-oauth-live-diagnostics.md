@@ -38,7 +38,7 @@ The goal is to separate:
 - Example:
   - `2026-04-23T08:12:44Z`
   - `Codex OAuth backend returned an error`
-  - request ID: `6a75ce32-9ad4-41ac-8289-c530477e510c`
+  - request ID: `<request-id>`
 
 Interpretation:
 
@@ -51,7 +51,7 @@ Interpretation:
 - Example:
   - `2026-04-23T08:08:27Z`
   - `Codex OAuth backend returned an error`
-  - request ID: `7eb2608e-9fbc-4ab7-a0f9-2a04dba5b13a`
+  - request ID: `<request-id>`
 
 Interpretation:
 
@@ -61,7 +61,7 @@ Interpretation:
 ### 3. Bootstrap-stage long wait with no text delta
 
 - Example live thread:
-  - `threadId: resp_01a31167d1197b170169e9e27346308191bee3b4f775c77621`
+  - `threadId: <thread-id>`
 - Sequence:
   - scaffold completed
   - bootstrap prompt artifact was written
@@ -79,7 +79,7 @@ Interpretation:
 ### 4. Smaller scaffold prompt still converges to the same bootstrap stall
 
 - Example live thread:
-  - `threadId: resp_03bc692ebc4ffb2e0169ea16a1c9d48191934016106e50a3d7`
+  - `threadId: <thread-id>`
 - Sequence:
   - compressed scaffold prompt persisted at `11984` bytes
   - scaffold still completed after heartbeat waits at `59s` and `119s`
@@ -95,7 +95,7 @@ Interpretation:
 ### 5. Smaller bootstrap prompt improves entry time but not yet the contract boundary
 
 - Example live thread:
-  - `threadId: resp_0542f1f5a665db340169ea2a16ab4481919401ec38452679f2`
+  - `threadId: <thread-id>`
 - Sequence:
   - compressed bootstrap contract prompt persisted at `6234` bytes
   - scaffold completed after a single `59s` wait and emitted output at `~104s`
@@ -112,16 +112,16 @@ Interpretation:
 ### 6. Smaller bootstrap prompt can clear bootstrap and expose a later materialization blocker
 
 - Example live threads:
-  - bootstrap: `resp_0542f1f5a665db340169ea2a16ab4481919401ec38452679f2`
-  - late aggregate chunk: `resp_086a26e641d247890169ea356b56688191bbd401ba9dbf6b32`
-  - resubchunk after timeout: `resp_0fbed7ef14f965550169ea39b0a9e881918e4dca403d0f22ab`
+  - bootstrap: `<thread-id>`
+  - late aggregate chunk: `<thread-id>`
+  - resubchunk after timeout: `<thread-id>`
 - Sequence:
   - bootstrap contract prompt persisted at `6234` bytes
   - scaffold completed after a single `59s` heartbeat
   - bootstrap contract completed successfully enough to write `bootstrap_contract_raw_response.txt` (`8762` bytes)
   - the run then progressed into staged file generation and materially expanded the public runner from `44` lines to `1923` lines
   - the remaining long-stall shifted to the later chunk:
-    - `Baseline-first adapter condition execution and aggregate metric computation`
+    - `Baseline-first condition execution and aggregate metric computation`
   - that chunk timed out after `540s` with no text delta, triggered dynamic resubdivision, and the follow-up resubchunk attempt later ended with:
     - `Implementation execution failed before any runnable implementation was produced: terminated`
 
@@ -129,7 +129,7 @@ Interpretation:
 
 - the bootstrap-specific compaction is a real improvement, not just a cosmetic size reduction
 - the dominant provider boundary is no longer always bootstrap
-- the current highest-value failure surface is the late adapter execution / aggregate-metrics chunk family inside staged materialization
+- the current highest-value failure surface is the late condition-execution and aggregate-metrics chunk family inside staged materialization
 
 ### 7. Per-chunk materialization artifacts are now visible
 
@@ -142,7 +142,7 @@ Interpretation:
   - materialization planning completed
   - chunk subdivision planning completed for:
     - `Imports, experiment configuration, and reusable helpers`
-    - `Baseline-first adapter comparison, reporting, and entrypoint`
+    - `Baseline-first candidate comparison, reporting, and entrypoint`
   - file materialization then generated per-chunk prompt and response artifacts
 - Observed prompt artifacts:
   - `unit_chunk_prompts/condition_runner__runner_core_setup__d0__chunk_1_2_subchunk_1_3.txt` (`12910` bytes)

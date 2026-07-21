@@ -10,17 +10,17 @@ describe("planned condition coverage", () => {
         recipes: [
           {
             recipe: "baseline",
-            adapter: { adapter_type: "none", trainable_parameters: 0 },
+            configuration: { method_type: "none", trainable_parameters: 0 },
             training: { skipped: true }
           },
           {
-            recipe: "adapter",
-            adapter: { adapter_type: "adapter", trainable_parameters: 1179648 },
+            recipe: "configuration",
+            configuration: { method_type: "configuration", trainable_parameters: 1179648 },
             training: { skipped: false }
           },
           {
             recipe: "ia3",
-            adapter: { adapter_type: "compact_method", trainable_parameters: 98304 },
+            configuration: { method_type: "compact_method", trainable_parameters: 98304 },
             training: { skipped: false }
           }
         ]
@@ -39,7 +39,7 @@ describe("planned condition coverage", () => {
           evaluation: { primary_mean_accuracy: 0.525 }
         },
         candidate_condition_b: {
-          type: "adapter_instruction_tuned",
+          type: "parameterized_method",
           train: {
             trainable_params: 2252800,
             recipe: { name: "candidate_condition_b" }
@@ -47,7 +47,7 @@ describe("planned condition coverage", () => {
           evaluation: { primary_mean_accuracy: 0.4875 }
         },
         candidate_condition_a: {
-          type: "adapter_instruction_tuned",
+          type: "parameterized_method",
           train: {
             trainable_params: 1126400,
             recipe: { name: "candidate_condition_a" }
@@ -80,7 +80,7 @@ describe("planned condition coverage", () => {
           training: { train_steps: 40, trainable_params: 1179648 }
         },
         {
-          marker: "adapter_plus_neftune_style_embedding_noise_while_pr",
+          marker: "configured_plus_auxiliary_perturbation",
           status: "failed",
           training: { train_steps: 0 }
         },

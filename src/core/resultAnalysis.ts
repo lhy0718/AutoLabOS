@@ -630,7 +630,9 @@ function buildConditionComparisons(
       hypothesis_supported: hypothesisSupported,
       summary: hypothesisSupported === undefined
         ? `${humanizeComparisonLabel(comparisonId)}: ${headline}.`
-        : `${humanizeComparisonLabel(comparisonId)}: ${headline}. Hypothesis supported=${hypothesisSupported}.`
+        : hypothesisSupported
+          ? `${humanizeComparisonLabel(comparisonId)}: ${headline}. This comparison supports the preregistered hypothesis.`
+          : `${humanizeComparisonLabel(comparisonId)}: ${headline}. This comparison does not support the preregistered hypothesis.`
     });
   }
 
@@ -2191,12 +2193,12 @@ function buildResultsArrayConditionComparison(args: {
     resultRows.find((row) => hasLockedBaselineMarker(row) || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
     resultRows.find((row) => {
       const recipe = asString(row.recipe)?.toLowerCase();
-      const adapterType = asString(row.adapter_type)?.toLowerCase();
+      const methodType = asString(row.method_type ?? row.configuration_type)?.toLowerCase();
       const conditionId = asString(row.condition_id)?.toLowerCase();
       return (
         recipe === "baseline" ||
         isLikelyBaselineCondition(recipe || "") ||
-        adapterType === "none" ||
+        methodType === "none" ||
         conditionId === "baseline" ||
         isLikelyBaselineCondition(conditionId || "") ||
         row.is_baseline_reference === true
@@ -2954,8 +2956,8 @@ function baselineConditionTextScore(text: string): number {
     /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(lower);
   const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(lower);
   const tunedBaseline =
-    /(?:^|[_\s-])(?:adapter|tuned|locked)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
-    /(?:^|[_\s-])baseline[\w\s-]*(?:adapter|tuned|locked)(?:[_\s-]|$)/u.test(lower);
+    /(?:^|[_\s-])(?:tuned|locked|configured)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
+    /(?:^|[_\s-])baseline[\w\s-]*(?:tuned|locked|configured)(?:[_\s-]|$)/u.test(lower);
 
   if (tunedBaseline && !referenceBaseline) {
     return 4;
@@ -3285,7 +3287,7 @@ function isMeanScoreMetric(key: string, value: number): boolean {
   }
   const normalized = key.toLocaleLowerCase();
   if (
-    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|rank|parameter_y|example|sample|step|epoch|token|parameter|index|order|trial)(?:[._-]|$)/u.test(
+    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|factor|parameter(?:_[a-z0-9]+)?|example|sample|step|epoch|token|index|order|trial)(?:[._-]|$)/u.test(
       normalized
     )
   ) {

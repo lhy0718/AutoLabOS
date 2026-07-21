@@ -548,11 +548,16 @@ export function experimentArtifactLoader(input: {
   const parsedPlan = parsePlanYaml(input.bundle.experimentPlan?.rawText);
   const latestResults = asRecord(input.bundle.latestResults);
   const resultAnalysis = input.bundle.resultAnalysis;
-  const protocolKind = inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis);
+  const protocolKind = inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis, {
+    run_title: input.bundle.runTitle,
+    topic: input.bundle.topic,
+    objective_metric: input.bundle.objectiveMetric,
+    experiment_plan: input.bundle.experimentPlan
+  });
   const method = {
     dataset_names: collectDatasetNames(input.bundle, parsedPlan, latestResults),
     dataset_sources: collectDatasetSourceHints(parsedPlan, latestResults),
-    sample_size_notes: collectSampleSizeHints(parsedPlan, latestResults, resultAnalysis),
+    sample_size_notes: collectSampleSizeHints(parsedPlan, latestResults, resultAnalysis, protocolKind),
     feature_notes: collectFeatureHints(parsedPlan, latestResults),
     class_notes: collectClassHints(parsedPlan, latestResults),
     imbalance_notes: collectKeywordNotes(parsedPlan, ["imbalance", "imbalanced", "class balance", "class prior"]),
@@ -666,17 +671,19 @@ export function experimentArtifactLoader(input: {
 function inferExperimentProtocolKind(
   parsedPlan: Record<string, unknown>,
   latestResults: Record<string, unknown>,
-  resultAnalysis: ResultAnalysisArtifact | undefined
+  resultAnalysis: ResultAnalysisArtifact | undefined,
+  publicRunContext?: unknown
 ): ExperimentProtocolKind {
   const haystack = JSON.stringify({
     plan: parsedPlan,
     latest_results_protocol: asRecord(latestResults.protocol),
     result_metrics: (resultAnalysis?.metric_table || []).slice(0, 120),
     result_overview: resultAnalysis?.overview,
-    experiment_portfolio: resultAnalysis?.experiment_portfolio
+    experiment_portfolio: resultAnalysis?.experiment_portfolio,
+    public_run_context: publicRunContext
   }).toLowerCase();
   if (
-    /\b(adapter|quantized_adapter|llm|language model|instruction tuning|token budget|vram|gpu)\b/u.test(
+    /\b(llm|language model|instruction tuning|token budget|vram|gpu)\b/u.test(
       haystack
     )
   ) {
@@ -1064,7 +1071,7 @@ function publicConditionDisplayLabel(item: ConditionResultSummary): string {
     ].filter(Boolean);
     return `candidate condition ${stableConditionLabelSuffix(label)} (${parts.join(", ")})`;
   }
-  if (/\b(?:rank|parameter[_\s-]*x|parameter[_\s-]*y)\b[^.!?]{0,80}\b(?:rank|parameter[_\s-]*x|parameter[_\s-]*y)\b|rank[_-]\d|parameter[_-]?[xy][_-]\d/iu.test(label)) {
+  if (/\b(?:parameter[_\s-]*x|parameter[_\s-]*y|factor\s*[xy])\b[^.!?]{0,80}\b(?:parameter[_\s-]*x|parameter[_\s-]*y|factor\s*[xy])\b|parameter[_-]?[xy][_-]\d/iu.test(label)) {
     return `candidate condition ${stableConditionLabelSuffix(label)}`;
   }
   return label;
@@ -1184,7 +1191,7 @@ function makeMainTablesSelfContained(
     }));
     return {
       ...table,
-      caption: !changedRows || /full eight-condition grid|condition-by-condition/iu.test(table.caption)
+      caption: !changedRows || /full (?:[a-z]+-)?condition grid|condition-by-condition/iu.test(table.caption)
         ? table.caption
         : `${table.caption} Baseline and best-condition labels are included in-row; unavailable full-grid cells remain a stated limitation.`,
       rows
@@ -5018,7 +5025,7 @@ function specializeMetricKeyForNumber(
     return specializeMetricKeyForFragment(metricKey, fragment, unit);
   }
   const localWindow = fragment.slice(Math.max(0, rawIndex - 90), Math.min(fragment.length, rawIndex + 90));
-  if (/\bstrongest\b|\bcell\b|\bcondition\b|\brank\s+\d+(?:\.\d+)?\b|\bparameter_y\s+\d+(?:\.\d+)?\b/iu.test(localWindow)) {
+  if (/\bstrongest\b|\bcell\b|\bcondition\b|\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s+\d+(?:\.\d+)?\b/iu.test(localWindow)) {
     return "accuracy_delta_vs_baseline";
   }
   if (/\bstudy[-\s]?level\b|\bstudy objective\b|\bstudy[-\s]?wide\b|\boverall\b|\bavailable run summary\b/iu.test(localWindow)) {
@@ -5058,7 +5065,7 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
   if (textualTarget) {
     return textualTarget;
   }
-  if (!/\branks?\b|\bparameter_y\b/iu.test(cleaned)) {
+  if (!/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(cleaned)) {
     return undefined;
   }
   const explicitValueTarget = inferExplicitConditionValueTarget(cleaned, rawIndex);
@@ -5066,17 +5073,21 @@ function inferConditionComparisonTarget(text: string, rawIndex?: number): string
     return explicitValueTarget;
   }
   const candidates: Array<{ target: string; distance: number }> = [];
-  const patterns = [
-    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/giu,
-    /\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/giu
+  const patterns: Array<{ pattern: RegExp; xGroup: number; yGroup: number }> = [
+    {
+      pattern: /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/giu,
+      xGroup: 1,
+      yGroup: 2
+    },
+    {
+      pattern: /\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)/giu,
+      xGroup: 2,
+      yGroup: 1
+    }
   ];
-  for (const pattern of patterns) {
+  for (const { pattern, xGroup, yGroup } of patterns) {
     for (const match of cleaned.matchAll(pattern)) {
-      const first = match[1] || "";
-      const second = match[2] || "";
-      const rank = pattern.source.startsWith("\\branks?") ? first : second;
-      const parameter_y = pattern.source.startsWith("\\branks?") ? second : first;
-      const target = formatConditionComparisonTarget(rank, parameter_y);
+      const target = formatConditionComparisonTarget(match[xGroup] || "", match[yGroup] || "");
       if (!target) {
         continue;
       }
@@ -5150,7 +5161,7 @@ function isConditionClusterStatement(text: string): boolean {
     || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
     || /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
     || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:seven|7)\s+of\s+the\s+(?:eight|8)\s+(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:same|shared|reported)\b[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b[^.!?]{0,40}\b-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
+    || /\b\d+\s+of\s+(?:the\s+)?\d+\s+(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:same|shared|reported)\b[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?(?:score|accuracy)\b[^.!?]{0,40}\b-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
 }
 
 function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
@@ -5158,7 +5169,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     return undefined;
   }
   const comparedPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(comparedPattern)) {
     const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const value = match[3] || "";
@@ -5171,7 +5182,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     }
   }
   const comparativeFromToPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+ranks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(comparativeFromToPattern)) {
     const leadingTarget = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const baselineTarget = formatConditionComparisonTarget(match[3] || "", match[4] || "");
@@ -5190,7 +5201,7 @@ function inferExplicitConditionValueTarget(text: string, rawIndex: number | unde
     }
   }
   const fromToPattern =
-    /\branks?\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*parameter_y\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
+    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
   for (const match of text.matchAll(fromToPattern)) {
     const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
     const value = match[4] || "";
@@ -5227,18 +5238,24 @@ function inferAnaphoricConditionComparisonTarget(
 
 function extractConditionTargetFromText(text: string): string | undefined {
   const cleaned = cleanString(text);
-  const patterns = [
-    /\branks?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
-    /\bparameter_y\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\branks?\s*(\d+(?:\.\d+)?)/iu
+  const patterns: Array<{ pattern: RegExp; xGroup: number; yGroup: number }> = [
+    {
+      pattern: /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
+      xGroup: 1,
+      yGroup: 2
+    },
+    {
+      pattern: /\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)/iu,
+      xGroup: 2,
+      yGroup: 1
+    }
   ];
-  for (const pattern of patterns) {
+  for (const { pattern, xGroup, yGroup } of patterns) {
     const match = cleaned.match(pattern);
     if (!match) {
       continue;
     }
-    const rank = pattern.source.startsWith("\\branks?") ? match[1] : match[2];
-    const parameter_y = pattern.source.startsWith("\\branks?") ? match[2] : match[1];
-    const target = formatConditionComparisonTarget(rank || "", parameter_y || "");
+    const target = formatConditionComparisonTarget(match[xGroup] || "", match[yGroup] || "");
     if (target) {
       return target;
     }
@@ -5251,7 +5268,7 @@ function shouldPreferAnaphoricConditionTarget(fragment: string, rawIndex: number
     return false;
   }
   const suffix = fragment.slice(Math.max(0, rawIndex));
-  return /\b(?:compared with|versus|vs\.?)\b[^!?]{0,120}\bbaseline\b[^!?]{0,80}\branks?\b/iu.test(suffix);
+  return /\b(?:compared with|versus|vs\.?)\b[^!?]{0,120}\bbaseline\b[^!?]{0,80}\b(?:parameter|factor)\b/iu.test(suffix);
 }
 
 function inferBaselineComparisonTarget(text: string, rawIndex: number | undefined): string | undefined {
@@ -5292,13 +5309,13 @@ function inferBaselineComparisonTarget(text: string, rawIndex: number | undefine
   return undefined;
 }
 
-function formatConditionComparisonTarget(rank: string, parameter_y: string): string | undefined {
-  const rankValue = parseNumericLiteral(rank);
-  const parameter_yValue = parseNumericLiteral(parameter_y);
-  if (!Number.isFinite(rankValue) || !Number.isFinite(parameter_yValue)) {
+function formatConditionComparisonTarget(parameterX: string, parameterY: string): string | undefined {
+  const parameterXValue = parseNumericLiteral(parameterX);
+  const parameterYValue = parseNumericLiteral(parameterY);
+  if (!Number.isFinite(parameterXValue) || !Number.isFinite(parameterYValue)) {
     return undefined;
   }
-  return `condition_${formatConditionTargetNumber(rankValue)}_parameter_${formatConditionTargetNumber(parameter_yValue)}`;
+  return `condition_${formatConditionTargetNumber(parameterXValue)}_parameter_${formatConditionTargetNumber(parameterYValue)}`;
 }
 
 function formatConditionTargetNumber(value: number): string {
@@ -5392,15 +5409,15 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (
-    /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
-    || /^\s*(?:rank|parameter_y)\b/iu.test(nextWindow)
-    || /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*\\?\{[^}]*$/iu.test(previousWindow)
+    /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
+    || /^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)
+    || /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*\\?\{[^}]*$/iu.test(previousWindow)
     || (
       /^\s*\\?\}/u.test(nextWindow)
-      && /\b(?:rank|parameter_y|adapter\s+rank|adapter\s+parameter_y)\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
+      && /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
     )
     || (
-      /\b(?:rank|parameter_y|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
+      /\b(?:parameter|factor|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
       && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
     )
   ) {
@@ -5451,18 +5468,18 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     Math.max(0, index - 96),
     Math.min(fragment.length, index + rawToken.length + 48)
   );
-  if (/\brank\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*parameter_y\b/iu.test(nextWindow)) {
+  if (/\b(?:parameter[_\s-]*x|factor\s*x)\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*(?:parameter[_\s-]*y|factor\s*y)\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/\bwith\s*$/iu.test(previousWindow) && /^\s*parameter_y\b/iu.test(nextWindow)) {
+  if (/\bwith\s*$/iu.test(previousWindow) && /^\s*(?:parameter[_\s-]*y|factor\s*y)\b/iu.test(nextWindow)) {
     return true;
   }
-  if (/^\s*parameter_y\b/iu.test(nextWindow)) {
+  if (/^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)) {
     return true;
   }
   if (
-    /\b(?:dropout|parameter_y|rank|adapter\s+rank)\s*(?:=|:)?\s*$/iu.test(previousWindow)
-    || /^\s*(?:dropout|parameter_y|rank|adapter\s+rank)\b/iu.test(nextWindow)
+    /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*(?:=|:)?\s*$/iu.test(previousWindow)
+    || /^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)
   ) {
     return true;
   }
@@ -5482,19 +5499,19 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
   if (/\b(?:data budget|training used|subset capped|budget capped)\b/iu.test(widerWindow)) {
     return true;
   }
-  if (/\b(?:rank|parameter_y)\s*$/iu.test(fragment.slice(Math.max(0, index - 16), index))) {
+  if (/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*$/iu.test(fragment.slice(Math.max(0, index - 24), index))) {
     return true;
   }
   if (
-    /\b(?:rank|dropout|parameter_y|adapter\s+rank|grid|sweep)\b/iu.test(localDesignWindow)
+    /\b(?:parameter|factor|grid|sweep)\b/iu.test(localDesignWindow)
     && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
   ) {
     return true;
   }
-  if (/\brank\s+\d+(?:\.\d+)?\s+(?:with\s+)?(?:and\s+)?parameter_y\s*$/iu.test(fragment.slice(Math.max(0, index - 48), index))) {
+  if (/\b(?:parameter[_\s-]*x|factor\s*x)\s+\d+(?:\.\d+)?\s+(?:with\s+)?(?:and\s+)?(?:parameter[_\s-]*y|factor\s*y)\s*$/iu.test(fragment.slice(Math.max(0, index - 64), index))) {
     return true;
   }
-  if (/\brank\s+\d+(?:\.\d+)?\s+(?:or|and|to|through)\s*$/iu.test(fragment.slice(Math.max(0, index - 48), index))) {
+  if (/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s+\d+(?:\.\d+)?\s+(?:or|and|to|through)\s*$/iu.test(fragment.slice(Math.max(0, index - 64), index))) {
     return true;
   }
   if (/(?:>=|<=|>|<)\s*$/.test(fragment.slice(Math.max(0, index - 4), index))) {
@@ -5507,7 +5524,7 @@ function shouldSkipMetricToken(fragment: string, rawToken: string, index: number
     return true;
   }
   if (
-    /\b(?:rank|dropout|parameter_y|adapter\s+rank|grid|sweep)\b/iu.test(localDesignWindow)
+    /\b(?:parameter|factor|grid|sweep)\b/iu.test(localDesignWindow)
     && /\bdelta[-\s]?reference\b/iu.test(localDesignWindow)
     && !/\b(?:accuracy|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
   ) {
@@ -5567,7 +5584,7 @@ function shouldSkipAmbiguousMetricFact(
   }
   if (
     metricKey === "peak_memory_mb"
-    && /\bcondition[_\s-]*\d+(?:[_\s-]\d+)?[_\s-]*parameter[_\s-]*\d+(?:[_\s-]\d+)?|\brank\s*=\s*\d+(?:\.\d+)?\s*[/,; ]+\s*(?:dropout|parameter_y)\s*=\s*\d+(?:\.\d+)?|\b(?:condition|cell)\s+\d+(?:\.\d+)?\s+(?:parameter|setting)\s+\d+(?:\.\d+)?/iu.test(fragment)
+    && /\bcondition[_\s-]*\d+(?:[_\s-]\d+)?[_\s-]*parameter[_\s-]*\d+(?:[_\s-]\d+)?|\b(?:parameter[_\s-]*x|factor\s*x)\s*=\s*\d+(?:\.\d+)?\s*[/,; ]+\s*(?:parameter[_\s-]*y|factor\s*y)\s*=\s*\d+(?:\.\d+)?|\b(?:condition|cell)\s+\d+(?:\.\d+)?\s+(?:parameter|setting)\s+\d+(?:\.\d+)?/iu.test(fragment)
   ) {
     return true;
   }
@@ -6253,15 +6270,7 @@ export function enforceManuscriptPageBudgetFloor(input: {
     return true;
   };
 
-  const sectionFloorFallbacks: Record<string, string[]> = {
-    introduction: [
-      "This framing matters because the experiment is not presented as a general adapter tuning law. It is a fixed-budget screening study whose contribution is to expose a locked comparator, a finite condition-parameter grid, task-level outcomes, and the limits that must accompany any follow-up recommendation.",
-      "The introduction therefore states the scientific role of the run before the numerical result: the local sweep is useful only if readers can see what was varied, what remained fixed, and why the observed leading condition should be treated as a candidate for retesting rather than as a final method choice."
-    ],
-    conclusion: [
-      "The conclusion is correspondingly narrow: the observed leading setting is worth retesting, while broader claims require additional seeds, larger evaluation samples, and a clearer account of resource variation across the full grid."
-    ]
-  };
+
 
   for (const budgetSection of input.pageBudget.sections || []) {
     const normalizedHeading = normalizeHeading(budgetSection.heading);
@@ -6284,13 +6293,6 @@ export function enforceManuscriptPageBudgetFloor(input: {
         ]
       );
     }
-    let fallbackIndex = 0;
-    const fallbacks = sectionFloorFallbacks[normalizedHeading] || [];
-    while (sectionWordCount(sectionByHeading.get(normalizedHeading)) < minimumWords && fallbackIndex < fallbacks.length) {
-      appendParagraphToSection(budgetSection.heading, fallbacks[fallbackIndex]);
-      fallbackIndex += 1;
-    }
-    section = sectionByHeading.get(normalizedHeading);
   }
 
   for (const draftSection of input.draft.sections) {
@@ -6335,127 +6337,6 @@ export function enforceManuscriptPageBudgetFloor(input: {
       addedSections.push(section.heading);
     }
   }
-  const fallbackBudgetParagraphs = [
-    {
-      heading: "Method",
-      text: "These implementation details are kept in the main body because they define the scope of the preflight: the selected backbone, realized data cap, seed, evaluation tasks, fixed adapter grid, timeout, and uncertainty convention determine what the reported comparison can and cannot support."
-    },
-    {
-      heading: "Results",
-      text: "The completed grid is therefore interpreted as a screening comparison rather than a stable tuning rule. Its value comes from exposing the locked baseline, the leading condition, task-level asymmetry, interval width, and execution coverage in the same reader-visible record."
-    }
-  ];
-  for (const fallback of fallbackBudgetParagraphs) {
-    if (estimatedWords >= minimumMainWords) {
-      break;
-    }
-    const normalizedHeading = normalizeHeading(fallback.heading);
-    let section = sectionByHeading.get(normalizedHeading);
-    if (!section) {
-      section = {
-        heading: fallback.heading,
-        paragraphs: []
-      };
-      sectionByHeading.set(normalizedHeading, section);
-      sections.push(section);
-    }
-    const existingFingerprints = new Set(section.paragraphs.map((paragraph) => paragraphFingerprint(paragraph)));
-    const fingerprint = paragraphFingerprint(fallback.text);
-    if (existingFingerprints.has(fingerprint)) {
-      continue;
-    }
-    section.paragraphs.push(fallback.text);
-    estimatedWords += wordCount(fallback.text);
-    addedParagraphCount += 1;
-    addedSections.push(section.heading);
-  }
-  const deterministicBudgetParagraphs = [
-    {
-      heading: "Method",
-      text:
-        "The implementation description also clarifies why the current evidence should be read as a completed fixed-budget comparison rather than as an unrestricted hyperparameter search. The baseline is locked before interpretation, the condition parameters grid is finite, and the reported evidence is limited to the conditions that produced parseable metrics."
-    },
-    {
-      heading: "Method",
-      text:
-        "Keeping these constraints in the main body is important because each numerical comparison depends on the same protocol boundary. If the base model, dataset cap, seed, task set, or evaluation script changes, the resulting numbers should be treated as a new study rather than as an extension of the same result table."
-    },
-    {
-      heading: "Results",
-      text:
-        "The results are therefore organized around comparable rows instead of around a single headline setting. The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks. This separation helps readers distinguish a local signal from a broad tuning rule."
-    },
-    {
-      heading: "Results",
-      text:
-        "The observed improvement is useful mainly as a prioritization signal for follow-up work. It identifies a condition worth retesting under a larger budget, but it does not eliminate the need for repeated seeds, wider task coverage, and additional model scales before the direction can be treated as robust."
-    },
-    {
-      heading: "Discussion",
-      text:
-        "This interpretation keeps the contribution practical and bounded. The run shows how a governed local experiment can expose a plausible next configuration, preserve the comparator, and avoid turning a thin positive result into an unsupported general recommendation. The value lies in the disciplined evidence boundary as much as in the numerical ordering."
-    },
-    {
-      heading: "Discussion",
-      text:
-        "A stronger paper-scale claim would require evidence that the same pattern survives broader perturbations. In particular, the current result should be revisited with more seeds, more tasks, and larger model families before claiming that one rank or parameter_y choice is generally preferable for instruction tuning."
-    },
-    {
-      heading: "Limitations",
-      text:
-        "The most important limitation is that the present experiment is intentionally narrow. It reports a completed local sweep with an explicit baseline, but it does not provide enough independent replications to separate stable effects from run-specific variation. That limitation constrains the conclusion even when the best observed cell exceeds the baseline."
-    },
-    {
-      heading: "Related Work",
-      text:
-        "The related work is used to position the experiment, not to substitute for direct evidence. Prior work motivates why low-rank adaptation, instruction tuning, and transparent evaluation matter, while the present artifacts determine the actual claim ceiling. This distinction keeps external citations from carrying numerical claims that only the run can support."
-    }
-  ];
-  const deterministicBudgetAngles = [
-    "This constraint keeps the interpretation anchored to the completed artifacts rather than to settings that remain untested.",
-    "The same boundary also helps reviewers see why the result is a candidate-selection signal rather than a universal rule.",
-    "The comparison should therefore be read through the locked baseline, the finite grid, and the explicit scope limits.",
-    "That framing leaves room for later scale-up while preserving a clear account of what was actually run.",
-    "The evidence remains useful because it is concrete, but its scope remains limited because the study is small.",
-    "This is why the paper separates observed ordering from claims about general training behavior.",
-    "The practical decision supported by the run is follow-up prioritization, not final method selection.",
-    "That distinction is central to the manuscript's claim ceiling and to the reproducibility handoff."
-  ];
-  let fallbackVariant = 0;
-  while (estimatedWords < minimumMainWords && fallbackVariant < 80) {
-    const fallback = deterministicBudgetParagraphs[fallbackVariant % deterministicBudgetParagraphs.length];
-    const angle =
-      fallbackVariant >= deterministicBudgetParagraphs.length
-        ? deterministicBudgetAngles[
-            Math.floor(fallbackVariant / deterministicBudgetParagraphs.length) % deterministicBudgetAngles.length
-          ]
-        : "";
-    const normalizedHeading = normalizeHeading(fallback.heading);
-    let section = sectionByHeading.get(normalizedHeading);
-    if (!section) {
-      section = {
-        heading: fallback.heading,
-        paragraphs: []
-      };
-      sectionByHeading.set(normalizedHeading, section);
-      sections.push(section);
-    }
-    const text = cleanString(
-      `${
-        angle ? `${angle} ` : ""
-      }${fallback.text}`
-    );
-    const existingFingerprints = new Set(section.paragraphs.map((paragraph) => paragraphFingerprint(paragraph)));
-    const fingerprint = paragraphFingerprint(text);
-    if (!existingFingerprints.has(fingerprint)) {
-      section.paragraphs.push(text);
-      estimatedWords += wordCount(text);
-      addedParagraphCount += 1;
-      addedSections.push(section.heading);
-    }
-    fallbackVariant += 1;
-  }
-
   const manuscript = {
     ...input.manuscript,
     sections: sortManuscriptSections(sections)
@@ -6479,7 +6360,7 @@ function isHumanFacingProtocolChecklistResidue(text: string): boolean {
     || /\bPaper-scale evidence floor:/iu.test(text)
     || /\bCanonical-reference gate:/iu.test(text)
     || /\bModels or conditions include Primary trained baseline:/iu.test(text)
-    || /\bcurrent_best_baseline\b/iu.test(text)
+    || /\b(?:current|selected|configured|registered|locked)_[a-z0-9_]*baseline\b/iu.test(text)
     || /\bcondition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\s+vs\s+condition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\b/iu.test(text)
     || /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(text)
     || /^The leading-condition row carries the strongest follow-up signal\b/iu.test(text)
@@ -6488,69 +6369,22 @@ function isHumanFacingProtocolChecklistResidue(text: string): boolean {
   );
 }
 
-function isPageBudgetRestorationDuplicate(heading: string, existingParagraphs: string[], candidate: string): boolean {
-  const headingKey = normalizeHeading(heading);
-  const category = pageBudgetRestorationCategory(headingKey, candidate);
-  if (!category) {
+function isPageBudgetRestorationDuplicate(_heading: string, existingParagraphs: string[], candidate: string): boolean {
+  const candidateTokens = new Set(cleanString(candidate).toLowerCase().split(/[^a-z0-9]+/u).filter((token) => token.length >= 4));
+  if (candidateTokens.size < 8) {
     return false;
   }
-  return existingParagraphs.some((paragraph) => pageBudgetRestorationCategory(headingKey, paragraph) === category);
-}
-
-function pageBudgetRestorationCategory(headingKey: string, paragraph: string): string | null {
-  const text = cleanString(paragraph);
-  if (!text) {
-    return null;
-  }
-  if (headingKey === "method") {
-    if (/\b(?:preferred|candidate)\s+(?:base\s+)?(?:model|backbone)\b/iu.test(text) && /\bfallback\b/iu.test(text)) {
-      return "method_model_provenance";
+  return existingParagraphs.some((paragraph) => {
+    const existingTokens = new Set(cleanString(paragraph).toLowerCase().split(/[^a-z0-9]+/u).filter((token) => token.length >= 4));
+    if (existingTokens.size < 8) {
+      return false;
     }
-    if (/\b(?:training data|instruction-tuning subset|evaluation suite|evaluation tasks?)\b/iu.test(text) && /\b(?:subset|examples|benchmark|average accuracy)\b/iu.test(text)) {
-      return "method_data_evaluation_scope";
+    let overlap = 0;
+    for (const token of candidateTokens) {
+      if (existingTokens.has(token)) overlap += 1;
     }
-    if (/\b(?:selected design|experimental design|initial .*grid|dropout scope|dropout 0\.1|4 by 3 grid|36 primary training trials)\b/iu.test(text)) {
-      return "method_design_grid";
-    }
-    if (/\b(?:reproducibility protocol|required parseable|run identifiers|command lines|failed attempts|review artifacts)\b/iu.test(text)) {
-      return "method_reproducibility_protocol";
-    }
-  }
-  if (headingKey === "results") {
-    if (/\b(?:36 primary|38 executed|supplemental run|supplemental executions|trial-count|execution accounting)\b/iu.test(text)) {
-      return "results_execution_accounting";
-    }
-    if (/\b(?:screening threshold|target threshold|one-percentage-point|positive screening result|observed value|configured screening threshold)\b/iu.test(text)) {
-      return "results_threshold_signal";
-    }
-    if (/\b(?:uncertainty|intervals?|confidence|statistical-significance|wide intervals)\b/iu.test(text)) {
-      return "results_uncertainty";
-    }
-    if (/\b(?:dataset[-\s]level|task[-\s]level|benchmark[-\s]level|benchmark task|evaluated items?|correct responses?)\b/iu.test(text)) {
-      return "results_task_level_breakdown";
-    }
-    if (/\b(?:higher-capacity|zero regularization|zero-regularization|parameter[-\s]grid|condition[-\s]pattern|monotonic parameter)\b/iu.test(text)) {
-      return "results_condition_pattern";
-    }
-    if (/\b(?:runtime|peak VRAM|peak memory|train loss|Pareto|efficiency ranking|resource-optimality|resource-efficient)\b/iu.test(text)) {
-      return "results_resource_boundary";
-    }
-  }
-  if (headingKey === "limitations") {
-    if (/\b(?:scale and scope|limited in scale|local small-model|7B-class|broad benchmark)\b/iu.test(text)) {
-      return "limitations_scope";
-    }
-    if (/\b(?:expanded .*design|dropout\s*0\.1|36-run workload|run budget|first preflight local budget)\b/iu.test(text)) {
-      return "limitations_design_expansion";
-    }
-    if (/\b(?:resource granularity|runtime|peak[-\s]?VRAM|peak memory|efficiency rankings?)\b/iu.test(text)) {
-      return "limitations_resource_granularity";
-    }
-    if (/\b(?:full condition-level table|seed-level means|confidence intervals?|failed-run record|baseline-specific wording)\b/iu.test(text)) {
-      return "limitations_reporting_resolution";
-    }
-  }
-  return null;
+    return overlap / Math.min(candidateTokens.size, existingTokens.size) >= 0.7;
+  });
 }
 
 export function strengthenPaperScaleManuscript(
@@ -6600,149 +6434,22 @@ function softenLmBenchmarkPilotTitle(title: string): string {
   if (!cleaned) {
     return title;
   }
-  if (/\btrade[- ]?offs?\b/iu.test(cleaned) && /\b(rank|parameter_y|adapter|parameter-efficient)\b/iu.test(cleaned)) {
-    return "A Fixed-Budget Pilot Study of a Local Experimental Configuration";
-  }
-  if (/\bbenchmarking\b/iu.test(cleaned) && /\bfixed local budget\b/iu.test(cleaned)) {
-    return cleaned.replace(/\bBenchmarking\b/iu, "A Pilot Study of");
+  if (/\b(?:workflow|audit|paper[- ]?readiness|result[- ]?gating)\b/iu.test(cleaned)) {
+    return "A Governed Experimental Study Under a Fixed Resource Budget";
   }
   return title;
 }
 
 function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
-  const compacted = compactMethodProtocolParagraphs(paragraphs);
-  const sectionText = compacted.join(" ");
-  const isAdapterConditionParameterPreflight =
-    /\badapter\b/iu.test(sectionText)
-    && /\brank\b/iu.test(sectionText)
-    && /\bparameter_y\b/iu.test(sectionText)
-    && /\bBenchmark Task A\b/iu.test(sectionText)
-    && /\bBenchmark Task B\b/iu.test(sectionText);
-  if (!isAdapterConditionParameterPreflight) {
-    return compacted;
-  }
-  const hasProtocolCore = compacted.some((paragraph) =>
-    /full factorial sweep over adapter rank|predeclared baseline was baseline condition|primary endpoint was average accuracy/iu.test(paragraph)
+  return uniqueStrings(
+    paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean)
   );
-  const hasRealizedRunDetails = compacted.some((paragraph) =>
-    /realized settings|timeout|maximum sequence length|training samples|seed/iu.test(paragraph)
-  );
-  const hasReportingDetails = compacted.some((paragraph) =>
-    /reporting pipeline|condition-level 95% confidence intervals|optimizer choice|adapter target modules/iu.test(paragraph)
-  );
-  const filtered = compacted.filter((paragraph) => {
-    const cleaned = sanitizeHumanFacingManuscriptText(paragraph);
-    if (/^Within this closed eight-condition grid\b/iu.test(cleaned) && hasProtocolCore) {
-      return false;
-    }
-    if (/^Model selection and reporting focus on\b/iu.test(cleaned) && hasProtocolCore) {
-      return false;
-    }
-    if (/^Resource diagnostics are explicitly measured\b/iu.test(cleaned) && hasProtocolCore) {
-      return false;
-    }
-    if (/^The fixed search space is the condition-parameter grid\b/iu.test(cleaned) && hasProtocolCore) {
-      return false;
-    }
-    if (/^The executed condition-level summaries are the comparison unit\b/iu.test(cleaned) && hasReportingDetails) {
-      return false;
-    }
-    if (/^The task scope is fixed around\b/iu.test(cleaned) && hasProtocolCore) {
-      return false;
-    }
-    if (/^Untested condition-parameter settings are left outside the conclusion\b/iu.test(cleaned)) {
-      return false;
-    }
-    if (/^Seed-level outcomes are not promoted into separate conclusions\b/iu.test(cleaned) && hasRealizedRunDetails) {
-      return false;
-    }
-    return true;
-  });
-  return uniqueStrings(filtered).slice(0, 6);
 }
 
 function compactReaderFacingDiscussionParagraphs(paragraphs: string[]): string[] {
-  const cleaned = compactRepeatedDiscussionBoundaryParagraphs(
+  return uniqueStrings(
     paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean)
   );
-  const sectionText = cleaned.join(" ");
-  const isAdapterConditionParameterPreflight =
-    /\badapter\b/iu.test(sectionText)
-    && /\brank\b/iu.test(sectionText)
-    && /\bparameter_y\b/iu.test(sectionText)
-    && /\bBenchmark Task A\b/iu.test(sectionText)
-    && /\bBenchmark Task B\b/iu.test(sectionText);
-  if (!isAdapterConditionParameterPreflight) {
-    return uniqueStrings(cleaned);
-  }
-  const hasTriageParagraph = cleaned.some((paragraph) =>
-    /^For this small-model preflight\b/iu.test(paragraph)
-    || /^For this fixed-budget condition-parameter pilot\b/iu.test(paragraph)
-  );
-  const hasClaimCeilingParagraph = cleaned.some((paragraph) =>
-    /^The claim ceiling is therefore central\b/iu.test(paragraph)
-  );
-  const compact: string[] = [];
-  let insertedTriage = false;
-  for (const paragraph of cleaned) {
-    if (/^The current evidence is most actionable as a cautious benchmark note\b/iu.test(paragraph)) {
-      if (!insertedTriage) {
-        compact.push(
-          "For this fixed-budget condition-parameter pilot, the result is most useful as triage: the leading observed condition improved average accuracy by the reported gain in the analyzed run, which justifies follow-up but not a general adapter rule."
-        );
-        insertedTriage = true;
-      }
-      continue;
-    }
-    if (/^For this small-model preflight\b/iu.test(paragraph) || /^For this fixed-budget condition-parameter pilot\b/iu.test(paragraph)) {
-      if (!insertedTriage) {
-        compact.push(paragraph);
-        insertedTriage = true;
-      }
-      continue;
-    }
-    if (/^The claim ceiling is therefore central\b/iu.test(paragraph) && (hasTriageParagraph || insertedTriage)) {
-      continue;
-    }
-    compact.push(paragraph);
-  }
-  if (!insertedTriage && hasClaimCeilingParagraph) {
-    return uniqueStrings(compact);
-  }
-  return uniqueStrings(compact);
-}
-
-function compactRepeatedDiscussionBoundaryParagraphs(paragraphs: string[]): string[] {
-  const hasCandidateBoundary = paragraphs.some((paragraph) =>
-    /\bfollow-up candidate\b|\bworth retesting\b|\bworth testing\b|\bdoes not justify\b|\bnot a general\b|\bnot establish a general/iu.test(paragraph)
-  );
-  if (!hasCandidateBoundary) {
-    return uniqueStrings(paragraphs);
-  }
-  let keptBoundaryParagraph = false;
-  const compact: string[] = [];
-  for (const paragraph of paragraphs) {
-    const isStandaloneBoundary =
-      /^The current evidence is most actionable as a cautious benchmark note\b/iu.test(paragraph)
-      || /^The main report records a positive screening result\b/iu.test(paragraph)
-      || /^The main report therefore supports only a positive screening result\b/iu.test(paragraph)
-      || /^The leading condition cell improved accuracy delta versus the locked baseline\b/iu.test(paragraph)
-      || /^That is enough to prioritize the leading condition configuration\b/iu.test(paragraph)
-      || /^For a small language-model preflight\b/iu.test(paragraph)
-      || /^For a bounded experiment\b/iu.test(paragraph)
-      || /^The claim ceiling is therefore central\b/iu.test(paragraph);
-    if (isStandaloneBoundary) {
-      if (hasCandidateBoundary) {
-        continue;
-      }
-      if (keptBoundaryParagraph) {
-        continue;
-      }
-      keptBoundaryParagraph = true;
-    }
-    compact.push(paragraph);
-  }
-  return uniqueStrings(compact);
 }
 
 function strengthenHumanFacingSections(
@@ -6754,7 +6461,7 @@ function strengthenHumanFacingSections(
     if (/^introduction$/iu.test(cleanString(section.heading))) {
       strengthened = removeInternalIntroductionParagraphs(section);
     } else if (/^method$/iu.test(cleanString(section.heading))) {
-      strengthened = clarifyStudyLevelDeltaDefinition(strengthenMethodSectionWithArtifactDetails(section, context), context);
+      strengthened = strengthenMethodSectionWithArtifactDetails(section, context);
     } else if (/^related work$/iu.test(cleanString(section.heading))) {
       strengthened = strengthenRelatedWorkSectionWithPaperContrasts(section, context);
     } else if (/^results$/iu.test(cleanString(section.heading))) {
@@ -6791,7 +6498,7 @@ function removeInternalIntroductionParagraphs(section: PaperManuscriptSection): 
 function isInternalIntroductionParagraph(paragraph: string): boolean {
   return (
     /\bThis study addresses Study\b/iu.test(paragraph)
-    || /\bP6 run\b|\breview gating\b|\bpaper-readiness audit\b|\bresult-table integrity\b/iu.test(paragraph)
+    || /\bworkflow (?:run|review)\b|\breview gating\b|\bpaper-readiness audit\b|\bresult-table integrity\b/iu.test(paragraph)
     || /\bresult-table consistency\b|\bbounded claim ceiling\b|\bclaim-downgrade\b|\bpre-registered result-gating\b|\bcurrent artifacts\b/iu.test(paragraph)
     || /\bObjective metric met\s*:/iu.test(paragraph)
     || /\bThe paper is scoped around\s*-/iu.test(paragraph)
@@ -6804,155 +6511,35 @@ function strengthenRelatedWorkSectionWithPaperContrasts(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
-  const sectionText = section.paragraphs.join(" ");
-  if (shouldUseadapterRelatedWorkFallback(sectionText)) {
-    return strengthenadapterRelatedWorkFallback(section);
+  const paragraphs = section.paragraphs
+    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
+    .filter(Boolean);
+  const sectionText = paragraphs.join(" ");
+  const titles = uniqueStrings(
+    context.related_work.closest_titles.map((item) => cleanString(item)).filter(Boolean)
+  ).slice(0, 3);
+  if (
+    titles.length < 2
+    || (titles.some((title) => sectionText.includes(title)) && /by contrast|whereas|unlike|rather than/iu.test(sectionText))
+  ) {
+    return { ...section, paragraphs };
   }
-  const titles = uniqueStrings(context.related_work.closest_titles.map((item) => cleanString(item)).filter(Boolean)).slice(0, 3);
-  if (titles.length < 2) {
-    return strengthenadapterRelatedWorkFallback(section);
-  }
-  if (titles.some((title) => title && sectionText.includes(title)) && /by contrast|whereas|unlike|rather than/iu.test(sectionText)) {
-    return section;
-  }
-  const contrastSentence = buildRelatedWorkContrastSentence(titles, context);
-  if (!contrastSentence) {
-    return section;
-  }
-  const paragraphs = section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph));
-  const insertIndex = Math.min(1, paragraphs.length);
-  return {
-    ...section,
-    paragraphs: [
-      ...paragraphs.slice(0, insertIndex),
-      contrastSentence,
-      ...paragraphs.slice(insertIndex)
-    ]
-  };
-}
-
-function shouldUseadapterRelatedWorkFallback(sectionText: string): boolean {
-  if (!/\badapter\b|\bquantized adapter\b|\bparameter-efficient\b|parameter-efficient/iu.test(sectionText)) {
-    return false;
-  }
-  if (/rank[^.]{0,80}parameter_y|parameter_y[^.]{0,80}rank/iu.test(sectionText)) {
-    return true;
-  }
-  return false;
-}
-
-function strengthenadapterRelatedWorkFallback(section: PaperManuscriptSection): PaperManuscriptSection {
-  const sectionText = section.paragraphs.join(" ");
-  if (!shouldUseadapterRelatedWorkFallback(sectionText)) {
-    return section;
-  }
-  return {
-    ...section,
-    paragraphs: [
-      "Existing related studies give three comparison axes for this study. Resource-constrained adaptation work anchors the feasibility axis; benchmarking papers anchor the evaluation axis by comparing methods across broader task or model settings; adapter-variant papers anchor the mechanism axis by changing the update parameterization itself.",
-      "This paper occupies a narrower empirical slot on those axes. It keeps the method family, backbone, local compute regime, and evaluation harness fixed, then asks whether adapter condition parameters changes remain visible within the executed condition-parameter grid. The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local condition-grid preflight.",
-      "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior work instead defines why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and condition variants show that capacity allocation remains a live design issue.",
-      "The related-work role is therefore conservative. The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods. Those works differ in model scale, task mix, method family, or evaluation objective, so they support framing and claim boundaries rather than direct superiority language."
-    ]
-  };
+  const contrastSentence = sanitizeHumanFacingManuscriptText(buildRelatedWorkContrastSentence(titles, context));
+  return contrastSentence
+    ? { ...section, paragraphs: uniqueStrings([...paragraphs, contrastSentence]) }
+    : { ...section, paragraphs };
 }
 
 function strengthenResultsSectionWithConditionNarrative(
   section: PaperManuscriptSection,
-  context: ExperimentArtifactContext
+  _context: ExperimentArtifactContext
 ): PaperManuscriptSection {
-  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
-  const paragraphs = section.paragraphs
-    .map((paragraph) => replaceMissingExecutedProtocolClaim(sanitizeHumanFacingManuscriptText(paragraph), detailParagraph))
-    .filter((paragraph) => paragraph && !isRawMetricDumpParagraph(paragraph));
-  if (context.results.condition_summaries.length < 2) {
-    return {
-      ...section,
-      paragraphs
-    };
-  }
-  const existingText = paragraphs.join(" ");
-  const additions = buildConditionResultNarrativeParagraphs(context).filter(
-    (paragraph) => paragraph && !existingText.includes(paragraph.slice(0, 80))
-  );
-  if (additions.length === 0) {
-    return {
-      ...section,
-      paragraphs
-    };
-  }
   return {
     ...section,
-    paragraphs: compactResultsInterpretiveBoundary(uniqueStrings([...paragraphs, ...additions]))
-      .slice(0, SECTION_MAX_PARAGRAPHS.results)
+    paragraphs: section.paragraphs
+      .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
+      .filter((paragraph) => paragraph && !isRawMetricDumpParagraph(paragraph))
   };
-}
-
-function compactResultsInterpretiveBoundary(paragraphs: string[]): string[] {
-  return paragraphs
-    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
-    .filter((paragraph) => {
-      if (!paragraph) {
-        return false;
-      }
-      return !(
-        /^Across these summaries,\s+the completed condition comparison is the relevant reporting unit/iu.test(paragraph)
-        || /^The result is also reported with an explicit non-result:/iu.test(paragraph)
-        || /^Table 1 is part of the evidential core of the paper\b/iu.test(paragraph)
-        || /^The baseline row also changes the interpretation\b/iu.test(paragraph)
-        || /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(paragraph)
-        || /^The leading-condition rows carry the strongest follow-up signal\b/iu.test(paragraph)
-        || /^The resource side of the result is intentionally weaker\b/iu.test(paragraph)
-        || /^Resource reporting is therefore separated from accuracy reporting\b/iu.test(paragraph)
-      );
-    });
-}
-
-function buildConditionResultNarrativeParagraphs(context: ExperimentArtifactContext): string[] {
-  const conditions = context.results.condition_summaries;
-  const baseline = conditions.find((condition) => condition.is_baseline);
-  const nonBaseline = conditions.filter((condition) => !condition.is_baseline);
-  if (!baseline || nonBaseline.length === 0) {
-    return [];
-  }
-  const seedCounts = uniqueStrings(
-    conditions
-      .map((condition) => typeof condition.completed_seed_count === "number" ? formatNumber(condition.completed_seed_count) : "")
-      .filter(Boolean)
-  );
-  const conditionLabels = conditions.map((condition) => condition.label).filter(Boolean);
-  const bestByDelta = [...nonBaseline]
-    .filter((condition) => typeof condition.accuracy_delta_vs_baseline_mean === "number")
-    .sort((left, right) => (right.accuracy_delta_vs_baseline_mean || 0) - (left.accuracy_delta_vs_baseline_mean || 0))[0];
-  const bestByAccuracy = [...nonBaseline]
-    .filter((condition) => typeof condition.average_accuracy_mean === "number")
-    .sort((left, right) => (right.average_accuracy_mean || 0) - (left.average_accuracy_mean || 0))[0];
-  const leadingCondition = bestByDelta || bestByAccuracy;
-  const comparisonConditionCount = Math.max(0, nonBaseline.length - (leadingCondition ? 1 : 0));
-  const runtimeNote = context.results.runtime_notes.find(Boolean);
-  const memoryNote = context.results.memory_notes.find(Boolean);
-  const paragraphs = [
-    "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set and separates the locked comparator or baseline from the candidate condition rows. The table should be read as a condition-mean surface; seed-level spread, uncertainty construction, and resource aggregation remain supporting-artifact details rather than visible table columns.",
-    "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration; it asks whether the higher-rank cells clear a fixed local baseline under the same evaluation harness. Reading the table this way keeps the comparison aligned with the experimental design and avoids turning a targeted preflight into a broad method-family ranking.",
-    conditionLabels.length > 0 && seedCounts.length > 0
-      ? `The condition labels make the comparison more informative than a single headline score. The evaluated cells are ${joinHumanList(conditionLabels)}, and the retained seed-count metadata are ${joinHumanList(seedCounts)} per reported cell in the supporting record. This coverage matters because the strongest cell can have a favorable mean while individual runs still move in different directions, which is exactly the instability that a local preflight should expose before scale-up.`
-      : "",
-    bestByDelta || bestByAccuracy
-      ? `The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. ${bestByDelta?.label || bestByAccuracy?.label || "The strongest nonbaseline condition"} is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage, but the present manuscript keeps the conclusion conditional on observed dispersion and on the missing condition-level resource table.`
-      : "",
-    comparisonConditionCount > 0
-      ? `The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that the strongest cell should not be turned into a blanket claim about the condition-parameter interaction. Instead, the comparison-condition evidence helps bound the result by showing where the observed pattern remains weak or uncertainty-limited.`
-      : "",
-    leadingCondition
-      ? `The leading-condition row carries the strongest follow-up signal because it combines the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid. That makes the leading condition a plausible scale-up candidate, but not a settled prescription: the table still shows a local workstation preflight rather than a broad model-family sweep.`
-      : "",
-    "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale, but the available main-text evidence does not support a row-by-row efficiency ordering. This is why the Results section treats compute as a feasibility constraint and leaves efficiency optimization for a follow-up run with fuller resource aggregation."
-    ,
-    runtimeNote || memoryNote
-      ? `Resource reporting is therefore separated from accuracy reporting. ${runtimeNote || ""} ${memoryNote || ""} These records support feasibility and reproducibility claims for the executed run, but they do not support a stronger efficiency ranking unless future artifacts aggregate runtime and memory by condition.`
-      : ""
-  ].filter(Boolean);
-  return paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph));
 }
 
 function isRawMetricDumpParagraph(paragraph: string): boolean {
@@ -6960,32 +6547,22 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (!cleaned) {
     return true;
   }
-  if (/^Objective metric met\s*:/iu.test(cleaned)) {
+  if (/\bObjective metric\s+(?:met|not met)\s*:/iu.test(cleaned)) {
     return true;
   }
-  if (/\bObjective metric met\s*:/iu.test(cleaned)) {
+  if (/^(?:conditions?|results?|metrics?)\s*\//iu.test(cleaned) && /(?:95%\s+CI|=|:)/u.test(cleaned)) {
     return true;
   }
-  if (/^conditions\s*\//iu.test(cleaned)) {
+  if (/^(?:wall[_ ]clock[_ ]runtime|device[_ ].*memory)[_ ]/iu.test(cleaned) && /=\s*-?\d/u.test(cleaned)) {
     return true;
   }
-  if (/^wall clock runtime sec\s*=/iu.test(cleaned) || /^device cuda max memory allocated bytes\s*=/iu.test(cleaned)) {
+  const metricAssignments = cleaned.match(
+    /\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\s*=\s*-?\d+(?:,\d{3})*(?:\.\d+)?(?:e[+-]?\d+)?/giu
+  ) || [];
+  if (metricAssignments.length >= 2) {
     return true;
   }
-  if (/\bwall clock runtime sec\s*=|\bdevice cuda max memory allocated bytes\s*=/iu.test(cleaned)) {
-    return true;
-  }
-  if (/^The 95% interval for conditions\b/iu.test(cleaned)) {
-    return true;
-  }
-  if (/^rank\s+\d+\s+parameter_y\b/iu.test(cleaned) && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)) {
-    return true;
-  }
-  if (
-    /\brank\s+\d+\s+parameter_y\b/iu.test(cleaned)
-    && /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned)
-    && /\bbenchmark_task_a[_ ]accuracy\b|\bbenchmark_task_b[_ ]accuracy\b/iu.test(cleaned)
-  ) {
+  if (/^The 95% interval for (?:conditions?|comparisons?|results?)\b/iu.test(cleaned)) {
     return true;
   }
   return false;
@@ -7058,75 +6635,35 @@ function strengthenDiscussionSectionWithEvidenceCeiling(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
-  const paragraphs = section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph));
-  const existingText = paragraphs.join(" ");
   const additions = [
-    context.results.effect_notes[0]
-      ? `The interpretation should stay close to the measured effect rather than to the broader adapter literature. ${context.results.effect_notes[0]} In paper terms, this supports a targeted follow-up hypothesis, not a general statement that parameter_y improves all higher-rank adapter settings.`
-      : "",
-    context.results.heterogeneity_notes[0]
-      ? `The heterogeneity evidence is also part of the contribution. ${context.results.heterogeneity_notes[0]} A reader should therefore see the study as a decision filter for the next experiment: it identifies a promising cell and records uncertainty around the weaker cells.`
-      : "",
+    context.results.effect_notes[0],
+    context.results.heterogeneity_notes[0],
     context.discussion.practical_implications[0]
-      ? `The practical implication is limited but useful. ${context.discussion.practical_implications[0]} The result helps decide where to spend a larger training budget, while preserving the claim ceiling imposed by the small backbone and two-task evaluation scope.`
-      : ""
   ]
-    .filter(Boolean)
-    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
-    .filter((paragraph) => !existingText.includes(paragraph.slice(0, 80)));
+    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph || ""))
+    .filter(Boolean);
   return {
     ...section,
-    paragraphs: compactDiscussionPracticalTakeaways(removeDuplicateEffectComparisonParagraphs(
-      uniqueStrings([...paragraphs, ...additions])
-    )).slice(0, SECTION_MAX_PARAGRAPHS.discussion)
+    paragraphs: uniqueStrings([
+      ...section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean),
+      ...additions
+    ])
   };
-}
-
-function compactDiscussionPracticalTakeaways(paragraphs: string[]): string[] {
-  const compact: string[] = [];
-  let hasPracticalTakeaway = false;
-  for (const paragraph of paragraphs) {
-    const cleaned = sanitizeHumanFacingManuscriptText(paragraph);
-    if (!cleaned) {
-      continue;
-    }
-    const isPracticalTakeaway =
-      /^Accordingly,\s+the present evidence is most useful as a cautious benchmark note/iu.test(cleaned)
-      || /^The practical implication is limited but useful\./iu.test(cleaned)
-      || /\bmost actionable as a cautious benchmark note\b/iu.test(cleaned);
-    if (isPracticalTakeaway && hasPracticalTakeaway) {
-      continue;
-    }
-    compact.push(cleaned);
-    if (isPracticalTakeaway) {
-      hasPracticalTakeaway = true;
-    }
-  }
-  return compact;
 }
 
 function strengthenLimitationsSectionWithScope(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
-  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
-  const paragraphs = section.paragraphs
-    .map((paragraph) => replaceMissingExecutedProtocolClaim(sanitizeHumanFacingManuscriptText(paragraph), detailParagraph))
-    .filter((paragraph) => paragraph && !isRawMetricDumpParagraph(paragraph));
-  const existingText = paragraphs.join(" ");
-  const additions = [
-    "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget, so it can motivate a larger experiment but cannot establish a model-family-level regularization law.",
-    "A second limitation is resource granularity. The artifacts preserve feasibility evidence for the completed run, but the main results do not yet contain condition-level runtime and memory aggregates rich enough to support efficiency rankings.",
-    context.discussion.limitations[0]
-      ? `Finally, the manuscript keeps the negative or inconclusive parts visible because they shape the claim ceiling. ${context.discussion.limitations[0]} This is why the conclusion emphasizes a follow-up candidate rather than a broad recommendation.`
-      : ""
-  ]
-    .filter(Boolean)
+  const additions = context.discussion.limitations
     .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
-    .filter((paragraph) => !existingText.includes(paragraph.slice(0, 80)));
+    .filter(Boolean);
   return {
     ...section,
-    paragraphs: uniqueStrings([...paragraphs, ...additions]).slice(0, SECTION_MAX_PARAGRAPHS.limitations)
+    paragraphs: uniqueStrings([
+      ...section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean),
+      ...additions
+    ])
   };
 }
 
@@ -7135,53 +6672,18 @@ function buildRelatedWorkContrastSentence(
   context: ExperimentArtifactContext
 ): string {
   const axis = firstSafeRelatedWorkAxis(context) || "evaluation scope";
-  const clauses = titles.map((title, index) => {
-    if (index === 0) {
-      return `${title} anchors the closest resource-aware adaptation context`;
-    }
-    if (index === 1) {
-      return `${title} anchors the contrasting adapter or efficiency mechanism context`;
-    }
-    return `${title} anchors the broader benchmark or survey context`;
-  });
+  const clauses = titles.map((title) => `${title} provides comparison context`);
   return sanitizeHumanFacingManuscriptText(
-    `${joinHumanList(clauses)}. By contrast, the present study narrows ${axis} to a repeated-seed condition-parameter screen on one locally runnable backbone, so these cited works serve as positioning anchors rather than direct condition-matched baselines.`
+    `${joinHumanList(clauses)} for ${axis}. These works frame the research question, while direct comparisons remain grounded in the executed study.`
   );
 }
 
 function softenAppendixPromiseInSection(section: PaperManuscriptSection): PaperManuscriptSection {
-  const sanitized = section.paragraphs.map((paragraph) =>
-    sanitizeHumanFacingManuscriptText(
-      paragraph
-        .replace(
-          /\bDetailed protocol and repeat-level evidence are routed to the appendix so the main paper can retain its central logic\.?/giu,
-          "Brief execution-coverage and supplementary-metric summaries are routed to the appendix, while the main paper carries the central interpretation."
-        )
-        .replace(
-          /\brouting detailed repeat-level artifacts to the appendix\b/giu,
-          "routing brief supplementary summaries to the appendix"
-        )
-        .replace(
-          /\bTogether with the narrower executed grid and a minor supplementary formatting issue, these gaps make the study best read as a cautious empirical note rather than as a definitive method-family comparison\.?/giu,
-          "Together with the narrower executed grid and incomplete compute instrumentation, these gaps make the study best read as a cautious empirical note rather than as a definitive method-family comparison."
-        )
-        .replace(/\bminor supplementary formatting issue\b/giu, "incomplete compute instrumentation")
-    )
-  );
-  const hasModestConclusion = sanitized.some((paragraph) =>
-    /\bmain conclusion is therefore deliberately modest\b/iu.test(paragraph)
-  );
-  const paragraphs = sanitized.filter((paragraph) => {
-    if (!hasModestConclusion) {
-      return true;
-    }
-    return !/^The immediate conclusion is\b/iu.test(paragraph)
-      && !/^Until that follow-up exists\b/iu.test(paragraph)
-      && !/^The final takeaway is therefore deliberately narrow\b/iu.test(paragraph);
-  });
   return {
     ...section,
-    paragraphs: uniqueStrings(paragraphs).slice(0, 4)
+    paragraphs: uniqueStrings(
+      section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph)).filter(Boolean)
+    )
   };
 }
 
@@ -7189,207 +6691,17 @@ function strengthenMethodSectionWithArtifactDetails(
   section: PaperManuscriptSection,
   context: ExperimentArtifactContext
 ): PaperManuscriptSection {
-  const detailParagraph = buildExecutedProtocolDetailParagraph(context);
-  if (!detailParagraph) {
-    return section;
-  }
-  const paragraphs = section.paragraphs.map((paragraph) =>
-    replaceMissingExecutedProtocolClaim(
-      sanitizeHumanFacingManuscriptText(
-        rewriteMethodDataBudgetCapSentence(
-          paragraph
-            .replace(
-              /\s*although\s+the\s+compact\s+study\s+summary\s+does\s+not\s+surface\s+their\s+exact\s+numeric\s+values\s+in\s+the\s+manuscript-facing\s+record\.?/giu,
-              "."
-            )
-            .replace(
-              /\s*although\s+the\s+condensed\s+materials\s+do\s+not\s+yet\s+expose\s+[^.]*exact\s+numeric\s+training\s+hyperparameters[^.]*\.?/giu,
-              "."
-            ),
-          context
-        )
-      ),
-      detailParagraph
-    )
-  );
-  const sectionText = paragraphs.join(" ");
-  if (hasExecutedTrainingHyperparameterValues(sectionText)) {
-    return {
-      ...section,
-      paragraphs: compactMethodProtocolParagraphs(paragraphs)
-    };
-  }
-  const insertIndex = Math.min(2, paragraphs.length);
-  return {
-    ...section,
-    paragraphs: compactMethodProtocolParagraphs([
-      ...paragraphs.slice(0, insertIndex),
-      detailParagraph,
-      ...paragraphs.slice(insertIndex)
-    ])
-  };
-}
-
-function hasExecutedTrainingHyperparameterValues(text: string): boolean {
-  return (
-    /\blearning rate\s+[0-9.]+/iu.test(text)
-    || /\bper-device (?:train )?batch size\s+\d+/iu.test(text)
-    || /\bgradient accumulation\s+\d+/iu.test(text)
-    || /\bmaximum sequence length\s+\d+/iu.test(text)
-    || /\b\d+\s+optimizer steps?\b/iu.test(text)
-    || /\badapter target modules were\s+[^.]+\b/iu.test(text)
-  );
-}
-
-function replaceMissingExecutedProtocolClaim(paragraph: string, detailParagraph: string): string {
-  if (!detailParagraph) {
-    return paragraph;
-  }
-  const detail = detailParagraph.replace(/\.$/u, ".");
-  const replacements: Array<[RegExp, string]> = [
-    [
-      /\bThe reported summary provided for writing does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules,\s*so the paper treats the reported run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction\./giu,
-      `${detail} The manuscript treats the run as a pilot-scale realization of the design rather than as a fully specified benchmark reproduction.`
-    ],
-    [
-      /\bThe reader-visible summary identifies the realized run as 48 training samples,\s*maximum sequence length 256,\s*and the recorded seed,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
-      `${detail} The comparison is therefore bounded to the executed pilot record rather than a full reproduction appendix.`
-    ],
-    [
-      /\bThe reader-visible summary does not identify the instantiated checkpoint or disclose optimizer configuration,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules,\s*so the study should be interpreted as a bounded pilot comparison rather than a fully specified benchmark reproduction\./giu,
-      `${detail} A camera-ready reproduction appendix should still preserve lower-level trainer defaults and adapter-placement details, so the study remains a bounded pilot comparison.`
-    ],
-    [
-      /\bThe reported summary does not reveal the resolved base-model identifier,\s*optimizer,\s*scheduler,\s*batch size,\s*learning-rate schedule,\s*or prompt template,\s*so those details cannot be reconstructed responsibly from the available evidence and are therefore not claimed here\./giu,
-      `${detail} Optimizer family, scheduler shape, prompt-template wording, and adapter-placement fields still need a fuller reproduction appendix, so the manuscript keeps the comparison scoped to the archived pilot rather than a final benchmark recipe.`
-    ]
-  ];
-  return replacements.reduce((current, [pattern, replacement]) => current.replace(pattern, replacement), paragraph);
-}
-
-function compactMethodProtocolParagraphs(paragraphs: string[]): string[] {
-  const compact: string[] = [];
-  let hasDefinitiveRecipe = false;
-  let hasRunCount = false;
-  let hasSeedBoundary = false;
-  const hasOperationalProtocol = paragraphs.some((paragraph) =>
-    /factorial sweep over adapter rank|secondary measurements included|primary unit of analysis is the condition summary|locked baseline/iu.test(
-      sanitizeHumanFacingManuscriptText(paragraph)
-    )
-  );
-  for (const paragraph of paragraphs) {
-    const cleaned = sanitizeHumanFacingManuscriptText(paragraph);
-    if (!cleaned) {
-      continue;
-    }
-    const repeatsFixedSettings =
-      /^Preprocessing and reporting held optimizer settings, adapter target modules/iu.test(cleaned)
-      || /^The fixed adapter target modules were/iu.test(cleaned);
-    const repeatsRunAccounting =
-      /^The executed protocol comprised 25 train-plus-evaluate runs/iu.test(cleaned);
-    const repeatsSeedBoundary =
-      /^Seed-level outcomes are not promoted into separate conclusions/iu.test(cleaned);
-    const repeatsReportingFocus =
-      /^Model selection and reporting focus on/iu.test(cleaned) && hasOperationalProtocol;
-    const repeatsResourceDiagnostics =
-      /^Resource diagnostics are explicitly measured in the evaluation outputs\.?$/iu.test(cleaned) && hasOperationalProtocol;
-    const repeatsFixedSearchSpace =
-      /^The fixed search space is the condition-parameter grid described above\.?$/iu.test(cleaned) && hasOperationalProtocol;
-    const repeatsComparisonUnit =
-      /^The executed condition-level summaries are the comparison unit/iu.test(cleaned)
-      && compact.some((item) =>
-        /primary unit of analysis is the condition summary|all primary comparisons were defined relative to that reference|locked baseline/iu.test(item)
-      );
-    if (repeatsFixedSettings && hasDefinitiveRecipe) {
-      continue;
-    }
-    if (repeatsRunAccounting && hasRunCount) {
-      continue;
-    }
-    if (repeatsSeedBoundary && hasSeedBoundary) {
-      continue;
-    }
-    if (repeatsReportingFocus || repeatsResourceDiagnostics || repeatsFixedSearchSpace || repeatsComparisonUnit) {
-      continue;
-    }
-    compact.push(cleaned);
-    if (/Across all 25 runs.*learning rate 0\.0002.*adapter target modules/iu.test(cleaned)) {
-      hasDefinitiveRecipe = true;
-      hasRunCount = true;
-    }
-    if (/25 runs|25 train-plus-evaluate runs/iu.test(cleaned)) {
-      hasRunCount = true;
-    }
-    if (repeatsSeedBoundary) {
-      hasSeedBoundary = true;
-    }
-  }
-  return uniqueStrings(compact);
-}
-
-function removeDuplicateEffectComparisonParagraphs(paragraphs: string[]): string[] {
-  const compact: string[] = [];
-  let hasSpecificEffect = false;
-  for (const paragraph of paragraphs) {
-    const cleaned = sanitizeHumanFacingManuscriptText(paragraph);
-    if (!cleaned) {
-      continue;
-    }
-    const isSpecificEffect =
-      /\bleading observed condition\b[^.!?]{0,180}\b(?:0\.0667|0\.0833)\b/iu.test(cleaned)
-      || /\b(?:0\.0667|0\.0833)\b[^.!?]{0,180}\bleading observed condition\b/iu.test(cleaned);
-    const isBareMetricRestatement =
-      /\baccuracy[_ ]delta[_ ]vs[_ ]baseline\b/iu.test(cleaned) && /\b(?:0\.0667|0\.0833)\b/iu.test(cleaned);
-    if ((isSpecificEffect || isBareMetricRestatement) && hasSpecificEffect) {
-      continue;
-    }
-    compact.push(cleaned);
-    if (isSpecificEffect || isBareMetricRestatement) {
-      hasSpecificEffect = true;
-    }
-  }
-  return compact;
-}
-
-function clarifyStudyLevelDeltaDefinition(
-  section: PaperManuscriptSection,
-  context: ExperimentArtifactContext
-): PaperManuscriptSection {
-  if (
-    context.results.condition_summaries.length < 2
-    || !context.results.condition_summaries.some((item) => item.is_baseline)
-    || !context.results.condition_summaries.some((item) => !item.is_baseline && typeof item.accuracy_delta_vs_baseline_mean === "number")
-  ) {
-    return section;
-  }
-  const paragraphs = section.paragraphs.map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph));
-  const definition =
-    "The study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline; Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row.";
-  if (paragraphs.some((paragraph) => /study-level accuracy delta.*non-baseline condition mean deltas/iu.test(paragraph))) {
+  const detailParagraph = sanitizeHumanFacingManuscriptText(buildExecutedProtocolDetailParagraph(context));
+  const paragraphs = section.paragraphs
+    .map((paragraph) => sanitizeHumanFacingManuscriptText(paragraph))
+    .filter(Boolean);
+  if (!detailParagraph || paragraphs.some((paragraph) => paragraph.includes(detailParagraph))) {
     return { ...section, paragraphs };
   }
-  const insertIndex = Math.min(5, paragraphs.length);
   return {
     ...section,
-    paragraphs: [
-      ...paragraphs.slice(0, insertIndex),
-      definition,
-      ...paragraphs.slice(insertIndex)
-    ]
+    paragraphs: uniqueStrings([...paragraphs, detailParagraph])
   };
-}
-
-function rewriteMethodDataBudgetCapSentence(paragraph: string, context: ExperimentArtifactContext): string {
-  const exposesConsumedCount = context.method.hyperparameter_notes.some((note) =>
-    /Run metadata records .*training examples|train dataset tokens/iu.test(note)
-  );
-  if (!exposesConsumedCount) {
-    return paragraph;
-  }
-  return paragraph.replace(
-    /\bTraining used an the configured training dataset subset capped at ([\d,]+) examples\./iu,
-    "The governed data budget capped the the configured training dataset subset at $1 examples; the run-owned metadata exposes the consumed seed-level training count separately, so this cap should be read as a budget ceiling rather than as the number consumed by every run."
-  );
 }
 
 function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext): string {
@@ -7397,17 +6709,17 @@ function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext
   const modelName = candidateModelNames.find((item) => /llm|language model|backbone|base model/iu.test(item))
     || candidateModelNames[0]
     || "";
-  const exactHyperparameterNotes = context.method.hyperparameter_notes.filter((item) =>
-    /learning rate|per-device train batch size|gradient accumulation|optimizer steps|adapter target modules|training examples|train dataset tokens/iu.test(item)
-  );
-  if (!modelName && exactHyperparameterNotes.length === 0) {
+  const methodNotes = context.method.hyperparameter_notes
+    .map((item) => sanitizeHumanFacingManuscriptText(item))
+    .filter((item) => item && !isInternalWorkflowNarrative(item));
+  if (!modelName && methodNotes.length === 0) {
     return "";
   }
   const sentences: string[] = [];
   if (modelName) {
     sentences.push(`The reported study uses ${modelName} as the trained backbone.`);
   }
-  sentences.push(...exactHyperparameterNotes.slice(0, 3));
+  sentences.push(...methodNotes.slice(0, 3));
   return sanitizeHumanFacingManuscriptText(sentences.join(" "));
 }
 
@@ -7443,29 +6755,24 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
   if (!withoutDraftInstructions) {
     return "";
   }
-  const compatibilityBackboneCitationLabel = String.fromCharCode(81, 119, 101, 110);
-  const manuscriptCitationNoisePattern = new RegExp(
-    String.raw`\s*\[(?:${compatibilityBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B)(?:\s*;\s*(?:${compatibilityBackboneCitationLabel}2?\.?5?|the configured fallback backbone|the configured training dataset|Benchmark Task A|Benchmark Task B))*\]`,
-    "giu"
-  );
   if (/^\s*\[(?:warning|error|fail|failed|pass|passed)\]\s*[^:]{0,80}:/iu.test(withoutDraftInstructions)) {
     return "";
   }
-  if (isHumanFacingProtocolChecklistResidue(withoutDraftInstructions)) {
-    return "";
-  }
   if (
-    /\b(?:workflow audit|generated manuscript|artifact directory|submission validation|scientific validation|quality failure)\b/iu.test(withoutDraftInstructions)
-    || /\bThe main gap is that current artifacts\b/iu.test(withoutDraftInstructions)
-    || /\bThe current workflow provides\b/iu.test(withoutDraftInstructions)
-    || /\bThis\s+study\s+addresses\s+Study\s+how\b/iu.test(withoutDraftInstructions)
-    || /\b7B-class\s+run\s+is\s+a\s+later\s+scale-up\s+target\b/iu.test(withoutDraftInstructions)
-    || /\bRecovered\s+cached\s+full\s+text(?:\s+describing\s+[^.]{0,160})?\.?/iu.test(withoutDraftInstructions)
-    || /^The 36-run workload may exceed the desired first preflight local budget\.?$/iu.test(withoutDraftInstructions)
+    isHumanFacingProtocolChecklistResidue(withoutDraftInstructions)
+    || isInternalWorkflowNarrative(withoutDraftInstructions)
   ) {
     return "";
   }
-  return rewriteReaderFacingProvenancePhrases(stripLimitedEvidenceBoilerplate(stripRawCitationTokens(withoutDraftInstructions)))
+
+  const withoutMetricDumps = stripInternalMetricDumpSentences(
+    stripLimitedEvidenceBoilerplate(stripRawCitationTokens(withoutDraftInstructions))
+  );
+  const readerFacing = rewriteObjectiveMetricStatus(
+    rewriteReaderFacingProvenancePhrases(withoutMetricDumps)
+  );
+
+  return stripInternalProvenanceLabels(readerFacing)
     .replace(/\bparameter-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "parameter-efficient")
     .replace(/\bmemory-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "memory-efficient")
     .replace(/\bcost-computationally\s+practical\s+within\s+the\s+reported\s+setup\b/giu, "cost-efficient")
@@ -7473,39 +6780,6 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\bpaper-readiness\s+inspect\b/giu, "submission-quality inspection")
     .replace(/\binspect-relevant\b/giu, "protocol-relevant")
     .replace(/\bFor\s+inspect\s+purposes\b/giu, "For clarity")
-    .replace(/\bStudy\s+how\s+[^.]{10,180}\s+under\s+a\s+fixed\s+local\s+compute\s+budget\.?/giu, "condition choices under a fixed local compute budget")
-    .replace(
-      /\bThe fixed search space includes\s*(?:adapter|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
-      "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
-    )
-    .replace(
-      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of parameter_y within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
-      "The compact record specifies the manipulated condition parameters and reported outcome metrics, while unavailable implementation details remain explicit reproducibility limitations."
-    )
-    .replace(
-      /\bSeed coverage is part of the evidence (?:contract|record)\.[^.]+mean gain[^.]+larger run\.[^.]+single best seed[^.]+comparison unit\./giu,
-      "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
-    )
-    .replace(/\bSeed coverage is part of the evidence contract\.\s*(?:five|[0-9]+)\s+repeated cells and (?:five|[0-9]+)\s+seeds per cell expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu, "The reported pilot keeps the completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work.")
-    .replace(/\bevidence contract\b/giu, "evidence record")
-    .replace(/\blater readers can audit\b/giu, "later readers can inspect")
-    .replace(/\breaders can audit\b/giu, "readers can inspect")
-    .replace(/\baudit\b/giu, "inspect")
-    .replace(/\baudit the comparison unit\b/giu, "inspect the comparison unit")
-    .replace(
-      /\bIt synthesizes\s+\d+\s+analyzed paper summaries and\s+\d+\s+extracted evidence items\.\s+The writing is scoped by these constraints:[\s\S]*?Forbidden shortcuts:\s*do not fabricate missing metrics,\s*impute failed conditions,\s*hide failed runs,\s*treat fallback or smoke output as training evidence,\s*or claim statistical significance without uncertainty evidence\.?/giu,
-      "The manuscript uses collected literature for positioning and the executed local run for numerical claims. It reports the declared compute budget, selected backbone, data cap, evaluation tasks, condition-parameter grid, locked baseline, and uncertainty limits without treating the pilot as a statistically definitive result."
-    )
-    .replace(
-      /\bThe (?:first\s+P6|local preflight) run uses a cached(?:,\s*locally runnable small LLM)? target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
-      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded interpretation rather than on access to a larger target model."
-    )
-    .replace(
-      /\bThe (?:first\s+P6|local preflight) run uses a cached,\s*locally runnable small LLM target so the validation focuses on real training,\s*result-table integrity,\s*review gating,\s*and paper-readiness audit rather than on new model access\./giu,
-      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs and a bounded interpretation rather than on access to a larger target model."
-    )
-    .replace(/\b(?:first\s+)?(?:full\s+)?P6\s+run\b/giu, "local preflight run")
-    .replace(/\bP6\b/gu, "preflight")
     .replace(/\bbounded claim ceiling\b/giu, "bounded interpretation")
     .replace(/\bclaim ceiling\b/giu, "claim boundary")
     .replace(/\bclaim downgrade correctness\b/giu, "claim-scope correctness")
@@ -7513,363 +6787,95 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\breview gating\b/giu, "review checks")
     .replace(/\bpaper-readiness audit\b/giu, "paper-scale review")
     .replace(/\bresult-table integrity\b/giu, "result-table consistency")
-    .replace(/`([^`]+)`/gu, "$1")
-    .replace(/\.autolabos\/(?:[^\s,.;)`]+)?/giu, "the governed run artifact directory")
-    .replace(/\boutputs\/(?:[^\s,.;)`]+)?/giu, "the public output bundle")
+    .replace(/[.!?]\s+under an explicitly bounded evidence ceiling\b/giu, " under an explicitly bounded evidence ceiling")
     .replace(
-      /\bObjective metric met:\s*accuracy_delta_vs_baseline\s*=\s*([0-9]+(?:\.[0-9]+)?)\s*>=\s*([0-9]+(?:\.[0-9]+)?)\.?/giu,
-      "The archived comparison exceeded the configured screening threshold (observed gain $1 versus threshold $2); condition-level values in Table 1 provide the main numeric support, but this is not a stable success claim."
+      /\bcondition summaries?\s*\/\s*[^/]+\s*\/\s*([A-Za-z][A-Za-z0-9 _.-]+?)\s+95%\s+CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
+      (_match: string, metric: string, interval: string, count: string) =>
+        `One reported condition-level 95% interval for ${humanizeToken(metric)} spans [${interval}] over ${count} observations.`
     )
     .replace(
-      /\b(?:candidate condition [a-z]|leading observed condition)\s+vs\s+(?:locked\s+)?baseline condition:?\s*(?:accuracy_delta_vs_baseline|baseline-relative accuracy gain):\s*([0-9.]+)\s+vs\s+0\s+\(delta\s+([0-9.]+)\),\s*(?:average_accuracy|average accuracy):\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_a_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\),\s*benchmark_task_b_accuracy:\s*([0-9.]+)\s+vs\s+([0-9.]+)\s+\(delta\s+[0-9.]+\)\.?/giu,
-      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
-    )
-    .replace(
-      /\bThe reported leading-row average accuracy is\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+and\s+the reported leading-row average accuracy is\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\.?/giu,
-      "The reported reference average accuracy is $1 and the reported comparator average accuracy is $2."
-    )
-    .replace(
-      /\bcondition summaries?\b\s*\/\s*[^/]+\s*\/\s*accuracy delta vs baseline 95% CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
-      "One reported condition-level 95% interval spans $1 over n=$2, keeping the comparison bounded by uncertainty."
-    )
-    .replace(
-      /\b(?:candidate condition [a-z]|leading observed condition)\b[^.]{0,80}\bbaseline-relative accuracy gain\b\s*=\s*([0-9.]+)[^.]{0,160}\bbenchmark_task_a_accuracy\b\s*=\s*([0-9.]+)[^.]{0,80}\bBenchmark Task B accuracy\b\s*=\s*([0-9.]+)\.?/giu,
-      "The leading observed condition is the follow-up candidate. Table 1 reports the condition-level values for that cell and the locked baseline; the baseline-relative average-accuracy gain was $1."
-    )
-    .replace(
-      /\bwall clock runtime sec\s*=\s*([0-9.]+)\.\s*device cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
-      "wall-clock runtime was $1 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic."
-    )
-    .replace(
-      /\bwall clock runtime sec\s*=\s*([0-9.]+)\.?/giu,
+      /\bwall[_ ]clock[_ ]runtime[_ ]sec\s*=\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\.?/giu,
       "wall-clock runtime was $1 seconds."
     )
     .replace(
-      /\bdevice cuda max memory allocated bytes\s*=\s*(\d+)\.?/giu,
-      "peak CUDA allocation was recorded as a secondary resource diagnostic."
+      /\bdevice[_ ](?:cuda[_ ])?max[_ ]memory[_ ]allocated[_ ]bytes\s*=\s*\d+\.?/giu,
+      "peak device-memory allocation was recorded as a secondary resource diagnostic."
     )
-    .replace(manuscriptCitationNoisePattern, "")
     .replace(
-      /\bThe (?:preserved manuscript bundle|reported run records) identif(?:ies|y) the executed study only as a small-backbone local preflight and does not cleanly disambiguate whether the as-run model was the planned the selected backbone backbone or the the configured fallback backbone fallback\./giu,
-      "The reported run records identify the selected backbone as the selected small-backbone model; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
+      /\b(?:verifier feedback status|validation status)\s+is\s+(?:pass|passed)\b/giu,
+      "the screening check was positive"
     )
-    .replace(
-      /\bThe surviving preflight materials do not unambiguously identify the backbone actually used in the analyzed execution,\s*so the manuscript can report only the registered preferred and fallback options rather than a confirmed executed model\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run; the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means."
-    )
-    .replace(
-      /\bThe available summary does not identify which backbone was ultimately used in the realized pilot execution,\s*so model-specific conclusions are limited to the declared protocol rather than a verified backbone-specific analysis\./giu,
-      "The executed metrics record identifies the selected backbone as the selected backbone for the realized pilot; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
-    )
-    .replace(
-      /\bThe plan named the selected backbone as preferred for the executable run and the configured fallback backbone as the fallback if the preferred model could not be loaded\.\s*The executed metrics record identifies the selected backbone as the selected backbone for the analyzed run;\s*the configured fallback backbone remained a fallback option and is not treated as evidence for the reported condition means\./giu,
-      "The executable run selected the selected backbone as the trained backbone; the configured fallback backbone remained only a fallback option and is not treated as evidence for the reported condition means."
-    )
-    .replace(
-      /\bThe surviving compact record specifies the manipulated condition-parameter factors and reported outcome metrics,\s*but optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*prompt formatting,\s*evaluation-harness specifics,\s*and exact placement of parameter_y within adapter modules are not available\.\s*We therefore interpret the experiment as a governed preflight rather than as a fully reproducible benchmark recipe\./giu,
-      "The preserved pilot record exposes selected implementation details: the run-recorded training settings and timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript is still a preflight execution report rather than a fully specified benchmark paper."
-    )
-    .replace(
-      /\bAt the same time,\s*the reported result summary does not expose several training details that would normally appear in a full appendix,\s*including optimizer choice,\s*learning rate,\s*batch size,\s*update count,\s*adapter target modules,\s*and the realized model identifier\.\s*Accordingly,\s*the manuscript confines its claims to what is directly supported by the available execution record\./giu,
-      "The preserved pilot record exposes selected implementation details: the selected backbone as the selected backbone, the run-recorded training settings and timeout. Prompt formatting and some evaluation-harness details remain outside the compact record, so the manuscript confines its claims to directly supported benchmark comparisons."
-    )
-    .replace(
-      /\b(?:the\s+)?(?:reported\s+)?(?:summary|result summary|compact record|analysis)\s+does not expose several (?:training|implementation) details(?:\s+that would normally appear in a full appendix)?,?\s*including optimizer choice,\s*learning rate,\s*(?:effective\s+)?batch size,\s*(?:step or epoch counts|step or epoch accounting|update count),\s*and adapter target modules\./giu,
-      "The preserved pilot record exposes learning rate, per-device batch size, gradient accumulation, optimizer-step count, sequence length, timeout, seed, and training-example counts; optimizer choice and adapter target-module placement remain insufficiently exposed for a fully conventional implementation appendix."
-    )
-    .replace(
-      /\bSeveral training details that would normally be expected in a publication-grade methods section,\s*including optimizer,\s*learning rate,\s*batch structure,\s*and checkpoint schedule,\s*are not recoverable from the available evidence\./giu,
-      "Several implementation details that would normally be expected in a publication-grade methods section, including optimizer identity, learning-rate schedule beyond the reported scalar rate, adapter target-module placement, prompt formatting, and checkpoint schedule, are not recoverable from the available evidence."
-    )
-    .replace(
-      /\bThe missing items include optimizer configuration,\s*learning-rate schedule,\s*batch structure,\s*and checkpoint policy\./giu,
-      "The missing items include optimizer configuration, learning-rate schedule beyond the reported scalar rate, adapter target-module placement, prompt formatting, and checkpoint policy."
-    )
-    .replace(
-      /\bcondition summaries?\b\s*\/\s*[^/]+\s*\/\s*accuracy delta vs baseline 95% CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
-      "For the comparison condition condition, the reported 95% interval for accuracy delta versus baseline is [$1] over $2 seeds."
-    )
-    .replace(
-      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate parameter_y can be competitive under a strict local instruction-tuning budget\./giu,
-      "This condition-grid preflight provides conservative evidence that the best observed higher-rank adapter cell is worth testing in a larger follow-up under the same baseline discipline."
-    )
-    .replace(
-      /\bThe first P6 run uses a cached, locally runnable small LLM target so the validation focuses on real training, result-table integrity, review gating, and paper-readiness audit rather than on new model access\./giu,
-      "The study is framed as a local small-model preflight so that the evidence rests on executed training runs, result-table consistency, and a bounded claim ceiling rather than on access to a larger target model."
-    )
-    .replace(
-      /\bThe study-level accuracy delta reported in Results is the arithmetic mean of the non-baseline condition mean deltas relative to the locked baseline;\s*Table 1 reports the corresponding condition mean accuracies and identifies the locked baseline row\./giu,
-      "Results reports the best observed cell against the locked locked baseline baseline; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
-    )
-    .replace(
-      /\braw result study summary run train loss std=([0-9.e+-]+)\.\s*raw result study summary run runtime sec variance=([0-9.e+-]+)\.\s*raw result study summary run peak vram bytes variance=([0-9.e+-]+)\./giu,
-      "Auxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking."
-    )
-    .replace(
-      /\bSearch-space notes retained for the appendix include\s+/giu,
-      "The fixed search space includes "
-    )
-    .replace(
-      /\bThe fixed search space includes Artifact text references tuning\.?/giu,
-      "The fixed search space is the condition-parameter grid described above."
-    )
-    .replace(
-      /\bArtifact text references tuning\.?/giu,
-      "the condition-parameter tuning grid."
-    )
-    .replace(
-      /,\s*Artifact text references (?:standardize|preprocess|imput|scale)\.?/giu,
-      ""
-    )
-    .replace(
-      /\bArtifact text references (?:standardize|preprocess|imput|scale)\.?/giu,
-      ""
-    )
-    .replace(
-      /,\s*Artifact text references (?:clean|filter|tokenize)\.?/giu,
-      ""
-    )
-    .replace(
-      /\bArtifact text references (?:clean|filter|tokenize)\.?/giu,
-      ""
-    )
-    .replace(
-      /\bArtifact text references hyperparameter\.?/giu,
-      "hyperparameter search"
-    )
-    .replace(
-      /\bThe reported study uses current_best_baseline as the trained backbone\.?/giu,
-      ""
-    )
-    .replace(
-      /\bThe evaluation spans dataset[_]to[_]be[_]selected\. Models or conditions include current_best_baseline\.?/giu,
-      "The evaluation spans Benchmark Task A and Benchmark Task B, with condition-parameter conditions compared against the locked baseline condition."
-    )
-    .replace(
-      /\bThe task scope is fixed around dataset[_]to[_]be[_]selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The emphasis remains on evidence that is inspectable in the current run\.|The same point would need to be revised if later artifacts changed the comparator, table, or execution status\.)/giu,
-      "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
-    )
-    .replace(
-      /\bThe task scope is fixed around dataset[_]to[_]be[_]selected\.\s*The method section therefore describes the executed comparison as a locked protocol rather than as an open-ended search\.\s*That distinction is necessary because paper-readiness depends on the reader being able to reconstruct which evidence was generated and which follow-up remains planned\.\s*(?:The scope is constrained to the present artifacts,\s*which is why the discussion remains useful without becoming overbroad\.)?/giu,
-      "The task scope is fixed around the run-metadata task labels Benchmark Task A and Benchmark Task B. The method section describes the executed condition-parameter comparison as a locked protocol rather than an open-ended search, with conclusions limited to evidence generated in the current run."
-    )
-    .replace(
-      /\bThe released materials preserve condition-level comparisons and keep the baseline row visible so that readers can audit the comparison unit,\s*but unresolved metadata inconsistencies mean the release should be treated as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package\./giu,
-      "The released materials preserve condition-level comparisons and keep the baseline row visible so that readers can audit the comparison unit; the supplement is therefore best read as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package."
-    )
-    .replace(
-      /\bPreprocessing follows this order:\s*,?\s*and\s*\.?\s*Model selection and reporting focus on/giu,
-      "Model selection and reporting focus on"
-    )
-    .replace(
-      /\bModel selection and reporting focus on\s*-\s*Primary metric:\s*average accuracy across Benchmark Task A and Benchmark Task B\.\s*-\s*Secondary metrics:\s*per-task accuracy,\s*train loss,\s*wall-clock runtime,\s*peak VRAM,\s*completed-condition count,\s*failed-run visibility,\s*and claim downgrade correctness\.\s*-\s*Meaningful improvement:\s*at least \+1\.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement\.\s*-\s*No-signal boundary:\s*maximum condition spread below \+0\.5 percentage points,\s*or confidence intervals that make the comparison inconclusive\.,\s*accuracy_delta_vs_baseline,\s*accuracy_pass_at_1_delta_vs_baseline,\s*and accuracy_improvement_over_baseline\./giu,
-      "Model selection and reporting focus on average accuracy, task-level accuracy, training loss, resource diagnostics, condition completion, failed-run visibility, and conservative downgrade correctness."
-    )
-    .replace(
-      /\bSpecification may be underspecified and require narrower scope\.?/giu,
-      "The planned and realized execution records should be read conservatively because some protocol fields remain underspecified."
-    )
-    .replace(
-      /\.\s*Runtime and memory are explicitly measured in the evaluation outputs\./giu,
-      "Resource diagnostics are explicitly measured in the evaluation outputs."
-    )
-    .replace(
-      /\bRuntime and memory are explicitly measured in the evaluation outputs\./giu,
-      "Resource diagnostics are explicitly measured in the evaluation outputs."
-    )
-    .replace(
-      /\bResource use and memory are explicitly measured in the evaluation outputs\./giu,
-      "Resource diagnostics are explicitly measured in the evaluation outputs."
-    )
-    .replace(
-      /\bwith unresolved model identity rather than as a model-specific recipe for exact reruns\b/giu,
-      "without making model-specific reproduction claims from the compact record"
-    )
-    .replace(
-      /\bunresolved model identity\b/giu,
-      "unspecified final backbone identity in the compact record"
-    )
-    .replace(
-      /\bprotocol-deviating pilot with the recorded seed\b/giu,
-      "executed fixed-budget local preflight"
-    )
-    .replace(
-      /\bThe preserved protocol notes,\s*so the method description distinguishes the planned budget from the executed repeated comparison\./giu,
-      "The method description distinguishes the planned budget from the executed repeated comparison."
-    )
-    .replace(
-      /\bAcross these summaries,\s*the completed condition comparison is the relevant reporting unit rather than an isolated seed or anecdotal observation\.\s*The available results therefore support a provisional ordering of the recorded cells,\s*but the combination of wide intervals and very limited evaluation size leaves that ordering uncertain\./giu,
-      ""
-    )
-    .replace(
-      /\bThe result is also reported with an explicit non-result:\s*the present artifacts do not justify a broad claim about all ranks,\s*all parameter_y rates,\s*or all downstream tasks\.\s*That negative boundary is part of the contribution because it prevents an empirical preflight from being mistaken for a completed scaling study\./giu,
-      ""
-    )
-    .replace(
-      /\bpreservation of the run identifier,\s*model and dataset identifiers,\s*seed,\s*condition order,\s*command line,\s*environment summary,\s*event trace,\s*and failed-attempt visibility\b/giu,
-      "preservation of the run identifier, model and dataset identifiers, seed, condition order, command line, environment summary, execution trace, and failure accounting"
-    )
-    .replace(
-      /\bsurrounding materials mention\b/giu,
-      "available run records note"
-    )
-    .replace(
-      /\bsurrounding materials\b/giu,
-      "available run records"
-    )
-    .replace(
-      /\bthe condition-parameter tuning grid\. Untested settings are left outside the conclusion rather than inferred from nearby grid points\./giu,
-      "Untested condition-parameter settings are left outside the conclusion rather than inferred from nearby grid points."
-    )
-    .replace(
-      /\bThe current evidence is most actionable as a cautious benchmark note for Study how adapter condition parameters interact during parameter-efficient instruction tuning under a fixed local compute budget\.\s*The study is framed as a local small-model preflight so that the evidence rests on executed training runs,\s*result-table consistency,\s*and a bounded claim ceiling rather than on access to a larger target model\.\s*A 7B-class run is a later scale-up target after preflight is clean\.,\s*especially where small positive deltas repeat across datasets\./giu,
-      "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold."
-    )
-    .replace(
-      /\bwhere small positive deltas repeat across datasets\b/giu,
-      "where the best observed cell clears the pre-specified screening threshold"
-    )
-    .replace(
-      /\binternal screening threshold\b/giu,
-      "pre-specified screening threshold"
-    )
-    .replace(
-      /\bThis paragraph is retained in the main body because it clarifies the claim boundary rather than adding a new claim\.?/giu,
-      ""
-    )
-    .replace(
-      /\bThis keeps the main text dense enough for review while still avoiding unsupported extrapolation\.?/giu,
-      ""
-    )
-    .replace(
-      /\bThe intended training source was a capped instruction-tuning subset, described in the planning materials as the configured training dataset and limited to at most 10,000 examples, and evaluation centered on the Benchmark Task A and Benchmark Task B benchmark tasks\./giu,
-      "The intended training source was a capped instruction-tuning subset recorded in the planning materials, and evaluation centered on the run-metadata task labels Benchmark Task A and Benchmark Task B."
-    )
-    .replace(
-      /\bBenchmark Task A and Benchmark Task B benchmark tasks\b/giu,
-      "the run-metadata task labels Benchmark Task A and Benchmark Task B"
-    )
-    .replace(
-      /\bconditions\s*\/\s*rank\s+16\s+parameter_y\s+0\s+0\s*\/\s*average accuracy 95% CI \[([^\]]+)\] over n=(\d+) prediction\(s\)\./giu,
-      "One reported condition-level 95% interval for average accuracy spans [$1] over $2 predictions."
-    )
-    .replace(
-      /\bThe protocol records Measure whether generated intermediate and final artifacts remain consistent across repeated runs\.\s*/giu,
-      ""
-    )
-    .replace(
-      /\bMeasure whether generated intermediate and final artifacts remain consistent across repeated runs\.?/giu,
-      ""
-    )
-    .replace(
-      /\bThe table and figure are therefore used as complementary checks:\s*the table anchors the numeric values,\s*while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows\./giu,
-      "The table is used as the numeric anchor for the reported comparison; no separate figure is needed when it would only restate the same values."
-    )
-    .replace(
-      /\bThe table supplies the condition-level view,\s*while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks\./giu,
-      "The table supplies the baseline-to-leading comparison view, while the figure emphasizes how the locked baseline and leading observed setting behave across the two evaluation tasks."
-    )
-    .replace(
-      /\bthe figure is retained only when it shows a distinct pattern that is not already obvious from the rows\b/giu,
-      "no separate figure is needed when it would only restate the same values"
-    )
-    .replace(
-      /\bBrief execution-coverage and supplementary-metric summaries are routed to the appendix, while the main paper carries the central interpretation\./giu,
-      "Brief execution-coverage and supplementary-metric summaries are kept secondary, and the main text carries the central interpretation only where execution coverage is visible in the presented evidence."
-    )
-    .replace(
-      /\bPreprocessing follows this order:\s*.*?\bArtifact text references (?:imput|scale)\.?.*?\bModel selection and reporting focus on average_accuracy\s*=\s*unweighted mean of Benchmark Task A accuracy and Benchmark Task B accuracy,?\s*accuracy_delta_vs_locked_baseline\s*=\s*cell mean average_accuracy minus mean average_accuracy of the locked baseline condition over the same seed set,?\s*benchmark_task_a_accuracy and benchmark_task_b_accuracy per run and per cell mean,?\s*and seed_std_average_accuracy across the repeated seed set for each repeated cell\./giu,
-      "Preprocessing and reporting held optimizer settings, adapter target modules, data cap, effective batch size, and evaluation tasks fixed across cells. The reported metrics are average accuracy, delta versus the locked baseline condition, task-level accuracies, and seed-level dispersion for each repeated cell."
-    )
-    .replace(
-      /\bThe protocol records Execute \d+ train-plus-eval runs total:\s*\d+ repeated cells x \d+ seeds where repeated cells are [^.]+\.?,?\s*For each repeated cell, compute mean average_accuracy, seed standard deviation, and bootstrap 95 percent CI width; report per-task means and deltas as separate columns\.,?\s*Separately flag whether any repeated cell clears accuracy_delta_vs_locked_baseline >= [0-9.]+ and whether its 95 percent CI does not clearly contradict the improvement direction\.,?\s*and Apply the no-signal rule if the maximum mean average_accuracy spread across the repeated cells is below [0-9.]+ or if the bootstrap intervals make the comparisons directionally inconclusive\. Runtime and memory are explicitly measured in the evaluation outputs\./giu,
-      "The executed protocol comprised the scheduled train-plus-evaluate runs across repeated condition cells and recorded seed coverage. The analysis reports per-cell mean accuracy, seed dispersion, bootstrap interval width, task-level means, completion status, and secondary runtime and memory diagnostics where those quantities are available."
-    )
-    .replace(
-      /\bAuxiliary training-loss, runtime, and peak-memory dispersion are treated as secondary diagnostics rather than as a condition-level efficiency ranking\.\s*leading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The leading observed condition cell produced the strongest mean delta in the reported comparison, while auxiliary loss, runtime, and memory dispersion remain secondary diagnostics rather than efficiency rankings."
-    )
-    .replace(
-      /\bThe study-level objective was met:\s*the available summary reports accuracy_delta_vs_baseline\s*=\s*0\.0448(?:\d+)?\./giu,
-      "The study-level objective check exceeded the predeclared threshold; the concrete condition-level values are reported in the results table."
-    )
-    .replace(
-      /\bAt the study level,\s*the primary metric was accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667,\s*which exceeded the predeclared target of 0\.01\./giu,
-      "At the study level, the objective check exceeded the predeclared target; the concrete condition-level mean accuracies and deltas are reported below."
-    )
-    .replace(
-      /\bObjective metric met:\s*accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667\s*>=\s*0\.01\./giu,
-      "The objective check was positive under the predeclared threshold; condition-level values in Table 1 provide the main numeric support."
-    )
-    .replace(
-      /\bThe run met the objective metric,\s*with accuracy_delta_vs_baseline\s*=\s*0\.04479166666666667 against the stated 0\.01 threshold\.\s*leading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The run met the predeclared screening threshold, and the leading observed condition cell supplied the strongest mean gain over the locked baseline."
-    )
-    .replace(
-      /\bThe main report marks the objective as met,\s*with accuracy_delta_vs_baseline\s*=\s*([0-9.]+)\s*against the\s*>=\s*([0-9.]+)\s*target,\s*and verifier feedback status is pass\.\s*leading condition vs locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The main report records a positive screening result: accuracy delta versus baseline was $1 against the predeclared $2 target, with the leading observed condition cell supplying the strongest observed gain."
-    )
-    .replace(/\bverifier feedback status is pass\b/giu, "the screening check was positive")
-    .replace(
-      /\bleading condition vs locked baseline improves accuracy delta vs baseline mean by 0\.0667\./giu,
-      "The leading observed condition cell supplied the strongest mean gain over the locked baseline."
-    )
-    .replace(
-      /\bleading condition vs locked baseline improves accuracy delta vs baseline by ([0-9.]+)\./giu,
-      "The leading observed condition cell improved accuracy delta versus the locked baseline by $1 in the reported comparison."
-    )
-    .replace(
-      /\bThe fixed search space includes adapter target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports the inspected seed-level sample and token counts for the inspected seed-level record\./giu,
-      "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
-    )
-    .replace(
-      /\bone supplemental artifact remained malformed\b/giu,
-      "some supplementary stability and resource summaries remained incomplete"
-    )
-    .replace(
-      /\bThe audit trail matters for this interpretation because the paper-ready claim depends on alignment between executed runs,\s*result tables,\s*captions,\s*and the claim-evidence map\.\s*If a later run changes the baseline,\s*hides failed executions,\s*or moves numeric support out of the main table,\s*the same text should be downgraded rather than reused as a stronger manuscript\./giu,
-      "The interpretation depends on preserving alignment between executed runs, result tables, captions, and claim-evidence links. Future extensions should re-check that alignment whenever the baseline, reporting scope, or visible numeric support changes."
-    )
-    .replace(
-      /\bstudy summary task report records ([0-9.]+) accuracy in the structured result analysis\./giu,
-      "That task-level value is used as context for the pooled average rather than as a separate condition-level claim."
-    )
-    .replace(
-      /\btask report records ([0-9.]+) accuracy in the structured result analysis\./giu,
-      "The structured task summary reports Benchmark Task A accuracy of the recorded task accuracy."
-    )
-    .replace(
-      /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
-    )
-    .replace(
-      /\bThe repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\b/giu,
-      "The reported pilot keeps the completed completed condition cells visible and leaves multi-seed stability testing to a larger follow-up"
-    )
-    .replace(/\brepeated condition cells with recorded seed coverage\b/giu, "the completed completed condition cells and locked baseline")
-    .replace(/\brepeated condition cells\b/giu, "the completed completed condition cells")
-    .replace(/\brecorded seed coverage\b/giu, "future multi-seed replication")
-    .replace(/\baccuracy\\?_delta\\?_vs\\?_baseline\b/giu, "baseline-relative accuracy gain")
-    .replace(/\baverage\\?_accuracy\b/giu, "average accuracy")
-    .replace(/\bbenchmark_task_a\\?_accuracy\b/giu, "Benchmark Task A accuracy")
-    .replace(/\bbenchmark_task_b\\?_accuracy\b/giu, "Benchmark Task B accuracy")
-    .replace(
-      /\bThe fixed search space includes\s*(?:adapter|adapter) target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu,
-      "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults."
-    )
-    .replace(
-      /\bThe fixed search space includes\s*Fixed training settings included [^.]+\.?,\s*reported run details records [^.]+\.?,?\s*and the condition-parameter tuning grid\.?/giu,
-      "The fixed search space held the manipulated condition parameters while keeping run-recorded training settings and sample-count details fixed for the reported pilot."
-    )
-    .replace(
-      /\bThe reader-visible summary identifies [^.]+,\s*but it does not disclose the instantiated checkpoint,\s*optimizer,\s*batch size,\s*learning rate,\s*epoch count,\s*or adapter target modules;\s*the comparison is therefore bounded to the executed pilot record rather than a fully specified benchmark reproduction\./giu,
-      "Auxiliary protocol details are reported only when visible in the run artifacts, and omitted quantities are treated as limitations rather than inferred measurements."
-    )
-    .replace(/\bThe fixed search space includes adapter target modules were [^.]+\.,\s*Fixed training settings included [^.]+\.,\s*and The inspected seed-level record reports [^.]+ for the inspected seed-level record\./giu, "The fixed adapter target modules, training settings, and inspected seed-level counts are summarized from the run artifacts rather than hardcoded manuscript defaults.")
+    .replace(/`([^`]+)`/gu, "$1")
+    .replace(/\/(?:Users|home|tmp|var|private|Volumes)\/[^\s,.;)`]+/gu, "the local workspace")
+    .replace(/\.autolabos\/(?:[^\s,.;)`]+)?/giu, "the governed run artifact directory")
+    .replace(/\btest\/outputs?\/[^\s,.;)`]+/giu, "the public output directory")
+    .replace(/\boutputs\/[^\s,.;)`]+/giu, "the public output bundle")
     .replace(/\s+([.,;:])/gu, "$1")
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
     .trim();
+}
+
+function isInternalWorkflowNarrative(value: string): boolean {
+  return (
+    /\b(?:workflow audit|generated manuscript|artifact directory|submission validation|scientific validation|quality failure|page[- ]budget restoration|cache recovery)\b/iu.test(value)
+    || /\b(?:current artifacts|current workflow)\b[^.!?]{0,180}\b(?:gate|validation|artifact|manuscript generation)\b/iu.test(value)
+    || /^\s*Study how\b/iu.test(value)
+    || /\brun workload\b[^.!?]{0,120}\bbudget\b/iu.test(value)
+  );
+}
+
+function rewriteObjectiveMetricStatus(value: string): string {
+  const replacement = (_match: string, status: string) =>
+    status.toLowerCase() === "met" || status.toLowerCase() === "exceeded"
+      ? "The archived objective check cleared its configured screening threshold; structured result tables remain the source of numerical support."
+      : "The archived objective check did not clear its configured screening threshold; structured result tables remain the source of numerical support.";
+
+  return value
+    .replace(
+      /\bObjective metric\s+(met|not met)\s*:\s*[A-Za-z][A-Za-z0-9_.-]*\s*=\s*-?\d+(?:,\d{3})*(?:\.\d+)?\s*(?:>=|<=|>|<|=)\s*-?\d+(?:,\d{3})*(?:\.\d+)?\.?/giu,
+      replacement
+    )
+    .replace(
+      /\bThe study-level objective was\s+(met|not met)\s*:[^.!?]{0,180}\b[A-Za-z][A-Za-z0-9_.-]*\s*=\s*-?\d+(?:,\d{3})*(?:\.\d+)?\.?/giu,
+      replacement
+    )
+    .replace(
+      /\bAt the study level,[^.!?]{0,120}\b[A-Za-z][A-Za-z0-9_.-]*\s*=\s*-?\d+(?:,\d{3})*(?:\.\d+)?,\s*which\s+(exceeded|did not meet)[^.!?]{0,100}\btarget\b[^.!?]*\.?/giu,
+      replacement
+    );
+}
+
+function stripInternalMetricDumpSentences(value: string): string {
+  const metricAssignmentPattern =
+    /\b[A-Za-z][A-Za-z0-9]*(?:_[A-Za-z0-9]+)+\s*=\s*-?\d+(?:,\d{3})*(?:\.\d+)?(?:e[+-]?\d+)?/giu;
+  return cleanString(
+    value
+      .split(/(?<=[.!?])\s+/u)
+      .filter((sentence) => (sentence.match(metricAssignmentPattern) || []).length < 2)
+      .join(" ")
+  );
+}
+
+function stripInternalProvenanceLabels(value: string): string {
+  return value.replace(
+    /\s*\[([^\[\]\n]{1,120})\]/gu,
+    (match: string, rawLabel: string, offset: number, source: string) => {
+      const label = cleanString(rawLabel);
+      if (!label) {
+        return "";
+      }
+      const prefix = source.slice(0, offset).trimEnd().toLocaleLowerCase();
+      if (prefix.endsWith(label.toLocaleLowerCase())) {
+        return "";
+      }
+      const labels = label.split(/\s*;\s*/u).filter(Boolean);
+      const isInternalLabel = labels.every((item) =>
+        /^(?:(?:the\s+)?(?:configured|selected|fallback|training|evaluation)\s+)?(?:model|backbone|dataset|benchmark(?:\s+task)?|task|condition)(?:\s+[A-Za-z0-9._/-]+){0,4}$/iu.test(item)
+      );
+      return isInternalLabel ? "" : match;
+    }
+  );
 }
 
 function stripHumanFacingDraftInstructionSentences(text: string): string {
@@ -7967,7 +6973,7 @@ function isOffTopicLmBenchmarkRelatedWorkAxis(value: string): boolean {
   ) {
     return true;
   }
-  return !/\b(?:adapter|method-family|parameterization|low-rank|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|parameter_y|rank|prompting|control)\b/iu.test(
+  return !/\b(?:method-family|parameterization|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|parameter|factor|prompting|control)\b/iu.test(
     text
   );
 }
@@ -7981,8 +6987,8 @@ function completeRelatedWorkClustersForProtocol(
   }
   return uniqueStrings([
     ...clusters,
-    "adapter and parameterization design",
-    "resource-budgeted instruction tuning",
+    "method and parameterization design",
+    "resource-budgeted training",
     "benchmark evaluation and claim calibration"
   ]).slice(0, 4);
 }
@@ -8037,174 +7043,21 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
 function rewriteReaderFacingProvenancePhrases(value: string): string {
   return value
     .replace(
-      /\bThe executed and analyzed run set contained three trials rather than the full planned condition grid\.\s*Within that limited coverage,\s*the strongest reported comparison was between the baseline condition,\s*the locked baseline cell,\s*and a higher-capacity regularized candidate cell\./giu,
-      "The reported condition summaries preserve the locked baseline and evaluated condition-parameter alternatives as the comparison grid. Within that local pilot, the strongest reported comparison was between the baseline condition, the locked baseline, and a higher-capacity regularized condition, the leading observed condition."
+      /\b(?:paper-writing|manuscript-facing)\s+(?:payload|bundle|record)\b/giu,
+      "reported evidence"
     )
     .replace(
-      /\bThe evaluation spans dataset[_]to[_]be[_]selected\.\s*Models or conditions include the selected backbone and current_best_baseline\./giu,
-      "Evaluation spans Benchmark Task A and Benchmark Task B. The reported conditions are completed condition cells compared against the locked baseline condition on the selected backbone."
+      /\b(?:preserved manuscript bundle|reader-visible summary|compact (?:record|summary|bundle|release))\b/giu,
+      "reported evidence"
     )
-    .replace(
-      /\bAt the same time,\s*a full reproduction appendix for a camera-ready version should add the realized backbone identifier,\s*optimizer and scheduler settings,\s*effective batch size,\s*update count,\s*adapter target modules,\s*and complete per-condition evaluation outputs\.\s*Those missing details are the main obstacle to turning the present pilot into a stronger comparative benchmark\./giu,
-      "A broader replication should report prompt formatting, scheduler details, adapter target modules, and complete per-condition evaluation outputs. Those additions would strengthen reproduction without changing the present pilot's baseline-relative result."
-    )
-    .replace(
-      /\bOnly three trials were analyzed,\s*the remaining planned conditions were not all completed in the present run set,\s*and the payload indicated unresolved reporting-consistency concerns around the handling of uncertainty evidence\./giu,
-      "The evidence remains a single local pilot without repeated-seed replication, and the reported materials indicate unresolved consistency limits around uncertainty handling."
-    )
-    .replace(
-      /\bAmong the three analyzed trials,\s*only the strongest candidate cell exceeded the baseline;\s*the other analyzed non-baseline condition did not\./giu,
-      "Among the reported condition summaries, the leading observed condition supplies the strongest baseline-relative gain."
-    )
-    .replace(
-      /\bbecause the full grid was not completed and only a small subset of conditions was executed and analyzed\b/giu,
-      "because this is a single local pilot without repeated-seed replication"
-    )
-    .replace(
-      /\bThe planned design contained eight adapter conditions,\s*but only three trials were executed and analyzed in the reported run set\.\s*This means the paper cannot characterize the full planned design space,\s*identify a stable optimum,\s*or estimate whether the observed best condition would remain best after completing the grid\./giu,
-      "The planned design covered condition-parameter conditions, but the reported evidence remains a local single-seed pilot. This means the paper cannot identify a stable optimum or estimate whether the observed best condition would remain best under repeated seeds or a broader benchmark suite."
-    )
-    .replace(
-      /\bBecause the executed run set was small and the planned grid was not fully completed,\s*the manuscript emphasizes direct benchmark comparisons among the analyzed trials rather than any broader estimate of stable variance across seeds or conditions\./giu,
-      "Because the evidence comes from a local pilot without repeated-seed replication, the manuscript emphasizes direct benchmark comparisons within the reported condition summaries rather than any broader estimate of stable variance across seeds or conditions."
-    )
-    .replace(
-      /\bAccordingly,\s*the study reports only benchmark-backed baseline-relative comparisons for completed analyzed trials and treats all other planned conditions as outside the evidential scope of the present manuscript\./giu,
-      "Accordingly, the study reports only benchmark-backed baseline-relative comparisons and treats stronger cross-seed or cross-model claims as outside the evidential scope of the present manuscript."
-    )
-    .replace(
-      /\bconfidence remains moderate because only three trials were executed and analyzed,\s*the full factorial grid was not completed,\s*and reporting artifacts flagged unresolved consistency issues around uncertainty handling\./giu,
-      "confidence remains moderate because the evidence comes from a local single-seed pilot and reporting artifacts flagged unresolved consistency issues around uncertainty handling."
-    )
-    .replace(/\bcomplete the factorial sweep,\s*add repeated seeds,/giu, "repeat the condition grid across seeds,")
-    .replace(/\bthe incomplete grid,\s*limited task set,\s*single-seed design,/giu, "the limited task set, single-seed design,")
-    .replace(
-      /\bThe table is used as the numeric anchor for the reported comparison;\s*no separate figure is needed when it would only restate the same values\./giu,
-      "Table 1 is the numeric anchor for the reported condition means; a separate task-delta figure is useful only when it adds information that is not already visible in the table."
-    )
-    .replace(
-      /\bAt the same time,\s*the reported result summary exposes only limited condition-level detail beyond the leading comparison,\s*which means the full shape of the condition-parameter interaction cannot be reconstructed from the summarized record alone\.\s*The discussion that follows is therefore exploratory and limited to the leading cell,\s*its task asymmetry,\s*and the operational behavior of the sweep\./giu,
-      "Table 1 preserves the condition mean accuracies. The discussion that follows is therefore exploratory and limited to the leading cell, its task asymmetry, and the operational behavior of the sweep."
-    )
-    .replace(
-      /\bBecause the summarized record does not resolve the full condition-parameter surface,\s*the discussion can only interpret the leading cell,\s*its task split,\s*and its low operational cost\./giu,
-      "Because Table 1 reports the condition-mean grid without repeated-seed interaction tests, the discussion interprets the leading cell, its task split, and its low operational cost."
-    )
-    .replace(
-      /\bThe paper therefore reports a dense but cautious empirical narrative grounded in the available artifacts\.\s*Brief execution-coverage and supplementary-metric summaries are kept secondary,\s*and the main text carries the central interpretation only where execution coverage is visible in the presented evidence\./giu,
-      "The paper therefore keeps execution-coverage and supplementary metrics secondary, while the main text interprets only the baseline-relative comparison and task split visible in the presented table and figure."
-    )
-    .replace(
-      /\bsupplementary checks referenced in the report did not reproduce the gain\b/giu,
-      "the reported uncertainty checks remained too broad to establish the gain as settled"
-    )
-    .replace(
-      /\bThe summary also notes that supplementary checks did not reproduce the improvement,\s*which further argues for treating the observed advantage as provisional rather than settled\./giu,
-      "The reported uncertainty checks remain broad, which further argues for treating the observed advantage as provisional rather than settled."
-    )
-    .replace(
-      /\bFor a small language-model preflight,\s*the strongest defensible use of the result is triage:\s*it nominates a configuration worth retesting under larger data or broader tasks,\s*but it does not establish a general adapter rule\./giu,
-      ""
-    )
-    .replace(
-      /\bFor a small language-model preflight,\s*the strongest defensible use of the result is triage:\s*it can identify a configuration worth carrying into a larger model or broader benchmark suite,\s*but it cannot establish a general adapter law\./giu,
-      ""
-    )
-    .replace(
-      /\bConsistent with prior compute-constrained adapter work and with the generalizability limits already noted in nearby resource-constrained studies,\s*/giu,
-      "Given the present run's generalizability limits, "
-    )
-    .replace(
-      /\bSeed coverage is part of the evidence contract\.\s*The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run\.\s*The manuscript does not collapse this structure into a single best seed,\s*and it keeps the baseline row visible so that later readers can audit the comparison unit\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
-    )
-    .replace(
-      /\bCondition coverage is part of the evidence contract\.\s*The reported pilot keeps the completed completed condition cells and locked baseline visible so that later readers can audit the comparison unit,\s*while treating stronger stability claims as future work\./giu,
-      "The reported pilot keeps the completed completed condition cells and locked baseline visible as the comparison unit, while treating stronger stability claims as future work."
-    )
-    .replace(
-      /\bHidden failures would invalidate this ceiling,\s*but the run accounting used here reports scheduled and executed trials explicitly\./giu,
-      "The run accounting used here reports scheduled and executed trials explicitly."
-    )
-    .replace(/\bThe released materials preserve condition-level comparisons and keep the baseline row visible so that readers can inspect the comparison unit,\s*but unresolved metadata inconsistencies mean the release should be treated as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package\./giu, "The released materials preserve condition-level comparisons and keep the baseline row visible for inspection; the supplement is therefore best read as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package.")
-    .replace(/\bThe released materials preserve condition-level comparisons and keep the baseline row visible so that readers can inspect the comparison unit,\s*but unresolved metadata inconsistencies mean the release should be treated as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package\./giu, "The released materials preserve condition-level comparisons and keep the baseline row visible for inspection; the supplement is therefore best read as a reproducibility trace for a local preflight rather than as a fully sufficient standalone replication package.")
-    .replace(/\bunresolved metadata inconsistencies\b/giu, "metadata limitations")
-    .replace(/\bfuture replication should reuse the same audit pattern\b/giu, "future replication should preserve the same reporting pattern")
-    .replace(/\bclaim ceiling audit\b/giu, "claim ceiling notes")
-    .replace(
-      /\bThis repeated-seed preflight provides conservative evidence that higher-rank adapter with moderate parameter_y can be competitive under a strict local instruction-tuning budget\./giu,
-      "This condition-grid preflight provides conservative evidence that the best observed higher-rank adapter cell is worth testing in a larger follow-up under the same baseline discipline."
-    )
-    .replace(/\bIn the executable run metadata and released study summary,\s*([^.,]+?)\s+is identified as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
-    .replace(/\bThe executable run metadata identifies\s+([^.,]+?)\s+as the trained backbone/giu, "The reported study uses $1 as the trained backbone")
-    .replace(/\bThe emphasis on benchmark accuracy rather than judge-based preference scoring is also compatible with prior warnings that chatbot evaluation can be noisy and order sensitive\./giu, "The emphasis on benchmark accuracy rather than judge-based preference scoring avoids introducing a separate evaluator-noise variable into this small benchmark.")
-    .replace(/\bThis narrowing follows the same resource-conscious logic emphasized in prior method-family work, where fixed memory and runtime budgets make selective comparison preferable to shallow coverage of every configuration\./giu, "This narrowing treats fixed memory and runtime budgets as the governing design constraint, making selective comparison preferable to shallow coverage of every configuration.")
-    .replace(/\bBecause several of these latter sources are available only through partial extraction in the present evidence base, they are used here for framing rather than detailed quantitative comparison\./giu, "Because those strands are not direct condition-matched baselines, they are used here for framing rather than detailed quantitative comparison.")
-    .replace(/\bThe benchmark also contributes methodologically\./giu, "The benchmark also illustrates a scoped reporting protocol for this setting.")
-    .replace(/\bTo isolate condition parameters as much as the budget allowed,\s*the protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\./giu, "To isolate condition parameters as much as the budget allowed, the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget; the preserved artifacts do not independently verify identical consumed token counts for every cell.")
-    .replace(/\bthe protocol held the optimizer,\s*learning-rate schedule,\s*adapter target modules,\s*effective batch size,\s*token budget,\s*and capped training set constant across cells\b/giu, "the protocol fixed the optimizer, learning-rate schedule, adapter target modules, effective batch size, and capped data budget, while treating consumed token counts as incompletely logged")
-    .replace(/\bThe main outcome is therefore twofold:\s*a limited but encouraging empirical signal for high-rank moderate-parameter_y tuning in this setting,\s*and a practical benchmark template for later larger-scale experiments\./giu, "The main outcome is therefore a limited but encouraging empirical signal for high-rank moderate-parameter_y tuning in this setting, plus a scoped protocol illustration for a larger follow-up.")
-    .replace(/\bpractical benchmark template for later larger-scale experiments\b/giu, "scoped protocol illustration for a larger follow-up")
-    .replace(/\brepeated-seed benchmark template for later larger-scale experiments\b/giu, "repeated-seed protocol illustration for later larger-scale experiments")
-    .replace(/\bthe strongest exposed cell-level comparison in the released comparison table and statistical summary is\b/giu, "the strongest exposed cell-level comparison is")
-    .replace(/\bthe compact table reports\b/giu, "this condition reports")
-    .replace(/\bthe compact metric table reports\b/giu, "the reported metric table shows")
-    .replace(/\bcompact run summary\b/giu, "run summary")
-    .replace(/\bcompact task-level statistics\b/giu, "reported task-level statistics")
-    .replace(/\bcompact manuscript payload\b/giu, "available manuscript record")
-    .replace(/\bcompact artifacts available for manuscript writing\b/giu, "available run summary")
-    .replace(/\bcompact writing payload(?: exposed here)?\b/giu, "available reporting materials")
-    .replace(/\bcompact writing materials\b/giu, "available reporting materials")
-    .replace(/\bcompact executed summary available for writing\b/giu, "reported execution summary")
-    .replace(/\bnot exposed in the writing payload\b/giu, "not available in the reported summary")
-    .replace(/\bpaper-writing payload exposes only one explicit condition-to-baseline comparison and a set of per-condition confidence intervals, not the full numeric table for every cell\b/giu, "reported evidence gives the strongest condition-to-baseline comparison and interval summaries, while the visible table preserves the condition-level reporting unit")
-    .replace(/\bthe full numeric table for all (?:eight\s+[a-z-]+|condition-parameter) conditions is not completely exposed in the manuscript source\./giu, "Table 1 exposes the condition means, while complete per-cell uncertainty and auxiliary metric tables remain outside the reader-visible summary.")
-    .replace(/\bthe present payload cannot establish\b/giu, "the present evidence cannot establish")
-    .replace(/\bThe payload also contains\b/giu, "The reported materials also contain")
+    .replace(/\b(?:the present payload|the payload)\b/giu, "the reported evidence")
+    .replace(/\bnot exposed in the writing payload\b/giu, "not available in the reported evidence")
+    .replace(/\bthe present payload cannot establish\b/giu, "the reported evidence cannot establish")
+    .replace(/\bThe payload also contains\b/giu, "The reported evidence also contains")
     .replace(/\breader-visible audit-?log sentence\b/giu, "reader-facing transition sentence")
     .replace(/\binternal audit\/log sentence\b/giu, "reader-facing transition sentence")
     .replace(/\baudit-?log sentence\b/giu, "transition sentence")
-    .replace(/\bpreserved manuscript bundle\b/giu, "reported run records")
-    .replace(/\bmanuscript-facing bundle\b/giu, "reported evidence")
-    .replace(/\bavailable manuscript record\b/giu, "reported evidence")
-    .replace(/\bcompact report\b/giu, "reported result summary")
-    .replace(/\bcompact summary\b/giu, "reported summary")
-    .replace(/\bcompact bundle\b/giu, "available report")
-    .replace(/\bthe reported CI-related summary value for this cell was\b/giu, "the reported 95% confidence-interval width for this cell was")
-    .replace(/\breported CI-related summary value\b/giu, "reported 95% confidence-interval width")
-    .replace(/\bthe compact results summary does not expose condition-level runtime or memory aggregates\b/giu, "the available records do not support condition-level runtime or memory efficiency rankings")
-    .replace(/\bcompact results summary\b/giu, "available records")
-    .replace(/\bcompact artifact record\b/giu, "preserved run record")
-    .replace(/\brather than inferring finer-grained per-task or compute trade-offs from tables that are not shown\b/giu, "without extending the claim to finer-grained per-task or compute trade-offs that the main text does not report")
-    .replace(/\btables that are not shown\b/giu, "evidence not reported in the main text")
-    .replace(/\babridged tables\b/giu, "main-text tables")
-    .replace(/\bpreserved supplemental-JSON parsing error\b/giu, "preserved supplemental reporting inconsistency")
-    .replace(/\bsupplemental-JSON parsing error\b/giu, "supplemental reporting inconsistency")
-    .replace(/\bmanuscript-process metadata\b/giu, "supplementary reporting limitation")
-    .replace(/\bmanuscript-process phrasing\b/giu, "supplementary reporting phrasing")
-    .replace(/\brepeated-seed design is therefore used as a screening instrument\b/giu, "reported interval summaries are therefore used as a screening instrument")
-    .replace(/\brepeated-seed local benchmark\b/giu, "bounded local condition-grid pilot")
-    .replace(/\brepeated-seed condition-parameter screen\b/giu, "condition-grid pilot")
-    .replace(/\blocal repeated-seed preflight\b/giu, "local condition-grid preflight")
-    .replace(/\brepeated-seed preflight\b/giu, "condition-grid preflight")
-    .replace(/\bThat reading is consistent with prior method-family work such as quantized adapter and neighboring low-budget adaptation studies\b/giu, "That reading is consistent with prior method-family and neighboring low-budget adaptation studies")
-    .replace(/\bquantized adapter-scale efficiency work and broader benchmark papers such as benchmark-suite studies both suggest\b/giu, "Efficiency-oriented method-family work and broader benchmark papers both suggest")
-    .replace(/\bthe released comparison table and statistical summary\b/giu, "the condition-level comparison")
-    .replace(/\bthe released study summary\b/giu, "the study summary")
-    .replace(/\bIn the released summary,\s*/giu, "In the reported results, ")
-    .replace(/\bWithin the released summary of this fixed-budget local benchmark\b/giu, "Within the reported results for this fixed-budget local benchmark")
-    .replace(/\breleased summary\b/giu, "reported results")
-    .replace(/\bthe compact release foregrounds\b/giu, "the reported analyses foreground")
-    .replace(/\bthe compact release\b/giu, "the reported analyses")
-    .replace(/\bcompact release\b/giu, "reported analyses")
-    .replace(/\bpresent evidence base\b/giu, "available literature record")
-    .replace(/\breader-visible paper\b/giu, "main manuscript")
-    .replace(/\bminor supplementary formatting issue\b/giu, "incomplete compute instrumentation")
-    .replace(/\bexecutable run metadata\b/giu, "reported run")
-    .replace(/\bRun metadata records\s+(\d+)\s+training examples and\s+(\d+)\s+train dataset tokens/giu, "The inspected seed-level record reports $1 training examples and a training-token count of $2")
-    .replace(/\bthe inspected seed-level run used\s+(\d+)\s+training examples and\s+(\d+)\s+train dataset tokens\s+for the inspected seed-level record\b/giu, "The inspected seed-level record reports $1 training examples and a training-token count of $2")
-    .replace(/\bthe the reported run separates the consumed seed-level training count separately\b/giu, "the preserved metadata records the consumed seed-level training count separately")
-    .replace(/\brun-owned metadata exposes\b/giu, "preserved metadata records")
+    .replace(/\b(?:executable|run-owned) run metadata\b/giu, "reported run metadata")
     .replace(/\brun metadata\b/giu, "reported run details");
 }
 
@@ -8868,7 +7721,7 @@ function buildSectionParagraphCandidates(
             ? [
                 "This positioning is intentionally narrower than a broad novelty claim: it clarifies where the current study overlaps with prior baselines and where evidence remains thin.",
                 context.protocol_kind === "lm_benchmark"
-                  ? "For this manuscript, the cited method-family literature supplies framing axes rather than direct numerical baselines. The condition-matched comparator remains the locked baseline inside the executed run, while prior work defines the memory-efficiency, benchmark-design, and adapter-mechanism questions that make a condition-parameter screen scientifically interpretable."
+                  ? "For this manuscript, the cited method-family literature supplies framing axes rather than direct numerical baselines. The condition-matched comparator remains the locked baseline inside the executed run, while prior work defines the resource, benchmark-design, and mechanism questions that make a condition-parameter screen scientifically interpretable."
                   : "For this manuscript, the cited literature supplies positioning anchors rather than direct condition-matched baselines. The condition-matched comparator remains the executed baseline inside the run, while prior work defines the methodological and evaluation questions that make the scoped experiment scientifically interpretable.",
                 context.protocol_kind === "lm_benchmark"
                   ? "This separation keeps the contribution modest but clearer. The paper can argue that a local condition-grid preflight is a useful evidence filter for tuning decisions, while avoiding claims that would require a broader model suite, a different task mix, or direct reproduction of the cited methods."
@@ -8970,9 +7823,6 @@ function buildSectionParagraphCandidates(
             context.results.memory_notes[0] || "",
             expanded && context.results.effect_notes[0] ? context.results.effect_notes[0] : ""
           ],
-          ...(expanded
-            ? buildConditionResultNarrativeParagraphs(context).map((paragraph) => [paragraph])
-            : []),
           ...(expanded && expansionPass >= 2
             ? [
                 [
@@ -9010,7 +7860,7 @@ function buildSectionParagraphCandidates(
                   "The table and figure are therefore used as complementary checks: the table anchors the numeric values, while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows."
                 ],
                 [
-                  "The result is also reported with an explicit non-result: the present artifacts do not justify a broad claim about all ranks, all parameter_y rates, or all downstream tasks.",
+                  "The result is also reported with an explicit non-result: the present artifacts do not justify a broad claim about all factor values or downstream tasks.",
                   "That negative boundary is part of the contribution because it prevents an empirical preflight from being mistaken for a completed scaling study."
                 ]
               ]
@@ -9034,9 +7884,7 @@ function buildSectionParagraphCandidates(
           ],
           expanded && expansionPass >= 2
             ? [
-                context.protocol_kind === "lm_benchmark"
-                  ? "For a small language-model preflight, the strongest defensible use of the result is triage: it can identify a configuration worth carrying into a larger model or broader benchmark suite, but it cannot establish a general adapter law."
-                  : "For a bounded experiment, the strongest defensible use of the result is triage: it can identify a configuration worth carrying into a larger run, but it cannot establish a general method law.",
+                "For a bounded experiment, the strongest defensible use of the result is triage: it can identify a configuration worth carrying into a larger run, but it cannot establish a general method law.",
                 context.results.effect_notes[0] || ""
               ]
             : [],
@@ -9646,9 +8494,9 @@ function collectModelNames(
     asString(metricsModelSelection.model_id) || "",
     ...asStringArray(protocol.models),
     ...asStringArray(selectedDesign.baselines),
-    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /llm|language model|backbone|base model|adapter/iu.test(item)),
-    ...asStringArray(selectedDesign.baselines).filter((item) => /llm|language model|backbone|base model|adapter/iu.test(item)),
-    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|llm|adapter/iu.test(item)),
+    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /llm|language model|backbone|base model/iu.test(item)),
+    ...asStringArray(selectedDesign.baselines).filter((item) => /llm|language model|backbone|base model/iu.test(item)),
+    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|llm/iu.test(item)),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(asRecord(item.workflows).nested).models || {})),
     ...datasetSummaries.flatMap((item) => Object.keys(asRecord(item.models)))
   ]).filter(Boolean).slice(0, 8);
@@ -9697,17 +8545,30 @@ function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestRe
 function collectSampleSizeHints(
   parsedPlan: Record<string, unknown>,
   latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact
+  resultAnalysis?: ResultAnalysisArtifact,
+  protocolKind?: ExperimentProtocolKind
 ): string[] {
   const includeLmEvaluationSamples =
-    inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis) === "lm_benchmark";
+    (protocolKind || inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis)) === "lm_benchmark";
   return uniqueStrings([
     ...collectKeywordNotes(parsedPlan, ["samples", "instances", "rows"]),
     ...collectNumbersAsNotes(latestResults, ["n_samples", "samples", "row_count", "num_train_samples"]),
     ...collectNumbersAsNotes(resultAnalysis, ["sample_size", "total_count", "num_train_samples", "row_count"]),
+    ...collectResultAnalysisSampleNotes(resultAnalysis),
     ...collectExecutedTrainingSampleNotes(latestResults),
     ...(includeLmEvaluationSamples ? collectLmEvaluationSampleNotes(latestResults, resultAnalysis) : [])
   ]).slice(0, 6);
+}
+
+function collectResultAnalysisSampleNotes(resultAnalysis?: ResultAnalysisArtifact): string[] {
+  const metrics = asRecord(resultAnalysis?.metrics);
+  const runConfig = asRecord(metrics.run_config);
+  const data = asRecord(metrics.data);
+  const train = asRecord(data.train);
+  const count = asNumber(train.count) ?? asNumber(runConfig.train_samples);
+  return typeof count === "number" && count > 0
+    ? [`Run metadata records ${formatNumber(count)} training examples for the inspected analysis record.`]
+    : [];
 }
 
 function collectLmEvaluationSampleNotes(
@@ -9838,12 +8699,33 @@ function collectHyperparameterNotes(
   const metrics = asRecord(resultAnalysis?.metrics);
   return uniqueStrings([
     ...collectExecutedTrainingHyperparameterNotes(latestResults),
+    ...collectResultAnalysisTrainingScaleNotes(resultAnalysis),
     ...collectRunConfigTrainingHyperparameterNotes(asRecord(latestResults.run_config), asRecord(latestResults.data)),
     ...collectRunConfigTrainingHyperparameterNotes(asRecord(metrics.run_config), asRecord(metrics.data)),
     ...asStringArray(selectedDesign.resource_notes).filter((item) => /grid|search|hyperparameter|sweep|tuning/iu.test(item)),
     ...collectKeywordNotes(parsedPlan, ["hyperparameter", "grid search", "random search", "bayesian search", "tuning"]),
     ...collectKeywordNotes(latestResults, ["hyperparameter", "grid", "search space"])
   ]).slice(0, 6);
+}
+
+function collectResultAnalysisTrainingScaleNotes(resultAnalysis?: ResultAnalysisArtifact): string[] {
+  const rows = resultAnalysis?.metric_table || [];
+  const trainingExampleCounts = uniqueNumbers(
+    rows
+      .filter((row) => /(?:^|[._])(?:num_train_samples|train_sample_count|training_example_count)$/iu.test(row.key))
+      .map((row) => row.value)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  );
+  const trainingTokenCounts = uniqueNumbers(
+    rows
+      .filter((row) => /(?:^|[._])(?:train_dataset_token_count|training_token_count)$/iu.test(row.key))
+      .map((row) => row.value)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+  );
+  return [
+    ...trainingExampleCounts.slice(0, 2).map((value) => `The recorded training-example count was ${formatNumber(value)}.`),
+    ...trainingTokenCounts.slice(0, 2).map((value) => `The recorded training-token count was ${formatNumber(value)}.`)
+  ];
 }
 
 function collectRunConfigTrainingHyperparameterNotes(
@@ -9896,7 +8778,7 @@ function collectExecutedTrainingHyperparameterNotes(latestResults: Record<string
   const notes: string[] = [];
   const targetModules = asStringArray(trainMetadata.selected_target_modules).slice(0, 8);
   if (targetModules.length > 0) {
-    notes.push(`adapter target modules were ${joinHumanList(targetModules)}.`);
+    notes.push(`Target modules were ${joinHumanList(targetModules)}.`);
   }
 
   const fixedSettings: string[] = [];
@@ -10195,12 +9077,6 @@ function parseRegisteredBaselineParametersForConditionSummaries(
 ): { x?: number; y?: number } | undefined {
   const texts = collectRegisteredBaselineTextsForConditionSummaries(resultAnalysis);
   for (const text of texts) {
-    const rankDropout = parseRankDropoutParametersForConditionSummaries(text);
-    if (rankDropout) {
-      return rankDropout;
-    }
-  }
-  for (const text of texts) {
     const generic = parseGenericConditionParameters(text);
     if (generic) {
       return generic;
@@ -10243,20 +9119,6 @@ function collectRegisteredBaselineTextsForConditionSummaries(
   visit(asRecord(resultAnalysis?.metrics).plan_context);
   visit(resultAnalysis?.experiment_portfolio);
   return uniqueStrings(texts);
-}
-
-function parseRankDropoutParametersForConditionSummaries(text: string): { x?: number; y?: number } | undefined {
-  const cleaned = cleanString(text);
-  const match = cleaned.match(/\brank\s*=?\s*([0-9]+(?:\.[0-9]+)?)\s*(?:\/|,|;|\s+and\s+|\s+)\s*dropout\s*=?\s*([0-9]+(?:\.[0-9]+)?)/iu);
-  if (!match) {
-    return undefined;
-  }
-  const x = Number(match[1]);
-  const y = Number(match[2]);
-  if (typeof x !== "number" && typeof y !== "number") {
-    return undefined;
-  }
-  return { ...(typeof x === "number" ? { x } : {}), ...(typeof y === "number" ? { y } : {}) };
 }
 
 function parametersMatchForConditionSummaries(

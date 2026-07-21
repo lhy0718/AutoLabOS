@@ -1,6 +1,14 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  constants as fsConstants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,11 +17,26 @@ const repoRoot = resolve(scriptDir, "..");
 const validationRoot = process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT
   ? resolve(process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT)
   : resolve(repoRoot, "..", ".autolabos-validation");
-const workspaceRoot = resolve(process.env.AUTOLABOS_P6_WORKSPACE || join(validationRoot, "p6-paper-ready-live"));
-const outDir = resolve(process.env.AUTOLABOS_P6_PREFLIGHT_OUT || join(repoRoot, "outputs", "p6-preflight"));
-const briefSource = join(repoRoot, "docs", "status", "p6-paper-ready-validation-brief.md");
-const briefRelativePath = join("briefs", "p6-paper-ready-validation-brief.md");
+const workspaceRoot = resolve(process.env.AUTOLABOS_VALIDATION_WORKSPACE || join(validationRoot, "live-validation"));
+const outDir = resolve(process.env.AUTOLABOS_VALIDATION_PREFLIGHT_OUT || join(repoRoot, "outputs", "live-validation-preflight"));
+const briefSourceValue = String(process.env.AUTOLABOS_VALIDATION_BRIEF_SOURCE || "").trim();
+const briefSource = briefSourceValue ? resolve(repoRoot, briefSourceValue) : undefined;
+const briefRelativePath = process.env.AUTOLABOS_VALIDATION_BRIEF || join("briefs", "live-validation-brief.md");
 const briefTarget = join(workspaceRoot, briefRelativePath);
+const preflightProfile = String(
+  process.env.AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE || "generic"
+).trim().toLowerCase();
+if (!["generic", "ml-cuda-acl"].includes(preflightProfile)) {
+  throw new Error(
+    `Unsupported AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE=${JSON.stringify(preflightProfile)}. ` +
+    "Use generic or ml-cuda-acl."
+  );
+}
+const runMlCudaAclChecks = preflightProfile === "ml-cuda-acl";
+const aclTemplatePath = process.env.AUTOLABOS_VALIDATION_ACL_TEMPLATE
+  ? resolve(repoRoot, process.env.AUTOLABOS_VALIDATION_ACL_TEMPLATE)
+  : undefined;
+let briefPreparationMode = "unresolved";
 
 function csvEnv(name, fallback = []) {
   const raw = process.env[name] || "";
@@ -21,19 +44,19 @@ function csvEnv(name, fallback = []) {
   return values.length > 0 ? values : fallback;
 }
 
-const requiredPythonModules = csvEnv("AUTOLABOS_P6_REQUIRED_PYTHON_MODULES", [
+const requiredPythonModules = csvEnv("AUTOLABOS_VALIDATION_REQUIRED_PYTHON_MODULES", [
   "torch",
   "transformers",
   "datasets",
   "accelerate"
 ]);
-const optionalPythonModules = csvEnv("AUTOLABOS_P6_OPTIONAL_PYTHON_MODULES", ["lm_eval"]);
+const optionalPythonModules = csvEnv("AUTOLABOS_VALIDATION_OPTIONAL_PYTHON_MODULES", ["lm_eval"]);
 const hfCacheRoot = process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface");
-const codexModel = process.env.AUTOLABOS_P6_CODEX_MODEL || "gpt-5.5";
-const openAiModel = process.env.AUTOLABOS_P6_OPENAI_MODEL || codexModel;
-const modelCacheCandidates = csvEnv("AUTOLABOS_P6_MODEL_CACHE_DIRS").map((name) => join(hfCacheRoot, "hub", name));
+const codexModel = process.env.AUTOLABOS_VALIDATION_CODEX_MODEL || "gpt-5.5";
+const openAiModel = process.env.AUTOLABOS_VALIDATION_OPENAI_MODEL || codexModel;
+const modelCacheCandidates = csvEnv("AUTOLABOS_VALIDATION_MODEL_CACHE_DIRS").map((name) => join(hfCacheRoot, "hub", name));
 const datasetCacheRoot = join(hfCacheRoot, "datasets");
-const expectedDatasets = csvEnv("AUTOLABOS_P6_EXPECTED_DATASET_CACHE_DIRS");
+const expectedDatasets = csvEnv("AUTOLABOS_VALIDATION_EXPECTED_DATASET_CACHE_DIRS");
 
 function run(command, args, options = {}) {
   try {
@@ -65,20 +88,47 @@ function existsDirectory(path) {
 function ensureWorkspace() {
   mkdirSync(join(workspaceRoot, ".autolabos", "runs"), { recursive: true });
   mkdirSync(join(workspaceRoot, ".autolabos", "logs"), { recursive: true });
-  mkdirSync(join(workspaceRoot, "briefs"), { recursive: true });
   mkdirSync(outDir, { recursive: true });
+
+  if (existsSync(briefTarget)) {
+    if (!statSync(briefTarget).isFile() || readFileSync(briefTarget, "utf8").trim() === "") {
+      throw new Error("Existing governed brief target is not a readable non-empty file: " + briefTarget);
+    }
+    if (briefSource) {
+      if (!existsSync(briefSource)) {
+        throw new Error("Missing explicit live-validation brief source: " + briefSource);
+      }
+      if (!readFileSync(briefSource).equals(readFileSync(briefTarget))) {
+        throw new Error(
+          "Refusing to overwrite existing governed brief target: " + briefTarget + ". " +
+          "Omit AUTOLABOS_VALIDATION_BRIEF_SOURCE to validate the existing target, or choose a new target path."
+        );
+      }
+    }
+    briefPreparationMode = "existing_target_validated";
+  } else {
+    if (!briefSource) {
+      throw new Error(
+        "No governed brief exists at " + briefTarget + ". " +
+        "Set AUTOLABOS_VALIDATION_BRIEF_SOURCE to an explicit governed brief before running preflight."
+      );
+    }
+    if (!existsSync(briefSource)) {
+      throw new Error("Missing explicit live-validation brief source: " + briefSource);
+    }
+    mkdirSync(dirname(briefTarget), { recursive: true });
+    copyFileSync(briefSource, briefTarget, fsConstants.COPYFILE_EXCL);
+    briefPreparationMode = "explicit_source_copied";
+  }
+
   if (!existsSync(join(workspaceRoot, "ISSUES.md"))) {
     writeFileSync(join(workspaceRoot, "ISSUES.md"), "## Active issues\n\nnone\n", "utf8");
   }
-  if (!existsSync(briefSource)) {
-    throw new Error(`Missing P6 brief source: ${briefSource}`);
-  }
-  copyFileSync(briefSource, briefTarget);
   writeFileSync(
     join(workspaceRoot, ".autolabos", "config.yaml"),
     [
       "version: 1",
-      "project_name: p6-paper-ready-validation",
+      "project_name: live-validation",
       "providers:",
       "  llm_mode: codex_chatgpt_only",
       "  codex:",
@@ -104,11 +154,11 @@ function ensureWorkspace() {
       "  max_results: 80",
       "  per_second_limit: 1",
       "research:",
-      `  default_topic: ${process.env.AUTOLABOS_P6_DEFAULT_TOPIC || "bounded condition-sweep validation"}`,
+      `  default_topic: ${process.env.AUTOLABOS_VALIDATION_DEFAULT_TOPIC || "bounded condition-sweep validation"}`,
       "  default_constraints:",
       "    - fixed execution budget",
       "    - explicit baseline and comparator result table",
-      `  default_objective_metric: ${process.env.AUTOLABOS_P6_DEFAULT_OBJECTIVE_METRIC || "primary metric delta versus baseline"}`,
+      `  default_objective_metric: ${process.env.AUTOLABOS_VALIDATION_DEFAULT_OBJECTIVE_METRIC || "primary metric delta versus baseline"}`,
       "workflow:",
       "  mode: agent_approval",
       "  wizard_enabled: true",
@@ -135,6 +185,9 @@ function ensureWorkspace() {
 }
 
 function pythonModuleReport() {
+  if (!runMlCudaAclChecks) {
+    return { ok: true, skipped: true, reason: "not selected by generic preflight profile" };
+  }
   const code = `
 import importlib.util, json
 mods = ${JSON.stringify([...requiredPythonModules, ...optionalPythonModules])}
@@ -204,13 +257,20 @@ function buildChecks({ pythonReport, doctor }) {
     npm: run("npm", ["--version"]),
     python3: run("python3", ["--version"]),
     pip3: run("pip3", ["--version"]),
-    nvidiaSmi: run("nvidia-smi", ["--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"]),
     expect: run("expect", ["-v"]),
     disk: run("df", ["-h", workspaceRoot]),
     memory: run("free", ["-h"])
   };
-  const requiredModulesOk = requiredPythonModules.every((name) => pythonReport[name] === true);
-  const cudaOk = pythonReport.torch_cuda_available === true && Number(pythonReport.torch_cuda_device_count || 0) >= 1;
+  if (runMlCudaAclChecks) {
+    commands.nvidiaSmi = run("nvidia-smi", [
+      "--query-gpu=name,memory.total,driver_version",
+      "--format=csv,noheader"
+    ]);
+    commands.latexmk = run("latexmk", ["--version"]);
+    commands.pdflatex = run("pdflatex", ["--version"]);
+    commands.bibtex = run("bibtex", ["--version"]);
+  }
+
   const checks = [
     {
       id: "validation_workspace_writable",
@@ -220,7 +280,7 @@ function buildChecks({ pythonReport, doctor }) {
     {
       id: "governed_brief_frozen",
       ok: existsSync(briefTarget),
-      detail: briefRelativePath
+      detail: briefRelativePath + " (" + briefPreparationMode + ")"
     },
     {
       id: "node_runtime",
@@ -228,41 +288,14 @@ function buildChecks({ pythonReport, doctor }) {
       detail: commands.node.stdout || commands.node.stderr
     },
     {
+      id: "npm_runtime",
+      ok: commands.npm.ok,
+      detail: commands.npm.stdout || commands.npm.stderr
+    },
+    {
       id: "python_runtime",
       ok: commands.python3.ok,
       detail: commands.python3.stdout || commands.python3.stderr
-    },
-    {
-      id: "required_python_modules",
-      ok: requiredModulesOk,
-      detail: requiredPythonModules.map((name) => `${name}=${pythonReport[name] === true ? "yes" : "no"}`).join(", ")
-    },
-    {
-      id: "cuda_visible",
-      ok: cudaOk,
-      detail: pythonReport.torch_cuda_names ? pythonReport.torch_cuda_names.join("; ") : pythonReport.torch_cuda_error || "unknown"
-    },
-    {
-      id: "model_cache_available",
-      ok: modelCacheCandidates.length === 0 || cachedModelDirs.length > 0,
-      detail: modelCacheCandidates.length === 0
-        ? "no model cache candidates configured"
-        : `${cachedModelDirs.length}/${modelCacheCandidates.length} configured model cache candidate(s) present`
-    },
-    {
-      id: "datasets_cached",
-      ok: expectedDatasets.length === 0 || datasetDirs.length === expectedDatasets.length,
-      detail: expectedDatasets.length === 0
-        ? "no dataset cache directories configured"
-        : `${datasetDirs.length}/${expectedDatasets.length} configured dataset cache directories present`
-    },
-    {
-      id: "evaluator_available",
-      ok: pythonReport.lm_eval === true,
-      severity: pythonReport.lm_eval === true ? "ok" : "warn",
-      detail: pythonReport.lm_eval === true
-        ? "lm_eval module available"
-        : "lm_eval is not installed; P6 must use a node-owned local evaluator or install the external harness before a paper-ready claim."
     },
     {
       id: "tty_automation_available",
@@ -275,9 +308,76 @@ function buildChecks({ pythonReport, doctor }) {
     {
       id: "doctor_engine",
       ok: doctor.available === true && doctor.status !== "fail",
-      detail: doctor.available ? `doctor status=${doctor.status}` : doctor.reason
+      detail: doctor.available ? "doctor status=" + doctor.status : doctor.reason
     }
   ];
+
+  if (runMlCudaAclChecks) {
+    const requiredModulesOk = requiredPythonModules.every((name) => pythonReport[name] === true);
+    const cudaOk =
+      pythonReport.torch_cuda_available === true &&
+      Number(pythonReport.torch_cuda_device_count || 0) >= 1;
+    const builtInAclTemplate = join(repoRoot, "dist", "core", "latex", "aclTemplate.js");
+    checks.push(
+      {
+        id: "required_python_modules",
+        ok: requiredModulesOk,
+        detail: requiredPythonModules
+          .map((name) => name + "=" + (pythonReport[name] === true ? "yes" : "no"))
+          .join(", ")
+      },
+      {
+        id: "cuda_visible",
+        ok: cudaOk,
+        detail: pythonReport.torch_cuda_names
+          ? pythonReport.torch_cuda_names.join("; ")
+          : pythonReport.torch_cuda_error || "unknown"
+      },
+      {
+        id: "nvidia_smi_available",
+        ok: commands.nvidiaSmi.ok,
+        detail: commands.nvidiaSmi.stdout || commands.nvidiaSmi.stderr
+      },
+      {
+        id: "model_cache_available",
+        ok: modelCacheCandidates.length === 0 || cachedModelDirs.length > 0,
+        detail: modelCacheCandidates.length === 0
+          ? "no model cache candidates configured"
+          : cachedModelDirs.length + "/" + modelCacheCandidates.length + " configured model cache candidate(s) present"
+      },
+      {
+        id: "datasets_cached",
+        ok: expectedDatasets.length === 0 || datasetDirs.length === expectedDatasets.length,
+        detail: expectedDatasets.length === 0
+          ? "no dataset cache directories configured"
+          : datasetDirs.length + "/" + expectedDatasets.length + " configured dataset cache directories present"
+      },
+      {
+        id: "evaluator_available",
+        ok: pythonReport.lm_eval === true,
+        severity: pythonReport.lm_eval === true ? "ok" : "warn",
+        detail: pythonReport.lm_eval === true
+          ? "lm_eval module available"
+          : "lm_eval is not installed; use a node-owned local evaluator or install the external harness before a paper-ready claim."
+      },
+      {
+        id: "acl_template_available",
+        ok: aclTemplatePath ? existsSync(aclTemplatePath) : existsSync(builtInAclTemplate),
+        detail: aclTemplatePath ? "explicit ACL template path" : "built-in ACL template runtime"
+      },
+      {
+        id: "acl_latex_engine_available",
+        ok: commands.latexmk.ok || commands.pdflatex.ok,
+        detail: commands.latexmk.stdout || commands.pdflatex.stdout ||
+          commands.pdflatex.stderr || commands.latexmk.stderr
+      },
+      {
+        id: "acl_bibliography_tool_available",
+        ok: commands.bibtex.ok,
+        detail: commands.bibtex.stdout || commands.bibtex.stderr
+      }
+    );
+  }
   return { checks, commands };
 }
 
@@ -289,20 +389,22 @@ function markdownReport(summary) {
     .filter((check) => check.ok !== true && check.severity === "warn")
     .map((check) => check.id);
   return [
-    "# P6 Preflight Report",
+    "# Live Validation Preflight Report",
     "",
     `Generated: ${summary.generatedAt}`,
     "",
     "## Verdict",
     "",
-    `- Ready for full live run: ${summary.readyForFullLiveRun ? "yes" : "no"}`,
+    `- Profile: ${summary.preflightProfile}`,
+    `- Ready for selected profile: ${summary.readyForSelectedProfile ? "yes" : "no"}`,
     `- Required blockers: ${requiredBlockers.length ? requiredBlockers.join(", ") : "none"}`,
     `- Warnings: ${warnings.length ? warnings.join(", ") : "none"}`,
     "",
     "## Workspace",
     "",
-    `- Validation workspace: <validation-workspace>/p6-paper-ready-live`,
+    `- Validation workspace: <validation-workspace>/live-validation`,
     `- Brief: ${summary.briefRelativePath}`,
+    `- Brief preparation: ${summary.briefPreparationMode}`,
     "",
     "## Checks",
     "",
@@ -315,9 +417,9 @@ function markdownReport(summary) {
     "",
     "## Next Action",
     "",
-    summary.readyForFullLiveRun
-      ? "Start the P6 live run from the validation workspace after running the TUI `/doctor` surface."
-      : "Resolve required blockers before starting the full live run. Warnings may be accepted only if the brief and audit ceiling explicitly account for them.",
+    summary.readyForSelectedProfile
+      ? "Start the live-validation run from the validation workspace after running the TUI `/doctor` surface."
+      : "Resolve required blockers for the selected profile before starting the run. Warnings may be accepted only if the brief and audit ceiling explicitly account for them.",
     ""
   ].join("\n");
 }
@@ -330,6 +432,7 @@ async function main() {
   const requiredBlockers = checks.filter((check) => check.ok !== true && check.severity !== "warn");
   const summary = {
     generatedAt: new Date().toISOString(),
+    preflightProfile,
     repoRoot,
     validationRoot,
     workspaceRoot,
@@ -337,16 +440,17 @@ async function main() {
     briefSource,
     briefRelativePath,
     briefTarget,
+    briefPreparationMode,
     pythonReport,
     commands,
     doctor,
     checks,
-    readyForFullLiveRun: requiredBlockers.length === 0
+    readyForSelectedProfile: requiredBlockers.length === 0
   };
   writeFileSync(join(outDir, "preflight-summary.json"), JSON.stringify(summary, null, 2) + "\n", "utf8");
   writeFileSync(join(outDir, "preflight-report.md"), markdownReport(summary), "utf8");
-  process.stdout.write(`P6 preflight ready=${summary.readyForFullLiveRun ? "yes" : "no"}\n`);
-  process.stdout.write(`Report: outputs/p6-preflight/preflight-report.md\n`);
+  process.stdout.write(`Validation preflight profile=${summary.preflightProfile} ready=${summary.readyForSelectedProfile ? "yes" : "no"}\n`);
+  process.stdout.write(`Report: outputs/live-validation-preflight/preflight-report.md\n`);
   if (requiredBlockers.length > 0) {
     process.stdout.write(`Blockers: ${requiredBlockers.map((check) => check.id).join(", ")}\n`);
     process.exitCode = 1;

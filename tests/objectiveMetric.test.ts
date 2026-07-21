@@ -355,13 +355,13 @@ describe("objectiveMetric", () => {
     expect(enriched.exact_match_delta_vs_baseline).toBeCloseTo(0.15, 10);
   });
 
-  it("synthesizes accuracy delta from adapter recipe result rows", () => {
+  it("synthesizes accuracy delta from candidate configuration result rows", () => {
     const enriched = synthesizeRelativeMetrics({
       comparison_mode: "baseline_first_locked",
       results: [
         { recipe: "baseline_condition", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-        { recipe: "candidate_condition_a", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
-        { recipe: "candidate_condition_b", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
+        { recipe: "candidate_condition_a", kind: "candidate", mean_zero_shot_accuracy: 0.34375 },
+        { recipe: "candidate_condition_b", kind: "candidate", mean_zero_shot_accuracy: 0.34375 }
       ]
     });
 
@@ -418,12 +418,12 @@ describe("objectiveMetric", () => {
           evaluation: { primary_mean_accuracy: 0.525 }
         },
         candidate_condition_b: {
-          type: "adapter_instruction_tuned",
+          type: "parameterized_method",
           evaluation: { primary_mean_accuracy: 0.4875 },
           train: { trainable_params: 2252800 }
         },
         candidate_condition_a: {
-          type: "adapter_instruction_tuned",
+          type: "parameterized_method",
           evaluation: { primary_mean_accuracy: 0.5125 },
           train: { trainable_params: 1126400 }
         }
@@ -456,12 +456,12 @@ describe("objectiveMetric", () => {
             evaluation: { primary_mean_accuracy: 0.525 }
           },
           candidate_condition_b: {
-            type: "adapter_instruction_tuned",
+            type: "parameterized_method",
             evaluation: { primary_mean_accuracy: 0.4875 },
             train: { trainable_params: 2252800 }
           },
           candidate_condition_a: {
-            type: "adapter_instruction_tuned",
+            type: "parameterized_method",
             evaluation: { primary_mean_accuracy: 0.5125 },
             train: { trainable_params: 1126400 }
           }
@@ -499,8 +499,8 @@ describe("objectiveMetric", () => {
             accuracy_delta_vs_baseline: -0.03125,
             evaluation: { mean_zero_shot_accuracy: 0.4765625 }
           },
-          adapter_baseline: {
-            name: "adapter_baseline",
+          configured_baseline: {
+            name: "configured_baseline",
             status: "completed",
             accuracy_delta_vs_baseline: -0.015625,
             evaluation: { mean_zero_shot_accuracy: 0.4921875 }
@@ -554,8 +554,8 @@ describe("objectiveMetric", () => {
             wall_clock_sec: 128.40490746498108,
             device_info_end: { cuda_max_memory_allocated_bytes: 9772951552 }
           },
-          adapter_baseline: {
-            name: "adapter_baseline",
+          configured_baseline: {
+            name: "configured_baseline",
             status: "completed",
             evaluation: { mean_zero_shot_accuracy: 0.4921875 },
             wall_clock_sec: 28.637099504470825,
@@ -585,7 +585,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.observedValue).toBeCloseTo(0.015625, 10);
     expect(evaluation.status).toBe("not_met");
     expect(evaluation.summary).toContain("Resource regression requirement not satisfied");
-    expect(evaluation.summary).toContain("stronger candidate vs adapter baseline");
+    expect(evaluation.summary).toContain("stronger candidate vs configured baseline");
     expect(evaluation.summary).toContain("runtime 2.86x");
     expect(evaluation.summary).toContain("memory 3.22x");
   });
@@ -624,7 +624,7 @@ describe("objectiveMetric", () => {
           },
           {
             name: "candidate_condition_a",
-            condition_type: "adapter_instruction_tuned",
+            condition_type: "parameterized_method",
             evaluation: { mean_zero_shot_accuracy: 0.3984375 }
           }
         ]
@@ -639,7 +639,7 @@ describe("objectiveMetric", () => {
     expect(evaluation.summary).toContain("not met");
   });
 
-  it("does not satisfy a delta objective with absolute baseline accuracy from adapter metrics", () => {
+  it("does not satisfy a delta objective with absolute baseline accuracy from configuration metrics", () => {
     const objective = "at least +1.0 percentage point over the named tuned baseline";
     const profile = normalizeObjectiveMetricProfile(
       {
@@ -660,8 +660,8 @@ describe("objectiveMetric", () => {
         best_vs_baseline_bootstrap_delta_ci: { delta_mean: 0, ci_low: 0, ci_high: 0 },
         results: [
           { recipe: "baseline_no_tuning", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-          { recipe: "candidate_condition_a", kind: "adapter", mean_zero_shot_accuracy: 0.34375 },
-          { recipe: "candidate_condition_b", kind: "adapter", mean_zero_shot_accuracy: 0.34375 }
+          { recipe: "candidate_condition_a", kind: "configuration", mean_zero_shot_accuracy: 0.34375 },
+          { recipe: "candidate_condition_b", kind: "configuration", mean_zero_shot_accuracy: 0.34375 }
         ]
       },
       profile,

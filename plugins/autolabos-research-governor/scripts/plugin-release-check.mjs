@@ -47,30 +47,56 @@ const publicSurfaceFiles = [
   "package.json"
 ];
 
-function chars(values) {
-  return String.fromCharCode(...values);
-}
+const posixPrivateRoots = ["home", "Users", "mnt", "tmp"]
+  .map((segment) => `${path.posix.sep}${segment}${path.posix.sep}`);
+const privateWorkspaceCompounds = [
+  ["reference", "vault"],
+  ["private", "mirror"]
+].map((segments) => segments.join("[-_ ]?"));
+const portabilityPattern = new RegExp(
+  [...posixPrivateRoots, ...privateWorkspaceCompounds].join("|"),
+  "iu"
+);
 
-const portabilityPattern = new RegExp([
-  chars([47, 104, 111, 109, 101, 47]),
-  chars([47, 85, 115, 101, 114, 115, 47]),
-  chars([47, 109, 110, 116, 47]),
-  chars([47, 116, 109, 112, 47]),
-  `${chars([114, 101, 102, 101, 114, 101, 110, 99, 101])}[-_ ]?${chars([118, 97, 117, 108, 116])}`,
-  `${chars([112, 114, 105, 118, 97, 116, 101])}[-_ ]?${chars([109, 105, 114, 114, 111, 114])}`
-].join("|"), "iu");
-
-const oneOffExperimentPattern = new RegExp([
-  chars([114, 117, 110, 95, 112, 101, 102, 116, 95, 105, 110, 115, 116, 114, 117, 99, 116, 105, 111, 110, 95, 115, 116, 117, 100, 121]),
-  `${chars([114, 97, 110, 107, 95])}[0-9]+${chars([95, 100, 114, 111, 112, 111, 117, 116])}`,
-  chars([97, 114, 99, 95, 99, 104, 97, 108, 108, 101, 110, 103, 101]),
-  chars([104, 101, 108, 108, 97, 115, 119, 97, 103]),
-  `${chars([81, 119, 101, 110, 50])}\\.5`,
-  `\\b${chars([76, 111, 82, 65])}\\b`,
-  `\\b${chars([81, 76, 111, 82, 65])}\\b`,
-  chars([82, 101, 99, 111, 118, 101, 114, 101, 100, 32, 99, 97, 99, 104, 101, 100, 32, 102, 117, 108, 108, 32, 116, 101, 120, 116]),
-  chars([99, 111, 109, 112, 97, 99, 116, 32, 80, 69, 70, 84, 32, 114, 101, 99, 105, 112, 101])
-].join("|"), "iu");
+const GENERIC_ENTRYPOINT_TOKENS = new Set([
+  "all",
+  "analysis",
+  "baseline",
+  "bounded",
+  "candidate",
+  "comparison",
+  "condition",
+  "configured",
+  "control",
+  "dynamic",
+  "experiment",
+  "failure",
+  "finalize",
+  "full",
+  "grid",
+  "local",
+  "locked",
+  "ordered",
+  "parameterized",
+  "planned",
+  "primary",
+  "public",
+  "real",
+  "safe",
+  "secondary",
+  "seed",
+  "single",
+  "study",
+  "sweep",
+  "validation",
+  "workflow"
+]);
+const EXPERIMENT_ENTRYPOINT_PATTERN =
+  /\b(?:run|execute|orchestrate)_([a-z][a-z0-9]*(?:_[a-z][a-z0-9]*)*)_(?:study|sweep|experiment)\b/gu;
+const NUMERIC_CONDITION_PATTERN =
+  /\b(?!(?:condition|score)_)[a-z][a-z0-9]*_\d+(?:_\d+)?_(?!to_)[a-z][a-z0-9]*_\d+(?:_\d+)?\b/giu;
+const ENCODED_LITERAL_PATTERN =
+  /String\.fromCharCode\(\s*\d+(?:\s*,\s*\d+){3,}\s*\)/gu;
 
 function readJson(relativePath) {
   return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8"));
@@ -112,10 +138,44 @@ function scanFiles(pattern) {
     }
     const text = fs.readFileSync(absolutePath, "utf8");
     text.split(/\n/u).forEach((line, index) => {
+      pattern.lastIndex = 0;
       if (pattern.test(line)) {
         hits.push({ relativePath, line: index + 1 });
       }
     });
+  }
+  return hits;
+}
+
+function scanExperimentSpecificContracts() {
+  const hits = [
+    ...scanFiles(NUMERIC_CONDITION_PATTERN).map((hit) => ({
+      ...hit,
+      kind: "numeric_condition_slug"
+    })),
+    ...scanFiles(ENCODED_LITERAL_PATTERN).map((hit) => ({
+      ...hit,
+      kind: "encoded_literal_from_character_codes"
+    }))
+  ];
+  for (const relativePath of publicSurfaceFiles) {
+    const absolutePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(absolutePath)) continue;
+    const source = fs.readFileSync(absolutePath, "utf8");
+    EXPERIMENT_ENTRYPOINT_PATTERN.lastIndex = 0;
+    for (const match of source.matchAll(EXPERIMENT_ENTRYPOINT_PATTERN)) {
+      const domainTokens = match[1]
+        .split("_")
+        .filter((token) => !GENERIC_ENTRYPOINT_TOKENS.has(token));
+      if (domainTokens.length === 0) continue;
+      hits.push({
+        relativePath,
+        line: source.slice(0, match.index).split(/\n/u).length,
+        kind: "experiment_specific_entrypoint",
+        identifier: match[0],
+        domainTokens
+      });
+    }
   }
   return hits;
 }
@@ -158,6 +218,11 @@ function main() {
     Array.isArray(contract?.sidecarArtifacts) && contract.sidecarArtifacts.includes("ModelReviewBundle"),
     { sidecarArtifacts: contract?.sidecarArtifacts }
   ));
+  checks.push(check(
+    "contract_lists_dependency_operational_artifact",
+    Array.isArray(contract?.operationalArtifacts) && contract.operationalArtifacts.includes("PluginDependencyReport"),
+    { operationalArtifacts: contract?.operationalArtifacts }
+  ));
 
   const dogfoodResult = runNode("plugins/autolabos-research-governor/scripts/dogfood-audit.mjs");
   const dogfood = dogfoodResult.status === 0 ? parseJsonObject(dogfoodResult.stdout) : undefined;
@@ -179,8 +244,12 @@ function main() {
   const portabilityHits = scanFiles(portabilityPattern);
   checks.push(check("plugin_public_surface_portable", portabilityHits.length === 0, { hits: portabilityHits }));
 
-  const oneOffHits = scanFiles(oneOffExperimentPattern);
-  checks.push(check("plugin_public_surface_has_no_one_off_experiment_ids", oneOffHits.length === 0, { hits: oneOffHits }));
+  const experimentContractHits = scanExperimentSpecificContracts();
+  checks.push(check(
+    "plugin_public_surface_has_no_encoded_or_experiment_specific_contracts",
+    experimentContractHits.length === 0,
+    { hits: experimentContractHits }
+  ));
 
   const failedChecks = checks.filter((item) => !item.passed);
   const report = {

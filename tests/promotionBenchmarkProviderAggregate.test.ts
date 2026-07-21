@@ -275,7 +275,7 @@ async function createProviderRuns(
             concerns: [{
               code: "manuscript_evidence_uncertain",
               severity: "warning",
-              evidence_refs: ["manuscript"]
+              evidence_refs: ["paper/main.tex"]
             }],
             repair_owners: ["review"]
           }),
@@ -317,7 +317,7 @@ async function createLocalProviderRuns(workspace: string, suitePath: string): Pr
           concerns: [{
             code: "manuscript_evidence_uncertain",
             severity: "warning",
-            evidence_refs: ["manuscript"]
+            evidence_refs: ["paper/main.tex"]
           }],
           repair_owners: ["review"]
         }),

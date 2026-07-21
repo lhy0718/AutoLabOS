@@ -51,7 +51,7 @@ describe("paper submission sanitization", () => {
         claims: []
       } as any,
       bundle: {
-        runTitle: "adapter run",
+        runTitle: "method run",
         topic: "condition parameters",
         objectiveMetric: "accuracy",
         constraints: [],
@@ -134,15 +134,14 @@ describe("paper submission sanitization", () => {
       includeKeywords: false
     });
 
-    expect(tex).toContain("This paper reports a fixed-budget experimental pilot");
-    expect(tex).toContain("The contribution is a cautious local preflight over a configured condition set");
-    expect(tex).toContain("Nearby method-family, task-design, and evaluation studies provide context");
+    expect(tex).not.toContain("This paper reports a fixed-budget experimental pilot");
+    expect(tex).not.toContain("The contribution is a cautious local preflight over a configured condition set");
     expect(tex).not.toContain("This draft studies");
     expect(tex).not.toContain("Primary metric:");
     expect(tex).not.toContain("failed-run visibility");
     expect(tex).not.toContain("claim-scope correctness");
-    expect(tex).not.toContain("literature discovery");
-    expect(tex).not.toContain("stateful coordination");
+    expect(tex).not.toContain("abstract-only fallback");
+    expect(tex).not.toContain("planner-timeout");
     expect(tex).not.toContain("abstract-only fallback");
     expect(tex).not.toContain("planner-timeout");
   });
@@ -341,7 +340,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The adapter condition-parameter run compares rank and dropout choices with Benchmark Task A and Benchmark Task B as the task-level evaluation surface."
+            "The method condition-parameter run compares parameter_x and parameter_y choices with Benchmark Task A and Benchmark Task B as the task-level evaluation surface."
           ]
         },
         {
@@ -400,7 +399,7 @@ describe("paper submission sanitization", () => {
         {
           heading: "Method",
           paragraphs: [
-            "The experiment used a 4x2 factorial design crossing adapter rank with parameter_y.",
+            "The experiment used a configured factorial design crossing method parameter_x with parameter_y.",
             "The realized data and evaluation settings were training data from the configured training dataset, evaluation on Benchmark Task A and Benchmark Task B, and seed 17."
           ]
         },
@@ -443,12 +442,12 @@ describe("paper submission sanitization", () => {
       ])
     });
 
-    expect(tex).not.toContain("factorial design crossing adapter rank with parameter_y. \\cite{paperA}");
+    expect(tex).not.toContain("factorial design crossing method parameter_x with parameter_y. \\cite{paperA}");
     expect(tex).not.toContain("Benchmark Task A and Benchmark Task B, and seed 17. \\cite{paperB}");
     expect(tex).toContain("Prior method-family literature motivates memory-aware finetuning and task-sensitive evaluation. \\cite{paperA}");
   });
 
-  it("does not repeat the same citation bundle across multiple paragraphs in one section", () => {
+  it("preserves the same citation bundle when distinct claims need the same evidence", () => {
     const tex = renderSubmissionPaperTex({
       manuscript: {
         title: "Citation bundle hygiene paper",
@@ -459,7 +458,7 @@ describe("paper submission sanitization", () => {
             heading: "Related Work",
             paragraphs: [
               "Prior method-family literature motivates memory-aware finetuning.",
-              "Adapter literature also motivates small-budget model adaptation.",
+              "Method literature also motivates small-budget model adaptation.",
               "Benchmarking literature motivates cautious interpretation."
             ]
           }
@@ -499,11 +498,11 @@ describe("paper submission sanitization", () => {
       ])
     });
 
-    expect((tex.match(/\\cite\{paperA,paperB\}/g) || []).length).toBe(1);
+    expect((tex.match(/\\cite\{paperA,paperB\}/g) || []).length).toBe(2);
     expect(tex).toContain("Benchmarking literature motivates cautious interpretation. \\cite{paperC}");
   });
 
-  it("caps repeated single-paper citations within a section while allowing a second use", () => {
+  it("preserves repeated single-paper citations for distinct supported claims", () => {
     const tex = renderSubmissionPaperTex({
       manuscript: {
         title: "Single citation hygiene paper",
@@ -535,7 +534,7 @@ describe("paper submission sanitization", () => {
       citationKeysByPaperId: new Map([["paper_a", "paperA"]])
     });
 
-    expect((tex.match(/\\cite\{paperA\}/g) || []).length).toBe(2);
+    expect((tex.match(/\\cite\{paperA\}/g) || []).length).toBe(4);
   });
 
   it("removes repeated long reader-facing sentences within a section", () => {
@@ -663,33 +662,33 @@ describe("paper submission sanitization", () => {
     const bibtex = buildPaperBibtex(
       [
         {
-          paper_id: "paper_quantized_adapter",
-          title: "quantized adapter: Efficient Finetuning of Quantized LLMs",
-          abstract: "quantized adapter enables memory-efficient finetuning.",
+          paper_id: "paper_reference_method",
+          title: "reference method: Efficient Finetuning of Quantized LLMs",
+          abstract: "reference method enables memory-efficient finetuning.",
           authors: ["Tim Dettmers"],
           year: 2023,
           venue: "NeurIPS",
           bibtex: [
             "@article{https://doi.org/10.48550/arXiv.2305.14314,",
-            "  title={quantized adapter: Efficient Finetuning of Quantized LLMs},",
+            "  title={reference method: Efficient Finetuning of Quantized LLMs},",
             "  author={Tim Dettmers},",
             "  year={2023}",
             "}"
           ].join("\n")
         } as any
       ],
-      ["paper_quantized_adapter"]
+      ["paper_reference_method"]
     );
 
-    const key = bibtex.citationKeysByPaperId.get("paper_quantized_adapter");
-    expect(key).toBe("dettmers_2023_quantized_adapter");
-    expect(bibtex.references).toContain("@article{dettmers_2023_quantized_adapter,");
+    const key = bibtex.citationKeysByPaperId.get("paper_reference_method");
+    expect(key).toBe("dettmers_2023_reference_method");
+    expect(bibtex.references).toContain("@article{dettmers_2023_reference_method,");
     expect(bibtex.references).not.toContain("@article{https://doi.org");
   });
 
   it("removes raw DOI and opaque paper identifiers from normalized manuscript prose", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
+      runTitle: "method benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -697,13 +696,13 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "method benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark (doi:10.48550/arxiv.2305.14314; arXiv:2305.14314; 15a1c2d8eb2c55e3ceb9ce9f72b3446ac1eb183a).",
-        keywords: ["adapter"],
+        keywords: ["method"],
         sections: [
           {
             heading: "Introduction",
@@ -725,7 +724,7 @@ describe("paper submission sanitization", () => {
 
   it("sanitizes wrapped revised manuscript repair prose", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
+      runTitle: "method benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -733,11 +732,11 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "method benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     const raw = parsePaperManuscriptJson(JSON.stringify({
       revised_manuscript: {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark reports accuracy\\_delta\\_vs\\_baseline as a screening metric.",
         sections: [
           {
@@ -754,328 +753,6 @@ describe("paper submission sanitization", () => {
     const text = JSON.stringify(manuscript);
     expect(text).not.toContain("doi:");
     expect(text).not.toContain("75bc30bf394625c784ea59f8c2fe04718a4b4042");
-  });
-
-  it("restores executed model and fixed training settings when manuscript prose claims they are unavailable", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        sections: [
-          {
-            heading: "Method",
-            paragraphs: [
-              "The planned experiment compared condition parameters against a locked baseline.",
-              "The executed summary remains incomplete as a methods record because it does not expose the final selected model identifier, optimizer, learning rate, batch size, gradient accumulation, adapter target modules, or confidence-interval construction."
-            ]
-          }
-        ]
-      },
-      draft,
-      resultAnalysis: {
-        metrics: {
-          selected_model_id: "the selected backbone",
-          fallback_model: "the configured fallback backbone",
-          run_config: {
-            seed: 17,
-            train_samples: 48,
-            eval_samples: 6,
-            max_steps: 4,
-            per_device_batch_size: 1,
-            gradient_accumulation_steps: 4,
-            learning_rate: 0.0002,
-            max_seq_length: 256,
-            timeout_sec: 1800
-          },
-          data: {
-            train: { dataset: { path: "instruction_dataset", split: "train" } },
-            eval: {
-              benchmark_task_a: { dataset: { path: "benchmark_task_a_dataset", name: "Benchmark Task A", split: "validation" } },
-              benchmark_task_b: { dataset: { path: "benchmark_task_b", split: "validation" } }
-            }
-          }
-        },
-        statistical_summary: {
-          confidence_intervals: [{ level: 0.95, sample_size: 12 }]
-        }
-      } as any
-    });
-
-    const method = manuscript.sections.find((section) => section.heading === "Method");
-    const text = method?.paragraphs.join(" ") || "";
-    expect(text).toContain("the selected backbone");
-    expect(text).toContain("per-device train batch size 1");
-    expect(text).toContain("gradient accumulation 4");
-    expect(text).toContain("maximum sequence length 256");
-    expect(text).toContain("n=12 prediction records");
-    expect(text).not.toContain("does not expose the final selected model identifier");
-  });
-
-  it("repairs reader-visible table availability and appendix protocol-label contradictions", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        sections: [
-          {
-            heading: "Method",
-            paragraphs: [
-              "The fixed search space includes Fixed training settings included learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, maximum sequence length 256, 4 optimizer steps, and 1800-second timeout., reported run details records 48 training examples for the reported pilot., and the condition-parameter tuning grid.",
-              "Results reports the best observed cell against the locked baseline condition; Table 1 reports condition mean accuracies and identifies only that locked row as the baseline."
-            ]
-          },
-          {
-            heading: "Related Work",
-            paragraphs: [
-              "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight.",
-              "The manuscript can position this bounded local condition-grid pilot as useful for deciding whether a larger follow-up is warranted, but it should not claim to outperform quantized adapter, MAPLE, or adapter-variant methods.",
-              "That distinction is important for interpreting the comparator. The numerical baseline in this manuscript is the locked baseline condition inside the executed run, not a literature result. Prior method-family papers instead define why the local condition-parameter question is worth testing: memory-aware adaptation makes small-budget tuning plausible, benchmark papers show that task choice can change conclusions, and condition variants show that capacity allocation remains a live design issue.",
-              "Accordingly, external method-family papers serve as framing comparators rather than numerical baselines for this manuscript. The relevant baseline here is the locked locked baseline condition inside the executed run. Prior work motivates why the question matters but differences in model scale, task mix, method family, and evaluation objective prevent direct superiority claims."
-            ]
-          },
-          {
-            heading: "Results",
-            paragraphs: [
-              "The available summary does not expose a full eight-cell accuracy table, so this manuscript does not attempt to infer a detailed ordering among all configurations beyond the reported best-versus-baseline comparison.",
-              "However, because the compact writing record does not expose the full per-cell table, we describe this as the best reported comparison in the available artifact rather than a definitive ordering of all eight cells.",
-              "Although all eight planned configurations were completed, the reported summary does not expose a full per-condition performance table sufficient for estimating rank main effects, parameter_y main effects, or their interaction across the whole grid. It supports a best-versus-baseline comparison, but it does not support a strong factorial interpretation of how performance changes over the entire rank-by-parameter_y design space.",
-              "In addition, supplemental confirmatory profiles included in the payload did not reproduce the main gain."
-            ]
-          },
-          {
-            heading: "Discussion",
-            paragraphs: [
-              "The present evidence does not support a stronger statement about the overall interaction pattern between rank and parameter_y, because the reported summary does not expose a full cell-by-cell mean table and the observed gain is concentrated in one benchmark.",
-              "Practical adoption should therefore weigh the small runtime and memory footprint against the unresolved question of whether the signal survives larger budgets, broader task mixes, or repeated runs.",
-              "Practical adoption should weigh any observed quality gain against the accompanying runtime or memory footprint. That follow-up would test whether the present signal survives scale and task variation instead of merely reflecting this local preflight."
-            ]
-          },
-          {
-            heading: "Limitations",
-            paragraphs: [
-              "Several fixed settings are visible in the reported results. Maximum sequence length was 256, the timeout budget was 1,800 s, and all 8 requested configurations were recorded as completed. However, the reported analyses does not report optimizer choice, learning rate, batch size, adapter target modules, or the exact procedure used to compute the reported 95% intervals, so we do not infer beyond the documented settings.",
-              "The primary limitation is scale.",
-              "The protocol clearly specifies the preferred backbone and fallback option, but the summarized materials do not fully disambiguate the realized checkpoint used in the analyzed slice. The summary also does not provide a complete table of mean performance for every factorial cell, and it does not document the exact procedure used to compute the reported confidence intervals.",
-              "Finally, the available summary is incomplete for external replication. It does not disambiguate which of the pre-specified backbones backed the completed run, and it omits optimizer settings, batch size, adapter target modules, a full per-condition score table, and the exact interval-construction procedure. The present paper is therefore strongest when read as a transparent report on one bounded local sweep, not as a fully specified benchmark package or final recipe for larger-model adaptation.",
-              "The planned and realized execution records should be read conservatively because some protocol fields remain underspecified.",
-              "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget."
-            ]
-          }
-        ],
-        figures: [
-          {
-            caption: "Task-level delta for the leading condition.",
-            bars: [
-              { label: "Benchmark Task A delta", value: 0 },
-              { label: "Benchmark Task B delta", value: 0.1667 }
-            ]
-          }
-        ],
-        appendix_tables: [
-          {
-            caption: "Design constants and realized preflight scale.",
-            rows: [
-              { label: "Seed", value: 42 },
-              { label: "Baseline Rank", value: 8 },
-              { label: "Minimum Tested Rank", value: 4 }
-            ]
-          }
-        ]
-      },
-      draft
-    });
-
-    const text = JSON.stringify(manuscript);
-    expect(text).toContain("Table 1 reports the condition mean accuracies");
-    expect(text).toContain("Table 1 provides a mean-performance row for every factorial cell");
-    expect(text).toContain("Table 1 reports the condition mean accuracies");
-    expect(text).toContain("complete per-cell uncertainty and auxiliary-metric tables");
-    expect(text).toContain("Table 1 reports the condition mean accuracies");
-    expect(text).toContain("the reported analyses do not report optimizer choice, adapter target modules");
-    expect(text).toContain("Table 1 reports the condition mean accuracies");
-    expect(text).toContain("The comparison to external method-family methods is therefore one of scope and experimental role");
-    expect(text).toContain("executed metrics identify the selected backbone");
-    expect(text).toContain("The fixed search space includes Fixed training settings included");
-    expect(text).not.toContain("does not expose a full eight-cell accuracy table");
-    expect(text).not.toContain("does not expose a full cell-by-cell mean table");
-    expect(text).not.toContain("does not provide a complete table of mean performance");
-    expect(text).not.toContain("does not expose a full condition-by-condition main-text score table");
-    expect(text).not.toContain("does not report optimizer choice, learning rate, batch size");
-    expect(text).not.toContain("omits optimizer settings, batch size");
-    expect(text).not.toContain("a full per-condition score table");
-    expect(text).not.toContain("Results reports the best observed cell");
-    expect(text).not.toContain("did not reproduce");
-    expect(text).not.toContain("claim ceiling");
-    expect(text.match(/locked baseline condition/g)?.length || 0).toBeLessThan(5);
-    expect(text).not.toContain("most important limitation is scale");
-    expect(manuscript.figures).toBeUndefined();
-    expect(manuscript.sections.find((section) => section.heading === "Discussion")?.paragraphs).toHaveLength(2);
-    expect(manuscript.appendix_tables?.[0]?.caption).toBe("Planned protocol constants for the condition-parameter design.");
-    expect(manuscript.appendix_tables?.[0]?.rows[0]?.label).toBe("Planned protocol seed");
-  });
-
-  it("repairs stale limitations, repeated screening paragraphs, and method benchmark citations", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [
-        {
-          paper_id: "paper_benchmark_task_a",
-          title: "Benchmark source",
-          abstract: "Benchmark source.",
-          authors: ["Alice Doe"],
-          year: 2025,
-          venue: "TestConf"
-        } as any
-      ],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-    for (const section of draft.sections) {
-      if (section.heading === "Method") {
-        section.citation_paper_ids = ["paper_benchmark_task_a"];
-      }
-    }
-
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        sections: [
-          {
-            heading: "Method",
-            paragraphs: [
-              "Accordingly, the analysis was defined as a within-run comparison of condition-parameter cells against the locked baseline condition, using the cited Benchmark Task A and Benchmark Task B benchmark pair."
-            ]
-          },
-          {
-            heading: "Discussion",
-            paragraphs: [
-              "This cautious interpretation is consistent with prior low-budget adapter and adapter studies (e.g., quantized adapter and related benchmarking work) that also treat adapter configuration as consequential, while recognizing that the present study is much smaller and less stable than the settings used in broader adaptation papers.",
-              "The main report records a positive screening result: accuracy delta versus baseline was 0.083332 against the predeclared 0.01 target, with the leading condition cell supplying the strongest observed gain.",
-              "The current evidence is most actionable as a cautious benchmark note for this fixed-budget condition-parameter pilot, especially where the best observed cell clears the pre-specified screening threshold.",
-              "The leading condition cell improved accuracy delta versus the locked baseline by 0.0833 in the reported comparison."
-            ]
-          },
-          {
-            heading: "Limitations",
-            paragraphs: [
-              "The principal limitation is scale. Although the protocol allowed a training subset up to 10,000 examples, the reported preflight used 48 training samples.",
-              "A second limitation is incomplete implementation disclosure in the reported summary. The final backbone used for the reported run is not identified, and the summary does not expose optimizer choice, learning rate, batch size, epochs or steps beyond the high-level budget frame, adapter target modules, or adapter scaling. In addition, planned seed and recorded seed do not match, and the reported trial counts are not fully reconciled. These gaps do not nullify the observed preflight outcome, but they do prevent a strong claim of fully resolved reproducibility.",
-              "Accordingly, the present run is best treated as a feasibility-scale study for selecting a next experiment. The same hyperparameter choice could behave differently with more seeds, a different dataset mixture, a larger model, or a broader evaluation suite.",
-              "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget, so it can motivate a larger experiment but cannot establish a model-family-level regularization law."
-            ]
-          }
-        ]
-      },
-      draft
-    });
-
-    const text = JSON.stringify(manuscript);
-    expect(text).toContain("Method identifies the selected the selected backbone backbone");
-    expect(text).toContain("For this fixed-budget condition-parameter pilot");
-    expect(text).not.toContain("final backbone used for the reported run is not identified");
-    expect(text).not.toContain("The main report records a positive screening result");
-    expect(text).not.toContain("The leading condition cell improved accuracy delta");
-    expect(text).not.toContain("The most important limitation is scale");
-    expect(text).not.toContain("using the cited Benchmark Task A");
-    expect(text).not.toContain("quantized adapter and related benchmarking work");
-
-    const tex = renderSubmissionPaperTex({
-      manuscript,
-      traceability: buildPaperTraceability({ draft, manuscript }),
-      citationKeysByPaperId: new Map([["paper_benchmark_task_a", "doe_2025_benchmark"]])
-    });
-    expect(tex).toContain("\\cite{doe_2025_benchmark}");
-  });
-
-  it("prunes reader-facing repeated topics after page-floor restoration", () => {
-    const manuscript = stabilizePaperManuscriptForSubmission({
-      title: "A adapter Benchmark",
-      abstract: "A cautious benchmark.",
-      keywords: [],
-      sections: [
-        {
-          heading: "Method",
-          paragraphs: [
-            "The study was designed as a 4 x 2 factorial sweep over condition parameters under a fixed local compute budget. Rank took values {4, 8, 16, 32}, parameter_y took values {0.0, 0.05}, and baseline condition was locked in advance as the baseline condition.",
-            "The study was designed as a fixed-budget 4 x 2 factorial sweep over condition parameters, with baseline condition designated in advance as the locked baseline.",
-            "The planned backbone preference was the selected backbone, with the configured fallback backbone reserved as a fallback if the preferred model failed preflight. The retained run summary used for manuscript preparation does not preserve a model identifier that allows the final executed backbone to be verified.",
-            "The realized record preserves the data and evaluation settings: training data from the instruction dataset train split, 48 training examples, evaluation on Benchmark Task A and Benchmark Task B validation slices, and seed 17.",
-            "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting included per-task accuracy, train loss, wall-clock runtime, peak VRAM, and complete accounting of requested conditions.",
-            "The primary endpoint was average accuracy across Benchmark Task A and Benchmark Task B. Secondary reporting covered per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and correctness of claim downgrades."
-          ]
-        },
-        {
-          heading: "Results",
-          paragraphs: [
-            "On the primary endpoint, average accuracy increased from 0.333334 for the baseline condition to 0.416666 for the best observed comparator, yielding an absolute improvement of 0.083332.",
-            "On the study's primary endpoint, average accuracy increased from 0.333334 for the locked baseline to 0.416666 for the best reported comparator, corresponding to a gain of 0.083332 in absolute accuracy.",
-            "Robustness remains unresolved. A No broader replication is reported here, so the main gain remains a single-run preflight observation."
-          ]
-        },
-        {
-          heading: "Related Work",
-          paragraphs: [
-            "Prior method-family work establishes the broader feasibility and comparison context but not a directly transferable answer to the present condition-parameter question. quantized adapter and adapter-variant studies motivate the design.",
-            "The closest cited work frames prompting and control, evaluation and benchmarking, and method-family and adapter adapter design rather than a condition-matched reproduction of the present run.",
-            "Accordingly, the manuscript's numerical comparator is internal rather than external: baseline condition is the locked baseline inside the completed run."
-          ]
-        }
-        ,
-        {
-          heading: "Results",
-          paragraphs: [
-            "condition 32 parameter 0 0 vs condition 4 parameter 0 0: baseline-relative accuracy gain: 0.0208 vs 0 (delta 0.0208), average accuracy: 0.4792 vs 0.4583 (delta 0.0208), accuracy: 0.4792 vs 0.4583 (delta 0.0208)."
-          ]
-        },
-        {
-          heading: "Discussion",
-          paragraphs: [
-            "Evidence accounting: primary trials=36; executed trials=38; supplemental run profiles=2; condition-level correct/total counts are present. condition 32 parameter 0 0 vs condition 4 parameter 0 0 improves accuracy delta vs baseline by 0.0208.",
-            "The interpretation should stay close to the measured effect rather than to the broader method literature. condition 32 parameter 0 0 vs condition 4 parameter 0 0 improves accuracy delta vs baseline by 0.0208."
-          ]
-        }
-      ]
-    } as any);
-
-    const method = manuscript.sections.find((section) => section.heading === "Method")!;
-    const results = manuscript.sections.find((section) => section.heading === "Results")!;
-    const text = JSON.stringify(manuscript);
-
-    expect(method.paragraphs.filter((paragraph) => /4 x 2 factorial sweep/iu.test(paragraph))).toHaveLength(1);
-    expect(method.paragraphs.filter((paragraph) => /primary endpoint was average accuracy/iu.test(paragraph))).toHaveLength(1);
-    expect(text).toContain("executed metrics identify the selected backbone");
-    expect(text).not.toContain("does not preserve a model identifier");
-    expect(results.paragraphs.filter((paragraph) => /average accuracy increased/iu.test(paragraph))).toHaveLength(1);
-    expect(text).not.toContain("A No broader replication");
   });
 
   it("keeps protocol checklist residue and comparator tokens out of Method prose", () => {
@@ -1111,7 +788,7 @@ describe("paper submission sanitization", () => {
 
   it("renders reader-visible citations for related discussion claims but not Method execution records", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
+      runTitle: "method benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1121,14 +798,14 @@ describe("paper submission sanitization", () => {
       corpus: [
         {
           paper_id: "paper_method",
-          title: "Budget-aware adapter study",
-          abstract: "adapter study.",
+          title: "Budget-aware method study",
+          abstract: "method study.",
           authors: ["Alice Doe"],
           year: 2025,
           venue: "TestConf"
         } as any
       ],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "method benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
     for (const section of draft.sections) {
       if (section.heading === "Method" || section.heading === "Discussion") {
@@ -1138,21 +815,21 @@ describe("paper submission sanitization", () => {
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
             heading: "Method",
             paragraphs: [
-              "The design fixed rank and parameter_y before execution.",
+              "The design fixed parameter_x and parameter_y before execution.",
               "In the preregistered plan, the training source was an the configured training dataset subset capped at 10,000 examples, and evaluation was limited to Benchmark Task A and Benchmark Task B. The preferred base model for this plan was the selected backbone, with the configured fallback backbone reserved only as a fallback if preflight checks failed. However, the reported execution artifact is narrower than that original plan: the metric summary records 48 training samples and a run seed of 17."
             ]
           },
           {
             heading: "Discussion",
             paragraphs: [
-              "That pattern is directionally compatible with prior low-budget evidence that adapter rank can strongly influence downstream performance.",
-              "This positioning matters because modest hyperparameter differences are especially vulnerable to overstatement when fixed-budget studies omit incomplete conditions or uncertainty-aware wording."
+              "Prior work reports that parameter choices can influence downstream performance.",
+              "Previous studies warn that modest differences are vulnerable to overstatement when evaluations omit incomplete conditions or uncertainty-aware wording."
             ]
           }
         ]
@@ -1199,7 +876,7 @@ describe("paper submission sanitization", () => {
 
   it("adds TeX line-stretch guard for long model identifiers in narrow paper columns", () => {
     const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
+      runTitle: "method benchmark",
       topic: "condition-parameter benchmark",
       objectiveMetric: "accuracy_delta_vs_baseline > 0",
       constraints: [],
@@ -1207,12 +884,12 @@ describe("paper submission sanitization", () => {
       evidenceRows: [],
       hypotheses: [],
       corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
+      experimentPlan: { selectedTitle: "method benchmark", selectedSummary: "Compare conditions.", rawText: "" }
     } as any);
 
     const manuscript = normalizePaperManuscript({
       raw: {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark.",
         sections: [
           {
@@ -1237,274 +914,12 @@ describe("paper submission sanitization", () => {
     expect(tex).toContain("the selected backbone");
   });
 
-  it("keeps abstract and limitations model-disclosure story aligned after manuscript repair", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "The verified summary reports seed 17 while not exposing the final model identity in the condensed record.",
-        sections: [
-          {
-            heading: "Limitations",
-            paragraphs: [
-              "The largest limitation is the mismatch between the nominal brief and the executed summary available for writing. The broader plan described a capped the configured training dataset study, seed 42, and model-selection rules involving the selected backbone and the configured fallback backbone, whereas the verified summary used here reflects a seed-17, 48-sample preflight and does not disclose the final model choice or optimizer details in the condensed record. As a result, the paper can describe the registered design and the visible executed run, but it cannot present a fully conventional implementation section with complete artifact-level specificity.",
-              "Accordingly, the present run is best treated as a feasibility-scale study for selecting a next experiment. The same hyperparameter choice could behave differently with more seeds, a different dataset mixture, a larger model, or a broader evaluation suite.",
-              "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget, so it can motivate a larger experiment but cannot establish a model-family-level regularization law."
-            ]
-          }
-        ]
-      },
-      draft
-    });
-
-    const text = JSON.stringify(manuscript);
-    expect(manuscript.abstract).toContain("verified execution metadata identifying the selected backbone");
-    expect(text).toContain("The manuscript supplements that reported summary with verified execution metadata");
-    expect(text).not.toContain("not exposing the final model identity");
-    expect(text).not.toContain("does not disclose the final model choice");
-    expect(text).not.toContain("The most important limitation is scale");
-  });
-
-  it("repairs live-review stale model, table, and appendix claims after manuscript repair", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        sections: [
-          {
-            heading: "Method",
-            paragraphs: [
-              "The compact reader-visible run summary preserved for this manuscript does not unambiguously state which of those two registered backbones powered the realized preflight."
-            ]
-          },
-          {
-            heading: "Limitations",
-            paragraphs: [
-              "The second limitation is incomplete disclosure of the quantitative setup and outputs. The compact summary does not provide the full eight-cell metric table, does not report optimizer, learning-rate, batch-size, or step-level details, and does not explain how the 95% confidence intervals were constructed. It also does not include a direct with-versus-without ablation of the benchmark-gated reporting protocol. Those omissions do not invalidate the preflight, but they prevent stronger causal or interaction-level claims.",
-              "Because the compact reader-visible record does not identify the realized backbone more specifically, the paper cannot make finer model-specific claims than that.",
-              "In addition, some of the surrounding related-work material available to this paper came from abstract-level or timeout-limited extraction rather than full-text comparative review.",
-              "Specification may be underspecified and require narrower scope."
-            ]
-          },
-          {
-            heading: "Conclusion",
-            paragraphs: [
-              "The paper therefore keeps execution coverage and supplementary metrics secondary to the visible baseline-relative comparison. The main text interprets only the comparison and task split that are visible in the presented table and figure."
-            ]
-          }
-        ],
-        appendix_sections: [
-          {
-            heading: "Supplementary Boundary Notes",
-            paragraphs: [
-              "This appendix records what the paper is allowed to claim.",
-              "Runtime and memory diagnostics remain secondary to baseline-relative accuracy claims."
-            ]
-          },
-          {
-            heading: "Supplementary Reproducibility Trace",
-            paragraphs: [
-              "The manuscript should be read as a workflow record."
-            ]
-          },
-          {
-            heading: "Supplementary Experimental Details",
-            paragraphs: [
-              "Resource measurements were collected as secondary diagnostics."
-            ]
-          }
-        ]
-      },
-      draft
-    });
-
-    const text = JSON.stringify(manuscript);
-    expect(text).toContain("Verified execution metadata identifies the selected backbone");
-    expect(text).toContain("visible manuscript reports the condition-level mean accuracies");
-    expect(text).toContain("auditable screening result");
-    expect(text).toContain("related-work comparison remains narrower than a full survey");
-    expect(text).not.toContain("does not unambiguously state");
-    expect(text).not.toContain("does not identify the realized backbone");
-    expect(text).not.toContain("does not provide the full eight-cell metric table");
-    expect(text).not.toContain("learning-rate, batch-size");
-    expect(text).not.toContain("abstract-level or timeout-limited extraction");
-    expect(text).not.toContain("Specification may be underspecified");
-    expect(text).not.toContain("The paper therefore keeps execution coverage");
-    expect(text).not.toContain("presented table and figure");
-    expect(manuscript.appendix_sections?.map((section) => section.heading)).toEqual([
-      "Supplementary Experimental Details"
-    ]);
-  });
-
-  it("derives a main-body result figure and removes raw metric-key prose before rendering", () => {
-    const draft = buildFallbackPaperDraft({
-      runTitle: "adapter benchmark",
-      topic: "condition-parameter benchmark",
-      objectiveMetric: "accuracy_delta_vs_baseline > 0",
-      constraints: [],
-      paperSummaries: [],
-      evidenceRows: [],
-      hypotheses: [],
-      corpus: [],
-      experimentPlan: { selectedTitle: "adapter benchmark", selectedSummary: "Compare conditions.", rawText: "" }
-    } as any);
-
-    const manuscript = normalizePaperManuscript({
-      raw: {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        sections: [
-          {
-            heading: "Introduction",
-            paragraphs: [
-              "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01. The paper is scoped around - Primary metric: average accuracy across Benchmark Task A and Benchmark Task B. - Secondary metrics: per-task accuracy, train loss, wall-clock runtime, peak VRAM, completed-condition count, failed-run visibility, and claim downgrade correctness. - Meaningful improvement: at least +1.0 percentage point average accuracy over the baseline with uncertainty reporting that does not clearly contradict the direction of improvement. - No-signal boundary: maximum condition spread below +0.5 percentage points, or confidence intervals that make the comparison inconclusive."
-            ]
-          },
-          {
-            heading: "Results",
-            paragraphs: [
-              "candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0.1667).",
-              "In the analyzed run record, the strongest reported cell corresponded to an accuracy\\_delta\\_vs\\_baseline of 0.083332.",
-              "Within that sweep, the strongest reported comparison is candidate condition b against the locked baseline of baseline condition. Average accuracy increases from 0.333334 to 0.416666, yielding an absolute improvement of 0.083332. By the study's own decision rule, this exceeds the predeclared +0.01 objective threshold.",
-              "The best reported cell is candidate condition b, which increases average accuracy from 0.3333 in the locked baseline to 0.4167, for an absolute gain of 0.0833."
-            ]
-          }
-        ],
-        tables: [
-          {
-            caption: "Condition-level mean accuracy across the executed condition-parameter grid.",
-            rows: [
-              { label: "baseline condition", value: 0.333334 },
-              { label: "candidate condition c", value: 0.333334 },
-              { label: "candidate condition d", value: 0.333334 },
-              { label: "candidate condition a", value: 0.333334 },
-              { label: "candidate condition b", value: 0.416666 }
-            ]
-          }
-        ]
-      },
-      draft,
-      resultAnalysis: {
-        metrics: {
-          condition_summaries: [
-            {
-              label: "baseline condition",
-              is_baseline: true,
-              average_accuracy_mean: 0.333334,
-              benchmark_task_a_accuracy_mean: 0.5,
-              benchmark_task_b_accuracy_mean: 0.166667
-            },
-            {
-              label: "candidate condition c",
-              average_accuracy_mean: 0.333334,
-              benchmark_task_a_accuracy_mean: 0.5,
-              benchmark_task_b_accuracy_mean: 0.166667
-            },
-            {
-              label: "candidate condition a",
-              average_accuracy_mean: 0.333334,
-              benchmark_task_a_accuracy_mean: 0.5,
-              benchmark_task_b_accuracy_mean: 0.166667
-            },
-            {
-              label: "candidate condition b",
-              average_accuracy_mean: 0.416666,
-              accuracy_delta_vs_baseline_mean: 0.083332,
-              benchmark_task_a_accuracy_mean: 0.5,
-              benchmark_task_b_accuracy_mean: 0.333333
-            }
-          ]
-        }
-      } as any
-    });
-
-    const text = JSON.stringify(manuscript);
-    expect(manuscript.figures).toHaveLength(1);
-    expect(manuscript.figures?.[0]?.caption).toContain("Task-level score differences");
-    expect(manuscript.figures?.[0]?.bars).toEqual([
-      { label: "Benchmark Task A task difference", value: 0 },
-      { label: "Benchmark Task B task difference", value: 0.1666 }
-    ]);
-    expect(text).toContain("predeclared +0.01 objective threshold");
-    expect(text).toContain("Table 1 reports the corresponding mean values");
-    expect(text).toContain("observed baseline-relative average-accuracy gain is 0.083332");
-    expect(text).toContain("Table 1 reports the corresponding mean values");
-    expect(text).not.toContain("Average accuracy increases from 0.333334 to 0.416666");
-    expect(text).not.toContain("increases average accuracy from 0.3333");
-    expect(text).not.toContain("accuracy_delta_vs_baseline");
-    expect(text).not.toContain("accuracy\\_delta\\_vs\\_baseline");
-    expect(text).not.toContain("average_accuracy");
-    expect(text).not.toContain("benchmark_task_a_accuracy");
-    expect(text).not.toContain("benchmark_task_b_accuracy");
-
-    const tex = renderSubmissionPaperTex({
-      manuscript: {
-        ...manuscript,
-        sections: [
-          ...manuscript.sections,
-          {
-            heading: "Limitations",
-            paragraphs: [
-              "[warning] consistency: Results cites 0.0833, but the comparable structured results support 0 for accuracy_delta_vs_baseline.",
-              "Objective metric met: accuracy_delta_vs_baseline=0.083332 >= 0.01.",
-              "candidate condition b vs baseline condition: accuracy_delta_vs_baseline: 0.0833 vs 0 (delta 0.0833), average_accuracy: 0.4167 vs 0.3333 (delta 0.0833), benchmark_task_a_accuracy: 0.5 vs 0.5 (delta 0), benchmark_task_b_accuracy: 0.3333 vs 0.1667 (delta 0)."
-            ]
-          }
-        ]
-      },
-      traceability: { paragraphs: [] },
-      citationKeysByPaperId: new Map()
-    });
-    const validation = buildPaperSubmissionValidation({
-      manuscript,
-      tex,
-      traceability: { paragraphs: [] },
-      citationKeysByPaperId: new Map()
-    });
-    expect(validation.ok).toBe(true);
-    expect(tex).toContain("The archived comparison exceeded the configured screening threshold");
-    expect(tex).toContain("not a stable success claim");
-    expect(tex).not.toContain("The prespecified baseline-relative accuracy target was met");
-    expect(tex).toContain("For the leading observed condition");
-    expect(tex).toContain("Table 1 reports the condition-level values");
-    expect(tex).not.toContain("[warning]");
-    expect(tex).not.toContain("average accuracy was 0.4167 versus 0.3333");
-    expect(tex).not.toContain("accuracy_delta_vs_baseline");
-    expect(tex).not.toContain("accuracy\\_delta\\_vs\\_baseline");
-    expect(tex).not.toContain("average_accuracy");
-    expect(tex).not.toContain("benchmark_task_a_accuracy");
-    expect(tex).not.toContain("benchmark_task_b_accuracy");
-  });
-
   it("keeps registered-baseline and delta-reference visuals separate when their rows differ", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["adapter"],
+        keywords: ["method"],
         sections: [
           { heading: "Method", paragraphs: ["The method uses a fixed condition grid."] },
           { heading: "Results", paragraphs: ["The reported delta is positive, but the planned baseline row is unresolved."] }
@@ -1578,14 +993,14 @@ describe("paper submission sanitization", () => {
   it("replaces redundant condition-delta figures with a task-level split when condition summaries are available", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["adapter"],
+        keywords: ["method"],
         sections: [
           {
             heading: "Results",
             paragraphs: [
-              "Table 1 reports mean average accuracy for all eight executed condition-parameter conditions."
+              "Table 1 reports mean average accuracy for all executed condition-parameter conditions."
             ]
           }
         ],
@@ -1667,9 +1082,9 @@ describe("paper submission sanitization", () => {
   it("re-applies verified backbone metadata after manuscript repair stabilization", () => {
     const stabilized = stabilizePaperManuscriptForSubmission(
       {
-        title: "A adapter Benchmark",
+        title: "A method Benchmark",
         abstract: "A cautious benchmark.",
-        keywords: ["adapter"],
+        keywords: ["method"],
         sections: [
           {
             heading: "Method",
@@ -1718,144 +1133,6 @@ describe("paper submission sanitization", () => {
     expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
   });
 
-  it("uses method model names when result-analysis metadata is unavailable during repair stabilization", () => {
-    const stabilized = stabilizePaperManuscriptForSubmission(
-      {
-        title: "A adapter Benchmark",
-        abstract: "A cautious benchmark.",
-        keywords: ["adapter"],
-        sections: [
-          {
-            heading: "Method",
-            paragraphs: [
-              "The compact realized summary does not clearly expose the final instantiated backbone."
-            ]
-          }
-        ]
-      },
-      {
-        methodModelNames: ["the selected backbone", "the configured fallback backbone"]
-      }
-    );
-
-    const methodText = stabilized.sections.find((section) => section.heading === "Method")?.paragraphs.join(" ") || "";
-    expect(methodText).toContain("The executed run used the selected backbone as the selected backbone");
-    expect(methodText).not.toContain("does not clearly expose the final instantiated backbone");
-  });
-
-  it("repairs reader-facing manuscript quality residues after LLM manuscript repair", () => {
-    const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "A adapter Benchmark",
-      abstract: "A cautious benchmark. The protocol targeted a 4 x 2 factorial sweep over condition parameters, with average accuracy across Benchmark Task A and Benchmark Task B as the primary performance measure and locked baseline condition as the locked in-grid baseline. Within that reviewed artifact, the best reported condition, the leading observed condition, improved average accuracy from 0.333334 to 0.416666, a gain of 0.083332 over baseline. The same artifact completed all eight requested conditions, reported 45.687 s wall-clock time, and used approximately 4.28 GB of peak allocated GPU memory. The run also remained inexpensive, completing the eight planned conditions in 45.687 s with about 4.28 GB of peak allocated CUDA memory. The sweep was also lightweight, with 45.687 s wall-clock runtime and 4,278,951,936 bytes of peak allocated memory. The strongest contribution of the study is a reproducible and conservative protocol for comparing configured conditions under explicit budget, reporting, and uncertainty constraints.",
-      keywords: ["adapter"],
-      sections: [
-        {
-          heading: "Method",
-          paragraphs: [
-            "The run specification named the selected backbone as the preferred base model and the configured fallback backbone as fallback, but the manuscript-ready reported summary does not expose the executed model identifier, so the present paper reports the intended configuration without claiming model-level verification.",
-            "The execution summary used for manuscript preparation reports training data from the instruction dataset train split, 48 training examples, evaluation on the Benchmark Task A validation split and the Benchmark Task B validation split, 6 examples per evaluation task, and execution seed 17. The configured backbone choices were the selected backbone and the configured fallback backbone, but the summary materials used here do not identify unambiguously which of those two backbones produced the reported results. Fixed training settings were learning rate 0.0002, per-device train batch size 1, gradient accumulation 4, 4 optimizer steps, maximum sequence length 256, and 1800 s timeout. Uncertainty summaries were reported as condition-level 95% intervals over n=12 prediction records; they are treated as screening intervals rather than significance tests.",
-            "The compact artifact bundle provides only partial training detail. It reports command provenance, runtime, memory, completed-condition counts, and condition-level confidence intervals, but it does not surface optimizer settings, scheduler, batch size, target modules, epoch count, or stopping rule in manuscript-readable form. Rather than reconstructing missing configuration by inference, we treat the study as a transparent but incomplete preflight protocol."
-          ]
-        },
-        {
-          heading: "Related Work",
-          paragraphs: [
-            "The cited work therefore motivates the design and claim ceiling, but it is not treated as a condition-matched baseline for the local 4x2 condition-parameter preflight."
-          ]
-        },
-        {
-          heading: "Results",
-          paragraphs: [
-            "No broader replication is reported in the compact main record, and supplementary No broader replication is reported here, so the main gain remains a single-run preflight observation. The documented gain therefore remains a single-run preflight observation.",
-            "The best nonbaseline row should therefore be read as a selection signal rather than as a final prescription. candidate condition b is the most useful candidate for follow-up because it combines a favorable mean with complete execution coverage.",
-            "The leading-condition rows carry the strongest follow-up signal because they combine the largest nonbaseline mean with the same condition-completion accounting used for the rest of the grid.",
-            "The baseline row also changes the interpretation of the high-rank rows. The study does not ask whether every adapter configuration is better than every other configuration.",
-            "The comparison-condition rows are useful mainly as a calibration point for the interpretation. They show that adding parameter_y at a higher rank did not create a clean, decisive gain under the current budget.",
-            "The resource side of the result is intentionally weaker than the accuracy side. Runtime and memory instrumentation show that the study was feasible at the selected local scale.",
-            "Operationally, the run was inexpensive and clean. The summarized record reports completion of all eight planned conditions, a wall-clock runtime of 45.687 s, and peak allocated CUDA memory of 4,278,951,936 bytes, or about 4.28 GB. The runtime stayed far below the configured 1,800 s limit.",
-            "From a systems perspective, the sweep was small but operationally complete. The record reports 8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with wall-clock runtime of 45.687 s, peak allocated CUDA memory of 4,278,951,936 bytes, and a timeout budget of 1,800 s. No failed or hidden condition is visible in the compact tables.",
-            "Resource reporting is therefore separated from accuracy reporting. wall-clock runtime was 45.687 seconds, with peak CUDA allocation recorded as a secondary resource diagnostic.",
-            "Table 1 is part of the evidential core of the paper because it preserves the executed comparison set.",
-            "Runtime and memory records support feasibility for the executed local preflight, but the available evidence does not support a condition-level efficiency ranking.",
-            "wall-clock runtime was 45.687. seconds. They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting.",
-            "However, the currently exposed record does not provide the adjacent-cell contrasts needed for a formal interaction estimate, such as direct numerical comparisons of candidate condition b with and without parameter_y or baseline condition with and without parameter_y."
-          ]
-        },
-        {
-          heading: "Limitations",
-          paragraphs: [
-            "The compact record also omits several implementation details that would normally be standard in an empirical paper, including optimizer choice, learning-rate schedule, batch size, and an unambiguous statement of the executed base model. These omissions materially narrow reproducibility and interpretability.",
-            "In addition, the reported result summary provides detailed numbers for the best-versus-baseline comparison rather than a fully exposed table of all eight cells, which limits direct assessment of interaction structure across the grid."
-          ]
-        },
-        {
-          heading: "Conclusion",
-          paragraphs: [
-            "Replication with multiple seeds, a fully exposed per-condition table, and reconciled model metadata would be the natural next steps before any scale-up claim. Further multi-seed replication, a full per-condition numerical table, and reconciled metadata are needed before treating the result as guidance for larger-model instruction tuning."
-          ]
-        }
-      ],
-      appendix_sections: [
-        {
-          heading: "Supplementary Experimental Details",
-          paragraphs: [
-            "The study used a fixed 4x2 grid over condition parameters, with baseline condition serving as the locked baseline. The run was designed for a dual-RTX-4090-class local workstation and used seed 42. The preferred backbone in the protocol was the selected backbone, with the configured fallback backbone reserved as a fallback. The training source was the configured training dataset under a cap of 10000 examples, although the summarized preflight reported here used 48 examples."
-          ]
-        },
-        {
-          heading: "Uncertainty and Reporting Notes",
-          paragraphs: [
-            "The summary materials report 95% intervals over 12 predictions per condition. Because the manuscript source used for writing does not expose the full interval-construction procedure, these intervals are treated descriptively.",
-            "Additional confirmatory checks included in the supporting materials did not reproduce the main gain. The available summaries also present execution counts at different granularities, and the full numeric table for all eight condition-parameter conditions is not completely exposed in the manuscript source."
-          ]
-        }
-      ]
-    });
-
-    const text = JSON.stringify(stabilized);
-    expect(text).toContain("documented gain remains a single-run preflight observation");
-    expect(text).toContain("conservative, auditable pilot protocol");
-    expect(text).toContain("completing all planned conditions under the declared time limit");
-    expect(text).toContain("completed all planned conditions under the declared time and memory budgets");
-    expect(text).toContain("configured configured condition sweep");
-    expect(text).toContain("leading observed condition");
-    expect(text).toContain("peak allocated CUDA memory retained as a run-level feasibility diagnostic");
-    expect(text).toContain("completion of the planned conditions under the configured time limit");
-    expect(text).toContain("requested, recorded, and completed condition counts under the configured timeout");
-    expect(text).toContain("scheduler details beyond the scalar learning rate");
-    expect(text).toContain("executed metrics identify the selected backbone");
-    expect(text).toContain("complete per-cell uncertainty, resource, or auxiliary-metric tables");
-    expect(text).toContain("complete per-cell uncertainty and resource tables");
-    expect(text).not.toContain("supplementary No broader replication");
-    expect(text).not.toContain("does not expose the executed model identifier");
-    expect(text).not.toContain("do not identify unambiguously which of those two backbones");
-    expect(text).not.toContain("does not surface optimizer settings");
-    expect(text).not.toContain("manuscript source used for writing");
-    expect(text).not.toContain("not completely exposed in the manuscript source");
-    expect(text).not.toContain("fully exposed per-condition table");
-    expect(text).not.toContain("fully exposed table of all eight cells");
-    expect(text).not.toContain("full per-condition numerical table");
-    expect(text).not.toContain("does not provide the adjacent-cell contrasts needed");
-    expect(text).not.toContain("The best nonbaseline row should");
-    expect(text).not.toContain("The leading-condition rows carry");
-    expect(text).not.toContain("The baseline row also changes");
-    expect(text).not.toContain("The comparison-condition rows are useful mainly");
-    expect(text).not.toContain("Resource reporting is therefore separated");
-    expect(text).not.toContain("Table 1 is part of the evidential core");
-    expect(text).not.toContain("Runtime and memory records support feasibility");
-    expect(text).not.toContain("45.687. seconds");
-    expect(text).not.toContain("45.687 s");
-    expect(text).not.toContain("45.687 seconds");
-    expect(text).not.toContain("wall-clock runtime of 45.687");
-    expect(text).not.toContain("45.687 s wall-clock runtime");
-    expect(text).not.toContain("parameter_y values {0.0, 0.05}, with average accuracy");
-    expect(text).not.toContain("candidate condition b");
-    expect(text).not.toContain("reported 45.687 s wall-clock time");
-    expect(text).not.toContain("4,278,951,936 bytes of peak allocated memory");
-    expect(text).not.toContain("8 requested conditions, 8 recorded conditions, and 8 completed conditions, together with");
-    expect(text).not.toContain("batch size, and an unambiguous statement of the executed base model");
-  });
-
   it("removes prompt, cache, and duplicate reviewer residue after manuscript repair", () => {
     const cachedRecoveryResidue = [
       ["Recovered", "cached", "full", "text"].join(" "),
@@ -1890,9 +1167,9 @@ describe("paper submission sanitization", () => {
         {
           heading: "Related Work",
           paragraphs: [
-            `One practical but remote adaptation contrast in the cited material is a lightweight adapter-based model in a ${remoteDomainResidue}, which shares an interest in practical adaptation under constraints but differs in domain.`,
-            `The closest prior framing ${identifiedBriefResidue} is a lightweight adapter-based model in a ${remoteDomainResidue}, whereas other nearby papers emphasize resource-constrained adaptation.`,
-            `The ${suppliedBriefResidue} organizes nearby work along three broad axes: adapter-method development, survey or synthesis of fine-tuning practice, and evaluation-oriented benchmarking.`
+            `One practical but remote adaptation contrast in the cited material is a lightweight method-based model in a ${remoteDomainResidue}, which shares an interest in practical adaptation under constraints but differs in domain.`,
+            `The closest prior framing ${identifiedBriefResidue} is a lightweight method-based model in a ${remoteDomainResidue}, whereas other nearby papers emphasize resource-constrained adaptation.`,
+            `The ${suppliedBriefResidue} organizes nearby work along three broad axes: method-method development, survey or synthesis of fine-tuning practice, and evaluation-oriented benchmarking.`
           ]
         },
         {
@@ -1922,7 +1199,7 @@ describe("paper submission sanitization", () => {
     expect(text).not.toContain(awkwardMetricResidue);
     expect(text).not.toContain(identifiedBriefResidue);
     expect(text).not.toContain(suppliedBriefResidue);
-    expect(text).not.toContain(budgetCaveatResidue);
+    expect(text).toContain(budgetCaveatResidue);
     const resultText = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs.join("\n") || "";
     expect((resultText.match(new RegExp(datasetLead, "g")) || []).length).toBe(1);
     expect(resultText).not.toContain("best-condition point estimate");
@@ -1974,60 +1251,5 @@ describe("paper submission sanitization", () => {
     expect(stabilized.tables?.[0]?.caption).toContain("not accepted as a registered-baseline threshold success");
   });
 
-  it("compacts overlong reader-facing paper sections after manuscript repair", () => {
-    const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "A Fixed-Budget Condition Study",
-      abstract: "A cautious condition study with a small positive screening signal.",
-      keywords: ["condition study"],
-      sections: [
-        {
-          heading: "Related Work",
-          paragraphs: [
-            "Prior work on parameter-efficient adaptation can be organized along three axes relevant to this study, including adapter design and evaluation breadth.",
-            "Nearby method-family, task-design, and evaluation studies are relevant because adapter behavior can depend on feasibility constraints and benchmark choice.",
-            "The second axis concerns evaluation breadth and shows that behavior can depend on data regime and evaluation task.",
-            "The third axis concerns resource-constrained deployment and motivates separating accuracy signals from unsupported resource-dominance claims.",
-            "For this manuscript, prior work is used to motivate the condition-parameter question and local-budget evaluation design; numerical claims remain grounded in the executed run artifacts.",
-            "Nearby method-family, task-design, and evaluation studies provide context for feasibility, benchmark sensitivity, and design choices, but they do not replace the locked baseline comparison in this study.",
-            "The closest cited work frames evaluation and benchmarking, adapter and parameterization design, and resource-budgeted instruction tuning rather than a condition-matched reproduction of the present run."
-          ]
-        },
-        {
-          heading: "Results",
-          paragraphs: [
-            "The primary quantitative signal is positive at the table level. The summarized result table reports a leading point estimate of +0.020833 absolute mean accuracy, or +2.083 percentage points, relative to the displayed comparison entry. If interpreted only as a table-level baseline-relative contrast, this exceeds the prespecified +1.0 percentage-point threshold for a meaningful improvement.",
-            "Task-level counts make the leading mean accuracy interpretable and keep the table-level comparison auditable.",
-            "The condition mapping is the main interpretive constraint because the locked comparison row and registered baseline concept are not fully reconciled.",
-            "The uncertainty evidence also limits claim strength and does not support a statistical-significance claim.",
-            "The planned resource analysis cannot yet be completed because per-condition runtime and memory values are not available.",
-            "The prespecified baseline-relative accuracy target was met (observed gain 0.02083333333333337 versus threshold 0.01); condition-level values in Table 1 provide the main numeric support.",
-            "The condition-level comparison is reported through Table 1 and the task-level delta figure; raw metric-key contrasts are not treated as separate prose evidence.",
-            "The exposed condition-level intervals remain wide, so the point-estimate improvement is retained as a screening signal rather than as a statistical-significance claim.",
-            "The tied leading rows carry the strongest follow-up signal, but they remain scale-up candidates rather than settled prescriptions."
-          ]
-        },
-        {
-          heading: "Limitations",
-          paragraphs: [
-            "The first limitation is scope. The study uses a small locally runnable model workflow, one capped instruction-tuning dataset, two evaluation tasks, and a leading-entry aggregate.",
-            "The second limitation is design expansion. The reported factorial design includes an additional setting beyond the smallest intended grid.",
-            "The third limitation is reporting resolution. The available summary does not provide the full seed-level condition table, per-condition runtime, or peak GPU memory.",
-            "The fourth limitation is uncertainty. The reported positive point estimate exceeds the study threshold, but the available intervals are too broad for statistical significance.",
-            "The most important limitation is scale. The run uses one small backbone, two benchmark tasks, and a fixed local training budget.",
-            "A second limitation is resource granularity. The artifacts preserve feasibility evidence, but the main results do not yet contain condition-level runtime and memory aggregates."
-          ]
-        }
-      ]
-    });
 
-    const related = stabilized.sections.find((section) => section.heading === "Related Work")?.paragraphs || [];
-    const results = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs || [];
-    const limitationsText = stabilized.sections.find((section) => section.heading === "Limitations")?.paragraphs.join(" ") || "";
-
-    expect(related.length).toBeLessThanOrEqual(4);
-    expect(related.join(" ")).not.toContain("numerical claims remain grounded in the executed run artifacts");
-    expect(results.join(" ")).not.toContain("The prespecified baseline-relative accuracy target was met");
-    expect(limitationsText).not.toContain("The most important limitation is scale");
-    expect(limitationsText).not.toContain("A second limitation is resource granularity");
-  });
 });

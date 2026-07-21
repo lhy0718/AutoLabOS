@@ -276,7 +276,7 @@ async function presenceChecklistPrediction(
   }
   const concerns: PromotionBenchmarkPrediction["concerns"] = [
     ...(missing.length > 0
-      ? [{ code: "required_artifact_missing", severity: "blocking" as const, evidence_refs: missing }]
+      ? [{ code: "required_artifact_missing", severity: "blocking" as const, evidence_refs: [] }]
       : []),
     ...(unparseable.length > 0
       ? [{ code: "required_artifact_unparseable", severity: "blocking" as const, evidence_refs: unparseable }]
@@ -311,16 +311,20 @@ async function artifactAuditPrediction(input: {
   const blockingCodes = actionableBlockers
     .filter((blocker) => blocker.severity === "blocker")
     .map((blocker) => blocker.code);
+  const concerns = await Promise.all(actionableBlockers.map(async (blocker) => ({
+    code: blocker.code,
+    severity: blocker.severity === "blocker" ? "blocking" as const : "warning" as const,
+    evidence_refs: await existingRegularEvidenceRefs(
+      input.artifactRoot,
+      evidenceRefsForBlocker(blocker)
+    )
+  })));
   return {
     case_id: input.benchmarkCase.case_id,
     system_id: "artifact-audit",
     trial_id: input.trialId,
     decision: decisionFromAudit(summary, blockingCodes),
-    concerns: actionableBlockers.map((blocker) => ({
-      code: blocker.code,
-      severity: blocker.severity === "blocker" ? "blocking" : "warning",
-      evidence_refs: evidenceRefsForBlocker(blocker)
-    })),
+    concerns,
     repair_owners: repairOwnersFromAudit(summary),
     latency_ms: Date.now() - startedAt,
     cost_usd: 0
@@ -380,6 +384,30 @@ function evidenceRefsForBlocker(blocker: PaperReadinessAuditBlocker): string[] {
   if (blocker.code === "budget_contract_mismatch") return ["run_config.json", "run_record.json"];
   if (blocker.code === "stale_persisted_state") return ["checkpoint/state.json", "paper/paper_readiness.json"];
   return [blocker.source];
+}
+
+async function existingRegularEvidenceRefs(artifactRoot: string, refs: string[]): Promise<string[]> {
+  const root = path.resolve(artifactRoot);
+  const valid: string[] = [];
+  for (const ref of refs) {
+    const fileRef = ref.split("#", 1)[0];
+    if (!fileRef || fileRef !== fileRef.trim() || fileRef.includes("\\") || path.isAbsolute(fileRef)) {
+      continue;
+    }
+    const resolved = path.resolve(root, fileRef);
+    if (resolved === root || !resolved.startsWith(`${root}${path.sep}`)) {
+      continue;
+    }
+    try {
+      const stat = await fs.lstat(resolved);
+      if (stat.isFile() && !stat.isSymbolicLink()) {
+        valid.push(ref);
+      }
+    } catch {
+      // Absence is represented by the concern code, not a dangling evidence reference.
+    }
+  }
+  return valid;
 }
 
 function uniqueSystems(systems: PromotionBenchmarkSystemName[]): PromotionBenchmarkSystemName[] {

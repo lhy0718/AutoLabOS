@@ -41,7 +41,7 @@ describe("promotion benchmark provider runner", () => {
             concerns: [{
               code: "manuscript_evidence_uncertain",
               severity: "warning",
-              evidence_refs: ["manuscript"]
+              evidence_refs: ["paper/main.tex"]
             }],
             repair_owners: ["review"]
           }),

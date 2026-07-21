@@ -1,0 +1,110 @@
+{
+  "schema_version": "1.0",
+  "files": [
+    {
+      "path": "papers/promotion-governance/development/corpus-manifest.json",
+      "sha256": "c2f9157cab0952a0bf6a5331e3ae747ab0c8be613f21e7923481c7d6d09b18fb",
+      "bytes": 518
+    },
+    {
+      "path": "papers/promotion-governance/development/pre-strengthening/promotion-score.json",
+      "sha256": "04812c973252944ea47d761b98415c315396d1ab35ac299ecfd50f31da76715b",
+      "bytes": 13470
+    },
+    {
+      "path": "papers/promotion-governance/development/pre-strengthening/review/node_strengthening_recommendations.json",
+      "sha256": "ffb57ee8e7fd16f4d239fa178ad11f3ae20013adacef10952dbe70359d45e8dc",
+      "bytes": 1632
+    },
+    {
+      "path": "papers/promotion-governance/development/pre-strengthening/review/promotion_benchmark_failure_analysis.json",
+      "sha256": "e518e5b77249e78959620af287b8e4ca65ac48c15a941fd628b7ca6d5110c2d9",
+      "bytes": 6507
+    },
+    {
+      "path": "papers/promotion-governance/development/predictions.jsonl",
+      "sha256": "e2ebf58d52a69aeded748c43bdd0bd5b906cf24d0888efb4e72f0d22cc47cf8f",
+      "bytes": 38656
+    },
+    {
+      "path": "papers/promotion-governance/development/promotion-score.json",
+      "sha256": "ffe83b1591796a72a2f79e943f18c9942e8a41ec379811f113b87e76cc582885",
+      "bytes": 21605
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmark.ts",
+      "sha256": "26ea9d8d841b0ec64a95169ed9fc2d0a4951c016f089c4435df717163e43a10d",
+      "bytes": 88238
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkAdjudication.ts",
+      "sha256": "b6c4a7e9e780014535495cf4182b538bfddf1ca6c87bf868852539a10b06a539",
+      "bytes": 43812
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkBuilder.ts",
+      "sha256": "ae99488957da24d9be71eca23d985eadfaa15da2f9de499ca9b30c654672b8d0",
+      "bytes": 26431
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
+      "sha256": "52cef44265433c426b7e36388d646596bdeed06cbb400815155259740744b501",
+      "bytes": 53156
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkExecutionEvidence.ts",
+      "sha256": "74084449b478da5dd72354fdb61d26a299c95f37d1ff8fd53a2fcfde31e5f1da",
+      "bytes": 18486
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkMutationAudit.ts",
+      "sha256": "5c7530c85f37473e3cd459f630cd35b7b8a001ea19dc9912a6d4f4158b63a10e",
+      "bytes": 38654
+    },
+    {
+      "path": "src/core/benchmark/promotionBenchmarkVariants.ts",
+      "sha256": "f939a1e07909c269a4810b623083b3b4b8f340c6e533f916e194a5a8a6e5ff59",
+      "bytes": 5027
+    },
+    {
+      "path": "src/core/metaHarness/metaHarness.ts",
+      "sha256": "246455a70bc3525c13472d9871405a637bc435e5463e71f9b7064c5307d8768a",
+      "bytes": 34731
+    },
+    {
+      "path": "tests/metaHarness.test.ts",
+      "sha256": "b28f4ef9896f8c58145d981b4db9ad6c01819ceaa3ac1798c866b0e31bd22b27",
+      "bytes": 23233
+    },
+    {
+      "path": "tests/promotionBenchmark.test.ts",
+      "sha256": "1e0cced5adcb45f1452c7fdc32f40c9973f1e1b097ec352a7cd7aacd527db60c",
+      "bytes": 17407
+    },
+    {
+      "path": "tests/promotionBenchmarkAdjudication.test.ts",
+      "sha256": "64f53d24acac9413aebad74402404a5ce2e97cf81aa124f6b24f065dc4bb4680",
+      "bytes": 33140
+    },
+    {
+      "path": "tests/promotionBenchmarkBuilder.test.ts",
+      "sha256": "c99abdaaf19ccd0a9b22aa3726abf12a39a0ba36ce236e93706b982c46c6b1ec",
+      "bytes": 12350
+    },
+    {
+      "path": "tests/promotionBenchmarkConfirmatoryIntake.test.ts",
+      "sha256": "5f7da9f1b9e6bcfb47b305a3fc422fa24d4735d1c1d4bff3973d7890f580f2e3",
+      "bytes": 28541
+    },
+    {
+      "path": "tests/promotionBenchmarkExecutionEvidence.test.ts",
+      "sha256": "145fcf8de28823a57db50905500c581f97f59db85e18907c45bb54bb9a474256",
+      "bytes": 9118
+    },
+    {
+      "path": "tests/promotionBenchmarkMutationAudit.test.ts",
+      "sha256": "b9002f2252ec1eee3aca91e86b2e9962a87ecfc3064de7a6be7c08283b36a8f8",
+      "bytes": 12449
+    }
+  ]
+}

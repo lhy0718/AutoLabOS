@@ -2396,14 +2396,14 @@ describe("analyzePapers node", () => {
     };
     await writeCorpus(runId, [
       {
-        paper_id: "relevant_compact_adapter",
-        title: "Instruction Tuning with Low-Rank Adaptation for Compact Open Language Models",
+        paper_id: "relevant_compact_method",
+        title: "Instruction Tuning with Low-Parameter x Adaptation for Compact Open Language Models",
         abstract:
           "A compact-model study of adaptation under a bounded local budget.",
         authors: ["Alice"],
         citation_count: 52,
         year: 2024,
-        pdf_url: "https://example.com/compact-adapter.pdf"
+        pdf_url: "https://example.com/compact-configuration.pdf"
       },
       {
         paper_id: "relevant_recipe_tradeoff",
@@ -2419,7 +2419,7 @@ describe("analyzePapers node", () => {
         paper_id: "off_topic_clinical_notes",
         title: "Using fine-tuned large language models to parse clinical notes in musculoskeletal pain disorders",
         abstract:
-          "This clinical-note study uses large language models under local constraints and mentions instruction tuning and low-rank adaptation in the abstract background.",
+          "This clinical-note study uses large language models under local constraints and mentions instruction tuning and low-parameter x adaptation in the abstract background.",
         authors: ["Cara"],
         citation_count: 75,
         year: 2023,
@@ -2427,9 +2427,9 @@ describe("analyzePapers node", () => {
       },
       {
         paper_id: "off_topic_multimodal_recommender",
-        title: "ATFLRec: A Multimodal Recommender System with Audio-Text Fusion and Low-Rank Adaptation via Instruction-Tuned Large Language Model",
+        title: "ATFLRec: A Multimodal Recommender System with Audio-Text Fusion and Low-Parameter x Adaptation via Instruction-Tuned Large Language Model",
         abstract:
-          "A multimodal recommender paper that mentions instruction tuning and low-rank adaptation but targets recommendation-specific fusion rather than compact-model recipe trade-offs.",
+          "A multimodal recommender paper that mentions instruction tuning and low-parameter x adaptation but targets recommendation-specific fusion rather than compact-model recipe trade-offs.",
         authors: ["Dina"],
         citation_count: 66,
         year: 2025,
@@ -2474,10 +2474,10 @@ describe("analyzePapers node", () => {
 
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
-    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_adapter", "relevant_recipe_tradeoff"]));
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_method", "relevant_recipe_tradeoff"]));
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    expect(summariesRaw).toContain('"paper_id":"relevant_compact_adapter"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_compact_method"');
     expect(summariesRaw).toContain('"paper_id":"relevant_recipe_tradeoff"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_clinical_notes"');
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_multimodal_recommender"');

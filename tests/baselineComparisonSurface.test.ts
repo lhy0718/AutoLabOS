@@ -7,7 +7,7 @@ import type { BaselineLock } from "../src/core/exploration/types.js";
 function makeReport() {
   return buildAnalysisReport({
     run: {
-      objectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline."
+      objectiveMetric: "Improve mean zero-shot accuracy over the locked configured baseline."
     },
     metrics: {
       result_rows: [
@@ -26,7 +26,7 @@ function makeReport() {
     },
     objectiveProfile: {
       source: "llm",
-      raw: "Improve mean zero-shot accuracy over the locked adapter baseline.",
+      raw: "Improve mean zero-shot accuracy over the locked configured baseline.",
       primaryMetric: "mean_zero_shot_accuracy",
       preferredMetricKeys: ["mean_zero_shot_accuracy"],
       comparator: ">=",
@@ -37,7 +37,7 @@ function makeReport() {
       assumptions: []
     },
     objectiveEvaluation: {
-      rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked adapter baseline.",
+      rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked configured baseline.",
       profileSource: "llm",
       primaryMetric: "mean_zero_shot_accuracy",
       preferredMetricKeys: ["mean_zero_shot_accuracy"],

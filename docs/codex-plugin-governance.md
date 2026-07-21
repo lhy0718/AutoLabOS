@@ -41,6 +41,7 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
 - `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, validator, policy,
   or runtime strengthening plan with rollback expectations.
 - `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
+- `PluginDependencyReport`: operational-only report for a missing or incompatible plugin dependency; it cannot represent research evidence or substitute for a `GateReport`.
 
 ## Decision Authority
 
@@ -95,7 +96,7 @@ No adapter may skip baseline requirements, claim-evidence mapping, reproducibili
 The plugin ships a thin bridge for `autolabos research
 <new|audit|review|improve|pack|verify-pack|verify-milestone>`. The bridge checks that the AutoLabOS CLI is
 available, delegates execution without a shell, and emits a blocking
-`GateReport` when the dependency is missing. The CLI owns deterministic
+`PluginDependencyReport` when the dependency is missing. The CLI owns deterministic
 artifact validation and reuse of the existing brief, audit, review, and
 meta-harness logic.
 

@@ -436,17 +436,17 @@ function extractTrainingSampleBudget(report: AnalysisReport): { plannedSamples?:
 function detectWeakInteractionClaim(report: AnalysisReport): string | undefined {
   const metrics = asRecord(report.metrics);
   const conditions = asArray(metrics.conditions).map(asRecord);
-  const ranks = new Set<string>();
-  const parameter_ys = new Set<string>();
+  const parameterXValues = new Set<string>();
+  const parameterYValues = new Set<string>();
   let positiveDeltaCount = 0;
   for (const condition of conditions) {
-    const rank = asNumber(condition.rank);
-    const parameter_y = asNumber(condition.parameter_y);
-    if (rank !== undefined) {
-      ranks.add(String(rank));
+    const parameterX = asNumber(condition.condition_parameter_x ?? condition.parameter_x);
+    const parameterY = asNumber(condition.condition_parameter_y ?? condition.parameter_y);
+    if (parameterX !== undefined) {
+      parameterXValues.add(String(parameterX));
     }
-    if (parameter_y !== undefined) {
-      parameter_ys.add(String(parameter_y));
+    if (parameterY !== undefined) {
+      parameterYValues.add(String(parameterY));
     }
     const delta = asNumber(condition.accuracy_delta_vs_baseline);
     if (delta !== undefined && delta > 0) {
@@ -458,10 +458,10 @@ function detectWeakInteractionClaim(report: AnalysisReport): string | undefined 
     ...(report.primary_findings ?? []),
     ...(report.paper_claims ?? []).map((claim) => claim.claim)
   ].join(" ");
-  if (ranks.size < 2 || parameter_ys.size < 2 || positiveDeltaCount !== 1 || !/\binteraction|rank|parameter_y\b/iu.test(text)) {
+  if (parameterXValues.size < 2 || parameterYValues.size < 2 || positiveDeltaCount !== 1 || !/\binteraction|factor|parameter\b/iu.test(text)) {
     return undefined;
   }
-  return `Grid has ${ranks.size} rank value(s), ${parameter_ys.size} parameter_y value(s), and only ${positiveDeltaCount} positive-delta condition(s).`;
+  return `Grid has ${parameterXValues.size} factor-x value(s), ${parameterYValues.size} factor-y value(s), and only ${positiveDeltaCount} positive-delta condition(s).`;
 }
 
 function detectCanonicalReferenceGap(topic: string, report: AnalysisReport, bibliographyText?: string): string | undefined {

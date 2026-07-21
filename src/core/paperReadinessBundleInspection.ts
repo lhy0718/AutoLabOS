@@ -4,12 +4,19 @@ import { promises as fs } from "node:fs";
 
 import {
   buildPaperReadinessBundleArtifact,
+  buildReviewReportArtifact,
   validateResearchGovernanceArtifact,
+  type EvidenceBundleArtifact,
+  type EvidenceBundleFile,
   type GateReportArtifact,
   type PaperReadinessBundleArtifact,
   type ReviewReportArtifact
 } from "./researchGovernanceArtifacts.js";
+import { parseModelReviewBundle } from "./modelReviewProtocol.js";
 import { containsNonPortableResearchText } from "./researchGovernancePortability.js";
+
+const EVIDENCE_BUNDLE_PATH = "artifacts/evidence-bundle.json";
+const MODEL_REVIEW_BUNDLE_PATH = "artifacts/model-review-bundle.json";
 
 export interface PaperReadinessBundleInspectionIssue {
   code:
@@ -324,6 +331,12 @@ function inspectBundleArtifactBindings(
   verifiedBytes: Map<string, Buffer>,
   issues: PaperReadinessBundleInspectionIssue[]
 ): void {
+  const evidenceBundle = parsePackedArtifact<EvidenceBundleArtifact>(
+    EVIDENCE_BUNDLE_PATH,
+    "EvidenceBundle",
+    verifiedBytes,
+    issues
+  );
   const gate = parsePackedArtifact<GateReportArtifact>(
     "artifacts/gate-report.json",
     "GateReport",
@@ -336,7 +349,9 @@ function inspectBundleArtifactBindings(
     verifiedBytes,
     issues
   );
-  if (!gate || !review) return;
+  if (!evidenceBundle || !gate || !review) return;
+  inspectPackedEvidenceBundleBindings(evidenceBundle, gate, verifiedBytes, issues);
+  inspectPackedReviewEvidenceBindings(gate, review, verifiedBytes, issues);
   const rebuiltBundle = bundle.limitations.every((limitation) => typeof limitation === "string")
     ? buildPaperReadinessBundleArtifact({
         gate,
@@ -362,6 +377,7 @@ function inspectBundleArtifactBindings(
     [bundle.gate_report_id !== gate.artifact_id, "Bundle gate_report_id does not match the packed GateReport."],
     [bundle.review_report_id !== review.artifact_id, "Bundle review_report_id does not match the packed ReviewReport."],
     [review.gate_report_id !== gate.artifact_id, "Packed ReviewReport does not reference the packed GateReport."],
+    [review.claim_ceiling !== gate.claim_ceiling, "Packed ReviewReport claim_ceiling does not match the packed GateReport."],
     [bundle.readiness_class !== review.readiness_class, "Bundle readiness_class does not match the packed ReviewReport."],
     [bundle.paper_ready !== review.paper_ready, "Bundle paper_ready does not match the packed ReviewReport."],
     [bundle.claim_ceiling !== review.claim_ceiling, "Bundle claim_ceiling does not match the packed ReviewReport."]
@@ -374,6 +390,141 @@ function inspectBundleArtifactBindings(
         message
       });
     }
+  }
+}
+
+function inspectPackedEvidenceBundleBindings(
+  evidenceBundle: EvidenceBundleArtifact,
+  gate: GateReportArtifact,
+  verifiedBytes: Map<string, Buffer>,
+  issues: PaperReadinessBundleInspectionIssue[]
+): void {
+  const bytes = verifiedBytes.get(EVIDENCE_BUNDLE_PATH);
+  if (!bytes) return;
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (sha256 !== gate.evidence_bundle_sha256) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: EVIDENCE_BUNDLE_PATH,
+      message: "Packed EvidenceBundle bytes do not match GateReport.evidence_bundle_sha256."
+    });
+  }
+  if (evidenceBundle.artifact_id !== gate.evidence_bundle_id) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: EVIDENCE_BUNDLE_PATH,
+      message: "Packed EvidenceBundle artifact_id does not match GateReport.evidence_bundle_id."
+    });
+  }
+  const boundFiles = evidenceBundle.files.filter(
+    (file): file is EvidenceBundleFile & { sha256: string; bytes: number } =>
+      typeof file.sha256 === "string" && Number.isSafeInteger(file.bytes)
+  );
+  if (JSON.stringify(boundFiles) !== JSON.stringify(gate.input_bindings)) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: EVIDENCE_BUNDLE_PATH,
+      message: "Packed EvidenceBundle bound files do not exactly match GateReport.input_bindings."
+    });
+  }
+}
+
+function inspectPackedReviewEvidenceBindings(
+  gate: GateReportArtifact,
+  review: ReviewReportArtifact,
+  verifiedBytes: Map<string, Buffer>,
+  issues: PaperReadinessBundleInspectionIssue[]
+): void {
+  const assurance = (review as {
+    reviewer_assurance?: ReviewReportArtifact["reviewer_assurance"];
+  }).reviewer_assurance;
+  if (!assurance) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: "artifacts/review-report.json",
+      message: "Packed ReviewReport must contain reviewer_assurance."
+    });
+    return;
+  }
+
+  const gateBytes = verifiedBytes.get("artifacts/gate-report.json");
+  if (!gateBytes) return;
+  const gateSha256 = createHash("sha256").update(gateBytes).digest("hex");
+  const declaredGateSha256 = (assurance as { gate_report_sha256?: unknown }).gate_report_sha256;
+  if (typeof declaredGateSha256 !== "string") {
+    if (assurance.tier === "A2_model_conservative") {
+      issues.push({
+        code: "artifact_binding_mismatch",
+        path: "artifacts/review-report.json",
+        message: "A2 ReviewReport must preserve the exact GateReport SHA-256."
+      });
+    }
+  } else if (declaredGateSha256 !== gateSha256) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: "artifacts/review-report.json",
+      message: "ReviewReport gate_report_sha256 does not match the packed GateReport bytes."
+    });
+  }
+
+  if (assurance.tier === "A0_deterministic") {
+    if (typeof declaredGateSha256 !== "string") return;
+    const rebuiltReview = buildReviewReportArtifact(
+      gate,
+      { gateReportSha256: gateSha256 },
+      new Date(review.generated_at)
+    );
+    if (JSON.stringify(review) !== JSON.stringify(rebuiltReview)) {
+      issues.push({
+        code: "artifact_binding_mismatch",
+        path: "artifacts/review-report.json",
+        message: "A0 ReviewReport does not exactly match its deterministic packed GateReport reconstruction."
+      });
+    }
+    return;
+  }
+
+  const modelReviewBytes = verifiedBytes.get(MODEL_REVIEW_BUNDLE_PATH);
+  if (!modelReviewBytes) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: MODEL_REVIEW_BUNDLE_PATH,
+      message: "A2 ReviewReport requires a bound ModelReviewBundle sidecar."
+    });
+    return;
+  }
+  const modelReviewBundleSha256 = createHash("sha256").update(modelReviewBytes).digest("hex");
+  if (modelReviewBundleSha256 !== assurance.model_review_bundle_sha256) {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: MODEL_REVIEW_BUNDLE_PATH,
+      message: "Packed ModelReviewBundle bytes do not match reviewer_assurance.model_review_bundle_sha256."
+    });
+  }
+
+  try {
+    const bundle = parseModelReviewBundle(
+      JSON.parse(modelReviewBytes.toString("utf8")) as unknown,
+      { artifact_id: gate.artifact_id, sha256: gateSha256 }
+    );
+    const rebuiltReview = buildReviewReportArtifact(gate, {
+      modelReviewBundle: bundle,
+      modelReviewBundleSha256,
+      gateReportSha256: gateSha256
+    }, new Date(review.generated_at));
+    if (JSON.stringify(review) !== JSON.stringify(rebuiltReview)) {
+      issues.push({
+        code: "artifact_binding_mismatch",
+        path: "artifacts/review-report.json",
+        message: "A2 ReviewReport does not exactly match its bound gate and ModelReviewBundle reconstruction."
+      });
+    }
+  } catch {
+    issues.push({
+      code: "artifact_binding_mismatch",
+      path: MODEL_REVIEW_BUNDLE_PATH,
+      message: "Packed ModelReviewBundle is invalid or does not bind the exact packed GateReport."
+    });
   }
 }
 

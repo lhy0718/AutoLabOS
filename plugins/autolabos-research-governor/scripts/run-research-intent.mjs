@@ -86,26 +86,19 @@ function dependencyReport(input) {
   });
   return {
     schema_version: "1.0",
-    artifact_type: "GateReport",
-    artifact_id: `gate_report_${createHash("sha256").update(dependencySeed).digest("hex").slice(0, 16)}`,
+    artifact_type: "PluginDependencyReport",
+    artifact_id: `plugin_dependency_report_${createHash("sha256").update(dependencySeed).digest("hex").slice(0, 16)}`,
     generated_at: generatedAt,
-    command_intent: "research:audit",
+    check_intent: "plugin:dependency",
     provenance: {
       source_mode: "governance_artifact",
       source_label: "Codex plugin runtime",
       artifact_refs: []
     },
     verdict: available && contractCompatible ? "pass" : "blocked",
-    evidence_bundle_id: "plugin_runtime_dependency_check",
-    claim_ceiling: "system_validation_note",
     checks: {
-      baseline_comparator: "unmeasured",
-      result_table_complete_rows: 0,
-      result_table_rows: 0,
-      severe_figure_mismatches: 0,
-      unsupported_claims: 0,
-      citation_support_issues: 0,
-      done_condition: available && contractCompatible ? "pass" : "fail"
+      cli_available: available,
+      research_intents_compatible: contractCompatible
     },
     findings: finding ? [finding] : [],
     next_actions: available && contractCompatible

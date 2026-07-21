@@ -117,6 +117,40 @@ describe("claim evidence scoring", () => {
     }));
   });
 
+  it("preserves development-only claims below the paper-support ceiling", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{
+          claim_id: "c-development",
+          artifact_refs: ["development/result.json"],
+          citation_refs: [],
+          evidence_ids: []
+        }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{
+          claim_id: "c-development",
+          status: "development_only",
+          artifact_refs: ["development/result.json"],
+          citation_refs: []
+        }]
+      },
+      availableArtifactRefs: ["development/result.json"]
+    });
+
+    expect(score).toMatchObject({
+      supported_claim_count: 0,
+      unsupported_claim_count: 0,
+      blocked_claim_count: 1,
+      claim_to_evidence_coverage: null
+    });
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_evidence_blocked",
+      claim_id: "c-development",
+      message: expect.stringContaining("development-only")
+    }));
+  });
+
   it("feeds governance scorer metrics without reporting unmeasured placeholders", () => {
     const score = scoreClaimEvidenceArtifacts({});
     const taskInput = buildGovernanceTaskScoreInputFromClaimEvidence({

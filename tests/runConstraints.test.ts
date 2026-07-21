@@ -24,14 +24,9 @@ describe("normalizeConstraintProfile", () => {
       runTopic: "Resource-aware baselines for tabular classification on small public datasets"
     });
 
-    expect(candidates).toContainEqual({
-      query: "Resource-aware baselines for tabular classification on small public datasets",
-      reason: "run_topic"
-    });
-    expect(candidates).toContainEqual({
-      query: "baselines for tabular classification",
-      reason: "constraint_stripped"
-    });
+    expect(candidates[0]?.reason).toBe("run_topic");
+    expect(candidates[0]?.query).toMatch(/^\+"[^"]+" \+"[^"]+"$/u);
+    expect(candidates.some((candidate) => candidate.reason === "constraint_stripped")).toBe(true);
   });
 
   it("prefers an explicit requested query and does not append llm-generated fallbacks", () => {
@@ -67,20 +62,14 @@ describe("normalizeConstraintProfile", () => {
     });
   });
 
-  it("builds tighter deterministic candidates for adaptive reasoning topics when llm queries are absent", () => {
+  it("builds deterministic phrase bundles for arbitrary research topics", () => {
     const candidates = buildLiteratureQueryCandidates({
-      runTopic:
-        "Measure how adaptive test-time reasoning behaves for small language models under inference budgets"
+      runTopic: "Measure how robust graph encoders behave for sparse networks under perturbation budgets"
     });
 
-    expect(candidates).toContainEqual({
-      query: '+"small language models" +"test-time reasoning"',
-      reason: "run_topic"
-    });
-    expect(candidates).toContainEqual({
-      query: '+"inference budget" +"small language models" +"test-time reasoning"',
-      reason: "run_topic"
-    });
+    expect(candidates[0]?.reason).toBe("run_topic");
+    expect(candidates[0]?.query).toMatch(/^\+"[^"]+" \+"[^"]+"$/u);
+    expect(candidates.every((candidate) => !/language models|test-time reasoning/iu.test(candidate.query))).toBe(true);
   });
 
   it("drops invalid llm-derived collect date filters instead of treating freeform prose as a date range", () => {

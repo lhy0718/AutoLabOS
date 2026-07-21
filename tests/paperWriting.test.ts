@@ -328,7 +328,7 @@ describe("paperWriting related-work support", () => {
   it("replaces related-work paragraphs that leak bibliography text or metric bullet lists", () => {
     const bundle = makeBundle();
     bundle.relatedWorkScout = {
-      query: "adapter instruction tuning",
+      query: "parameterized method",
       rationale: "Exercise bibliography spillover filtering.",
       papers: [
         {

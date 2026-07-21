@@ -86,6 +86,7 @@ describe("promotion benchmark", () => {
     expect(governed?.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci?.[1]).toBe(1);
     const checklist = result.report.systems.find((system) => system.system_id === "checklist");
     expect(checklist?.false_paper_ready_rate).toBe(0.5);
+    expect(checklist?.concern_acceptance_conflict_count).toBe(1);
     expect(checklist?.concern_acceptance_conflict_rate).toBe(1);
     expect(result.report.paired_analysis.comparisons).toContainEqual(expect.objectContaining({
       system_a: "checklist",
@@ -111,6 +112,45 @@ describe("promotion benchmark", () => {
     expect(markdown).toContain("clean_control");
     expect(markdown).toContain("## Clustered Metric Uncertainty");
     expect(markdown).toContain("## Paired Repair-Owner Analysis");
+  });
+
+  it("counts only existing contained files as concern traces", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-traces-"));
+    tempDirs.push(workspace);
+    await writeSuite(workspace, [
+      caseManifest(
+        "case-blocked",
+        "base-blocked",
+        "test",
+        "block",
+        ["execution_gap", "claim_gap"],
+        ["run_experiments"]
+      )
+    ]);
+    await writeFile(path.join(workspace, "predictions.jsonl"), JSON.stringify(prediction(
+      "candidate",
+      "case-blocked",
+      "block",
+      [
+        blocking("execution_gap"),
+        { code: "claim_gap", severity: "blocking", evidence_refs: ["../outside.json"] }
+      ],
+      ["run_experiments"]
+    )) + "\n");
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.validation_issues).toContainEqual(expect.objectContaining({
+      code: "prediction_evidence_ref_invalid",
+      ref: expect.stringContaining("../outside.json")
+    }));
+    expect(result.report.systems[0].trace_coverage).toBe(0.5);
   });
 
   it("does not turn twenty all-zero clusters into a zero-width confidence interval", async () => {
@@ -377,6 +417,7 @@ function hashId(value: string): string {
 
 async function writeSuite(workspace: string, cases: Array<Record<string, unknown>>): Promise<void> {
   await mkdir(path.join(workspace, "artifacts"), { recursive: true });
+  await writeFile(path.join(workspace, "artifacts", "artifact.json"), "{}\n");
   await mkdir(path.join(workspace, "cases"), { recursive: true });
   const caseRefs: string[] = [];
   for (const benchmarkCase of cases) {

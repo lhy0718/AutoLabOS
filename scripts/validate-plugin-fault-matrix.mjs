@@ -68,7 +68,7 @@ if (args[0] === "--version") {
 }
 
 function privatePathFixture() {
-  return String.fromCharCode(47, 104, 111, 109, 101, 47) + "example/private-artifact.json";
+  return path.posix.join(path.posix.sep, "home", "example", "private-artifact.json");
 }
 
 function main() {
@@ -209,14 +209,14 @@ function main() {
       "review", "--gate", gateResult.output_path, "--out-dir", "outputs/review"
     ]), "fault setup review");
     const invalidGatePath = path.join(workspace, "invalid-gate.json");
-    fs.writeFileSync(invalidGatePath, `${JSON.stringify({ ...gateResult.artifact, schema_version: "2.0" }, null, 2)}\n`, "utf8");
+    fs.writeFileSync(invalidGatePath, `${JSON.stringify({ ...gateResult.artifact, schema_version: "3.0" }, null, 2)}\n`, "utf8");
     const schemaMismatch = runCli(workspace, [
       "review", "--gate", "invalid-gate.json", "--out-dir", "outputs/invalid-review"
     ]);
     cases.push(caseResult(
       "schema_mismatch",
       schemaMismatch.status === 1
-        && schemaMismatch.stderr.includes("Expected schema version 1.0")
+        && schemaMismatch.stderr.includes("Expected schema version 2.0")
         && !schemaMismatch.stderr.includes("\n    at ")
         && !schemaMismatch.stderr.includes(workspace),
       "concise schema-version rejection",

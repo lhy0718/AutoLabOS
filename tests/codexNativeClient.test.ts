@@ -59,9 +59,11 @@ describe("CodexNativeClient fake response sequence", () => {
     expect(
       normalizeCodexWorkspacePath("/tmp/demo/outputs/experiment.py", "/private/tmp/demo")
     ).toBe("/private/tmp/demo/outputs/experiment.py");
+    const presentedTempPath = path.posix.join(path.posix.sep, "var", "folders", "x", "demo", "run.py");
+    const sandboxTempRoot = path.posix.join(path.posix.sep, "private", "var", "folders", "x", "demo");
     expect(
-      normalizeCodexWorkspacePath("/var/folders/x/demo/run.py", "/private/var/folders/x/demo")
-    ).toBe("/private/var/folders/x/demo/run.py");
+      normalizeCodexWorkspacePath(presentedTempPath, sandboxTempRoot)
+    ).toBe(path.posix.join(sandboxTempRoot, "run.py"));
   });
 
   it("checks writable Codex home and shell snapshot directories via CODEX_HOME", async () => {

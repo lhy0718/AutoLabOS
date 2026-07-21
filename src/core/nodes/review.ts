@@ -44,6 +44,7 @@ import {
 } from "../readinessRisks.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
+import { inspectAclTemplateSurface } from "../latex/aclTemplate.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -1441,10 +1442,10 @@ async function resolvePaperSurfaceReviewIssues(
   const issues: PaperSurfaceReviewIssue[] = [];
   const tex = await safeRead(path.join(runDir, "paper", "main.tex"));
   if (tex) {
-    const aclPackage = tex.match(/\\usepackage(?:\[[^\]]*\])?\{ACL20\d{2}\}/iu)?.[0] || "";
-    const usesAclTemplate = aclPackage.length > 0;
-    const bibliographyStyle = tex.match(/\\bibliographystyle\{([^}]+)\}/u)?.[1]?.trim() || "";
-    if (usesAclTemplate && bibliographyStyle !== "acl_natbib") {
+    const aclSurface = inspectAclTemplateSurface(tex);
+    const aclPackage = aclSurface.template?.packageCommand || "";
+    const bibliographyStyle = aclSurface.explicitBibliographyStyle || "";
+    if (aclSurface.hasBibliographyStyleMismatch) {
       issues.push({
         code: "paper_acl_bibliography_style_mismatch",
         detail:
@@ -1454,7 +1455,7 @@ async function resolvePaperSurfaceReviewIssues(
         severity: "high"
       });
     }
-    if (usesAclTemplate && /\\(?:noindent\s*)?textbf\{Keywords:\}|\\keywords\{/iu.test(tex)) {
+    if (aclSurface.hasExcludedKeywords) {
       issues.push({
         code: "paper_acl_template_absent_keywords",
         detail: "paper/main.tex renders a Keywords field even though the ACL template surface does not include one.",

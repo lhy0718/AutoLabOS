@@ -443,7 +443,7 @@ describe("review node", () => {
     expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
   });
 
-  it("includes analysis risk signals and paper surface issues in the review panel prompt context", async () => {
+  it("includes analysis risk signals and current or year-specific ACL surface issues in the review panel prompt context", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-risk-signals-"));
     process.chdir(root);
 
@@ -507,13 +507,12 @@ describe("review node", () => {
       path.join(runDir, "paper", "main.tex"),
       [
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\noindent\\textbf{Keywords:} method, regularization",
         "\\section{Related Work}",
         "Prior work motivates the setting. \\cite{paperA,paperB}",
         "Prior work motivates the setting again. \\cite{paperB,paperA}",
-        "\\bibliographystyle{plain}",
         "\\bibliography{references}",
         "\\end{document}"
       ].join("\n"),
@@ -549,11 +548,39 @@ describe("review node", () => {
       llm.prompts.some((prompt) => prompt.includes("statistically inconsistent metrics"))
     ).toBe(true);
     expect(llm.prompts.some((prompt) => prompt.includes("\"paper_surface_issues\""))).toBe(true);
-    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_bibliography_style_mismatch"))).toBe(true);
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_bibliography_style_mismatch"))).toBe(false);
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_template_absent_keywords"))).toBe(true);
     expect(llm.prompts.some((prompt) => prompt.includes("paper_repeated_citation_bundle"))).toBe(true);
-    const findingsRaw = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
-    expect(findingsRaw).toContain("ACL bibliography style mismatch");
-    expect(findingsRaw).toContain("Repeated citation bundle");
+    const currentAclFindings = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
+    expect(currentAclFindings).not.toContain("ACL bibliography style mismatch");
+    expect(currentAclFindings).toContain("Template-absent keywords rendered");
+
+    await writeFile(
+      path.join(runDir, "paper", "main.tex"),
+      [
+        "\\documentclass[11pt]{article}",
+        "\\usepackage[review]{ACL2023}",
+        "\\begin{document}",
+        "\\noindent\\textbf{Keywords:} method, regularization",
+        "\\section{Related Work}",
+        "Prior work motivates the setting. \\cite{paperA,paperB}",
+        "Prior work motivates the setting again. \\cite{paperB,paperA}",
+        "\\bibliographystyle{plain}",
+        "\\bibliography{references}",
+        "\\end{document}"
+      ].join("\n"),
+      "utf8"
+    );
+    llm.prompts = [];
+
+    const yearSpecificResult = await node.execute({ run, graph: run.graph });
+
+    expect(yearSpecificResult.status).toBe("success");
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_bibliography_style_mismatch"))).toBe(true);
+    expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_template_absent_keywords"))).toBe(true);
+    const yearSpecificAclFindings = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
+    expect(yearSpecificAclFindings).toContain("ACL bibliography style mismatch");
+    expect(yearSpecificAclFindings).toContain("Repeated citation bundle");
   });
 
   it("marks missing evidence inputs as blocking", async () => {
@@ -1394,10 +1421,10 @@ describe("review node", () => {
   });
 
   it("keeps repeated-seed review downgrades consistent with the write_paper transition", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-p6-"));
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-full-grid-"));
     process.chdir(root);
 
-    const run = makeRun("run-review-p6");
+    const run = makeRun("run-review-full-grid");
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
@@ -1412,7 +1439,7 @@ describe("review node", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  title: P6 repeated-seed adapter validation",
+        "  title: Full-grid repeated-seed condition validation",
         "  baselines:",
         "    - baseline_condition",
         "  evaluation_steps:",
@@ -1438,9 +1465,9 @@ describe("review node", () => {
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 25 },
       plan_context: {
         selected_design: {
-          id: "p6",
-          title: "P6 repeated-seed adapter validation",
-          summary: "Validate repeated-seed adapter comparison.",
+          id: "full_grid",
+          title: "Full-grid repeated-seed condition validation",
+          summary: "Validate repeated-seed configuration comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
           baselines: ["baseline_condition"],
@@ -1552,7 +1579,7 @@ describe("review node", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  title: Single-run adapter validation",
+        "  title: Single-run configuration validation",
         "  baselines:",
         "    - baseline_condition",
         "  evaluation_steps:",
@@ -1577,9 +1604,9 @@ describe("review node", () => {
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
       plan_context: {
         selected_design: {
-          id: "p6-single",
-          title: "Single-run adapter validation",
-          summary: "Validate a bounded local adapter comparison.",
+          id: "single_run",
+          title: "Single-run configuration validation",
+          summary: "Validate a bounded local configuration comparison.",
           selected_hypothesis_ids: ["h_1"],
           metrics: ["accuracy_delta_vs_baseline"],
           baselines: ["baseline_condition"],
