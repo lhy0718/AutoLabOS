@@ -64,7 +64,10 @@ describe("governance benchmark dry-run", () => {
     expect(gated?.missing_baseline_detected).toBe(true);
     expect(gated?.comparative_claim_blocked_or_downgraded).toBe(true);
     expect(gated?.contract.passed).toBe(true);
-    expect(ungated?.contract.passed).toBe(true);
+    expect(ungated?.contract.passed).toBe(false);
+    expect(ungated?.contract.issues.map((issue) => issue.code)).toContain(
+      "paper_ready_reference_authority_not_passed"
+    );
 
     const readme = await readFile(path.join(workspace, report.readme_path), "utf8");
     expect(readme).toContain("case-alpha Governance Benchmark Dry-Run");

@@ -218,6 +218,33 @@ describe("live-validation continue helper", () => {
     }
   });
 
+  it("fails doctor validation immediately when the workspace has not been prepared", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "autolabos-doctor-unprepared-"));
+    const workspace = path.join(tempRoot, "workspace");
+    const script = path.join(repoRoot, "scripts", "live-validation-doctor-pty-smoke.py");
+
+    try {
+      await mkdir(workspace, { recursive: true });
+      let failure = "";
+      try {
+        await execFileAsync("python3", [script], {
+          env: {
+            ...process.env,
+            AUTOLABOS_VALIDATION_WORKSPACE: workspace,
+          },
+        });
+      } catch (error) {
+        failure = String((error as { stdout?: string }).stdout || error);
+      }
+
+      expect(failure).toContain("validation workspace is not prepared");
+      expect(failure).toContain("AUTOLABOS_VALIDATION_BRIEF_SOURCE");
+      expect(failure).not.toContain("pattern not found");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("preserves the live-validation workspace during test cleanup", () => {
     expect(shouldPreserveValidationRootEntry("live-validation")).toBe(true);
   });

@@ -24,6 +24,7 @@ import {
   AnalysisFailureCategory,
   AnalysisReport,
   buildAnalysisReport,
+  buildPersistedAnalysisMetricsProjection,
   renderPerformanceFigureSvg
 } from "../resultAnalysis.js";
 import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentation.js";
@@ -85,6 +86,7 @@ import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
 import { loadBaselineLock } from "../exploration/baselineLock.js";
 import { loadResearchTree } from "../exploration/researchTree.js";
 import { buildWriteupInputManifest } from "../exploration/evidenceSerializer.js";
+import { projectPortableArtifactValue } from "../../utils/portableArtifact.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -101,11 +103,18 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           await runContextMemory.get<string>("implement_experiments.public_dir"),
           process.cwd()
         ) || undefined;
-      const metricsPath =
+      const configuredMetricsPath =
         resolveMaybeRelative(
           await runContextMemory.get<string>("implement_experiments.metrics_path"),
           process.cwd()
-        ) || path.join(".autolabos", "runs", run.id, "metrics.json");
+        );
+      const runLocalMetricsPath = path.join(".autolabos", "runs", run.id, "metrics.json");
+      const metricsPath = selectAnalysisMetricsPath({
+        workspaceRoot: process.cwd(),
+        configuredPath: configuredMetricsPath,
+        runLocalPath: runLocalMetricsPath,
+        runLocalExists: await fileExists(runLocalMetricsPath)
+      });
       let metrics: Record<string, unknown> = {};
       const inputWarnings: string[] = [];
       let metricsLoadError: string | undefined;
@@ -288,7 +297,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         preflightOnlyMetricsMessage && runVerifierReport?.status !== "fail"
           ? undefined
           : runVerifierReport;
-      const summary = buildAnalysisReport({
+      let summary = buildAnalysisReport({
         run,
         metrics: analysisMetrics,
         objectiveProfile,
@@ -462,6 +471,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         transitionRecommendation
       });
       summary.transition_recommendation = transitionRecommendation;
+      summary.metrics = buildPersistedAnalysisMetricsProjection(
+        summary.metrics,
+        publicDir ? "../experiment/metrics.json" : "metrics.json"
+      );
+      summary = projectPortableArtifactValue(summary);
 
       await writeRunArtifact(
         run,
@@ -787,7 +801,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await longTermStore.append({
         runId: run.id,
         category: "results",
-        text: `Result summary: ${JSON.stringify(summary)}`,
+        text: `Result summary: ${buildAnalyzeResultsCompletionSummary(summary)} Evidence: ${resultAnalysisPath}.`,
         tags: ["analyze_results"]
       });
 
@@ -1878,6 +1892,35 @@ function resolveMaybeRelative(value: string | undefined, workspaceRoot: string):
     return value;
   }
   return path.join(workspaceRoot, value);
+}
+
+export function selectAnalysisMetricsPath(input: {
+  workspaceRoot: string;
+  configuredPath?: string;
+  runLocalPath: string;
+  runLocalExists: boolean;
+}): string {
+  if (input.configuredPath && isPathWithin(input.workspaceRoot, input.configuredPath)) {
+    return input.configuredPath;
+  }
+  if (input.runLocalExists) {
+    return input.runLocalPath;
+  }
+  return input.configuredPath || input.runLocalPath;
+}
+
+function isPathWithin(parent: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function readJsonlRecords(filePath: string): Promise<Record<string, unknown>[]> {

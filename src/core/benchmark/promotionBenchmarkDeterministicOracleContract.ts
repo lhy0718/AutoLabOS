@@ -12,7 +12,8 @@ import type {
 } from "./promotionBenchmark.js";
 import type { PromotionMutationOperation } from "./promotionBenchmarkBuilder.js";
 
-export const PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION = "1.0";
+export const PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION = "1.1";
+export type PromotionDeterministicOracleProtocolRevision = "1.0" | "1.1";
 export const PROMOTION_DETERMINISTIC_ORACLE_EVIDENCE_ROOT = "oracle";
 export const PROMOTION_DETERMINISTIC_ORACLE_DEVELOPMENT_SUITE_REF = "oracle/development-suite/suite.json";
 export const PROMOTION_DETERMINISTIC_ORACLE_REGISTRY_REF = "oracle/registry-manifest.json";
@@ -33,7 +34,7 @@ export type PromotionBenchmarkExternalValidationStatus = "not_run" | "passed" | 
 export interface PromotionBenchmarkDeterministicOracleProvenance {
   schema_version: "1.0";
   method: "registry_bound_independent_oracle";
-  protocol_revision: typeof PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION;
+  protocol_revision: PromotionDeterministicOracleProtocolRevision;
   development_suite_ref: typeof PROMOTION_DETERMINISTIC_ORACLE_DEVELOPMENT_SUITE_REF;
   development_suite_snapshot_sha256: string;
   development_suite_tree_sha256: string;
@@ -56,7 +57,7 @@ export interface PromotionBenchmarkDeterministicOracleProvenance {
 
 export interface PromotionDeterministicOracleRegistryManifest {
   schema_version: "1.0";
-  protocol_revision: typeof PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION;
+  protocol_revision: PromotionDeterministicOracleProtocolRevision;
   method: "frozen_registered_fault_definitions";
   variants: Array<{
     mutation_family: string | null;
@@ -78,7 +79,10 @@ export interface PromotionDeterministicOracleGoldManifest {
 
 export interface PromotionDeterministicOracleSplitManifest {
   schema_version: "1.0";
-  method: "failure_family_and_source_disjoint";
+  method:
+    | "failure_family_and_source_disjoint"
+    | "failure_family_base_id_and_source_hash_disjoint"
+    | "failure_family_and_base_grouped_with_exact_source_hash_screen";
   development_suite_id: string;
   test_suite_id: string;
   development_suite_snapshot_sha256: string;
@@ -105,7 +109,7 @@ export interface PromotionDeterministicOracleCaseResult {
 export interface PromotionDeterministicOracleReport {
   schema_version: "1.0";
   method: "independent_artifact_replay";
-  protocol_revision: typeof PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION;
+  protocol_revision: PromotionDeterministicOracleProtocolRevision;
   passed: true;
   development_case_count: number;
   test_case_count: number;
@@ -128,7 +132,10 @@ export interface PromotionDeterministicOracleVerificationInput {
   hashSuiteSnapshot: (suitePath: string) => Promise<string>;
 }
 
-export function canonicalPromotionDeterministicOracleRegistry(): PromotionDeterministicOracleRegistryManifest {
+export function canonicalPromotionDeterministicOracleRegistry(
+  protocolRevision: PromotionDeterministicOracleProtocolRevision
+    = PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION
+): PromotionDeterministicOracleRegistryManifest {
   const variants = promotionVariantDefinitions().map((variant) => ({
     mutation_family: variant.mutation_family || null,
     operations: variant.operations,
@@ -136,7 +143,7 @@ export function canonicalPromotionDeterministicOracleRegistry(): PromotionDeterm
   }));
   return {
     schema_version: "1.0",
-    protocol_revision: PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION,
+    protocol_revision: protocolRevision,
     method: "frozen_registered_fault_definitions",
     variants: variants.sort((left, right) =>
       (left.mutation_family || "").localeCompare(right.mutation_family || ""))
@@ -149,7 +156,7 @@ export function parsePromotionDeterministicOracleProvenance(
   if (!isRecord(value)
       || value.schema_version !== "1.0"
       || value.method !== "registry_bound_independent_oracle"
-      || value.protocol_revision !== PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION
+      || !supportedOracleProtocolRevision(value.protocol_revision)
       || value.development_suite_ref !== PROMOTION_DETERMINISTIC_ORACLE_DEVELOPMENT_SUITE_REF
       || !sha256(value.development_suite_snapshot_sha256)
       || !sha256(value.development_suite_tree_sha256)
@@ -176,7 +183,7 @@ export function parsePromotionDeterministicOracleProvenance(
   return {
     schema_version: "1.0",
     method: "registry_bound_independent_oracle",
-    protocol_revision: PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION,
+    protocol_revision: value.protocol_revision,
     development_suite_ref: PROMOTION_DETERMINISTIC_ORACLE_DEVELOPMENT_SUITE_REF,
     development_suite_snapshot_sha256: value.development_suite_snapshot_sha256,
     development_suite_tree_sha256: value.development_suite_tree_sha256,
@@ -278,7 +285,7 @@ export async function verifyPromotionDeterministicOracleEvidence(
     });
   }
 
-  const expectedRegistry = canonicalPromotionDeterministicOracleRegistry();
+  const expectedRegistry = canonicalPromotionDeterministicOracleRegistry(input.provenance.protocol_revision);
   if (!deepEqual(values.get(input.provenance.registry_manifest_ref), expectedRegistry)) {
     issues.push({
       code: "deterministic_oracle_registry_mismatch",
@@ -296,7 +303,7 @@ export async function verifyPromotionDeterministicOracleEvidence(
   }
 
   const split = values.get(input.provenance.split_manifest_ref);
-  if (!validSplitManifest(split)
+  if (!validSplitManifest(split, input.provenance.protocol_revision)
       || split.development_suite_id !== development.suite.manifest.suite_id
       || split.test_suite_id !== input.manifest.suite_id
       || split.development_suite_snapshot_sha256 !== input.provenance.development_suite_snapshot_sha256
@@ -306,13 +313,13 @@ export async function verifyPromotionDeterministicOracleEvidence(
       || !splitContractMatchesSuites(split, development.suite.cases, input.cases)) {
     issues.push({
       code: "deterministic_oracle_split_manifest_mismatch",
-      message: "The split manifest must prove source-, base-, and failure-family-disjoint development and test partitions.",
+      message: "The split manifest must prove failure-family, base-id, and exact-source-hash disjointness; it does not establish substantive source independence.",
       ref: input.provenance.split_manifest_ref
     });
   }
 
   const report = values.get(input.provenance.oracle_report_ref);
-  if (!validOracleReport(report)
+  if (!validOracleReport(report, input.provenance.protocol_revision)
       || report.development_case_count !== development.suite.cases.length
       || report.test_case_count !== input.cases.length
       || report.verified_case_count !== development.suite.cases.length + input.cases.length
@@ -376,13 +383,15 @@ export function buildPromotionDeterministicSplitManifest(input: {
       || !sameStringArray([...developmentFamilies, ...testFamilies].sort(), allRegisteredFamilies)
       || !disjoint(baseIds(input.development.cases), baseIds(input.test.cases))
       || !disjoint(sourceHashes(input.development.cases), sourceHashes(input.test.cases))) {
-    throw new Error("Development and test suites must be disjoint by failure family, base bundle, and source hash.");
+    throw new Error(
+      "Development and test suites must be disjoint by failure family, base bundle id, and exact source hash; this does not establish substantive source independence."
+    );
   }
   assertSuiteMatrix(input.development.cases, "development", developmentFamilies);
   assertSuiteMatrix(input.test.cases, "test", testFamilies);
   return {
     schema_version: "1.0",
-    method: "failure_family_and_source_disjoint",
+    method: "failure_family_and_base_grouped_with_exact_source_hash_screen",
     development_suite_id: input.development.manifest.suite_id,
     test_suite_id: input.test.manifest.suite_id,
     development_suite_snapshot_sha256: input.developmentSuiteSnapshotSha256,
@@ -447,10 +456,16 @@ function registryByFamily(): Map<string | null, PromotionDeterministicOracleRegi
   return new Map(canonicalPromotionDeterministicOracleRegistry().variants.map((variant) => [variant.mutation_family, variant]));
 }
 
-function validSplitManifest(value: unknown): value is PromotionDeterministicOracleSplitManifest {
+function validSplitManifest(
+  value: unknown,
+  protocolRevision: PromotionDeterministicOracleProtocolRevision
+): value is PromotionDeterministicOracleSplitManifest {
   return isRecord(value)
     && value.schema_version === "1.0"
-    && value.method === "failure_family_and_source_disjoint"
+    && (protocolRevision === "1.0"
+      ? value.method === "failure_family_and_source_disjoint"
+      : value.method === "failure_family_and_base_grouped_with_exact_source_hash_screen"
+        || value.method === "failure_family_base_id_and_source_hash_disjoint")
     && nonEmptyString(value.development_suite_id)
     && nonEmptyString(value.test_suite_id)
     && sha256(value.development_suite_snapshot_sha256)
@@ -464,11 +479,14 @@ function validSplitManifest(value: unknown): value is PromotionDeterministicOrac
     && value.leakage_detected === false;
 }
 
-function validOracleReport(value: unknown): value is PromotionDeterministicOracleReport {
+function validOracleReport(
+  value: unknown,
+  protocolRevision: PromotionDeterministicOracleProtocolRevision
+): value is PromotionDeterministicOracleReport {
   return isRecord(value)
     && value.schema_version === "1.0"
     && value.method === "independent_artifact_replay"
-    && value.protocol_revision === PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION
+    && value.protocol_revision === protocolRevision
     && value.passed === true
     && positiveInteger(value.development_case_count)
     && positiveInteger(value.test_case_count)
@@ -477,6 +495,12 @@ function validOracleReport(value: unknown): value is PromotionDeterministicOracl
     && value.leakage_detected === false
     && Array.isArray(value.cases)
     && value.cases.every(validOracleCaseResult);
+}
+
+function supportedOracleProtocolRevision(
+  value: unknown
+): value is PromotionDeterministicOracleProtocolRevision {
+  return value === "1.0" || value === PROMOTION_DETERMINISTIC_ORACLE_PROTOCOL_REVISION;
 }
 
 function validOracleCaseResult(value: unknown): value is PromotionDeterministicOracleCaseResult {

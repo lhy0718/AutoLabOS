@@ -2,6 +2,7 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import type { GovernanceBenchmarkConditionName } from "./governanceCondition.js";
+import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 
 export interface GovernanceArtifactContractIssue {
   code: string;
@@ -115,7 +116,10 @@ async function validatePaperReadyEvidence(
     "result_table.json",
     "evidence_store.jsonl",
     "review/paper_critique.json",
-    "paper/evidence_links.json"
+    "paper/evidence_links.json",
+    "paper/reference_evidence_status.json",
+    "paper/refgate_claims.tsv",
+    "paper/reference_authority_gate.json"
   ];
   for (const relativePath of evidenceRequired) {
     if (!(await nonEmptyArtifactExists(path.join(runDir, relativePath)))) {
@@ -125,6 +129,15 @@ async function validatePaperReadyEvidence(
         file_path: relativePath
       });
     }
+  }
+
+  const authorityGate = await inspectReferenceAuthorityGate(path.join(runDir, "paper"));
+  if (authorityGate.status !== "pass") {
+    issues.push({
+      code: "paper_ready_reference_authority_not_passed",
+      message: `paper_ready=true requires a current hash-bound reference authority pass: ${authorityGate.reason}`,
+      file_path: "paper/reference_authority_gate.json"
+    });
   }
 }
 

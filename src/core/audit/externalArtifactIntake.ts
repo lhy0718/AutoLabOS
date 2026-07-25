@@ -40,11 +40,30 @@ export interface ExternalArtifactIntakeManifest {
   policy_note: string;
 }
 
+export interface ExternalArtifactBinding {
+  path: string;
+  sha256: string;
+  bytes: number;
+}
+
+export interface ExternalArtifactIntakeBindings {
+  manifest: ExternalArtifactBinding;
+  canonical_projection_manifest?: ExternalArtifactBinding;
+}
+
+export interface ExternalArtifactIntakeResult {
+  runRoot: string;
+  manifest: ExternalArtifactIntakeManifest;
+  bindings: ExternalArtifactIntakeBindings;
+}
+
 const ALLOWLISTED_RELATIVE_FILES = [
   "governance_condition.json",
   "result_table.json",
   "evidence_store.jsonl",
+  "run_config.json",
   "run_record.json",
+  "experiment_evidence.json",
   "events.jsonl",
   "design_contracts.json",
   path.join("audit", "design_contracts.json"),
@@ -52,12 +71,18 @@ const ALLOWLISTED_RELATIVE_FILES = [
   path.join("review", "decision.json"),
   path.join("review", "paper_critique.json"),
   path.join("figure_audit", "figure_audit_summary.json"),
+  path.join("checkpoint", "state.json"),
   path.join("paper", "claim_evidence_table.json"),
   path.join("paper", "claim_status_table.json"),
   path.join("paper", "evidence_links.json"),
   path.join("paper", "evidence_gate_decision.json"),
   path.join("paper", "paper_readiness.json"),
   path.join("paper", "main.tex"),
+  path.join("paper", "main.pdf"),
+  path.join("paper", "build.log"),
+  path.join("paper", "layout_validation.json"),
+  path.join("paper", "acl.sty"),
+  path.join("paper", "acl_natbib.bst"),
   path.join("paper", "references.bib"),
   path.join("paper", "academic_claim_evidence_map.json"),
   path.join("paper", "reference_evidence_status.json"),
@@ -74,6 +99,7 @@ const ALLOWLISTED_RELATIVE_FILES = [
 
 const ACADEMIC_PACKAGE_ALIASES = [
   { source: "manuscript.tex", destination: path.join("paper", "main.tex") },
+  { source: "layout-validation.json", destination: path.join("paper", "layout_validation.json") },
   { source: "references.bib", destination: path.join("paper", "references.bib") },
   { source: "claim-evidence-map.json", destination: path.join("paper", "academic_claim_evidence_map.json") },
   { source: "reference-evidence-status.json", destination: path.join("paper", "reference_evidence_status.json") },
@@ -103,6 +129,7 @@ interface PreparedExternalAuditSupport {
 const EXPLICIT_DRAFT_DESTINATION = "paper/draft.md";
 const EXPLICIT_LOG_DESTINATION = "logs/external.log";
 const FROZEN_SUPPORT_MANIFEST_DESTINATION = "intake/support-manifest.json";
+const CANONICAL_PROJECTION_MANIFEST = "projection-manifest.json";
 
 export function resolvePortableExternalAuditOutputDir(cwdValue: string, outDirValue: string): string {
   const cwd = path.resolve(cwdValue);
@@ -115,7 +142,7 @@ export function resolvePortableExternalAuditOutputDir(cwdValue: string, outDirVa
 
 export async function materializeExternalAuditArtifacts(
   input: ExternalArtifactIntakeInput
-): Promise<{ runRoot: string; manifest: ExternalArtifactIntakeManifest }> {
+): Promise<ExternalArtifactIntakeResult> {
   const cwd = path.resolve(input.cwd);
   const outputDir = resolvePortableExternalAuditOutputDir(cwd, input.outDir);
   if (Boolean(input.supportRoot) !== Boolean(input.supportManifestPath)) {
@@ -233,8 +260,23 @@ export async function materializeExternalAuditArtifacts(
     },
     policy_note: "External intake copies allowlisted artifacts plus explicitly hash-bound support-manifest files, records portable source-to-copy mappings, rejects path escape and symlinks, binds every copied file by SHA-256 and byte length, and omits machine-local source paths."
   };
-  await writeJsonFile(path.join(outputDir, "external-intake-manifest.json"), manifest);
-  return { runRoot, manifest };
+  const manifestPath = path.join(outputDir, "external-intake-manifest.json");
+  await writeJsonFile(manifestPath, manifest);
+  const canonicalProjectionManifest = copiedFileBindings.find(
+    (binding) => binding.path === CANONICAL_PROJECTION_MANIFEST
+  );
+  const bindings: ExternalArtifactIntakeBindings = {
+    manifest: await bindPortableFile(cwd, manifestPath),
+    ...(canonicalProjectionManifest
+      ? {
+          canonical_projection_manifest: await bindPortableFile(
+            cwd,
+            path.join(runRoot, canonicalProjectionManifest.path)
+          )
+        }
+      : {})
+  };
+  return { runRoot, manifest, bindings };
 }
 
 async function prepareSupportManifestFiles(input: {
@@ -401,4 +443,13 @@ async function copyFile(
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, "/");
+}
+
+async function bindPortableFile(cwd: string, absolutePath: string): Promise<ExternalArtifactBinding> {
+  const bytes = await fs.readFile(absolutePath);
+  return {
+    path: normalizePath(path.relative(cwd, absolutePath)),
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.byteLength
+  };
 }

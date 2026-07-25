@@ -916,19 +916,19 @@ describe("App", () => {
       if (url.includes("/api/runs/run-1/literature")) {
         return new Response(JSON.stringify({ literature: populatedLiterature("run-1") }), { status: 200 });
       }
-      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcollect_result.json")) {
+      if (url.includes("/api/runs/run-1/artifact?path=collect_result.json")) {
         return new Response('{"status":"completed","paper_count":40}\n', { status: 200 });
       }
-      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcorpus.jsonl")) {
+      if (url.includes("/api/runs/run-1/artifact?path=corpus.jsonl")) {
         return new Response('{"paper_id":"p1","title":"Corpus paper"}\n', { status: 200 });
       }
-      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fbibtex.bib")) {
+      if (url.includes("/api/runs/run-1/artifact?path=bibtex.bib")) {
         return new Response('@article{p1,title={Corpus paper}}\n', { status: 200 });
       }
-      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fpaper_summaries.jsonl")) {
+      if (url.includes("/api/runs/run-1/artifact?path=paper_summaries.jsonl")) {
         return new Response('{"paper_id":"p1","summary":"Summary row"}\n', { status: 200 });
       }
-      if (url.includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fevidence_store.jsonl")) {
+      if (url.includes("/api/runs/run-1/artifact?path=evidence_store.jsonl")) {
         return new Response('{"paper_id":"p1","quote":"Evidence row"}\n', { status: 200 });
       }
       if (url.includes("/api/runs/run-1/artifacts")) {
@@ -1024,7 +1024,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText('{"status":"completed","paper_count":40}')).toBeInTheDocument();
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcollect_result.json"))).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=collect_result.json"))).toBe(true);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
@@ -1033,7 +1033,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText('{"paper_id":"p1","title":"Corpus paper"}')).toBeInTheDocument();
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fcorpus.jsonl"))).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=corpus.jsonl"))).toBe(true);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
@@ -1041,7 +1041,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText("@article{p1,title={Corpus paper}}")).toBeInTheDocument();
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fbibtex.bib"))).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=bibtex.bib"))).toBe(true);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
@@ -1049,7 +1049,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText('{"paper_id":"p1","summary":"Summary row"}')).toBeInTheDocument();
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fpaper_summaries.jsonl"))).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=paper_summaries.jsonl"))).toBe(true);
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Knowledge" }));
@@ -1057,7 +1057,7 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(screen.getByText('{"paper_id":"p1","quote":"Evidence row"}')).toBeInTheDocument();
-      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=.autolabos%2Fruns%2Frun-1%2Fevidence_store.jsonl"))).toBe(true);
+      expect(fetchMock.mock.calls.some(([url]) => String(url).includes("/api/runs/run-1/artifact?path=evidence_store.jsonl"))).toBe(true);
     });
   });
 
@@ -1440,6 +1440,7 @@ describe("App", () => {
       expect(screen.getByRole("button", { name: /open artifact for comparison: treatment vs baseline/i })).toBeInTheDocument();
     });
 
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     fireEvent.click(screen.getByRole("button", { name: /run recommendation/i }));
 
     await waitFor(() => {
@@ -2401,7 +2402,165 @@ describe("App", () => {
     expect(screen.getAllByText("Run brief").length).toBeGreaterThan(0);
     expect(screen.getByText("collect_papers started")).toBeInTheDocument();
   });
+
+  it("keeps inspected and active runs separate until the operator activates the context", async () => {
+    const runs = [makeWebRun("run-1", "Active run"), makeWebRun("run-2", "Inspected run")];
+    let activeRunId = "run-1";
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/bootstrap") {
+        return new Response(JSON.stringify({
+          configured: true,
+          setupDefaults: {
+            projectName: "AutoLabOS",
+            defaultTopic: "topic",
+            defaultConstraints: [],
+            defaultObjectiveMetric: "metric"
+          },
+          session: { activeRunId, busy: false, logs: [], canCancel: false },
+          activeRunId,
+          runs,
+          jobs: { generated_at: "2026-07-25T00:00:00.000Z", runs: [], top_failures: [] },
+          jobQueue: { running: [], waiting: [], stalled: [] }
+        }), { status: 200 });
+      }
+      if (url === "/api/session/input") {
+        expect(JSON.parse(String(init?.body))).toEqual({ text: "/run run-2" });
+        activeRunId = "run-2";
+        return new Response(JSON.stringify({
+          session: { activeRunId, busy: false, logs: ["Selected run-2."], canCancel: false }
+        }), { status: 200 });
+      }
+      if (url === "/api/doctor") return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      if (url === "/api/knowledge") return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      if (url === "/api/jobs") return new Response(JSON.stringify({ running: [], waiting: [], stalled: [] }), { status: 200 });
+      if (url.startsWith("/api/exploration/status")) return new Response(JSON.stringify({ enabled: false }), { status: 200 });
+      const detail = runs.find((run) => url === `/api/runs/${run.id}`);
+      if (detail) return new Response(JSON.stringify({ run: detail }), { status: 200 });
+      const artifactRun = runs.find((run) => url === `/api/runs/${run.id}/artifacts`);
+      if (artifactRun) return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      const checkpointRun = runs.find((run) => url === `/api/runs/${run.id}/checkpoints`);
+      if (checkpointRun) return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      const literatureRun = runs.find((run) => url === `/api/runs/${run.id}/literature`);
+      if (literatureRun) return new Response(JSON.stringify({ literature: emptyLiterature(literatureRun.id) }), { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", class { addEventListener() {} close() {} } as unknown as typeof EventSource);
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText("Actions target this run")).toBeInTheDocument());
+    fireEvent.click(screen.getAllByRole("button", { name: "Retry" })[0]);
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(
+      /Action: Retry current node[\s\S]*Run: Active run[\s\S]*Run ID: run-1[\s\S]*Node: Review/u
+    ));
+    expect(fetchMock.mock.calls.filter(([url, init]) => String(url).includes("/actions/") && init?.method === "POST")).toHaveLength(0);
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Inspect run" }), { target: { value: "run-2" } });
+
+    await waitFor(() => {
+      expect(screen.getByText("Inspection only")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Activate inspected run" })).toBeInTheDocument();
+    });
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Activate inspected run" }));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/session/input",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ text: "/run run-2" }) })
+      );
+      expect(screen.getByText("Actions target this run")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+    });
+  });
+
+  it("ignores a late run response after the operator inspects another run", async () => {
+    const runs = [makeWebRun("run-1", "Delayed run"), makeWebRun("run-2", "Current inspection")];
+    let resolveDelayedRun: ((response: Response) => void) | undefined;
+    const delayedRun = new Promise<Response>((resolve) => {
+      resolveDelayedRun = resolve;
+    });
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/bootstrap") {
+        return new Response(JSON.stringify({
+          configured: true,
+          setupDefaults: {
+            projectName: "AutoLabOS",
+            defaultTopic: "topic",
+            defaultConstraints: [],
+            defaultObjectiveMetric: "metric"
+          },
+          session: { activeRunId: "run-1", busy: false, logs: [], canCancel: false },
+          activeRunId: "run-1",
+          runs,
+          jobs: { generated_at: "2026-07-25T00:00:00.000Z", runs: [], top_failures: [] },
+          jobQueue: { running: [], waiting: [], stalled: [] }
+        }), { status: 200 });
+      }
+      if (url === "/api/doctor") return new Response(JSON.stringify({ configured: true, checks: [] }), { status: 200 });
+      if (url === "/api/knowledge") return new Response(JSON.stringify({ entries: [] }), { status: 200 });
+      if (url === "/api/jobs") return new Response(JSON.stringify({ running: [], waiting: [], stalled: [] }), { status: 200 });
+      if (url.startsWith("/api/exploration/status")) return new Response(JSON.stringify({ enabled: false }), { status: 200 });
+      if (url === "/api/runs/run-1") return delayedRun;
+      if (url === "/api/runs/run-2") return new Response(JSON.stringify({ run: runs[1] }), { status: 200 });
+      const artifactRun = runs.find((run) => url === `/api/runs/${run.id}/artifacts`);
+      if (artifactRun) return new Response(JSON.stringify({ artifacts: [] }), { status: 200 });
+      const checkpointRun = runs.find((run) => url === `/api/runs/${run.id}/checkpoints`);
+      if (checkpointRun) return new Response(JSON.stringify({ checkpoints: [] }), { status: 200 });
+      const literatureRun = runs.find((run) => url === `/api/runs/${run.id}/literature`);
+      if (literatureRun) return new Response(JSON.stringify({ literature: emptyLiterature(literatureRun.id) }), { status: 200 });
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("EventSource", class { addEventListener() {} close() {} } as unknown as typeof EventSource);
+    render(<App />);
+
+    const inspectRun = await screen.findByRole("combobox", { name: "Inspect run" });
+    fireEvent.change(inspectRun, { target: { value: "run-2" } });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Current inspection" })).toBeInTheDocument());
+
+    resolveDelayedRun?.(new Response(JSON.stringify({ run: runs[0] }), { status: 200 }));
+    await Promise.resolve();
+
+    expect(screen.getByRole("heading", { name: "Current inspection" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Delayed run" })).not.toBeInTheDocument();
+  });
 });
+
+function makeWebRun(id: string, title: string) {
+  const updatedAt = "2026-07-25T00:00:00.000Z";
+  const nodeIds = [
+    "collect_papers", "analyze_papers", "generate_hypotheses", "design_experiments",
+    "implement_experiments", "run_experiments", "analyze_results", "figure_audit", "review", "write_paper"
+  ];
+  return {
+    id,
+    title,
+    topic: "topic",
+    constraints: [],
+    objectiveMetric: "metric",
+    status: "paused",
+    currentNode: "review",
+    latestSummary: "Review requires an operator decision.",
+    updatedAt,
+    graph: {
+      currentNode: "review",
+      checkpointSeq: 8,
+      retryCounters: {},
+      rollbackCounters: {},
+      nodeStates: Object.fromEntries(nodeIds.map((node) => [node, {
+        status: node === "review" ? "needs_approval" : node === "write_paper" ? "pending" : "completed",
+        updatedAt
+      }]))
+    }
+  };
+}
 
 function emptyLiterature(runId: string) {
   return {

@@ -171,9 +171,17 @@ import {
   type RunPromotionDevelopmentRecoveryInput
 } from "../core/benchmark/promotionBenchmarkDevelopmentRecovery.js";
 import {
+  runPromotionControlledRecovery,
+  type RunPromotionControlledRecoveryInput
+} from "../core/benchmark/promotionBenchmarkControlledRecovery.js";
+import {
   exportPromotionDevelopmentEvidence,
   type ExportPromotionDevelopmentEvidenceInput
 } from "../core/benchmark/promotionBenchmarkDevelopmentEvidence.js";
+import {
+  exportPromotionAuditPackage,
+  type ExportPromotionAuditPackageInput
+} from "../core/benchmark/promotionBenchmarkAuditProjection.js";
 import { resolveOpenAiApiKey } from "../config.js";
 import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
@@ -189,6 +197,7 @@ export interface RunPromotionProviderCliInput {
   systemId: string;
   trialId: string;
   outDir: string;
+  resume?: boolean;
 }
 
 export interface RunGovernanceBenchmarkSeedCliInput {
@@ -361,7 +370,8 @@ async function runOpenAiPromotionProvider(input: RunPromotionProviderCliInput) {
     reasoningEffort: input.reasoningEffort,
     systemId: input.systemId,
     trialId: input.trialId,
-    evidenceClass: "external_real_provider"
+    evidenceClass: "external_real_provider",
+    resume: input.resume
   }, {
     complete: (request) => client.complete({
       prompt: request.prompt,
@@ -389,7 +399,8 @@ async function runOllamaPromotionProvider(input: RunPromotionProviderCliInput) {
     reasoningEffort: input.reasoningEffort,
     systemId: input.systemId,
     trialId: input.trialId,
-    evidenceClass: "local_real_model"
+    evidenceClass: "local_real_model",
+    resume: input.resume
   }, {
     complete: async (request) => {
       const completion = await client.chat({
@@ -423,7 +434,8 @@ export async function runPromotionProviderAggregationCli(
       `Suite: ${result.manifest.suite_id}`,
       `Trials: ${result.manifest.trial_count}`,
       `Predictions: ${result.manifest.prediction_count}`,
-      `Independent trial requirement: ${result.manifest.independent_trial_requirement_met}`,
+      `Receipt-distinct execution requirement: ${result.manifest.receipt_distinct_trial_requirement_met}`,
+      "Statistical replicates: false",
       `Paper-claim evidence eligible: ${result.manifest.paper_claim_evidence_eligible}`,
       `Output: ${result.predictions_path}`,
       `Manifest: ${result.manifest_path}`
@@ -448,6 +460,22 @@ export async function runPromotionConfirmatoryGateCli(
     ].join("\n") + "\n"
   );
   if (!result.report.evidence_gate_passed) process.exitCode = 1;
+}
+
+export async function runPromotionAuditPackageExportCli(
+  input: ExportPromotionAuditPackageInput
+): Promise<void> {
+  const result = await exportPromotionAuditPackage(input);
+  process.stdout.write(
+    [
+      "Promotion audit package exported: paper_scale_candidate",
+      "Claims: " + result.claim_count,
+      "Provider trials: " + result.trial_count,
+      "Output: " + result.output_dir,
+      "Projection manifest: " + result.projection_manifest_path,
+      "Support manifest: " + result.support_manifest_path
+    ].join("\n") + "\n"
+  );
 }
 
 export async function runPromotionRecoveryEvaluationCli(
@@ -484,6 +512,25 @@ export async function runPromotionDevelopmentRecoveryCli(
       "Recovery manifest: " + result.recovery_manifest_path,
       "Summary: " + result.summary_path,
       "Evidence boundary: synthetic development only; not eligible for paper claims"
+    ].join("\n") + "\n"
+  );
+}
+
+export async function runPromotionControlledRecoveryCli(
+  input: RunPromotionControlledRecoveryInput
+): Promise<void> {
+  const result = await runPromotionControlledRecovery(input);
+  process.stdout.write(
+    [
+      "Promotion controlled node-owned recovery verified: " + result.recovery.study_id,
+      "System: " + result.recovery.system_id,
+      "Fault-case coverage: " + result.recovery.covered_fault_case_count + "/" + result.recovery.original_fault_case_count,
+      "Successful recovery: " + formatOptionalRate(result.recovery.successful_recovery_rate),
+      "Exact clean-artifact match: " + formatOptionalRate(result.recovery.exact_clean_artifact_match_rate ?? null),
+      "Clean-control regression: " + formatOptionalRate(result.recovery.clean_control_regression_rate),
+      "Repair execution manifest: " + result.repair_execution_manifest_path,
+      "Recovery manifest: " + result.recovery_manifest_path,
+      "Evidence boundary: controlled registered fault families only"
     ].join("\n") + "\n"
   );
 }

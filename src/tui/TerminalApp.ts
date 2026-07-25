@@ -92,6 +92,7 @@ import {
 } from "../config.js";
 import { executionProfileToDependencyMode } from "../runtime/executionProfile.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
+import { isSafeAutoExecutableAdvance } from "../core/stateGraph/transitionSafety.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { DefaultTuneNodeRunner, TuneNodeRunner } from "../core/agents/tuneNode.js";
 import { RunContextMemory } from "../core/memory/runContextMemory.js";
@@ -315,6 +316,10 @@ const MAX_SHIFT_ENTER_SEQUENCE_LENGTH = SHIFT_ENTER_SEQUENCE_LIST.reduce(
   0
 );
 const STALE_RUNNING_NODE_RECOVERY_MS = 5 * 60 * 1000;
+const MAX_SEEN_EVENT_IDS = 5_000;
+const STREAM_RENDER_INTERVAL_MS = 50;
+const MAX_STREAM_LOG_LINES_PER_FRAME = 20;
+const MAX_PROJECTION_FILE_BYTES = 2 * 1024 * 1024;
 
 export class TerminalApp {
   private readonly config: AppConfig;
@@ -331,6 +336,7 @@ export class TerminalApp {
   private readonly semanticScholarApiKeyConfigured: boolean;
   private readonly interactiveSupervisor: InteractiveRunSupervisor;
   private readonly seenEventIds = new Set<string>();
+  private readonly pendingStreamRefreshRunIds = new Set<string>();
   private readonly appVersion = getAppVersion();
   private readonly colorEnabled = supportsColor();
   private recoveredStaleSessionLock = false;
@@ -356,6 +362,9 @@ export class TerminalApp {
   private queuedInputs: string[] = [];
   private watchModeActive = false;
   private watchModeTimer?: NodeJS.Timeout;
+  private streamRenderTimer?: NodeJS.Timeout;
+  private pendingStreamLogLines: string[] = [];
+  private drainingStreamRefreshes = false;
   private watchComposerSnapshot?: WatchComposerSnapshot;
   private activeSelectionMenu?: ActiveSelectionMenu;
   private drainingQueuedInputs = false;
@@ -446,7 +455,7 @@ export class TerminalApp {
       if (!this.rememberEventId(event.id)) {
         return;
       }
-      void this.handleStreamEvent(event);
+      this.handleStreamEvent(event);
     });
     this.attachProcessTerminationHandlers();
     await this.attachKeyboard();
@@ -4052,19 +4061,94 @@ export class TerminalApp {
 
     await this.setActiveRunId(run.id);
     let workingRun = run;
+    const requiresFigureAuditTraversal =
+      run.currentNode === "analyze_results" || run.currentNode === "figure_audit";
     const packetPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "review", "review_packet.json");
 
     if (workingRun.currentNode === "analyze_results") {
       const analyzeState = workingRun.graph.nodeStates.analyze_results;
       if (analyzeState.status === "needs_approval") {
+        const transition = workingRun.graph.pendingTransition;
+        if (!isSafeAutoExecutableAdvance(workingRun, "analyze_results", "figure_audit")) {
+          const detail = transition
+            ? `${transition.action} -> ${transition.targetNode || "stay"} (autoExecutable=${transition.autoExecutable})`
+            : `node status ${analyzeState.status} with no pending transition`;
+          this.pushLog(
+            `Analysis handoff stopped before figure audit: ${detail} is not a safe auto-executable advance to figure_audit.`
+          );
+          if (transition?.reason) {
+            this.pushLog(`Reason: ${transition.reason}`);
+          }
+          return { ok: false, reason: `analyze_results did not safely advance to figure_audit: ${detail}` };
+        }
+
         workingRun = await this.orchestrator.approveCurrent(workingRun.id);
         await this.refreshRunIndex();
-        if (workingRun.currentNode !== "review") {
+        if (workingRun.currentNode === "figure_audit") {
+          this.pushLog("Approved analyze_results and moved into figure_audit.");
+        } else if (
+          workingRun.currentNode !== "review" ||
+          workingRun.graph.nodeStates.figure_audit.status !== "completed"
+        ) {
           this.pushLog(`Approved analyze_results. Next node is ${workingRun.currentNode}.`);
           return { ok: false, reason: `review not available after approval: ${workingRun.currentNode}` };
         }
-        this.pushLog("Approved analyze_results and moved into figure_audit.");
       }
+    }
+
+    if (workingRun.currentNode === "figure_audit") {
+      const figureAuditState = workingRun.graph.nodeStates.figure_audit;
+      if (figureAuditState.status !== "needs_approval") {
+        const response = await this.orchestrator.runAgentWithOptions(workingRun.id, "figure_audit", { abortSignal });
+        await this.refreshRunIndex();
+        if (this.wasAgentRunCanceled(response.run, "figure_audit")) {
+          throw new Error("Operation aborted by user");
+        }
+        if (response.result.status === "failure" || response.run.status === "failed") {
+          const failure =
+            response.result.error ||
+            response.run.graph.nodeStates.figure_audit.lastError ||
+            "figure_audit failed";
+          this.pushLog(`figure_audit failed: ${failure}`);
+          return { ok: false, reason: failure };
+        }
+        workingRun = response.run;
+        this.pushLog(`figure_audit finished: ${oneLine(response.result.summary, 480)}`);
+      }
+
+      if (workingRun.currentNode === "figure_audit") {
+        const transition = workingRun.graph.pendingTransition;
+        const canAdvanceToReview = isSafeAutoExecutableAdvance(workingRun, "figure_audit", "review");
+        if (!canAdvanceToReview) {
+          const detail = transition
+            ? `${transition.action} -> ${transition.targetNode || "stay"} (autoExecutable=${transition.autoExecutable})`
+            : `node status ${workingRun.graph.nodeStates.figure_audit.status} with no pending transition`;
+          this.pushLog(
+            `Figure audit stopped before review: ${detail} is not a safe auto-executable advance to review.`
+          );
+          if (transition?.reason) {
+            this.pushLog(`Reason: ${transition.reason}`);
+          }
+          return { ok: false, reason: `figure_audit did not safely advance to review: ${detail}` };
+        }
+
+        workingRun = await this.orchestrator.applyPendingTransition(workingRun.id);
+        await this.refreshRunIndex();
+        if (workingRun.currentNode !== "review") {
+          this.pushLog(`Applied figure_audit transition. Next node is ${workingRun.currentNode}; review was not started.`);
+          return { ok: false, reason: `review not available after figure_audit: ${workingRun.currentNode}` };
+        }
+        this.pushLog("Applied figure_audit advance and moved into review.");
+      }
+    }
+
+    if (
+      requiresFigureAuditTraversal &&
+      (workingRun.currentNode !== "review" ||
+        workingRun.graph.nodeStates.figure_audit.status !== "completed")
+    ) {
+      this.pushLog(`Figure audit stopped before review. Current node is ${workingRun.currentNode}.`);
+      return { ok: false, reason: `review not available after figure_audit: ${workingRun.currentNode}` };
     }
 
     const packetBeforeRun = parseReviewPacket(await safeRead(packetPath));
@@ -5309,30 +5393,97 @@ export class TerminalApp {
     return !this.activeRunId || event.runId === this.activeRunId;
   }
 
-  private async handleStreamEvent(event: AutoLabOSEvent): Promise<void> {
+  private handleStreamEvent(event: AutoLabOSEvent): void {
     this.applyProjectedRunEvent(event);
-    try {
-      await this.refreshRunFromStore(event.runId);
-      await this.refreshRunProjectionHints(event.runId);
-      if (this.watchModeActive) {
-        await this.refreshWatchView();
-      } else if (this.activeRunId === event.runId) {
-        this.render();
+    const line = formatEventLog(event);
+
+    if (event.type === "OBS_RECEIVED") {
+      if (line && this.shouldLogStreamEvent(event)) {
+        this.queueStreamLogLine(line);
       }
-    } catch {
-      // Ignore transient projection refresh errors.
+      if (this.watchModeActive || !this.activeRunId || this.activeRunId === event.runId) {
+        this.scheduleStreamRender();
+      }
+      return;
     }
 
-    const line = formatEventLog(event);
-    if (!line || !this.shouldLogStreamEvent(event)) {
+    if (line && this.shouldLogStreamEvent(event)) {
+      this.pushLog(line);
+    }
+    this.pendingStreamRefreshRunIds.add(event.runId);
+    void this.drainPendingStreamRefreshes();
+  }
+
+  private queueStreamLogLine(line: string): void {
+    if (this.pendingStreamLogLines.length < MAX_STREAM_LOG_LINES_PER_FRAME) {
+      this.pendingStreamLogLines.push(line);
       return;
     }
-    this.pushLog(line);
-    if (this.watchModeActive) {
-      await this.refreshWatchView();
+    this.pendingStreamLogLines[MAX_STREAM_LOG_LINES_PER_FRAME - 1] = line;
+  }
+
+  private scheduleStreamRender(): void {
+    if (this.streamRenderTimer || this.stopped) {
       return;
     }
-    this.render();
+    this.streamRenderTimer = setTimeout(() => {
+      this.streamRenderTimer = undefined;
+      if (this.stopped) {
+        return;
+      }
+      this.flushPendingStreamLogLines();
+      this.render();
+    }, STREAM_RENDER_INTERVAL_MS);
+  }
+
+  private flushPendingStreamLogLines(): void {
+    const lines = this.pendingStreamLogLines;
+    this.pendingStreamLogLines = [];
+    for (const line of lines) {
+      this.pushLog(line);
+    }
+  }
+
+  private async drainPendingStreamRefreshes(): Promise<void> {
+    if (this.drainingStreamRefreshes || this.stopped) {
+      return;
+    }
+    this.drainingStreamRefreshes = true;
+    try {
+      while (!this.stopped && this.pendingStreamRefreshRunIds.size > 0) {
+        const runIds = [...this.pendingStreamRefreshRunIds];
+        this.pendingStreamRefreshRunIds.clear();
+        const shouldRender = !this.activeRunId || runIds.includes(this.activeRunId);
+
+        for (const runId of runIds) {
+          try {
+            await this.refreshRunFromStore(runId);
+            await this.refreshRunProjectionHints(runId);
+          } catch {
+            // Ignore transient projection refresh errors.
+          }
+        }
+
+        if (this.stopped) {
+          return;
+        }
+        try {
+          if (this.watchModeActive) {
+            await this.refreshWatchView();
+          } else if (shouldRender) {
+            this.flushPendingStreamLogLines();
+            this.render();
+          }
+        } catch {
+          // Ignore transient watch-view refresh errors.
+        }
+      }
+    } finally {
+      this.drainingStreamRefreshes = false;
+      if (!this.stopped && this.pendingStreamRefreshRunIds.size > 0) {
+        void this.drainPendingStreamRefreshes();
+      }
+    }
   }
 
   private applyProjectedRunEvent(event: AutoLabOSEvent): void {
@@ -5575,6 +5726,12 @@ export class TerminalApp {
       return false;
     }
     this.seenEventIds.add(eventId);
+    if (this.seenEventIds.size > MAX_SEEN_EVENT_IDS) {
+      const oldestEventId = this.seenEventIds.values().next().value;
+      if (typeof oldestEventId === "string") {
+        this.seenEventIds.delete(oldestEventId);
+      }
+    }
     return true;
   }
 
@@ -6393,6 +6550,13 @@ export class TerminalApp {
     }
     this.stopWatchMode({ skipRender: true });
     this.stopped = true;
+    if (this.streamRenderTimer) {
+      clearTimeout(this.streamRenderTimer);
+      this.streamRenderTimer = undefined;
+    }
+    this.pendingStreamLogLines = [];
+    this.pendingStreamRefreshRunIds.clear();
+    this.seenEventIds.clear();
     this.resetCtrlCExitConfirmation();
     this.detachProcessTerminationHandlers();
     this.queuedInputs = [];
@@ -7820,9 +7984,9 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
 async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Promise<RunProjectionHints | undefined> {
   const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
   const [runContextRaw, analyzeManifestRaw, implementStatusRaw, checkpointHints] = await Promise.all([
-    safeRead(path.join(workspaceRoot, run.memoryRefs.runContextPath)),
-    safeRead(path.join(runDir, "analysis_manifest.json")),
-    safeRead(path.join(runDir, "implement_experiments", "status.json")),
+    safeReadBounded(path.join(workspaceRoot, run.memoryRefs.runContextPath), MAX_PROJECTION_FILE_BYTES),
+    safeReadBounded(path.join(runDir, "analysis_manifest.json"), MAX_PROJECTION_FILE_BYTES),
+    safeReadBounded(path.join(runDir, "implement_experiments", "status.json"), MAX_PROJECTION_FILE_BYTES),
     readCheckpointProjectionHints(runDir)
   ]);
 
@@ -7855,7 +8019,7 @@ async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Pr
 
 async function readCheckpointProjectionHints(runDir: string): Promise<RunProjectionHints["checkpoint"] | undefined> {
   const checkpointsDir = path.join(runDir, "checkpoints");
-  const latestRaw = await safeRead(path.join(checkpointsDir, "latest.json"));
+  const latestRaw = await safeReadBounded(path.join(checkpointsDir, "latest.json"), MAX_PROJECTION_FILE_BYTES);
   if (!latestRaw.trim()) {
     return undefined;
   }
@@ -7886,7 +8050,7 @@ async function readCheckpointProjectionHints(runDir: string): Promise<RunProject
 }
 
 async function readCheckpointSnapshot(filePath: string): Promise<RunRecord | undefined> {
-  const raw = await safeRead(filePath);
+  const raw = await safeReadBounded(filePath, MAX_PROJECTION_FILE_BYTES);
   if (!raw.trim()) {
     return undefined;
   }
@@ -7898,6 +8062,18 @@ async function readCheckpointSnapshot(filePath: string): Promise<RunRecord | und
     return readRunRecord(parsed.runSnapshot);
   } catch {
     return undefined;
+  }
+}
+
+async function safeReadBounded(filePath: string, maxBytes: number): Promise<string> {
+  try {
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile() || stats.size > maxBytes) {
+      return "";
+    }
+    return await fs.readFile(filePath, "utf8");
+  } catch {
+    return "";
   }
 }
 

@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "validated_at": "2026-07-24T00:46:40+09:00",
+  "status": "passed",
+  "build_command": "latexmk -pdf -interaction=nonstopmode -halt-on-error manuscript.tex",
+  "package_build_command": "cd paper && latexmk -pdf -interaction=nonstopmode -halt-on-error main.tex",
+  "page_count": 4,
+  "page_size": "A4",
+  "undefined_citations": false,
+  "undefined_references": false,
+  "overfull_boxes": false,
+  "visual_pages_inspected": [1, 2, 3, 4],
+  "visual_findings": {
+    "clipping": false,
+    "overlap": false,
+    "table_overflow": false,
+    "unreadable_content": false,
+    "blank_or_duplicate_page": false,
+    "acl_review_style_and_continuous_line_numbers": true,
+    "malformed_bibliography_entry": false,
+    "minor_reference_column_imbalance": true
+  },
+  "artifacts": {
+    "manuscript_tex_sha256": "df679d72c841d08b05f4caa5ebca15b3331efa71669b1931472ccf8870dc58fd",
+    "manuscript_pdf_sha256": "49a421e6d30522c3134ecc54a3886d197d7716e101cffea8d71a1ee662e3b770",
+    "manuscript_log_sha256": "c012d01c6e5799a8c5045e0cd1dfc86ec5130fb6b4bc82215e6f8002eadc789c",
+    "acl_sty_sha256": "19dfeddc2c0e448f3926a0bef048a9db3f3611b46265b760caabd7ada4f361de",
+    "acl_natbib_bst_sha256": "6fbb306202290f4b68e74ac1460a8b27398500cb6dfeb4492e74c457eae7cd1e",
+    "references_bib_sha256": "4e74b0830ce1667a1f050993a4b241e7c23a367011d3e59aa47d5fd8eee72d31"
+  }
+}

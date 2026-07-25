@@ -1,8 +1,10 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { writeJsonFile } from "../../utils/fs.js";
+import { isReproducibleSourceEntry } from "../../utils/reproducibleSource.js";
 import {
   runPaperReadinessAudit,
   type PaperReadinessAuditBlocker,
@@ -16,6 +18,7 @@ import {
   type PromotionBenchmarkPrediction,
   type PromotionDecision
 } from "./promotionBenchmark.js";
+import { expectedPromotionConcernEvidenceRefs } from "./promotionBenchmarkEvidenceTrace.js";
 
 export const PROMOTION_BENCHMARK_SYSTEMS = [
   "always-promote",
@@ -25,7 +28,7 @@ export const PROMOTION_BENCHMARK_SYSTEMS = [
 ] as const;
 
 export const PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION =
-  "promotion-system-protocol-v2";
+  "promotion-system-protocol-v5";
 
 export type PromotionBenchmarkSystemName = typeof PROMOTION_BENCHMARK_SYSTEMS[number];
 
@@ -53,8 +56,8 @@ export type PromotionBenchmarkSystemProtocol =
   | "gate_ablation";
 
 export interface PromotionBenchmarkSystemRunManifest {
-  schema_version: "1.0" | "1.1";
-  protocol_revision: typeof PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION | null;
+  schema_version: "1.0" | "1.1" | "1.2" | "1.3";
+  protocol_revision: string | null;
   status: "completed";
   evidence_class: "deterministic_artifact_evaluation";
   suite_id: string;
@@ -69,10 +72,29 @@ export interface PromotionBenchmarkSystemRunManifest {
     system_id: PromotionBenchmarkSystemName;
     protocol: PromotionBenchmarkSystemProtocol;
     ablated_components: string[];
+    input_contract?: "case_id_and_artifact_tree_only";
   }>;
+  runtime_binding: {
+    node_version: string;
+    source_tree_sha256: string;
+    package_lock_sha256: string;
+  } | null;
   artifacts: {
     predictions_path: string;
     predictions_sha256: string;
+  };
+}
+
+export type PromotionBenchmarkRuntimeBinding = NonNullable<
+  PromotionBenchmarkSystemRunManifest["runtime_binding"]
+>;
+
+export async function buildPromotionBenchmarkRuntimeBinding(): Promise<PromotionBenchmarkRuntimeBinding> {
+  const runtimeRoot = await resolveSystemRuntimeRoot();
+  return {
+    node_version: process.version,
+    source_tree_sha256: await hashPromotionBenchmarkRuntimeSourceTree(runtimeRoot),
+    package_lock_sha256: await sha256File(path.join(runtimeRoot, "package-lock.json"))
   };
 }
 
@@ -111,16 +133,17 @@ export async function runPromotionBenchmarkSystems(
 
   for (const benchmarkCase of loaded.suite.cases) {
     const artifactRoot = loaded.suite.case_artifact_roots[benchmarkCase.case_id];
+    const visibleCase = systemVisibleCase(benchmarkCase);
     let auditPrediction: PromotionBenchmarkPrediction | undefined;
     for (const system of systems) {
       if (system === "always-promote") {
-        predictions.push(alwaysPromotePrediction(benchmarkCase, trialId));
+        predictions.push(alwaysPromotePrediction(visibleCase, trialId));
       } else if (system === "presence-checklist") {
-        predictions.push(await presenceChecklistPrediction(benchmarkCase, artifactRoot, trialId));
+        predictions.push(await presenceChecklistPrediction(visibleCase, artifactRoot, trialId));
       } else {
         auditPrediction ||= await artifactAuditPrediction({
           cwd,
-          benchmarkCase,
+          benchmarkCase: visibleCase,
           artifactRoot,
           auditRoot: path.join(outDir, "audits"),
           trialId
@@ -137,7 +160,7 @@ export async function runPromotionBenchmarkSystems(
   await fs.writeFile(predictionsPath, predictionsText, "utf8");
   const manifestPath = path.join(outDir, "system-run-manifest.json");
   const manifest: PromotionBenchmarkSystemRunManifest = {
-    schema_version: "1.1",
+    schema_version: "1.3",
     protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
@@ -150,6 +173,7 @@ export async function runPromotionBenchmarkSystems(
     case_count: loaded.suite.cases.length,
     prediction_count: predictions.length,
     systems: systems.map(systemDefinition),
+    runtime_binding: await buildPromotionBenchmarkRuntimeBinding(),
     artifacts: {
       predictions_path: portableRef(cwd, predictionsPath),
       predictions_sha256: sha256(predictionsText)
@@ -198,6 +222,12 @@ export async function verifyPromotionBenchmarkSystemRun(
       || await sha256File(predictionsPath) !== manifest.artifacts.predictions_sha256) {
     throw new Error("System run manifest artifact SHA-256 mismatch.");
   }
+  const runtimeRoot = await resolveSystemRuntimeRoot();
+  if (!manifest.runtime_binding
+      || await hashPromotionBenchmarkRuntimeSourceTree(runtimeRoot) !== manifest.runtime_binding.source_tree_sha256
+      || await sha256File(path.join(runtimeRoot, "package-lock.json")) !== manifest.runtime_binding.package_lock_sha256) {
+    throw new Error("System run manifest runtime source or dependency lock SHA-256 mismatch.");
+  }
   const loaded = await loadPromotionBenchmarkSuite(suitePath);
   const predictionLoad = await loadPromotionBenchmarkPredictions(predictionsPath);
   if (!loaded.suite || loaded.issues.length > 0 || predictionLoad.issues.length > 0) {
@@ -231,7 +261,7 @@ export async function verifyPromotionBenchmarkSystemRun(
 }
 
 function alwaysPromotePrediction(
-  benchmarkCase: PromotionBenchmarkCaseManifest,
+  benchmarkCase: PromotionBenchmarkSystemCaseView,
   trialId: string
 ): PromotionBenchmarkPrediction {
   return {
@@ -247,7 +277,7 @@ function alwaysPromotePrediction(
 }
 
 async function presenceChecklistPrediction(
-  benchmarkCase: PromotionBenchmarkCaseManifest,
+  benchmarkCase: PromotionBenchmarkSystemCaseView,
   artifactRoot: string,
   trialId: string
 ): Promise<PromotionBenchmarkPrediction> {
@@ -296,7 +326,7 @@ async function presenceChecklistPrediction(
 
 async function artifactAuditPrediction(input: {
   cwd: string;
-  benchmarkCase: PromotionBenchmarkCaseManifest;
+  benchmarkCase: PromotionBenchmarkSystemCaseView;
   artifactRoot: string;
   auditRoot: string;
   trialId: string;
@@ -371,18 +401,10 @@ function repairOwnerForBlocker(code: string): string | undefined {
 }
 
 function evidenceRefsForBlocker(blocker: PaperReadinessAuditBlocker): string[] {
-  if (blocker.code === "baseline_or_comparator_missing" || blocker.code.startsWith("result_table_")) {
-    return ["result_table.json"];
-  }
-  if (blocker.code === "fallback_only_evidence") return ["evidence_store.jsonl"];
-  if (blocker.code === "unsupported_claims_present") return ["paper/claim_evidence_table.json"];
-  if (blocker.code === "citation_support_missing") return ["paper/evidence_links.json"];
-  if (blocker.code === "figure_result_caption_mismatch") return ["figure_audit/figure_audit_summary.json"];
+  const expected = expectedPromotionConcernEvidenceRefs(blocker.code);
+  if (expected) return expected;
   if (blocker.code.includes("run") || blocker.code === "write_paper_failed") return ["run_record.json"];
   if (blocker.code === "artifact_contract_incomplete") return ["artifact_contract"];
-  if (blocker.code === "repeated_run_provenance_missing") return ["run_config.json", "experiment_evidence.json"];
-  if (blocker.code === "budget_contract_mismatch") return ["run_config.json", "run_record.json"];
-  if (blocker.code === "stale_persisted_state") return ["checkpoint/state.json", "paper/paper_readiness.json"];
   return [blocker.source];
 }
 
@@ -424,30 +446,56 @@ function systemDefinition(systemId: PromotionBenchmarkSystemName): {
   system_id: PromotionBenchmarkSystemName;
   protocol: PromotionBenchmarkSystemProtocol;
   ablated_components: string[];
+  input_contract: "case_id_and_artifact_tree_only";
 } {
   if (systemId === "always-promote") {
-    return { system_id: systemId, protocol: "ungated", ablated_components: [] };
+    return systemDefinitionRecord(systemId, "ungated", []);
   }
   if (systemId === "presence-checklist") {
-    return { system_id: systemId, protocol: "artifact_presence_checklist", ablated_components: [] };
+    return systemDefinitionRecord(systemId, "artifact_presence_checklist", []);
   }
   if (systemId === "artifact-audit") {
-    return { system_id: systemId, protocol: "full_artifact_policy", ablated_components: [] };
+    return systemDefinitionRecord(systemId, "full_artifact_policy", []);
   }
+  return systemDefinitionRecord(systemId, "gate_ablation", ["concern_to_action_binding"]);
+}
+
+interface PromotionBenchmarkSystemCaseView {
+  case_id: string;
+}
+
+function systemVisibleCase(benchmarkCase: PromotionBenchmarkCaseManifest): PromotionBenchmarkSystemCaseView {
+  return { case_id: benchmarkCase.case_id };
+}
+
+function systemDefinitionRecord(
+  systemId: PromotionBenchmarkSystemName,
+  protocol: PromotionBenchmarkSystemProtocol,
+  ablatedComponents: string[]
+): ReturnType<typeof systemDefinition> {
   return {
     system_id: systemId,
-    protocol: "gate_ablation",
-    ablated_components: ["concern_to_action_binding"]
+    protocol,
+    ablated_components: ablatedComponents,
+    input_contract: "case_id_and_artifact_tree_only"
   };
 }
 
 function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunManifest {
-  const currentProtocol = isRecord(value) && value.schema_version === "1.1";
+  const currentProtocol = isRecord(value) && value.schema_version === "1.3";
+  const sourceBoundProtocol = isRecord(value) && value.schema_version === "1.2";
+  const legacyProtocol = isRecord(value) && value.schema_version === "1.1";
+  const runtimeBinding = isRecord(value) && isRecord(value.runtime_binding)
+    ? value.runtime_binding
+    : null;
   if (!isRecord(value)
-      || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
+      || (value.schema_version !== "1.0" && value.schema_version !== "1.1"
+        && value.schema_version !== "1.2" && value.schema_version !== "1.3")
       || (currentProtocol
         ? value.protocol_revision !== PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION
-        : value.protocol_revision !== undefined)
+        : sourceBoundProtocol || legacyProtocol
+          ? !nonEmptyString(value.protocol_revision)
+          : value.protocol_revision !== undefined)
       || value.status !== "completed"
       || value.evidence_class !== "deterministic_artifact_evaluation"
       || !portableIdentifier(value.suite_id)
@@ -460,6 +508,10 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
       || !positiveInteger(value.prediction_count)
       || !Array.isArray(value.systems)
       || value.systems.length === 0
+      || ((currentProtocol || sourceBoundProtocol) && (!runtimeBinding
+        || !/^v\d+\.\d+\.\d+/u.test(String(runtimeBinding.node_version))
+        || !isSha256(runtimeBinding.source_tree_sha256)
+        || !isSha256(runtimeBinding.package_lock_sha256)))
       || !isRecord(value.artifacts)
       || !nonEmptyString(value.artifacts.predictions_path)
       || !isSha256(value.artifacts.predictions_sha256)) {
@@ -467,7 +519,7 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
   }
   assertExactKeys(value, [
     "schema_version",
-    ...(currentProtocol ? ["protocol_revision"] : []),
+    ...(currentProtocol || sourceBoundProtocol || legacyProtocol ? ["protocol_revision"] : []),
     "status",
     "evidence_class",
     "suite_id",
@@ -479,6 +531,7 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
     "case_count",
     "prediction_count",
     "systems",
+    ...(currentProtocol || sourceBoundProtocol ? ["runtime_binding"] : []),
     "artifacts"
   ], "system run manifest");
   assertExactKeys(value.artifacts, ["predictions_path", "predictions_sha256"], "system run artifacts");
@@ -490,14 +543,21 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
           && entry.protocol !== "full_artifact_policy"
           && entry.protocol !== "gate_ablation")
         || !Array.isArray(entry.ablated_components)
-        || entry.ablated_components.some((item) => !portableIdentifier(item))) {
+        || entry.ablated_components.some((item) => !portableIdentifier(item))
+        || (currentProtocol && entry.input_contract !== "case_id_and_artifact_tree_only")) {
       throw new Error("Invalid system run protocol entry " + (index + 1) + ".");
     }
-    assertExactKeys(entry, ["system_id", "protocol", "ablated_components"], "system run protocol");
+    assertExactKeys(entry, [
+      "system_id",
+      "protocol",
+      "ablated_components",
+      ...(currentProtocol ? ["input_contract"] : [])
+    ], "system run protocol");
     return {
       system_id: entry.system_id as PromotionBenchmarkSystemName,
       protocol: entry.protocol as PromotionBenchmarkSystemProtocol,
-      ablated_components: entry.ablated_components as string[]
+      ablated_components: entry.ablated_components as string[],
+      ...(currentProtocol ? { input_contract: "case_id_and_artifact_tree_only" as const } : {})
     };
   });
   if (new Set(systems.map((system) => system.system_id)).size !== systems.length
@@ -505,8 +565,8 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
     throw new Error("System run manifest system identifiers or prediction count are invalid.");
   }
   return {
-    schema_version: currentProtocol ? "1.1" : "1.0",
-    protocol_revision: currentProtocol ? PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION : null,
+    schema_version: currentProtocol ? "1.3" : sourceBoundProtocol ? "1.2" : legacyProtocol ? "1.1" : "1.0",
+    protocol_revision: currentProtocol || sourceBoundProtocol || legacyProtocol ? value.protocol_revision as string : null,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
     suite_id: value.suite_id,
@@ -518,6 +578,13 @@ function parseSystemRunManifest(value: unknown): PromotionBenchmarkSystemRunMani
     case_count: value.case_count,
     prediction_count: value.prediction_count,
     systems,
+    runtime_binding: currentProtocol || sourceBoundProtocol
+      ? {
+          node_version: runtimeBinding!.node_version as string,
+          source_tree_sha256: runtimeBinding!.source_tree_sha256 as string,
+          package_lock_sha256: runtimeBinding!.package_lock_sha256 as string
+        }
+      : null,
     artifacts: {
       predictions_path: value.artifacts.predictions_path,
       predictions_sha256: value.artifacts.predictions_sha256
@@ -551,6 +618,50 @@ function sha256(value: string | Buffer): string {
 
 function sha256File(filePath: string): Promise<string> {
   return fs.readFile(filePath).then(sha256);
+}
+
+export async function hashPromotionBenchmarkRuntimeSourceTree(cwd: string): Promise<string> {
+  const roots = ["src", "package.json", "package-lock.json", "tsconfig.json"];
+  const rows: Array<{ ref: string; sha256: string }> = [];
+  const visit = async (absolutePath: string, relativePath: string): Promise<void> => {
+    const stat = await fs.lstat(absolutePath);
+    if (stat.isSymbolicLink()) {
+      throw new Error(`System runtime binding rejects symbolic links: ${relativePath}`);
+    }
+    if (stat.isDirectory()) {
+      const entries = await fs.readdir(absolutePath, { withFileTypes: true });
+      for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+        if (!isReproducibleSourceEntry(entry.name)) continue;
+        await visit(path.join(absolutePath, entry.name), path.posix.join(relativePath, entry.name));
+      }
+      return;
+    }
+    if (stat.isFile()) rows.push({ ref: relativePath, sha256: await sha256File(absolutePath) });
+  };
+  for (const ref of roots) await visit(path.join(cwd, ref), ref);
+  return sha256(`${JSON.stringify(rows)}\n`);
+}
+
+async function resolveSystemRuntimeRoot(): Promise<string> {
+  const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  for (const candidate of [...new Set([process.cwd(), moduleRoot])]) {
+    if ((await pathExists(path.join(candidate, "src")))
+        && (await pathExists(path.join(candidate, "package.json")))
+        && (await pathExists(path.join(candidate, "package-lock.json")))
+        && (await pathExists(path.join(candidate, "tsconfig.json")))) {
+      return candidate;
+    }
+  }
+  throw new Error("System runtime binding source root is unavailable.");
+}
+
+async function pathExists(value: string): Promise<boolean> {
+  try {
+    await fs.access(value);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isSha256(value: unknown): value is string {

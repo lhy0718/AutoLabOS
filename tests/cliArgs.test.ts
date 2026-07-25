@@ -632,6 +632,25 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports exporting a confirmatory result into the canonical audit contract", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "export-promotion-audit-package",
+      "--gate", "outputs/gate.json",
+      "--paper-root", "paper-package",
+      "--support-root", ".",
+      "--support-manifest", "paper-package/support.json",
+      "--out-dir", "outputs/audit-input"
+    ])).toEqual({
+      kind: "governance-benchmark-export-promotion-audit-package",
+      gatePath: "outputs/gate.json",
+      paperRoot: "paper-package",
+      supportRoot: ".",
+      supportManifestPath: "paper-package/support.json",
+      outDir: "outputs/audit-input"
+    });
+  });
+
   it("supports explicit post-repair promotion evaluation", () => {
     expect(resolveCliAction([
       "governance-benchmark",
@@ -680,6 +699,27 @@ describe("resolveCliAction", () => {
     ])).toMatchObject({
       kind: "error",
       message: expect.stringContaining("requires")
+    });
+  });
+
+  it("supports node-owned controlled recovery", () => {
+    expect(resolveCliAction([
+      "governance-benchmark",
+      "run-promotion-controlled-recovery",
+      "--suite", "inputs/certified-suite.json",
+      "--predictions", "runs/original/predictions.jsonl",
+      "--system-run-manifest", "runs/original/system-run-manifest.json",
+      "--repaired-suite-id", "controlled-repaired-suite",
+      "--repaired-trial-id", "controlled-post-repair",
+      "--out-dir", "outputs/controlled-recovery"
+    ])).toEqual({
+      kind: "governance-benchmark-run-promotion-controlled-recovery",
+      suitePath: "inputs/certified-suite.json",
+      predictionsPath: "runs/original/predictions.jsonl",
+      systemRunManifestPath: "runs/original/system-run-manifest.json",
+      repairedSuiteId: "controlled-repaired-suite",
+      repairedTrialId: "controlled-post-repair",
+      outDir: "outputs/controlled-recovery"
     });
   });
 
@@ -761,7 +801,7 @@ describe("resolveCliAction", () => {
     });
   });
 
-  it("supports a hash-bound local model promotion run", () => {
+  it("supports resuming a hash-bound local model promotion run", () => {
     expect(resolveCliAction([
       "governance-benchmark",
       "run-promotion-provider",
@@ -772,6 +812,7 @@ describe("resolveCliAction", () => {
       "--system", "manuscript-reviewer",
       "--trial", "trial-local",
       "--base-url", "http://127.0.0.1:11434",
+      "--resume",
       "--out-dir", "outputs/provider-runs/trial-local"
     ])).toEqual({
       kind: "governance-benchmark-run-promotion-provider",
@@ -782,7 +823,8 @@ describe("resolveCliAction", () => {
       systemId: "manuscript-reviewer",
       trialId: "trial-local",
       outDir: "outputs/provider-runs/trial-local",
-      baseUrl: "http://127.0.0.1:11434"
+      baseUrl: "http://127.0.0.1:11434",
+      resume: true
     });
   });
 

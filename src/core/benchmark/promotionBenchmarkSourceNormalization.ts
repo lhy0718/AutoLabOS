@@ -608,7 +608,7 @@ async function writeCanonicalEnvelope(
   });
   await writeJsonFile(path.join(root, "review", "paper_critique.json"), {
     paper_readiness_state: annotation.paper_ready ? "paper_ready" : "blocked",
-    claim_ceiling_applied: true,
+    claim_ceiling_applied: !annotation.paper_ready,
     source_artifact_ref: sourceArtifactRef(annotation.readiness_source_path)
   });
   await writeJsonFile(path.join(root, "review", "decision.json"), {
@@ -643,6 +643,7 @@ async function writeCanonicalEnvelope(
   });
   await fs.writeFile(path.join(root, "evidence_store.jsonl"), `${JSON.stringify({
     id: annotation.evidence_ids[0],
+    claim_id: claimId,
     source_normalization_id: normalizationId,
     metric_evidence_present: true,
     source_artifact_refs: annotation.evidence_refs.map(sourceArtifactRef)

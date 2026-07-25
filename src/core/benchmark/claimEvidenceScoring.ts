@@ -20,6 +20,7 @@ export interface ScoreClaimEvidenceArtifactsInput {
   claimEvidenceTableArtifact?: unknown;
   claimStatusTableArtifact?: unknown;
   evidenceLinksArtifact?: unknown;
+  evidenceStoreArtifact?: unknown;
   availableArtifactRefs?: readonly string[];
 }
 
@@ -39,12 +40,32 @@ interface NormalizedClaimStatusRow {
   reproduction_trace_present?: boolean;
 }
 
+const SUPPORTED_CLAIM_STATUSES = new Set([
+  "verified",
+  "supported",
+  "supported_by_code_and_tests",
+  "supported_with_scope_limitation",
+  "supported_with_task_gold_mismatch",
+  "supported_with_local_runtime_boundary"
+]);
+
+const BLOCKED_CLAIM_STATUSES = new Set([
+  "blocked",
+  "development_only",
+  "inferred"
+]);
+
 export function scoreClaimEvidenceArtifacts(
   input: ScoreClaimEvidenceArtifactsInput
 ): ClaimEvidenceScore {
   const tableClaims = normalizeClaimEvidenceRows(input.claimEvidenceTableArtifact);
   const statusRows = normalizeClaimStatusRows(input.claimStatusTableArtifact);
   const evidenceLinkClaims = normalizeEvidenceLinkRows(input.evidenceLinksArtifact);
+  const duplicateClaimIds = new Set([
+    ...duplicateIds(tableClaims.map((claim) => claim.claim_id)),
+    ...duplicateIds(statusRows.map((claim) => claim.claim_id)),
+    ...duplicateIds(evidenceLinkClaims.map((claim) => claim.claim_id))
+  ]);
   const claimIds = new Set<string>([
     ...tableClaims.map((claim) => claim.claim_id),
     ...statusRows.map((claim) => claim.claim_id),
@@ -72,6 +93,7 @@ export function scoreClaimEvidenceArtifacts(
   const tableById = new Map(tableClaims.map((claim) => [claim.claim_id, claim] as const));
   const statusById = new Map(statusRows.map((claim) => [claim.claim_id, claim] as const));
   const evidenceLinksById = new Map(evidenceLinkClaims.map((claim) => [claim.claim_id, claim] as const));
+  const evidenceStoreById = groupEvidenceStoreRows(input.evidenceStoreArtifact);
   const availableArtifactRefs = input.availableArtifactRefs
     ? new Set(input.availableArtifactRefs.map(normalizeArtifactRef))
     : undefined;
@@ -81,6 +103,15 @@ export function scoreClaimEvidenceArtifacts(
   const issues: ClaimEvidenceScoringIssue[] = [];
 
   for (const claimId of [...claimIds].sort()) {
+    if (duplicateClaimIds.has(claimId)) {
+      unsupported += 1;
+      issues.push({
+        code: "claim_id_duplicate",
+        claim_id: claimId,
+        message: `Claim ${claimId} appears more than once in at least one claim artifact; duplicate identifiers are rejected before map construction.`
+      });
+      continue;
+    }
     const tableClaim = tableById.get(claimId);
     const statusClaim = statusById.get(claimId);
     const evidenceLinkClaim = evidenceLinksById.get(claimId);
@@ -89,23 +120,47 @@ export function scoreClaimEvidenceArtifacts(
       ...(statusClaim?.artifact_refs ?? []),
       ...(evidenceLinkClaim?.artifact_refs ?? [])
     ].filter(Boolean);
+    const evidenceIds = [
+      ...(tableClaim?.evidence_ids ?? []),
+      ...(evidenceLinkClaim?.evidence_ids ?? [])
+    ].filter(Boolean);
+    const resolvedEvidenceIdRefs: string[] = [];
+    const unresolvedEvidenceIds: string[] = [];
+    for (const evidenceId of evidenceIds) {
+      const matches = evidenceStoreById.get(evidenceId) ?? [];
+      if (matches.length !== 1) {
+        unresolvedEvidenceIds.push(evidenceId);
+        continue;
+      }
+      const evidenceRow = matches[0];
+      const boundClaimId = typeof evidenceRow.claim_id === "string" ? evidenceRow.claim_id.trim() : "";
+      const evidenceValid = evidenceRow.claim_evidence_valid === true;
+      if (boundClaimId !== claimId || !evidenceValid) {
+        unresolvedEvidenceIds.push(evidenceId);
+        continue;
+      }
+      const refs = evidenceStoreArtifactRefs(evidenceRow);
+      const resolved = availableArtifactRefs
+        ? refs.filter((reference) => availableArtifactRefs.has(normalizeArtifactRef(reference)))
+        : refs;
+      if (resolved.length === 0) unresolvedEvidenceIds.push(evidenceId);
+      else resolvedEvidenceIdRefs.push(...resolved);
+    }
     const resolvedArtifactRefs = availableArtifactRefs
       ? artifactRefs.filter((reference) => availableArtifactRefs.has(normalizeArtifactRef(reference)))
       : artifactRefs;
     const evidenceRefs = [
-      ...resolvedArtifactRefs,
-      ...(tableClaim?.citation_refs ?? []),
-      ...(tableClaim?.evidence_ids ?? []),
-      ...(statusClaim?.citation_refs ?? []),
-      ...(evidenceLinkClaim?.citation_refs ?? []),
-      ...(evidenceLinkClaim?.evidence_ids ?? [])
+      ...resolvedEvidenceIdRefs,
+      ...(availableArtifactRefs ? [] : tableClaim?.citation_refs ?? []),
+      ...(availableArtifactRefs ? [] : statusClaim?.citation_refs ?? []),
+      ...(availableArtifactRefs ? [] : evidenceLinkClaim?.citation_refs ?? [])
     ].filter(Boolean);
     const status = statusClaim?.status;
     const developmentOnly = status === "development_only" || status === "inferred";
-    const blocked = status === "blocked" || developmentOnly;
-    const unsupportedByStatus = status === "unverified";
-    const supportedByStatus = status === "verified";
+    const blocked = status !== undefined && BLOCKED_CLAIM_STATUSES.has(status);
+    const supportedByStatus = status !== undefined && SUPPORTED_CLAIM_STATUSES.has(status);
     const hasSupport = evidenceRefs.length > 0;
+    const hasBoundArtifactTrace = resolvedArtifactRefs.length > 0;
     const declaredSupport = artifactRefs.length > 0
       || (tableClaim?.citation_refs.length ?? 0) > 0
       || (tableClaim?.evidence_ids.length ?? 0) > 0
@@ -123,9 +178,9 @@ export function scoreClaimEvidenceArtifacts(
       });
       continue;
     }
-    const isSupported = availableArtifactRefs
-      ? hasSupport && !unsupportedByStatus
-      : supportedByStatus || (hasSupport && !unsupportedByStatus);
+    const isSupported = hasSupport
+      && unresolvedEvidenceIds.length === 0
+      && supportedByStatus;
 
     if (isSupported) {
       supported += 1;
@@ -133,19 +188,40 @@ export function scoreClaimEvidenceArtifacts(
     }
 
     unsupported += 1;
-    issues.push({
-      code: declaredSupport && !hasSupport
-          ? "claim_evidence_unavailable"
-          : hasSupport
-            ? "claim_evidence_unverified"
-            : "claim_evidence_missing",
-      claim_id: claimId,
-      message: declaredSupport && !hasSupport
-        ? `Claim ${claimId} references artifacts that are not present in the frozen audit input.`
-        : hasSupport
-        ? `Claim ${claimId} has evidence references but remains unverified or blocked.`
-        : `Claim ${claimId} has no artifact, citation, or evidence references.`
-    });
+    let issueRecorded = false;
+    if (!supportedByStatus) {
+      issues.push({
+        code: status ? "claim_status_unrecognized_or_unsupported" : "claim_status_missing",
+        claim_id: claimId,
+        message: status
+          ? `Claim ${claimId} declares non-supporting or unknown status ${status}; only the explicit support-status allowlist can authorize a claim.`
+          : `Claim ${claimId} has no explicit support status; evidence presence alone cannot authorize a claim.`
+      });
+      issueRecorded = true;
+    }
+    if (unresolvedEvidenceIds.length > 0) {
+      issues.push({
+        code: "claim_evidence_id_unresolved",
+        claim_id: claimId,
+        message: `Claim ${claimId} has evidence IDs that do not resolve uniquely to valid, claim-bound, frozen artifact-backed evidence-store records: ${[...new Set(unresolvedEvidenceIds)].join(", ")}.`
+      });
+      issueRecorded = true;
+    }
+    if (!issueRecorded) {
+      issues.push({
+        code: declaredSupport && !hasSupport && !hasBoundArtifactTrace
+            ? "claim_evidence_unavailable"
+            : hasSupport || hasBoundArtifactTrace
+              ? "claim_evidence_unverified"
+              : "claim_evidence_missing",
+        claim_id: claimId,
+        message: declaredSupport && !hasSupport && !hasBoundArtifactTrace
+          ? `Claim ${claimId} references artifacts that are not present in the frozen audit input.`
+          : hasSupport || hasBoundArtifactTrace
+          ? `Claim ${claimId} has an artifact trace but lacks a unique claim-bound validation receipt.`
+          : `Claim ${claimId} has no artifact, citation, or evidence references.`
+      });
+    }
   }
 
   return {
@@ -249,6 +325,36 @@ function normalizeStringArray(value: unknown): string[] {
 
 function normalizeArtifactRef(value: string): string {
   return value.trim().replace(/\\/gu, "/").replace(/^\.\//u, "");
+}
+
+function groupEvidenceStoreRows(value: unknown): Map<string, Record<string, unknown>[]> {
+  const rows = Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    : [];
+  const grouped = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows) {
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    if (!id) continue;
+    grouped.set(id, [...(grouped.get(id) ?? []), row]);
+  }
+  return grouped;
+}
+
+function evidenceStoreArtifactRefs(row: Record<string, unknown>): string[] {
+  return [
+    ...normalizeStringArray(row.artifact_refs),
+    ...(typeof row.evidence_ref === "string" ? [row.evidence_ref.trim()] : [])
+  ].filter(Boolean);
+}
+
+function duplicateIds(values: string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const value of values) {
+    if (seen.has(value)) duplicates.add(value);
+    seen.add(value);
+  }
+  return [...duplicates];
 }
 
 function round2(value: number): number {

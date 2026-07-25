@@ -1,10 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { validateGovernanceArtifactContract } from "../src/core/benchmark/governanceArtifactContract.js";
+import { inspectReferenceAuthorityGate } from "../src/core/referenceAuthorityGate.js";
 
 const tempDirs: string[] = [];
 
@@ -50,6 +52,16 @@ describe("governanceArtifactContract", () => {
     expect(report.passed).toBe(false);
     expect(report.issues.map((issue) => issue.code)).toContain("paper_ready_without_evidence_artifact");
     expect(report.issues.map((issue) => issue.file_path)).toContain("result_table.json");
+  });
+
+  it("accepts paper_ready=true only with a current hash-bound reference authority pass", async () => {
+    const runDir = await makeRunDir("run-artifact-contract-authority-pass");
+    await seedGatedArtifacts(runDir, { paperReady: true });
+
+    const report = await validateGovernanceArtifactContract({ runDir, condition: "gated" });
+
+    expect(report.passed).toBe(true);
+    expect(report.issues).toEqual([]);
   });
 
   it("does not require figure audit artifacts for the no_figure_audit ablation", async () => {
@@ -111,7 +123,9 @@ async function seedGatedArtifacts(
   });
   await writeJson(path.join(runDir, "review", "decision.json"), { outcome: "advance" });
   await mkdir(path.join(runDir, "paper"), { recursive: true });
-  await writeFile(path.join(runDir, "paper", "main.tex"), "\\section{Results}\n", "utf8");
+  const manuscript = "\\section{Results}\n";
+  const manuscriptSha256 = createHash("sha256").update(manuscript, "utf8").digest("hex");
+  await writeFile(path.join(runDir, "paper", "main.tex"), manuscript, "utf8");
   await writeJson(path.join(runDir, "paper", "evidence_links.json"), {
     claims: [{ claim_id: "c1", evidence_ids: ["ev1"] }]
   });
@@ -119,6 +133,32 @@ async function seedGatedArtifacts(
     paper_ready: options.paperReady,
     readiness_state: options.paperReady ? "paper_ready" : "paper_scale_candidate"
   });
+  await writeJson(path.join(runDir, "paper", "reference_evidence_status.json"), {
+    schema_version: "1.0",
+    manuscript: "paper/main.tex",
+    manuscript_projection: {
+      source_ref: "paper/main.tex",
+      package_ref: "paper/main.tex",
+      source_sha256: manuscriptSha256,
+      package_content_sha256: manuscriptSha256
+    },
+    submission_gate_passed: true,
+    summary: {
+      citation_bearing_claim_count: 0,
+      independently_checked_claim_count: 0,
+      missing_full_text_claim_count: 0
+    },
+    blocking_requirements: []
+  });
+  await writeFile(
+    path.join(runDir, "paper", "refgate_claims.tsv"),
+    "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n",
+    "utf8"
+  );
+  await writeJson(
+    path.join(runDir, "paper", "reference_authority_gate.json"),
+    await inspectReferenceAuthorityGate(path.join(runDir, "paper"))
+  );
 }
 
 async function writeJson(filePath: string, value: unknown): Promise<void> {

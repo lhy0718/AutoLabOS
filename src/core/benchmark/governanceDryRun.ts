@@ -441,9 +441,11 @@ async function writeDryRunArtifacts(input: {
 function dryRunPassed(reports: GovernanceBenchmarkDryRunConditionReport[]): boolean {
   const gated = reports.find((report) => report.condition === "gated");
   const ungated = reports.find((report) => report.condition === "ungated");
+  const ungatedFalsePromotionRejected = ungated?.contract.passed === false
+    && ungated.contract.issues.some((issue) => issue.code === "paper_ready_reference_authority_not_passed");
   return Boolean(
     gated?.contract.passed
-      && ungated?.contract.passed
+      && ungatedFalsePromotionRejected
       && gated.missing_baseline_detected
       && gated.comparative_claim_blocked_or_downgraded
   );

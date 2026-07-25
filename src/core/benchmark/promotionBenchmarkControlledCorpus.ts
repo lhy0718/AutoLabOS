@@ -12,6 +12,11 @@ import { certifyPromotionDeterministicOracle } from "./promotionBenchmarkDetermi
 import { MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES } from "./promotionBenchmarkConfirmatoryContract.js";
 import { promotionVariantDefinitions, type PromotionVariantDefinition } from "./promotionBenchmarkVariants.js";
 import { writeSyntheticPromotionBaseBundle } from "./promotionBenchmarkSyntheticCorpus.js";
+import { inspectPromotionCleanControlSemantics } from "./promotionBenchmarkCanonicalCuration.js";
+import {
+  buildPromotionBenchmarkRuntimeBinding,
+  type PromotionBenchmarkRuntimeBinding
+} from "./promotionBenchmarkSystems.js";
 
 export interface GenerateControlledPromotionBenchmarkInput {
   cwd: string;
@@ -31,6 +36,8 @@ export interface GenerateControlledPromotionBenchmarkResult {
   test_base_bundle_count: number;
   development_case_count: number;
   test_case_count: number;
+  clean_control_admission: "generator_contract_plus_canonical_semantic_validation";
+  runtime_binding: PromotionBenchmarkRuntimeBinding;
   paper_claim_eligible: boolean;
   output_dir: string;
   development_suite_path: string;
@@ -99,12 +106,13 @@ export async function generateControlledPromotionBenchmark(
       testSuitePath: path.join(testSuiteDir, "suite.json"),
       outDir: certifiedDir
     });
+    const runtimeBinding = await buildPromotionBenchmarkRuntimeBinding();
     const manifest = {
-      schema_version: "1.0",
+      schema_version: "1.1",
       benchmark_id: benchmarkId,
       evaluation_regime: "controlled_deterministic_fault_injection",
       gold_provenance: "registry_bound_independent_oracle",
-      split_method: "failure_family_and_source_disjoint",
+      split_method: "failure_family_and_base_grouped_with_exact_source_hash_screen",
       seed_sha256: createHash("sha256").update(seed).digest("hex"),
       development_mutation_families: split.development.map((variant) => variant.mutation_family!),
       test_mutation_families: split.test.map((variant) => variant.mutation_family!),
@@ -112,6 +120,8 @@ export async function generateControlledPromotionBenchmark(
       test_base_bundle_count: testBaseCount,
       development_case_count: developmentBaseCount * (split.development.length + 1),
       test_case_count: testBaseCount * (split.test.length + 1),
+      clean_control_admission: "generator_contract_plus_canonical_semantic_validation" as const,
+      runtime_binding: runtimeBinding,
       paper_claim_eligible: certification.paper_claim_eligible,
       claim_ceiling: "registered_fault_families_only",
       external_validation_status: "not_run"
@@ -128,6 +138,8 @@ export async function generateControlledPromotionBenchmark(
       test_base_bundle_count: manifest.test_base_bundle_count,
       development_case_count: manifest.development_case_count,
       test_case_count: manifest.test_case_count,
+      clean_control_admission: manifest.clean_control_admission,
+      runtime_binding: manifest.runtime_binding,
       paper_claim_eligible: manifest.paper_claim_eligible,
       output_dir: portableRef(cwd, outDir),
       development_suite_path: portableRef(cwd, path.join(outDir, "development-suite", "suite.json")),
@@ -175,6 +187,13 @@ async function writePartition(input: {
     const sourceRoot = path.join(input.root, "base-bundles", baseId);
     const delta = [0.1, 0, -0.05, 0.02][baseIndex % 4]!;
     await writeSyntheticPromotionBaseBundle(sourceRoot, baseId, delta, baseIndex);
+    const semanticInspection = await inspectPromotionCleanControlSemantics(sourceRoot);
+    if (!semanticInspection.passed) {
+      throw new Error(
+        `Controlled benchmark clean base failed canonical semantic validation: ${baseId}: `
+        + semanticInspection.issues.map((issue) => issue.code).join(", ")
+      );
+    }
     for (const [variantIndex, variant] of [clean, ...input.variants].entries()) {
       cases.push({
         case_id: `${input.split}-case-${baseIndex + 1}-${variantIndex + 1}`,

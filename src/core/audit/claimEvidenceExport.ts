@@ -14,6 +14,7 @@ export interface ClaimEvidenceExportRow {
   statement?: string;
   section_heading?: string;
   status: "supported" | "unsupported" | "blocked" | "unverified" | "unknown";
+  declared_status?: string;
   artifact_refs: string[];
   citation_refs: string[];
   evidence_ids: string[];
@@ -84,6 +85,7 @@ interface PartialClaimRow {
   statement?: string;
   section_heading?: string;
   status?: string;
+  declared_status?: string;
   artifact_refs: string[];
   citation_refs: string[];
   evidence_ids: string[];
@@ -98,6 +100,7 @@ function normalizeExportRow(row: PartialClaimRow, issueCodes: string[], measured
     ...(row.statement ? { statement: row.statement } : {}),
     ...(row.section_heading ? { section_heading: row.section_heading } : {}),
     status,
+    ...(row.declared_status ? { declared_status: row.declared_status } : {}),
     artifact_refs: unique(row.artifact_refs),
     citation_refs: unique(row.citation_refs),
     evidence_ids: unique(row.evidence_ids),
@@ -139,6 +142,7 @@ function mergeClaimRows(rows: PartialClaimRow[]): Map<string, PartialClaimRow> {
       statement: row.statement || existing?.statement,
       section_heading: row.section_heading || existing?.section_heading,
       status: row.status || existing?.status,
+      declared_status: row.declared_status || existing?.declared_status,
       artifact_refs: unique([...(existing?.artifact_refs ?? []), ...row.artifact_refs]),
       citation_refs: unique([...(existing?.citation_refs ?? []), ...row.citation_refs]),
       evidence_ids: unique([...(existing?.evidence_ids ?? []), ...row.evidence_ids])
@@ -153,6 +157,7 @@ function extractClaimRows(value: unknown): PartialClaimRow[] {
     statement: stringValue(claim.statement),
     section_heading: stringValue(claim.section_heading),
     status: stringValue(claim.status),
+    declared_status: stringValue(claim.declared_status),
     artifact_refs: normalizeStringArray(claim.artifact_refs),
     citation_refs: normalizeStringArray(claim.citation_refs),
     evidence_ids: normalizeStringArray(claim.evidence_ids)

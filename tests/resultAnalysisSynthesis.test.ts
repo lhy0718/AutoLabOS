@@ -7,9 +7,14 @@ import type { AnalysisReport } from "../src/core/resultAnalysis.js";
 describe("resultAnalysisSynthesis", () => {
   it("grounds LLM synthesis against explicit evidence-accounting fields", async () => {
     let capturedPrompt = "";
+    const emittedEvents: Array<Record<string, any>> = [];
     const llm: LLMClient = {
-      async complete(prompt) {
+      async complete(prompt, options) {
         capturedPrompt = prompt;
+        options?.onProgress?.({ type: "status", text: "Provider request accepted." });
+        for (let index = 0; index < 500; index += 1) {
+          options?.onProgress?.({ type: "delta", text: `token-${index}` });
+        }
         return {
           text: JSON.stringify({
             discussion_points: [
@@ -127,6 +132,12 @@ describe("resultAnalysisSynthesis", () => {
       },
       report,
       llm,
+      eventStream: {
+        emit(event: Record<string, any>) {
+          emittedEvents.push(event);
+          return event;
+        }
+      } as any,
       node: "analyze_results"
     });
 
@@ -137,5 +148,14 @@ describe("resultAnalysisSynthesis", () => {
     const combined = JSON.stringify(synthesis);
     expect(combined).not.toMatch(/single[- ]seed|n=6|raw counts are missing|raw correct\/total counts|raw correct-count denominators are not provided|trial-accounting ambiguity/iu);
     expect(combined).toContain("Use the structured result table in the writeup.");
+    const progressTexts = emittedEvents
+      .map((event) => event.payload?.text)
+      .filter((text): text is string => typeof text === "string");
+    expect(progressTexts).toEqual([
+      "Generating grounded discussion synthesis for the structured result analysis.",
+      "Result analysis synthesis: Provider request accepted.",
+      "Result analysis synthesis response received; validating structured output."
+    ]);
+    expect(progressTexts.some((text) => text.includes("token-"))).toBe(false);
   });
 });

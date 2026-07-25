@@ -51,6 +51,7 @@ describe("literatureIndex", () => {
     expect(index.analysis.summary_count).toBe(2);
     expect(index.analysis.full_text_summary_count).toBe(1);
     expect(index.analysis.abstract_summary_count).toBe(1);
+    await expect(fs.access(path.join(runDir, "literature_index.json"))).rejects.toThrow();
 
     const persisted = await writeRunLiteratureIndex(workspace, runId);
     expect(persisted.artifacts.literature_index_path).toBe(`.autolabos/runs/${runId}/literature_index.json`);

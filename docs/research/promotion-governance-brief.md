@@ -37,6 +37,18 @@ null, and negative research outcomes.
 - Do not fabricate independent annotation, provider repetitions, or
   statistical significance.
 
+## Evidence Classification
+
+The prospective paper-scale contract below was not satisfied by the current
+controlled execution: outcomes were inspected before an implementation and
+threshold freeze, and no independently implemented artifact-aware comparator
+was run. The current manuscript therefore reports a post-hoc fixed-suite
+conformance and mechanism-ablation study. Its test-designated split, oracle,
+runtime bindings, and recovery evidence remain auditable, but neither the gate
+nor the H1--H4 labels constitute prospective hypothesis support. The unmet
+freeze and comparator requirements remain the contract for a future
+confirmatory run rather than being removed retroactively.
+
 ## Plan
 
 1. Freeze the literature boundary and nearest-neighbor comparison.
@@ -45,8 +57,11 @@ null, and negative research outcomes.
 4. Implement ungated, presence-checklist, manuscript-only, full-policy, and
    ablation conditions.
 5. Run a development pilot and repair benchmark validity failures.
-6. Complete a prospective clustered precision analysis, assign entire
-   registered fault families to development or test, generate source- and
+6. Audit whether a prospective clustered precision and freeze contract was
+   completed before outcomes were inspected. If it was not, classify the
+   resulting execution as post-hoc fixed-suite conformance. A future
+   confirmatory run must assign entire registered fault families to development
+   or test, generate source- and
    base-disjoint partitions, and certify the test suite with an independently
    implemented artifact-replay oracle. Require at least 720 held-out cases and
    enough test bases to satisfy both that case floor and the preregistered
@@ -178,7 +193,8 @@ on clean research bundles?
   repetition count and paired dispatch schedule. Primary rates average
   case-trial indicators within base before equal weighting across bases.
   Between-trial disagreement and variance are secondary outcomes.
-- Freeze boundary: before confirmatory outcomes are revealed, freeze hashes for
+- Prospective freeze boundary (not satisfied by the current controlled run):
+  before confirmatory outcomes are revealed, freeze hashes for
   the registry, derived gold, split manifest, oracle report, development and
   test suites, every evaluated implementation, prompt, policy, threshold,
   comparator, scorer, statistical script, dependency lock, and runtime image.
@@ -208,6 +224,10 @@ on clean research bundles?
   regression with base-clustered uncertainty.
 
 ## Minimum Acceptable Evidence
+
+The requirements in this section are the prospective confirmatory bar. The
+current post-hoc conformance study does not claim to satisfy the freeze or
+independent-comparator items.
 
 - A prospective clustered precision report that justifies the final base count,
   with a floor of 72 test bases and 720 held-out cases.
@@ -265,7 +285,8 @@ on clean research bundles?
 
 - One development pilot for schema and mutation validation.
 - One repair pass after the development pilot.
-- One frozen confirmatory test pass.
+- One test-designated post-hoc conformance pass for the current study; one
+  separately frozen prospective pass for any future confirmatory claim.
 - Up to three real-model repetitions for the manuscript-only condition.
 - One independent metric recomputation from preserved raw predictions.
 

@@ -13,12 +13,16 @@ over-blocking clean research bundles.
 
 ## Current Evaluation Regime
 
-The primary confirmatory path is
+The current primary evidence is a post-hoc fixed-suite conformance run under
 `controlled_deterministic_fault_injection`. Registered fault definitions
 produce mechanical gold, a separately implemented oracle replays every
 mutation, and entire fault families plus source/base identities are held out
 from development. Human adjudication is not required for this metric-gold
-path. Its claim ceiling is `registered_fault_families_only` and external
+path. Outcomes were inspected without the prospective implementation freeze or
+the matched independently implemented artifact-aware comparator required by
+the original brief. H1--H4 are therefore retained only as historical threshold
+identifiers, not as preregistered hypothesis support. The claim ceiling is
+`registered_fault_families_only` and external
 naturalistic validation remains `not_run`. The human curation, license,
 and normalization work described below is retained as an optional naturalistic
 and redistribution extension.
@@ -90,11 +94,13 @@ paper-ready promotion decision?
 and repair burden, and how accurately can blocking findings identify the
 upstream artifact owner that must be rechecked?
 
-## Hypotheses
+## Post-hoc Operational Thresholds
 
-- **H1:** Artifact-grounded gates lower false promotion rate by at least 20
-  absolute percentage points relative to an artifact-presence checklist on the
-  held-out fault-family split.
+- **H1:** The artifact-presence checklist's observed false-promotion rate minus
+  the artifact-grounded gate's rate is at least 20 absolute percentage points
+  on the test-designated, fault-family-disjoint split. This label does not imply
+  pre-outcome blinding or protection from development tuning; satisfying it is
+  a fixed-suite diagnostic, not hypothesis support.
 - **H2:** Binding blocker severity to transition policy lowers
   concern-acceptance conflict rate to at most 5 percent.
 - **H3:** The full policy retains at least 90 percent clean-case promotion
@@ -150,26 +156,41 @@ source does not enumerate case identifiers or encode case-specific metrics.
   It records real-model execution and paper-claim evidence eligibility as
   separate fields, so a real-model run over a development suite remains
   ineligible for paper claims. One completed runner invocation remains one
-  trial and does not satisfy the three-trial requirement by itself. The three-trial
+  execution and does not satisfy the three-receipt requirement by itself. The
+  receipt-distinct
   aggregate is admissible only when exactly three completed manifests share
   the suite, system, model, reasoning effort, protocol, and prompt hashes;
   expose distinct run, trial, and hashed execution receipt identifiers; retain
   complete case coverage; and pass artifact rehashing against the current
   suite. The aggregate repeats the source-suite binding, and the confirmatory
   gate requires its explicit paper-claim eligibility in addition to complete
-  repetition. This operational repetition gate does not independently verify
-  provider identity or statistical independence.
+  coverage. Aggregate schema 1.3 records
+  `receipt_distinct_trial_requirement_met=true` while fixing
+  `statistical_independence_established=false` and
+  `statistical_replicates=false`. This operational receipt gate does not
+  independently verify provider identity or statistical independence.
 - **Artifact-grounded promotion:** applies the full gate, claim ceiling, figure
   consistency, execution-state, and review-transition policy.
 - **Ablations:** remove one of concern-to-action binding, claim ceiling, figure
   consistency, or execution-state validation while preserving all other inputs.
 
 Deterministic comparisons are bound to
-`promotion-system-protocol-v2` in system-run manifest schema `1.1`. This
-revision distinguishes the documented presence-plus-parseability baseline from
-earlier development manifests that checked existence only. Unversioned
-manifests remain inspectable as development history but are not admissible to
-the confirmatory or post-repair evidence gate.
+`promotion-system-protocol-v5` in system-run manifest schema `1.1`. This
+revision retains the documented presence-plus-parseability baseline and makes
+artifact trace coverage semantic: a known concern counts as traceable only
+when its references include the registered artifact targets for that concern.
+The package verifier also recomputes the packaged execution-source and lockfile
+hashes instead of normalizing the source binding during replay. Earlier or
+unversioned manifests remain inspectable as development history but are not
+admissible to the confirmatory or post-repair evidence gate.
+
+Controlled-corpus generation now emits manifest schema `1.1` with the same
+runtime source-tree and lockfile binding at generation time. Earlier frozen
+suite artifacts without that field remain verifiable through registry, gold,
+split, case-tree, and oracle replay, but that replay does not establish the
+historical generator's execution-time source identity. Paper-facing claims
+must preserve this provenance boundary rather than inferring it from current
+source files.
 
 ## Metrics
 
@@ -186,32 +207,29 @@ Secondary metrics:
 - upstream repair-owner accuracy
 - successful recovery rate after one declared repair
 - regression rate on previously passing checks
-- artifact trace coverage
+- semantic artifact trace coverage
 - wall time and provider cost
 
-Primary confidence intervals use paired bootstrap resampling clustered by base
-bundle. Because content-distinct runs from one system family are not
-independent system samples, the final analysis must also report family-stratified
-results and leave-one-family-out sensitivity. The implemented evaluator emits
-per-family system metrics and recomputes all paired comparisons after each
-declared family is omitted. It also reports an exact paired sign test over
-base-bundle effects; McNemar's test may
-additionally be reported for a frozen single-trial binary comparison when its
-assumptions are met. Effect sizes and raw counts are reported regardless of
-significance. Synthetic development suites are always marked exploratory.
+The current evaluator emits deterministic base-bundle identifier-resampling
+intervals as finite-suite sensitivity diagnostics. Because content-distinct
+runs from one system family are not independent system samples, these intervals
+do not claim population coverage and do not determine the post-hoc fixed-suite
+gate. The evaluator also emits per-family metrics, leave-one-family-out paired
+comparisons. Inferential sign-test fields remain null because the fixed suite
+was constructed and evaluated post hoc. Effect sizes and raw counts remain
+primary. Synthetic development suites are always marked exploratory.
 
-Confirmatory support is interval-based rather than point-estimate-based. H1 and
-H4 use direction-normalized paired differences, while H2 and H3 use
-base-bundle-clustered system intervals. All-zero and all-one binary system
-outcomes use a two-sided exact boundary guard because a percentile bootstrap
-would otherwise collapse to a zero-width interval. An at-least hypothesis is
-supported
-only when the 95 percent interval lower bound reaches its preregistered
-threshold; an at-most hypothesis is supported only when the upper bound is no
-greater than its threshold. A point estimate that clears the threshold while
-its interval crosses the threshold is recorded as not supported. Missing
-intervals make the corresponding hypothesis not evaluable and block
-paper-scale progression, whereas a complete null or negative result does not.
+In a future prospectively frozen study, confirmatory support may be
+interval-based only after defining a target population, sampling mechanism,
+independent analysis unit, and coverage-justified method. H1 and H4 would use
+direction-normalized paired differences, while H2 and H3 would use declared
+system-level intervals. A point estimate that clears the threshold while its
+valid inferential interval crosses the threshold would be recorded as not
+supported. Missing required uncertainty would make the corresponding
+hypothesis not evaluable and block paper-scale progression, whereas a complete
+null or negative result would not. The current post-hoc execution uses exact
+fixed-suite point thresholds and labels every resampling interval as
+sensitivity-only.
 For example, zero events across 20 independent base bundles still has an upper
 95 percent boundary of about 16.8 percent, so it cannot support H2's 5 percent
 ceiling. Seventy-two all-zero base bundles are required to move that boundary
@@ -286,7 +304,8 @@ recorded in
   adjudicator pseudonyms. Preserve an external role-assignment log because
   pseudonymous IDs do not prove real-world identity.
 - Let the adjudication importer set paper eligibility only after the external
-  real-run, artifact-verified provenance, held-out split, source-hash
+  real-run, artifact-verified provenance, a test-designated split frozen before
+  scoring, source-hash
   uniqueness, declared family/operator diversity, 72-base, 720-case, and
   clean-plus-nine-family paired-coverage gates pass and mutation isolation is
   `double_verified`.
@@ -917,35 +936,40 @@ SHA-256 values, not by machine-specific paths. The exporter refuses
 paper-eligible input, a non-blocked gate decision, hash drift, system-coverage
 drift, or a missing blocker-to-node recommendation.
 
-### Confirmatory Decision Boundary
+### Conformance and Prospective Decision Boundary
 
-The implementation now separates benchmark score validity from paper-scale
-claim eligibility. The confirmatory gate revalidates three provider-run
+The implementation now separates benchmark score validity, post-hoc conformance,
+and prospective paper-scale claim eligibility. The evidence gate revalidates three provider-run
 manifests, merges only their hash-verified manuscript-only predictions,
 recomputes all system and paired metrics, checks the frozen sample and
-regime-specific source-family or held-out-fault-family contracts, and consumes a post-repair manifest whose recovery
+regime-specific partition and fault-family contracts, and consumes a post-repair manifest whose recovery
 and clean-control regression rates are derived from raw suites and predictions.
 It also emits the same `paper_scale_diagnostics.json` and
 `node_strengthening_recommendations.json` shapes used by the promotion
 meta-harness.
 
-The gate can return `paper_scale_candidate` for a complete null or negative
-result while lowering its claim class; hypothesis support is not used as a
-proxy for evidence validity. Missing evidence returns
+For the controlled generated suite, the gate records
+`study_design=post_hoc_fixed_suite_conformance`, can pass only the conformance
+gate, and keeps `evidence_gate_passed=false`. Threshold satisfaction is not used
+as a proxy for prospective evidence validity. Missing required artifacts return
 `blocked_for_paper_scale` and identifies `design_experiments`,
 `run_experiments`, `analyze_results`, or `review` as the recheck target. The
 gate never returns `paper_ready=true`.
 
-This is an implemented evaluation contract, not a completed paper-scale
-experiment. A three-trial local real-model development run now covers all 40
-synthetic cases with distinct hash-bound runtime receipts. The reviewer returned
-`needs_review` for every case: false promotion was zero, but clean-case promotion,
-blocker F1, and repair-owner exact match were all zero. This is useful instrument
-evidence that blanket deferral must not be mistaken for review quality. The
-tracked receipt remains `verified_development_only`; no human normalization
-labels have been admitted and no three-run aggregate has been executed for a
-paper-eligible suite. Therefore no confirmatory metrics, hypothesis verdicts,
-or paper-scale empirical claims exist yet.
+The controlled test execution now covers 120 generated bases and 720 cases.
+Four deterministic conditions cover each case once, and three complete local
+model runs contribute 2,160 additional predictions. The local model blocked all
+720 cases in every trial: false promotion was zero, but clean promotion,
+blocker precision/recall/F1, and repair-owner exact match were all zero. Its
+self-recorded inputs were only 96--98-character Results fragments, the task
+asked for paper promotion, and the prompt omitted the scored concern and owner
+vocabularies. The resulting gold-scored values are therefore a fragment-level
+abstention and execution sanity check, not evidence about clean utility,
+actionability, or learned-governor effectiveness. The
+self-recorded output bundles preserve separate executions but do not establish
+external provider identity, statistical independence, receipt-preimage
+recomputation, or execution-time source identity. The result is therefore a
+fixed-suite protocol diagnostic, not a provider-generalization claim.
 
 A controlled synthetic recovery run also materialized each fault case's paired
 clean control as an oracle repair target and reran the full artifact policy over
@@ -957,6 +981,24 @@ repair quality. The confirmatory gate binds the recovery report but retains
 `paper_ready=false` and `post_repair_evidence_not_verified` because both suites
 remain development-only, lack controlled oracle certification, and are
 ineligible for paper claims.
+
+The oracle-certified controlled test suite was subsequently evaluated through a
+prediction-owned repair path rather than clean-control substitution. Each of the
+600 fault cases was copied from its own source artifact and dispatched to the
+`run_experiments`, `analyze_results`, or `figure_audit` adapter named by the
+original full-policy prediction, whose decision and owner accuracy were both
+one on this suite. The adapters received the case artifact but not
+source gold, a sibling clean artifact, or oracle manifests. A hash-bound execution
+manifest records the source prediction, adapter revision, changed paths, and
+input/output artifact tree for every attempt. The rerun recovered 600 of 600
+fault cases under the same audit and preserved all 120 clean controls, giving
+same-gate reacceptance 1.0 and clean-control regression 0.0. Exact clean-tree
+restoration was 360 of 600: three families restored 120 of 120 and two restored
+zero of 120. For claim-evidence conflicts, the adapter restores only a valid
+existing evidence-store ID bound to the claim; it does not invent removed
+citation metadata. This establishes recovery-runner conformance under perfect routing;
+it does not establish semantic repair, independent validation, tolerance of
+route errors, naturalistic repair, or cross-domain generalization.
 
 ### Long-Horizon Completion Contract
 
@@ -977,23 +1019,26 @@ validation. Historical candidate-review and canonical-curation receipts remain
 available as naturalistic-extension evidence but no longer satisfy or block
 the controlled primary requirement.
 
-The contract separates implemented instrument evidence from confirmatory
-evidence. Its audit can verify artifact bytes and declared values but cannot
+The contract separates implemented conformance evidence from future prospective
+confirmatory evidence. Its audit can verify artifact bytes and declared values but cannot
 independently establish human identity, provider identity, scientific validity,
 or empirical independence.
 
 ## Minimum Publishable Experiment
 
-- At least 72 test bases and 720 held-out cases total, with one clean control
+- At least 72 test bases and 720 test-designated cases total, with one clean control
   and one case from every declared test fault family per base.
-- Source-, base-, and fault-family-disjoint development/test partitions with a
-  passing independent replay oracle over every case.
+- Hash-, base-, and fault-family-disjoint development/test partitions with a
+  passing independent replay oracle over every case. Any reuse of semantically
+  equivalent generated bases must be disclosed and cannot support held-out-source
+  generalization.
 - Ungated, presence-checklist, manuscript-only, and full artifact-grounded
   comparisons.
 - At least one gate ablation and one post-repair rerun for every original fault
   case, with complete coverage across all fault families.
-- Three independent provider runs per manuscript-only case when that condition
-  is used for external claims.
+- Three complete model runs per manuscript-only case when that condition is
+  reported, with the actual provider, source, receipt, and independence boundary
+  stated explicitly.
 - Raw decisions, concerns, manifests, hashes, costs, and failures preserved.
 - Registry, gold, split, oracle report, development-suite, and test-case-set
   hashes preserved in the certified suite.

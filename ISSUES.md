@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-19
+Last updated: 2026-07-25
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,222 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-620
+
+- Status: resolved; focused and adjacent regressions, production build, real provider execution, and same-flow TUI revalidation pass
+- Validation target: long-running model streams must not create unbounded TUI refresh work, render work, event-ID memory, or token-level persisted progress records.
+- Environment/session context: isolated copy of a configured validation workspace, real production TUI, and the real `analyze_results` provider path.
+- Reproduction steps:
+  1. Start the production TUI in an isolated configured workspace.
+  2. Move a persisted run to `analyze_results` and execute the node through the real provider.
+  3. Let result-synthesis progress stream while monitoring process memory and the run event log.
+- Expected behavior:
+  - Token deltas remain provider-local and are not persisted as one research event per token.
+  - Observation events update the TUI at a bounded frame rate without rereading run state.
+  - Structural events refresh persisted state serially and remain auditable.
+  - Event deduplication memory remains bounded over long sessions.
+- Actual behavior:
+  - Each synthesis token became an `OBS_RECEIVED` record and triggered an asynchronous run-store refresh, projection-hint refresh, and up to two renders.
+  - The event listener did not await or coalesce those handlers, so refresh promises accumulated without a bound.
+  - The persisted analysis copied raw condition rows and predictions, then copied the full report into run context and long-term memory; the same run produced a 110,136,189-byte `result_analysis.json` and a 135,024,739-byte run-context artifact.
+  - Stale absolute metrics paths from copied validation workspaces could also leak into public reports.
+  - The TUI terminated at the approximately 4 GB V8 heap limit.
+  - The reproduced run event log reached 843,735 lines and 248,993,963 bytes before termination.
+- Fresh vs existing session comparison:
+  - Fresh session: an isolated configured-workspace copy reproduced the failure through the real TUI and provider path.
+  - Existing session: the source configured workspace was not mutated by the reproduction.
+  - Divergence: no state-projection divergence was required; event volume alone triggered the failure.
+- Root-cause hypothesis:
+  - Type: `refresh_render_bug`
+  - Hypothesis: result synthesis exposed provider token deltas as durable workflow observations, while the TUI treated every observation as a structural state change and launched an unbounded asynchronous refresh/render path.
+- Code/test changes:
+  - Code: `src/core/resultAnalysisSynthesis.ts`, `src/core/resultAnalysis.ts`, `src/core/nodes/analyzeResults.ts`, `src/utils/portableArtifact.ts`, `src/tui/TerminalApp.ts`, `src/interaction/InteractionSession.ts`.
+  - Tests: `tests/resultAnalysisSynthesis.test.ts`, `tests/resultAnalysis.test.ts`, `tests/terminalAppPlanExecution.test.ts`.
+  - Provider delta events are filtered from durable synthesis observations; status changes and completion validation remain visible.
+  - TUI observation rendering is capped at 20 Hz and 20 lines per frame, structural refreshes are serialized, and event-ID caches are capped at 5,000 entries.
+  - Persisted analysis retains aggregate task statistics but replaces raw rows and predictions with counts and source references; run context and long-term memory retain concise summaries and artifact references.
+  - Public artifact projection removes machine-local paths and prefers the run-local metrics source when a copied configured path is stale.
+- Regression status:
+  - Automated regression test linked: yes; 6,000-event burst coverage, serialized structural refresh, bounded projection reads, result-synthesis delta filtering, compact metric projection, and portable-path coverage pass.
+  - Re-validation result: focused and adjacent suites pass 172/172; portability and public-code suites pass 86/86; production build passes.
+  - The rebuilt production TUI reran `analyze_results` through the real Codex OAuth provider. Transient RSS peaked near 2.055 GB while parsing the historical 102 MB metrics file, then returned to approximately 199--249 MB instead of growing to the V8 heap limit.
+  - The new `result_analysis.json` is 94,442 bytes and run context is approximately 1.9 MB; the event log grew by only 15 records. Public generated artifacts contain zero machine-local path matches.
+  - The node correctly paused at `analyze_results` with a `backtrack_to_design` recommendation because the evidence gate failed; no paper-readiness claim was raised.
+- Follow-up risks:
+  - Other provider adapters should continue to map semantic milestones rather than raw transport deltas.
+  - The isolated workspace still contains a 249 MB historical append-only long-term-memory file and approximately 35 GB of old attempt snapshots. Retention, compaction, and migration are separate historical-artifact work; new writes no longer duplicate the full analysis payload.
+  - Parsing a historical 102 MB metrics file still causes a bounded transient memory spike. Streaming or indexed metric ingestion remains a useful follow-up.
+- Evidence/artifacts:
+  - `<validation-workspace>/.autolabos/runs/<validation-run>/events.jsonl`
+  - `src/tui/TerminalApp.ts`
+  - `tests/terminalAppPlanExecution.test.ts`
+
+---
+
+## Issue: LV-619
+
+- Status: resolved; persisted same-flow regressions, production build, and full CI suite pass
+- Validation target: autonomous and overnight controllers must stop at `pause_for_human` even when confidence, repetition, fallback, or automatic-approval settings would otherwise permit execution.
+- Environment/session context: domain-neutral controller fixtures exercising both autonomous modes against a persisted pending transition.
+- Reproduction steps:
+  1. Return a `pause_for_human` transition from the current node.
+  2. Configure confidence `1.0`, include the current node in automatic-approval nodes, and permit force fallback.
+  3. Run the autonomous and overnight control loops.
+- Expected behavior:
+  - The controller returns `manual_review_required`.
+  - No transition is applied and no approval action is issued.
+  - The pending transition remains available for an explicit operator decision.
+- Actual behavior:
+  - Repetition and fallback handling ran before the human-boundary check.
+  - A high-confidence or repeated recommendation could therefore consume a transition that explicitly required human review.
+- Fresh vs existing session comparison:
+  - Fresh session: focused persisted-run fixtures reproduce the ordering defect and now stop before mutation.
+  - Existing session: no external-provider long run is required for this boundary because the controller must stop before invoking a node or provider; the persisted controller path is the complete decision flow under test.
+  - Divergence: no persisted-state divergence is known; the defect was control-order dependent.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: transition executability was projected from confidence and retry policy before authority requirements were evaluated.
+- Code/test changes:
+  - Code: `src/core/agents/autonomousRunController.ts`.
+  - Tests: `tests/autonomousRunController.test.ts`.
+- Regression status:
+  - Automated regression test linked: yes; the controller suite passes 36/36 across overnight and autonomous modes.
+  - Re-validation result: both modes return `manual_review_required` under maximal confidence, automatic approval, and force-fallback settings; approvals remain 0, applied transitions remain 0, transition history remains empty, and the persisted `pause_for_human` recommendation remains available.
+  - The production build, complete root suite (2,406/2,406), Web suite (16/16), harness validation, and CI smoke pass.
+- Follow-up risks:
+  - Other command surfaces must consume the same authority requirement rather than infer safety from action shape.
+- Evidence/artifacts:
+  - `src/core/agents/autonomousRunController.ts`
+  - `tests/autonomousRunController.test.ts`
+
+---
+
+## Issue: LV-618
+
+- Status: resolved; focused regressions, production build, and real same-flow `/agent review` validation pass
+- Validation target: `/agent review` must traverse the approved `figure_audit` checkpoint before `review` and stop on any non-safe transition.
+- Environment/session context: current 10-node runtime contract, terminal command palette, and deterministic smoke workspace.
+- Reproduction steps:
+  1. Place a run at `analyze_results` with `figure_audit` pending.
+  2. Execute `/agent review` from the TUI.
+  3. Compare runtime traversal, command suggestions, and the smoke fixture's node inventory.
+- Expected behavior:
+  - At `analyze_results`, only an exact auto-executable `analyze_results -> figure_audit` advance may be consumed by the shortcut.
+  - `figure_audit` executes before `review`.
+  - Only an exact auto-executable `figure_audit -> review` advance is applied automatically.
+  - Backtrack, failure, cancellation, or human pause stops traversal.
+  - Command suggestions and smoke fixtures represent all 10 nodes.
+- Actual behavior:
+  - The shortcut retained the historical 9-node assumption and attempted to move from `analyze_results` directly to `review`.
+  - The smoke fixture also omitted `figure_audit`, and the command palette did not suggest `review`.
+  - After the first repair, the shortcut still called `approveCurrent(...)` before validating the pending `analyze_results` transition, so a backtrack recommendation could be consumed before review traversal stopped.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic interaction and terminal fixtures reproduce the missing checkpoint.
+  - Existing session: real configured-workspace traversal pending.
+  - Divergence: no session divergence; all surfaces shared stale workflow cardinality.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: convenience commands and fixtures duplicated node order, and shortcut safety was checked only after the first approval mutation instead of at every governed transition boundary.
+- Code/test changes:
+  - Code: `src/core/stateGraph/transitionSafety.ts`, `src/interaction/InteractionSession.ts`, `src/tui/TerminalApp.ts`, `src/tui/commandPalette/suggest.ts`, `tests/smoke/common.sh`.
+  - Tests: `tests/interactionSession.test.ts`, `tests/newSlashCommands.test.ts`, `tests/terminalAppPlanExecution.test.ts`.
+- Regression status:
+  - Automated regression test linked: yes; focused interaction and terminal suites pass 132/132, including non-consumption of an `analyze_results` backtrack.
+  - Re-validation result: the rebuilt production TUI ran `/agent review` against a real paused `analyze_results` run whose pending transition was `backtrack_to_design -> design_experiments` with `autoExecutable=true`.
+  - The TUI displayed the stop reason, did not invoke review traversal, and preserved the run exactly: `run_record.json` SHA-256 remained `43869eba81d03db218e6f3fca5c459dabc3f9e62c9e98f14addafdbe50237088`, while the event log remained at 843,809 lines.
+- Follow-up risks:
+  - Any remaining duplicated node lists must be covered by the public sanitization and workflow-contract tests.
+- Evidence/artifacts:
+  - `src/interaction/InteractionSession.ts`
+  - `tests/smoke/common.sh`
+
+---
+
+## Issue: LV-617
+
+- Status: resolved; Web regressions, production build, and real Firefox desktop/mobile revalidation pass
+- Validation target: the Web workbench must keep the inspected run separate from the active mutation target and reject stale asynchronous projections.
+- Environment/session context: configured local Web workspace with two domain-neutral runs and delayed detail responses.
+- Reproduction steps:
+  1. Keep `run-1` active and begin loading its detail projection.
+  2. Select `run-2` for inspection before the first response completes.
+  3. Attempt an approval or workflow command, then let the delayed `run-1` response arrive.
+- Expected behavior:
+  - Inspection performs no mutation.
+  - All mutation controls remain disabled until `run-2` is explicitly activated.
+  - The delayed `run-1` response cannot replace `run-2` details.
+  - Sync and request failures remain visible and retryable.
+- Actual behavior:
+  - Selection and active command target were presented as one implicit context.
+  - Event refreshes could restore the active run, and late responses could overwrite newer inspection state.
+  - High-impact controls remained available without a clear action-target boundary.
+  - The first real-browser revalidation also found that direct action buttons bypassed the command confirmation path, so `Retry` immediately started a node despite the newly visible run context.
+- Fresh vs existing session comparison:
+  - Fresh session: two-run fixtures reproduce context mismatch and delayed-response ordering.
+  - Existing session: desktop and mobile local Web revalidation pending.
+  - Divergence: the defect was most visible when active and inspected run IDs differed.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`
+  - Hypothesis: independent API projections had neither an explicit action-target identity nor request-generation guards.
+- Code/test changes:
+  - Code: `web/src/App.tsx`, `web/src/styles.css`, `src/web/server.ts`.
+  - Tests: `web/src/App.test.tsx`, `tests/literatureIndex.test.ts`.
+  - Direct workflow actions now share a fail-closed confirmation gate that names the action, run title, run ID, and node before any mutation request is sent.
+  - The mobile flow presents run context, the selected-run workflow, the inspector, and the run rail in task order.
+  - Operational button variants retain explicit solid backgrounds after gradient removal so primary actions remain legible on light panels.
+- Regression status:
+  - Automated regression test linked: yes; Web `App` suite passes 16/16.
+  - Re-validation result: the production build passed and a real Firefox session exercised two domain-neutral runs in an isolated configured workspace.
+  - Selecting a non-active run displayed `Inspection only`, kept workflow mutations disabled, and required `Activate inspected run`; after activation the inspected and active IDs matched and controls became available.
+  - Canceling the resulting `Retry` confirmation preserved both persisted files exactly: `run_record.json` SHA-256 remained `02f77893521819bd755bf3de987e9158b13c6ce2ce7ac38ff82f85d1a71f3e16`, `events.jsonl` SHA-256 remained `c5345f5ca59db4b46135fc8044ef737bcd904a38e5862e563fab31b42f5e6ff3`, and the event count remained 28.
+  - At 1440x900 the workbench rendered its three operational columns without document-level horizontal overflow. At 390x844 the measured order was `operator-context -> workbench-main -> workbench-inspector -> workbench-rail`, with `scrollWidth=390` and no horizontal overflow.
+- Follow-up risks:
+  - A versioned aggregate operator snapshot is still needed to eliminate cross-endpoint projection skew.
+- Evidence/artifacts:
+  - `web/src/App.tsx`
+  - `web/src/App.test.tsx`
+
+---
+
+## Issue: LV-616
+
+- Status: resolved; focused regression, production build, fresh preflight failure, and configured-workspace real `/doctor` control pass
+- Validation target: `npm run validation:doctor` must distinguish an unprepared live-validation workspace from a TUI readiness-pattern regression before launching the PTY session.
+- Environment/session context: production build on `main`; default fresh workspace at `<validation-workspace>/live-validation`; configured existing workspace at `<validation-workspace>`.
+- Reproduction steps:
+  1. Ensure the default `<validation-workspace>/live-validation` directory exists without `.autolabos/config.yaml`.
+  2. Run `npm run validation:doctor`.
+  3. Compare with `AUTOLABOS_VALIDATION_WORKSPACE=<validation-workspace> npm run validation:doctor`.
+- Expected behavior:
+  - An unprepared fresh workspace fails immediately with the missing prerequisite and the exact preflight remediation.
+  - A configured workspace starts the real TUI, sends `/doctor`, observes doctor and harness rows, and exits cleanly.
+  - The helper does not misclassify initial provider setup as a missing steady-state TUI pattern.
+- Actual behavior:
+  - The default fresh workspace opened the provider-selection setup screen and waited until the generic 40-second readiness-pattern timeout.
+  - The failure only reported that the normal TUI pattern was absent, obscuring the missing workspace configuration.
+  - The configured existing workspace completed the same `/doctor` PTY flow successfully.
+- Fresh vs existing session comparison:
+  - Fresh session: failed after waiting at the provider-selection setup screen because `.autolabos/config.yaml` was absent.
+  - Existing session: passed the real `/doctor` PTY flow and wrote the captured doctor output.
+  - Divergence: yes; workspace preparation state was not checked before the helper assumed a steady-state TUI.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: the validation helper projected every pre-ready screen into one generic pattern timeout instead of validating the persisted workspace prerequisite before process launch.
+- Code/test changes:
+  - Code: `scripts/live-validation-doctor-pty-smoke.py` now checks for `.autolabos/config.yaml` before PTY launch and reports the exact workspace preparation command.
+  - Tests: `tests/liveValidationContinueScript.test.ts` covers the prerequisite and remediation contract.
+- Regression status:
+  - Automated regression test linked: yes; focused helper regression passes.
+  - Re-validation result: an unprepared fresh workspace fails immediately with the missing config and remediation, while the configured existing workspace starts the real TUI, observes `/doctor` output, and exits cleanly.
+- Follow-up risks:
+  - Other live-validation PTY helpers may have the same missing-preflight ambiguity.
+  - A present but invalid config must still be diagnosed by the real TUI rather than hidden by an overly broad file-existence check.
+- Evidence/artifacts:
+  - `scripts/live-validation-doctor-pty-smoke.py`
+  - `outputs/live-validation-preflight/doctor-pty-output.txt`
 
 ---
 

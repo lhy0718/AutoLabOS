@@ -73,6 +73,13 @@ interface UiActivityState {
   label: string;
 }
 
+interface GovernedActionConfirmation {
+  action: string;
+  node?: NodeId;
+}
+
+type SyncState = "connecting" | "live" | "polling" | "degraded";
+
 type ReviewPreviewStatus = "ready" | "warning" | "blocking" | "manual";
 
 interface ReviewPacketPreview {
@@ -134,7 +141,24 @@ export function App() {
   const [setupForm, setSetupForm] = useState<SetupFormState>(createEmptySetupForm());
   const [setupSeeded, setSetupSeeded] = useState(false);
   const [uiActivity, setUiActivity] = useState<UiActivityState | null>(null);
+  const [uiError, setUiError] = useState<string | null>(null);
+  const [syncState, setSyncState] = useState<SyncState>("connecting");
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const uiActivitySeq = useRef(0);
+  const selectedRunIdRef = useRef<string | undefined>();
+  const selectedArtifactRef = useRef<ArtifactEntry | null>(null);
+  const runDetailsRequestSeq = useRef(0);
+  const literatureRequestSeq = useRef(0);
+  const explorationRequestSeq = useRef(0);
+  const artifactPreviewRequestSeq = useRef(0);
+
+  useEffect(() => {
+    selectedRunIdRef.current = selectedRunId;
+  }, [selectedRunId]);
+
+  useEffect(() => {
+    selectedArtifactRef.current = selectedArtifact;
+  }, [selectedArtifact]);
 
   useEffect(() => {
     void refreshBootstrap();
@@ -148,6 +172,11 @@ export function App() {
     if (!selectedRunId) {
       return;
     }
+    setSelectedRun(null);
+    setArtifacts([]);
+    setCheckpoints([]);
+    setSelectedArtifact(null);
+    setArtifactPreview(null);
     setExpandedInsightReferenceKey(null);
     setKnowledgePreviewPath(null);
     setKnowledgePreviewContent(null);
@@ -175,7 +204,11 @@ export function App() {
       setConfigOptions(bootstrap.configOptions);
     }
     setSession(bootstrap.session);
-    setSelectedRunId(bootstrap.activeRunId || bootstrap.runs[0]?.id);
+    setSelectedRunId((current) =>
+      current && bootstrap.runs.some((run) => run.id === current)
+        ? current
+        : bootstrap.activeRunId || bootstrap.runs[0]?.id
+    );
     if (!setupSeeded) {
       setSetupForm(createSetupFormFromBootstrap(bootstrap));
       setSetupSeeded(true);
@@ -187,44 +220,58 @@ export function App() {
 
   useEffect(() => {
     const source = new EventSource("/api/events/stream");
+    source.addEventListener("open", () => {
+      setSyncState("live");
+      setLastSyncedAt(new Date().toISOString());
+    });
+    source.addEventListener("error", () => {
+      setSyncState("degraded");
+    });
     source.addEventListener("session_state", (event) => {
       const nextSession = JSON.parse((event as MessageEvent).data) as WebSessionState;
       startTransition(() => {
         setSession(nextSession);
-        if (nextSession.activeRunId) {
-          setSelectedRunId(nextSession.activeRunId);
-        }
+        setSelectedRunId((current) => current || nextSession.activeRunId);
+        setLastSyncedAt(new Date().toISOString());
       });
     });
     source.addEventListener("runtime_event", () => {
-      if (selectedRunId) {
+      const inspectedRunId = selectedRunIdRef.current;
+      if (inspectedRunId) {
         startTransition(() => {
-          void refreshRunDetails(selectedRunId);
+          void refreshRunDetails(inspectedRunId);
         });
       }
-      startTransition(() => {
-        void refreshJobs();
-        void refreshKnowledge();
-        void refreshExplorationStatus(selectedRunId);
-      });
-    });
-    source.addEventListener("bootstrap", () => {
       startTransition(() => {
         void refreshBootstrap();
         void refreshJobs();
         void refreshKnowledge();
-        void refreshExplorationStatus(selectedRunId);
+        void refreshExplorationStatus(inspectedRunId);
+      });
+    });
+    source.addEventListener("bootstrap", () => {
+      const inspectedRunId = selectedRunIdRef.current;
+      startTransition(() => {
+        void refreshBootstrap();
+        void refreshJobs();
+        void refreshKnowledge();
+        void refreshExplorationStatus(inspectedRunId);
       });
     });
     return () => {
       source.close();
     };
-  }, [selectedRunId]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
+      const inspectedRunId = selectedRunIdRef.current;
+      void refreshBootstrap();
       void refreshJobs();
-      void refreshExplorationStatus(selectedRunId);
+      void refreshExplorationStatus(inspectedRunId);
+      if (inspectedRunId) {
+        void refreshRunDetails(inspectedRunId);
+      }
     }, 5000);
     return () => {
       window.clearInterval(timer);
@@ -271,17 +318,38 @@ export function App() {
     artifacts.find((artifact) => artifact.path === "run_completeness_checklist.json") || null;
   const activeInsight =
     session && selectedRun && session.activeRunId === selectedRun.id ? session.activeRunInsight : null;
+  const effectiveActiveRunId = session?.activeRunId || bootstrap?.activeRunId;
+  const isSelectedRunActive = Boolean(
+    selectedRun && effectiveActiveRunId && selectedRun.id === effectiveActiveRunId
+  );
   const selectedKnowledgeEntry =
     knowledgeEntries.find((entry) => entry.run_id === (selectedRunId || session?.activeRunId)) || null;
   const activityRun =
     selectedRun ||
     (bootstrap?.runs || []).find((run) => run.id === (session?.activeRunId || selectedRunId));
 
+  function markSynced(): void {
+    setLastSyncedAt(new Date().toISOString());
+    setSyncState((current) => current === "live" ? "live" : "polling");
+  }
+
+  function reportUiError(error: unknown, fallback: string): void {
+    setUiError(error instanceof Error ? error.message : fallback);
+    setSyncState("degraded");
+  }
+
   async function refreshBootstrap() {
-    const data = await api<BootstrapResponse>("/api/bootstrap");
-    setBootstrap(data);
-    if (data.jobQueue) {
-      setLiveJobQueue(data.jobQueue);
+    try {
+      const data = await api<BootstrapResponse>("/api/bootstrap");
+      setBootstrap(data);
+      if (data.jobQueue) {
+        setLiveJobQueue(data.jobQueue);
+      }
+      markSynced();
+      return data;
+    } catch (error) {
+      reportUiError(error, "Workspace state could not be loaded.");
+      return undefined;
     }
   }
 
@@ -295,65 +363,109 @@ export function App() {
   }
 
   async function refreshExplorationStatus(runId?: string) {
+    const requestSeq = explorationRequestSeq.current + 1;
+    explorationRequestSeq.current = requestSeq;
     try {
       const query = runId ? `?run_id=${encodeURIComponent(runId)}` : "";
       const data = await api<ExplorationStatusResponse>(`/api/exploration/status${query}`);
+      if (requestSeq !== explorationRequestSeq.current || (runId && selectedRunIdRef.current !== runId)) {
+        return;
+      }
       if (typeof data.enabled === "boolean") {
         setExplorationStatus(data);
       } else {
         setExplorationStatus(null);
       }
     } catch {
-      setExplorationStatus(null);
+      if (requestSeq === explorationRequestSeq.current && (!runId || selectedRunIdRef.current === runId)) {
+        setExplorationStatus(null);
+      }
     }
   }
 
   async function refreshRunDetails(runId: string) {
-    const [{ run }, artifactsResponse, checkpointsResponse] = await Promise.all([
-      api<{ run: RunRecord }>(`/api/runs/${encodeURIComponent(runId)}`),
-      api<{ artifacts: ArtifactEntry[] }>(`/api/runs/${encodeURIComponent(runId)}/artifacts`),
-      api<{ checkpoints: CheckpointEntry[] }>(`/api/runs/${encodeURIComponent(runId)}/checkpoints`)
-    ]);
-    setSelectedRun(run);
-    setArtifacts(artifactsResponse.artifacts);
-    setCheckpoints(checkpointsResponse.checkpoints);
-    if (selectedArtifact) {
-      const nextArtifact = artifactsResponse.artifacts.find((item) => item.path === selectedArtifact.path) || null;
-      setSelectedArtifact(nextArtifact);
-      if (nextArtifact?.previewable) {
-        await loadArtifactPreview(runId, nextArtifact);
+    const requestSeq = runDetailsRequestSeq.current + 1;
+    runDetailsRequestSeq.current = requestSeq;
+    try {
+      const [{ run }, artifactsResponse, checkpointsResponse] = await Promise.all([
+        api<{ run: RunRecord }>(`/api/runs/${encodeURIComponent(runId)}`),
+        api<{ artifacts: ArtifactEntry[] }>(`/api/runs/${encodeURIComponent(runId)}/artifacts`),
+        api<{ checkpoints: CheckpointEntry[] }>(`/api/runs/${encodeURIComponent(runId)}/checkpoints`)
+      ]);
+      if (requestSeq !== runDetailsRequestSeq.current || selectedRunIdRef.current !== runId) {
+        return;
+      }
+      setSelectedRun(run);
+      setArtifacts(artifactsResponse.artifacts);
+      setCheckpoints(checkpointsResponse.checkpoints);
+      markSynced();
+      const currentArtifact = selectedArtifactRef.current;
+      if (currentArtifact) {
+        const nextArtifact = artifactsResponse.artifacts.find((item) => item.path === currentArtifact.path) || null;
+        setSelectedArtifact(nextArtifact);
+        if (nextArtifact?.previewable) {
+          await loadArtifactPreview(runId, nextArtifact);
+          return;
+        }
+        setArtifactPreview(null);
         return;
       }
       setArtifactPreview(null);
-      return;
+    } catch (error) {
+      if (requestSeq === runDetailsRequestSeq.current && selectedRunIdRef.current === runId) {
+        reportUiError(error, `Run ${runId} could not be loaded.`);
+      }
     }
-    setArtifactPreview(null);
   }
 
   async function refreshDoctor() {
-    const response = await api<DoctorResponse>("/api/doctor");
-    setDoctorChecks(response.checks);
-    setDoctorReadiness(response.readiness || null);
-    setDoctorHarness(response.harness || null);
+    try {
+      const response = await api<DoctorResponse>("/api/doctor");
+      setDoctorChecks(response.checks);
+      setDoctorReadiness(response.readiness || null);
+      setDoctorHarness(response.harness || null);
+    } catch (error) {
+      reportUiError(error, "Doctor state could not be loaded.");
+    }
   }
 
   async function refreshKnowledge() {
-    const response = await api<KnowledgeResponse>("/api/knowledge");
-    setKnowledgeEntries(response.entries);
+    try {
+      const response = await api<KnowledgeResponse>("/api/knowledge");
+      setKnowledgeEntries(response.entries);
+    } catch (error) {
+      reportUiError(error, "Repository knowledge could not be loaded.");
+    }
   }
 
   async function refreshLiterature(runId: string) {
-    const response = await api<LiteratureResponse>(`/api/runs/${encodeURIComponent(runId)}/literature`);
-    setLiterature(response.literature);
+    const requestSeq = literatureRequestSeq.current + 1;
+    literatureRequestSeq.current = requestSeq;
+    try {
+      const response = await api<LiteratureResponse>(`/api/runs/${encodeURIComponent(runId)}/literature`);
+      if (requestSeq === literatureRequestSeq.current && selectedRunIdRef.current === runId) {
+        setLiterature(response.literature);
+      }
+    } catch (error) {
+      if (requestSeq === literatureRequestSeq.current && selectedRunIdRef.current === runId) {
+        reportUiError(error, `Literature state for ${runId} could not be loaded.`);
+      }
+    }
   }
 
   async function loadKnowledgePreview(relativePath: string) {
-    const response = await api<KnowledgeFileResponse>(`/api/knowledge/file?path=${encodeURIComponent(relativePath)}`);
-    setKnowledgePreviewPath(response.path);
-    setKnowledgePreviewContent(response.content);
+    try {
+      const response = await api<KnowledgeFileResponse>(`/api/knowledge/file?path=${encodeURIComponent(relativePath)}`);
+      setKnowledgePreviewPath(response.path);
+      setKnowledgePreviewContent(response.content);
+    } catch (error) {
+      reportUiError(error, `Knowledge artifact ${relativePath} could not be loaded.`);
+    }
   }
 
   async function loadArtifactPreview(runId: string, artifact: ArtifactEntry) {
+    const requestSeq = artifactPreviewRequestSeq.current + 1;
+    artifactPreviewRequestSeq.current = requestSeq;
     setSelectedArtifact(artifact);
     if (!artifact.previewable || artifact.kind === "directory") {
       setArtifactPreview(null);
@@ -363,8 +475,16 @@ export function App() {
       setArtifactPreview(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`);
       return;
     }
-    const text = await fetch(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`).then((response) => response.text());
-    setArtifactPreview(text);
+    try {
+      const text = await fetchText(`/api/runs/${encodeURIComponent(runId)}/artifact?path=${encodeURIComponent(artifact.path)}`);
+      if (requestSeq === artifactPreviewRequestSeq.current && selectedRunIdRef.current === runId) {
+        setArtifactPreview(text);
+      }
+    } catch (error) {
+      if (requestSeq === artifactPreviewRequestSeq.current && selectedRunIdRef.current === runId) {
+        reportUiError(error, `Artifact ${artifact.path} could not be loaded.`);
+      }
+    }
   }
 
   async function openInsightReference(referencePath: string) {
@@ -379,18 +499,25 @@ export function App() {
   }
 
   async function openKnowledgeArtifact(referencePath: string) {
-    await openInsightReference(referencePath);
+    const runId = selectedRunIdRef.current || session?.activeRunId;
+    await openInsightReference(runId ? toRunRelativeArtifactPath(runId, referencePath) : referencePath);
   }
 
-  async function runSlashSelection(runId: string) {
-    await withUiActivity(`Switching to ${runId}`, async () => {
+  function inspectRun(runId: string): void {
+    selectedRunIdRef.current = runId;
+    setSelectedRunId(runId);
+  }
+
+  async function activateRun(runId: string) {
+    await withUiActivity(`Activating ${runId}`, async () => {
       const response = await api<{ session: WebSessionState }>("/api/session/input", {
         method: "POST",
         body: JSON.stringify({ text: `/run ${runId}` })
       });
       setSession(response.session);
-      setSelectedRunId(runId);
+      inspectRun(runId);
       await refreshBootstrap();
+      await refreshRunDetails(runId);
     });
   }
 
@@ -423,7 +550,7 @@ export function App() {
       setShowNewRunForm(false);
       setNewRunBrief("");
       setSession(response.session);
-      setSelectedRunId(response.run.id);
+      inspectRun(response.run.id);
       await refreshBootstrap();
       await refreshRunDetails(response.run.id);
     });
@@ -470,7 +597,31 @@ export function App() {
     });
   }
 
-  async function runAction(endpoint: string, body?: unknown, activityLabel = "Running action") {
+  async function runAction(
+    endpoint: string,
+    body?: unknown,
+    activityLabel = "Running action",
+    confirmation?: GovernedActionConfirmation
+  ) {
+    const endpointRunId = endpoint.match(/^\/api\/runs\/([^/]+)\/actions\//u)?.[1];
+    const activeRunId = session?.activeRunId || bootstrap?.activeRunId;
+    const targetRunId = endpointRunId ? decodeURIComponent(endpointRunId) : undefined;
+    if (targetRunId && targetRunId !== activeRunId) {
+      setUiError("Activate the inspected run before applying a workflow action.");
+      return;
+    }
+    if (confirmation && targetRunId) {
+      const targetRun = selectedRun?.id === targetRunId
+        ? selectedRun
+        : bootstrap?.runs.find((run) => run.id === targetRunId);
+      if (!window.confirm(formatGovernedActionConfirmation({
+        ...confirmation,
+        runId: targetRunId,
+        runTitle: targetRun?.title
+      }))) {
+        return;
+      }
+    }
     await withUiActivity(activityLabel, async () => {
       const response = await api<{ session: WebSessionState }>(endpoint, {
         method: "POST",
@@ -479,7 +630,7 @@ export function App() {
       setSession(response.session);
       const nextRunId = response.session.activeRunId || selectedRunId;
       if (nextRunId) {
-        setSelectedRunId(nextRunId);
+        inspectRun(nextRunId);
       }
       await refreshBootstrap();
       if (nextRunId) {
@@ -489,6 +640,24 @@ export function App() {
   }
 
   async function runSessionCommand(text: string, activityLabel = `Running ${summarizeCommand(text)}`) {
+    const targetRunId = selectedRunIdRef.current;
+    if (targetRunId && (session?.activeRunId || bootstrap?.activeRunId) !== targetRunId) {
+      setUiError("Activate the inspected run before sending commands or applying decisions.");
+      return;
+    }
+    if (requiresCommandConfirmation(text) && targetRunId) {
+      const targetRun = selectedRun?.id === targetRunId
+        ? selectedRun
+        : bootstrap?.runs.find((run) => run.id === targetRunId);
+      if (!window.confirm(formatGovernedActionConfirmation({
+        action: text.trim(),
+        runId: targetRunId,
+        runTitle: targetRun?.title,
+        node: targetRun?.currentNode
+      }))) {
+        return;
+      }
+    }
     await withUiActivity(activityLabel, async () => {
       const response = await api<{ session: WebSessionState }>("/api/session/input", {
         method: "POST",
@@ -497,7 +666,7 @@ export function App() {
       setSession(response.session);
       const nextRunId = response.session.activeRunId || selectedRunId;
       if (nextRunId) {
-        setSelectedRunId(nextRunId);
+        inspectRun(nextRunId);
       }
       await refreshBootstrap();
       if (nextRunId) {
@@ -506,12 +675,16 @@ export function App() {
     });
   }
 
-  async function withUiActivity<T>(label: string, work: () => Promise<T>): Promise<T> {
+  async function withUiActivity<T>(label: string, work: () => Promise<T>): Promise<T | undefined> {
     const id = uiActivitySeq.current + 1;
     uiActivitySeq.current = id;
     setUiActivity({ id, label });
+    setUiError(null);
     try {
       return await work();
+    } catch (error) {
+      reportUiError(error, `${label} failed.`);
+      return undefined;
     } finally {
       setUiActivity((current) => (current?.id === id ? null : current));
     }
@@ -524,6 +697,8 @@ export function App() {
           <p className="eyebrow">AutoLabOS</p>
           <h1>Research Workbench</h1>
           <p>Loading local workspace state from <code>http://127.0.0.1:4317</code>.</p>
+          {uiError ? <p className="error-message">{uiError}</p> : null}
+          {uiError ? <button className="button button-primary" type="button" onClick={() => void refreshBootstrap()}>Retry connection</button> : null}
           <span className="loading-bar" aria-hidden="true" />
         </section>
       </div>
@@ -565,6 +740,7 @@ export function App() {
     <ResearchWorkbench
       bootstrap={bootstrap}
       session={session}
+      activeRunId={effectiveActiveRunId}
       selectedRun={selectedRun}
       selectedRunId={selectedRunId}
       filteredRuns={filteredRuns}
@@ -577,6 +753,10 @@ export function App() {
       activeTabLabel={activeTabLabel}
       isBusy={isBusy}
       activeBusyLabel={activeBusyLabel}
+      isSelectedRunActive={isSelectedRunActive}
+      syncState={syncState}
+      lastSyncedAt={lastSyncedAt}
+      uiError={uiError}
       activityRun={activityRun}
       runSearch={runSearch}
       showNewRunForm={showNewRunForm}
@@ -614,22 +794,56 @@ export function App() {
       onSetNewRunObjective={setNewRunObjective}
       onSetNewRunAutoStart={setNewRunAutoStart}
       onSubmitNewRun={submitNewRun}
-      onSelectRun={(runId) => void runSlashSelection(runId)}
-      onApprove={(runId) => void runAction(`/api/runs/${runId}/actions/approve`, undefined, "Approving current node")}
+      onSelectRun={inspectRun}
+      onActivateRun={(runId) => void activateRun(runId)}
+      onApprove={(runId) => void runAction(
+        `/api/runs/${runId}/actions/approve`,
+        undefined,
+        "Approving current node",
+        { action: "Approve current node", node: selectedRun?.id === runId ? selectedRun.currentNode : undefined }
+      )}
       onApplyRecommendation={(runId) =>
-        void runAction(`/api/runs/${runId}/actions/apply-transition`, undefined, "Applying transition recommendation")
+        void runAction(
+          `/api/runs/${runId}/actions/apply-transition`,
+          undefined,
+          "Applying transition recommendation",
+          { action: "Apply transition recommendation", node: selectedRun?.id === runId ? selectedRun.currentNode : undefined }
+        )
       }
       onRetry={(runId, node) =>
-        void runAction(`/api/runs/${runId}/actions/retry`, node ? { node } : undefined, `Retrying ${node ? formatNodeLabel(node) : "current node"}`)
+        void runAction(
+          `/api/runs/${runId}/actions/retry`,
+          node ? { node } : undefined,
+          `Retrying ${node ? formatNodeLabel(node) : "current node"}`,
+          {
+            action: `Retry ${node ? formatNodeLabel(node) : "current node"}`,
+            node: node || (selectedRun?.id === runId ? selectedRun.currentNode : undefined)
+          }
+        )
       }
       onOvernight={(runId) =>
-        void runAction(`/api/runs/${runId}/actions/overnight`, undefined, "Starting autonomy preset: overnight")
+        void runAction(
+          `/api/runs/${runId}/actions/overnight`,
+          undefined,
+          "Starting autonomy preset: overnight",
+          { action: "Start overnight autonomy preset", node: selectedRun?.id === runId ? selectedRun.currentNode : undefined }
+        )
       }
       onRunNode={(runId, node) =>
-        void runAction(`/api/runs/${runId}/actions/run-node`, { node }, `Running ${formatNodeLabel(node)}`)
+        void runAction(
+          `/api/runs/${runId}/actions/run-node`,
+          { node },
+          `Running ${formatNodeLabel(node)}`,
+          { action: `Run ${formatNodeLabel(node)}`, node }
+        )
       }
       onJumpNode={(runId, node) =>
-        void runAction(`/api/runs/${runId}/actions/jump`, { node, force: true }, `Jumping to ${formatNodeLabel(node)}`)
+        void runAction(
+          `/api/runs/${runId}/actions/jump`,
+          { node, force: false },
+          `Backtracking to ${formatNodeLabel(node)}`,
+          { action: `Backtrack to ${formatNodeLabel(node)}`, node }
+        )
       }
       onCancelActive={() => void cancelActive()}
       onSetActiveTab={setActiveTab}
@@ -644,7 +858,19 @@ export function App() {
       onLoadArtifactPreview={(runId, artifact) => void loadArtifactPreview(runId, artifact)}
       onLoadKnowledgePreview={(path) => void loadKnowledgePreview(path)}
       onOpenKnowledgeArtifact={(path) => void openKnowledgeArtifact(path)}
-      onSetSelectedRunId={setSelectedRunId}
+      onSetSelectedRunId={inspectRun}
+      onRetrySync={() => {
+        setUiError(null);
+        void refreshBootstrap();
+        void refreshDoctor();
+        void refreshKnowledge();
+        const runId = selectedRunIdRef.current;
+        if (runId) {
+          void refreshRunDetails(runId);
+          void refreshLiterature(runId);
+        }
+      }}
+      onDismissError={() => setUiError(null)}
       onSubmitSetup={submitSetup}
       onSetSetupForm={setSetupForm}
     />
@@ -654,6 +880,7 @@ export function App() {
 interface ResearchWorkbenchProps {
   bootstrap: BootstrapResponse;
   session: WebSessionState | null;
+  activeRunId: string | undefined;
   selectedRun: RunRecord | null;
   selectedRunId: string | undefined;
   filteredRuns: RunRecord[];
@@ -666,6 +893,10 @@ interface ResearchWorkbenchProps {
   activeTabLabel: string;
   isBusy: boolean;
   activeBusyLabel: string | undefined;
+  isSelectedRunActive: boolean;
+  syncState: SyncState;
+  lastSyncedAt: string | null;
+  uiError: string | null;
   activityRun: RunRecord | undefined;
   runSearch: string;
   showNewRunForm: boolean;
@@ -704,6 +935,7 @@ interface ResearchWorkbenchProps {
   onSetNewRunAutoStart: (value: boolean) => void;
   onSubmitNewRun: (event: FormEvent) => Promise<void>;
   onSelectRun: (runId: string) => void;
+  onActivateRun: (runId: string) => void;
   onApprove: (runId: string) => void;
   onApplyRecommendation: (runId: string) => void;
   onRetry: (runId: string, node?: NodeId) => void;
@@ -722,6 +954,8 @@ interface ResearchWorkbenchProps {
   onLoadKnowledgePreview: (path: string) => void;
   onOpenKnowledgeArtifact: (path: string) => void;
   onSetSelectedRunId: (runId: string) => void;
+  onRetrySync: () => void;
+  onDismissError: () => void;
   onSubmitSetup: (event: FormEvent) => Promise<void>;
   onSetSetupForm: Dispatch<SetStateAction<SetupFormState>>;
 }
@@ -729,6 +963,7 @@ interface ResearchWorkbenchProps {
 function ResearchWorkbench(props: ResearchWorkbenchProps) {
   return (
     <div className="workbench-shell">
+      <OperatorContextBar {...props} />
       <WorkbenchRail {...props} />
       <main className="workbench-main">
         <RuntimeRibbon {...props} />
@@ -749,6 +984,52 @@ function ResearchWorkbench(props: ResearchWorkbenchProps) {
       </main>
       <WorkbenchInspector {...props} />
     </div>
+  );
+}
+
+function OperatorContextBar(props: ResearchWorkbenchProps) {
+  const contextMismatch = Boolean(props.selectedRunId && props.activeRunId !== props.selectedRunId);
+  return (
+    <section className={`operator-context ${contextMismatch ? "context-locked" : ""}`} aria-label="Run context">
+      <div className="operator-context-main">
+        <div>
+          <p className="section-kicker">Run context</p>
+          <strong>{contextMismatch ? "Inspection only" : props.selectedRunId ? "Actions target this run" : "No run selected"}</strong>
+        </div>
+        <label className="context-run-picker">
+          Inspect run
+          <select
+            aria-label="Inspect run"
+            value={props.selectedRunId || ""}
+            disabled={props.isBusy || props.bootstrap.runs.length === 0}
+            onChange={(event) => props.onSelectRun(event.target.value)}
+          >
+            {props.bootstrap.runs.length === 0 ? <option value="">No runs</option> : null}
+            {props.bootstrap.runs.map((run) => <option key={run.id} value={run.id}>{run.title}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="context-identities">
+        <span><small>Inspecting</small><code>{props.selectedRunId || "none"}</code></span>
+        <span><small>Active target</small><code>{props.activeRunId || "none"}</code></span>
+        <span><small>Sync</small><strong className={`sync-${props.syncState}`}>{formatSyncState(props.syncState)}</strong></span>
+        <span><small>Last update</small><strong>{props.lastSyncedAt ? formatTimestamp(props.lastSyncedAt) : "not yet"}</strong></span>
+      </div>
+      {contextMismatch && props.selectedRunId ? (
+        <button className="button button-primary" type="button" disabled={props.isBusy} onClick={() => props.onActivateRun(props.selectedRunId!)}>
+          Activate inspected run
+        </button>
+      ) : null}
+      {props.uiError ? (
+        <div className="operator-error" role="alert">
+          <span>{props.uiError}</span>
+          <div className="operator-error-actions">
+            <button className="button button-secondary button-small" type="button" onClick={props.onRetrySync}>Retry sync</button>
+            <button className="button button-ghost button-small" type="button" onClick={props.onDismissError}>Dismiss</button>
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -799,7 +1080,7 @@ function WorkbenchRail(props: ResearchWorkbenchProps) {
               return (
                 <button
                   key={run.id}
-                  className={`run-ledger-item ${props.selectedRunId === run.id ? "selected" : ""}`}
+                  className={`run-ledger-item ${props.selectedRunId === run.id ? "selected" : ""} ${props.activeRunId === run.id ? "active-target" : ""}`}
                   type="button"
                   disabled={props.isBusy}
                   onClick={() => props.onSelectRun(run.id)}
@@ -807,6 +1088,7 @@ function WorkbenchRail(props: ResearchWorkbenchProps) {
                   <span className={`status-dot ${statusToneClass(lifecycleStatus)}`} />
                   <strong>{run.title}</strong>
                   <span>{formatNodeLabel(run.currentNode)} · {formatTimestamp(job?.last_event_at || run.updatedAt)}</span>
+                  {props.activeRunId === run.id ? <span className="active-target-label">Active command target</span> : null}
                   {job ? (
                     <>
                       <span>Next: {formatRunRecommendedAction(job.recommended_next_action)}</span>
@@ -931,6 +1213,11 @@ function ResearchRunHero(props: ResearchWorkbenchProps) {
     (transition
       ? `${transition.action}${transition.targetNode ? ` toward ${formatNodeLabel(transition.targetNode)}` : ""}: ${transition.reason}`
       : props.selectedRun.latestSummary || "No blocking decision is currently attached to this run.");
+  const currentState = props.selectedRun.graph.nodeStates[props.selectedRun.currentNode];
+  const canApprove = props.isSelectedRunActive && currentState?.status === "needs_approval";
+  const canApply = props.isSelectedRunActive
+    && transition?.autoExecutable === true
+    && transition.action !== "pause_for_human";
 
   return (
     <section className="run-hero">
@@ -951,15 +1238,15 @@ function ResearchRunHero(props: ResearchWorkbenchProps) {
         </div>
       </div>
       <div className="hero-actions">
-        <button className="button button-primary" type="button" disabled={props.isBusy} onClick={() => props.onApprove(props.selectedRun!.id)}>
+        <button className="button button-primary" type="button" disabled={props.isBusy || !canApprove} onClick={() => props.onApprove(props.selectedRun!.id)}>
           Approve
         </button>
         {transition ? (
-          <button className="button button-primary button-warm" type="button" disabled={props.isBusy} onClick={() => props.onApplyRecommendation(props.selectedRun!.id)}>
+          <button className="button button-primary button-warm" type="button" disabled={props.isBusy || !canApply} onClick={() => props.onApplyRecommendation(props.selectedRun!.id)}>
             Apply recommendation
           </button>
         ) : (
-          <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id)}>
+          <button className="button button-secondary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onRetry(props.selectedRun!.id)}>
             Retry
           </button>
         )}
@@ -1020,10 +1307,10 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
       {props.selectedRun.graph.pendingTransition ? <TransitionPanel {...props} /> : null}
       {props.activeInsight ? <InsightPanel {...props} /> : null}
       <div className="decision-actions">
-        <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onOvernight(props.selectedRun!.id)}>
+        <button className="button button-secondary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onOvernight(props.selectedRun!.id)}>
           Overnight preset
         </button>
-        <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id)}>
+        <button className="button button-secondary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onRetry(props.selectedRun!.id)}>
           Retry current node
         </button>
       </div>
@@ -1046,12 +1333,12 @@ function TransitionPanel(props: ResearchWorkbenchProps) {
         {transition.evidence.map((item) => <span key={item} className="chip">{item}</span>)}
       </div>
       <div className="decision-actions">
-        <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand("/agent apply", "Applying transition recommendation")}>
+        <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy || !props.isSelectedRunActive || !transition.autoExecutable || transition.action === "pause_for_human"} onClick={() => props.onRunSessionCommand("/agent apply", "Applying transition recommendation")}>
           <span>Apply recommendation</span>
           <code>/agent apply</code>
         </button>
         {transition.autoExecutable ? (
-          <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand("/agent overnight", "Starting autonomy preset: overnight")}>
+          <button className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onRunSessionCommand("/agent overnight", "Starting autonomy preset: overnight")}>
             <span>Start overnight preset</span>
             <code>/agent overnight</code>
           </button>
@@ -1077,7 +1364,7 @@ function InsightPanel(props: ResearchWorkbenchProps) {
       {insight.actions?.length ? (
         <div className="decision-actions">
           {insight.actions.map((action) => (
-            <button key={`${action.label}-${action.command}`} className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy} onClick={() => props.onRunSessionCommand(action.command, `${action.label} · ${action.command}`)}>
+            <button key={`${action.label}-${action.command}`} className="button button-secondary button-small insight-action" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onRunSessionCommand(action.command, `${action.label} · ${action.command}`)}>
               <span>{action.label}</span>
               <code>{action.command}</code>
             </button>
@@ -1207,6 +1494,10 @@ function WorkflowMap(props: ResearchWorkbenchProps) {
             updatedAt: props.selectedRun!.updatedAt
           };
           const current = props.selectedRun!.currentNode === node;
+          const currentIndex = NODE_ORDER.indexOf(props.selectedRun!.currentNode);
+          const canRun = props.isSelectedRunActive && current && ["pending", "failed"].includes(state.status);
+          const canRetry = props.isSelectedRunActive && current && ["failed", "needs_approval"].includes(state.status);
+          const canBacktrack = props.isSelectedRunActive && index < currentIndex;
           return (
             <article key={node} className={`node-tile status-${state.status} ${current ? "current" : ""}`}>
               <span className="node-index">{index + 1}</span>
@@ -1216,9 +1507,9 @@ function WorkflowMap(props: ResearchWorkbenchProps) {
               </div>
               <span className={`status-pill ${statusToneClass(state.status)}`}>{formatStatusLabel(state.status)}</span>
               <div className="node-actions">
-                <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onRunNode(props.selectedRun!.id, node)}>Run</button>
-                <button className="button button-secondary button-small" type="button" disabled={props.isBusy} onClick={() => props.onRetry(props.selectedRun!.id, node)}>Retry</button>
-                <button className="button button-ghost button-small" type="button" disabled={props.isBusy} onClick={() => props.onJumpNode(props.selectedRun!.id, node)}>Jump</button>
+                <button className="button button-secondary button-small" type="button" disabled={props.isBusy || !canRun} onClick={() => props.onRunNode(props.selectedRun!.id, node)}>Run</button>
+                <button className="button button-secondary button-small" type="button" disabled={props.isBusy || !canRetry} onClick={() => props.onRetry(props.selectedRun!.id, node)}>Retry</button>
+                <button className="button button-ghost button-small" type="button" disabled={props.isBusy || !canBacktrack} onClick={() => props.onJumpNode(props.selectedRun!.id, node)}>Backtrack</button>
               </div>
             </article>
           );
@@ -1246,9 +1537,9 @@ function PendingPlanQueue(props: ResearchWorkbenchProps) {
         {plan.displayCommands.map((command) => <li key={command}>{command}</li>)}
       </ol>
       <div className="decision-actions">
-        <button className="button button-primary" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("next")}>Run next</button>
-        {plan.totalSteps > 1 ? <button className="button button-secondary" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("all")}>Run all</button> : null}
-        <button className="button button-danger" type="button" disabled={props.isBusy} onClick={() => props.onTriggerPending("cancel")}>Cancel</button>
+        <button className="button button-primary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onTriggerPending("next")}>Run next</button>
+        {plan.totalSteps > 1 ? <button className="button button-secondary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onTriggerPending("all")}>Run all</button> : null}
+        <button className="button button-danger" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onTriggerPending("cancel")}>Cancel</button>
       </div>
     </section>
   );
@@ -1301,10 +1592,10 @@ function WorkbenchInspector(props: ResearchWorkbenchProps) {
         </div>
         <label className="field-label">
           Prompt
-          <textarea value={props.commandInput} onChange={(event) => props.onSetCommandInput(event.target.value)} placeholder="collect 100 papers from the last 5 years by relevance" rows={3} disabled={props.isBusy} />
+          <textarea value={props.commandInput} onChange={(event) => props.onSetCommandInput(event.target.value)} placeholder="collect 100 papers from the last 5 years by relevance" rows={3} disabled={props.isBusy || !props.isSelectedRunActive} />
         </label>
         <div className="composer-actions">
-          <button className="button button-primary" type="submit" disabled={props.isBusy}>{props.isBusy ? "Running..." : "Send"}</button>
+          <button className="button button-primary" type="submit" disabled={props.isBusy || !props.isSelectedRunActive}>{props.isBusy ? "Running..." : "Send"}</button>
           {props.session?.canCancel ? <button className="button button-danger" type="button" onClick={props.onCancelActive}>Cancel active task</button> : null}
         </div>
       </form>
@@ -1352,7 +1643,7 @@ function ArtifactPreviewPane(props: ResearchWorkbenchProps) {
     return <div className="artifact-preview"><iframe src={props.artifactPreview} title={props.selectedArtifact.path} /></div>;
   }
   if (props.selectedArtifact.path === "review/review_packet.json" && props.selectedReviewPacket) {
-    return <ReviewPacketPreviewPane packet={props.selectedReviewPacket} isBusy={props.isBusy} onRunSessionCommand={props.onRunSessionCommand} />;
+    return <ReviewPacketPreviewPane packet={props.selectedReviewPacket} isBusy={props.isBusy || !props.isSelectedRunActive} onRunSessionCommand={props.onRunSessionCommand} />;
   }
   if (props.selectedArtifact.kind === "text" || props.selectedArtifact.kind === "json") {
     return <div className="artifact-preview"><pre>{props.artifactPreview}</pre></div>;
@@ -2104,6 +2395,57 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
     throw new Error(errorText || `Request failed: ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+async function fetchText(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(errorText || `Request failed: ${response.status}`);
+  }
+  return response.text();
+}
+
+function toRunRelativeArtifactPath(runId: string, referencePath: string): string {
+  const normalized = referencePath.replace(/\\/gu, "/").replace(/^\.\//u, "");
+  const prefix = `.autolabos/runs/${runId}/`;
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : normalized;
+}
+
+function requiresCommandConfirmation(text: string): boolean {
+  const normalized = text.trim();
+  return /^\/(?:approve|retry)\b/iu.test(normalized)
+    || /^\/agent\s+(?:apply|jump|retry|overnight|autonomous)\b/iu.test(normalized);
+}
+
+function formatGovernedActionConfirmation(input: GovernedActionConfirmation & {
+  runId: string;
+  runTitle?: string;
+}): string {
+  const lines = [
+    "Run this governed action?",
+    "",
+    `Action: ${input.action}`,
+    `Run: ${input.runTitle || "Untitled run"}`,
+    `Run ID: ${input.runId}`
+  ];
+  if (input.node) {
+    lines.push(`Node: ${formatNodeLabel(input.node)}`);
+  }
+  return lines.join("\n");
+}
+
+function formatSyncState(state: SyncState): string {
+  switch (state) {
+    case "connecting":
+      return "Connecting";
+    case "live":
+      return "Live stream";
+    case "polling":
+      return "Polling";
+    case "degraded":
+      return "Needs attention";
+  }
 }
 
 function summarizeCommand(text: string): string {

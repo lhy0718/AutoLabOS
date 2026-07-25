@@ -9,250 +9,271 @@
 \usepackage{microtype}
 
 \title{From Concern Detection to Promotion Control:\\
-A Protocol for Fail-Closed Governance of Autonomous Research Artifacts}
+A Controlled Study of Fail-Closed Research Governance}
 \author{Anonymous}
-\date{}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Autonomous research systems increasingly produce complete-looking manuscripts
-and run bundles, yet review components can identify serious scientific defects
-without preventing a paper-ready decision. We formulate this gap as
-\emph{promotion governance}: deciding whether an artifact bundle should be
-promoted, reviewed, downgraded, or blocked, while linking each blocking concern
-to inspectable evidence and a responsible repair stage. We introduce a
-manifest-driven evaluation protocol with clean controls, counterfactual fault
-variants, base-bundle-disjoint splits, blind manuscript-only requests, and
-metrics for false promotion, concern--acceptance conflict, clean-case retention,
-repair localization, traceability, and cost. A synthetic development suite
-with four base bundles and 40 cases validates the evaluator and exposes three
-missing integrity checks in an artifact audit. After those checks were added,
-the audit passed all development cases; an advisory-only ablation still
-accepted every defective case despite detecting its concerns. These results
-are instrument validation, not empirical evidence for general effectiveness:
-the suite is synthetic, unreviewed, and explicitly ineligible for paper-level
-claims. We specify an oracle-certified controlled experiment with held-out
-fault families and repeated real-model evaluation needed to test the central
-hypothesis without treating human adjudication as metric gold.
+Research workflows can produce complete-looking manuscripts and run bundles
+while leaving scientific defects unresolved. We study \emph{promotion
+governance}: whether an artifact bundle may advance and which workflow stage
+must repair it. We introduce a mechanically certified benchmark with 120 base
+bundles, 600 registered fault cases, and 120 clean controls. A fail-closed
+artifact audit made zero false promotions and retained all clean controls;
+presence-only and advisory-only policies promoted every fault case. Under
+perfect audit-derived routing, owner-scoped repair made all 600 fault cases
+acceptable to the same gate without changing clean controls, while 360 repairs
+exactly reconstructed the paired clean artifact tree. Three self-recorded
+local-model runs over short Results fragments abstained on every case and are
+reported separately as a protocol diagnostic. The findings establish
+conformance to one generated suite and its executable fault contracts, not
+population-level effectiveness or naturalistic reviewer generalization.
 \end{abstract}
 
 \section{Introduction}
 
-Research-agent systems span literature review, experimentation, and report
-writing \cite{schmidgall-etal-2025-agent}. Capability benchmarks now evaluate
-replication workflows extending from paper understanding to experiment
-execution \cite{starace2025paperbench}. Completion, however, is not equivalent
-to scientific readiness. BadScientist shows that plausible but unsound papers
-can receive favorable automatic reviews
-\cite{jiang-etal-2026-badscientist}, while counterfactual evaluation finds that
-flaws in research logic have no significant effect on automatic reviews
-\cite{dycke-gurevych-2026-automatic}.
+Agent Laboratory connects literature review, experimentation, and reporting
+\cite{schmidgall-etal-2025-agent}, and PaperBench evaluates executed
+research replication \cite{starace2025paperbench}. Completion, however, does
+not imply scientific readiness. Unsound generated papers can receive favorable
+automatic reviews \cite{jiang-etal-2026-badscientist}, and \citet{dycke-gurevych-2026-automatic}
+find that injected reasoning flaws need not materially change tested reviewer
+outputs.
 
-We study the policy boundary between detecting a concern and allowing an
-artifact bundle to advance. A useful research governor must fail closed: a
-blocking concern cannot coexist with a paper-ready decision unless the concern
-is resolved or explicitly downgraded. It must also avoid the trivial solution
-of blocking everything. This motivates three questions: whether artifact-bound
-gates reduce false promotion, whether binding concerns to transitions prevents
-concern--acceptance conflict, and what clean-case, repair-localization, latency,
-and cost trade-offs follow.
+This gap is also a control problem. A system may detect missing evidence yet
+still accept a bundle; a checklist may find required files while missing
+contradictions; a conservative model may avoid false acceptance by rejecting
+everything. We call the policy connecting concerns to allowed workflow
+transitions \emph{promotion governance}. It should block unsupported
+promotion, retain clean bundles, expose decision evidence, and route repair to
+the stage that owns the defect.
 
-The contribution at the present evidence level is a protocol and tested
-instrumentation, not a confirmed performance claim. We provide (i) a portable
-artifact-bundle task with explicit promotion and repair labels, (ii) leakage
-and independent-oracle gates, (iii) baselines that isolate detection from action binding,
-and (iv) a development failure analysis that routes audit misses back to the
-responsible workflow stages.
+We ask: \textbf{within a fixed executable artifact contract, how do artifact
+visibility and fail-closed concern-to-decision binding affect false promotion,
+clean retention, and repair routing?} We contribute (i) an artifact-bundle
+task covering decisions, concerns, evidence paths, and repair ownership; (ii) a
+mechanically certified benchmark with family-separated development and test
+partitions, grouped base variants, exact-hash duplicate screening, and
+independent mutation replay; and (iii) a controlled component study with
+node-owned recovery over 720 test cases. Claims are limited to registered
+artifact faults in the generated suite.
 
 \section{Related Work}
 
-\paragraph{Research-agent capability.}
-Agent Laboratory organizes literature review, experimentation, and reporting
-within a multi-agent research workflow \cite{schmidgall-etal-2025-agent}.
-PaperBench evaluates replication of published machine-learning research from
-paper understanding through executed artifacts \cite{starace2025paperbench}.
-These systems motivate artifact-level evaluation, but their primary object is
-research capability rather than the consistency of a promotion decision with
-detected blockers.
+Agent Laboratory composes agents across the research workflow
+\cite{schmidgall-etal-2025-agent}, whereas PaperBench evaluates replication
+from paper understanding through executed artifacts
+\cite{starace2025paperbench}. BadScientist and counterfactual reviewer
+evaluations expose failures in automatic scientific judgment
+\cite{jiang-etal-2026-badscientist,dycke-gurevych-2026-automatic}.
+CLAIM-BENCH evaluates claim extraction, evidence extraction, and their links
+\cite{javaji-etal-2025-ai}. ARA and REPRO-Bench assess reproducibility from
+workflow or reproduction artifacts \cite{riehl2026ara,hu2025reprobench}, while
+SAGE localizes experiment failures to intervention levels
+\cite{ma2026reflection}. The present task joins artifact consistency,
+decision binding, and repair localization; a passing gate means contract
+conformance, not scientific truth.
 
-\paragraph{Review and claim verification.}
-BadScientist operationalizes concern--acceptance conflict for unsound generated
-papers \cite{jiang-etal-2026-badscientist}. Dycke and Gurevych use targeted
-edits to create flawed research logic and compare automatic reviews
-\cite{dycke-gurevych-2026-automatic}. CLAIM-BENCH evaluates claim extraction,
-evidence extraction, and claim--evidence link validation in AI papers
-\cite{javaji-etal-2025-ai}. These dimensions motivate a separate evaluation
-question: whether detected concerns constrain promotion decisions, bind artifact evidence, and identify the responsible repair stage.
+\section{Task and Benchmark}
 
-\paragraph{Artifact assurance and recovery.}
-ARA reconstructs scientific workflows for reproducibility assessment
-\cite{riehl2026ara}. REPRO-Bench evaluates agents' reproducibility assessments
-using paper PDFs and reproduction packages \cite{hu2025reprobench}. SAGE
-routes experiment failures to structured intervention levels
-\cite{ma2026reflection}. The closest distinction is therefore not
-artifact inspection or failure attribution alone, but whether detected
-scientific blockers deterministically constrain paper-readiness promotion
-without over-blocking clean bundles.
+Each case is a portable research-run tree. A system returns one of
+\texttt{promote}, \texttt{needs\_review}, \texttt{downgrade}, or
+\texttt{block}; typed concerns with severities and artifact paths; and repair
+owners. Gold and mutation metadata remain scorer-side. Exact case coverage,
+predictions, the suite, a contemporaneous TypeScript source snapshot, and the
+dependency lock are SHA-256 bound. A fail-closed policy forbids
+\texttt{promote} when an unresolved blocker exists. We also measure
+\emph{concern--acceptance conflict}: promotion among faulty predictions that
+actually emit a blocking concern.
 
-\section{Promotion Governance Protocol}
+The benchmark comes from a versioned mutation registry. Every entry specifies
+an artifact, precondition, deterministic transformation, expected decision,
+blocker, and repair owner. A separately implemented oracle reconstructs each
+case from its clean control, replays the mutation, checks before/after hashes,
+and derives gold. Registry, split, suite, gold, and oracle-report hashes are
+bound before scoring. This is executable contract gold, not independent human
+judgment of scientific correctness.
 
-\subsection{Task and labels}
+Development and test use disjoint fault families; all variants of a base stay
+in one partition. Exact source hashes screen byte-identical duplicates but do
+not establish substantive source independence. The 120-case development set
+contains 24 bases and four fault families. The 720-case test set contains 120
+bases, each with one clean control and five faults: claim--evidence conflict,
+declared-versus-executed budget mismatch, missing repeated-run provenance,
+figure-audit summary-state contradiction, and claim-contract flag
+contradiction. The latter two are metadata-state faults and account for 240 of
+600 faults. Both partitions reuse semantically equivalent generator templates,
+and no pre-outcome freeze prevents tuning to the generator; this is not a
+held-out-source generalization design.
 
-Each case is a portable research-run artifact tree paired with a private case
-manifest. The evaluated system returns one decision from \texttt{promote},
-\texttt{needs\_review}, \texttt{downgrade}, or \texttt{block}; zero or more
-concerns with severity and evidence paths; and the workflow stages responsible
-for repair. Gold labels remain outside the visible artifact tree.
+\paragraph{Systems.}
+\textbf{Always promote} preserves readiness. A \textbf{presence checklist}
+checks required files but not preserved-file field mutations. An
+\textbf{advisory audit} copies the full audit's concerns and owners but forcibly
+retains \texttt{promote}. The \textbf{fail-closed audit} applies artifact
+checks and blocks or downgrades unresolved findings. These deterministic
+conditions isolate contract mechanisms rather than estimate effectiveness
+against an independent governor.
 
-Every suite declares an evidence class, evaluation regime, claim ceiling,
-adjudication status, mutation-isolation status, and paper-claim eligibility.
-The controlled regime derives gold from a frozen fault registry and requires
-an independently implemented oracle to replay each mutation and verify the
-resulting artifact hash. Its claim ceiling is limited to registered fault
-families and it cannot claim external validation. A separate naturalistic
-regime retains independent human adjudication and external source provenance.
-All variants derived from one base bundle remain in the same split, and source
-content hashes detect renamed duplicates across splits.
+Qwen3.5-35B-A3B is the model identity cited for the fragment-model diagnostic
+\cite{qwen3.5}. The local runner separately self-records that identifier as its
+requested and resolved model for short Results fragments.
+Every six-case sibling group receives the same 96--98-character fragment under
+opaque request identifiers. Prompts omit case-specific paths, mutation labels,
+gold, and scored concern and owner vocabularies. Three complete local-runtime
+trials contain 2,160 predictions and self-record 324,216 input and 131,976
+output tokens. This protocol cannot expose the artifact faults, so it is an
+execution and abstention diagnostic, not a learned-governor comparator.
 
-\subsection{Fault families and controls}
+\section{Evaluation}
 
-The protocol requires clean positive, null, and negative controls together
-with variants covering missing comparison evidence, repeated-run provenance,
-hidden failed execution, declared-versus-executed budget mismatch,
-result--figure conflict, claim--evidence conflict, citation support mismatch,
-stale persisted state, and unsupported claim strength. Each mutation records
-before and after hashes. For controlled evaluation, the implementation assigns
-entire fault families to development or test, derives case gold from the
-registry, and verifies every clean and mutated artifact by independent replay.
-Certification binds registry, gold, split, oracle-report, and development-suite
-hashes; any mismatch quarantines the suite. Evaluated systems receive only the
-artifact view, and blind manuscript requests omit case, family, path, oracle,
-and gold metadata. Naturalistic evaluation can additionally use separate
-mutation auditors and promotion-label reviewers.
+The primary metric is false promotion over faulty cases. Secondary metrics are
+four-way decision accuracy, macro-F1, clean promotion, blocker F1, exact owner
+match, and artifact trace coverage. For registered benchmark concerns, a trace
+counts only when every concern-specific artifact target is referenced and each
+path resolves inside the case tree. Unregistered model concern codes retain an
+existence-only trace diagnostic and are interpreted separately. We report
+finite-suite rates. The scorer also makes
+5,000 deterministic \texttt{base\_bundle\_id} resamples and reports empirical
+2.5th/97.5th percentiles as identifier-sensitivity intervals. Its seed is the
+first 32 bits of SHA-256 over the null-delimited analysis identity. These are
+not confidence intervals for unseen bundles and do not determine the
+fixed-suite gate.
 
-\subsection{Comparison conditions}
+Four post-hoc criteria, recorded as H1--H4 for machine compatibility, are used:
+H1 requires the checklist-minus-audit false-promotion difference to be at least
+.20; H2 requires audit concern--acceptance conflict at most .05; H3 requires
+clean promotion at least .90; and H4 requires the audit-minus-always-promote
+owner-match difference at least .15. The machine-readable gate remains false for prospective evidence
+because the design is post hoc, even when its conformance blockers are empty.
 
-We define four deterministic conditions and one provider condition.
-\emph{Always promote} trusts the incoming ready state. A \emph{presence
-checklist} verifies required files without semantic consistency checks. An
-\emph{advisory artifact audit} reports the same concerns, evidence, and repair
-owners as the full audit but does not bind them to the decision. The
-\emph{fail-closed artifact audit} applies the binding policy. Finally, a blind
-\emph{manuscript-only reviewer} receives only paper text under opaque request
-identifiers; case labels, mutations, paths, and gold data remain private.
+Recovery starts from fail-closed predictions. Predicted decisions select cases
+and predicted owners select experiment, analysis, or figure-audit adapters.
+Adapters receive neither registry labels nor clean siblings. Outside the
+adapters, mutation family asserts owner--family consistency and repaired-case
+gold is set to \texttt{promote} before the same audit reruns. Gold then scores
+routing and restoration. A manifest
+binds changed paths, adapter revisions, before/after tree hashes, and source
+prediction hashes. This evaluates repair under observed perfect routing, not
+recovery from an erroneous decision or owner.
 
-\subsection{Metrics and inference}
+\section{Results}
 
-Primary metrics are false paper-ready promotion and concern--acceptance
-conflict. We also report four-way decision macro-F1, clean-case promotion,
-blocker precision/recall/F1, exact repair-owner match, trace coverage, latency,
-and provider cost. Every system trial must cover every case. Pairwise effects
-are computed per case, with 5,000-replicate bootstrap intervals clustered by
-base bundle and exact paired sign tests over base-bundle effects. Synthetic
-development suites remain exploratory regardless of numeric performance.
+\begin{table*}[!t]
+\centering
+\small
+\begin{tabular}{lrrrrrrrr}
+\toprule
+System & Trials & Dec. acc. & Macro-F1 & False prom. & Clean prom. & Blocker F1 & Owner & Trace \\
+\midrule
+Always promote & 1 & .167 & .071 & 1.000 & 1.000 & -- & .000 & -- \\
+Presence checklist & 1 & .167 & .071 & 1.000 & 1.000 & -- & .000 & -- \\
+Advisory audit & 1 & .167 & .071 & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 \\
+Fragment model & 3 & .500 & .167 & .000 & .000 & .000 & .000 & 1.000 \\
+Fail-closed audit & 1 & 1.000 & 1.000 & .000 & 1.000 & 1.000 & 1.000 & 1.000 \\
+\bottomrule
+\end{tabular}
+\caption{Controlled-suite results. Each deterministic row has 600 faulty and
+120 clean observations. The separate artifact-blind fragment diagnostic pools
+1,800 faulty and 360 clean prediction-observations from three receipt-distinct
+executions that are not statistical replicates. A dash denotes an undefined
+metric when no concern is emitted.}
+\label{tab:conformance}
+\end{table*}
 
-\section{Implementation and Development Validation}
+The deterministic comparison isolates concern-to-transition binding. Always
+promote, the checklist, and the advisory audit accepted all 600 faults. The
+advisory policy nevertheless achieved perfect blocker F1 and owner match; it
+emitted blockers on 480 faults and promoted all 480, giving conflict rate 1.0.
+The fail-closed audit made zero false promotions and retained all 120 clean
+controls. Its fixed-suite false-promotion reduction against the checklist was
+1.0 and its decision-accuracy increase was .833. These values follow the
+registered mechanisms, not an independently designed comparator.
 
-The protocol is implemented as manifest-driven builders, runners, scorers, and
-blind request import/export commands. Paths are confined to suite roots;
-symbolic links, duplicate cases, hash mismatches, split leakage, and incomplete
-trial coverage are validation failures. Failure analysis emits review
-diagnostics and node-strengthening recommendations with explicit recheck
-conditions.
+Table~\ref{tab:conformance} summarizes these deterministic rows. H1--H4
+observed values were $1.0$, $0.0$, $1.0$, and $1.0$, with sensitivity
+intervals $[1,1]$, $[0,0]$, $[1,1]$, and $[1,1]$. Their eligible counts were
+600, 480, 120, and 600; each report also records 600 faulty and 720 total suite
+observations. All criteria passed as post-hoc finite-suite checks. The
+prospective evidence gate remained false because the design was post hoc.
+
+The fragment model blocked every case in every trial. Its pooled decision
+accuracy was .500, macro-F1 .167, false promotion .000, clean promotion .000,
+blocker F1 .000, owner match .000, and trace coverage 1.000; that trace metric
+checks only whether the requested constant path exists. Blanket abstention
+under an artifact-blind fragment prompt does not measure evidence grounding,
+clean utility, or learned-governor effectiveness.
 
 \begin{table}[!t]
 \centering
 \small
-\begin{tabular}{lrrr}
+\begin{tabular}{lrr}
 \toprule
-Condition & False & Conflict & Clean \\
+Fault family & Reaccepted & Exact tree \\
 \midrule
-Always promote & 1.00 & -- & 1.00 \\
-Presence checklist & 1.00 & -- & 1.00 \\
-Advisory audit & 1.00 & 1.00 & 1.00 \\
-Fail-closed audit & .00 & .00 & 1.00 \\
+Claim--evidence conflict & 120/120 & 0/120 \\
+Executed-budget mismatch & 120/120 & 120/120 \\
+Repeated-run provenance & 120/120 & 0/120 \\
+Figure-audit summary state & 120/120 & 120/120 \\
+Claim-contract flag state & 120/120 & 120/120 \\
 \bottomrule
 \end{tabular}
-\caption{Synthetic development results over four base bundles and 40 cases.
-Columns report false-promotion, concern--acceptance conflict, and clean-case
-promotion rates.
-The labels were generated for instrument debugging and were not independently
-adjudicated; the table is not confirmatory evidence.}
-\label{tab:development}
+\caption{Same-gate reacceptance and exact restoration under perfect
+audit-derived routing.}
+\label{tab:recovery}
 \end{table}
 
-The development corpus contains four synthetic base bundles, one clean control
-and nine counterfactual variants per bundle, for 40 cases. It is marked as
-synthetic development evidence with unreviewed adjudication and no paper-claim
-eligibility. Table~\ref{tab:development} therefore tests instrumentation only.
+Recovery covered all 600 faults and reaccepted every repaired case; no clean
+control changed. Table~\ref{tab:recovery} shows that 360 repairs exactly matched
+clean trees. Claim--evidence repair restored the unique evidence link without
+changing its citation metadata, and repeated-run repair used new trial
+identifiers, so both remained byte-distinct. The deterministic adapter and
+repaired artifacts make these operations inspectable.
 
-Before strengthening, the fail-closed audit reached .70 decision accuracy and
-.333 false-promotion rate, missing repeated-run provenance, executed-budget,
-and stale-state faults. The failure analyzer routed the first two to experiment
-execution and the third to review. Added integrity checks were then evaluated
-on the same frozen suite. In the final development run, the fail-closed audit
-differed from the advisory ablation by .90 decision accuracy and -1.00 false
-promotion. The cluster bootstrap intervals are degenerate because each
-synthetic fault repeats identically across only four base bundles; the paired
-sign-test value is .125. This is direct evidence that the development sample is
-too small for inferential claims, despite final decision accuracy and blocker
-F1 of 1.00 on the generated cases.
-
-\section{Confirmatory Study and Readiness Gate}
-
-The controlled confirmatory study requires at least 720 held-out cases. Entire
-registered fault families are assigned to either development or test before
-outcomes are observed; base identities and source hashes are also disjoint.
-Every test base contributes one clean control and one case from each held-out
-test family. Certification independently replays all development and test
-mutations from their clean controls, verifies registry-derived gold, and binds
-the complete case set and split manifests by hash. A certified suite may become
-paper-claim eligible for registered fault families without human label
-adjudication, but it remains explicitly unvalidated on naturally occurring
-defects.
-
-The manuscript-only condition requires three preserved real-model trials per
-case. Remote API trials retain hashed provider receipts; local trials retain an
-exact model-artifact digest and hash-bound runtime receipts. Deterministic
-baselines and ablations use versioned, hash-bound system-run manifests. At
-least one post-repair rerun per original fault case must measure recovery and
-clean-control regression. Raw requests, responses, decisions, failures,
-manifests, hashes, latency, and cost must be retained. The confirmatory gate
-checks held-out family coverage for every system and trial, recomputes metrics
-from predictions, and cannot raise the claim ceiling beyond the registered
-families.
-
-The central hypothesis is that fail-closed governance lowers false promotion
-by at least 20 absolute percentage points relative to the presence checklist
-while retaining at least 90 percent clean-case promotion. The study is stopped
-or downgraded if the full policy blocks more than 10 percent of clean bundles,
-if the checklist is within five points on both primary safety and clean-case
-metrics, if mutations leak labels, if oracle replay or split isolation fails,
-or if required real-model and recovery evidence is incomplete.
-
-\section{Limitations and Ethical Considerations}
-
-Counterfactual faults may be easier than naturally occurring research defects,
-and deterministic checks can overfit a known artifact schema. A promotion gate
-does not establish scientific truth; it enforces consistency between available
-evidence, stated concerns, and allowed transitions. Provider-based reviewers
-introduce model, prompt, and temporal dependence. Public artifact bundles must
-exclude credentials, private paths, personal data, and proprietary research
-content. False promotion can amplify unsound claims, while false blocking can
-suppress valid null or negative results; both errors must remain visible.
+Three earlier schema-1.0 attempt ledgers self-report stale-running recovery
+counts of 499, 479, and 479 responses before completing 720 requests each.
+They record prior and observed hashes but do not preserve the corresponding
+preimage files, independently verify their recorded prefix contents, or encode an
+external cause. They therefore support only a bounded claim about
+runner-recorded resume behavior, not power-loss attribution, provider
+independence, or statistical replication.
 
 \section{Conclusion}
 
-Promotion governance treats paper readiness as an evidence-bound transition
-rather than a by-product of workflow completion. The implementation and
-development suite show that this distinction is measurable and that detected
-failures can drive targeted audit strengthening. They do not yet show that the
-policy generalizes. An oracle-certified controlled suite, repeated real-model
-review, complete recovery evidence, and a frozen confirmatory run are required
-before advancing beyond a research memo. Naturalistic generalization remains a
-separate claim that would require independently curated external evidence.
+On one executable controlled benchmark, fail-closed concern binding prevented
+all registered false promotions while retaining every clean control; advisory
+concerns alone did not constrain transitions. Under perfect audit-derived
+routing, owner-scoped repair restored same-gate acceptance for every fault and
+exactly reconstructed 60\% of clean trees. These are contract-conformance
+results, not broad claims about scientific validity or reviewer superiority.
+
+\section{Limitations}
+
+The benchmark uses generated faults, one artifact schema, one generator, and
+contract-derived gold without independent scientific annotation. Development
+and test are fault-family separated but not substantively source-independent.
+The deterministic audit was designed for the same contract, and no competitive
+artifact-aware learned reviewer receives matched inputs. The model diagnostic
+uses one local model and an artifact-blind fragment prompt; self-recorded
+receipts do not establish external identity or independent sampling. The frozen
+suite does not bind the historical corpus-generator source at execution time;
+oracle replay establishes artifact consistency, not that historical identity.
+Provider resume evidence uses earlier ledgers without retained preimages. Recovery starts
+from perfect routing, is scoped to registered adapters, and achieves only 60\%
+exact reconstruction. Same-gate reacceptance cannot establish semantic repair,
+naturalistic validity, or robustness to unmodeled faults. Full-text citation
+approval remains a separate human-authority requirement.
+
+\section{Ethical Considerations}
+
+A gate cannot establish scientific truth; it can only enforce consistency
+among inspected evidence, concerns, and transitions. False promotion can
+amplify unsupported claims, while excessive blocking can suppress valid null
+or negative results. Deployments should report clean retention and unresolved
+items, preserve appeal and human review, and exclude credentials, personal
+data, private paths, and non-redistributable sources from public bundles.
 
 \bibliography{references}
 

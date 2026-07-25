@@ -46,6 +46,9 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
     const completion = await args.llm.complete(buildAnalysisSynthesisPrompt(args.run, args.report), {
       systemPrompt: buildAnalysisSynthesisSystemPrompt(args.systemPromptOverride),
       onProgress: (event) => {
+        if (event.type !== "status") {
+          return;
+        }
         const text = event.text.trim();
         if (!text) {
           return;
@@ -59,6 +62,15 @@ export async function synthesizeAnalysisReport(args: SynthesizeAnalysisArgs): Pr
             text: `Result analysis synthesis: ${text}`
           }
         });
+      }
+    });
+    args.eventStream?.emit({
+      type: "OBS_RECEIVED",
+      runId: args.run.id,
+      node: args.node,
+      agentRole: "analyst_statistician",
+      payload: {
+        text: "Result analysis synthesis response received; validating structured output."
       }
     });
     const parsed = parseAnalysisSynthesisResponse(completion.text);

@@ -17,6 +17,10 @@ import {
   verifyPromotionBenchmarkSystemRun,
   type PromotionBenchmarkSystemRunManifest
 } from "./promotionBenchmarkSystems.js";
+import {
+  parsePromotionRepairExecutionManifest,
+  type PromotionRepairExecutionManifest
+} from "./promotionBenchmarkRepairExecution.js";
 
 export type PromotionRecoveryPairKind = "fault_repair" | "clean_control";
 
@@ -39,6 +43,7 @@ export interface PromotionRecoveryManifest {
   repaired_predictions_path: string;
   original_system_run_manifest_path: string;
   repaired_system_run_manifest_path: string;
+  repair_execution_manifest_path?: string;
   system_id: string;
   pairs: PromotionRecoveryPair[];
 }
@@ -59,6 +64,7 @@ export interface PromotionRecoveryPairResult {
   repaired_decision: string | null;
   source_artifact_sha256: string | null;
   repaired_artifact_sha256: string | null;
+  exact_clean_artifact_match?: boolean | null;
   recovered: boolean | null;
   regressed: boolean | null;
   valid: boolean;
@@ -83,6 +89,7 @@ export interface PromotionRecoveryReport {
   repaired_predictions_sha256: string;
   original_system_run_manifest_sha256: string;
   repaired_system_run_manifest_sha256: string;
+  repair_execution_manifest_sha256: string | null;
   required_fault_families: string[];
   covered_fault_families: string[];
   missing_fault_families: string[];
@@ -95,6 +102,8 @@ export interface PromotionRecoveryReport {
   fault_repair_pair_count: number;
   successful_recovery_count: number;
   successful_recovery_rate: number | null;
+  exact_clean_artifact_match_count?: number;
+  exact_clean_artifact_match_rate?: number | null;
   clean_control_pair_count: number;
   clean_control_regression_count: number;
   clean_control_regression_rate: number | null;
@@ -156,6 +165,19 @@ export async function evaluatePromotionBenchmarkRecovery(
     manifest.repaired_system_run_manifest_path,
     "Repaired system run manifest"
   );
+  const repairExecutionManifestPath = manifest.repair_execution_manifest_path
+    ? await resolveArtifact(
+        cwd,
+        manifestRoot,
+        manifest.repair_execution_manifest_path,
+        "Repair execution manifest"
+      )
+    : null;
+  const repairExecutionManifest = repairExecutionManifestPath
+    ? parsePromotionRepairExecutionManifest(
+        JSON.parse(await fs.readFile(repairExecutionManifestPath, "utf8"))
+      )
+    : null;
   const [originalSystemRun, repairedSystemRun] = await Promise.all([
     verifyPromotionBenchmarkSystemRun({
       cwd,
@@ -188,6 +210,21 @@ export async function evaluatePromotionBenchmarkRecovery(
   inspectSuiteEligibility(repairedLoaded.suite, "repaired", issues, false, controlledDeterministic);
   inspectSystemRunProtocol(originalSystemRun, manifest.system_id, "original", issues);
   inspectSystemRunProtocol(repairedSystemRun, manifest.system_id, "repaired", issues);
+  await inspectRepairExecutionManifest({
+    controlledDeterministic,
+    execution: repairExecutionManifest,
+    manifest,
+    originalSuitePath,
+    repairedSuitePath,
+    originalPredictionsPath,
+    repairedPredictionsPath,
+    originalSystemRunManifestPath,
+    repairedSystemRunManifestPath,
+    originalCases: new Map((originalLoaded.suite?.cases || []).map((item) => [item.case_id, item])),
+    repairedCases: new Map((repairedLoaded.suite?.cases || []).map((item) => [item.case_id, item])),
+    originalPredictions: originalPredictionLoad.predictions,
+    issues
+  });
   if (originalLoaded.suite?.manifest.suite_id !== manifest.study_id) {
     issues.push({ code: "study_id_mismatch", message: "study_id must match the original suite_id." });
   }
@@ -209,6 +246,11 @@ export async function evaluatePromotionBenchmarkRecovery(
     manifest.system_id,
     "repaired",
     issues
+  );
+  const cleanCaseByBase = new Map(
+    (originalLoaded.suite?.cases || [])
+      .filter((item) => !item.mutation_family)
+      .map((item) => [item.base_bundle_id, item] as const)
   );
   const seenSources = new Set<string>();
   const seenRepairs = new Set<string>();
@@ -253,6 +295,9 @@ export async function evaluatePromotionBenchmarkRecovery(
       repaired_decision: repairedPrediction?.decision || null,
       source_artifact_sha256: sourceCase?.artifact_sha256 || null,
       repaired_artifact_sha256: repairedCase?.artifact_sha256 || null,
+      exact_clean_artifact_match: pair.pair_kind === "fault_repair" && sourceCase && repairedCase
+        ? repairedCase.artifact_sha256 === cleanCaseByBase.get(sourceCase.base_bundle_id)?.artifact_sha256
+        : null,
       recovered: pair.pair_kind === "fault_repair" && sourcePrediction && repairedPrediction
         ? sourcePrediction.decision !== "promote" && repairedPrediction.decision === "promote"
         : null,
@@ -323,6 +368,8 @@ export async function evaluatePromotionBenchmarkRecovery(
 
   const validControlPairs = pairs.filter((pair) => pair.valid && pair.pair_kind === "clean_control");
   const recoveredCount = validFaultPairs.filter((pair) => pair.recovered === true).length;
+  const exactCleanArtifactMatchCount = validFaultPairs
+    .filter((pair) => pair.exact_clean_artifact_match === true).length;
   const regressionCount = validControlPairs.filter((pair) => pair.regressed === true).length;
   const report: PromotionRecoveryReport = {
     schema_version: "1.1",
@@ -343,6 +390,9 @@ export async function evaluatePromotionBenchmarkRecovery(
     repaired_predictions_sha256: await sha256File(repairedPredictionsPath),
     original_system_run_manifest_sha256: await sha256File(originalSystemRunManifestPath),
     repaired_system_run_manifest_sha256: await sha256File(repairedSystemRunManifestPath),
+    repair_execution_manifest_sha256: repairExecutionManifestPath
+      ? await sha256File(repairExecutionManifestPath)
+      : null,
     required_fault_families: requiredFamilies,
     covered_fault_families: coveredFamilies,
     missing_fault_families: missingFamilies,
@@ -355,6 +405,8 @@ export async function evaluatePromotionBenchmarkRecovery(
     fault_repair_pair_count: validFaultPairs.length,
     successful_recovery_count: recoveredCount,
     successful_recovery_rate: ratioOrNull(recoveredCount, originalFaultCaseIds.size),
+    exact_clean_artifact_match_count: exactCleanArtifactMatchCount,
+    exact_clean_artifact_match_rate: ratioOrNull(exactCleanArtifactMatchCount, originalFaultCaseIds.size),
     clean_control_pair_count: validControlPairs.length,
     clean_control_regression_count: regressionCount,
     clean_control_regression_rate: ratioOrNull(regressionCount, validControlPairs.length),
@@ -373,6 +425,85 @@ export async function evaluatePromotionBenchmarkRecovery(
     report_path: portableRef(cwd, reportPath),
     markdown_path: portableRef(cwd, markdownPath)
   };
+}
+
+async function inspectRepairExecutionManifest(input: {
+  controlledDeterministic: boolean;
+  execution: PromotionRepairExecutionManifest | null;
+  manifest: PromotionRecoveryManifest;
+  originalSuitePath: string;
+  repairedSuitePath: string;
+  originalPredictionsPath: string;
+  repairedPredictionsPath: string;
+  originalSystemRunManifestPath: string;
+  repairedSystemRunManifestPath: string;
+  originalCases: Map<string, PromotionBenchmarkCaseManifest>;
+  repairedCases: Map<string, PromotionBenchmarkCaseManifest>;
+  originalPredictions: PromotionBenchmarkPrediction[];
+  issues: PromotionRecoveryIssue[];
+}): Promise<void> {
+  if (!input.execution) {
+    if (input.controlledDeterministic) {
+      input.issues.push({
+        code: "repair_execution_manifest_required",
+        message: "Controlled recovery requires a hash-bound node repair execution manifest."
+      });
+    }
+    return;
+  }
+  const execution = input.execution;
+  const expectedHashes = {
+    source_suite_sha256: await sha256File(input.originalSuitePath),
+    repaired_suite_sha256: await sha256File(input.repairedSuitePath),
+    source_predictions_sha256: await sha256File(input.originalPredictionsPath),
+    repaired_predictions_sha256: await sha256File(input.repairedPredictionsPath),
+    source_system_run_manifest_sha256: await sha256File(input.originalSystemRunManifestPath),
+    repaired_system_run_manifest_sha256: await sha256File(input.repairedSystemRunManifestPath)
+  };
+  for (const [field, expected] of Object.entries(expectedHashes)) {
+    if (execution[field as keyof typeof expectedHashes] !== expected) {
+      input.issues.push({
+        code: "repair_execution_artifact_hash_mismatch",
+        message: `Repair execution manifest does not match ${field}.`,
+        ref: field
+      });
+    }
+  }
+  if (execution.study_id !== input.manifest.study_id) {
+    input.issues.push({
+      code: "repair_execution_study_mismatch",
+      message: "Repair execution manifest study_id does not match recovery."
+    });
+  }
+  const attemptBySource = new Map(execution.attempts.map((attempt) => [attempt.source_case_id, attempt] as const));
+  if (attemptBySource.size !== input.manifest.pairs.length) {
+    input.issues.push({
+      code: "repair_execution_pair_coverage_mismatch",
+      message: "Repair execution attempts must cover every recovery pair exactly once."
+    });
+  }
+  for (const pair of input.manifest.pairs) {
+    const attempt = attemptBySource.get(pair.source_case_id);
+    const sourceCase = input.originalCases.get(pair.source_case_id);
+    const repairedCase = input.repairedCases.get(pair.repaired_case_id);
+    const prediction = input.originalPredictions.find((candidate) =>
+      candidate.case_id === pair.source_case_id
+        && candidate.system_id === input.manifest.system_id
+        && candidate.trial_id === pair.source_trial_id);
+    if (!attempt || attempt.repaired_case_id !== pair.repaired_case_id
+        || attempt.pair_kind !== pair.pair_kind
+        || attempt.declared_repair_owner !== (pair.declared_repair_owner || null)
+        || attempt.input_artifact_sha256 !== sourceCase?.artifact_sha256
+        || attempt.output_artifact_sha256 !== repairedCase?.artifact_sha256
+        || !prediction
+        || attempt.source_prediction_sha256 !== sha256Json(prediction)) {
+      input.issues.push({
+        code: "repair_execution_pair_binding_mismatch",
+        message: "Repair execution attempt does not match its source prediction and artifact pair.",
+        ref: pair.source_case_id
+      });
+    }
+  }
 }
 
 function appendLoadIssues(
@@ -537,6 +668,7 @@ function parseRecoveryManifest(value: unknown): PromotionRecoveryManifest {
     "repaired_predictions_path",
     "original_system_run_manifest_path",
     "repaired_system_run_manifest_path",
+    ...(value.repair_execution_manifest_path === undefined ? [] : ["repair_execution_manifest_path"]),
     "system_id",
     "pairs"
   ];
@@ -546,6 +678,8 @@ function parseRecoveryManifest(value: unknown): PromotionRecoveryManifest {
       || !nonEmptyString(value.original_predictions_path) || !nonEmptyString(value.repaired_predictions_path)
       || !nonEmptyString(value.original_system_run_manifest_path)
       || !nonEmptyString(value.repaired_system_run_manifest_path)
+      || (value.repair_execution_manifest_path !== undefined
+        && !nonEmptyString(value.repair_execution_manifest_path))
       || !portableIdentifier(value.system_id) || !Array.isArray(value.pairs) || value.pairs.length === 0) {
     throw new Error("Promotion recovery manifest has an invalid schema.");
   }
@@ -558,6 +692,9 @@ function parseRecoveryManifest(value: unknown): PromotionRecoveryManifest {
     repaired_predictions_path: value.repaired_predictions_path,
     original_system_run_manifest_path: value.original_system_run_manifest_path,
     repaired_system_run_manifest_path: value.repaired_system_run_manifest_path,
+    ...(value.repair_execution_manifest_path
+      ? { repair_execution_manifest_path: value.repair_execution_manifest_path }
+      : {}),
     system_id: value.system_id,
     pairs: value.pairs.map(parseRecoveryPair)
   };
@@ -601,6 +738,7 @@ function renderMarkdown(report: PromotionRecoveryReport): string {
     "- Fault-family coverage: " + report.covered_fault_families.length + "/" + report.required_fault_families.length,
     "- Fault-case coverage: " + report.covered_fault_case_count + "/" + report.original_fault_case_count,
     "- Successful recovery: " + formatRate(report.successful_recovery_rate),
+    "- Exact clean-artifact match: " + formatRate(report.exact_clean_artifact_match_rate ?? null),
     "- Clean-control regression: " + formatRate(report.clean_control_regression_rate),
     "",
     "## Validation Issues",
@@ -668,6 +806,10 @@ function portableRef(cwd: string, absolutePath: string): string {
 
 function sha256File(filePath: string): Promise<string> {
   return fs.readFile(filePath).then((bytes) => createHash("sha256").update(bytes).digest("hex"));
+}
+
+function sha256Json(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function isSha256(value: unknown): value is string {

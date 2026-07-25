@@ -1,11 +1,12 @@
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { scorePromotionBenchmarkFromFiles } from "../src/core/benchmark/promotionBenchmark.js";
 import { buildPromotionBenchmarkSuite } from "../src/core/benchmark/promotionBenchmarkBuilder.js";
+import { generateControlledPromotionBenchmark } from "../src/core/benchmark/promotionBenchmarkControlledCorpus.js";
 import { aggregatePromotionBenchmarkProviderRuns } from "../src/core/benchmark/promotionBenchmarkProviderAggregate.js";
 import {
   runPromotionBenchmarkProvider,
@@ -32,7 +33,7 @@ describe("promotion provider run aggregation", () => {
     });
 
     expect(result.manifest).toMatchObject({
-      schema_version: "1.2",
+      schema_version: "1.3",
       status: "completed",
       evidence_class: "external_real_provider",
       execution_environment: "remote_api",
@@ -41,7 +42,7 @@ describe("promotion provider run aggregation", () => {
       external_empirical_evidence_eligible: true,
       real_model_empirical_evidence_eligible: true,
       paper_claim_evidence_eligible: false,
-      independent_trial_requirement_met: true,
+      receipt_distinct_trial_requirement_met: true,
       source_suite: {
         evidence_class: "unspecified",
         paper_claim_eligible: false,
@@ -57,11 +58,13 @@ describe("promotion provider run aggregation", () => {
         input_tokens: 69,
         output_tokens: 24
       },
-      independence_basis: {
+      receipt_distinctness: {
         distinct_run_ids: true,
         distinct_trial_ids: true,
         distinct_execution_receipts: true,
-        identical_prompt_pack: true
+        identical_prompt_pack: true,
+        statistical_independence_established: false,
+        statistical_replicates: false
       }
     });
     expect(result.manifest.usage.cost_usd).toBeCloseTo(0.009, 12);
@@ -101,7 +104,7 @@ describe("promotion provider run aggregation", () => {
     });
 
     expect(result.manifest).toMatchObject({
-      schema_version: "1.2",
+      schema_version: "1.3",
       provider: "ollama_local",
       evidence_class: "local_real_model",
       execution_environment: "local_runtime",
@@ -111,11 +114,191 @@ describe("promotion provider run aggregation", () => {
       paper_claim_evidence_eligible: false,
       trial_count: 3,
       model_artifact_digest: `sha256:${"c".repeat(64)}`,
-      independence_basis: {
+      receipt_distinctness: {
         distinct_execution_receipts: true,
+        statistical_independence_established: false,
+        statistical_replicates: false,
         caveat: expect.stringContaining("local runtime receipts")
       }
     });
+  });
+
+  it("aggregates three provider trials over an oracle-certified controlled suite", async () => {
+    const workspace = await createWorkspace();
+    const controlled = await generateControlledPromotionBenchmark({
+      cwd: workspace,
+      outDir: "controlled",
+      seed: "provider-aggregate-controlled",
+      developmentBaseBundleCount: 1,
+      testBaseBundleCount: 1
+    });
+    const manifests = await createProviderRuns(
+      workspace,
+      controlled.certified_suite_path,
+      ["controlled-a", "controlled-b", "controlled-c"],
+      "controlled-provider"
+    );
+
+    const result = await aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath: controlled.certified_suite_path,
+      runManifestPaths: manifests,
+      outDir: "controlled-aggregate"
+    });
+
+    expect(result.manifest).toMatchObject({
+      status: "completed",
+      receipt_distinct_trial_requirement_met: true,
+      source_suite: {
+        evidence_class: "deterministic_fault_injection_test"
+      },
+      trial_count: 3
+    });
+  });
+
+  it("accepts a verified resumed run and rejects attempt-ledger drift", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    let requestIndex = 0;
+    const interruptedClient: PromotionProviderClient = {
+      complete: async () => {
+        requestIndex += 1;
+        return {
+          text: requestIndex === 1
+            ? JSON.stringify({ decision: "needs_review", concerns: [], repair_owners: ["review"] })
+            : "not-json",
+          responseId: `interrupted-${requestIndex}`,
+          model: "gpt-5.4",
+          usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.001 }
+        };
+      }
+    };
+    const interruptedInput = {
+      cwd: workspace,
+      suitePath,
+      outDir: "resumed-provider",
+      provider: "openai_responses_api" as const,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-a",
+      evidenceClass: "external_real_provider" as const
+    };
+    await expect(runPromotionBenchmarkProvider(interruptedInput, interruptedClient))
+      .rejects.toThrow("partial artifacts were preserved");
+    const resumed = await runPromotionBenchmarkProvider({ ...interruptedInput, resume: true }, {
+      complete: async () => ({
+        text: JSON.stringify({ decision: "block", concerns: [], repair_owners: ["review"] }),
+        responseId: "resumed-2",
+        model: "gpt-5.4",
+        usage: { inputTokens: 12, outputTokens: 5, costUsd: 0.001 }
+      })
+    });
+    const cleanManifests = await createProviderRuns(
+      workspace,
+      suitePath,
+      ["trial-b", "trial-c"],
+      "resume-clean"
+    );
+    const manifests = [resumed.manifest_path, ...cleanManifests];
+
+    const aggregate = await aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "resumed-aggregate"
+    });
+    expect(aggregate.manifest.trial_count).toBe(3);
+
+    await appendFile(
+      path.join(workspace, "resumed-provider", "provider-attempt-failures.jsonl"),
+      " ",
+      "utf8"
+    );
+    await expect(aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "tampered-resumed-aggregate"
+    })).rejects.toThrow("attempt failures SHA-256 mismatch");
+  });
+
+  it("rejects tampering with a stale-checkpoint recovery preimage", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const runRoot = path.join(workspace, "recovered-provider");
+    let requestIndex = 0;
+    const interruptedInput = {
+      cwd: workspace,
+      suitePath,
+      outDir: "recovered-provider",
+      provider: "openai_responses_api" as const,
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      systemId: "manuscript-reviewer",
+      trialId: "trial-a",
+      evidenceClass: "external_real_provider" as const
+    };
+    await expect(runPromotionBenchmarkProvider(interruptedInput, {
+      complete: async () => {
+        requestIndex += 1;
+        return {
+          text: requestIndex === 1
+            ? JSON.stringify({ decision: "needs_review", concerns: [], repair_owners: ["review"] })
+            : "not-json",
+          responseId: `interrupted-${requestIndex}`,
+          model: "gpt-5.4",
+          usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.001 }
+        };
+      }
+    })).rejects.toThrow("partial artifacts were preserved");
+
+    const manifestPath = path.join(runRoot, "provider-run-manifest.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.status = "running";
+    manifest.completed_at = null;
+    manifest.failed_response_count = 0;
+    manifest.failure = null;
+    manifest.artifacts.failures_sha256 = null;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    await unlink(path.join(runRoot, "provider-failures.jsonl"));
+    const staleTime = new Date(Date.now() - 11 * 60 * 1000);
+    await utimes(manifestPath, staleTime, staleTime);
+
+    const recovered = await runPromotionBenchmarkProvider({ ...interruptedInput, resume: true }, {
+      complete: async () => ({
+        text: JSON.stringify({ decision: "block", concerns: [], repair_owners: ["review"] }),
+        responseId: "resumed-2",
+        model: "gpt-5.4",
+        usage: { inputTokens: 12, outputTokens: 5, costUsd: 0.001 }
+      })
+    });
+    const cleanManifests = await createProviderRuns(
+      workspace,
+      suitePath,
+      ["trial-b", "trial-c"],
+      "recovery-clean"
+    );
+    const manifests = [recovered.manifest_path, ...cleanManifests];
+    await aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "recovery-aggregate"
+    });
+
+    const attemptRow = JSON.parse((await readFile(
+      path.join(runRoot, "provider-attempt-failures.jsonl"),
+      "utf8"
+    )).trim());
+    expect(attemptRow.schema_version).toBe("1.1");
+    await appendFile(path.join(workspace, attemptRow.prior_manifest_ref), " ", "utf8");
+    await expect(aggregatePromotionBenchmarkProviderRuns({
+      cwd: workspace,
+      suitePath,
+      runManifestPaths: manifests,
+      outDir: "tampered-recovery-aggregate"
+    })).rejects.toThrow("attempt prior manifest SHA-256 mismatch");
   });
 
   it("rejects missing or duplicate trial manifests before creating output", async () => {

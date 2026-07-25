@@ -15,6 +15,7 @@ import {
 import { fileExists } from "../../utils/fs.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
+import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 import { buildWorkspaceRunRoot } from "./runPaths.js";
 
 interface ReviewCritiqueProjection {
@@ -89,7 +90,9 @@ export async function buildRunOperatorStatus(input: {
   const paperReadiness = await readJsonArtifact<PaperReadinessProjection>(
     path.join(runDir, "paper", "paper_readiness.json")
   );
-  const paperReady = Boolean(paperReadiness?.paper_ready);
+  const referenceAuthorityGate = await inspectReferenceAuthorityGate(path.join(runDir, "paper"));
+  const paperReady = paperReadiness?.paper_ready === true
+    && referenceAuthorityGate.status === "pass";
   const reviewRisks = await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"));
   const paperRisks = await readReadinessRisks(path.join(runDir, "paper", "readiness_risks.json"));
   const reviewCritique = await readJsonArtifact<ReviewCritiqueProjection>(

@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -14,6 +15,7 @@ import {
   runPromotionBenchmarkSystems,
   verifyPromotionBenchmarkSystemRun
 } from "../src/core/benchmark/promotionBenchmarkSystems.js";
+import { inspectReferenceAuthorityGate } from "../src/core/referenceAuthorityGate.js";
 
 const tempDirs: string[] = [];
 
@@ -81,9 +83,12 @@ describe("promotion benchmark systems", () => {
       predictionsPath: evaluated.predictions_path
     });
     expect(verifiedRun).toMatchObject({
-      schema_version: "1.1",
+      schema_version: "1.3",
       protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION
     });
+    expect(verifiedRun.systems.every(
+      (system) => system.input_contract === "case_id_and_artifact_tree_only"
+    )).toBe(true);
     expect(verifiedRun.systems.map((system) => system.protocol)).toEqual([
       "ungated",
       "artifact_presence_checklist",
@@ -231,6 +236,65 @@ describe("promotion benchmark systems", () => {
       predictionsPath: evaluated.predictions_path
     })).resolves.toMatchObject({ prediction_count: 1 });
   });
+
+  it("binds repeated-run provenance concerns to the mutated evidence artifacts", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-systems-trace-"));
+    tempDirs.push(workspace);
+    await writeCleanBundle(path.join(workspace, "base-bundle"));
+    await writeJson(path.join(workspace, "recipe.json"), {
+      schema_version: "1.0",
+      suite_id: "trace-relevance-suite",
+      cases: [{
+        case_id: "case-repeated-run-gap",
+        base_bundle_id: "base-trace",
+        split: "test",
+        source_root: "base-bundle",
+        mutation_family: "repeated_run_provenance_gap",
+        operations: [0, 1, 2].map((index) => ({
+          op: "remove_json_pointer",
+          path: "experiment_evidence.json",
+          pointer: `/trials/${index}/trial_id`
+        })),
+        gold: {
+          decision: "block",
+          blocking_concerns: ["repeated_run_provenance_missing"],
+          repair_owners: ["run_experiments"]
+        }
+      }]
+    });
+    const built = await buildPromotionBenchmarkSuite({
+      cwd: workspace,
+      recipePath: "recipe.json",
+      outDir: "suite"
+    });
+
+    const evaluated = await runPromotionBenchmarkSystems({
+      cwd: workspace,
+      suitePath: built.suite_path,
+      outDir: "predictions",
+      systems: ["artifact-audit"]
+    });
+    const [prediction] = (await readFile(path.join(workspace, evaluated.predictions_path), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as {
+        concerns: Array<{ code: string; evidence_refs: string[] }>;
+      });
+
+    expect(prediction.concerns).toContainEqual({
+      code: "repeated_run_provenance_missing",
+      severity: "blocking",
+      evidence_refs: ["run_config.json", "experiment_evidence.json"]
+    });
+    const scored = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: built.suite_path,
+      predictionsPath: evaluated.predictions_path,
+      outDir: "score"
+    });
+    expect(scored.report.passed).toBe(true);
+    expect(scored.report.systems[0].trace_coverage).toBe(1);
+  });
 });
 
 async function writeCleanBundle(root: string): Promise<void> {
@@ -259,17 +323,52 @@ async function writeCleanBundle(root: string): Promise<void> {
   });
   await writeJson(path.join(root, "review", "paper_critique.json"), {
     paper_readiness_state: "paper_ready",
-    claim_ceiling_applied: true
+    claim_ceiling_applied: false
   });
   await writeJson(path.join(root, "review", "decision.json"), { outcome: "accept" });
-  await writeFile(path.join(root, "paper", "main.tex"), "\\section{Results}\n", "utf8");
+  const manuscript = "\\section{Results}\n";
+  const manuscriptSha256 = createHash("sha256").update(manuscript, "utf8").digest("hex");
+  await writeFile(path.join(root, "paper", "main.tex"), manuscript, "utf8");
   await writeJson(path.join(root, "paper", "paper_readiness.json"), {
     paper_ready: true,
     readiness_state: "paper_ready"
   });
+  await writeJson(path.join(root, "paper", "reference_evidence_status.json"), {
+    schema_version: "1.0",
+    manuscript: "paper/main.tex",
+    manuscript_projection: {
+      source_ref: "paper/main.tex",
+      package_ref: "paper/main.tex",
+      source_sha256: manuscriptSha256,
+      package_content_sha256: manuscriptSha256
+    },
+    submission_gate_passed: true,
+    summary: {
+      citation_bearing_claim_count: 0,
+      independently_checked_claim_count: 0,
+      missing_full_text_claim_count: 0
+    },
+    blocking_requirements: []
+  });
+  await writeFile(
+    path.join(root, "paper", "refgate_claims.tsv"),
+    "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n",
+    "utf8"
+  );
+  await writeJson(
+    path.join(root, "paper", "reference_authority_gate.json"),
+    await inspectReferenceAuthorityGate(path.join(root, "paper"))
+  );
   await writeJson(path.join(root, "paper", "claim_evidence_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "claim_status_table.json"), { claims: [] });
   await writeJson(path.join(root, "paper", "evidence_links.json"), { claims: [] });
+  await writeJson(path.join(root, "run_config.json"), {
+    planned_budget: { trials: 3 },
+    executed_budget: { trials: 3 }
+  });
+  await writeJson(path.join(root, "experiment_evidence.json"), {
+    trials: [1, 2, 3].map((index) => ({ trial_id: `trial-${index}` }))
+  });
   await writeJson(path.join(root, "run_record.json"), { id: "base-alpha", status: "completed" });
 }
 

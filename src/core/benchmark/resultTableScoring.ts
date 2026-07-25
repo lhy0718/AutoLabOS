@@ -20,11 +20,16 @@ export interface ResultTableScore {
   missing_comparator_count: number;
   missing_delta_count: number;
   comparator_coverage: number | null;
+  comparative_claim_supported: boolean;
   superiority_claim_supported: boolean;
   issues: ResultTableScoringIssue[];
 }
 
-export function scoreResultTableArtifact(value: unknown): ResultTableScore {
+export function scoreResultTableArtifact(value: unknown, authorization: {
+  comparativeClaimAuthorized?: boolean;
+  superiorityClaimAuthorized?: boolean;
+  superiorityPrimaryMetrics?: readonly string[];
+} = {}): ResultTableScore {
   const normalized = normalizeResultTableArtifact(value);
   const validation = validateResultsTableSchema(normalized.value);
   const rows = validation.rows;
@@ -48,6 +53,7 @@ export function scoreResultTableArtifact(value: unknown): ResultTableScore {
       missing_comparator_count: 0,
       missing_delta_count: 0,
       comparator_coverage: null,
+      comparative_claim_supported: false,
       superiority_claim_supported: false,
       issues
     };
@@ -92,10 +98,19 @@ export function scoreResultTableArtifact(value: unknown): ResultTableScore {
   const missingBaselineCount = rows.filter((row) => row.baseline === null).length;
   const missingComparatorCount = rows.filter((row) => row.comparator === null).length;
   const missingDeltaCount = rows.filter((row) => row.delta === null).length;
+  const validSchema = normalized.valid_schema && validation.valid && issues.length === 0;
+  const primaryMetrics = new Set(
+    (authorization.superiorityPrimaryMetrics ?? []).map((metric) => metric.trim()).filter(Boolean)
+  );
+  const favorablePrimaryRows = completeRows.filter((row) =>
+    primaryMetrics.has(row.metric)
+    && deltaMatchesObservedEffect(row)
+    && (row.direction === "higher_better" ? row.delta! > 0 : row.delta! < 0)
+  );
 
   return {
     measured: true,
-    valid_schema: normalized.valid_schema && validation.valid && issues.length === 0,
+    valid_schema: validSchema,
     row_count: rows.length,
     complete_row_count: completeRows.length,
     missing_metric_count: missingMetricCount,
@@ -103,9 +118,22 @@ export function scoreResultTableArtifact(value: unknown): ResultTableScore {
     missing_comparator_count: missingComparatorCount,
     missing_delta_count: missingDeltaCount,
     comparator_coverage: rows.length > 0 ? round2(completeRows.length / rows.length) : null,
-    superiority_claim_supported: completeRows.length > 0,
+    comparative_claim_supported: validSchema
+      && completeRows.length > 0
+      && authorization.comparativeClaimAuthorized === true,
+    superiority_claim_supported: validSchema
+      && completeRows.length > 0
+      && authorization.comparativeClaimAuthorized === true
+      && authorization.superiorityClaimAuthorized === true
+      && primaryMetrics.size > 0
+      && favorablePrimaryRows.length > 0,
     issues
   };
+}
+
+function deltaMatchesObservedEffect(row: ResultsTableSchema[number]): boolean {
+  if (row.baseline === null || row.comparator === null || row.delta === null) return false;
+  return Math.abs(row.delta - (row.comparator - row.baseline)) <= 1e-9;
 }
 
 function normalizeResultTableArtifact(value: unknown): {

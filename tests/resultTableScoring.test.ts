@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { scoreResultTableArtifact } from "../src/core/benchmark/resultTableScoring.js";
 
 describe("result table scoring", () => {
-  it("scores complete baseline/comparator rows as claim-supporting evidence", () => {
+  it("does not authorize comparison claims from numeric completeness alone", () => {
     const score = scoreResultTableArtifact([
       {
         metric: "accuracy",
@@ -20,9 +20,84 @@ describe("result table scoring", () => {
       row_count: 1,
       complete_row_count: 1,
       comparator_coverage: 1,
-      superiority_claim_supported: true
+      comparative_claim_supported: false,
+      superiority_claim_supported: false
     });
     expect(score.issues).toEqual([]);
+  });
+
+  it("requires separate explicit authorization for comparison and superiority claims", () => {
+    const rows = [{
+      metric: "primary_score",
+      baseline: 0.7,
+      comparator: 0.75,
+      delta: 0.05,
+      direction: "higher_better"
+    }];
+
+    expect(scoreResultTableArtifact(rows, {
+      comparativeClaimAuthorized: true
+    })).toMatchObject({
+      comparative_claim_supported: true,
+      superiority_claim_supported: false
+    });
+    expect(scoreResultTableArtifact(rows, {
+      comparativeClaimAuthorized: true,
+      superiorityClaimAuthorized: true,
+      superiorityPrimaryMetrics: ["primary_score"]
+    })).toMatchObject({
+      comparative_claim_supported: true,
+      superiority_claim_supported: true
+    });
+  });
+
+  it("rejects superiority for zero, adverse, arithmetically inconsistent, or unregistered effects", () => {
+    const authorization = {
+      comparativeClaimAuthorized: true,
+      superiorityClaimAuthorized: true,
+      superiorityPrimaryMetrics: ["primary_score"]
+    };
+    const score = (baseline: number, comparator: number, delta: number, direction = "higher_better") =>
+      scoreResultTableArtifact([{
+        metric: "primary_score",
+        baseline,
+        comparator,
+        delta,
+        direction
+      }], authorization);
+
+    expect(score(0.7, 0.7, 0).superiority_claim_supported).toBe(false);
+    expect(score(0.7, 0.6, -0.1).superiority_claim_supported).toBe(false);
+    expect(score(0.7, 0.75, -0.05).superiority_claim_supported).toBe(false);
+    expect(score(0.7, 0.6, -0.1, "lower_better").superiority_claim_supported).toBe(true);
+    expect(scoreResultTableArtifact([{
+      metric: "secondary_score",
+      baseline: 0.7,
+      comparator: 0.8,
+      delta: 0.1,
+      direction: "higher_better"
+    }], authorization).superiority_claim_supported).toBe(false);
+  });
+
+  it("fails closed when an authorized table has any schema issue", () => {
+    const score = scoreResultTableArtifact([
+      {
+        metric: "primary_score",
+        baseline: 0.7,
+        comparator: 0.75,
+        delta: 0.05,
+        direction: "unsupported_direction"
+      }
+    ], {
+      comparativeClaimAuthorized: true,
+      superiorityClaimAuthorized: true,
+      superiorityPrimaryMetrics: ["primary_score"]
+    });
+
+    expect(score.valid_schema).toBe(false);
+    expect(score.complete_row_count).toBe(1);
+    expect(score.comparative_claim_supported).toBe(false);
+    expect(score.superiority_claim_supported).toBe(false);
   });
 
   it("keeps missing comparator and metric values explicit", () => {

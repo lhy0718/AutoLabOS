@@ -1087,3 +1087,388 @@ label,
     grid-column: 1;
   }
 }
+
+/* Operational workbench overrides */
+body {
+  background: #eef0ed;
+}
+
+body::before {
+  display: none;
+}
+
+.panel,
+.workbench-card,
+.sub-panel,
+.rail-panel,
+.workbench-inspector,
+.runtime-ribbon,
+.workbench-form,
+.meta-card {
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(23, 33, 29, 0.07);
+  backdrop-filter: none;
+}
+
+.workbench-shell {
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+
+.operator-context {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.6fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-left: 4px solid var(--success);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 2px 10px rgba(23, 33, 29, 0.07);
+}
+
+.operator-context.context-locked {
+  border-left-color: var(--warning);
+  background: #fffdf7;
+}
+
+.operator-context-main {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.7fr) minmax(160px, 1fr);
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.context-run-picker {
+  gap: 4px;
+  font-size: 0.74rem;
+}
+
+.context-run-picker select {
+  min-height: 34px;
+  padding: 6px 9px;
+}
+
+.context-identities {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.context-identities > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-left: 1px solid var(--line);
+}
+
+.context-identities small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.context-identities code,
+.context-identities strong {
+  overflow: hidden;
+  font-size: 0.76rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-live {
+  color: var(--success);
+}
+
+.sync-polling,
+.sync-connecting {
+  color: var(--warning);
+}
+
+.sync-degraded {
+  color: var(--danger);
+}
+
+.operator-error {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(165, 66, 52, 0.25);
+  border-radius: 6px;
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.operator-error-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.workbench-rail {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.workbench-main {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.workbench-inspector {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.rail-intro,
+.run-hero {
+  background: #1b2925;
+  box-shadow: 0 3px 14px rgba(15, 31, 28, 0.14);
+}
+
+.rail-intro,
+.rail-panel,
+.workbench-card,
+.workbench-inspector,
+.runtime-ribbon,
+.run-hero,
+.panel,
+.hero,
+.onboarding-form,
+.loading-card {
+  border-radius: 8px;
+}
+
+.sub-panel,
+.mini-finding,
+.checkpoint-item,
+.quality-group,
+.reference-card,
+.artifact-item,
+.doctor-item,
+.job-bucket,
+.inline-empty,
+.metric-grid article,
+.run-ledger-item,
+.decision-focus,
+.artifact-preview img,
+.artifact-preview iframe,
+.log-line,
+.artifact-preview pre,
+.knowledge-pane pre {
+  border-radius: 6px;
+}
+
+.button,
+input,
+textarea,
+select,
+.tab-button {
+  border-radius: 6px;
+}
+
+.button {
+  box-shadow: none;
+}
+
+.button:hover:not(:disabled) {
+  transform: none;
+  box-shadow: none;
+  filter: brightness(0.97);
+}
+
+.button-primary,
+.button-danger,
+.button-warm {
+  background-image: none;
+}
+
+.button-primary {
+  background-color: var(--accent);
+}
+
+.button-danger {
+  background-color: var(--danger);
+}
+
+.button-warm {
+  background-color: var(--gold);
+}
+
+.metric-grid article,
+.run-ledger-item,
+.runtime-ribbon {
+  background-image: none;
+  background-color: #fafbf9;
+}
+
+.run-ledger-item.active-target {
+  border-left: 4px solid var(--success);
+}
+
+.run-ledger-item .active-target-label {
+  color: var(--success);
+  font-weight: 800;
+}
+
+.workbench-inspector {
+  background: #1d2724;
+}
+
+.hero h1,
+.rail-intro h1,
+.run-hero h2,
+.loading-card h1,
+.eyebrow,
+.section-kicker,
+.stat-label,
+.metric-grid span,
+.meta-grid span {
+  letter-spacing: 0;
+}
+
+.hero h1,
+.loading-card h1 {
+  font-size: 2.6rem;
+  line-height: 1.05;
+}
+
+.rail-intro h1 {
+  font-size: 2.1rem;
+  line-height: 1.05;
+}
+
+.run-hero h2 {
+  font-size: 1.55rem;
+  line-height: 1.18;
+}
+
+.rail-intro,
+.rail-panel,
+.workbench-card,
+.workbench-inspector,
+.runtime-ribbon,
+.run-hero {
+  padding: 14px;
+}
+
+.workbench-main,
+.workbench-rail {
+  gap: 10px;
+}
+
+.rail-intro,
+.rail-panel,
+.workbench-card,
+.sub-panel {
+  gap: 10px;
+}
+
+.rail-intro,
+.rail-panel,
+.run-hero,
+.workbench-card,
+.workbench-inspector {
+  animation: none;
+}
+
+@media (max-width: 1380px) {
+  .operator-context {
+    grid-template-columns: minmax(260px, 1fr) minmax(420px, 1.8fr) auto;
+  }
+
+  .workbench-rail {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .workbench-main {
+    grid-column: 2;
+    grid-row: 2;
+  }
+
+  .workbench-inspector {
+    grid-column: 1 / -1;
+    grid-row: 3;
+  }
+}
+
+@media (max-width: 980px) {
+  .workbench-shell {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .operator-context {
+    order: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .operator-context-main,
+  .context-identities {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .workbench-main {
+    order: 1;
+  }
+
+  .workbench-inspector {
+    order: 2;
+  }
+
+  .workbench-rail {
+    order: 3;
+  }
+
+  .workbench-inspector .inspector-body {
+    max-height: 36vh;
+  }
+}
+
+@media (max-width: 640px) {
+  .workbench-shell {
+    padding: 8px;
+  }
+
+  .operator-context,
+  .operator-context-main,
+  .context-identities {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-error {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .operator-error-actions,
+  .operator-error-actions > * {
+    width: 100%;
+  }
+
+  .rail-intro,
+  .rail-panel,
+  .workbench-card,
+  .workbench-inspector,
+  .runtime-ribbon,
+  .run-hero {
+    padding: 12px;
+    border-radius: 8px;
+  }
+
+  .run-hero h2 {
+    font-size: 1.45rem;
+  }
+}

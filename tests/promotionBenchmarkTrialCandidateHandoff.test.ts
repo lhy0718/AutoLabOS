@@ -81,6 +81,7 @@ import {
   PROMOTION_CANONICAL_CURATION_SCHEMA_VERSION,
   type PromotionCanonicalCurationRecord
 } from "../src/core/benchmark/promotionBenchmarkCanonicalCuration.js";
+import { inspectReferenceAuthorityGate } from "../src/core/referenceAuthorityGate.js";
 import {
   PROMOTION_CANONICAL_CURATION_HANDOFF_MANIFEST,
   PROMOTION_CANONICAL_CURATION_TASKS,
@@ -2215,7 +2216,7 @@ describe("promotion trial-candidate handoff", () => {
     expect(curationTasks.every((task) =>
       task.status === "pending_human_curation"
       && task.source_trials.length === 6
-      && task.required_artifacts.length === 15
+      && task.required_artifacts.length === Object.keys(PROMOTION_CANONICAL_ARTIFACT_PATHS).length
       && task.canonical_source_root === null
       && task.curator_attestation.completed_by_human === false
       && task.verifier_attestation.completed_by_human === false)).toBe(true);
@@ -3155,7 +3156,13 @@ async function writeCanonicalConfirmatorySource(input: {
   });
   await writeFile(
     path.join(root, "evidence_store.jsonl"),
-    `${JSON.stringify({ id: "evidence-primary", metric_evidence_present: true })}\n`,
+    `${JSON.stringify({
+      id: "evidence-primary",
+      claim_id: "claim-primary",
+      metric_evidence_present: true,
+      claim_evidence_valid: true,
+      artifact_refs: ["result_table.json"]
+    })}\n`,
     "utf8"
   );
   await writeJsonFile(path.join(root, "figure_audit", "figure_audit_summary.json"), {
@@ -3183,15 +3190,39 @@ async function writeCanonicalConfirmatorySource(input: {
       citation_paper_ids: ["source-primary"]
     }]
   });
-  await writeFile(
-    path.join(root, "paper", "main.tex"),
-    "\\section{Results}\nThe measured comparison is linked to the canonical evidence artifacts.\n",
-    "utf8"
-  );
+  const manuscript = "\\section{Results}\nThe measured comparison is linked to the canonical evidence artifacts.\n";
+  const manuscriptSha256 = createHash("sha256").update(manuscript, "utf8").digest("hex");
+  await writeFile(path.join(root, "paper", "main.tex"), manuscript, "utf8");
   await writeJsonFile(path.join(root, "paper", "paper_readiness.json"), {
     paper_ready: true,
     readiness_state: "paper_ready"
   });
+  await writeJsonFile(path.join(root, "paper", "reference_evidence_status.json"), {
+    schema_version: "1.0",
+    manuscript: "paper/main.tex",
+    manuscript_projection: {
+      source_ref: "paper/main.tex",
+      package_ref: "paper/main.tex",
+      source_sha256: manuscriptSha256,
+      package_content_sha256: manuscriptSha256
+    },
+    submission_gate_passed: true,
+    summary: {
+      citation_bearing_claim_count: 0,
+      independently_checked_claim_count: 0,
+      missing_full_text_claim_count: 0
+    },
+    blocking_requirements: []
+  });
+  await writeFile(
+    path.join(root, "paper", "refgate_claims.tsv"),
+    "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n",
+    "utf8"
+  );
+  await writeJsonFile(
+    path.join(root, "paper", "reference_authority_gate.json"),
+    await inspectReferenceAuthorityGate(path.join(root, "paper"))
+  );
   await writeJsonFile(path.join(root, "checkpoint", "state.json"), {
     paper_ready: true,
     run_status: "completed"
@@ -3215,7 +3246,7 @@ async function writeCanonicalConfirmatorySource(input: {
   });
   await writeJsonFile(path.join(root, "review", "paper_critique.json"), {
     paper_readiness_state: "paper_ready",
-    claim_ceiling_applied: true
+    claim_ceiling_applied: false
   });
   await writeFile(path.join(root, "command.txt"), `runner --item ${ordinal}\n`, "utf8");
   await writeFile(path.join(root, "execution.log"), `completed item ${ordinal}\n`, "utf8");

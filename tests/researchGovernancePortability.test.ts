@@ -43,4 +43,23 @@ describe("research governance portability", () => {
     expect(parsed.markdown).toBe("](<private-path>)");
     expect(parsed.tex).toBe("\\url{<private-path>}");
   });
+
+  it.each([
+    JSON.stringify({ api_key: "placeholder" }),
+    JSON.stringify({ nested: { password: "placeholder" } }),
+    "access_token=placeholder",
+    "private-key: placeholder",
+    "'refresh_token' : 'placeholder'"
+  ])("detects sensitive key assignments in JSON and general text: %s", (text) => {
+    expect(containsNonPortableResearchText(text)).toBe(true);
+  });
+
+  it.each([
+    JSON.stringify({ password_policy: "required", api_key_hint: "environment", secret_count: 0 }),
+    "Password hygiene should be documented.",
+    "A secret can be discussed without assigning one.",
+    "Credential formats use documented placeholders."
+  ])("does not flag non-assignment uses of sensitive words: %s", (text) => {
+    expect(containsNonPortableResearchText(text)).toBe(false);
+  });
 });

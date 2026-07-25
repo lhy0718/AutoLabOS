@@ -19,6 +19,12 @@ web/dist/
 *.swo
 *.tmp
 *.orig
+*.bak
+*.backup
+*.rej
+*~
+.playwright-cli/
+tmp/
 
 # AutoLabOS runtime artifacts
 .autolabos/

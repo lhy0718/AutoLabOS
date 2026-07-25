@@ -122,7 +122,7 @@ export interface ExportPromotionDevelopmentEvidenceResult {
 }
 
 interface DevelopmentCorpusManifest {
-  schema_version: "1.0";
+  schema_version: "1.1";
   corpus_id: string;
   evidence_class: "synthetic_development";
   paper_claim_eligible: false;
@@ -597,7 +597,7 @@ function countBlockers(blockers: PromotionConfirmatoryGateIssue[]): PromotionDev
 
 function parseProviderAggregate(value: unknown): PromotionProviderAggregateManifest {
   if (!isRecord(value)
-      || value.schema_version !== "1.2"
+      || value.schema_version !== "1.3"
       || value.status !== "completed"
       || value.protocol !== "manuscript-only-v1"
       || !["openai_responses_api", "ollama_local"].includes(String(value.provider))
@@ -609,7 +609,10 @@ function parseProviderAggregate(value: unknown): PromotionProviderAggregateManif
       || typeof value.external_empirical_evidence_eligible !== "boolean"
       || value.real_model_empirical_evidence_eligible !== true
       || value.paper_claim_evidence_eligible !== false
-      || value.independent_trial_requirement_met !== true
+      || value.receipt_distinct_trial_requirement_met !== true
+      || !isRecord(value.receipt_distinctness)
+      || value.receipt_distinctness.statistical_independence_established !== false
+      || value.receipt_distinctness.statistical_replicates !== false
       || !nonEmptyString(value.suite_id)
       || !sha256Digest(value.suite_sha256)
       || !nonEmptyString(value.system_id)
@@ -675,7 +678,7 @@ function validDevelopmentProviderContract(value: Record<string, unknown>): boole
 
 function parseDevelopmentCorpusManifest(value: unknown): DevelopmentCorpusManifest {
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || value.schema_version !== "1.1"
       || !nonEmptyString(value.corpus_id)
       || value.evidence_class !== "synthetic_development"
       || value.paper_claim_eligible !== false
@@ -694,7 +697,7 @@ function parseDevelopmentCorpusManifest(value: unknown): DevelopmentCorpusManife
 
 function parseScoreReport(value: unknown): PromotionBenchmarkScoreReport {
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || value.schema_version !== "1.1"
       || !nonEmptyString(value.suite_id)
       || value.evidence_class !== "synthetic_development"
       || value.paper_claim_eligible !== false
@@ -712,12 +715,16 @@ function parseScoreReport(value: unknown): PromotionBenchmarkScoreReport {
 
 function parseGateReport(value: unknown): PromotionConfirmatoryGateReport {
   if (!isRecord(value)
-      || value.schema_version !== "1.0"
+      || value.schema_version !== "1.3"
       || !nonEmptyString(value.generated_at)
       || !nonEmptyString(value.suite_id)
       || value.readiness !== "blocked_for_paper_scale"
       || value.paper_ready !== false
+      || value.study_design !== "post_hoc_fixed_suite_conformance"
       || value.evidence_gate_passed !== false
+      || (value.evidence_gate_reason !== "blocking_issues_present"
+        && value.evidence_gate_reason !== "post_hoc_design_not_prospective_evidence")
+      || value.conformance_gate_passed !== false
       || typeof value.score_validation_passed !== "boolean"
       || !positiveInteger(value.case_count)
       || !positiveInteger(value.base_bundle_count)

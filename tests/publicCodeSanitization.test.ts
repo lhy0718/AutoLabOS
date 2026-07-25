@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+import { isReproducibleSourceEntry } from "../src/utils/reproducibleSource.js";
+
 const ROOT = process.cwd();
 const SANITIZER_TEST_PATH = path.join("tests", "publicCodeSanitization.test.ts");
 const PUBLIC_DIRS = [
@@ -73,6 +75,22 @@ function publicTextFiles(options: { includeAuditLog?: boolean } = {}): string[] 
   });
 }
 
+function walkPublicFiles(dir: string): string[] {
+  const absolute = path.join(ROOT, dir);
+  if (!fs.existsSync(absolute)) return [];
+  return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const portablePath = relativePath.split(path.sep).join("/");
+      const localRefgateCache = portablePath.endsWith("/.refgate/cache");
+      return ["node_modules", "dist", ".git"].includes(entry.name) || localRefgateCache
+        ? []
+        : walkPublicFiles(relativePath);
+    }
+    return entry.isFile() ? [relativePath] : [];
+  });
+}
+
 function collectPatternOffenders(
   files: string[],
   patterns: ReadonlyArray<{ kind: string; pattern: RegExp }>
@@ -140,6 +158,24 @@ function collectExperimentSpecificEntrypoints(
 }
 
 describe("public code sanitization", () => {
+  it("rejects editor backups and transient source files from public trees", () => {
+    const files = PUBLIC_DIRS.flatMap(walkPublicFiles);
+    const offenders = files.filter((relativePath) =>
+      !isReproducibleSourceEntry(path.basename(relativePath)));
+
+    expect(offenders).toEqual([]);
+    expect([
+      "module.ts.orig",
+      "module.ts.bak",
+      "module.ts.backup",
+      "module.ts.rej",
+      "module.ts.swp",
+      "module.ts.swo",
+      "module.ts~",
+      ".#module.ts"
+    ].every((name) => !isReproducibleSourceEntry(name))).toBe(true);
+  });
+
   it("rejects experiment-specific entrypoints and encoded numeric condition names", () => {
     const files = publicTextFiles();
     const structuralHardcodingPatterns = [

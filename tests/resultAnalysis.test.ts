@@ -1,9 +1,107 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 
-import { buildResultsTableValidation } from "../src/core/nodes/analyzeResults.js";
-import { buildAnalysisReport } from "../src/core/resultAnalysis.js";
+import {
+  buildResultsTableValidation,
+  selectAnalysisMetricsPath
+} from "../src/core/nodes/analyzeResults.js";
+import {
+  buildAnalysisReport,
+  buildPersistedAnalysisMetricsProjection
+} from "../src/core/resultAnalysis.js";
+import { projectPortableArtifactValue } from "../src/utils/portableArtifact.js";
 
 describe("resultAnalysis", () => {
+  it("projects machine-local paths out of nested public artifact strings", () => {
+    const privateRoot = ["", "home", "operator", "workspace-neutral"].join("/");
+    const artifact = {
+      metrics_path: `${privateRoot}/.autolabos/runs/run-neutral/metrics.json`,
+      command: `python ${privateRoot}/outputs/bundle-neutral/experiment/run.py --metrics-path ${privateRoot}/.autolabos/runs/run-neutral/metrics.json`,
+      nested: [{ path: `${privateRoot}/outputs/bundle-neutral/analysis/result.json` }]
+    };
+
+    const projected = projectPortableArtifactValue(artifact);
+    const serialized = JSON.stringify(projected);
+
+    expect(projected.metrics_path).toBe(".autolabos/runs/<run-id>/metrics.json");
+    expect(projected.command).toContain("outputs/bundle-neutral/experiment/run.py");
+    expect(projected.nested[0].path).toBe("outputs/bundle-neutral/analysis/result.json");
+    expect(serialized).not.toContain(privateRoot);
+    expect(serialized).not.toContain(["", "home", ""].join("/"));
+  });
+
+  it("prefers a run-local metrics artifact over a stale external configured path", () => {
+    const workspaceRoot = path.resolve("workspace-neutral");
+    const runLocalPath = path.join(workspaceRoot, ".autolabos", "runs", "run-neutral", "metrics.json");
+    const externalPath = path.resolve("..", "external-neutral", "metrics.json");
+
+    expect(
+      selectAnalysisMetricsPath({
+        workspaceRoot,
+        configuredPath: externalPath,
+        runLocalPath,
+        runLocalExists: true
+      })
+    ).toBe(runLocalPath);
+    expect(
+      selectAnalysisMetricsPath({
+        workspaceRoot,
+        configuredPath: path.join(workspaceRoot, "outputs", "metrics.json"),
+        runLocalPath,
+        runLocalExists: true
+      })
+    ).toBe(path.join(workspaceRoot, "outputs", "metrics.json"));
+  });
+
+  it("persists a bounded metrics projection while retaining the raw metrics reference", () => {
+    const rawRows = Array.from({ length: 200 }, (_, index) => ({
+      example_id: `example-${index}`,
+      prediction: "candidate",
+      correct: index % 2 === 0
+    }));
+    const predictions = rawRows.slice(0, 50);
+    const metrics = {
+      status: "completed",
+      raw_condition_results: rawRows,
+      condition_results: [
+        {
+          condition_marker: "candidate_condition_a",
+          seed_count: 3,
+          correct_count: 25,
+          total_count: 50,
+          evaluation: {
+            benchmark_task_a: {
+              accuracy: 0.5,
+              correct_count: 25,
+              total_count: 50,
+              predictions
+            }
+          }
+        }
+      ]
+    };
+
+    const projected = buildPersistedAnalysisMetricsProjection(
+      metrics,
+      ".autolabos/runs/run-neutral/metrics.json"
+    );
+
+    expect(projected.raw_condition_results).toBeUndefined();
+    expect(projected.raw_condition_result_count).toBe(200);
+    expect((metrics.condition_results[0].evaluation.benchmark_task_a as any).predictions).toHaveLength(50);
+    expect((projected.condition_results as any[])[0].evaluation.benchmark_task_a).toMatchObject({
+      accuracy: 0.5,
+      correct_count: 25,
+      total_count: 50,
+      prediction_count: 50
+    });
+    expect((projected.condition_results as any[])[0].evaluation.benchmark_task_a.predictions).toBeUndefined();
+    expect(projected.analysis_artifact_projection).toMatchObject({
+      source_metrics_ref: ".autolabos/runs/run-neutral/metrics.json"
+    });
+    expect(JSON.stringify(projected).length).toBeLessThan(JSON.stringify(metrics).length / 2);
+  });
+
   it("keeps mean_score focused on score metrics instead of resource counters", () => {
     const report = buildAnalysisReport({
       run: {

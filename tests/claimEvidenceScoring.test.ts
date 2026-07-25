@@ -80,12 +80,169 @@ describe("claim evidence scoring", () => {
             citation_paper_ids: ["paper_1"]
           }
         ]
-      }
+      },
+      claimStatusTableArtifact: {
+        claims: [{
+          claim_id: "c1",
+          status: "verified",
+          artifact_refs: [],
+          citation_refs: []
+        }]
+      },
+      evidenceStoreArtifact: [{
+        id: "ev_1",
+        claim_id: "c1",
+        claim_evidence_valid: true,
+        artifact_refs: ["reports/result.json"]
+      }],
+      availableArtifactRefs: ["reports/result.json"]
     });
 
     expect(score.supported_claim_count).toBe(1);
     expect(score.unsupported_claim_count).toBe(0);
     expect(score.claim_to_evidence_coverage).toBe(1);
+  });
+
+  it("rejects dangling or non-unique evidence IDs even when a claim declares support", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{
+          claim_id: "c1",
+          artifact_refs: [],
+          citation_refs: [],
+          evidence_ids: ["ev_duplicate", "ev_missing"]
+        }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{
+          claim_id: "c1",
+          status: "verified",
+          artifact_refs: [],
+          citation_refs: []
+        }]
+      },
+      evidenceStoreArtifact: [
+        { id: "ev_duplicate", claim_id: "c1", claim_evidence_valid: true, artifact_refs: ["reports/result.json"] },
+        { id: "ev_duplicate", claim_id: "c1", claim_evidence_valid: true, artifact_refs: ["reports/result.json"] }
+      ],
+      availableArtifactRefs: ["reports/result.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.unsupported_claim_count).toBe(1);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_evidence_id_unresolved",
+      claim_id: "c1",
+      message: expect.stringContaining("ev_duplicate, ev_missing")
+    }));
+  });
+
+  it("rejects evidence IDs bound to a different claim", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{ claim_id: "c1", evidence_ids: ["ev_1"] }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{ claim_id: "c1", status: "verified" }]
+      },
+      evidenceStoreArtifact: [{
+        id: "ev_1",
+        claim_id: "c2",
+        claim_evidence_valid: true,
+        artifact_refs: ["reports/result.json"]
+      }],
+      availableArtifactRefs: ["reports/result.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_evidence_id_unresolved",
+      claim_id: "c1"
+    }));
+  });
+
+  it("rejects unscoped evidence rows even when only one claim references them", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [
+          { claim_id: "c1", evidence_ids: ["ev_unscoped"] }
+        ]
+      },
+      claimStatusTableArtifact: {
+        claims: [
+          { claim_id: "c1", status: "verified" }
+        ]
+      },
+      evidenceStoreArtifact: [{
+        id: "ev_unscoped",
+        claim_evidence_valid: true,
+        artifact_refs: ["reports/result.json"]
+      }],
+      availableArtifactRefs: ["reports/result.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.unsupported_claim_count).toBe(1);
+    expect(score.issues.filter((issue) => issue.code === "claim_evidence_id_unresolved")).toHaveLength(1);
+  });
+
+  it("does not treat an arbitrary statement with only an existing artifact path as validated support", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{ claim_id: "c1", artifact_refs: ["reports/result.json"] }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{ claim_id: "c1", status: "verified", artifact_refs: ["reports/result.json"] }]
+      },
+      availableArtifactRefs: ["reports/result.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.unsupported_claim_count).toBe(1);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_evidence_unverified",
+      claim_id: "c1"
+    }));
+  });
+
+  it("rejects duplicate claim IDs before map construction", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [
+          { claim_id: "c1", artifact_refs: ["reports/a.json"] },
+          { claim_id: "c1", artifact_refs: ["reports/b.json"] }
+        ]
+      },
+      claimStatusTableArtifact: {
+        claims: [{ claim_id: "c1", status: "verified" }]
+      },
+      availableArtifactRefs: ["reports/a.json", "reports/b.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.unsupported_claim_count).toBe(1);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_id_duplicate",
+      claim_id: "c1"
+    }));
+  });
+
+  it("does not treat an unknown status as support", () => {
+    const score = scoreClaimEvidenceArtifacts({
+      claimEvidenceTableArtifact: {
+        claims: [{ claim_id: "c1", artifact_refs: ["reports/result.json"] }]
+      },
+      claimStatusTableArtifact: {
+        claims: [{ claim_id: "c1", status: "supported_with_unregistered_exception" }]
+      },
+      availableArtifactRefs: ["reports/result.json"]
+    });
+
+    expect(score.supported_claim_count).toBe(0);
+    expect(score.issues).toContainEqual(expect.objectContaining({
+      code: "claim_status_unrecognized_or_unsupported",
+      claim_id: "c1"
+    }));
   });
 
   it("does not count artifact paths that are absent from the frozen audit input", () => {

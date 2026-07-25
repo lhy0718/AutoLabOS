@@ -12,7 +12,7 @@
       "evidence": [
         {
           "path": "docs/research/promotion-governance-study.md",
-          "sha256": "b74a9c9848b42e89263560d899c7a28f754183857dfa1dea9ba316fccdf24d2b"
+          "sha256": "55fd035aa2aba3d57c097514574eafb4f8ab94d08b486be580ceffb253347424"
         },
         {
           "path": "papers/promotion-governance/references.bib",
@@ -116,14 +116,14 @@
       ]
     },
     {
-      "id": "controlled_oracle_confirmatory_suite",
-      "label": "The oracle-certified controlled benchmark and confirmatory gate satisfy the registered-fault-family evidence contract",
+      "id": "controlled_oracle_conformance_suite",
+      "label": "The oracle-certified controlled benchmark and fixed-suite conformance gate satisfy the registered-fault-family evidence contract",
       "target_node": "design_experiments",
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/controlled-benchmark/controlled-benchmark-manifest.json",
-          "sha256": "b99b0e1094d8e7d2edc00d8c9d7f7a63ae5d6ec70ea51ad24d99f3ab2c5db11c",
+          "path": "outputs/promotion-governance/controlled-benchmark-v4/controlled-benchmark-manifest.json",
+          "sha256": "ba80d3dd280f801b2842bb352524ce682547c6c01c4f14fe233a436c1d6bc553",
           "assertions": [
             {
               "pointer": "/evaluation_regime",
@@ -158,8 +158,8 @@
           ]
         },
         {
-          "path": "outputs/promotion-governance/controlled-confirmatory/promotion-confirmatory-gate.json",
-          "sha256": null,
+          "path": "outputs/promotion-governance/controlled-conformance-v6/promotion-confirmatory-gate.json",
+          "sha256": "d58a0dbbda04605498b40159066cbfd2297b15c0f8b29841f70c895021fb2b2d",
           "assertions": [
             {
               "pointer": "/evaluation_regime",
@@ -189,12 +189,17 @@
             {
               "pointer": "/evidence_gate_passed",
               "operator": "equals",
-              "expected": true
+              "expected": false
             },
             {
               "pointer": "/readiness",
               "operator": "equals",
               "expected": "paper_scale_candidate"
+            },
+            {
+              "pointer": "/conformance_gate_passed",
+              "operator": "equals",
+              "expected": true
             }
           ]
         }
@@ -207,8 +212,8 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/controlled-confirmatory/provider-aggregate/provider-run-aggregate-manifest.json",
-          "sha256": null,
+          "path": "outputs/promotion-governance/controlled-conformance-v6/provider-aggregate/provider-run-aggregate-manifest.json",
+          "sha256": "62458b85fc2c586c3022bedc7fa38b7d7d255c509f8d8c4a296622a8c816fb76",
           "assertions": [
             {
               "pointer": "/trial_count",
@@ -241,8 +246,8 @@
       "required": true,
       "evidence": [
         {
-          "path": "outputs/promotion-governance/controlled-confirmatory/promotion-confirmatory-gate.json",
-          "sha256": null,
+          "path": "outputs/promotion-governance/controlled-conformance-v6/promotion-confirmatory-gate.json",
+          "sha256": "d58a0dbbda04605498b40159066cbfd2297b15c0f8b29841f70c895021fb2b2d",
           "assertions": [
             {
               "pointer": "/recovery/status",
@@ -280,8 +285,8 @@
       "required": true,
       "evidence": [
         {
-          "path": "docs/research/evidence/promotion-reference-review-handoff-v5.json",
-          "sha256": "5e77b887181d9bdeaa4a6de9cd83d0392a9918b40b3564eff2cdc13f73a17a97",
+          "path": "docs/research/evidence/promotion-reference-review-handoff-v7.json",
+          "sha256": "fa18081e63b6195374c72cad99acdcfdc894311a2281e43603ebc82c29b742fc",
           "assertions": [
             {
               "pointer": "/private_distribution/source_count",

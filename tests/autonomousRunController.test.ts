@@ -235,6 +235,50 @@ describe("AutonomousRunController", () => {
     expect(latest?.currentNode).toBe("analyze_results");
     expect(latest?.graph.pendingTransition?.action).toBe("backtrack_to_hypotheses");
   });
+
+  it("fails closed on pause_for_human even when overnight auto-approval conditions are maximal", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "pause_for_human",
+      sourceNode: "analyze_results",
+      targetNode: "analyze_results",
+      reason: "Governance requires pre-execution human approval.",
+      confidence: 1.0,
+      autoExecutable: true,
+      evidence: ["The next action requires explicit human judgment."],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const policy = {
+      ...buildDefaultOvernightPolicy(),
+      autoApproveNodes: ["analyze_results"] as GraphNodeId[]
+    };
+    const result = await controller.runOvernight(run.id, policy);
+
+    expect(result.status).toBe("stopped");
+    expect(result.stopReason).toBe("manual_review_required");
+    expect(result.approvalsApplied).toBe(0);
+    expect(result.transitionsApplied).toBe(0);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.status).toBe("paused");
+    expect(latest?.currentNode).toBe("analyze_results");
+    expect(latest?.graph.pendingTransition?.action).toBe("pause_for_human");
+    expect(latest?.graph.transitionHistory).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -403,6 +447,55 @@ describe("AutonomousRunController — autonomous mode", () => {
     expect(result.status).toBe("stopped");
     // Should stop due to manual_review_required since it's a pause_for_human with no auto-approve
     expect(["manual_review_required", "catastrophic_fuse"]).toContain(result.stopReason);
+  });
+
+  it("fails closed on pause_for_human before autonomous force-apply or auto-approval", async () => {
+    const { store, controller } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "pause_for_human",
+      sourceNode: "analyze_results",
+      targetNode: "analyze_results",
+      reason: "Governance requires pre-execution human approval.",
+      confidence: 1.0,
+      autoExecutable: true,
+      evidence: ["The next action requires explicit human judgment."],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const policy = {
+      ...buildDefaultAutonomousPolicy(),
+      autoApproveNodes: ["analyze_results"] as GraphNodeId[],
+      fuse: {
+        maxTotalIterations: 1,
+        maxConsecutiveFailures: 10,
+        maxRepeatedRecommendation: 5
+      }
+    };
+    const result = await controller.runAutonomous(run.id, policy);
+
+    expect(result.status).toBe("stopped");
+    expect(result.stopReason).toBe("manual_review_required");
+    expect(result.approvalsApplied).toBe(0);
+    expect(result.transitionsApplied).toBe(0);
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.status).toBe("paused");
+    expect(latest?.currentNode).toBe("analyze_results");
+    expect(latest?.graph.pendingTransition?.action).toBe("pause_for_human");
+    expect(latest?.graph.transitionHistory).toHaveLength(0);
   });
 
   it("result includes bestBranch, paperStatus, and noveltySignals", async () => {

@@ -1,7 +1,9 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { createHash } from "node:crypto";
 
 import { writeJsonFile } from "../../utils/fs.js";
+import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 import type {
   PromotionBenchmarkRecipe,
   PromotionBenchmarkRecipeCase
@@ -26,6 +28,8 @@ export interface GenerateSyntheticPromotionCorpusResult {
 const CORPUS_ID = "promotion-governance-synthetic-development-v1";
 const DEFAULT_BASE_BUNDLE_COUNT = 4;
 const MAXIMUM_BASE_BUNDLE_COUNT = 1_000;
+const EMPTY_REFERENCE_CLAIMS_TSV =
+  "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n";
 
 export async function generateSyntheticPromotionCorpus(
   input: GenerateSyntheticPromotionCorpusInput
@@ -75,7 +79,7 @@ export async function generateSyntheticPromotionCorpus(
     };
     await writeJsonFile(path.join(stagingRoot, "recipe.json"), recipe);
     await writeJsonFile(path.join(stagingRoot, "corpus-manifest.json"), {
-      schema_version: "1.0",
+      schema_version: "1.1",
       corpus_id: corpusId,
       evidence_class: "synthetic_development",
       paper_claim_eligible: false,
@@ -86,7 +90,7 @@ export async function generateSyntheticPromotionCorpus(
       case_count: cases.length,
       clean_control_count: baseBundleCount,
       mutation_family_count: variants.filter((variant) => variant.mutation_family).length,
-      use_boundary: "Development, evaluator debugging, and node-strengthening only. Not confirmatory evidence."
+      use_boundary: "Development, evaluator debugging, and node-strengthening only. Not prospective empirical evidence."
     });
     await fs.rename(stagingRoot, outDir);
   } catch (error) {
@@ -125,7 +129,14 @@ export async function writeSyntheticPromotionBaseBundle(
   ]);
   await fs.writeFile(
     path.join(root, "evidence_store.jsonl"),
-    `${JSON.stringify({ id: `evidence-${baseIndex + 1}`, metric: `primary_score_${baseIndex + 1}`, metric_evidence_present: true })}\n`,
+    `${JSON.stringify({
+      id: `evidence-${baseIndex + 1}`,
+      claim_id: "claim-primary",
+      metric: `primary_score_${baseIndex + 1}`,
+      metric_evidence_present: true,
+      claim_evidence_valid: true,
+      artifact_refs: ["result_table.json"]
+    })}\n`,
     "utf8"
   );
   await fs.writeFile(
@@ -148,6 +159,8 @@ export async function writeSyntheticPromotionBaseBundle(
   });
   await writeJsonFile(path.join(root, "checkpoint", "state.json"), { paper_ready: true, run_status: "completed" });
   await writeJsonFile(path.join(root, "design_contracts.json"), {
+    comparative_claim_authorized: true,
+    superiority_claim_authorized: false,
     sota_ranking_claimed: false,
     sota_evidence_present: false
   });
@@ -160,18 +173,42 @@ export async function writeSyntheticPromotionBaseBundle(
   });
   await writeJsonFile(path.join(root, "review", "paper_critique.json"), {
     paper_readiness_state: "paper_ready",
-    claim_ceiling_applied: true
+    claim_ceiling_applied: false
   });
   await writeJsonFile(path.join(root, "review", "decision.json"), { outcome: "accept" });
-  await fs.writeFile(
-    path.join(root, "paper", "main.tex"),
-    `\\section{Results}\nThe measured comparison for record ${baseIndex + 1} is reported without a superiority claim.\n`,
-    "utf8"
-  );
+  const manuscriptText = `\\section{Results}\nThe measured comparison for record ${baseIndex + 1} is reported without a superiority claim.\n`;
+  const manuscriptSha256 = createHash("sha256").update(manuscriptText, "utf8").digest("hex");
+  await fs.writeFile(path.join(root, "paper", "main.tex"), manuscriptText, "utf8");
   await writeJsonFile(path.join(root, "paper", "paper_readiness.json"), {
     paper_ready: true,
     readiness_state: "paper_ready"
   });
+  await writeJsonFile(path.join(root, "paper", "reference_evidence_status.json"), {
+    schema_version: "1.0",
+    manuscript: "paper/main.tex",
+    manuscript_projection: {
+      source_ref: "paper/main.tex",
+      package_ref: "paper/main.tex",
+      source_sha256: manuscriptSha256,
+      package_content_sha256: manuscriptSha256
+    },
+    submission_gate_passed: true,
+    summary: {
+      citation_bearing_claim_count: 0,
+      independently_checked_claim_count: 0,
+      missing_full_text_claim_count: 0
+    },
+    blocking_requirements: []
+  });
+  await fs.writeFile(
+    path.join(root, "paper", "refgate_claims.tsv"),
+    EMPTY_REFERENCE_CLAIMS_TSV,
+    "utf8"
+  );
+  await writeJsonFile(
+    path.join(root, "paper", "reference_authority_gate.json"),
+    await inspectReferenceAuthorityGate(path.join(root, "paper"))
+  );
   const claim = {
     claim_id: "claim-primary",
     statement: "The measured comparison is reported.",
@@ -193,7 +230,11 @@ export async function writeSyntheticPromotionBaseBundle(
   });
   await writeJsonFile(path.join(root, "paper", "claim_status_table.json"), { claims: [claim] });
   await writeJsonFile(path.join(root, "paper", "evidence_links.json"), {
-    claims: [{ claim_id: claim.claim_id, evidence_ids: ["evidence-primary"], citation_paper_ids: ["source-primary"] }]
+    claims: [{
+      claim_id: claim.claim_id,
+      evidence_ids: [`evidence-${baseIndex + 1}`],
+      citation_paper_ids: ["source-primary"]
+    }]
   });
 }
 

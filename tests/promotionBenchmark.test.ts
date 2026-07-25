@@ -12,8 +12,7 @@ import {
 import {
   MINIMUM_PROMOTION_CLEAN_SUCCESS_BASE_BUNDLES,
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
-  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES,
-  PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY
+  MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
 
 const tempDirs: string[] = [];
@@ -61,8 +60,11 @@ describe("promotion benchmark", () => {
       leave_one_family_out: []
     });
     expect(result.report.paired_analysis).toMatchObject({
-      inference_unit: "base_bundle_id",
-      bootstrap_replicates: 5000,
+      resampling_unit: "base_bundle_id",
+      resampling_replicates: 5000,
+      resampling_interval_percentiles: [0.025, 0.975],
+      resampling_seed_derivation: "uint32_from_first_8_hex_of_sha256_over_null_delimited_analysis_identity",
+      resampling_interpretation: "finite_suite_identifier_sensitivity_not_population_uncertainty",
       exploratory_only: true
     });
     const governed = result.report.systems.find((system) => system.system_id === "governed");
@@ -72,18 +74,14 @@ describe("promotion benchmark", () => {
       false_paper_ready_rate: 0,
       concern_acceptance_conflict_rate: 0,
       clean_case_promotion_accuracy: 1,
-      clean_case_promotion_accuracy_cluster_bootstrap_95_ci: null,
+      clean_case_promotion_accuracy_base_bundle_resampling_interval: null,
       blocker_precision: 1,
       blocker_recall: 1,
       repair_owner_exact_match_accuracy: 1,
       trace_coverage: 1
     });
-    expect(governed?.false_paper_ready_cluster_bootstrap_95_ci?.[0]).toBe(0);
-    expect(governed?.false_paper_ready_cluster_bootstrap_95_ci?.[1])
-      .toBeCloseTo(1 - Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / 2));
-    expect(governed?.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci?.[0])
-      .toBeCloseTo(Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / 2));
-    expect(governed?.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci?.[1]).toBe(1);
+    expect(governed?.false_paper_ready_base_bundle_resampling_interval).toEqual([0, 0]);
+    expect(governed?.repair_owner_exact_match_accuracy_base_bundle_resampling_interval).toEqual([1, 1]);
     const checklist = result.report.systems.find((system) => system.system_id === "checklist");
     expect(checklist?.false_paper_ready_rate).toBe(0.5);
     expect(checklist?.concern_acceptance_conflict_count).toBe(1);
@@ -93,10 +91,13 @@ describe("promotion benchmark", () => {
       system_b: "governed",
       common_case_count: 3,
       decision_accuracy_delta: -2 / 3,
+      decision_accuracy_exact_paired_sign_test_p: null,
       false_paper_ready_rate_delta: 0.5,
+      false_paper_ready_exact_paired_sign_test_p: null,
       repair_owner_common_case_count: 2,
       repair_owner_exact_match_accuracy_delta: -1,
-      repair_owner_cluster_bootstrap_95_ci: [-1, -1]
+      repair_owner_exact_paired_sign_test_p: null,
+      repair_owner_base_bundle_resampling_interval: [-1, -1]
     }));
     expect(JSON.parse(await readFile(path.join(workspace, "score", "promotion-score.json"), "utf8"))).toMatchObject({
       suite_id: "portable-suite",
@@ -110,7 +111,8 @@ describe("promotion benchmark", () => {
     expect(markdown).toContain("Availability: unavailable");
     expect(markdown).toContain("## Mutation Families");
     expect(markdown).toContain("clean_control");
-    expect(markdown).toContain("## Clustered Metric Uncertainty");
+    expect(markdown).toContain("## Base-Bundle Resampling Sensitivity");
+    expect(markdown).toContain("not population confidence intervals");
     expect(markdown).toContain("## Paired Repair-Owner Analysis");
   });
 
@@ -153,7 +155,50 @@ describe("promotion benchmark", () => {
     expect(result.report.systems[0].trace_coverage).toBe(0.5);
   });
 
-  it("does not turn twenty all-zero clusters into a zero-width confidence interval", async () => {
+  it("rejects existing but semantically irrelevant concern evidence references", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-trace-relevance-"));
+    tempDirs.push(workspace);
+    await writeSuite(workspace, [
+      caseManifest(
+        "case-repeated-run-gap",
+        "base-repeated-run-gap",
+        "test",
+        "block",
+        ["repeated_run_provenance_missing"],
+        ["run_experiments"]
+      )
+    ]);
+    await writeFile(path.join(workspace, "artifacts", "run_record.json"), "{}\n");
+    await writeFile(path.join(workspace, "artifacts", "run_config.json"), "{}\n");
+    await writeFile(path.join(workspace, "artifacts", "experiment_evidence.json"), "{}\n");
+    await writeFile(path.join(workspace, "predictions.jsonl"), JSON.stringify(prediction(
+      "candidate",
+      "case-repeated-run-gap",
+      "block",
+      [{
+        code: "repeated_run_provenance_missing",
+        severity: "blocking",
+        evidence_refs: ["run_record.json"]
+      }],
+      ["run_experiments"]
+    )) + "\n");
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+
+    expect(result.report.passed).toBe(false);
+    expect(result.report.validation_issues).toContainEqual(expect.objectContaining({
+      code: "prediction_evidence_ref_irrelevant",
+      ref: expect.stringContaining("repeated_run_provenance_missing:run_record.json")
+    }));
+    expect(result.report.systems[0].trace_coverage).toBe(0);
+  });
+
+  it("reports degenerate finite-suite sensitivity for twenty all-zero clusters", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-boundary-"));
     tempDirs.push(workspace);
     const cases = Array.from({ length: 20 }, (_, index) =>
@@ -186,23 +231,80 @@ describe("promotion benchmark", () => {
       outDir: "score"
     });
     const metrics = result.report.systems[0];
-    const exactUpperBoundary = 1 - Math.pow(
-      PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY,
-      1 / 20
-    );
-
     expect(MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES).toBe(72);
     expect(MINIMUM_PROMOTION_CLEAN_SUCCESS_BASE_BUNDLES).toBe(36);
     expect(MINIMUM_PROMOTION_PAPER_ELIGIBLE_CASES).toBe(720);
     expect(metrics.false_paper_ready_rate).toBe(0);
-    expect(metrics.false_paper_ready_cluster_bootstrap_95_ci).toEqual([
-      0,
-      exactUpperBoundary
-    ]);
+    expect(metrics.false_paper_ready_base_bundle_resampling_interval).toEqual([0, 0]);
     expect(metrics.concern_acceptance_conflict_rate).toBe(0);
-    expect(metrics.concern_acceptance_conflict_cluster_bootstrap_95_ci?.[1])
-      .toBeCloseTo(exactUpperBoundary);
-    expect(exactUpperBoundary).toBeGreaterThan(0.05);
+    expect(metrics.concern_acceptance_conflict_base_bundle_resampling_interval).toEqual([0, 0]);
+  });
+
+  it("scores complete blocker-code mismatch as zero F1", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-zero-f1-"));
+    tempDirs.push(workspace);
+    await writeSuite(workspace, [
+      caseManifest("case-fault", "base-fault", "test", "block", ["expected_blocker"], ["review"])
+    ]);
+    await writeFile(
+      path.join(workspace, "predictions.jsonl"),
+      JSON.stringify(prediction("candidate", "case-fault", "block", [blocking("wrong_blocker")], ["review"])) + "\n"
+    );
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+
+    expect(result.report.systems[0]).toMatchObject({
+      blocker_precision: 0,
+      blocker_recall: 0,
+      blocker_f1: 0
+    });
+  });
+
+  it("uses only faulty predictions with a predicted blocker for conflict point and interval", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "promotion-benchmark-conflict-eligibility-"));
+    tempDirs.push(workspace);
+    await writeSuite(workspace, [
+      caseManifest("case-clean", "base-clean", "test", "promote", [], []),
+      caseManifest("case-fault-a", "base-fault-a", "test", "block", ["expected_blocker"], ["review"]),
+      caseManifest("case-fault-b", "base-fault-b", "test", "block", ["expected_blocker"], ["review"])
+    ]);
+    const predictions = [
+      prediction("no-eligible", "case-clean", "promote", [blocking("spurious_blocker")]),
+      prediction("no-eligible", "case-fault-a", "promote"),
+      prediction("no-eligible", "case-fault-b", "promote"),
+      prediction("eligible", "case-clean", "promote", [blocking("spurious_blocker")]),
+      prediction("eligible", "case-fault-a", "promote", [blocking("expected_blocker")]),
+      prediction("eligible", "case-fault-b", "promote", [blocking("expected_blocker")])
+    ];
+    await writeFile(
+      path.join(workspace, "predictions.jsonl"),
+      predictions.map((row) => JSON.stringify(row)).join("\n") + "\n"
+    );
+
+    const result = await scorePromotionBenchmarkFromFiles({
+      cwd: workspace,
+      suitePath: "suite.json",
+      predictionsPath: "predictions.jsonl",
+      outDir: "score"
+    });
+    const noEligible = result.report.systems.find((system) => system.system_id === "no-eligible");
+    const eligible = result.report.systems.find((system) => system.system_id === "eligible");
+
+    expect(noEligible).toMatchObject({
+      concern_acceptance_conflict_count: 0,
+      concern_acceptance_conflict_rate: null,
+      concern_acceptance_conflict_base_bundle_resampling_interval: null
+    });
+    expect(eligible).toMatchObject({
+      concern_acceptance_conflict_count: 2,
+      concern_acceptance_conflict_rate: 1
+    });
+    expect(eligible?.concern_acceptance_conflict_base_bundle_resampling_interval).not.toBeNull();
   });
 
   it("reports source-family strata and leave-one-family-out comparisons", async () => {

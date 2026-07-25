@@ -1,26 +1,41 @@
-# Promotion Governance Pre-Confirmatory Manuscript
+# Promotion Governance Conformance Manuscript
 
 ## Status
 
-This manuscript is a protocol and development-validation draft. It is not a
-submission-ready empirical paper. The primary target is an archival long paper
-at REALM 2026, the Second Workshop for Research on Agent Language Models at
-EMNLP 2026. The workshop accepts up to eight content pages, requires the ACL
-2026 style, and lists a direct-submission deadline of 2026-08-05 Anywhere on
-Earth as checked on 2026-07-18.
+This manuscript reports an oracle-certified post-hoc fixed-suite conformance
+study. It does not claim a prospective confirmatory result: the evaluated
+implementations and thresholds were not frozen before outcomes were inspected,
+and no matched independently implemented artifact-aware comparator was run. The
+primary target is an archival short paper at REALM 2026, the Second Workshop
+for Research on Agent Language Models at EMNLP 2026. The manuscript uses four
+content pages including limitations, requires the ACL 2026 style, and targets
+the direct-submission deadline of 2026-08-05 Anywhere on Earth as checked on
+2026-07-18.
+
+Completed evidence:
+
+- 24 development bases and 120 development cases,
+- 120 test bases and 720 test cases across five test-designated registered fault
+  families plus clean controls,
+- independent oracle replay for all 840 development and test cases,
+- complete deterministic baseline, checklist, advisory-ablation, and
+  fail-closed audit predictions,
+- three complete self-recorded local-model trials totaling 2,160 predictions,
+- owner-scoped recovery for all 600 faulty cases with zero clean-control
+  regression,
+- a passing post-hoc conformance gate with the
+  `registered_fault_families_only` claim ceiling and
+  `evidence_gate_passed=false`.
 
 Current blockers:
 
-- no preserved oracle-certified 720-case controlled confirmatory suite,
-- no completed source-, base-, and fault-family-disjoint split receipt for the
-  final confirmatory corpus,
-- no three-trial paper-eligible real-model manuscript-only baseline,
-- no complete controlled comparator and ablation result set,
-- no paper-scale post-repair recovery evaluation,
-- no passing controlled confirmatory gate or five-role model/meta-review bundle,
-- 12 citation-bearing claims have hash-bound full-text evidence candidates but
-  remain independently unchecked in Refgate,
-- no citation-bearing claim has been promoted to `checked`.
+- the final five-role whole-package review and full CI remain in progress,
+- 13 citation-bearing claims have hash-bound full-text evidence candidates but
+  remain `needs_review` in Refgate,
+- the final Refgate submission audit remains blocked on authorized human
+  review. The four-page ACL review-style PDF has passed build and visual layout
+  inspection. Automated validation status is recorded in
+  `submission-status.json` rather than duplicated as an easily stale test count.
 
 Human candidate adjudication and source-license review are not blockers for the
 controlled metric-gold path. They remain prerequisites only for a separate
@@ -32,7 +47,7 @@ third-party PDFs.
 
 ## Independent Reference Review
 
-`reference-review-handoff/` binds the 12 mapped full-text candidates to the
+`reference-review-handoff-v12/` binds the 13 mapped full-text candidates to the
 current claim TSV, evidence status, and Refgate lock hashes. Give an independent
 reviewer the complete handoff root so its manifest remains available to the
 packet-relative preflight command; the public handoff contains no third-party
@@ -57,7 +72,7 @@ create a closed distribution:
 
 ```bash
 node dist/cli/main.js reference-review distribute-private \
-  --packet papers/promotion-governance/reference-review-handoff \
+  --packet papers/promotion-governance/reference-review-handoff-v12 \
   --source-dir <private-citation-key-named-full-text-dir> \
   --out-dir <new-private-reference-review-distribution>
 ```
@@ -65,14 +80,13 @@ node dist/cli/main.js reference-review distribute-private \
 This command rejects missing, ambiguous, symlinked, or hash-mismatched sources.
 Its manifest fixes `public_distribution_allowed=false` and
 `license_review_status=not_assessed`; the resulting directory must not enter a
-public source snapshot without a separate license review. Two claims whose exact
-full texts were unavailable were removed from the manuscript and canonical claim
-inventory rather than being filled from metadata or abstracts. The private
+public source snapshot without a separate license review. Claims without exact
+direct-source support are not filled from metadata or abstracts. The private
 packet's `reviewer/SOURCE_README.md` lists the retained source inventory and
 public record URLs so source handling remains explicitly separate from human
-claim review. The public verification receipt is
-`docs/research/evidence/promotion-reference-review-handoff-v4.json`; it records
-hashes, the scope correction, and gate outcomes, not the third-party full texts.
+claim review. Public model-review and authority status are recorded in
+`model-citation-review-receipt.json` and `reference-evidence-status.json`;
+neither file redistributes third-party full text or confers human approval.
 
 Preflight a returned human review separately:
 
@@ -151,6 +165,20 @@ The certified manifest must declare
 `external_validation_status=not_run`. This command establishes the
 benchmark and gold provenance contract; it does not create real-model outcomes.
 
+After the deterministic full-policy run, execute owner-scoped controlled repair rather than the development clean-control substitution:
+
+```bash
+node dist/cli/main.js governance-benchmark run-promotion-controlled-recovery \
+  --suite <certified-test-suite/suite.json> \
+  --predictions <original-predictions.jsonl> \
+  --system-run-manifest <original-system-run-manifest.json> \
+  --repaired-suite-id <id> \
+  --repaired-trial-id <id> \
+  --out-dir <new-output-dir>
+```
+
+The resulting repair execution manifest binds each prediction-declared node owner, changed path, and input/output artifact tree hash. Its claim ceiling remains the registered controlled fault families.
+
 To recompute the checked-in score from the preserved predictions, generate and
 build a fresh development suite as above, then run:
 
@@ -161,22 +189,25 @@ node dist/cli/main.js governance-benchmark score-promotion \
   --out-dir "$WORKDIR/recomputed-score"
 ```
 
-## Confirmatory Boundary
+## Evidence Boundary
 
 ### Controlled Primary Study
 
-The primary workshop study uses the certified controlled suite. Entire
-registered fault families are held out from development, and the split also
-separates base IDs and source hashes. The independent oracle replays every
-mutation, verifies registry-derived gold and artifact hashes, and quarantines
-any drift. Human adjudication is not used as metric gold.
+The primary workshop study uses the certified controlled suite. Development
+and test-designated partitions use disjoint registered fault families and
+distinct base IDs and hashes. They reuse semantically equivalent templates
+from one generator, so this is not a held-out-source design. The independent
+oracle replays every mutation, verifies registry-derived gold and artifact
+hashes, and quarantines any drift. Human adjudication is not used as metric
+gold.
 
 After certification, run all deterministic systems and ablations from the
 versioned system protocol, run the blind manuscript-only condition three times
 with a real model, execute complete post-repair and clean-control reruns, then
-run the confirmatory gate. Passing this path supports only claims about the
-registered held-out fault families. It does not establish naturally occurring
-defect prevalence or cross-domain generalization.
+run the conformance gate. Passing this path supports only finite-suite
+conformance claims for the registered test fault families. It does not
+establish naturally occurring defect prevalence, comparative effectiveness,
+or cross-domain generalization.
 
 ### Optional Naturalistic Extension
 
@@ -252,7 +283,7 @@ outcomes.
 
 The importer rejects declared mutation-auditor IDs that overlap label
 adjudicator IDs. These pseudonyms do not establish real-world identity, so the
-confirmatory study must retain an external role-assignment record.
+future confirmatory study must retain an external role-assignment record.
 
 Real provider requests must be exported through the blind prompt pack; only
 `requests.jsonl` may enter provider context.

@@ -13,6 +13,7 @@ import {
   prepareReferenceClaimReviewPrivateDistribution,
   preflightReferenceClaimReview,
   REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE,
+  REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR,
   REFERENCE_CLAIM_REVIEW_GUIDE,
   REFERENCE_CLAIM_REVIEW_IMPORT,
   REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS,
@@ -204,6 +205,22 @@ describe("reference claim review handoff", () => {
       path.join(workspace, "import", REFERENCE_CLAIM_REVIEW_IMPORT),
       "utf8"
     ))).toMatchObject({ import_id: result.receipt.import_id });
+    expect(result.authority_evidence_dir).toBe(
+      path.join("import", REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR)
+    );
+    for (const fileName of [
+      "packet-manifest.json",
+      "completed-review.json",
+      "preflight-report.json",
+      "final-approval.json"
+    ]) {
+      expect((await readFile(path.join(
+        workspace,
+        "import",
+        REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR,
+        fileName
+      ))).length).toBeGreaterThan(0);
+    }
   });
 
   it("rejects final approval performed by the initial claim reviewer", async () => {

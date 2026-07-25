@@ -5,9 +5,10 @@ import path from "node:path";
 import { scoreClaimEvidenceArtifacts } from "./claimEvidenceScoring.js";
 import { scoreResultTableArtifact } from "./resultTableScoring.js";
 import { isSha256 } from "./promotionBenchmarkSourceDiversity.js";
+import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 
 export const PROMOTION_CANONICAL_CURATION_RECORD = "benchmark-curation.json";
-export const PROMOTION_CANONICAL_CURATION_SCHEMA_VERSION = "1.1" as const;
+export const PROMOTION_CANONICAL_CURATION_SCHEMA_VERSION = "1.2" as const;
 
 export const PROMOTION_CANONICAL_ARTIFACT_PATHS = {
   result_table: "result_table.json",
@@ -21,6 +22,9 @@ export const PROMOTION_CANONICAL_ARTIFACT_PATHS = {
   review_decision: "review/decision.json",
   paper_main: "paper/main.tex",
   paper_readiness: "paper/paper_readiness.json",
+  reference_evidence_status: "paper/reference_evidence_status.json",
+  reference_claim_inventory: "paper/refgate_claims.tsv",
+  reference_authority_gate: "paper/reference_authority_gate.json",
   claim_status: "paper/claim_status_table.json",
   claim_evidence: "paper/claim_evidence_table.json",
   evidence_links: "paper/evidence_links.json",
@@ -97,6 +101,69 @@ export interface PromotionCanonicalCurationInspection {
   record_sha256: string | null;
   verified_artifact_count: number;
   issues: PromotionCanonicalCurationIssue[];
+}
+
+export interface PromotionCleanControlSemanticInspection {
+  passed: boolean;
+  verified_artifact_count: number;
+  issues: PromotionCanonicalCurationIssue[];
+}
+
+export async function inspectPromotionCleanControlSemantics(
+  sourceRootInput: string
+): Promise<PromotionCleanControlSemanticInspection> {
+  const sourceRoot = path.resolve(sourceRootInput);
+  const artifacts = new Map<PromotionCanonicalArtifactRole, Buffer>();
+  const issues: PromotionCanonicalCurationIssue[] = [];
+  for (const [role, relativePath] of Object.entries(PROMOTION_CANONICAL_ARTIFACT_PATHS) as Array<
+    [PromotionCanonicalArtifactRole, string]
+  >) {
+    const artifactPath = path.join(sourceRoot, relativePath);
+    try {
+      const stat = await fs.lstat(artifactPath);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size === 0) throw new Error("invalid file");
+      artifacts.set(role, await fs.readFile(artifactPath));
+    } catch {
+      issues.push({
+        code: "clean_control_artifact_unreadable",
+        message: "A required clean-control artifact is missing, empty, or unsafe.",
+        ref: relativePath
+      });
+    }
+  }
+  if (issues.length === 0) {
+    let trialIds: string[] = [];
+    try {
+      const experimentEvidence = JSON.parse(
+        artifacts.get("experiment_evidence")!.toString("utf8")
+      ) as unknown;
+      trialIds = isRecord(experimentEvidence) && Array.isArray(experimentEvidence.trials)
+        ? experimentEvidence.trials.flatMap((trial) =>
+            isRecord(trial) && validId(trial.trial_id) ? [trial.trial_id] : [])
+        : [];
+    } catch {
+      // The canonical semantic checker reports the malformed JSON below.
+    }
+    const semanticRecord = {
+      source_trials: trialIds.map((trialId) => ({ trial_id: trialId })),
+      curated_at: "2000-01-01T00:00:00.000Z",
+      verified_at: "2000-01-01T00:00:00.000Z"
+    } as PromotionCanonicalCurationRecord;
+    issues.push(...inspectCanonicalArtifactSemantics(semanticRecord, artifacts));
+  }
+  const authorityGate = await inspectReferenceAuthorityGate(path.join(sourceRoot, "paper"));
+  if (authorityGate.status !== "pass") {
+    issues.push({
+      code: "clean_control_reference_authority_invalid",
+      message: `Clean-control reference authority validation failed: ${authorityGate.reason}`,
+      ref: "paper/reference_authority_gate.json"
+    });
+  }
+  return {
+    passed: issues.length === 0,
+    verified_artifact_count: artifacts.size,
+    issues
+  };
 }
 
 export async function inspectPromotionCanonicalCuration(
@@ -214,7 +281,7 @@ function inspectCanonicalArtifactSemantics(
   const issues: PromotionCanonicalCurationIssue[] = [];
   const json = new Map<PromotionCanonicalArtifactRole, unknown>();
   for (const role of Object.keys(PROMOTION_CANONICAL_ARTIFACT_PATHS) as PromotionCanonicalArtifactRole[]) {
-    if (role === "evidence_store" || role === "paper_main") continue;
+    if (role === "evidence_store" || role === "paper_main" || role === "reference_claim_inventory") continue;
     const bytes = artifacts.get(role);
     if (!bytes) continue;
     try {
@@ -303,10 +370,13 @@ function inspectCanonicalArtifactSemantics(
   const claimStatus = json.get("claim_status");
   const claimEvidence = json.get("claim_evidence");
   const evidenceLinks = json.get("evidence_links");
+  const evidenceStoreRows = parseEvidenceStoreRows(artifacts.get("evidence_store"));
   const claimScore = scoreClaimEvidenceArtifacts({
     claimStatusTableArtifact: claimStatus,
     claimEvidenceTableArtifact: claimEvidence,
-    evidenceLinksArtifact: evidenceLinks
+    evidenceLinksArtifact: evidenceLinks,
+    evidenceStoreArtifact: evidenceStoreRows ?? undefined,
+    availableArtifactRefs: Object.values(PROMOTION_CANONICAL_ARTIFACT_PATHS)
   });
   const statusRows = claimRows(claimStatus);
   const evidenceRows = claimRows(claimEvidence);
@@ -338,7 +408,9 @@ function inspectCanonicalArtifactSemantics(
     });
   }
 
-  const evidenceStoreIds = parseEvidenceStoreIds(artifacts.get("evidence_store"));
+  const evidenceStoreIds = evidenceStoreRows
+    ? new Set(evidenceStoreRows.map((row) => row.id as string))
+    : null;
   const linkedEvidenceIds = linkRows.flatMap((row) =>
     Array.isArray(row.evidence_ids) ? row.evidence_ids.filter(nonEmptyString) : []);
   if (!evidenceStoreIds
@@ -353,6 +425,8 @@ function inspectCanonicalArtifactSemantics(
 
   const checkpoint = json.get("readiness_state");
   const paperReadiness = json.get("paper_readiness");
+  const referenceEvidenceStatus = json.get("reference_evidence_status");
+  const referenceAuthorityGate = json.get("reference_authority_gate");
   const reviewCritique = json.get("review_critique");
   const reviewDecision = json.get("review_decision");
   if (!isRecord(checkpoint)
@@ -361,15 +435,37 @@ function inspectCanonicalArtifactSemantics(
       || !isRecord(paperReadiness)
       || paperReadiness.paper_ready !== true
       || paperReadiness.readiness_state !== "paper_ready"
+      || !isRecord(referenceEvidenceStatus)
+      || referenceEvidenceStatus.schema_version !== "1.0"
+      || referenceEvidenceStatus.submission_gate_passed !== true
+      || !isRecord(referenceEvidenceStatus.summary)
+      || referenceEvidenceStatus.summary.citation_bearing_claim_count !== 0
+      || referenceEvidenceStatus.summary.independently_checked_claim_count !== 0
+      || referenceEvidenceStatus.summary.missing_full_text_claim_count !== 0
+      || !Array.isArray(referenceEvidenceStatus.blocking_requirements)
+      || referenceEvidenceStatus.blocking_requirements.length !== 0
+      || !isRecord(referenceAuthorityGate)
+      || referenceAuthorityGate.status !== "pass"
+      || referenceAuthorityGate.manuscript_bound !== true
       || !isRecord(reviewCritique)
       || reviewCritique.paper_readiness_state !== "paper_ready"
-      || reviewCritique.claim_ceiling_applied !== true
+      || reviewCritique.claim_ceiling_applied !== false
       || !isRecord(reviewDecision)
       || reviewDecision.outcome !== "accept") {
     issues.push({
       code: "canonical_curation_readiness_inconsistent",
       message: "Checkpoint, review, and paper readiness artifacts must agree on a completed clean-control promotion.",
       ref: "checkpoint + review + paper"
+    });
+  }
+  const referenceClaimInventory = artifacts.get("reference_claim_inventory")?.toString("utf8") || "";
+  const referenceClaimLines = referenceClaimInventory.split(/\r?\n/u).filter((line) => line.length > 0);
+  if (referenceClaimLines.length !== 1
+      || referenceClaimLines[0] !== "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance") {
+    issues.push({
+      code: "canonical_curation_reference_inventory_invalid",
+      message: "Citation-free canonical controls require an explicit canonical empty Refgate claim inventory.",
+      ref: PROMOTION_CANONICAL_ARTIFACT_PATHS.reference_claim_inventory
     });
   }
 
@@ -426,23 +522,28 @@ function nonEmptyStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.length > 0 && value.every(nonEmptyString);
 }
 
-function parseEvidenceStoreIds(bytes: Buffer | undefined): Set<string> | null {
+function parseEvidenceStoreRows(bytes: Buffer | undefined): Record<string, unknown>[] | null {
   if (!bytes) return null;
   const lines = bytes.toString("utf8").split(/\r?\n/u).filter((line) => line.trim());
   const ids = new Set<string>();
+  const rows: Record<string, unknown>[] = [];
   try {
     for (const line of lines) {
       const row = JSON.parse(line) as unknown;
       if (!isRecord(row)
           || !validId(row.id)
           || row.metric_evidence_present !== true
+          || !validId(row.claim_id)
+          || row.claim_evidence_valid !== true
+          || !nonEmptyStringArray(row.artifact_refs)
           || ids.has(row.id)) return null;
       ids.add(row.id);
+      rows.push(row);
     }
   } catch {
     return null;
   }
-  return ids.size > 0 ? ids : null;
+  return rows.length > 0 ? rows : null;
 }
 
 function nestedPositiveInteger(value: unknown, parent: string, child: string): number | null {

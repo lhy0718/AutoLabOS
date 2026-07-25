@@ -76,6 +76,14 @@ def main() -> int:
     if not workspace.exists():
         print(f"FAIL: workspace does not exist: {workspace}")
         return 1
+    config_path = workspace / ".autolabos" / "config.yaml"
+    if not config_path.is_file():
+        print(f"FAIL: validation workspace is not prepared: missing {config_path}")
+        print(
+            "Run `npm run validation:preflight` with an explicit "
+            "AUTOLABOS_VALIDATION_BRIEF_SOURCE before `npm run validation:doctor`."
+        )
+        return 1
     if not dist_main.exists():
         print(f"FAIL: expected built CLI at {dist_main}; run npm run build first")
         return 1

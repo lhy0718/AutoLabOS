@@ -4,6 +4,7 @@ import { promises as fs } from "node:fs";
 import { RunStore } from "../core/runs/runStore.js";
 import { TitleGenerator } from "../core/runs/titleGenerator.js";
 import { AgentOrchestrator } from "../core/agents/agentOrchestrator.js";
+import { isSafeAutoExecutableAdvance } from "../core/stateGraph/transitionSafety.js";
 import { AutonomousRunController, buildDefaultOvernightPolicy, buildDefaultAutonomousPolicy } from "../core/agents/autonomousRunController.js";
 import { DefaultTuneNodeRunner, TuneNodeRunner } from "../core/agents/tuneNode.js";
 import { EventStream, AutoLabOSEvent, readPersistedRunEvents } from "../core/events.js";
@@ -134,6 +135,8 @@ interface CorpusInsightsCacheEntry {
   size: number;
   insights: CorpusInsights;
 }
+
+const MAX_SEEN_EVENT_IDS = 5_000;
 
 export interface InteractionSessionDeps {
   workspaceRoot: string;
@@ -2010,19 +2013,94 @@ export class InteractionSession {
 
     await this.setActiveRunId(run.id);
     let workingRun = run;
+    const requiresFigureAuditTraversal =
+      run.currentNode === "analyze_results" || run.currentNode === "figure_audit";
     const packetPath = path.join(this.workspaceRoot, ".autolabos", "runs", run.id, "review", "review_packet.json");
 
     if (workingRun.currentNode === "analyze_results") {
       const analyzeState = workingRun.graph.nodeStates.analyze_results;
       if (analyzeState.status === "needs_approval") {
+        const transition = workingRun.graph.pendingTransition;
+        if (!isSafeAutoExecutableAdvance(workingRun, "analyze_results", "figure_audit")) {
+          const detail = transition
+            ? `${transition.action} -> ${transition.targetNode || "stay"} (autoExecutable=${transition.autoExecutable})`
+            : `node status ${analyzeState.status} with no pending transition`;
+          this.pushLog(
+            `Analysis handoff stopped before figure audit: ${detail} is not a safe auto-executable advance to figure_audit.`
+          );
+          if (transition?.reason) {
+            this.pushLog(`Reason: ${transition.reason}`);
+          }
+          return { ok: false, reason: `analyze_results did not safely advance to figure_audit: ${detail}` };
+        }
+
         workingRun = await this.orchestrator.approveCurrent(workingRun.id);
         await this.refreshRunIndex();
-        if (workingRun.currentNode !== "review") {
+        if (workingRun.currentNode === "figure_audit") {
+          this.pushLog("Approved analyze_results and moved into figure_audit.");
+        } else if (
+          workingRun.currentNode !== "review" ||
+          workingRun.graph.nodeStates.figure_audit.status !== "completed"
+        ) {
           this.pushLog(`Approved analyze_results. Next node is ${workingRun.currentNode}.`);
           return { ok: false, reason: `review not available after approval: ${workingRun.currentNode}` };
         }
-        this.pushLog("Approved analyze_results and moved into figure_audit.");
       }
+    }
+
+    if (workingRun.currentNode === "figure_audit") {
+      const figureAuditState = workingRun.graph.nodeStates.figure_audit;
+      if (figureAuditState.status !== "needs_approval") {
+        const response = await this.orchestrator.runAgentWithOptions(workingRun.id, "figure_audit", { abortSignal });
+        await this.refreshRunIndex();
+        if (this.wasAgentRunCanceled(response.run, "figure_audit")) {
+          throw new Error("Operation aborted by user");
+        }
+        if (response.result.status === "failure" || response.run.status === "failed") {
+          const failure =
+            response.result.error ||
+            response.run.graph.nodeStates.figure_audit.lastError ||
+            "figure_audit failed";
+          this.pushLog(`figure_audit failed: ${failure}`);
+          return { ok: false, reason: failure };
+        }
+        workingRun = response.run;
+        this.pushLog(`figure_audit finished: ${oneLine(response.result.summary)}`);
+      }
+
+      if (workingRun.currentNode === "figure_audit") {
+        const transition = workingRun.graph.pendingTransition;
+        const canAdvanceToReview = isSafeAutoExecutableAdvance(workingRun, "figure_audit", "review");
+        if (!canAdvanceToReview) {
+          const detail = transition
+            ? `${transition.action} -> ${transition.targetNode || "stay"} (autoExecutable=${transition.autoExecutable})`
+            : `node status ${workingRun.graph.nodeStates.figure_audit.status} with no pending transition`;
+          this.pushLog(
+            `Figure audit stopped before review: ${detail} is not a safe auto-executable advance to review.`
+          );
+          if (transition?.reason) {
+            this.pushLog(`Reason: ${transition.reason}`);
+          }
+          return { ok: false, reason: `figure_audit did not safely advance to review: ${detail}` };
+        }
+
+        workingRun = await this.orchestrator.applyPendingTransition(workingRun.id);
+        await this.refreshRunIndex();
+        if (workingRun.currentNode !== "review") {
+          this.pushLog(`Applied figure_audit transition. Next node is ${workingRun.currentNode}; review was not started.`);
+          return { ok: false, reason: `review not available after figure_audit: ${workingRun.currentNode}` };
+        }
+        this.pushLog("Applied figure_audit advance and moved into review.");
+      }
+    }
+
+    if (
+      requiresFigureAuditTraversal &&
+      (workingRun.currentNode !== "review" ||
+        workingRun.graph.nodeStates.figure_audit.status !== "completed")
+    ) {
+      this.pushLog(`Figure audit stopped before review. Current node is ${workingRun.currentNode}.`);
+      return { ok: false, reason: `review not available after figure_audit: ${workingRun.currentNode}` };
     }
 
     const packetBeforeRun = parseReviewPacket(await safeRead(packetPath));
@@ -2350,6 +2428,12 @@ export class InteractionSession {
       return false;
     }
     this.seenEventIds.add(eventId);
+    if (this.seenEventIds.size > MAX_SEEN_EVENT_IDS) {
+      const oldestEventId = this.seenEventIds.values().next().value;
+      if (typeof oldestEventId === "string") {
+        this.seenEventIds.delete(oldestEventId);
+      }
+    }
     return true;
   }
 

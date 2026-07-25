@@ -289,6 +289,19 @@ export class AutonomousRunController {
         const recommendation = run.graph.pendingTransition;
         if (recommendation) {
           const key = recommendationKey(recommendation);
+          if (recommendation.action === "pause_for_human") {
+            this.emit(run, `Overnight autonomy paused for required human review at ${run.currentNode}: ${key}.`);
+            return {
+              run,
+              status: "stopped",
+              reason: `Manual review required for recommendation ${key} at ${run.currentNode}.`,
+              stopReason: "manual_review_required",
+              approvalsApplied,
+              transitionsApplied,
+              iterations
+            };
+          }
+
           repeatedRecommendationCount = key === lastRecommendationKey ? repeatedRecommendationCount + 1 : 1;
           lastRecommendationKey = key;
           const stopThreshold = policy.mode === "overnight"
@@ -655,6 +668,15 @@ export class AutonomousRunController {
         const recommendation = run.graph.pendingTransition;
         if (recommendation) {
           const key = recommendationKey(recommendation);
+          if (recommendation.action === "pause_for_human") {
+            this.emit(run, `[autonomous] Paused for required human review at ${run.currentNode}: ${key}.`);
+            return buildStopResult(
+              "stopped",
+              `Manual review required: ${key} at ${run.currentNode}.`,
+              "manual_review_required"
+            );
+          }
+
           repeatedRecommendationCount = key === lastRecommendationKey ? repeatedRecommendationCount + 1 : 1;
           lastRecommendationKey = key;
 

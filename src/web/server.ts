@@ -38,7 +38,7 @@ import {
 } from "../config.js";
 import { getDoctorAggregateStatus, mapDoctorCheckForApi, runDoctorReport } from "../core/doctor.js";
 import { CodexNativeClient } from "../integrations/codex/codexCliClient.js";
-import { writeRunLiteratureIndex } from "../core/literatureIndex.js";
+import { buildRunLiteratureIndex } from "../core/literatureIndex.js";
 import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { readEvalHarnessHistoryEntries } from "../core/evaluation/evalHarness.js";
 import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
@@ -474,7 +474,7 @@ class AutoLabOSWebController {
         if (!run) {
           return jsonResponse(res, 404, { error: "Run not found." });
         }
-        const literature = await writeRunLiteratureIndex(this.cwd, runId);
+        const literature = await buildRunLiteratureIndex(this.cwd, runId);
         return jsonResponse(res, 200, { literature } satisfies LiteratureResponse);
       }
 

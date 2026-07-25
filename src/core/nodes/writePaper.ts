@@ -127,6 +127,10 @@ import {
   parseManuscriptAuthorsFromBrief,
   parseManuscriptTemplateFromBrief
 } from "../runs/researchBriefFiles.js";
+import {
+  inspectReferenceAuthorityGate,
+  type ReferenceAuthorityGateArtifact
+} from "../referenceAuthorityGate.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -319,6 +323,7 @@ interface PaperReadinessArtifact {
   overall_score?: number;
   reason: string;
   citation_check: CitationReport["status"];
+  reference_authority_gate: ReferenceAuthorityGateArtifact;
   triggered_by: string[];
   evidence_gate_status: EvidenceGateDecisionArtifact["status"];
   scientific_validation_status: "pass" | "warn" | "fail";
@@ -1132,11 +1137,19 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       if (conceptualDiagramPromptJson) {
         await writeRunArtifact(run, "paper/figures/concept_diagram_prompt.json", conceptualDiagramPromptJson);
       }
-      const citationConsistency = checkCitationConsistency(path.join(process.cwd(), ".autolabos", "runs", run.id));
+      let citationConsistency = checkCitationConsistency(path.join(process.cwd(), ".autolabos", "runs", run.id));
+      let referenceAuthorityGate = await inspectReferenceAuthorityGate(
+        path.join(process.cwd(), ".autolabos", "runs", run.id, "paper")
+      );
       await writeRunArtifact(
         run,
         "paper/citation_consistency.json",
         `${JSON.stringify(citationConsistency, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/reference_authority_gate.json",
+        `${JSON.stringify(referenceAuthorityGate, null, 2)}\n`
       );
       await writeRunArtifact(run, "paper/draft.json", `${JSON.stringify(paperDraft, null, 2)}\n`);
       await writeRunArtifact(run, "paper/manuscript.json", manuscriptJson);
@@ -1216,6 +1229,11 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         "utf8"
       );
       await fs.writeFile(
+        path.join(publicPaperDir, "reference_authority_gate.json"),
+        `${JSON.stringify(referenceAuthorityGate, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
         path.join(publicPaperDir, "scientific_validation.json"),
         `${JSON.stringify(finalScientificValidationArtifact, null, 2)}\n`,
         "utf8"
@@ -1253,6 +1271,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         claimStatusTable,
         evidenceGateDecision,
         citationReport: citationConsistency,
+        referenceAuthorityGate,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action,
@@ -1277,6 +1296,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         evidenceGateDecision,
         claimStatusTable,
         citationReport: citationConsistency,
+        referenceAuthorityGate,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action
@@ -1424,6 +1444,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         evidenceGateDecision,
         claimStatusTable,
         citationReport: citationConsistency,
+        referenceAuthorityGate,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action
@@ -1765,6 +1786,28 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         emitLog(`Compiled PDF page-budget warning: ${compiledPageValidation.message}`);
       }
       const finalTexForValidation = (await safeRead(path.join(runPaperDir, "main.tex"))) || tex;
+      citationConsistency = checkCitationConsistency(path.join(process.cwd(), ".autolabos", "runs", run.id));
+      referenceAuthorityGate = await inspectReferenceAuthorityGate(runPaperDir);
+      await writeRunArtifact(
+        run,
+        "paper/citation_consistency.json",
+        `${JSON.stringify(citationConsistency, null, 2)}\n`
+      );
+      await writeRunArtifact(
+        run,
+        "paper/reference_authority_gate.json",
+        `${JSON.stringify(referenceAuthorityGate, null, 2)}\n`
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "citation_consistency.json"),
+        `${JSON.stringify(citationConsistency, null, 2)}\n`,
+        "utf8"
+      );
+      await fs.writeFile(
+        path.join(publicPaperDir, "reference_authority_gate.json"),
+        `${JSON.stringify(referenceAuthorityGate, null, 2)}\n`,
+        "utf8"
+      );
       const renderValidation = buildPaperRenderValidation({
         validationMode,
         manuscript,
@@ -1798,6 +1841,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         evidenceGateDecision,
         claimStatusTable,
         citationReport: citationConsistency,
+        referenceAuthorityGate,
         scientificGateStatus: gateDecision.status,
         submissionValidationOk: submissionValidation.ok,
         manuscriptQualityAction: manuscriptQuality.repairDecision.action,
@@ -1923,6 +1967,7 @@ async function persistBlockedWritePaperReadiness(input: {
     claim_ceiling_applied: input.manuscriptType !== "paper_ready",
     reason: input.reason,
     citation_check: "pass",
+    reference_authority_gate: missingReferenceAuthorityGate(),
     triggered_by: ["write_paper_eligibility"],
     evidence_gate_status: "fail",
     scientific_validation_status: "fail",
@@ -5411,6 +5456,7 @@ function buildPaperReadinessArtifact(input: {
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   claimStatusTable: ClaimStatusTableArtifact;
   citationReport: CitationReport;
+  referenceAuthorityGate: ReferenceAuthorityGateArtifact;
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
@@ -5427,6 +5473,7 @@ function buildPaperReadinessArtifact(input: {
     && !claimCeilingApplied
     && input.evidenceGateDecision.status !== "fail"
     && input.citationReport.status !== "fail"
+    && input.referenceAuthorityGate.status === "pass"
     && input.scientificGateStatus !== "fail"
     && input.submissionValidationOk
     && input.manuscriptQualityAction !== "stop"
@@ -5436,6 +5483,7 @@ function buildPaperReadinessArtifact(input: {
   const triggeredBy = [
     ...(input.evidenceGateDecision.status === "fail" ? ["evidence_gate"] : []),
     ...(input.citationReport.status === "fail" ? ["citation_check"] : []),
+    ...(input.referenceAuthorityGate.status !== "pass" ? ["reference_authority_gate"] : []),
     ...(input.scientificGateStatus === "fail" ? ["scientific_validation"] : []),
     ...(!input.submissionValidationOk ? ["submission_validation"] : []),
     ...(input.manuscriptQualityAction === "stop" ? ["manuscript_quality"] : []),
@@ -5452,6 +5500,7 @@ function buildPaperReadinessArtifact(input: {
     claim_ceiling_applied: claimCeilingApplied,
     overall_score: typeof input.overallScore === "number" ? input.overallScore : undefined,
     citation_check: input.citationReport.status,
+    reference_authority_gate: input.referenceAuthorityGate,
     reason: paperReady
       ? "The manuscript passed manuscript-quality, evidence, scientific, and submission gates."
       : input.manuscriptQualityAction === "stop"
@@ -5460,6 +5509,8 @@ function buildPaperReadinessArtifact(input: {
         ? "paper_ready is blocked because the pre-draft review claim ceiling classified the evidence below paper-ready."
       : input.citationReport.status === "fail"
         ? "citation_gap"
+      : input.referenceAuthorityGate.status !== "pass"
+        ? `paper_ready is blocked because ${input.referenceAuthorityGate.reason}.`
       : input.evidenceGateDecision.status === "fail"
         ? "paper_ready is blocked because at least one major claim remained blocked at the evidence gate."
       : !input.submissionValidationOk
@@ -5505,6 +5556,21 @@ function buildPaperReadinessRiskArtifact(input: {
     networkPurpose: input.config.experiments?.network_purpose,
     executionApprovalMode: input.config.workflow?.execution_approval_mode
   });
+
+  if (input.paperReadiness.reference_authority_gate.status !== "pass") {
+    risks.push({
+      risk_code: "reference_authority_gate_not_passed",
+      severity: "blocked",
+      category: "citation_source",
+      status: "blocked",
+      message: `The authoritative reference gate is not closed: ${input.paperReadiness.reference_authority_gate.reason}.`,
+      triggered_by: ["reference_authority_gate"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Complete independent claim-level full-text review and rerun the authoritative reference submission gate.",
+      recheck_condition: "reference_authority_gate.json reports status=pass with submission_gate_passed=true and no unchecked Refgate claims."
+    });
+  }
 
   for (const entry of input.verifiedRegistry.entries) {
     if (entry.status !== "blocked" && entry.status !== "unverified") {
@@ -5683,6 +5749,7 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
   claimStatusTable: ClaimStatusTableArtifact;
   evidenceGateDecision: EvidenceGateDecisionArtifact;
   citationReport?: CitationReport;
+  referenceAuthorityGate?: ReferenceAuthorityGateArtifact;
   scientificGateStatus: "pass" | "warn" | "fail";
   submissionValidationOk: boolean;
   manuscriptQualityAction: ManuscriptRepairDecision["action"];
@@ -5702,6 +5769,7 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
       missing_rendered_citations: [],
       status: "pass"
     },
+    referenceAuthorityGate: input.referenceAuthorityGate ?? missingReferenceAuthorityGate(),
     scientificGateStatus: input.scientificGateStatus,
     submissionValidationOk: input.submissionValidationOk,
     manuscriptQualityAction: input.manuscriptQualityAction
@@ -5717,6 +5785,40 @@ function buildFallbackPaperReadinessRiskArtifact(input: {
     manuscriptQualityAction: input.manuscriptQualityAction,
     config: input.config
   });
+}
+
+function missingReferenceAuthorityGate(): ReferenceAuthorityGateArtifact {
+  return {
+    status: "fail",
+    status_ref: "paper/reference_evidence_status.json",
+    claims_ref: "paper/refgate_claims.tsv",
+    manuscript_ref: "paper/main.tex",
+    human_authority_ref: "paper/reference-claim-review-import.json",
+    status_present: false,
+    claims_present: false,
+    manuscript_present: false,
+    manuscript_projection_present: false,
+    manuscript_projection_valid: false,
+    manuscript_bound: false,
+    human_authority_required: false,
+    human_authority_present: false,
+    human_authority_valid: false,
+    human_authority_artifacts_bound: false,
+    human_identity_verification_valid: false,
+    status_sha256: null,
+    claims_sha256: null,
+    manuscript_sha256: null,
+    authoritative_manuscript_sha256: null,
+    human_authority_sha256: null,
+    submission_gate_passed: false,
+    citation_bearing_claim_count: null,
+    independently_checked_claim_count: null,
+    inventory_claim_count: null,
+    unchecked_claim_count: null,
+    missing_full_text_claim_count: null,
+    blocking_requirement_count: null,
+    reason: "authoritative reference evidence status and Refgate claim inventory are missing"
+  };
 }
 
 function resolveFallbackReadinessState(input: {

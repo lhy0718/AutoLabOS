@@ -86,7 +86,10 @@ import {
   MINIMUM_PROMOTION_PAPER_ELIGIBLE_BASE_BUNDLES,
   REQUIRED_CONFIRMATORY_MUTATION_FAMILIES
 } from "../src/core/benchmark/promotionBenchmarkConfirmatoryContract.js";
-import { PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION } from "../src/core/benchmark/promotionBenchmarkSystems.js";
+import {
+  buildPromotionBenchmarkRuntimeBinding,
+  PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION
+} from "../src/core/benchmark/promotionBenchmarkSystems.js";
 import { promotionVariantDefinitions } from "../src/core/benchmark/promotionBenchmarkVariants.js";
 import {
   PROMOTION_CONFIRMATORY_UPSTREAM_CAMPAIGN_RETURN_ROOT,
@@ -1008,7 +1011,7 @@ async function writeSystemRunManifest(input: {
   caseCount: number;
 }): Promise<void> {
   await writeFile(path.join(input.workspace, input.fileName), JSON.stringify({
-    schema_version: "1.1",
+    schema_version: "1.2",
     protocol_revision: PROMOTION_BENCHMARK_SYSTEM_PROTOCOL_REVISION,
     status: "completed",
     evidence_class: "deterministic_artifact_evaluation",
@@ -1027,6 +1030,7 @@ async function writeSystemRunManifest(input: {
       protocol: "full_artifact_policy",
       ablated_components: []
     }],
+    runtime_binding: await buildPromotionBenchmarkRuntimeBinding(),
     artifacts: {
       predictions_path: input.predictionsPath,
       predictions_sha256: await sha256File(path.join(input.workspace, input.predictionsPath))

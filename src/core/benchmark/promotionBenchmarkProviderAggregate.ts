@@ -34,7 +34,7 @@ export interface AggregatePromotionProviderRunsInput {
 }
 
 export interface PromotionProviderAggregateManifest {
-  schema_version: "1.2";
+  schema_version: "1.3";
   aggregate_id: string;
   status: "completed";
   protocol: "manuscript-only-v1";
@@ -46,14 +46,16 @@ export interface PromotionProviderAggregateManifest {
   external_empirical_evidence_eligible: boolean;
   real_model_empirical_evidence_eligible: boolean;
   paper_claim_evidence_eligible: boolean;
-  independent_trial_requirement_met: true;
+  receipt_distinct_trial_requirement_met: true;
   evidence_boundary: string;
-  independence_basis: {
+  receipt_distinctness: {
     required_trial_count: 3;
     distinct_run_ids: true;
     distinct_trial_ids: true;
     distinct_execution_receipts: true;
     identical_prompt_pack: true;
+    statistical_independence_established: false;
+    statistical_replicates: false;
     caveat: string;
   };
   suite_id: string;
@@ -225,7 +227,7 @@ export async function aggregatePromotionBenchmarkProviderRuns(
   const predictionsPath = path.join(outDir, "predictions.jsonl");
   const manifestPath = path.join(outDir, "provider-run-aggregate-manifest.json");
   const manifest: PromotionProviderAggregateManifest = {
-    schema_version: "1.2",
+    schema_version: "1.3",
     aggregate_id: aggregateId,
     status: "completed",
     protocol: "manuscript-only-v1",
@@ -238,14 +240,16 @@ export async function aggregatePromotionBenchmarkProviderRuns(
     real_model_empirical_evidence_eligible: true,
     paper_claim_evidence_eligible: sourceSuite.paper_claim_eligible
       && validatedRuns.every((run) => run.manifest.paper_claim_evidence_eligible),
-    independent_trial_requirement_met: true,
-    evidence_boundary: "This aggregate verifies three complete hash-bound real-model executions and distinguishes remote provider receipts from self-recorded local runtime receipts. It is paper-claim evidence only when the bound source suite is paper-claim eligible and the downstream confirmatory gate accepts the complete comparison and recovery evidence.",
-    independence_basis: {
+    receipt_distinct_trial_requirement_met: true,
+    evidence_boundary: "This aggregate verifies three complete hash-bound real-model executions with distinct receipts. Receipt distinctness is not statistical independence and these executions are not licensed as statistical replicates. It is paper-claim evidence only when the bound source suite is paper-claim eligible and the downstream confirmatory gate accepts the complete comparison and recovery evidence.",
+    receipt_distinctness: {
       required_trial_count: 3,
       distinct_run_ids: true,
       distinct_trial_ids: true,
       distinct_execution_receipts: true,
       identical_prompt_pack: true,
+      statistical_independence_established: false,
+      statistical_replicates: false,
       caveat: reference.provider === "ollama_local"
         ? "Distinct local runtime receipts prove separate hash-bound executions, not external provider identity or statistical independence."
         : "Distinct provider receipts and trial identifiers do not independently verify provider identity or statistical independence."
@@ -345,6 +349,7 @@ async function validateRun(input: {
   await verifyFileHash(providerResponsesPath, manifest.artifacts.provider_responses_sha256!, "provider responses");
   await verifyFileHash(predictionsPath, manifest.artifacts.predictions_sha256!, "predictions");
   await requireMissingArtifact(failuresPath, "Completed provider run must not contain a failure artifact.");
+  await validateAttemptFailureLedger(input.cwd, runRoot, manifest);
 
   const requestMap = parsePromotionPromptRequestMap(JSON.parse(await fs.readFile(privateMapPath, "utf8")));
   const requestsText = await fs.readFile(requestsPath, "utf8");
@@ -412,6 +417,114 @@ async function validateRun(input: {
     executionReceiptHashes: outputs.map((output) => output.executionReceiptHash),
     resolvedModel: outputs[0].resolvedModel
   };
+}
+
+async function validateAttemptFailureLedger(
+  cwd: string,
+  runRoot: string,
+  manifest: PromotionProviderRunManifest
+): Promise<void> {
+  const attemptPath = manifest.artifacts.attempt_failures_path;
+  const attemptHash = manifest.artifacts.attempt_failures_sha256;
+  const resumeCount = manifest.resume_count;
+  const failureCount = manifest.attempt_failure_count;
+  if (attemptPath === undefined && attemptHash === undefined
+      && resumeCount === undefined && failureCount === undefined) return;
+  if (!nonEmptyString(attemptPath) || !nonNegativeInteger(resumeCount)
+      || !nonNegativeInteger(failureCount)) {
+    throw new Error("Provider run attempt-failure ledger metadata is invalid.");
+  }
+  const resolved = resolveRunArtifactTarget(cwd, runRoot, attemptPath, "attempt failures");
+  if (attemptHash === null) {
+    if (resumeCount !== 0 || failureCount !== 0) {
+      throw new Error("Provider run attempt-failure counts require a hash-bound ledger.");
+    }
+    await requireMissingArtifact(resolved, "Provider run without retries must not contain an attempt-failure ledger.");
+    return;
+  }
+  if (!isSha256(attemptHash) || resumeCount === 0 || failureCount === 0) {
+    throw new Error("Provider run attempt-failure ledger contract is invalid.");
+  }
+  const existing = await resolveRunArtifact(cwd, runRoot, attemptPath, "attempt failures");
+  await verifyFileHash(existing, attemptHash, "attempt failures");
+  const rows = parseJsonLines(await fs.readFile(existing, "utf8"), "provider attempt failure");
+  if (rows.length !== failureCount || failureCount < resumeCount) {
+    throw new Error("Provider run attempt-failure ledger count does not match the manifest.");
+  }
+  for (const [index, row] of rows.entries()) {
+    await validateAttemptFailureRow(cwd, runRoot, row, index + 1);
+  }
+}
+
+async function validateAttemptFailureRow(
+  cwd: string,
+  runRoot: string,
+  value: unknown,
+  lineNumber: number
+): Promise<void> {
+  const context = `provider attempt failure line ${lineNumber}`;
+  if (!isRecord(value) || (value.schema_version !== "1.0" && value.schema_version !== "1.1")
+      || (value.request_id !== null && !nonEmptyString(value.request_id))
+      || !nonEmptyString(value.error_name) || !nonEmptyString(value.message)) {
+    throw new Error(`Invalid ${context}.`);
+  }
+  if (value.error_name !== "InterruptedCheckpointRecovery") {
+    assertExactKeys(value, ["schema_version", "request_id", "error_name", "message"], context, true);
+    return;
+  }
+
+  const commonKeys = [
+    "schema_version",
+    "request_id",
+    "error_name",
+    "message",
+    "recovered_at",
+    "prior_manifest_sha256",
+    "prior_manifest_completed_response_count",
+    "recovered_response_count",
+    "observed_provider_outputs_sha256",
+    "observed_provider_responses_sha256",
+    "prior_declared_provider_outputs_sha256",
+    "prior_declared_provider_responses_sha256",
+    "discarded_output_record_count",
+    "discarded_response_record_count",
+    "discarded_output_bytes",
+    "discarded_response_bytes"
+  ];
+  const preimageKeys = [
+    "prior_manifest_ref",
+    "observed_provider_outputs_ref",
+    "observed_provider_responses_ref"
+  ];
+  assertExactKeys(value, [...commonKeys, ...preimageKeys], context, value.schema_version === "1.1");
+  if (value.request_id !== null || !nonEmptyString(value.recovered_at)
+      || !isSha256(value.prior_manifest_sha256)
+      || !isSha256(value.observed_provider_outputs_sha256)
+      || !isSha256(value.observed_provider_responses_sha256)
+      || (value.prior_declared_provider_outputs_sha256 !== null
+        && !isSha256(value.prior_declared_provider_outputs_sha256))
+      || (value.prior_declared_provider_responses_sha256 !== null
+        && !isSha256(value.prior_declared_provider_responses_sha256))
+      || !nonNegativeInteger(value.prior_manifest_completed_response_count)
+      || !nonNegativeInteger(value.recovered_response_count)
+      || !nonNegativeInteger(value.discarded_output_record_count)
+      || !nonNegativeInteger(value.discarded_response_record_count)
+      || !nonNegativeInteger(value.discarded_output_bytes)
+      || !nonNegativeInteger(value.discarded_response_bytes)) {
+    throw new Error(`Invalid ${context}.`);
+  }
+  if (value.schema_version === "1.0") return;
+
+  const bindings = [
+    [value.prior_manifest_ref, value.prior_manifest_sha256, "attempt prior manifest"],
+    [value.observed_provider_outputs_ref, value.observed_provider_outputs_sha256, "attempt observed outputs"],
+    [value.observed_provider_responses_ref, value.observed_provider_responses_sha256, "attempt observed responses"]
+  ] as const;
+  for (const [ref, expectedHash, label] of bindings) {
+    if (!nonEmptyString(ref)) throw new Error(`Invalid ${context}.`);
+    const resolved = await resolveRunArtifact(cwd, runRoot, ref, label);
+    await verifyFileHash(resolved, expectedHash, label);
+  }
 }
 
 function validatePromptRequests(raw: string, requestMap: PromotionPromptRequestMap): void {
@@ -496,7 +609,13 @@ function isSourceSuiteBinding(value: unknown): value is PromotionProviderSourceS
     && nonEmptyString(value.path)
     && isSha256(value.manifest_sha256)
     && isSha256(value.snapshot_sha256)
-    && ["synthetic_development", "human_adjudicated_test", "external_real_run", "unspecified"]
+    && [
+      "synthetic_development",
+      "human_adjudicated_test",
+      "deterministic_fault_injection_test",
+      "external_real_run",
+      "unspecified"
+    ]
       .includes(String(value.evidence_class))
     && typeof value.paper_claim_eligible === "boolean";
 }
@@ -783,7 +902,10 @@ function isCompletedArtifacts(value: unknown): boolean {
     && isSha256(value.provider_outputs_sha256) && nonEmptyString(value.provider_responses_path)
     && isSha256(value.provider_responses_sha256) && nonEmptyString(value.predictions_path)
     && isSha256(value.predictions_sha256) && nonEmptyString(value.failures_path)
-    && value.failures_sha256 === null;
+    && value.failures_sha256 === null
+    && (value.attempt_failures_path === undefined || nonEmptyString(value.attempt_failures_path))
+    && (value.attempt_failures_sha256 === undefined || value.attempt_failures_sha256 === null
+      || isSha256(value.attempt_failures_sha256));
 }
 
 function isUsage(value: unknown): boolean {

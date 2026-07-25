@@ -104,6 +104,7 @@ describe("promotion confirmatory gate", () => {
       readiness: "blocked_for_paper_scale",
       paper_ready: false,
       evidence_gate_passed: false,
+      evidence_gate_reason: "blocking_issues_present",
       provider_repetition: { status: "missing_or_invalid", trial_count: 0 },
       recovery: { status: "missing_or_invalid" }
     });
@@ -138,13 +139,36 @@ describe("promotion confirmatory gate", () => {
 
   it("admits a human-free controlled benchmark with oracle-bound held-out families", () => {
     const fixture = makeControlledAssessmentFixture();
+    fixture.score.paired_analysis.comparisons[0]!
+      .false_paper_ready_base_bundle_resampling_interval = [0, 0];
+    const full = fixture.score.systems.find((system) => system.system_id === fixture.roles.full);
+    if (!full) throw new Error("Controlled full-policy fixture is missing.");
+    full.clean_case_promotion_accuracy_base_bundle_resampling_interval = null;
+    for (const system of fixture.score.systems) {
+      system.by_mutation_family.push({
+        ...system.by_mutation_family[0]!,
+        mutation_family: "clean_control"
+      });
+    }
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
 
     expect(assessment).toMatchObject({
       blockers: [],
       readiness: "paper_scale_candidate",
-      claim_class: "confirmatory_signal"
+      claim_class: "fixed_suite_conformance_signal"
     });
+    expect(assessment.hypotheses.every((item) => item.status === "threshold_met_post_hoc")).toBe(true);
+    expect(assessment.hypotheses.every(
+      (item) => item.decision_basis === "exact_fixed_suite_point_estimate"
+        && item.evaluation_unit === "fixed_suite"
+    )).toBe(true);
+    const controlledFaultCaseCount = full.prediction_count - full.clean_case_count;
+    expect(assessment.hypotheses.find((item) => item.hypothesis_id === "H2")).toMatchObject({
+      eligible_observation_count: controlledFaultCaseCount,
+      faulty_observation_count: controlledFaultCaseCount,
+      suite_observation_count: CONFIRMATORY_CASE_COUNT
+    });
+    expect(assessment.hypotheses.find((item) => item.hypothesis_id === "H3")?.diagnostic_interval).toBeNull();
     expect(fixture.loaded.manifest.adjudication_provenance).toBeUndefined();
     expect(fixture.loaded.manifest.confirmatory_freeze_provenance).toBeUndefined();
   });
@@ -279,10 +303,10 @@ describe("promotion confirmatory gate", () => {
     expect(assessment.hypotheses.find((item) => item.hypothesis_id === "H1")?.status).toBe("not_supported");
   });
 
-  it("does not support a point-threshold result when its clustered interval crosses the threshold", () => {
+  it("does not support a point-threshold result when its declared prospective resampling bound crosses the threshold", () => {
     const fixture = makeAssessmentFixture(true);
     const comparison = fixture.score.paired_analysis.comparisons[0];
-    comparison.false_paper_ready_cluster_bootstrap_95_ci = [-0.30, -0.10];
+    comparison.false_paper_ready_base_bundle_resampling_interval = [-0.30, -0.10];
 
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
     const h1 = assessment.hypotheses.find((item) => item.hypothesis_id === "H1");
@@ -293,17 +317,20 @@ describe("promotion confirmatory gate", () => {
     expect(h1).toMatchObject({
       status: "not_supported",
       observed_value: 0.30,
-      confidence_interval_95: [0.10, 0.30],
+      diagnostic_interval: [0.10, 0.30],
       point_threshold_met: true,
-      decision_rule: "lower_bound_at_least_threshold"
+      decision_rule: "lower_resampling_bound_at_least_threshold",
+      decision_basis: "base_bundle_resampling_interval"
     });
   });
 
-  it("uses the upper interval bound for an at-most hypothesis", () => {
+  it("uses the upper resampling bound for a prospective at-most hypothesis", () => {
     const fixture = makeAssessmentFixture(true);
     const full = fixture.score.systems.find((system) => system.system_id === fixture.roles.full);
     if (!full) throw new Error("Full-policy fixture is missing.");
-    full.concern_acceptance_conflict_cluster_bootstrap_95_ci = [0, 0.08];
+    full.concern_acceptance_conflict_base_bundle_resampling_interval = [0, 0.08];
+    full.false_paper_ready_rate = 0.75;
+    full.false_paper_ready_base_bundle_resampling_interval = [0.70, 0.80];
 
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
     const h2 = assessment.hypotheses.find((item) => item.hypothesis_id === "H2");
@@ -312,9 +339,10 @@ describe("promotion confirmatory gate", () => {
     expect(h2).toMatchObject({
       status: "not_supported",
       observed_value: 0.01,
-      confidence_interval_95: [0, 0.08],
+      diagnostic_interval: [0, 0.08],
       point_threshold_met: true,
-      decision_rule: "upper_bound_at_most_threshold"
+      decision_rule: "upper_resampling_bound_at_most_threshold",
+      decision_basis: "base_bundle_resampling_interval"
     });
   });
 
@@ -322,14 +350,14 @@ describe("promotion confirmatory gate", () => {
     const fixture = makeAssessmentFixture(true);
     const full = fixture.score.systems.find((system) => system.system_id === fixture.roles.full);
     if (!full) throw new Error("Full-policy fixture is missing.");
-    full.clean_case_promotion_accuracy_cluster_bootstrap_95_ci = null;
+    full.clean_case_promotion_accuracy_base_bundle_resampling_interval = null;
 
     const assessment = assessPromotionConfirmatoryEvidence(fixture);
 
     expect(assessment.readiness).toBe("blocked_for_paper_scale");
     expect(assessment.claim_class).toBe("not_evaluable");
     expect(assessment.blockers).toContainEqual(expect.objectContaining({
-      code: "hypothesis_clustered_interval_not_evaluable",
+      code: "hypothesis_resampling_interval_not_evaluable",
       evidence_ref: "H3",
       target_node: "analyze_results"
     }));
@@ -396,15 +424,15 @@ function makeAssessmentFixture(h1Supported: boolean): {
   const suiteSnapshotSha256 = "d".repeat(64);
   const inputPredictionsSha256 = "b".repeat(64);
   const systemRunManifestSha256 = "c".repeat(64);
-  const checklistFalsePromotion = h1Supported ? 0.50 : 0.30;
+  const checklistFalsePromotion = h1Supported ? 0.31 : 0.11;
   const systems = [
     systemMetrics(roles.ungated, 1, 0.90, 0, 1, 0.10),
     systemMetrics(roles.checklist, 1, checklistFalsePromotion, 0, 1, 0.20),
     systemMetrics(roles.manuscript, 3, 0.45, 0.08, 0.90, 0.15),
-    systemMetrics(roles.full, 1, 0.20, 0.01, 0.95, 0.80),
+    systemMetrics(roles.full, 1, 0.01, 0.01, 0.95, 0.80),
     systemMetrics(roles.ablations[0], 1, 0.40, 0.20, 1, 0.50)
   ];
-  const paired = pairedComparison(roles.checklist, roles.full, checklistFalsePromotion - 0.20);
+  const paired = pairedComparison(roles.checklist, roles.full, checklistFalsePromotion - 0.01);
   const loaded: LoadedPromotionBenchmarkSuite = {
     suite_path: "suite.json",
     suite_root: ".",
@@ -468,8 +496,9 @@ function makeAssessmentFixture(h1Supported: boolean): {
       }))
     },
     paired_analysis: {
-      inference_unit: "base_bundle_id",
-      bootstrap_replicates: 5000,
+      resampling_unit: "base_bundle_id",
+      resampling_replicates: 5000,
+      resampling_interpretation: "finite_suite_identifier_sensitivity_not_population_uncertainty",
       exploratory_only: false,
       comparisons: [paired]
     }
@@ -478,7 +507,17 @@ function makeAssessmentFixture(h1Supported: boolean): {
     suite_id: loaded.manifest.suite_id,
     system_id: roles.manuscript,
     trial_count: 3,
-    independent_trial_requirement_met: true,
+    receipt_distinct_trial_requirement_met: true,
+    receipt_distinctness: {
+      required_trial_count: 3,
+      distinct_run_ids: true,
+      distinct_trial_ids: true,
+      distinct_execution_receipts: true,
+      identical_prompt_pack: true,
+      statistical_independence_established: false,
+      statistical_replicates: false,
+      caveat: "Distinct receipts do not establish statistical independence."
+    },
     external_empirical_evidence_eligible: true,
     real_model_empirical_evidence_eligible: true,
     paper_claim_evidence_eligible: true
@@ -540,6 +579,7 @@ function makeControlledAssessmentFixture(): ReturnType<typeof makeAssessmentFixt
   }
   const testFamilies = testVariants.map((variant) => variant.mutation_family as string);
   const baseCount = CONFIRMATORY_CASE_COUNT / (testFamilies.length + 1);
+  const controlledFaultCaseCount = baseCount * testFamilies.length;
   const cases: PromotionBenchmarkCaseManifest[] = [];
   for (let baseIndex = 0; baseIndex < baseCount; baseIndex += 1) {
     for (const [variantIndex, variant] of [clean, ...testVariants].entries()) {
@@ -615,6 +655,9 @@ function makeControlledAssessmentFixture(): ReturnType<typeof makeAssessmentFixt
     system.covered_case_count = CONFIRMATORY_CASE_COUNT;
     system.expected_case_count = CONFIRMATORY_CASE_COUNT;
     system.clean_case_count = baseCount;
+    system.false_paper_ready_count = Math.round((system.false_paper_ready_rate ?? 0) * controlledFaultCaseCount);
+    system.concern_acceptance_conflict_eligible_count = controlledFaultCaseCount * system.trial_count;
+    system.repair_owner_eligible_count = controlledFaultCaseCount * system.trial_count;
     system.by_mutation_family = testFamilies.map((family) => ({
       mutation_family: family,
       case_count: baseCount,
@@ -624,6 +667,10 @@ function makeControlledAssessmentFixture(): ReturnType<typeof makeAssessmentFixt
       blocker_recall: 0.8,
       repair_owner_exact_match_accuracy: 0.8
     }));
+  }
+  for (const comparison of fixture.score.paired_analysis.comparisons) {
+    comparison.false_paper_ready_common_case_count = controlledFaultCaseCount;
+    comparison.repair_owner_common_case_count = controlledFaultCaseCount;
   }
   fixture.providerAggregate.suite_id = fixture.loaded.manifest.suite_id;
   fixture.recovery.study_id = fixture.loaded.manifest.suite_id;
@@ -717,18 +764,20 @@ function systemMetrics(
     macro_decision_f1: 0.80,
     false_paper_ready_count: Math.round(falsePromotionRate * CONFIRMATORY_FAULT_CASE_COUNT),
     false_paper_ready_rate: falsePromotionRate,
-    false_paper_ready_cluster_bootstrap_95_ci: boundedInterval(falsePromotionRate, 0.02),
+    false_paper_ready_base_bundle_resampling_interval: boundedInterval(falsePromotionRate, 0.02),
     concern_acceptance_conflict_count: Math.round(conflictRate * CONFIRMATORY_CASE_COUNT),
+    concern_acceptance_conflict_eligible_count: CONFIRMATORY_FAULT_CASE_COUNT * trialCount,
     concern_acceptance_conflict_rate: conflictRate,
-    concern_acceptance_conflict_cluster_bootstrap_95_ci: boundedInterval(conflictRate, 0.01),
+    concern_acceptance_conflict_base_bundle_resampling_interval: boundedInterval(conflictRate, 0.01),
     clean_case_count: CONFIRMATORY_BASE_COUNT,
     clean_case_promotion_accuracy: cleanAccuracy,
-    clean_case_promotion_accuracy_cluster_bootstrap_95_ci: boundedInterval(cleanAccuracy, 0.02),
+    clean_case_promotion_accuracy_base_bundle_resampling_interval: boundedInterval(cleanAccuracy, 0.02),
     blocker_precision: 0.80,
     blocker_recall: 0.80,
     blocker_f1: 0.80,
     repair_owner_exact_match_accuracy: repairAccuracy,
-    repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: boundedInterval(repairAccuracy, 0.02),
+    repair_owner_eligible_count: CONFIRMATORY_FAULT_CASE_COUNT * trialCount,
+    repair_owner_exact_match_accuracy_base_bundle_resampling_interval: boundedInterval(repairAccuracy, 0.02),
     trace_coverage: 1,
     mean_latency_ms: 1,
     total_cost_usd: 0,
@@ -753,15 +802,15 @@ function pairedComparison(
     common_case_count: CONFIRMATORY_CASE_COUNT,
     common_base_bundle_count: CONFIRMATORY_BASE_COUNT,
     decision_accuracy_delta: delta,
-    decision_accuracy_cluster_bootstrap_95_ci: [0.10, 0.40],
+    decision_accuracy_base_bundle_resampling_interval: [0.10, 0.40],
     decision_accuracy_exact_paired_sign_test_p: 0.01,
     false_paper_ready_common_case_count: CONFIRMATORY_FAULT_CASE_COUNT,
     false_paper_ready_rate_delta: -delta,
-    false_paper_ready_cluster_bootstrap_95_ci: [-delta - 0.05, -delta + 0.05],
+    false_paper_ready_base_bundle_resampling_interval: [-delta - 0.05, -delta + 0.05],
     false_paper_ready_exact_paired_sign_test_p: 0.01,
     repair_owner_common_case_count: CONFIRMATORY_FAULT_CASE_COUNT,
     repair_owner_exact_match_accuracy_delta: 0.60,
-    repair_owner_cluster_bootstrap_95_ci: [0.55, 0.65],
+    repair_owner_base_bundle_resampling_interval: [0.55, 0.65],
     repair_owner_exact_paired_sign_test_p: 0.01
   };
 }

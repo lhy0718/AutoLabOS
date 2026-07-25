@@ -92,4 +92,32 @@ describe("claim evidence audit export", () => {
       issue_codes: ["claim_evidence_unavailable"]
     });
   });
+
+  it("preserves a qualified declared status alongside normalized support", () => {
+    const exportPayload = buildClaimEvidenceExport({
+      claimStatusTableArtifact: {
+        claims: [{
+          claim_id: "claim_scoped",
+          status: "verified",
+          declared_status: "supported_with_scope_limitation",
+          artifact_refs: ["results/scoped.json"]
+        }]
+      },
+      claimEvidenceScore: {
+        measured: true,
+        major_claim_count: 1,
+        supported_claim_count: 1,
+        unsupported_claim_count: 0,
+        blocked_claim_count: 0,
+        claim_to_evidence_coverage: 1,
+        issues: []
+      },
+      unsupportedClaims: []
+    });
+
+    expect(exportPayload.claims[0]).toMatchObject({
+      status: "supported",
+      declared_status: "supported_with_scope_limitation"
+    });
+  });
 });

@@ -64,6 +64,7 @@ export async function runReferenceClaimReviewImportCli(
     `Submission claim gate passed: ${result.receipt.submission_claim_gate_passed}`,
     `Import receipt: ${result.receipt_path}`,
     `Import-candidate claims: ${result.claims_path}`,
+    `Authority evidence: ${result.authority_evidence_dir}`,
     "Source claims modified: false",
     "Refgate submission audit still required: true"
   ].join("\n") + "\n");

@@ -45,7 +45,7 @@
 
   <p>
     <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-    <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518.17-339933?style=flat-square&logo=node.js&logoColor=white" />
+    <img alt="Node" src="https://img.shields.io/badge/Node-20.x%20%7C%2022--25.x-339933?style=flat-square&logo=node.js&logoColor=white" />
     <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black" />
   </p>
 
@@ -904,7 +904,7 @@ their values or cross-artifact consistency. Confirmatory and recovery evidence
 rejects unversioned deterministic runs; schema `1.0` remains readable only for
 development-record compatibility.
 
-Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve these leave-one-family-out deltas, confidence intervals, and paired sign-test results; suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
+Promotion scoring writes per-family system metrics and recomputes every paired comparison after omitting each declared source family. Both the machine-readable score and Markdown report preserve leave-one-family-out deltas and finite-suite clustered resampling intervals; inferential sign-test fields remain null for post-hoc fixed suites. Suites without complete family assignments are marked unavailable instead of receiving an inferred stratification.
 
 The score also emits base-bundle-clustered system intervals for false promotion, concern-acceptance conflict, clean promotion, and repair-owner accuracy, plus paired repair-owner deltas. All-zero and all-one system outcomes use a two-sided exact boundary guard so a binary percentile interval cannot collapse to false certainty. Confirmatory H1--H4 support is decided from the relevant 95% interval boundary, not from the point estimate alone. Pair direction is normalized explicitly; a threshold-clearing point estimate with an interval that crosses the threshold remains unsupported, and a missing required interval blocks paper-scale progression.
 
@@ -936,7 +936,7 @@ summary uses logical artifact roles instead of local paths; real-model execution
 and complete synthetic recovery are marked `verified_development_only` and do
 not become paper evidence by being summarized.
 
-### Fresh Real-Model Execution
+### Resumable Real-Model Execution
 
 Run the manuscript-only comparator through either the OpenAI Responses API or a local Ollama runtime without manually constructing response files:
 
@@ -955,6 +955,8 @@ For a local Ollama execution, select `--provider ollama`, use `--reasoning off`,
 
 The command requires a new output directory and an explicit model, reasoning setting, system ID, and trial ID. It hash-binds the opaque prompt pack, saves each model output before advancing, records the resolved model, token usage, cost, latency, failures, and predictions, and withholds predictions after any incomplete or malformed response. Remote API runs hash provider response IDs instead of exposing them. Local runs bind a self-recorded runtime receipt to the exact model artifact digest, timestamps, duration, token counts, and output hash. Fake-response environment variables are rejected for both real-model paths. Neither receipt type independently proves provider identity or statistical independence.
 
+If a run fails after preserving partial outputs, repeat the same command with the same arguments and `--resume`. Resume is accepted for a failed run whose suite binding, prompt pack, provider contract, completed request prefix, artifact hashes, and accumulated usage still match. It also accepts a `running` checkpoint only after that manifest has been stale for at least ten minutes, which covers abrupt host or process termination without permitting an immediate second writer. Stale-running recovery validates the durable common JSONL prefix against the request map and execution receipts, discards only an interrupted final record or unpaired output, recomputes usage, and records the prior manifest and observed artifact hashes in the hash-bound attempt ledger. The runner then continues after the last verified response and removes an active failure artifact only after a later attempt completes. A completed aggregate rechecks the ledger when one is present.
+
 Manual prompt export and response import remain useful adapter surfaces, but they do not by themselves establish a fresh real-model run. A completed run manifest marks one real-model trial while keeping `independent_trial_requirement_met=false`; the preregistered manuscript-only comparison still requires three complete trials.
 
 After three fresh runs complete against the same suite, system, model, reasoning effort, and prompt protocol, aggregate them with their manifests:
@@ -968,7 +970,25 @@ autolabos governance-benchmark aggregate-promotion-provider-runs \
   --out-dir <new-aggregate-output-dir>
 ```
 
-Aggregation accepts exactly three distinct run and trial IDs from one provider, execution environment, model, model digest when local, reasoning setting, and prompt protocol. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused execution receipts; and emits score-compatible combined predictions only after every check passes. The aggregate then records `independent_trial_requirement_met=true`, while retaining `provider_identity_independently_verified=false`: distinct receipts support a repeated-run audit but do not independently prove provider identity or statistical independence. Paper claims additionally require a paper-eligible source suite and acceptance by the downstream confirmatory gate.
+Aggregation accepts exactly three distinct run and trial IDs from one provider, execution environment, model, model digest when local, reasoning setting, and prompt protocol. It rehashes every prompt, output, response, and prediction artifact; checks current-suite manuscript hashes and full per-trial case coverage; rejects reused execution receipts; and emits score-compatible combined predictions only after every check passes. The aggregate records `receipt_distinct_trial_requirement_met=true`, `statistical_independence_established=false`, and `statistical_replicates=false`: distinct receipts support a repeated-execution audit but do not establish independent statistical replication or provider identity. Paper claims additionally require a paper-eligible source suite and acceptance by the downstream confirmatory gate.
+
+### Node-Owned Controlled Recovery
+
+Run owner-scoped artifact repairs over an oracle-certified controlled suite:
+
+```sh
+autolabos governance-benchmark run-promotion-controlled-recovery \
+  --suite <certified-test-suite.json> \
+  --predictions <original-predictions.jsonl> \
+  --system-run-manifest <original-system-run-manifest.json> \
+  --repaired-suite-id <new-suite-id> \
+  --repaired-trial-id <new-trial-id> \
+  --out-dir <new-recovery-output-dir>
+```
+
+The controller verifies one complete full artifact-policy run, copies each case's own artifact tree, and dispatches only the source prediction's declared owner. The built-in `run_experiments`, `analyze_results`, and `figure_audit` adapters receive the copied case artifact only; source gold, sibling clean artifacts, and oracle manifests are outside their input boundary. Clean controls are rerun without modification. The command records every changed path, adapter revision, source-prediction hash, and input/output tree hash in `repair-execution-manifest.json`, then reruns the full policy and evaluates every fault and clean-control pair.
+
+This path is evidence for the registered deterministic fault families only. It does not establish naturalistic repair quality, provider independence, or performance on unregistered failures. The recovery evaluator requires the repair execution manifest for controlled evidence and rechecks its suite, prediction, system-run, pair, owner, and artifact bindings.
 
 ### Synthetic Development Recovery
 
@@ -1017,6 +1037,7 @@ case/trial pairs:
   "repaired_predictions_path": "repaired-predictions.jsonl",
   "original_system_run_manifest_path": "system-run-manifest.json",
   "repaired_system_run_manifest_path": "repaired-system-run-manifest.json",
+  "repair_execution_manifest_path": "repair-execution-manifest.json",
   "system_id": "artifact-audit",
   "pairs": [
     {

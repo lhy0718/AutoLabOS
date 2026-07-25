@@ -1,21 +1,65 @@
 {
   "schema_version": "1.0",
-  "audited_on": "2026-07-19",
+  "audited_on": "2026-07-25",
   "manuscript": "manuscript.tex",
+  "manuscript_projection": {
+    "source_ref": "manuscript.tex",
+    "package_ref": "paper/main.tex",
+    "line_index_convention": "one_based_source_line",
+    "source_sha256": "0cafbd02cac0cbe4e49afa2c261585315b6f37a80c659de6899805448c17dc2f",
+    "package_content_sha256": "0cafbd02cac0cbe4e49afa2c261585315b6f37a80c659de6899805448c17dc2f"
+  },
   "submission_gate_passed": false,
+  "human_authority": {
+    "required": true,
+    "status": "pending",
+    "receipt_ref": "paper/reference-claim-review-import.json",
+    "receipt_present": false
+  },
   "summary": {
-    "citation_source_count": 8,
-    "citation_bearing_claim_count": 12,
-    "full_text_source_count": 8,
-    "full_text_evidence_candidate_count": 12,
+    "citation_source_count": 9,
+    "citation_bearing_claim_count": 13,
+    "full_text_source_count": 9,
+    "full_text_evidence_candidate_count": 13,
     "independently_checked_claim_count": 0,
+    "model_full_text_reviewed_claim_count": 13,
+    "model_meta_adjudicated_claim_count": 13,
     "missing_full_text_claim_count": 0
   },
   "review_policy": {
     "candidate_status": "needs_review",
     "independent_review_required": true,
     "metadata_or_abstract_only_is_sufficient": false,
-    "automatic_evidence_candidates_can_mark_checked": false
+    "automatic_evidence_candidates_can_mark_checked": false,
+    "model_full_text_review_can_mark_supported": true,
+    "model_review_can_mark_refgate_checked": false,
+    "human_approval_required_for_checked_status": true
+  },
+  "model_review": {
+    "authority": "A2_model_conservative",
+    "provider": "codex_multi_agent",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "ultra",
+    "specialist_count": 4,
+    "meta_reviewer_present": true,
+    "parallel_topology_satisfied": true,
+    "private_panel_schema_version": "2.2",
+    "public_receipt_schema_version": "1.2",
+    "anchor_reviewed_claim_count": 13,
+    "supported_claim_count": 10,
+    "blocked_claim_count": 3,
+    "unchecked_claim_blocker_count": 13,
+    "human_authority_blocker_count": 1,
+    "human_authority": false,
+    "refgate_status_changed": false,
+    "panel_ref": "papers/promotion-governance/model-citation-review-receipt.json",
+    "panel_sha256": "8a4400c9a5af453361c8c396396e3fb1b012c5b8198d35cffd3d34bb528028b5",
+    "blocked_claim_ids": [
+      "claim-0010",
+      "claim-0012",
+      "claim-0013"
+    ],
+    "meta_execution_provenance_status": "output_hash_bound_provider_execution_receipt_absent"
   },
   "sources": [
     {
@@ -23,56 +67,88 @@
       "record_url": "https://aclanthology.org/2026.tacl-1.22/",
       "full_text_status": "mapped",
       "pdf_sha256": "d711d7ce16b84452b177794c9631c557640cd4e2c6284a72f5962a843c45d700",
-      "claim_ids": ["claim-0004", "claim-0008"]
+      "claim_ids": [
+        "claim-0004",
+        "claim-0008"
+      ]
     },
     {
       "citation_key": "hu2025reprobench",
-      "record_url": "https://arxiv.org/abs/2507.18901v1",
+      "record_url": "https://aclanthology.org/2025.findings-acl.1210/",
       "full_text_status": "mapped",
-      "pdf_sha256": "ba2349b012d5e852e5fe096e086d6b3b4ca24a55610a582404b434253a5cacff",
-      "claim_ids": ["claim-0011"]
+      "pdf_sha256": "4f8698141acfe562fbe921a88bc9233b680ab43ef43df6b8bb3dfcb85500fbe1",
+      "claim_ids": [
+        "claim-0011"
+      ],
+      "bibliographic_record_url": "https://aclanthology.org/2025.findings-acl.1210/"
     },
     {
       "citation_key": "javaji-etal-2025-ai",
       "record_url": "https://aclanthology.org/2025.ijcnlp-long.127/",
       "full_text_status": "mapped",
       "pdf_sha256": "67eb7c07dee6dcd95d0a2745eb9a7b781a68f4c01f0594426912045d171589a1",
-      "claim_ids": ["claim-0009"]
+      "claim_ids": [
+        "claim-0009"
+      ]
     },
     {
       "citation_key": "jiang-etal-2026-badscientist",
       "record_url": "https://aclanthology.org/2026.acl-long.1134/",
       "full_text_status": "mapped",
       "pdf_sha256": "9ae8a4e37d19e427a5f673b20786f940a766fed39c0fe7ac700dd4ef98643b15",
-      "claim_ids": ["claim-0003", "claim-0007"]
+      "claim_ids": [
+        "claim-0003",
+        "claim-0007"
+      ]
     },
     {
       "citation_key": "ma2026reflection",
       "record_url": "https://arxiv.org/abs/2606.31478v1",
       "full_text_status": "mapped",
       "pdf_sha256": "a58f10624eab91350e3d78dfc87ab4ab6bed6b48396511d0d691a5ad132bd3aa",
-      "claim_ids": ["claim-0013"]
+      "claim_ids": [
+        "claim-0012"
+      ]
+    },
+    {
+      "citation_key": "qwen3.5",
+      "record_url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+      "full_text_status": "mapped",
+      "pdf_sha256": "71c3bbc2eadadd5980bbdbb15df958c27d42ede24821015602a021109aacf492",
+      "source_media_type": "text/markdown",
+      "claim_ids": [
+        "claim-0013"
+      ]
     },
     {
       "citation_key": "riehl2026ara",
       "record_url": "https://arxiv.org/abs/2605.02651v2",
       "full_text_status": "mapped",
       "pdf_sha256": "ce3be9c4a7e0da20217010267dc3d15a686857f92df519bc99fdc4d6df2aafe9",
-      "claim_ids": ["claim-0010"]
+      "claim_ids": [
+        "claim-0010"
+      ]
     },
     {
       "citation_key": "schmidgall-etal-2025-agent",
       "record_url": "https://aclanthology.org/2025.findings-emnlp.320/",
       "full_text_status": "mapped",
       "pdf_sha256": "28de4e931db9004d056e240a2ac7a1460305dafc3b781fe1fb0fbd0c2596cc70",
-      "claim_ids": ["claim-0001", "claim-0005"]
+      "claim_ids": [
+        "claim-0001",
+        "claim-0005"
+      ]
     },
     {
       "citation_key": "starace2025paperbench",
-      "record_url": "https://arxiv.org/abs/2504.01848v3",
+      "record_url": "https://proceedings.mlr.press/v267/starace25a.html",
       "full_text_status": "mapped",
-      "pdf_sha256": "2f58f1a6581af9d99432422dccf3cf61f5c263377c1e4550e7333c4a22d7184d",
-      "claim_ids": ["claim-0002", "claim-0006"]
+      "pdf_sha256": "4115ec4e330474765c65438b7b17357eef840c37b859ce0e44cd2c0e14912a76",
+      "claim_ids": [
+        "claim-0002",
+        "claim-0006"
+      ],
+      "bibliographic_record_url": "https://proceedings.mlr.press/v267/starace25a.html"
     }
   ],
   "manual_source_alignment": [
@@ -82,10 +158,46 @@
       "first_page_result": "title_aligned_with_bibtex",
       "cause": "official_bibtex_tex_arrow_macro_rendered_as_unicode",
       "gate_effect": "source_title_gate_passed"
+    },
+    {
+      "citation_key": "riehl2026ara",
+      "automated_result": "source_title_match",
+      "first_page_result": "title_aligned_with_bibtex_author_spelling_differs",
+      "cause": "official_arxiv_metadata_uses_Nikofors_while_bound_pdf_uses_Nikiforos",
+      "gate_effect": "model_advisory_blocked_pending_author_identity_reconciliation"
+    },
+    {
+      "citation_key": "starace2025paperbench",
+      "automated_result": "archival_bibliography_record_verified",
+      "first_page_result": "official_pmlr_pdf_title_and_author_identity_aligned_with_archival_record",
+      "cause": "full_text_review_and_bibliography_use_the_same_pmlr_record",
+      "gate_effect": "source_identity_gate_passed_human_claim_approval_still_required"
+    },
+    {
+      "citation_key": "hu2025reprobench",
+      "automated_result": "archival_bibliography_record_verified",
+      "first_page_result": "official_acl_pdf_title_and_author_identity_aligned_with_archival_record",
+      "cause": "full_text_review_and_bibliography_use_the_same_acl_anthology_record",
+      "gate_effect": "source_identity_gate_passed_human_claim_approval_still_required"
+    },
+    {
+      "citation_key": "qwen3.5",
+      "automated_result": "official_model_card_verified",
+      "first_page_result": "not_applicable_markdown_source",
+      "cause": "official_model_card_is_the_direct_source_for_model_identity",
+      "gate_effect": "model_advisory_blocked_pending_bibliography_source_reconciliation"
+    },
+    {
+      "citation_key": "ma2026reflection",
+      "automated_result": "full_text_mapped",
+      "first_page_result": "method_name_alignment_unresolved",
+      "cause": "the manuscript names SAGE while the reviewed specialist anchor names MHFA",
+      "gate_effect": "model_advisory_blocked_pending_method_identity_reconciliation"
     }
   ],
   "blocking_requirements": [
-    "independent_review_of_12_full_text_evidence_candidates",
+    "model_meta_reconciliation_for_claims_0010_0012_0013",
+    "authorized_human_approval_of_13_direct_source_claims",
     "final_refgate_submission_audit_with_zero_blocking_claims"
   ]
 }

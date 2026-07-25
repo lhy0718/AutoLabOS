@@ -1,120 +1,180 @@
 {
   "schema_version": "1.0",
-  "claim_ceiling": "development_instrument_validation",
+  "claim_ceiling": "registered_fault_families_only",
   "claims": [
     {
-      "claim_id": "protocol-contract",
-      "claim": "The implementation validates suite confinement, split leakage, artifact hashes, complete per-trial coverage, and explicit human or deterministic gold provenance.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "controlled-certification-inventory",
+      "claim": "The controlled benchmark contains 24 development bases and 120 development cases, 120 test bases and 720 test cases, and a separate oracle replay verifies all 840 cases against executable registry gold.",
+      "status": "supported",
       "artifact_refs": [
-        "src/core/benchmark/promotionBenchmark.ts",
-        "src/core/benchmark/promotionBenchmarkBuilder.ts",
-        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
-        "tests/promotionBenchmark.test.ts",
-        "tests/promotionBenchmarkBuilder.test.ts",
-        "tests/promotionBenchmarkAdjudication.test.ts"
+        "outputs/promotion-governance/controlled-benchmark-v5/controlled-benchmark-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/development-suite/suite.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/suite.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/oracle/registry-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/oracle/gold-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/oracle/split-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/oracle/oracle-report.json",
+        "outputs/promotion-governance/controlled-deterministic-predictions-v20/system-run-manifest.json",
+        "src/core/benchmark/promotionBenchmarkDeterministicOracleCertification.ts",
+        "tests/promotionBenchmarkDeterministicOracle.test.ts"
       ]
     },
     {
-      "claim_id": "deterministic-oracle-contract",
-      "claim": "The implementation can generate source-, base-, and fault-family-disjoint development and test suites, derive gold from a frozen fault registry, independently replay every mutation, quarantine drift, and keep controlled claims below the registered-fault-family ceiling without human adjudication.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "development-test-family-inventory",
+      "claim": "Development uses citation-support mismatch, comparison-evidence gap, hidden failed execution, and stale persisted state; test uses claim-evidence conflict, executed-budget mismatch, repeated-run provenance gap, result-figure summary-state conflict, and unsupported-claim contract-flag state.",
+      "status": "supported",
       "artifact_refs": [
+        "outputs/promotion-governance/controlled-benchmark-v5/controlled-benchmark-manifest.json",
         "src/core/benchmark/promotionBenchmarkControlledCorpus.ts",
-        "src/core/benchmark/promotionBenchmarkDeterministicOracleCertification.ts",
-        "src/core/benchmark/promotionBenchmarkDeterministicOracleContract.ts",
-        "tests/promotionBenchmarkDeterministicOracle.test.ts",
+        "src/core/benchmark/promotionBenchmarkVariants.ts"
+      ]
+    },
+    {
+      "claim_id": "split-and-construct-boundary",
+      "claim": "The partitions are exact-source-hash-disjoint and fault-family-disjoint but reuse semantically equivalent generated bases, and the two metadata-state test mutations account for 240 of 600 fault cases. The frozen suite does not bind the historical corpus-generator source at execution time; oracle replay establishes artifact consistency, not that historical identity, and exact hash disjointness does not establish held-out-source generalization or content-level figure and claim fault coverage.",
+      "status": "supported_with_scope_limitation",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-benchmark-v5/controlled-benchmark-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/development-suite/suite.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/suite.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/oracle/split-manifest.json",
+        "src/core/benchmark/promotionBenchmarkControlledCorpus.ts",
+        "src/core/benchmark/promotionBenchmarkVariants.ts"
+      ]
+    },
+    {
+      "claim_id": "comparator-mechanism-boundary",
+      "claim": "The presence condition checks file presence and the advisory condition copies full-audit findings while forcing promote, so the deterministic contrasts are contract-mechanism ablations rather than comparative effectiveness; the fragment-model runs are a separate abstention sanity check, not a calibrated comparator.",
+      "status": "supported_with_scope_limitation",
+      "artifact_refs": [
+        "src/core/benchmark/promotionBenchmarkSystems.ts",
+        "src/core/benchmark/promotionBenchmarkProviderRunner.ts",
+        "outputs/promotion-governance/controlled-deterministic-predictions-v20/system-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-a/prompt-pack/requests.jsonl"
+      ]
+    },
+    {
+      "claim_id": "controlled-false-promotion",
+      "claim": "On the fixed suite of 600 registered test fault cases, the fail-closed audit had zero false promotions while the presence checklist, always-promote condition, and advisory ablation promoted every fault case.",
+      "status": "supported",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-conformance-v12/promotion-confirmatory-gate.json",
+        "outputs/promotion-governance/controlled-conformance-v12/score/promotion-score.json",
+        "outputs/promotion-governance/controlled-conformance-v12/scored-predictions.jsonl",
+        "outputs/promotion-governance/controlled-deterministic-predictions-v20/system-run-manifest.json"
+      ]
+    },
+    {
+      "claim_id": "controlled-clean-retention",
+      "claim": "The fail-closed audit promoted all 120 generated clean controls; this is a fixed-suite regression result, not an independent clean-population estimate.",
+      "status": "supported_with_scope_limitation",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-conformance-v12/score/promotion-score.json",
+        "outputs/promotion-governance/controlled-conformance-v12/scored-predictions.jsonl",
+        "outputs/promotion-governance/controlled-benchmark-v5/controlled-benchmark-manifest.json",
+        "outputs/promotion-governance/controlled-benchmark-v5/certified-test-suite/suite.json"
+      ]
+    },
+    {
+      "claim_id": "advisory-binding-ablation",
+      "claim": "The advisory audit had blocker F1 and repair-owner accuracy of one but promoted every fault case; all 480 faulty predictions with an emitted blocking concern were promoted, so conditional concern-acceptance conflict was one.",
+      "status": "supported",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-conformance-v12/score/promotion-score.json",
+        "outputs/promotion-governance/controlled-conformance-v12/scored-predictions.jsonl",
+        "src/core/benchmark/promotionBenchmark.ts"
+      ]
+    },
+    {
+      "claim_id": "model-input-boundary",
+      "claim": "Model prompts provide the same 96--98-character Results fragment across sibling variants, omit case-specific artifact paths, mutation labels, case IDs, gold metadata, and scored concern and repair-owner vocabularies, and retain the constant output reference paper/main.tex.",
+      "status": "supported_with_task_gold_mismatch",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-provider-v4-a/prompt-pack/requests.jsonl",
+        "outputs/promotion-governance/controlled-provider-v4-a/prompt-pack/private-request-map.json",
+        "src/core/benchmark/promotionBenchmarkPromptPack.ts",
+        "src/core/benchmark/promotionBenchmarkProviderRunner.ts"
+      ]
+    },
+    {
+      "claim_id": "model-trial-denominators-and-outcome",
+      "claim": "Each fragment-model trial contains 600 faulty and 120 clean predictions and blocks all 720 cases; the pooled row contains 1,800 faulty and 360 clean prediction records, with decision accuracy .5, macro-F1 .1667, blocker precision, recall, and F1 zero, repair-owner accuracy zero, and trace coverage one. These are fragment-level abstention diagnostics, not clean-utility or actionability estimates.",
+      "status": "supported_with_task_gold_mismatch",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-provider-v4-a/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-b/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-c/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-conformance-v12/provider-aggregate/predictions.jsonl",
+        "outputs/promotion-governance/controlled-conformance-v12/score/promotion-score.json"
+      ]
+    },
+    {
+      "claim_id": "finite-suite-gate-rules",
+      "claim": "H1--H4 use exact observed fixed-suite values for their post-hoc threshold decisions; empirical base_bundle_id bootstrap percentile intervals are sensitivity diagnostics only, remain degenerate for uniform boundary outcomes, and are not population confidence intervals or decision bounds.",
+      "status": "supported",
+      "artifact_refs": [
+        "outputs/promotion-governance/controlled-conformance-v12/promotion-confirmatory-gate.json",
+        "src/core/benchmark/promotionBenchmarkConfirmatoryGate.ts",
+        "src/core/benchmark/promotionBenchmarkConfirmatoryContract.ts",
+        "src/core/benchmark/promotionBenchmark.ts",
         "tests/promotionBenchmarkConfirmatoryGate.test.ts"
       ]
     },
     {
-      "claim_id": "blind-double-adjudication-contract",
-      "claim": "The implementation exports gold-blind annotation packs, rejects incomplete or non-independent labels, requires third-party resolution for disagreements, preserves adjudication traces, and emits review-to-meta-harness repair targets.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "recovery-routing-boundary",
+      "claim": "Recovery starts from fail-closed artifact-audit predictions with decision and repair-owner accuracy one and is evaluated by the same audit; it does not test erroneous routing or independent semantic validation.",
+      "status": "supported_with_scope_limitation",
       "artifact_refs": [
-        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
-        "src/core/metaHarness/metaHarness.ts",
-        "tests/promotionBenchmarkAdjudication.test.ts",
-        "tests/metaHarness.test.ts"
+        "outputs/promotion-governance/controlled-conformance-v12/score/promotion-score.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repair-execution-manifest.json",
+        "outputs/promotion-governance/controlled-deterministic-predictions-v20/system-run-manifest.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repaired-run/system-run-manifest.json",
+        "src/core/benchmark/promotionBenchmarkControlledRecovery.ts",
+        "src/core/benchmark/promotionBenchmarkRepairExecution.ts"
       ]
     },
     {
-      "claim_id": "confirmatory-intake-freeze-contract",
-      "claim": "The implementation rejects confirmatory input below 72 source-hash-distinct bases or 720 cases, duplicate or mutation-incompatible sources, and insufficient source-family or operator-group diversity; derives opaque base identities from source hashes; emits held-out clean-plus-nine recipes; and keeps every pre-adjudication label and paper-eligibility state provisional.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "recovery-family-results",
+      "claim": "Same-gate reacceptance is 120 of 120 for each of five fault families; exact clean-tree restoration is 120 of 120 for executed-budget mismatch, result-figure summary state, and unsupported-claim contract flag, and zero of 120 for claim-evidence conflict and repeated-run provenance, totaling 360 of 600 with no clean-control regression. Claim-evidence repair restores only an existing valid claim-bound evidence ID and does not invent removed citation metadata.",
+      "status": "supported",
       "artifact_refs": [
-        "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
-        "src/core/benchmark/promotionBenchmarkBuilder.ts",
-        "src/core/benchmark/promotionBenchmarkVariants.ts",
-        "tests/promotionBenchmarkConfirmatoryIntake.test.ts"
+        "outputs/promotion-governance/controlled-conformance-v12/recovery/promotion-recovery-report.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/recovery-manifest.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repair-execution-manifest.json",
+        "outputs/promotion-governance/controlled-deterministic-predictions-v20/system-run-manifest.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repaired-run/system-run-manifest.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repaired-suite/artifacts/test-case-1-2-repaired-b5b2b7a45a2f/paper/evidence_links.json",
+        "outputs/promotion-governance/controlled-node-recovery-v20/repaired-suite/artifacts/test-case-1-2-repaired-b5b2b7a45a2f/paper/refgate_claims.tsv",
+        "src/core/nodes/promotionArtifactRepairAdapters.ts",
+        "tests/promotionArtifactRepairAdapters.test.ts"
       ]
     },
     {
-      "claim_id": "mutation-isolation-hard-gate",
-      "claim": "The implementation exports clean/mutated audit pairs without promotion labels, requires two independent full-coverage isolation audits, blocks on confounds or integrity failures, binds reports to suite and artifact hashes, separates declared auditor roles, and feeds repair targets to review and the meta-harness.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "provider-output-provenance-boundary",
+      "claim": "The manuscript-only condition completed three 720-request local runs and 2,160 predictions with distinct self-recorded output bundles; receipt distinctness is not statistical replication, and the records do not establish external provider identity, statistical independence, independently recomputable receipt preimages, or execution-time source identity.",
+      "status": "supported_with_local_runtime_boundary",
       "artifact_refs": [
-        "src/core/benchmark/promotionBenchmarkMutationAudit.ts",
-        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
-        "src/core/benchmark/promotionBenchmark.ts",
-        "tests/promotionBenchmarkMutationAudit.test.ts",
-        "tests/promotionBenchmarkAdjudication.test.ts"
+        "outputs/promotion-governance/controlled-conformance-v12/provider-aggregate/provider-run-aggregate-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-a/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-b/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-c/provider-run-manifest.json"
       ]
     },
     {
-      "claim_id": "execution-provenance-hard-gate",
-      "claim": "The implementation rejects non-real, failed, incomplete, hash-drifted, or duplicate confirmatory execution records and requires artifact-verified execution provenance before paper eligibility.",
-      "status": "supported_by_code_and_tests",
+      "claim_id": "resumable-provider-execution",
+      "claim": "Three earlier schema-1.0 attempt ledgers self-report stale-running recovery counts of 499, 479, and 479 responses before all three 720-request trials completed. They record observed manifest and artifact hashes but do not preserve checkpoint preimage files, independently verify their recorded prefix contents, or establish the interruption cause; current runner code requires hash-bound preimage snapshots for future stale takeovers.",
+      "status": "supported_with_scope_limitation",
       "artifact_refs": [
-        "src/core/benchmark/promotionBenchmarkExecutionEvidence.ts",
-        "src/core/benchmark/promotionBenchmarkConfirmatoryIntake.ts",
-        "src/core/benchmark/promotionBenchmarkAdjudication.ts",
-        "tests/promotionBenchmarkExecutionEvidence.test.ts",
-        "tests/promotionBenchmarkConfirmatoryIntake.test.ts",
-        "tests/promotionBenchmarkAdjudication.test.ts"
-      ]
-    },
-    {
-      "claim_id": "development-four-system-summary",
-      "claim": "On the synthetic development suite, the fail-closed audit had zero false promotions and the advisory audit had a concern-acceptance conflict rate of one.",
-      "status": "development_only",
-      "artifact_refs": [
-        "papers/promotion-governance/development/promotion-score.json",
-        "papers/promotion-governance/development/predictions.jsonl",
-        "papers/promotion-governance/development/corpus-manifest.json"
-      ]
-    },
-    {
-      "claim_id": "pre-strengthening-failures",
-      "claim": "Before strengthening, the artifact audit missed repeated-run provenance, budget mismatch, and stale-state cases and routed them to run_experiments and review.",
-      "status": "development_only",
-      "artifact_refs": [
-        "papers/promotion-governance/development/pre-strengthening/promotion-score.json",
-        "papers/promotion-governance/development/pre-strengthening/review/promotion_benchmark_failure_analysis.json",
-        "papers/promotion-governance/development/pre-strengthening/review/node_strengthening_recommendations.json"
-      ]
-    },
-    {
-      "claim_id": "registered-fault-family-effectiveness",
-      "claim": "Fail-closed promotion governance reduces false promotion on held-out registered fault families while retaining clean controls.",
-      "status": "blocked",
-      "missing_evidence": [
-        "oracle_certified_controlled_test_suite",
-        "at_least_720_held_out_cases",
-        "three_paper_eligible_real_model_trials",
-        "complete_comparator_and_ablation_predictions",
-        "post_repair_recovery_runs"
-      ]
-    },
-    {
-      "claim_id": "naturalistic-generalization",
-      "claim": "Controlled benchmark results generalize to naturally occurring defects in independently curated external research bundles.",
-      "status": "blocked",
-      "missing_evidence": [
-        "external_naturalistic_corpus",
-        "independent_human_labels",
-        "external_source_and_license_provenance",
-        "prespecified_external_validation_analysis"
+        "outputs/promotion-governance/controlled-provider-v4-a/provider-attempt-failures.jsonl",
+        "outputs/promotion-governance/controlled-provider-v4-a/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-b/provider-attempt-failures.jsonl",
+        "outputs/promotion-governance/controlled-provider-v4-b/provider-run-manifest.json",
+        "outputs/promotion-governance/controlled-provider-v4-c/provider-attempt-failures.jsonl",
+        "outputs/promotion-governance/controlled-provider-v4-c/provider-run-manifest.json",
+        "src/core/benchmark/promotionBenchmarkProviderRunner.ts",
+        "src/core/benchmark/promotionBenchmarkProviderAggregate.ts",
+        "tests/promotionBenchmarkProviderRunner.test.ts",
+        "tests/promotionBenchmarkProviderAggregate.test.ts"
       ]
     }
   ]

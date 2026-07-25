@@ -370,7 +370,7 @@ and full-label agreement. A completed suite is marked
   marked `mutation_isolation_status=double_verified`,
 - the suite is marked `execution_provenance_status=artifact_verified`,
 - the source evidence class is `external_real_run`,
-- all cases are in the held-out test split,
+- all cases are in the test-designated split frozen before scoring,
 - at least 72 source-hash-distinct base bundles are present,
 - at least 720 cases are present, and
 - every base bundle has one clean control and all nine required fault-family
@@ -426,9 +426,10 @@ concern-acceptance conflict. The scorer also reports decision macro-F1, clean
 promotion accuracy, blocker precision/recall/F1, repair-owner exact match,
 trace coverage, latency, and cost. Every `(system_id, trial_id)` must cover the
 complete suite; coverage cannot be borrowed across trials. Pairwise system
-comparisons report case-level effect differences, 5,000-replicate bootstrap
-intervals clustered by `base_bundle_id`, and exact paired sign tests over base
-bundles. Scores from suites with `paper_claim_eligible=false` are marked
+comparisons report case-level effect differences and 5,000-replicate bootstrap
+intervals clustered by `base_bundle_id`. Inferential sign-test fields remain
+null for the post-hoc fixed suite. Scores from suites with
+`paper_claim_eligible=false` are marked
 exploratory even when validation passes.
 
 Failed decisions can be converted into the review artifacts consumed by the

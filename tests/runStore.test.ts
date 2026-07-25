@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { createHash } from "node:crypto";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -136,6 +137,7 @@ describe("RunStore", () => {
       JSON.stringify({ paper_ready: true, readiness_state: "paper_ready" }, null, 2),
       "utf8"
     );
+    await writePassingReferenceAuthority(path.join(runRoot, "paper"));
 
     run.status = "completed";
     run.currentNode = "write_paper";
@@ -905,3 +907,35 @@ describe("RunStore", () => {
     expect(plainRun?.usage).toBeUndefined();
   });
 });
+
+async function writePassingReferenceAuthority(paperDir: string): Promise<void> {
+  const manuscript = "\\section{Results}\n";
+  const manuscriptSha256 = createHash("sha256").update(manuscript, "utf8").digest("hex");
+  await writeFile(path.join(paperDir, "main.tex"), manuscript, "utf8");
+  await writeFile(
+    path.join(paperDir, "reference_evidence_status.json"),
+    `${JSON.stringify({
+      schema_version: "1.0",
+      manuscript: "paper/main.tex",
+      manuscript_projection: {
+        source_ref: "paper/main.tex",
+        package_ref: "paper/main.tex",
+        source_sha256: manuscriptSha256,
+        package_content_sha256: manuscriptSha256
+      },
+      submission_gate_passed: true,
+      summary: {
+        citation_bearing_claim_count: 0,
+        independently_checked_claim_count: 0,
+        missing_full_text_claim_count: 0
+      },
+      blocking_requirements: []
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(paperDir, "refgate_claims.tsv"),
+    "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n",
+    "utf8"
+  );
+}

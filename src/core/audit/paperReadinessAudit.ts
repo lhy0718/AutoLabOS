@@ -13,9 +13,13 @@ import {
   parseReferenceClaimsTsv,
   type ReferenceClaimRow
 } from "../referenceClaimReview.js";
+import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
 import { writeJsonFile } from "../../utils/fs.js";
 import { buildClaimEvidenceExport, type ClaimEvidenceExport } from "./claimEvidenceExport.js";
-import { materializeExternalAuditArtifacts } from "./externalArtifactIntake.js";
+import {
+  materializeExternalAuditArtifacts,
+  type ExternalArtifactIntakeBindings
+} from "./externalArtifactIntake.js";
 import { scoreLiteratureDiscoveryAudit, type LiteratureDiscoveryAuditScore } from "./literatureDiscoveryAudit.js";
 import { buildAuditTimeline, type AuditTimeline } from "./auditTimeline.js";
 import { buildClaimPromotionTimeline, type BlockedClaimEvents, type ClaimPromotionTimeline } from "./claimPromotionTimeline.js";
@@ -104,6 +108,7 @@ export interface PaperReadinessAuditSummary {
     autonomy_metrics_path: string;
     external_intake_manifest_path?: string;
   };
+  external_intake?: ExternalArtifactIntakeBindings;
   top_blockers: PaperReadinessAuditBlocker[];
   unsupported_claims: PaperReadinessAuditUnsupportedClaim[];
   baseline_comparator_status: {
@@ -130,6 +135,8 @@ export interface PaperReadinessAuditSummary {
   execution_integrity_findings: PaperReadinessAuditExecutionIntegrityFinding[];
   claim_ceiling: {
     allowed_level: string;
+    audit_output_level?: string;
+    declared_scope_level?: string;
     rules_applied: string[];
   };
   paper_readiness: {
@@ -245,7 +252,7 @@ export async function runPaperReadinessAudit(
     cwd,
     outDir,
     external: Boolean(externalIntake),
-    externalIntakeManifestPresent: Boolean(externalIntake),
+    externalIntakeBindings: externalIntake?.bindings,
     artifacts
   });
   const summary = buildResult.summary;
@@ -273,7 +280,7 @@ async function buildAuditSummary(input: {
   cwd: string;
   outDir: string;
   external: boolean;
-  externalIntakeManifestPresent: boolean;
+  externalIntakeBindings?: ExternalArtifactIntakeBindings;
   artifacts: LoadedRunArtifacts;
 }): Promise<PaperReadinessAuditBuildResult> {
   const contract = await validateGovernanceArtifactContract({
@@ -290,11 +297,17 @@ async function buildAuditSummary(input: {
       ? "missing_or_empty" as const
       : "present" as const
   }));
-  const resultTable = scoreResultTableArtifact(input.artifacts.resultTable);
+  const declaredAcademicCeiling = stringValue(input.artifacts.academicClaimEvidenceMap?.claim_ceiling);
+  const boundDesignClaimCeilings = [...new Set(input.artifacts.designContractPayloads
+    .map(({ payload }) => stringValue(payload.claim_ceiling))
+    .filter((value): value is string => Boolean(value)))];
+  const claimAuthorization = resolveComparisonClaimAuthorization(input.artifacts.designContractPayloads);
+  const resultTable = scoreResultTableArtifact(input.artifacts.resultTable, claimAuthorization);
   const claimEvidence = scoreClaimEvidenceArtifacts({
     claimEvidenceTableArtifact: input.artifacts.claimEvidenceTable,
     claimStatusTableArtifact: input.artifacts.claimStatusTable,
     evidenceLinksArtifact: input.artifacts.evidenceLinks,
+    evidenceStoreArtifact: input.artifacts.evidenceStoreLines,
     availableArtifactRefs: input.artifacts.availableArtifactRefs
   });
   const figureAudit = scoreFigureAudit({
@@ -317,6 +330,10 @@ async function buildAuditSummary(input: {
   const unsupportedClaims = collectUnsupportedClaims(input.artifacts, claimEvidence);
   const citationSupportIssues = collectCitationSupportIssues(input.artifacts);
   const designContractFindings = collectDesignContractFindings(input.artifacts);
+  const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
+  const referenceAuthorityGate = await inspectReferenceAuthorityGate(
+    path.join(input.artifacts.runRoot, "paper")
+  );
   const researchScaleFindings = [
     ...collectResearchScaleFindings(input.artifacts),
     ...collectAcademicPackageFindings(input.artifacts)
@@ -325,7 +342,6 @@ async function buildAuditSummary(input: {
   const literatureDiscovery = scoreLiteratureDiscoveryAudit({
     payloads: input.artifacts.literatureDiscoveryPayloads
   });
-  const paperReady = input.artifacts.paperReadiness?.paper_ready === true;
   const readinessState = stringValue(input.artifacts.paperReadiness?.readiness_state);
   const runStatus = getRunStatus(input.artifacts.runRecord);
   const activeRun = isActiveRunStatus(runStatus);
@@ -338,6 +354,16 @@ async function buildAuditSummary(input: {
   const writePaperFailureMessage = getWritePaperFailureMessage(input.artifacts.runRecord);
   const blockers: PaperReadinessAuditBlocker[] = [];
   const rulesApplied: string[] = [];
+
+  if ((paperReady || referenceAuthorityGate.status_present || referenceAuthorityGate.claims_present)
+      && referenceAuthorityGate.status !== "pass") {
+    blockers.push({
+      code: "reference_authority_gate_not_passed",
+      severity: "blocker",
+      message: `Canonical reference authority validation failed: ${referenceAuthorityGate.reason}`,
+      source: "referenceAuthorityGate"
+    });
+  }
 
   if (contract.issues.length > 0) {
     const affectedPaths = [...new Set(contract.issues.map((issue) => issue.file_path))].sort();
@@ -560,8 +586,9 @@ async function buildAuditSummary(input: {
       source: "claimCeilingAudit"
     });
   }
-  const declaredAcademicCeiling = stringValue(input.artifacts.academicClaimEvidenceMap?.claim_ceiling);
-  if (declaredAcademicCeiling && declaredAcademicCeiling !== allowedLevel) {
+  if (declaredAcademicCeiling
+      && isAuditOutputClaimLevel(declaredAcademicCeiling)
+      && declaredAcademicCeiling !== allowedLevel) {
     blockers.push({
       code: "claim_ceiling_conflict",
       severity: "blocker",
@@ -569,7 +596,24 @@ async function buildAuditSummary(input: {
       source: "claimCeilingAudit"
     });
   }
+  if (declaredAcademicCeiling
+      && boundDesignClaimCeilings.length > 0
+      && (boundDesignClaimCeilings.length !== 1 || boundDesignClaimCeilings[0] !== declaredAcademicCeiling)) {
+    blockers.push({
+      code: "claim_ceiling_design_contract_conflict",
+      severity: "blocker",
+      message: `Declared academic claim ceiling ${declaredAcademicCeiling} is not uniquely bound by the design contract ceiling(s): ${boundDesignClaimCeilings.join(", ")}.`,
+      source: "claimCeilingAudit"
+    });
+  }
   const verdict = resolveVerdict(blockers);
+  const effectiveAllowedLevel = declaredAcademicCeiling && !isAuditOutputClaimLevel(declaredAcademicCeiling)
+    ? declaredAcademicCeiling
+    : allowedLevel;
+  if (effectiveAllowedLevel !== allowedLevel) {
+    rulesApplied.push(`declared scope ceiling preserved -> ${effectiveAllowedLevel}`);
+    rulesApplied.push(`generic audit output level -> ${allowedLevel}`);
+  }
   const relativeOutDir = relativePath(input.cwd, input.outDir, "<output>");
   const claimEvidenceExport = buildClaimEvidenceExport({
     claimEvidenceTableArtifact: input.artifacts.claimEvidenceTable,
@@ -583,7 +627,7 @@ async function buildAuditSummary(input: {
     blockers,
     unsupportedClaims,
     citationSupportIssues,
-    allowedClaimLevel: allowedLevel
+    allowedClaimLevel: effectiveAllowedLevel
   });
   const reviewDecision = stringValue(input.artifacts.reviewDecision?.outcome)
     || stringValue(input.artifacts.reviewDecision?.decision)
@@ -594,7 +638,7 @@ async function buildAuditSummary(input: {
     resultTableCompleteRows: resultTable.complete_row_count,
     figureAuditStatus: figureAudit.audit_status,
     reviewDecision,
-    claimCeilingAllowedLevel: allowedLevel,
+    claimCeilingAllowedLevel: effectiveAllowedLevel,
     paperReadinessVerdict: verdict,
     paperReady,
     blockers
@@ -637,10 +681,11 @@ async function buildAuditSummary(input: {
       blocked_claim_events_path: path.posix.join(relativeOutDir, "blocked-claim-events.json"),
       done_condition_path: path.posix.join(relativeOutDir, "done-condition-audit.json"),
       autonomy_metrics_path: path.posix.join(relativeOutDir, "autonomy-metrics.json"),
-      ...(input.externalIntakeManifestPresent
-        ? { external_intake_manifest_path: path.posix.join(relativeOutDir, "external-intake-manifest.json") }
+      ...(input.externalIntakeBindings
+        ? { external_intake_manifest_path: input.externalIntakeBindings.manifest.path }
         : {})
     },
+    ...(input.externalIntakeBindings ? { external_intake: input.externalIntakeBindings } : {}),
     top_blockers: blockers,
     unsupported_claims: unsupportedClaims,
     baseline_comparator_status: {
@@ -651,7 +696,8 @@ async function buildAuditSummary(input: {
           : "present",
       missing_baseline_count: resultTable.missing_baseline_count,
       missing_comparator_count: resultTable.missing_comparator_count,
-      comparative_claim_allowed: resultTable.superiority_claim_supported && resultTable.missing_baseline_count === 0
+      comparative_claim_allowed: resultTable.comparative_claim_supported
+        && resultTable.missing_baseline_count === 0
     },
     result_table_completeness: {
       measured: resultTable.measured,
@@ -673,7 +719,11 @@ async function buildAuditSummary(input: {
     research_scale_findings: researchScaleFindings,
     execution_integrity_findings: executionIntegrityFindings,
     claim_ceiling: {
-      allowed_level: allowedLevel,
+      allowed_level: effectiveAllowedLevel,
+      audit_output_level: allowedLevel,
+      ...(declaredAcademicCeiling && !isAuditOutputClaimLevel(declaredAcademicCeiling)
+        ? { declared_scope_level: declaredAcademicCeiling }
+        : {}),
       rules_applied: [...new Set(rulesApplied)]
     },
     paper_readiness: {
@@ -720,6 +770,52 @@ async function buildAuditSummary(input: {
     },
     next_action_checklist: buildNextActions(blockers)
     }
+  };
+}
+
+function isAuditOutputClaimLevel(value: string): boolean {
+  return new Set([
+    "blocked_until_failed_run_is_visible",
+    "system_validation_note_only",
+    "research_memo_without_quantitative_claims",
+    "descriptive_only_no_comparative_claims",
+    "result_claims_allowed_related_work_downgraded",
+    "needs_repair_before_manuscript_promotion",
+    "conditional_claims_with_artifact_links"
+  ]).has(value);
+}
+
+function resolveComparisonClaimAuthorization(
+  payloads: Array<{ path: string; payload: Record<string, unknown> }>
+): {
+  comparativeClaimAuthorized: boolean;
+  superiorityClaimAuthorized: boolean;
+  superiorityPrimaryMetrics: string[];
+} {
+  const comparativeDeclarations = payloads
+    .map(({ payload }) => payload.comparative_claim_authorized)
+    .filter((value): value is boolean => typeof value === "boolean");
+  const superiorityDeclarations = payloads
+    .map(({ payload }) => payload.superiority_claim_authorized)
+    .filter((value): value is boolean => typeof value === "boolean");
+  const primaryMetricDeclarations = payloads
+    .map(({ payload }) => payload.superiority_primary_metrics)
+    .filter((value): value is string[] =>
+      Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim().length > 0)
+    );
+  const firstPrimaryMetrics = primaryMetricDeclarations[0] ?? [];
+  const primaryMetricsAgree = primaryMetricDeclarations.length > 0
+    && primaryMetricDeclarations.every((metrics) =>
+      JSON.stringify([...metrics].sort()) === JSON.stringify([...firstPrimaryMetrics].sort())
+    );
+  const comparativeClaimAuthorized = comparativeDeclarations.length > 0
+    && comparativeDeclarations.every((value) => value);
+  return {
+    comparativeClaimAuthorized,
+    superiorityClaimAuthorized: comparativeClaimAuthorized
+      && superiorityDeclarations.length > 0
+      && superiorityDeclarations.every((value) => value),
+    superiorityPrimaryMetrics: primaryMetricsAgree ? [...firstPrimaryMetrics] : []
   };
 }
 
@@ -841,6 +937,7 @@ function normalizeAcademicClaimStatusTable(
       claim_id: stringValue(claim.claim_id),
       statement: stringValue(claim.statement) || stringValue(claim.claim),
       status: normalizeAcademicClaimStatus(stringValue(claim.status)),
+      declared_status: stringValue(claim.status),
       artifact_refs: stringArray(claim.artifact_refs),
       citation_refs: stringArray(claim.citation_refs),
       reproduction_trace_present: stringArray(claim.artifact_refs).length > 0
@@ -849,7 +946,14 @@ function normalizeAcademicClaimStatusTable(
 }
 
 function normalizeAcademicClaimStatus(status: string | undefined): string {
-  if (status === "supported_by_code_and_tests") return "verified";
+  if (
+    status === "verified"
+    || status === "supported"
+    || status === "supported_by_code_and_tests"
+    || status === "supported_with_scope_limitation"
+    || status === "supported_with_task_gold_mismatch"
+    || status === "supported_with_local_runtime_boundary"
+  ) return "verified";
   if (status === "development_only") return "development_only";
   if (status === "blocked") return "blocked";
   return "unverified";
@@ -1086,7 +1190,9 @@ function collectResearchScaleFindings(
 function collectAcademicPackageFindings(
   artifacts: LoadedRunArtifacts
 ): PaperReadinessAuditResearchScaleFinding[] {
-  const findings: PaperReadinessAuditResearchScaleFinding[] = [];
+  const findings: PaperReadinessAuditResearchScaleFinding[] = [
+    ...collectReferenceAnchorFindings(artifacts)
+  ];
   const submissionStatus = artifacts.academicSubmissionStatus;
   const submissionRequirements = stringArray(submissionStatus?.blocking_requirements);
   if (submissionStatus?.paper_ready === true && submissionRequirements.length > 0) {
@@ -1125,6 +1231,17 @@ function collectAcademicPackageFindings(
   const missingFullTextCount = numberValue(referenceSummary?.missing_full_text_claim_count);
   const claimCount = numberValue(referenceSummary?.citation_bearing_claim_count);
   const checkedClaimCount = numberValue(referenceSummary?.independently_checked_claim_count);
+  if (!referenceStatus && artifacts.paperReadiness?.paper_ready === true) {
+    findings.push({
+      code: "reference_submission_gate_missing",
+      severity: "blocker",
+      message: "The package declares paper_ready=true without an authoritative reference evidence status.",
+      target_node: "analyze_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "reference_evidence_status.json"),
+      recheck_condition: "A reference evidence status exists and reports submission_gate_passed=true after independent claim review."
+    });
+  }
   if (referenceStatus && referenceStatus.submission_gate_passed !== true) {
     findings.push({
       code: "reference_submission_gate_not_passed",
@@ -1169,6 +1286,17 @@ function collectAcademicPackageFindings(
       recheck_condition: "The Refgate claim inventory parses with the canonical schema."
     });
   }
+  if (!artifacts.referenceClaimInventory.present && artifacts.paperReadiness?.paper_ready === true) {
+    findings.push({
+      code: "reference_claim_inventory_missing",
+      severity: "blocker",
+      message: "The package declares paper_ready=true without a canonical Refgate claim inventory.",
+      target_node: "analyze_papers",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "refgate_claims.tsv"),
+      recheck_condition: "The canonical Refgate claim inventory exists and every citation-bearing claim is checked."
+    });
+  }
 
   for (const claim of recordArray(artifacts.academicClaimEvidenceMap?.claims)) {
     if (stringValue(claim.status) !== "blocked") continue;
@@ -1190,6 +1318,90 @@ function collectAcademicPackageFindings(
   }
 
   return findings;
+}
+
+function collectReferenceAnchorFindings(
+  artifacts: LoadedRunArtifacts
+): PaperReadinessAuditResearchScaleFinding[] {
+  if (!artifacts.referenceClaimInventory.valid || artifacts.referenceClaimInventory.rows.length === 0) {
+    return [];
+  }
+  if (!artifacts.mainTexText) {
+    return [{
+      code: "citation_anchor_manuscript_missing",
+      severity: "blocker",
+      message: "Citation anchors cannot be checked because paper/main.tex is missing or empty.",
+      target_node: "write_paper",
+      target_surface: "validator",
+      evidence_path: path.posix.join("paper", "main.tex"),
+      recheck_condition: "A non-empty projected manuscript is present and every citation anchor is revalidated."
+    }];
+  }
+
+  const manuscriptLines = artifacts.mainTexText.split(/\r?\n/u);
+  return artifacts.referenceClaimInventory.rows.flatMap((claim) => {
+    const location = /^lines?\s+(\d+)(?:\s*[-\u2013]\s*(\d+))?$/iu.exec(claim.manuscript_location.trim());
+    const startLine = Number(location?.[1]);
+    const endLine = Number(location?.[2] || location?.[1]);
+    if (!location || startLine < 1 || endLine < startLine || endLine > manuscriptLines.length) {
+      return [{
+        code: `citation_anchor_invalid:${claim.claim_id}`,
+        severity: "blocker" as const,
+        message: `Citation claim ${claim.claim_id} has an invalid manuscript location: ${claim.manuscript_location}.`,
+        target_node: "analyze_papers",
+        target_surface: "validator" as const,
+        evidence_path: path.posix.join("paper", "refgate_claims.tsv"),
+        recheck_condition: "The one-based line anchor resolves inside paper/main.tex."
+      }];
+    }
+
+    const anchorLine = manuscriptLines[startLine - 1] || "";
+    const firstClaimToken = firstSignificantClaimToken(claim.claim_text);
+    const anchorTokens = new Set(normalizedTextTokens(anchorLine));
+    const claimStartsAtAnchor = Boolean(firstClaimToken && anchorTokens.has(firstClaimToken));
+    const citationWindow = manuscriptLines.slice(startLine - 1, Math.min(manuscriptLines.length, endLine + 4)).join("\n");
+    const citationKeys = citationKeysInTex(citationWindow);
+    if (claimStartsAtAnchor && citationKeys.has(claim.citation_key)) {
+      return [];
+    }
+
+    const failedChecks = [
+      !claimStartsAtAnchor ? `claim onset token ${firstClaimToken || "<none>"}` : undefined,
+      !citationKeys.has(claim.citation_key) ? `citation key ${claim.citation_key}` : undefined
+    ].filter((value): value is string => Boolean(value));
+    return [{
+      code: `citation_anchor_mismatch:${claim.claim_id}`,
+      severity: "blocker" as const,
+      message: `Citation claim ${claim.claim_id} anchor ${claim.manuscript_location} does not bind ${failedChecks.join(" and ")} to the projected manuscript.`,
+      target_node: "analyze_papers",
+      target_surface: "validator" as const,
+      evidence_path: path.posix.join("paper", "refgate_claims.tsv"),
+      recheck_condition: "The declared line contains the claim onset and its citation key appears in the same forward sentence window."
+    }];
+  });
+}
+
+const CLAIM_ANCHOR_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has", "have",
+  "in", "is", "it", "of", "on", "or", "that", "the", "their", "this", "to", "was", "were", "with"
+]);
+
+function normalizedTextTokens(value: string): string[] {
+  return value.toLowerCase().match(/[a-z0-9]+/gu) || [];
+}
+
+function firstSignificantClaimToken(value: string): string | undefined {
+  return normalizedTextTokens(value).find((token) => token.length >= 3 && !CLAIM_ANCHOR_STOP_WORDS.has(token));
+}
+
+function citationKeysInTex(value: string): Set<string> {
+  const keys = new Set<string>();
+  for (const match of value.matchAll(/\\cite[a-zA-Z*]*\s*(?:\[[^\]]*\]\s*){0,2}\{([^}]*)\}/gu)) {
+    for (const key of (match[1] || "").split(",")) {
+      if (key.trim()) keys.add(key.trim());
+    }
+  }
+  return keys;
 }
 
 function targetNodeForAcademicRequirement(requirement: string): string {
@@ -1238,8 +1450,15 @@ function collectExecutionIntegrityFindings(
   const plannedTrials = numberValue(plannedBudget?.trials);
   const executedTrials = numberValue(executedBudget?.trials);
   const developmentEvidence = recordValue(artifacts.academicSubmissionStatus?.development_evidence);
-  const externalTrialCount = numberValue(developmentEvidence?.real_model_trial_count);
-  const externalExecutionStatus = stringValue(developmentEvidence?.execution_provenance_status);
+  const evaluationContract = recordValue(artifacts.academicSubmissionStatus?.controlled_evaluation_contract)
+    || recordValue(artifacts.academicSubmissionStatus?.confirmatory_evaluation_contract);
+  const evaluationTrialCount = numberValue(evaluationContract?.real_model_trial_count);
+  const externalTrialCount = evaluationTrialCount > 0
+    ? evaluationTrialCount
+    : numberValue(developmentEvidence?.real_model_trial_count);
+  const externalExecutionStatus = evaluationTrialCount > 0
+    ? stringValue(evaluationContract?.execution_provenance_status)
+    : stringValue(developmentEvidence?.execution_provenance_status);
 
   if (externalTrialCount > 0 && externalExecutionStatus !== "verified") {
     findings.push({

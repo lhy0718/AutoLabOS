@@ -1024,7 +1024,7 @@ describe("InteractionSession", () => {
     );
   });
 
-  it("prepares review from analyze_results and logs the review summary", async () => {
+  it("prepares review through analyze_results and figure_audit in 10-node order", async () => {
     const run = await runStore.createRun({
       title: "Review command run",
       topic: "topic",
@@ -1044,6 +1044,10 @@ describe("InteractionSession", () => {
       updatedAt: new Date().toISOString(),
       note: "Analysis ready for review."
     };
+    current.graph.nodeStates.figure_audit = {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
     current.graph.nodeStates.review = {
       status: "pending",
       updatedAt: new Date().toISOString()
@@ -1051,8 +1055,8 @@ describe("InteractionSession", () => {
     current.graph.pendingTransition = {
       action: "advance",
       sourceNode: "analyze_results",
-      targetNode: "review",
-      reason: "Proceed to review.",
+      targetNode: "figure_audit",
+      reason: "Proceed to figure audit.",
       confidence: 0.88,
       autoExecutable: true,
       evidence: ["accuracy reached the configured target."],
@@ -1096,32 +1100,64 @@ describe("InteractionSession", () => {
       suggested_actions: ["/agent apply", "/agent jump analyze_results"]
     };
 
+    const callOrder: string[] = [];
     const approveCurrent = vi.fn(async (runId: string) => {
       const stored = await runStore.getRun(runId);
       if (!stored) {
         throw new Error("expected stored run");
       }
-      stored.currentNode = "review";
-      stored.graph.currentNode = "review";
+      callOrder.push(`approve:${stored.currentNode}`);
+      stored.currentNode = "figure_audit";
+      stored.graph.currentNode = "figure_audit";
       stored.status = "running";
       stored.graph.nodeStates.analyze_results.status = "completed";
-      stored.graph.nodeStates.review.status = "pending";
+      stored.graph.nodeStates.figure_audit.status = "pending";
       stored.graph.pendingTransition = undefined;
       await runStore.updateRun(stored);
       return stored;
     });
 
-    const runAgentWithOptions = vi.fn(async (runId: string) => {
+    const runAgentWithOptions = vi.fn(async (runId: string, nodeId: string) => {
+      callOrder.push(`run:${nodeId}`);
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      if (nodeId === "figure_audit") {
+        stored.currentNode = "figure_audit";
+        stored.graph.currentNode = "figure_audit";
+        stored.status = "paused";
+        stored.graph.nodeStates.figure_audit = {
+          status: "needs_approval",
+          updatedAt: new Date().toISOString(),
+          note: "Figure audit completed."
+        };
+        stored.graph.pendingTransition = {
+          action: "advance",
+          sourceNode: "figure_audit",
+          targetNode: "review",
+          reason: "Figure audit completed safely.",
+          confidence: 0.95,
+          autoExecutable: true,
+          evidence: ["Figure audit summary is available."],
+          suggestedCommands: ["/approve"],
+          generatedAt: new Date().toISOString()
+        };
+        await runStore.updateRun(stored);
+        return {
+          run: stored,
+          result: { status: "success" as const, summary: "Figure audit completed." }
+        };
+      }
+      if (nodeId !== "review") {
+        throw new Error(`unexpected node: ${nodeId}`);
+      }
       await fs.mkdir(path.join(runDir, "review"), { recursive: true });
       await fs.writeFile(
         path.join(runDir, "review", "review_packet.json"),
         `${JSON.stringify(reviewPacket, null, 2)}\n`,
         "utf8"
       );
-      const stored = await runStore.getRun(runId);
-      if (!stored) {
-        throw new Error("expected stored run");
-      }
       stored.currentNode = "review";
       stored.graph.currentNode = "review";
       stored.status = "paused";
@@ -1135,6 +1171,21 @@ describe("InteractionSession", () => {
         run: stored,
         result: { status: "success" as const, summary: "Review packet prepared." }
       };
+    });
+    const applyPendingTransition = vi.fn(async (runId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      callOrder.push(`apply:${stored.currentNode}`);
+      stored.currentNode = "review";
+      stored.graph.currentNode = "review";
+      stored.status = "running";
+      stored.graph.nodeStates.figure_audit.status = "completed";
+      stored.graph.nodeStates.review.status = "pending";
+      stored.graph.pendingTransition = undefined;
+      await runStore.updateRun(stored);
+      return stored;
     });
 
     const session = new InteractionSession({
@@ -1162,6 +1213,7 @@ describe("InteractionSession", () => {
       eventStream: new InMemoryEventStream(),
       orchestrator: {
         approveCurrent,
+        applyPendingTransition,
         runAgentWithOptions
       } as any,
       semanticScholarApiKeyConfigured: true
@@ -1173,17 +1225,131 @@ describe("InteractionSession", () => {
     const snapshot = session.snapshot();
 
     expect(result.logs.some((line) => line.includes("Approved analyze_results and moved into figure_audit."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("figure_audit finished: Figure audit completed."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Applied figure_audit advance and moved into review."))).toBe(true);
     expect(result.logs.some((line) => line.includes("review finished: Review packet prepared."))).toBe(true);
     expect(result.logs.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
     expect(result.logs.some((line) => line.includes("Blocking: Evidence bundle"))).toBe(true);
     expect(approveCurrent).toHaveBeenCalledWith(run.id);
-    expect(runAgentWithOptions).toHaveBeenCalledWith(
+    expect(applyPendingTransition).toHaveBeenCalledWith(run.id);
+    expect(runAgentWithOptions.mock.calls.map(([, nodeId]) => nodeId)).toEqual(["figure_audit", "review"]);
+    expect(runAgentWithOptions).toHaveBeenNthCalledWith(
+      1,
+      run.id,
+      "figure_audit",
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    );
+    expect(runAgentWithOptions).toHaveBeenNthCalledWith(
+      2,
       run.id,
       "review",
       expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
     );
+    expect(callOrder).toEqual([
+      "approve:analyze_results",
+      "run:figure_audit",
+      "apply:figure_audit",
+      "run:review"
+    ]);
     expect(snapshot.activeRunInsight?.title).toBe("Review packet");
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Review readiness: blocking"))).toBe(true);
+  });
+
+  it.each([
+    {
+      label: "a non-auto-executable human pause",
+      action: "pause_for_human" as const,
+      targetNode: "review" as const,
+      autoExecutable: false
+    },
+    {
+      label: "a backtrack",
+      action: "backtrack_to_design" as const,
+      targetNode: "design_experiments" as const,
+      autoExecutable: true
+    }
+  ])("stops /agent review when figure_audit returns $label", async ({ action, targetNode, autoExecutable }) => {
+    const run = await runStore.createRun({
+      title: "Guarded figure audit run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    const current = await runStore.getRun(run.id);
+    if (!current) {
+      throw new Error("expected run");
+    }
+    current.status = "running";
+    current.currentNode = "figure_audit";
+    current.graph.currentNode = "figure_audit";
+    current.graph.nodeStates.analyze_results.status = "completed";
+    current.graph.nodeStates.figure_audit.status = "pending";
+    await runStore.updateRun(current);
+
+    const runAgentWithOptions = vi.fn(async (runId: string, nodeId: string) => {
+      const stored = await runStore.getRun(runId);
+      if (!stored) {
+        throw new Error("expected stored run");
+      }
+      stored.status = "paused";
+      stored.currentNode = "figure_audit";
+      stored.graph.currentNode = "figure_audit";
+      stored.graph.nodeStates.figure_audit = {
+        status: "needs_approval",
+        updatedAt: new Date().toISOString(),
+        note: "Figure audit requires another decision."
+      };
+      stored.graph.pendingTransition = {
+        action,
+        sourceNode: "figure_audit",
+        targetNode,
+        reason: "Figure audit cannot safely advance to review.",
+        confidence: 0.9,
+        autoExecutable,
+        evidence: ["A blocking figure issue remains."],
+        suggestedCommands: ["/agent transition"],
+        generatedAt: new Date().toISOString()
+      };
+      await runStore.updateRun(stored);
+      return {
+        run: stored,
+        result: { status: "success" as const, summary: `${nodeId} paused.` }
+      };
+    });
+    const applyPendingTransition = vi.fn();
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["recent papers"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {
+        applyPendingTransition,
+        runAgentWithOptions
+      } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(run.id);
+
+    const result = await session.submitInput("/agent review");
+
+    expect(result.logs.some((line) => line.includes(`${action} -> ${targetNode}`))).toBe(true);
+    expect(result.logs.some((line) => line.includes("not a safe auto-executable advance to review"))).toBe(true);
+    expect(runAgentWithOptions).toHaveBeenCalledWith(
+      run.id,
+      "figure_audit",
+      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
+    );
+    expect(applyPendingTransition).not.toHaveBeenCalled();
   });
 
   it("surfaces manuscript quality insight during write_paper before falling back to the review packet", async () => {
@@ -1511,7 +1677,7 @@ describe("InteractionSession", () => {
     expect(snapshot.activeRunInsight?.lines.some((line) => line.includes("Paper readiness risks: blocked 1"))).toBe(true);
   });
 
-  it("stops /agent review when approving analyze_results backtracks to design", async () => {
+  it("does not consume an analyze_results backtrack when /agent review is requested", async () => {
     const run = await runStore.createRun({
       title: "Backtrack before review",
       topic: "topic",
@@ -1600,10 +1766,22 @@ describe("InteractionSession", () => {
     await session.selectRun(run.id);
 
     const result = await session.submitInput("/agent review");
+    const unchanged = await runStore.getRun(run.id);
 
-    expect(result.logs.some((line) => line.includes("Approved analyze_results. Next node is design_experiments."))).toBe(true);
-    expect(approveCurrent).toHaveBeenCalledWith(run.id);
+    expect(
+      result.logs.some((line) =>
+        line.includes(
+          "Analysis handoff stopped before figure audit: backtrack_to_design -> design_experiments (autoExecutable=false)"
+        )
+      )
+    ).toBe(true);
+    expect(result.logs.some((line) => line.includes("not a safe auto-executable advance to figure_audit"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Reason: Brief evidence gate failed."))).toBe(true);
+    expect(approveCurrent).not.toHaveBeenCalled();
     expect(runAgentWithOptions).not.toHaveBeenCalled();
+    expect(unchanged?.currentNode).toBe("analyze_results");
+    expect(unchanged?.graph.nodeStates.analyze_results.status).toBe("needs_approval");
+    expect(unchanged?.graph.pendingTransition).toEqual(current.graph.pendingTransition);
   });
 
   it("does not surface analyze-results insight when the active run is rewound before analyze_results", async () => {

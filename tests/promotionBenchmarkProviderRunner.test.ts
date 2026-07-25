@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -108,6 +108,90 @@ describe("promotion benchmark provider runner", () => {
       .rejects.toThrow("output already exists");
   });
 
+  it("holds an exclusive writer lease for the full provider request", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const pending = deferred<void>();
+    const started = deferred<void>();
+    const client: PromotionProviderClient = {
+      complete: vi.fn(async () => {
+        started.resolve();
+        await pending.promise;
+        return externalCompletion();
+      })
+    };
+
+    const firstRun = runPromotionBenchmarkProvider(
+      providerInput(workspace, suitePath, "leased-run"),
+      client
+    );
+    await started.promise;
+
+    await expect(runPromotionBenchmarkProvider(
+      providerInput(workspace, suitePath, "leased-run"),
+      { complete: vi.fn(async () => externalCompletion()) }
+    )).rejects.toThrow("locked by an active writer lease");
+
+    pending.resolve();
+    await expect(firstRun).resolves.toMatchObject({ manifest: { status: "completed" } });
+    await expect(stat(path.join(workspace, "leased-run.provider-run-lease"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("takes over a stale writer lease before starting a fresh run", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const leaseDir = path.join(workspace, "stale-lease-run.provider-run-lease");
+    await mkdir(leaseDir);
+    const staleAt = new Date(Date.now() - 11 * 60 * 1000).toISOString();
+    await writeFile(path.join(leaseDir, "owner.json"), `${JSON.stringify({
+      schema_version: "1.0",
+      owner_token: "ended-writer",
+      process_id: 1,
+      acquired_at: staleAt,
+      heartbeat_at: staleAt
+    })}\n`, "utf8");
+
+    const result = await runPromotionBenchmarkProvider(
+      providerInput(workspace, suitePath, "stale-lease-run"),
+      { complete: vi.fn(async () => externalCompletion()) }
+    );
+
+    expect(result.manifest.status).toBe("completed");
+    await expect(stat(leaseDir)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes no response or failure artifact after losing writer lease ownership", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    const pending = deferred<void>();
+    const started = deferred<void>();
+    const runPromise = runPromotionBenchmarkProvider(
+      providerInput(workspace, suitePath, "lost-lease-run"),
+      {
+        complete: vi.fn(async () => {
+          started.resolve();
+          await pending.promise;
+          return externalCompletion();
+        })
+      }
+    );
+    await started.promise;
+    const ownerPath = path.join(workspace, "lost-lease-run.provider-run-lease", "owner.json");
+    const owner = JSON.parse(await readFile(ownerPath, "utf8"));
+    await writeFile(ownerPath, `${JSON.stringify({ ...owner, owner_token: "replacement-writer" })}\n`, "utf8");
+    pending.resolve();
+
+    await expect(runPromise).rejects.toThrow("lost its exclusive writer lease");
+    await expect(stat(path.join(workspace, "lost-lease-run", "provider-outputs.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+    await expect(stat(path.join(workspace, "lost-lease-run", "provider-failures.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
   it("preserves partial artifacts and withholds predictions after malformed output", async () => {
     const workspace = await createWorkspace();
     const suitePath = await createSuite(workspace);
@@ -118,7 +202,9 @@ describe("promotion benchmark provider runner", () => {
         return {
           text: index === 1
             ? JSON.stringify({ decision: "promote", concerns: [], repair_owners: [] })
-            : "not-json"
+            : "not-json",
+          model: "gpt-5.4",
+          usage: { inputTokens: 10, outputTokens: 4, costUsd: 0 }
         };
       }
     };
@@ -149,6 +235,136 @@ describe("promotion benchmark provider runner", () => {
     await expect(stat(path.join(workspace, "failed-run", "predictions", "predictions.jsonl"))).rejects.toMatchObject({
       code: "ENOENT"
     });
+
+    const resumedClient: PromotionProviderClient = {
+      complete: vi.fn(async () => ({
+        text: JSON.stringify({ decision: "block", concerns: [], repair_owners: ["review"] }),
+        model: "gpt-5.4",
+        usage: { inputTokens: 12, outputTokens: 5, costUsd: 0 }
+      }))
+    };
+    const resumed = await runPromotionBenchmarkProvider({
+      ...providerInput(workspace, suitePath, "failed-run"),
+      evidenceClass: "test_fixture",
+      resume: true
+    }, resumedClient);
+
+    expect(resumedClient.complete).toHaveBeenCalledTimes(1);
+    expect(resumed.manifest).toMatchObject({
+      status: "completed",
+      completed_response_count: 2,
+      failed_response_count: 0,
+      resume_count: 1,
+      attempt_failure_count: 1,
+      failure: null,
+      artifacts: {
+        failures_sha256: null,
+        attempt_failures_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u)
+      }
+    });
+    const attemptFailures = (await readFile(
+      path.join(workspace, "failed-run", "provider-attempt-failures.jsonl"),
+      "utf8"
+    )).trim().split("\n");
+    expect(attemptFailures).toHaveLength(1);
+    await expect(stat(path.join(workspace, "failed-run", "provider-failures.jsonl"))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  });
+
+  it("recovers a stale running checkpoint from the durable common JSONL prefix", async () => {
+    const workspace = await createWorkspace();
+    const suitePath = await createSuite(workspace);
+    let index = 0;
+    const interruptedInput = {
+      ...providerInput(workspace, suitePath, "interrupted-run"),
+      evidenceClass: "test_fixture" as const
+    };
+    await expect(runPromotionBenchmarkProvider(interruptedInput, {
+      complete: async () => {
+        index += 1;
+        return {
+          text: index === 1
+            ? JSON.stringify({ decision: "promote", concerns: [], repair_owners: [] })
+            : "not-json",
+          model: "gpt-5.4",
+          usage: { inputTokens: 10, outputTokens: 4, costUsd: 0 }
+        };
+      }
+    })).rejects.toThrow("partial artifacts were preserved");
+
+    const runRoot = path.join(workspace, "interrupted-run");
+    const manifestPath = path.join(runRoot, "provider-run-manifest.json");
+    const outputPath = path.join(runRoot, "provider-outputs.jsonl");
+    const responsePath = path.join(runRoot, "provider-responses.jsonl");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    manifest.status = "running";
+    manifest.completed_at = null;
+    manifest.completed_response_count = 2;
+    manifest.failed_response_count = 0;
+    manifest.failure = null;
+    manifest.usage = { input_tokens: 20, output_tokens: 8, cost_usd: 0 };
+    manifest.artifacts.failures_sha256 = null;
+    const priorManifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+    await writeFile(manifestPath, priorManifestText, "utf8");
+    await unlink(path.join(runRoot, "provider-failures.jsonl"));
+    await writeFile(outputPath, `${await readFile(outputPath, "utf8")}{"schema_version":"1.0"`, "utf8");
+    await writeFile(responsePath, `${await readFile(responsePath, "utf8")}{"request_id":"partial"`, "utf8");
+    const observedOutputsText = await readFile(outputPath, "utf8");
+    const observedResponsesText = await readFile(responsePath, "utf8");
+
+    const resumedClient: PromotionProviderClient = {
+      complete: vi.fn(async () => ({
+        text: JSON.stringify({ decision: "block", concerns: [], repair_owners: ["review"] }),
+        model: "gpt-5.4",
+        usage: { inputTokens: 12, outputTokens: 5, costUsd: 0 }
+      }))
+    };
+    await expect(runPromotionBenchmarkProvider({
+      ...interruptedInput,
+      resume: true
+    }, resumedClient)).rejects.toThrow("running checkpoint that is not stale");
+
+    const staleTime = new Date(Date.now() - 11 * 60 * 1000);
+    await utimes(manifestPath, staleTime, staleTime);
+    const resumed = await runPromotionBenchmarkProvider({
+      ...interruptedInput,
+      resume: true
+    }, resumedClient);
+
+    expect(resumedClient.complete).toHaveBeenCalledTimes(1);
+    expect(resumed.manifest).toMatchObject({
+      status: "completed",
+      completed_response_count: 2,
+      resume_count: 1,
+      attempt_failure_count: 1,
+      usage: { input_tokens: 22, output_tokens: 9, cost_usd: 0 }
+    });
+    const attemptRows = (await readFile(
+      path.join(runRoot, "provider-attempt-failures.jsonl"),
+      "utf8"
+    )).trim().split("\n").map((line) => JSON.parse(line));
+    expect(attemptRows).toEqual([
+      expect.objectContaining({
+        error_name: "InterruptedCheckpointRecovery",
+        prior_manifest_completed_response_count: 2,
+        recovered_response_count: 1,
+        prior_manifest_sha256: sha256(priorManifestText),
+        prior_manifest_ref: expect.any(String),
+        observed_provider_outputs_sha256: sha256(observedOutputsText),
+        observed_provider_outputs_ref: expect.any(String),
+        observed_provider_responses_sha256: sha256(observedResponsesText),
+        observed_provider_responses_ref: expect.any(String),
+        discarded_output_bytes: expect.any(Number),
+        discarded_response_bytes: expect.any(Number)
+      })
+    ]);
+    const recovery = attemptRows[0];
+    expect(await readFile(path.join(workspace, recovery.prior_manifest_ref), "utf8")).toBe(priorManifestText);
+    expect(await readFile(path.join(workspace, recovery.observed_provider_outputs_ref), "utf8"))
+      .toBe(observedOutputsText);
+    expect(await readFile(path.join(workspace, recovery.observed_provider_responses_ref), "utf8"))
+      .toBe(observedResponsesText);
   });
 
   it("rejects fake response environments for real-model evidence before creating output", async () => {
@@ -361,4 +577,27 @@ async function createSuite(workspace: string): Promise<string> {
     outDir: "suite"
   });
   return built.suite_path;
+}
+
+function externalCompletion() {
+  return {
+    text: JSON.stringify({ decision: "promote", concerns: [], repair_owners: [] }),
+    responseId: "response-private",
+    model: "gpt-5.4",
+    usage: { inputTokens: 10, outputTokens: 4, costUsd: 0.002 }
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

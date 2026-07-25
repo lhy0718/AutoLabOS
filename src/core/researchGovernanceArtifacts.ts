@@ -428,16 +428,21 @@ export function buildReviewReportArtifact(
     : [];
   const findings = mergeGateFindingsConservatively([...gate.findings, ...modelFindings]);
   const verdict = conservativeReviewVerdict(gate.verdict, modelFindings);
-  const deterministicReadiness = inferReadinessClass(gate);
-  const readinessClass = conservativeReviewReadiness(deterministicReadiness, verdict, modelFindings);
-  const blockingIssues = findings.filter((finding) => finding.severity === "blocker");
-  const nonBlockingIssues = findings.filter((finding) => finding.severity === "warning");
-  const repairTargets = findings.map(mapFindingToRepairTarget);
   const reviewerAssurance = buildReviewerAssurance(
     modelReviewBundle,
     modelReviewBundleSha256,
     gateReportSha256
   );
+  const deterministicReadiness = inferReadinessClass(gate);
+  const readinessClass = conservativeReviewReadiness(
+    deterministicReadiness,
+    verdict,
+    modelFindings,
+    reviewerAssurance
+  );
+  const blockingIssues = findings.filter((finding) => finding.severity === "blocker");
+  const nonBlockingIssues = findings.filter((finding) => finding.severity === "warning");
+  const repairTargets = findings.map(mapFindingToRepairTarget);
   return {
     ...baseArtifact("ReviewReport", "research:review", {
       sourceMode: "governance_artifact",
@@ -459,7 +464,9 @@ export function buildReviewReportArtifact(
     verdict,
     gate_report_id: gate.artifact_id,
     readiness_class: readinessClass,
-    paper_ready: readinessClass === "paper_ready" && verdict === "pass",
+    paper_ready: hasHashBoundA2Assurance(reviewerAssurance)
+      && readinessClass === "paper_ready"
+      && verdict === "pass",
     claim_ceiling: gate.claim_ceiling,
     blocking_issues: blockingIssues,
     non_blocking_issues: nonBlockingIssues,
@@ -510,6 +517,17 @@ export function buildPaperReadinessBundleArtifact(input: {
 }): PaperReadinessBundleArtifact {
   const portabilityIssues = uniqueStrings(input.portabilityIssues ?? []);
   const redactedFiles = uniqueStrings(input.redactedFiles ?? []);
+  const paperReady = hasHashBoundA2Assurance(input.review.reviewer_assurance)
+    && input.gate.verdict === "pass"
+    && input.gate.claim_ceiling === "paper_ready"
+    && input.review.verdict === "pass"
+    && input.review.gate_report_id === input.gate.artifact_id
+    && input.review.claim_ceiling === input.gate.claim_ceiling
+    && input.review.readiness_class === "paper_ready"
+    && input.review.paper_ready;
+  const readinessClass = input.review.readiness_class === "paper_ready" && !paperReady
+    ? "paper_scale_candidate"
+    : input.review.readiness_class;
   return {
     ...baseArtifact("PaperReadinessBundle", "research:pack", {
       sourceMode: "governance_artifact",
@@ -527,8 +545,8 @@ export function buildPaperReadinessBundleArtifact(input: {
     command_intent: "research:pack",
     gate_report_id: input.gate.artifact_id,
     review_report_id: input.review.artifact_id,
-    readiness_class: input.review.readiness_class,
-    paper_ready: input.review.paper_ready,
+    readiness_class: readinessClass,
+    paper_ready: paperReady,
     claim_ceiling: input.review.claim_ceiling,
     files: input.files,
     limitations: uniqueStrings(input.limitations),
@@ -626,14 +644,25 @@ function conservativeReviewVerdict(
 function conservativeReviewReadiness(
   deterministicReadiness: ResearchReadinessClass,
   verdict: ResearchGovernanceVerdict,
-  modelFindings: readonly GateFinding[]
+  modelFindings: readonly GateFinding[],
+  reviewerAssurance: ReviewerAssurance
 ): ResearchReadinessClass {
   if (verdict === "blocked") return "blocked_for_paper_scale";
   if (deterministicReadiness === "paper_ready"
-      && modelFindings.some((finding) => finding.severity === "warning")) {
+      && (!hasHashBoundA2Assurance(reviewerAssurance)
+        || modelFindings.some((finding) => finding.severity === "warning"))) {
+    // A2 may preserve an A0 paper-ready ceiling, but it cannot raise a lower ceiling.
     return "paper_scale_candidate";
   }
   return deterministicReadiness;
+}
+
+function hasHashBoundA2Assurance(value: unknown): boolean {
+  if (!isRecord(value) || value.tier !== "A2_model_conservative") return false;
+  return typeof value.gate_report_sha256 === "string"
+    && /^[a-f0-9]{64}$/u.test(value.gate_report_sha256)
+    && typeof value.model_review_bundle_sha256 === "string"
+    && /^[a-f0-9]{64}$/u.test(value.model_review_bundle_sha256);
 }
 
 function buildReviewerAssurance(
@@ -933,6 +962,14 @@ function validateArtifactSpecificShape(value: Record<string, unknown>, issues: A
     validateGateFindingArray(value.non_blocking_issues, "$.non_blocking_issues", "warning", issues);
     validateRepairTargetArray(value.repair_targets, "$.repair_targets", false, issues);
     validateReviewerAssuranceShape(value.reviewer_assurance, issues);
+    if ((value.readiness_class === "paper_ready" || value.paper_ready === true)
+        && !hasHashBoundA2Assurance(value.reviewer_assurance)) {
+      issues.push({
+        code: "invalid_shape",
+        path: "$.paper_ready",
+        message: "paper_ready requires hash-bound A2_model_conservative reviewer assurance."
+      });
+    }
   } else if (artifactType === "MetaHarnessPatchPlan") {
     requireString("review_report_id");
     requireString("review_report_sha256");

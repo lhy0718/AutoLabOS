@@ -38,6 +38,9 @@ Until those conditions are met, treat the governed workflow shape as fixed.
 - Deferred `collect_papers` recovery state is persisted in `.autolabos/runs/<run-id>/collect_background_job.json` whenever background enrichment is active, so restart recovery stays inspectable.
 - Approval mode and transition recommendation behavior are part of runtime contracts.
 - `/approve` must respect stored non-advance pending transitions (for example `analyze_results -> backtrack_to_design`) instead of advancing by graph order. Explicit manual `/agent run <next-node>` handoffs may resume `pause_for_human` transitions without weakening default approval behavior.
+- Interactive surfaces distinguish the inspected run from the active action target. Selecting a run is read-only; commands, approvals, retries, transition application, and node execution require an explicit active-run match.
+- Asynchronous projections are keyed by run identity and request generation. A late response for a previously inspected run must never replace the current inspector state.
+- HTTP `GET` routes are observational. Derived artifact materialization belongs to explicit commands or mutating routes, never to a read endpoint.
 
 Harness and runtime work must preserve both TUI and web behaviors unless a change is explicitly requested.
 

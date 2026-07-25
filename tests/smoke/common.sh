@@ -100,6 +100,7 @@ const graphNodeIds = [
   "implement_experiments",
   "run_experiments",
   "analyze_results",
+  "figure_audit",
   "review",
   "write_paper"
 ];

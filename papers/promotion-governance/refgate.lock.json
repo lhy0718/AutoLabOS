@@ -55,62 +55,59 @@
     },
     {
       "authority": {
-        "bibtex_url": null,
-        "record_type": "preprint_record",
-        "record_url": "https://arxiv.org/abs/2507.18901v1",
-        "source": "arxiv",
-        "source_priority": 2
+        "bibtex_url": "https://aclanthology.org/2025.findings-acl.1210.bib",
+        "record_type": "conference_proceedings",
+        "record_url": "https://aclanthology.org/2025.findings-acl.1210/",
+        "source": "acl",
+        "source_priority": 1
       },
       "bibtex": {
         "citation_key": "hu2025reprobench",
-        "entry_type": "misc",
-        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official ACL Anthology export normalized locally by changing the citation key and omitting editor, month, and ISBN fields.",
         "field_checks": {
-          "arxiv_id": "checked",
-          "bibtex_source": "manual_fallback_with_reason",
-          "doi": "missing",
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "checked",
           "first_author": "checked",
           "title": "checked",
           "url": "checked",
           "year": "checked"
         },
-        "normalized_sha256": "0873aacb1efe5e76e1e98d620bdfaeae01febd6b13af61e741b9836620970d0e",
-        "raw_sha256": "0873aacb1efe5e76e1e98d620bdfaeae01febd6b13af61e741b9836620970d0e",
-        "source_kind": "arxiv_manual_normalized"
+        "normalized_sha256": "49a133224a099260eb6d1bd17f890f8fb6de5ff2ed6a67bb90b4de4d78a0bb9b",
+        "raw_sha256": "49a133224a099260eb6d1bd17f890f8fb6de5ff2ed6a67bb90b4de4d78a0bb9b",
+        "source_kind": "official_export"
       },
-      "checked_at": "2026-07-16",
+      "checked_at": "2026-07-23",
       "checked_by": "refgate",
       "citation_key": "hu2025reprobench",
       "record": {
-        "accessed_at": "2026-07-16",
-        "arxiv_id": "2507.18901",
+        "accessed_at": "2026-07-23",
+        "arxiv_id": null,
         "authors": [
-          "Hu, Chuxuan",
+          "Chuxuan Hu",
           "Liyun Zhang",
           "Yeji Lim",
           "Aum Wadhwani",
           "Austin Peters",
           "Daniel Kang"
         ],
-        "doi": null,
+        "doi": "10.18653/v1/2025.findings-acl.1210",
         "title": "REPRO-Bench: Can Agentic AI Systems Assess the Reproducibility of Social Science Research?",
-        "url": "https://arxiv.org/abs/2507.18901v1",
-        "venue": "arXiv preprint",
+        "url": "https://aclanthology.org/2025.findings-acl.1210/",
+        "venue": "Findings of the Association for Computational Linguistics: ACL 2025",
         "year": 2025
       },
       "resolver": {
         "blocking_issues": [],
         "decision_trace": [
-          "title normalized exact match",
-          "year match",
-          "first author match",
-          "official record"
+          "lock entry built from fetch-bibtex inputs"
         ],
-        "score": 94,
+        "score": 95,
         "warnings": []
       },
       "short_title": "REPRO-Bench",
-      "status": "arxiv_fallback_verified"
+      "status": "verified_official_bibtex"
     },
     {
       "authority": {
@@ -288,6 +285,56 @@
     },
     {
       "authority": {
+        "bibtex_url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+        "record_type": "official_model_card",
+        "record_url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+        "source": "qwen",
+        "source_priority": 1
+      },
+      "bibtex": {
+        "citation_key": "qwen3.5",
+        "entry_type": "misc",
+        "field_checks": {
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
+          "doi": "missing",
+          "first_author": "checked",
+          "title": "checked",
+          "url": "checked",
+          "year": "checked"
+        },
+        "normalized_sha256": "352d799c8126659ba447ce0181fe0b72656e36dcd91ee326db6c07175dfc08be",
+        "raw_sha256": "352d799c8126659ba447ce0181fe0b72656e36dcd91ee326db6c07175dfc08be",
+        "source_kind": "official_export"
+      },
+      "checked_at": "2026-07-23",
+      "checked_by": "refgate",
+      "citation_key": "qwen3.5",
+      "record": {
+        "accessed_at": "2026-07-23",
+        "arxiv_id": null,
+        "authors": [
+          "Qwen Team"
+        ],
+        "doi": null,
+        "title": "Qwen3.5: Towards Native Multimodal Agents",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-35B-A3B",
+        "venue": "Official model card",
+        "year": 2026
+      },
+      "resolver": {
+        "blocking_issues": [],
+        "decision_trace": [
+          "lock entry built from fetch-bibtex inputs"
+        ],
+        "score": 95,
+        "warnings": []
+      },
+      "short_title": "Qwen3.5",
+      "status": "verified_official_bibtex"
+    },
+    {
+      "authority": {
         "bibtex_url": null,
         "record_type": "preprint_record",
         "record_url": "https://arxiv.org/abs/2605.02651v2",
@@ -410,37 +457,37 @@
     },
     {
       "authority": {
-        "bibtex_url": null,
-        "record_type": "preprint_record",
-        "record_url": "https://arxiv.org/abs/2504.01848v3",
-        "source": "arxiv",
-        "source_priority": 2
+        "bibtex_url": "https://proceedings.mlr.press/v267/starace25a.html",
+        "record_type": "conference_proceedings",
+        "record_url": "https://proceedings.mlr.press/v267/starace25a.html",
+        "source": "pmlr",
+        "source_priority": 1
       },
       "bibtex": {
         "citation_key": "starace2025paperbench",
-        "entry_type": "misc",
-        "fallback_reason": "Official arXiv records have no BibTeX export; OpenReview entries are normalized from the official record pages.",
+        "entry_type": "inproceedings",
+        "fallback_reason": "Official PMLR export normalized locally by changing the citation key and omitting editor, month, PDF, and abstract fields.",
         "field_checks": {
-          "arxiv_id": "checked",
-          "bibtex_source": "manual_fallback_with_reason",
+          "arxiv_id": "not_applicable",
+          "bibtex_source": "official_export",
           "doi": "missing",
           "first_author": "checked",
           "title": "checked",
           "url": "checked",
           "year": "checked"
         },
-        "normalized_sha256": "ae8ab37e2b067fd52f0df6fac6448efb88cd635d84248b46d8c14de8fbd79ee7",
-        "raw_sha256": "ae8ab37e2b067fd52f0df6fac6448efb88cd635d84248b46d8c14de8fbd79ee7",
-        "source_kind": "arxiv_manual_normalized"
+        "normalized_sha256": "fd4d191612cc2871714e916af7101795f2024c385f632a7806ecea27b71d5656",
+        "raw_sha256": "fd4d191612cc2871714e916af7101795f2024c385f632a7806ecea27b71d5656",
+        "source_kind": "official_export"
       },
-      "checked_at": "2026-07-16",
+      "checked_at": "2026-07-23",
       "checked_by": "refgate",
       "citation_key": "starace2025paperbench",
       "record": {
-        "accessed_at": "2026-07-16",
-        "arxiv_id": "2504.01848",
+        "accessed_at": "2026-07-23",
+        "arxiv_id": null,
         "authors": [
-          "Starace, Giulio",
+          "Giulio Starace",
           "Oliver Jaffe",
           "Dane Sherburn",
           "James Aung",
@@ -456,23 +503,20 @@
         ],
         "doi": null,
         "title": "PaperBench: Evaluating AI's Ability to Replicate AI Research",
-        "url": "https://arxiv.org/abs/2504.01848v3",
-        "venue": "arXiv preprint",
+        "url": "https://proceedings.mlr.press/v267/starace25a.html",
+        "venue": "Proceedings of the 42nd International Conference on Machine Learning",
         "year": 2025
       },
       "resolver": {
         "blocking_issues": [],
         "decision_trace": [
-          "title normalized exact match",
-          "year match",
-          "first author match",
-          "official record"
+          "lock entry built from fetch-bibtex inputs"
         ],
-        "score": 94,
+        "score": 95,
         "warnings": []
       },
       "short_title": "PaperBench",
-      "status": "arxiv_fallback_verified"
+      "status": "verified_official_bibtex"
     }
   ],
   "generated_at": "2026-07-16",

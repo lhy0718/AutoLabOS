@@ -21,6 +21,7 @@ const AGENT_SUBCOMMANDS = [
   "list",
   "run",
   "status",
+  "review",
   "collect",
   "clear",
   "count",

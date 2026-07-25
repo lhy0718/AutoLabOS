@@ -78,6 +78,11 @@ describe("new slash commands", () => {
     expect(suggestions.some((s) => s.applyValue === "/agent tune-node generate_hypotheses ")).toBe(true);
   });
 
+  it("includes /agent review in subcommand suggestions", () => {
+    const suggestions = buildSuggestions({ input: "/agent rev", runs, activeRunId: "run-1" });
+    expect(suggestions.some((s) => s.applyValue === "/agent review ")).toBe(true);
+  });
+
   it("shows all new visible commands in root suggestions", () => {
     const suggestions = buildSuggestions({ input: "/", runs, activeRunId: "run-1" });
     expect(suggestions.some((s) => s.key === "cmd:clear")).toBe(true);
@@ -541,12 +546,14 @@ describe("diagnostic command transient logs", () => {
       node: "analyze_results",
       payload: {}
     });
-    await app.handleStreamEvent(event);
+    app.handleStreamEvent(event);
 
-    const logs = app.getRenderableLogs();
-    expect(logs.some((line: string) => line.includes("12345678"))).toBe(true);
-    expect(logs.some((line: string) => line.includes("analyze_results"))).toBe(true);
-    expect(logs.some((line: string) => line.includes("running"))).toBe(true);
+    await vi.waitFor(() => {
+      const logs = app.getRenderableLogs();
+      expect(logs.some((line: string) => line.includes("12345678"))).toBe(true);
+      expect(logs.some((line: string) => line.includes("analyze_results"))).toBe(true);
+      expect(logs.some((line: string) => line.includes("running"))).toBe(true);
+    });
 
     await app.handleKeypress("q", { name: "q" });
     expect(app.watchModeActive).toBe(false);

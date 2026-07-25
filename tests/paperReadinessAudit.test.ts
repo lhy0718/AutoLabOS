@@ -173,6 +173,149 @@ describe("paper-readiness audit", () => {
     );
   });
 
+  it("does not compare a study-scope claim ceiling with the audit output-level taxonomy", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-scope-ceiling-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeJson(path.join(runRoot, "paper", "academic_claim_evidence_map.json"), {
+      claim_ceiling: "registered_fault_families_only",
+      claims: []
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/scope-ceiling-audit"
+    });
+
+    expect(summary.top_blockers.map((blocker) => blocker.code)).not.toContain("claim_ceiling_conflict");
+    expect(summary.claim_ceiling).toMatchObject({
+      allowed_level: "registered_fault_families_only",
+      audit_output_level: "conditional_claims_with_artifact_links",
+      declared_scope_level: "registered_fault_families_only"
+    });
+    expect(summary.baseline_comparator_status.comparative_claim_allowed).toBe(false);
+  });
+
+  it("blocks a study-scope claim ceiling that conflicts with its design contract", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-bound-ceiling-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeJson(path.join(runRoot, "paper", "academic_claim_evidence_map.json"), {
+      claim_ceiling: "registered_fault_families_only",
+      claims: []
+    });
+    await writeJson(path.join(runRoot, "design_contracts.json"), {
+      claim_ceiling: "naturalistic_generalization_supported"
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/bound-ceiling-audit"
+    });
+
+    expect(summary.top_blockers).toContainEqual(expect.objectContaining({
+      code: "claim_ceiling_design_contract_conflict"
+    }));
+  });
+
+  it("authorizes a comparison only through an explicit conflict-free design contract", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-comparison-authorization-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeJson(path.join(runRoot, "design_contracts.json"), {
+      comparative_claim_authorized: true,
+      superiority_claim_authorized: false
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/comparison-authorization-audit"
+    });
+
+    expect(summary.baseline_comparator_status.comparative_claim_allowed).toBe(true);
+    expect(summary.scorer_outputs.result_table).toMatchObject({
+      comparative_claim_supported: true,
+      superiority_claim_supported: false
+    });
+  });
+
+  it("blocks a claim whose evidence ID does not resolve to a frozen artifact", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-dangling-evidence-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeJson(path.join(runRoot, "paper", "claim_evidence_table.json"), {
+      claims: [{
+        claim_id: "claim-a",
+        statement: "A bounded result claim.",
+        artifact_refs: [],
+        evidence_ids: ["missing-evidence"]
+      }]
+    });
+    await writeJson(path.join(runRoot, "paper", "claim_status_table.json"), {
+      claims: [{
+        claim_id: "claim-a",
+        statement: "A bounded result claim.",
+        status: "verified",
+        artifact_refs: []
+      }]
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/dangling-evidence-audit"
+    });
+
+    expect(summary.top_blockers).toContainEqual(expect.objectContaining({
+      code: "unsupported_claims_present"
+    }));
+    expect(summary.unsupported_claims).toContainEqual(expect.objectContaining({
+      claim_id: "claim-a",
+      message: expect.stringContaining("missing-evidence")
+    }));
+  });
+
+  it("still rejects a conflicting declaration from the audit output-level taxonomy", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-output-ceiling-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeJson(path.join(runRoot, "paper", "academic_claim_evidence_map.json"), {
+      claim_ceiling: "system_validation_note_only",
+      claims: []
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/output-ceiling-audit"
+    });
+
+    expect(summary.top_blockers.map((blocker) => blocker.code)).toContain("claim_ceiling_conflict");
+  });
+
   it.each([
     {
       name: "missing",
@@ -631,6 +774,51 @@ describe("paper-readiness audit", () => {
       .not.toContain("repeated_run_provenance_missing");
   });
 
+  it("blocks stale citation anchors while accepting claim-bound manuscript lines", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-citation-anchor-"));
+    tempDirs.push(workspace);
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: [
+        { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1, direction: "higher_better" }
+      ]
+    });
+    await writeFile(
+      path.join(runRoot, "paper", "main.tex"),
+      "\\section{Related Work}\nPrior method preserves evidence \\cite{source-a}.\nAnother method checks decisions \\cite{source-b}.\n",
+      "utf8"
+    );
+    const header = [
+      "claim_id", "manuscript_location", "claim_text", "citation_key", "source_location",
+      "quote_or_evidence", "evidence_kind", "status", "notes", "claim_type", "importance"
+    ];
+    const rows = [
+      ["claim-a", "line 2", "Prior method preserves evidence.", "source-a", "page 1", "support", "source_text", "checked", "", "related_work", "normal"],
+      ["claim-b", "line 2", "Another method checks decisions.", "source-b", "page 2", "support", "source_text", "checked", "", "related_work", "normal"]
+    ];
+    await writeFile(
+      path.join(runRoot, "paper", "refgate_claims.tsv"),
+      [header, ...rows].map((row) => row.join("\t")).join("\n") + "\n",
+      "utf8"
+    );
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/citation-anchor-audit"
+    });
+
+    expect(summary.research_scale_findings).toContainEqual(expect.objectContaining({
+      code: "citation_anchor_mismatch:claim-b",
+      target_node: "analyze_papers"
+    }));
+    expect(summary.research_scale_findings.map((finding) => finding.code))
+      .not.toContain("citation_anchor_mismatch:claim-a");
+    expect(summary.top_blockers).toContainEqual(expect.objectContaining({
+      code: "citation_anchor_mismatch:claim-b",
+      severity: "blocker"
+    }));
+  });
+
   it("accepts a complete condition-by-seed matrix and rejects a reused pair", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-condition-seed-matrix-"));
     tempDirs.push(workspace);
@@ -671,6 +859,34 @@ describe("paper-readiness audit", () => {
       expect.objectContaining({ code: "repeated_run_provenance_missing", target_node: "run_experiments" })
     ]));
   });
+
+  it.each(["controlled_evaluation_contract", "confirmatory_evaluation_contract"])(
+    "accepts verified model-trial provenance from %s",
+    async (contractKey) => {
+      const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-evaluation-contract-"));
+      tempDirs.push(workspace);
+      const runRoot = await writeMinimalAuditRun(workspace, {
+        resultTable: [
+          { metric: "primary_score", baseline: 0.6, comparator: 0.7, delta: 0.1 }
+        ]
+      });
+      await writeJson(path.join(runRoot, "paper", "submission_status.json"), {
+        [contractKey]: {
+          real_model_trial_count: 3,
+          execution_provenance_status: "verified"
+        }
+      });
+
+      const summary = await runPaperReadinessAudit({
+        cwd: workspace,
+        runRoot,
+        outDir: `outputs/${contractKey}`
+      });
+
+      expect(summary.execution_integrity_findings.map((finding) => finding.code))
+        .not.toContain("reported_trial_provenance_unverified");
+    }
+  );
 });
 
 async function writeMinimalAuditRun(

@@ -56,17 +56,30 @@ export interface EvaluatePromotionConfirmatoryGateInput {
 }
 
 export type PromotionConfirmatoryReadiness = "paper_scale_candidate" | "blocked_for_paper_scale";
-export type PromotionHypothesisStatus = "supported" | "not_supported" | "not_evaluable";
+export type PromotionHypothesisStatus =
+  | "supported"
+  | "not_supported"
+  | "not_evaluable"
+  | "threshold_met_post_hoc"
+  | "threshold_not_met_post_hoc";
 
 export interface PromotionConfirmatoryHypothesisResult {
   hypothesis_id: "H1" | "H2" | "H3" | "H4";
   status: PromotionHypothesisStatus;
   observed_value: number | null;
-  confidence_interval_95: [number, number] | null;
+  diagnostic_interval: [number, number] | null;
   threshold: number;
-  decision_rule: "lower_bound_at_least_threshold" | "upper_bound_at_most_threshold";
+  decision_rule:
+    | "point_estimate_at_least_threshold"
+    | "point_estimate_at_most_threshold"
+    | "lower_resampling_bound_at_least_threshold"
+    | "upper_resampling_bound_at_most_threshold";
   point_threshold_met: boolean | null;
-  inference_unit: "base_bundle_id";
+  evaluation_unit: "fixed_suite" | "base_bundle_id";
+  decision_basis: "exact_fixed_suite_point_estimate" | "base_bundle_resampling_interval";
+  eligible_observation_count: number | null;
+  faulty_observation_count: number | null;
+  suite_observation_count: number;
   comparison: string;
   interpretation: string;
 }
@@ -79,7 +92,7 @@ export interface PromotionConfirmatoryGateIssue {
 }
 
 export interface PromotionConfirmatoryGateReport {
-  schema_version: "1.0";
+  schema_version: "1.3";
   generated_at: string;
   suite_id: string;
   evaluation_regime: PromotionBenchmarkScoreReport["evaluation_regime"];
@@ -87,9 +100,12 @@ export interface PromotionConfirmatoryGateReport {
   external_validation_status: PromotionBenchmarkScoreReport["external_validation_status"];
   readiness: PromotionConfirmatoryReadiness;
   paper_ready: false;
-  claim_class: "confirmatory_signal" | "mixed_or_weak_signal" | "null_or_counterevidence" | "not_evaluable";
+  study_design: "post_hoc_fixed_suite_conformance" | "prospective_confirmatory";
+  claim_class: "fixed_suite_conformance_signal" | "confirmatory_signal" | "mixed_or_weak_signal" | "null_or_counterevidence" | "not_evaluable";
   score_validation_passed: boolean;
   evidence_gate_passed: boolean;
+  evidence_gate_reason: "passed" | "blocking_issues_present" | "post_hoc_design_not_prospective_evidence";
+  conformance_gate_passed: boolean;
   system_roles: PromotionConfirmatorySystemRoles;
   case_count: number;
   base_bundle_count: number;
@@ -98,6 +114,8 @@ export interface PromotionConfirmatoryGateReport {
     status: "verified_receipt_distinct" | "missing_or_invalid";
     trial_count: number;
     provider_identity_independently_verified: false;
+    statistical_independence_established: false;
+    statistical_replicates: false;
     caveat: string;
   };
   recovery: {
@@ -106,6 +124,7 @@ export interface PromotionConfirmatoryGateReport {
     covered_fault_case_count: number | null;
     missing_fault_case_count: number | null;
     successful_recovery_rate: number | null;
+    exact_clean_artifact_match_rate?: number | null;
     clean_control_regression_rate: number | null;
   };
   hypotheses: PromotionConfirmatoryHypothesisResult[];
@@ -356,8 +375,9 @@ export async function evaluatePromotionConfirmatoryGate(
   issues = assessment.blockers;
   const hypotheses = assessment.hypotheses;
   const readiness = assessment.readiness;
+  const postHocControlled = isPostHocFixedSuiteEvaluation(loaded.suite, score.report);
   const report: PromotionConfirmatoryGateReport = {
-    schema_version: "1.0",
+    schema_version: "1.3",
     generated_at: new Date().toISOString(),
     suite_id: score.report.suite_id,
     evaluation_regime: score.report.evaluation_regime,
@@ -365,9 +385,16 @@ export async function evaluatePromotionConfirmatoryGate(
     external_validation_status: score.report.external_validation_status,
     readiness,
     paper_ready: false,
+    study_design: postHocControlled ? "post_hoc_fixed_suite_conformance" : "prospective_confirmatory",
     claim_class: assessment.claim_class,
     score_validation_passed: score.report.passed,
-    evidence_gate_passed: issues.length === 0,
+    evidence_gate_passed: issues.length === 0 && !postHocControlled,
+    evidence_gate_reason: issues.length > 0
+      ? "blocking_issues_present"
+      : postHocControlled
+        ? "post_hoc_design_not_prospective_evidence"
+        : "passed",
+    conformance_gate_passed: issues.length === 0,
     system_roles: input.systemRoles,
     case_count: score.report.case_count,
     base_bundle_count: countBaseBundles(loaded.suite),
@@ -376,7 +403,9 @@ export async function evaluatePromotionConfirmatoryGate(
       status: providerAggregate ? "verified_receipt_distinct" : "missing_or_invalid",
       trial_count: providerAggregate?.trial_count || 0,
       provider_identity_independently_verified: false,
-      caveat: providerAggregate?.independence_basis.caveat
+      statistical_independence_established: false,
+      statistical_replicates: false,
+      caveat: providerAggregate?.receipt_distinctness.caveat
         || "No valid three-trial provider aggregate was available."
     },
     recovery: {
@@ -385,6 +414,7 @@ export async function evaluatePromotionConfirmatoryGate(
       covered_fault_case_count: recovery?.covered_fault_case_count ?? null,
       missing_fault_case_count: recovery?.missing_fault_case_count ?? null,
       successful_recovery_rate: recovery?.successful_recovery_rate ?? null,
+      exact_clean_artifact_match_rate: recovery?.exact_clean_artifact_match_rate ?? null,
       clean_control_regression_rate: recovery?.clean_control_regression_rate ?? null
     },
     hypotheses,
@@ -429,7 +459,10 @@ export async function evaluatePromotionConfirmatoryGate(
     outcome: readiness === "paper_scale_candidate" ? "accept" : "revise",
     manuscript_type: readiness,
     paper_ready: false,
+    study_design: report.study_design,
     claim_class: report.claim_class,
+    evidence_gate_passed: report.evidence_gate_passed,
+    conformance_gate_passed: report.conformance_gate_passed,
     blocker_count: issues.length
   });
   return {
@@ -460,7 +493,21 @@ export function assessPromotionConfirmatoryEvidence(
     systemRunManifestSha256: input.systemRunManifestSha256,
     issues: blockers
   });
-  const hypotheses = evaluateHypotheses(input.score, input.roles, blockers);
+  const postHocControlled = isPostHocFixedSuiteEvaluation(input.loaded, input.score);
+  const evaluatedHypotheses = evaluateHypotheses(input.score, input.roles, blockers, postHocControlled);
+  const hypotheses = postHocControlled
+    ? evaluatedHypotheses.map((item) => ({
+        ...item,
+        status: item.status === "supported"
+          ? "threshold_met_post_hoc" as const
+          : item.status === "not_supported"
+            ? "threshold_not_met_post_hoc" as const
+            : item.status,
+        interpretation: item.status === "not_evaluable"
+          ? item.interpretation
+          : `${item.interpretation} This is a post-hoc fixed-suite threshold check, not prospective hypothesis support.`
+      }))
+    : evaluatedHypotheses;
   return {
     blockers,
     hypotheses,
@@ -683,7 +730,9 @@ function inspectConfirmatoryEvidence(input: {
       && input.providerAggregate.suite_id === input.score.suite_id
       && input.providerAggregate.system_id === input.roles.manuscript
       && input.providerAggregate.trial_count === 3
-      && input.providerAggregate.independent_trial_requirement_met === true
+      && input.providerAggregate.receipt_distinct_trial_requirement_met === true
+      && input.providerAggregate.receipt_distinctness.statistical_independence_established === false
+      && input.providerAggregate.receipt_distinctness.statistical_replicates === false
       && input.providerAggregate.real_model_empirical_evidence_eligible === true
       && manuscript?.trial_count === 3
       && manuscript.coverage_rate === 1);
@@ -789,7 +838,9 @@ function inspectHeldOutMutationFamilies(
   }
   const baseCount = countBaseBundles(suite);
   for (const system of report.systems) {
-    const metricsByFamily = new Map(system.by_mutation_family.map((item) => [item.mutation_family, item]));
+    const metricsByFamily = new Map(system.by_mutation_family
+      .filter((item) => item.mutation_family !== "clean_control")
+      .map((item) => [item.mutation_family, item]));
     if (!sameStringSet([...metricsByFamily.keys()], expected)
         || expected.some((family) => {
           const metrics = metricsByFamily.get(family);
@@ -817,6 +868,14 @@ function isControlledDeterministicEvaluation(
     || Boolean(suite?.manifest.deterministic_oracle_provenance);
 }
 
+function isPostHocFixedSuiteEvaluation(
+  suite: LoadedPromotionBenchmarkSuite | undefined,
+  score: PromotionBenchmarkScoreReport
+): boolean {
+  return score.evidence_class === "synthetic_development"
+    || isControlledDeterministicEvaluation(suite, score);
+}
+
 function inspectLeaveOneFamilyOut(
   report: PromotionBenchmarkScoreReport,
   roles: PromotionConfirmatorySystemRoles,
@@ -835,7 +894,7 @@ function inspectLeaveOneFamilyOut(
   }
   for (const omitted of familyAnalysis.leave_one_family_out) {
     const comparison = findComparison(omitted.comparisons, roles.checklist, roles.full);
-    if (!comparison || comparison.false_paper_ready_cluster_bootstrap_95_ci === null) {
+    if (!comparison || comparison.false_paper_ready_base_bundle_resampling_interval === null) {
       addIssue(
         issues,
         "leave_one_family_out_comparison_missing",
@@ -850,7 +909,8 @@ function inspectLeaveOneFamilyOut(
 function evaluateHypotheses(
   report: PromotionBenchmarkScoreReport,
   roles: PromotionConfirmatorySystemRoles,
-  issues: PromotionConfirmatoryGateIssue[]
+  issues: PromotionConfirmatoryGateIssue[],
+  useExactFixedSuiteDecision: boolean
 ): PromotionConfirmatoryHypothesisResult[] {
   const systems = new Map(report.systems.map((system) => [system.system_id, system]));
   const full = systems.get(roles.full);
@@ -860,7 +920,7 @@ function evaluateHypotheses(
     roles.checklist,
     roles.full,
     "false_paper_ready_rate_delta",
-    "false_paper_ready_cluster_bootstrap_95_ci"
+    "false_paper_ready_base_bundle_resampling_interval"
   );
   const strongestBaseline = [roles.ungated, roles.checklist, roles.manuscript]
     .map((systemId) => systems.get(systemId))
@@ -878,8 +938,11 @@ function evaluateHypotheses(
     roles.full,
     strongestBaseline?.system_id,
     "repair_owner_exact_match_accuracy_delta",
-    "repair_owner_cluster_bootstrap_95_ci"
+    "repair_owner_base_bundle_resampling_interval"
   );
+  const faultyObservationCount = full
+    ? full.prediction_count - full.clean_case_count
+    : null;
   const inputs = [
     {
       id: "H1" as const,
@@ -887,22 +950,28 @@ function evaluateHypotheses(
       ci: h1.ci,
       threshold: H1_MINIMUM_FALSE_PROMOTION_REDUCTION,
       direction: "at_least" as const,
+      eligibleCount: h1Comparison?.false_paper_ready_common_case_count ?? null,
+      faultyCount: faultyObservationCount,
       comparison: roles.checklist + " minus " + roles.full
     },
     {
       id: "H2" as const,
       value: full?.concern_acceptance_conflict_rate ?? null,
-      ci: full?.concern_acceptance_conflict_cluster_bootstrap_95_ci ?? null,
+      ci: full?.concern_acceptance_conflict_base_bundle_resampling_interval ?? null,
       threshold: PROMOTION_CONFIRMATORY_MAXIMUM_CONFLICT_RATE,
       direction: "at_most" as const,
+      eligibleCount: full?.concern_acceptance_conflict_eligible_count ?? null,
+      faultyCount: faultyObservationCount,
       comparison: roles.full
     },
     {
       id: "H3" as const,
       value: full?.clean_case_promotion_accuracy ?? null,
-      ci: full?.clean_case_promotion_accuracy_cluster_bootstrap_95_ci ?? null,
+      ci: full?.clean_case_promotion_accuracy_base_bundle_resampling_interval ?? null,
       threshold: PROMOTION_CONFIRMATORY_MINIMUM_CLEAN_PROMOTION_ACCURACY,
       direction: "at_least" as const,
+      eligibleCount: full?.clean_case_count ?? null,
+      faultyCount: faultyObservationCount,
       comparison: roles.full
     },
     {
@@ -911,15 +980,18 @@ function evaluateHypotheses(
       ci: h4.ci,
       threshold: H4_MINIMUM_REPAIR_OWNER_ADVANTAGE,
       direction: "at_least" as const,
+      eligibleCount: h4Comparison?.repair_owner_common_case_count ?? null,
+      faultyCount: faultyObservationCount,
       comparison: roles.full + " minus " + (strongestBaseline?.system_id || "strongest non-governed baseline")
     }
   ];
-  for (const input of inputs) {
-    if (input.value === null || input.ci === null) {
+  if (!useExactFixedSuiteDecision) {
+    for (const input of inputs) {
+      if (input.value !== null && input.ci !== null) continue;
       addIssue(
         issues,
-        "hypothesis_clustered_interval_not_evaluable",
-        input.id + " requires a base-bundle clustered 95% confidence interval for its preregistered metric.",
+        "hypothesis_resampling_interval_not_evaluable",
+        input.id + " requires a base-bundle resampling interval for its declared prospective decision rule.",
         "analyze_results",
         input.id
       );
@@ -939,7 +1011,11 @@ function evaluateHypotheses(
     input.ci,
     input.threshold,
     input.direction,
-    input.comparison
+    input.eligibleCount,
+    input.faultyCount,
+    report.case_count,
+    input.comparison,
+    useExactFixedSuiteDecision
   ));
 }
 
@@ -949,35 +1025,55 @@ function hypothesis(
   ci: [number, number] | null,
   threshold: number,
   direction: "at_least" | "at_most",
-  comparison: string
+  eligibleObservationCount: number | null,
+  faultyObservationCount: number | null,
+  suiteObservationCount: number,
+  comparison: string,
+  useExactFixedSuiteDecision: boolean
 ): PromotionConfirmatoryHypothesisResult {
   const pointThresholdMet = value === null
     ? null
     : direction === "at_least" ? value >= threshold : value <= threshold;
-  const status: PromotionHypothesisStatus = value === null || ci === null
+  const status: PromotionHypothesisStatus = value === null || (!useExactFixedSuiteDecision && ci === null)
     ? "not_evaluable"
+    : useExactFixedSuiteDecision
+      ? pointThresholdMet ? "supported" : "not_supported"
+      : direction === "at_least"
+        ? ci![0] >= threshold ? "supported" : "not_supported"
+        : ci![1] <= threshold ? "supported" : "not_supported";
+  const decisionRule: PromotionConfirmatoryHypothesisResult["decision_rule"] = useExactFixedSuiteDecision
+    ? direction === "at_least"
+      ? "point_estimate_at_least_threshold"
+      : "point_estimate_at_most_threshold"
     : direction === "at_least"
-      ? ci[0] >= threshold ? "supported" : "not_supported"
-      : ci[1] <= threshold ? "supported" : "not_supported";
-  const decisionRule = direction === "at_least"
-    ? "lower_bound_at_least_threshold"
-    : "upper_bound_at_most_threshold";
+      ? "lower_resampling_bound_at_least_threshold"
+      : "upper_resampling_bound_at_most_threshold";
   return {
     hypothesis_id: id,
     status,
     observed_value: value,
-    confidence_interval_95: ci,
+    diagnostic_interval: ci,
     threshold,
     decision_rule: decisionRule,
     point_threshold_met: pointThresholdMet,
-    inference_unit: "base_bundle_id",
+    evaluation_unit: useExactFixedSuiteDecision ? "fixed_suite" : "base_bundle_id",
+    decision_basis: useExactFixedSuiteDecision
+      ? "exact_fixed_suite_point_estimate"
+      : "base_bundle_resampling_interval",
+    eligible_observation_count: eligibleObservationCount,
+    faulty_observation_count: faultyObservationCount,
+    suite_observation_count: suiteObservationCount,
     comparison,
-    interpretation: value === null || ci === null
-      ? "The required point estimate or clustered confidence interval was unavailable."
-      : "Observed " + value.toFixed(4)
-        + " with clustered 95% CI [" + ci[0].toFixed(4) + ", " + ci[1].toFixed(4) + "]; "
-        + "support requires the " + (direction === "at_least" ? "lower" : "upper")
-        + " bound to be " + direction.replace("_", " ") + " " + threshold.toFixed(4) + "."
+    interpretation: value === null || (!useExactFixedSuiteDecision && ci === null)
+      ? "The required decision quantity was unavailable."
+      : useExactFixedSuiteDecision
+        ? "Observed exact fixed-suite value " + value.toFixed(4) + "; threshold check requires the point estimate to be "
+          + direction.replace("_", " ") + " " + threshold.toFixed(4)
+          + ". Any base-bundle resampling interval is sensitivity-only and does not determine this decision."
+        : "Observed " + value.toFixed(4)
+          + " with base-bundle resampling interval [" + ci![0].toFixed(4) + ", " + ci![1].toFixed(4) + "]; "
+          + "the declared prospective rule requires the " + (direction === "at_least" ? "lower" : "upper")
+          + " resampling bound to be " + direction.replace("_", " ") + " " + threshold.toFixed(4) + "."
   };
 }
 
@@ -986,17 +1082,17 @@ function orientPairedMetric(
   left: string,
   right: string | undefined,
   valueKey: "false_paper_ready_rate_delta" | "repair_owner_exact_match_accuracy_delta",
-  ciKey: "false_paper_ready_cluster_bootstrap_95_ci" | "repair_owner_cluster_bootstrap_95_ci"
+  ciKey: "false_paper_ready_base_bundle_resampling_interval" | "repair_owner_base_bundle_resampling_interval"
 ): { value: number | null; ci: [number, number] | null } {
   if (!comparison || !right) return { value: null, ci: null };
   const value = comparison[valueKey];
   const ci = comparison[ciKey];
-  if (value === null || ci === null) return { value: null, ci: null };
+  if (value === null) return { value: null, ci };
   if (comparison.system_a === left && comparison.system_b === right) {
     return { value, ci };
   }
   if (comparison.system_a === right && comparison.system_b === left) {
-    return { value: -value, ci: [-ci[1], -ci[0]] };
+    return { value: -value, ci: ci === null ? null : [-ci[1], -ci[0]] };
   }
   return { value: null, ci: null };
 }
@@ -1005,6 +1101,10 @@ function claimClass(
   hypotheses: PromotionConfirmatoryHypothesisResult[]
 ): PromotionConfirmatoryGateReport["claim_class"] {
   if (hypotheses.some((item) => item.status === "not_evaluable")) return "not_evaluable";
+  if (hypotheses.every((item) => item.status === "threshold_met_post_hoc")) {
+    return "fixed_suite_conformance_signal";
+  }
+  if (hypotheses.some((item) => item.status === "threshold_met_post_hoc")) return "mixed_or_weak_signal";
   if (hypotheses.every((item) => item.status === "supported")) return "confirmatory_signal";
   if (hypotheses.some((item) => item.status === "supported")) return "mixed_or_weak_signal";
   return "null_or_counterevidence";
@@ -1054,11 +1154,15 @@ function targetForSuiteIssue(code: string): string {
 
 function renderGateMarkdown(report: PromotionConfirmatoryGateReport): string {
   const lines = [
-    "# Promotion Confirmatory Gate",
+    "# Promotion Evidence Gate",
     "",
     "- Readiness: " + report.readiness,
     "- Paper ready: false",
+    "- Study design: " + report.study_design,
     "- Claim class: " + report.claim_class,
+    "- Conformance gate passed: " + report.conformance_gate_passed,
+    "- Prospective evidence gate passed: " + report.evidence_gate_passed,
+    "- Evidence gate reason: " + report.evidence_gate_reason,
     "- Evaluation regime: " + report.evaluation_regime,
     "- Claim ceiling: " + report.claim_ceiling,
     "- External validation: " + report.external_validation_status,
@@ -1072,7 +1176,9 @@ function renderGateMarkdown(report: PromotionConfirmatoryGateReport): string {
     ""
   ];
   lines.push(...report.hypotheses.map((item) =>
-    "- " + item.hypothesis_id + ": " + item.status + " - " + item.interpretation));
+    "- " + item.hypothesis_id + ": " + item.status
+      + ` (eligible=${item.eligible_observation_count ?? "n/a"}, faulty=${item.faulty_observation_count ?? "n/a"}, suite=${item.suite_observation_count})`
+      + " - " + item.interpretation));
   lines.push("", "## Blocking Evidence Gaps", "");
   if (report.blockers.length === 0) lines.push("- None.");
   else {

@@ -6,7 +6,15 @@ import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/
 import { afterEach, describe, expect, it } from "vitest";
 
 import { materializeExternalAuditArtifacts } from "../src/core/audit/externalArtifactIntake.js";
-import { runPaperReadinessAudit } from "../src/core/audit/paperReadinessAudit.js";
+import {
+  runPaperReadinessAudit,
+  type PaperReadinessAuditSummary
+} from "../src/core/audit/paperReadinessAudit.js";
+import {
+  runResearchAudit,
+  runResearchPack,
+  runResearchReview
+} from "../src/core/researchGovernanceOperations.js";
 
 const tempDirs: string[] = [];
 
@@ -29,7 +37,15 @@ describe("external artifact audit intake", () => {
       JSON.stringify([{ metric: "accuracy", baseline: 0.7, comparator: 0.74, delta: 0.04, direction: "higher_better" }]),
       "utf8"
     );
-    await writeFile(path.join(external, "evidence_store.jsonl"), JSON.stringify({ id: "ev_metric", metric: "accuracy", value: 0.74 }) + "\n", "utf8");
+    await writeFile(path.join(external, "evidence_store.jsonl"), JSON.stringify({
+      id: "ev_metric",
+      claim_id: "claim_accuracy_delta",
+      metric: "accuracy",
+      metric_evidence_present: true,
+      claim_evidence_valid: true,
+      value: 0.74,
+      artifact_refs: ["result_table.json"]
+    }) + "\n", "utf8");
     await writeFile(
       path.join(external, "paper", "claim_evidence_table.json"),
       JSON.stringify({
@@ -151,7 +167,11 @@ describe("external artifact audit intake", () => {
       outDir: "outputs/support-audit"
     });
 
-    expect(summary.unsupported_claims).not.toContainEqual(expect.objectContaining({ claim_id: "contract-claim" }));
+    expect(summary.unsupported_claims).toContainEqual(expect.objectContaining({
+      claim_id: "contract-claim",
+      status: "unsupported",
+      message: expect.stringContaining("lacks a unique claim-bound validation receipt")
+    }));
     expect(await readFile(
       path.join(workspace, "outputs", "support-audit", "_external-intake", "run-artifacts", "src", "validator.ts"),
       "utf8"
@@ -175,6 +195,119 @@ describe("external artifact audit intake", () => {
     }));
     expect(manifest.explicit_inputs).toMatchObject({ support_manifest: true, support_file_count: 1 });
     expect(manifestRaw).not.toContain(supportRoot);
+  });
+
+  it("binds exact intake and canonical projection manifest bytes in the audit summary", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-canonical-package-workspace-"));
+    tempDirs.push(workspace);
+    const external = path.join(workspace, "canonical-package");
+    await mkdir(external, { recursive: true });
+    const projectionBytes = Buffer.from([
+      "{",
+      "  \"schema_version\": \"1.0\",",
+      "  \"files\": []",
+      "}",
+      ""
+    ].join("\n"), "utf8");
+    const projectionPath = path.join(external, "projection-manifest.json");
+    await writeFile(projectionPath, projectionBytes);
+    const supportManifestPath = path.join(external, "projection-support-manifest.json");
+    await writeFile(supportManifestPath, JSON.stringify({
+      schema_version: "1.0",
+      files: [{
+        path: "projection-manifest.json",
+        sha256: createHash("sha256").update(projectionBytes).digest("hex"),
+        bytes: projectionBytes.byteLength
+      }]
+    }), "utf8");
+
+    const gateResult = await runResearchAudit({
+      cwd: workspace,
+      externalRoot: external,
+      supportRoot: external,
+      supportManifestPath,
+      outDir: "outputs/canonical-package-audit"
+    });
+
+    const manifestPath = path.join(
+      workspace,
+      "outputs",
+      "canonical-package-audit",
+      "external-intake-manifest.json"
+    );
+    const frozenProjectionPath = path.join(
+      workspace,
+      "outputs",
+      "canonical-package-audit",
+      "_external-intake",
+      "run-artifacts",
+      "projection-manifest.json"
+    );
+    const manifestBytes = await readFile(manifestPath);
+    const frozenProjectionBytes = await readFile(frozenProjectionPath);
+    const summary = JSON.parse(await readFile(
+      path.join(workspace, "outputs", "canonical-package-audit", "audit-summary.json"),
+      "utf8"
+    )) as PaperReadinessAuditSummary;
+    const intakeBinding = {
+      path: "outputs/canonical-package-audit/external-intake-manifest.json",
+      sha256: createHash("sha256").update(manifestBytes).digest("hex"),
+      bytes: manifestBytes.byteLength
+    };
+    const projectionBinding = {
+      path: "outputs/canonical-package-audit/_external-intake/run-artifacts/projection-manifest.json",
+      sha256: createHash("sha256").update(projectionBytes).digest("hex"),
+      bytes: projectionBytes.byteLength
+    };
+
+    expect(frozenProjectionBytes).toEqual(projectionBytes);
+    expect(summary.external_intake).toEqual({
+      manifest: intakeBinding,
+      canonical_projection_manifest: projectionBinding
+    });
+    expect(summary.outputs.external_intake_manifest_path).toBe(intakeBinding.path);
+    const intakeManifest = JSON.parse(manifestBytes.toString("utf8")) as {
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    expect(intakeManifest.copied_file_bindings).toContainEqual({
+      path: "projection-manifest.json",
+      sha256: projectionBinding.sha256,
+      bytes: projectionBinding.bytes
+    });
+
+    const reviewResult = await runResearchReview({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      outDir: "outputs/canonical-package-audit"
+    });
+    const packResult = await runResearchPack({
+      cwd: workspace,
+      gatePath: gateResult.output_path,
+      reviewPath: reviewResult.output_path,
+      sourceDir: "outputs/canonical-package-audit",
+      outDir: "outputs/canonical-review-package"
+    });
+    const packedManifestBytes = await readFile(path.join(
+      workspace,
+      "outputs",
+      "canonical-review-package",
+      "artifacts",
+      "external-intake-manifest.json"
+    ));
+    expect(packedManifestBytes).toEqual(manifestBytes);
+    expect(packResult.artifact.files).toContainEqual({
+      path: "artifacts/external-intake-manifest.json",
+      sha256: intakeBinding.sha256,
+      bytes: intakeBinding.bytes
+    });
+    const packedManifest = JSON.parse(packedManifestBytes.toString("utf8")) as {
+      copied_file_bindings: Array<{ path: string; sha256: string; bytes: number }>;
+    };
+    expect(packedManifest.copied_file_bindings).toContainEqual({
+      path: "projection-manifest.json",
+      sha256: projectionBinding.sha256,
+      bytes: projectionBinding.bytes
+    });
   });
 
   it.each([

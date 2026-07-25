@@ -9,6 +9,7 @@ import { generateControlledPromotionBenchmark } from "../src/core/benchmark/prom
 import { certifyPromotionDeterministicOracle } from "../src/core/benchmark/promotionBenchmarkDeterministicOracleCertification.js";
 import { registeredFaultFamilies } from "../src/core/benchmark/promotionBenchmarkDeterministicOracleContract.js";
 import { exportPromotionBenchmarkPromptPack } from "../src/core/benchmark/promotionBenchmarkPromptPack.js";
+import { hashPromotionBenchmarkRuntimeSourceTree } from "../src/core/benchmark/promotionBenchmarkSystems.js";
 
 describe("deterministic promotion oracle", () => {
   it("builds a human-free controlled suite with disjoint held-out fault families", async () => {
@@ -22,6 +23,11 @@ describe("deterministic promotion oracle", () => {
     });
 
     expect(result.paper_claim_eligible).toBe(false);
+    expect(result.clean_control_admission)
+      .toBe("generator_contract_plus_canonical_semantic_validation");
+    expect(result.runtime_binding.source_tree_sha256)
+      .toBe(await hashPromotionBenchmarkRuntimeSourceTree(process.cwd()));
+    expect(result.runtime_binding.package_lock_sha256).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.development_case_count).toBeGreaterThan(2);
     expect(result.test_case_count).toBeGreaterThan(2);
     expect(new Set([
@@ -31,6 +37,20 @@ describe("deterministic promotion oracle", () => {
     expect(result.development_mutation_families.every(
       (family) => !result.test_mutation_families.includes(family)
     )).toBe(true);
+
+    const controlledManifest = JSON.parse(await fs.readFile(
+      path.join(workspace, result.output_dir, "controlled-benchmark-manifest.json"),
+      "utf8"
+    )) as {
+      schema_version: string;
+      split_method: string;
+      runtime_binding: { source_tree_sha256: string; package_lock_sha256: string };
+    };
+    expect(controlledManifest).toMatchObject({
+      schema_version: "1.1",
+      split_method: "failure_family_and_base_grouped_with_exact_source_hash_screen",
+      runtime_binding: result.runtime_binding
+    });
 
     const loaded = await loadPromotionBenchmarkSuite(path.join(workspace, result.certified_suite_path));
     expect(loaded.issues).toEqual([]);

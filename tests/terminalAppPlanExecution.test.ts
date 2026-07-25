@@ -1105,7 +1105,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expectNthMenuPrompt(app.openSelectionMenu, 1, "Select Ollama research backend model");
   });
 
-  it("summarizes an existing review packet through /agent review", async () => {
+  it("routes /agent review through figure_audit before review", async () => {
     const origCwd = process.cwd();
     const tmpDir = await mkdtemp(path.join(os.tmpdir(), "autolabos-review-command-"));
     process.chdir(tmpDir);
@@ -1113,9 +1113,22 @@ describe("TerminalApp pending natural plan execution", () => {
     const app = makeApp();
     const run = makeRun("run-review-command");
     run.status = "paused";
-    run.currentNode = "review";
-    run.graph.currentNode = "review";
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.nodeStates.figure_audit.status = "pending";
     run.graph.nodeStates.review.status = "pending";
+    run.graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "analyze_results",
+      targetNode: "figure_audit",
+      reason: "Proceed to figure audit.",
+      confidence: 0.9,
+      autoExecutable: true,
+      evidence: ["Analysis is complete."],
+      suggestedCommands: ["/approve"],
+      generatedAt: new Date().toISOString()
+    };
 
     const reviewDir = path.join(".autolabos", "runs", run.id, "review");
     await rm(path.join(".autolabos", "runs", run.id), { recursive: true, force: true });
@@ -1125,8 +1138,50 @@ describe("TerminalApp pending natural plan execution", () => {
     app.setActiveRunId = vi.fn();
     app.refreshRunIndex = vi.fn();
     app.refreshActiveRunInsight = vi.fn();
+    const callOrder: string[] = [];
     app.orchestrator = {
-      runAgentWithOptions: vi.fn(async () => {
+      approveCurrent: vi.fn(async () => {
+        callOrder.push("approve:analyze_results");
+        run.currentNode = "figure_audit";
+        run.graph.currentNode = "figure_audit";
+        run.status = "running";
+        run.graph.nodeStates.analyze_results.status = "completed";
+        run.graph.nodeStates.figure_audit.status = "pending";
+        run.graph.pendingTransition = undefined;
+        return run;
+      }),
+      applyPendingTransition: vi.fn(async () => {
+        callOrder.push("apply:figure_audit");
+        run.currentNode = "review";
+        run.graph.currentNode = "review";
+        run.status = "running";
+        run.graph.nodeStates.figure_audit.status = "completed";
+        run.graph.nodeStates.review.status = "pending";
+        run.graph.pendingTransition = undefined;
+        return run;
+      }),
+      runAgentWithOptions: vi.fn(async (_runId: string, nodeId: string) => {
+        callOrder.push(`run:${nodeId}`);
+        if (nodeId === "figure_audit") {
+          run.status = "paused";
+          run.graph.nodeStates.figure_audit.status = "needs_approval";
+          run.graph.nodeStates.figure_audit.note = "Figure audit completed.";
+          run.graph.pendingTransition = {
+            action: "advance",
+            sourceNode: "figure_audit",
+            targetNode: "review",
+            reason: "Figure audit completed safely.",
+            confidence: 0.95,
+            autoExecutable: true,
+            evidence: ["Figure audit summary is available."],
+            suggestedCommands: ["/approve"],
+            generatedAt: new Date().toISOString()
+          };
+          return {
+            run,
+            result: { status: "success" as const, summary: "Figure audit completed." }
+          };
+        }
         await writeFile(
           path.join(reviewDir, "review_packet.json"),
           `${JSON.stringify(
@@ -1194,9 +1249,18 @@ describe("TerminalApp pending natural plan execution", () => {
     const result = await app.handleAgent(["review"]);
 
     expect(result.ok).toBe(true);
-    expect(app.orchestrator.runAgentWithOptions).toHaveBeenCalledWith(run.id, "review", {
-      abortSignal: undefined
-    });
+    expect(app.orchestrator.runAgentWithOptions.mock.calls.map((call: unknown[]) => call[1])).toEqual([
+      "figure_audit",
+      "review"
+    ]);
+    expect(callOrder).toEqual([
+      "approve:analyze_results",
+      "run:figure_audit",
+      "apply:figure_audit",
+      "run:review"
+    ]);
+    expect(app.logs).toContain("Approved analyze_results and moved into figure_audit.");
+    expect(app.logs).toContain("Applied figure_audit advance and moved into review.");
     expect(app.logs).toContain("review finished: Review packet prepared.");
     expect(app.logs.some((line: string) => line.includes("Review readiness: warning"))).toBe(true);
     expect(app.logs.some((line: string) => line.includes("Manual: Human sign-off"))).toBe(true);
@@ -1204,6 +1268,53 @@ describe("TerminalApp pending natural plan execution", () => {
       process.chdir(origCwd);
       await rm(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("does not consume an analyze_results backtrack when TUI /agent review is requested", async () => {
+    const app = makeApp();
+    const run = makeRun("run-review-backtrack");
+    run.status = "paused";
+    run.currentNode = "analyze_results";
+    run.graph.currentNode = "analyze_results";
+    run.graph.nodeStates.analyze_results.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_design",
+      sourceNode: "analyze_results",
+      targetNode: "design_experiments",
+      reason: "Evidence remains below the paper progression floor.",
+      confidence: 0.8,
+      autoExecutable: false,
+      evidence: ["The comparison is incomplete."],
+      suggestedCommands: ["/agent jump design_experiments"],
+      generatedAt: new Date().toISOString()
+    };
+
+    app.resolveTargetRun = vi.fn().mockResolvedValue(run);
+    app.setActiveRunId = vi.fn();
+    app.refreshRunIndex = vi.fn();
+    app.orchestrator = {
+      approveCurrent: vi.fn(),
+      applyPendingTransition: vi.fn(),
+      runAgentWithOptions: vi.fn()
+    };
+
+    const result = await app.handleAgent(["review"]);
+
+    expect(result).toEqual({
+      ok: false,
+      reason:
+        "analyze_results did not safely advance to figure_audit: backtrack_to_design -> design_experiments (autoExecutable=false)"
+    });
+    expect(app.logs).toContain(
+      "Analysis handoff stopped before figure audit: backtrack_to_design -> design_experiments (autoExecutable=false) is not a safe auto-executable advance to figure_audit."
+    );
+    expect(app.logs).toContain("Reason: Evidence remains below the paper progression floor.");
+    expect(app.orchestrator.approveCurrent).not.toHaveBeenCalled();
+    expect(app.orchestrator.applyPendingTransition).not.toHaveBeenCalled();
+    expect(app.orchestrator.runAgentWithOptions).not.toHaveBeenCalled();
+    expect(run.currentNode).toBe("analyze_results");
+    expect(run.graph.nodeStates.analyze_results.status).toBe("needs_approval");
+    expect(run.graph.pendingTransition?.action).toBe("backtrack_to_design");
   });
 
   it("interrupts busy work on ctrl+c instead of shutting down", async () => {
@@ -2025,6 +2136,102 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(
       app.logs.some((line: string) => line.includes('Persisted analysis outputs for "Paper 1"'))
     ).toBe(false);
+  });
+
+  it("coalesces high-frequency observation events without refreshing persisted run state", async () => {
+    vi.useFakeTimers();
+    try {
+      const app = makeApp();
+      const run = makeRun("run-stream-burst");
+      app.runIndex = [run];
+      app.activeRunId = run.id;
+      app.render = vi.fn();
+      app.refreshRunFromStore = vi.fn();
+      app.refreshRunProjectionHints = vi.fn();
+
+      for (let index = 0; index < 6_000; index += 1) {
+        expect(app.rememberEventId(`event-${index}`)).toBe(true);
+        app.handleStreamEvent({
+          id: `event-${index}`,
+          timestamp: new Date().toISOString(),
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: { text: `Synthesis progress ${index}` }
+        });
+      }
+
+      expect(app.seenEventIds.size).toBe(5_000);
+      expect(app.pendingStreamLogLines).toHaveLength(20);
+      expect(app.logs).toEqual([]);
+      expect(app.refreshRunFromStore).not.toHaveBeenCalled();
+      expect(app.refreshRunProjectionHints).not.toHaveBeenCalled();
+      expect(app.render).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(app.logs).toHaveLength(20);
+      expect(app.logs.at(-1)).toBe("Synthesis progress 5999");
+      expect(app.render).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("serializes structural stream refreshes and renders their active run once", async () => {
+    const app = makeApp();
+    const run = makeRun("run-structural-stream");
+    app.runIndex = [run];
+    app.activeRunId = run.id;
+    app.render = vi.fn();
+    app.refreshRunFromStore = vi.fn().mockResolvedValue(undefined);
+    app.refreshRunProjectionHints = vi.fn().mockResolvedValue(undefined);
+
+    app.handleStreamEvent({
+      id: "event-node-started",
+      timestamp: new Date().toISOString(),
+      type: "NODE_STARTED",
+      runId: run.id,
+      node: "analyze_results",
+      payload: { node: "analyze_results" }
+    });
+
+    await vi.waitFor(() => expect(app.render).toHaveBeenCalledTimes(1));
+    expect(app.refreshRunFromStore).toHaveBeenCalledTimes(1);
+    expect(app.refreshRunProjectionHints).toHaveBeenCalledTimes(1);
+    expect(app.logs).toContain("Node analyze_results started.");
+  });
+
+  it("skips oversized run-context files when refreshing TUI projection hints", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-tui-bounded-projection-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const app = makeApp();
+      const run = makeRun("run-bounded-projection");
+      app.runIndex = [run];
+      const contextPath = path.join(cwd, run.memoryRefs.runContextPath);
+      await mkdir(path.dirname(contextPath), { recursive: true });
+      await writeFile(
+        contextPath,
+        JSON.stringify({
+          items: [
+            {
+              key: "collect_papers.last_result",
+              value: { stored: 999 }
+            }
+          ],
+          padding: "x".repeat(2 * 1024 * 1024)
+        })
+      );
+
+      await app.refreshRunProjectionHints(run.id);
+
+      expect(app.runProjectionHints.has(run.id)).toBe(false);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it("inserts a newline on shift+enter instead of submitting", async () => {

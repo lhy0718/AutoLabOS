@@ -16,6 +16,7 @@ import {
 import type {
   PromotionTrialCandidateRecord
 } from "../src/core/benchmark/promotionBenchmarkTrialCandidateHandoff.js";
+import { inspectReferenceAuthorityGate } from "../src/core/referenceAuthorityGate.js";
 
 const tempDirs: string[] = [];
 
@@ -323,7 +324,13 @@ async function writeCanonicalArtifacts(
   await mkdir(path.join(root, "checkpoint"), { recursive: true });
   await writeFile(
     path.join(root, "evidence_store.jsonl"),
-    `${JSON.stringify({ id: "evidence-primary", metric_evidence_present: true })}\n`,
+    `${JSON.stringify({
+      id: "evidence-primary",
+      claim_id: "claim-primary",
+      metric_evidence_present: true,
+      claim_evidence_valid: true,
+      artifact_refs: ["result_table.json"]
+    })}\n`,
     "utf8"
   );
   await writeFile(
@@ -332,6 +339,8 @@ async function writeCanonicalArtifacts(
     "utf8"
   );
   await writeJsonFile(path.join(root, "design_contracts.json"), {
+    comparative_claim_authorized: true,
+    superiority_claim_authorized: false,
     sota_ranking_claimed: false,
     sota_evidence_present: false
   });
@@ -344,18 +353,42 @@ async function writeCanonicalArtifacts(
   });
   await writeJsonFile(path.join(root, "review", "paper_critique.json"), {
     paper_readiness_state: "paper_ready",
-    claim_ceiling_applied: true
+    claim_ceiling_applied: false
   });
   await writeJsonFile(path.join(root, "review", "decision.json"), { outcome: "accept" });
-  await writeFile(
-    path.join(root, "paper", "main.tex"),
-    "\\section{Results}\nThe measured comparison is linked to the canonical evidence artifacts.\n",
-    "utf8"
-  );
+  const manuscript = "\\section{Results}\nThe measured comparison is linked to the canonical evidence artifacts.\n";
+  const manuscriptSha256 = createHash("sha256").update(manuscript, "utf8").digest("hex");
+  await writeFile(path.join(root, "paper", "main.tex"), manuscript, "utf8");
   await writeJsonFile(path.join(root, "paper", "paper_readiness.json"), {
     paper_ready: true,
     readiness_state: "paper_ready"
   });
+  await writeJsonFile(path.join(root, "paper", "reference_evidence_status.json"), {
+    schema_version: "1.0",
+    manuscript: "paper/main.tex",
+    manuscript_projection: {
+      source_ref: "paper/main.tex",
+      package_ref: "paper/main.tex",
+      source_sha256: manuscriptSha256,
+      package_content_sha256: manuscriptSha256
+    },
+    submission_gate_passed: true,
+    summary: {
+      citation_bearing_claim_count: 0,
+      independently_checked_claim_count: 0,
+      missing_full_text_claim_count: 0
+    },
+    blocking_requirements: []
+  });
+  await writeFile(
+    path.join(root, "paper", "refgate_claims.tsv"),
+    "claim_id\tmanuscript_location\tclaim_text\tcitation_key\tsource_location\tquote_or_evidence\tevidence_kind\tstatus\tnotes\tclaim_type\timportance\n",
+    "utf8"
+  );
+  await writeJsonFile(
+    path.join(root, "paper", "reference_authority_gate.json"),
+    await inspectReferenceAuthorityGate(path.join(root, "paper"))
+  );
   const claim = {
     claim_id: "claim-primary",
     statement: "The measured comparison is reported.",

@@ -11,6 +11,7 @@ import {
   type PromotionBenchmarkSourceDiversityStatus
 } from "./promotionBenchmarkSourceDiversity.js";
 import { PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY } from "./promotionBenchmarkConfirmatoryContract.js";
+import { promotionConcernEvidenceRefsAreRelevant } from "./promotionBenchmarkEvidenceTrace.js";
 import {
   inspectPromotionConfirmatoryFreezeEvidence,
   parsePromotionConfirmatoryFreezeProvenance,
@@ -152,18 +153,20 @@ export interface PromotionBenchmarkSystemMetrics {
   macro_decision_f1: number;
   false_paper_ready_count: number;
   false_paper_ready_rate: number | null;
-  false_paper_ready_cluster_bootstrap_95_ci: [number, number] | null;
+  false_paper_ready_base_bundle_resampling_interval: [number, number] | null;
   concern_acceptance_conflict_count: number;
+  concern_acceptance_conflict_eligible_count: number;
   concern_acceptance_conflict_rate: number | null;
-  concern_acceptance_conflict_cluster_bootstrap_95_ci: [number, number] | null;
+  concern_acceptance_conflict_base_bundle_resampling_interval: [number, number] | null;
   clean_case_count: number;
   clean_case_promotion_accuracy: number | null;
-  clean_case_promotion_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
+  clean_case_promotion_accuracy_base_bundle_resampling_interval: [number, number] | null;
   blocker_precision: number | null;
   blocker_recall: number | null;
   blocker_f1: number | null;
   repair_owner_exact_match_accuracy: number | null;
-  repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
+  repair_owner_eligible_count: number;
+  repair_owner_exact_match_accuracy_base_bundle_resampling_interval: [number, number] | null;
   trace_coverage: number | null;
   mean_latency_ms: number | null;
   total_cost_usd: number | null;
@@ -177,15 +180,15 @@ export interface PromotionBenchmarkPairedComparison {
   common_case_count: number;
   common_base_bundle_count: number;
   decision_accuracy_delta: number;
-  decision_accuracy_cluster_bootstrap_95_ci: [number, number] | null;
+  decision_accuracy_base_bundle_resampling_interval: [number, number] | null;
   decision_accuracy_exact_paired_sign_test_p: number | null;
   false_paper_ready_common_case_count: number;
   false_paper_ready_rate_delta: number | null;
-  false_paper_ready_cluster_bootstrap_95_ci: [number, number] | null;
+  false_paper_ready_base_bundle_resampling_interval: [number, number] | null;
   false_paper_ready_exact_paired_sign_test_p: number | null;
   repair_owner_common_case_count: number;
   repair_owner_exact_match_accuracy_delta: number | null;
-  repair_owner_cluster_bootstrap_95_ci: [number, number] | null;
+  repair_owner_base_bundle_resampling_interval: [number, number] | null;
   repair_owner_exact_paired_sign_test_p: number | null;
 }
 
@@ -222,7 +225,7 @@ export interface PromotionBenchmarkSourceFamilyAnalysis {
 }
 
 export interface PromotionBenchmarkScoreReport {
-  schema_version: "1.0";
+  schema_version: "1.1";
   generated_at: string;
   suite_id: string;
   evidence_class: PromotionBenchmarkEvidenceClass | "unspecified";
@@ -243,8 +246,11 @@ export interface PromotionBenchmarkScoreReport {
   systems: PromotionBenchmarkSystemMetrics[];
   source_family_analysis: PromotionBenchmarkSourceFamilyAnalysis;
   paired_analysis: {
-    inference_unit: "base_bundle_id";
-    bootstrap_replicates: number;
+    resampling_unit: "base_bundle_id";
+    resampling_replicates: number;
+    resampling_interval_percentiles: [0.025, 0.975];
+    resampling_seed_derivation: "uint32_from_first_8_hex_of_sha256_over_null_delimited_analysis_identity";
+    resampling_interpretation: "finite_suite_identifier_sensitivity_not_population_uncertainty";
     exploratory_only: boolean;
     comparisons: PromotionBenchmarkPairedComparison[];
   };
@@ -471,7 +477,7 @@ export async function scorePromotionBenchmarkFromFiles(
   );
 
   const report: PromotionBenchmarkScoreReport = {
-    schema_version: "1.0",
+    schema_version: "1.1",
     generated_at: new Date().toISOString(),
     suite_id: loaded.suite?.manifest.suite_id || "<invalid-suite>",
     evidence_class: loaded.suite?.manifest.evidence_class || "unspecified",
@@ -492,9 +498,13 @@ export async function scorePromotionBenchmarkFromFiles(
     systems,
     source_family_analysis: sourceFamilyAnalysis,
     paired_analysis: {
-      inference_unit: "base_bundle_id",
-      bootstrap_replicates: CLUSTER_BOOTSTRAP_REPLICATES,
-      exploratory_only: loaded.suite?.manifest.paper_claim_eligible !== true,
+      resampling_unit: "base_bundle_id",
+      resampling_replicates: CLUSTER_BOOTSTRAP_REPLICATES,
+      resampling_interval_percentiles: [0.025, 0.975],
+      resampling_seed_derivation: "uint32_from_first_8_hex_of_sha256_over_null_delimited_analysis_identity",
+      resampling_interpretation: "finite_suite_identifier_sensitivity_not_population_uncertainty",
+      exploratory_only: loaded.suite?.manifest.paper_claim_eligible !== true
+        || loaded.suite?.manifest.evaluation_regime === "controlled_deterministic_fault_injection",
       comparisons: pairedComparisons
     }
   };
@@ -558,7 +568,7 @@ function scoreSystem(
     }
 
     const blocking = prediction.concerns.filter((concern) => concern.severity === "blocking");
-    if (blocking.length > 0) {
+    if (benchmarkCase.gold.decision !== "promote" && blocking.length > 0) {
       withBlockingConcern += 1;
       if (prediction.decision === "promote") conflicts += 1;
     }
@@ -596,18 +606,20 @@ function scoreSystem(
     macro_decision_f1: macroF1(confusion),
     false_paper_ready_count: falsePromotions,
     false_paper_ready_rate: ratioOrNull(falsePromotions, nonPromotable),
-    false_paper_ready_cluster_bootstrap_95_ci: intervalFor("false_paper_ready"),
+    false_paper_ready_base_bundle_resampling_interval: intervalFor("false_paper_ready"),
     concern_acceptance_conflict_count: conflicts,
+    concern_acceptance_conflict_eligible_count: withBlockingConcern,
     concern_acceptance_conflict_rate: ratioOrNull(conflicts, withBlockingConcern),
-    concern_acceptance_conflict_cluster_bootstrap_95_ci: intervalFor("concern_acceptance_conflict"),
+    concern_acceptance_conflict_base_bundle_resampling_interval: intervalFor("concern_acceptance_conflict"),
     clean_case_count: clean,
     clean_case_promotion_accuracy: ratioOrNull(cleanPromotions, clean),
-    clean_case_promotion_accuracy_cluster_bootstrap_95_ci: intervalFor("clean_case_promotion"),
+    clean_case_promotion_accuracy_base_bundle_resampling_interval: intervalFor("clean_case_promotion"),
     blocker_precision: precision,
     blocker_recall: recall,
     blocker_f1: harmonicMean(precision, recall),
     repair_owner_exact_match_accuracy: ratioOrNull(repairExact, repairCases),
-    repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci: intervalFor("repair_owner_exact_match"),
+    repair_owner_eligible_count: repairCases,
+    repair_owner_exact_match_accuracy_base_bundle_resampling_interval: intervalFor("repair_owner_exact_match"),
     trace_coverage: ratioOrNull(tracedConcernCount, concernCount),
     mean_latency_ms: meanOrNull(latencies),
     total_cost_usd: costs.length > 0 ? costs.reduce((sum, value) => sum + value, 0) : null,
@@ -696,15 +708,15 @@ function scorePairedComparisons(
         common_case_count: decisionDiffs.length,
         common_base_bundle_count: new Set(decisionDiffs.map((row) => row.base_bundle_id)).size,
         decision_accuracy_delta: decisionStats.delta ?? 0,
-        decision_accuracy_cluster_bootstrap_95_ci: decisionStats.ci,
+        decision_accuracy_base_bundle_resampling_interval: decisionStats.ci,
         decision_accuracy_exact_paired_sign_test_p: decisionStats.p,
         false_paper_ready_common_case_count: falsePromotionDiffs.length,
         false_paper_ready_rate_delta: falsePromotionStats.delta,
-        false_paper_ready_cluster_bootstrap_95_ci: falsePromotionStats.ci,
+        false_paper_ready_base_bundle_resampling_interval: falsePromotionStats.ci,
         false_paper_ready_exact_paired_sign_test_p: falsePromotionStats.p,
         repair_owner_common_case_count: repairOwnerDiffs.length,
         repair_owner_exact_match_accuracy_delta: repairOwnerStats.delta,
-        repair_owner_cluster_bootstrap_95_ci: repairOwnerStats.ci,
+        repair_owner_base_bundle_resampling_interval: repairOwnerStats.ci,
         repair_owner_exact_paired_sign_test_p: repairOwnerStats.p
       });
     }
@@ -838,7 +850,7 @@ function metricObservation(
   }
   if (metric === "concern_acceptance_conflict") {
     const hasBlockingConcern = prediction.concerns.some((concern) => concern.severity === "blocking");
-    return hasBlockingConcern || benchmarkCase.gold.blocking_concerns.length > 0
+    return benchmarkCase.gold.decision !== "promote" && hasBlockingConcern
       ? Number(prediction.decision === "promote")
       : null;
   }
@@ -872,9 +884,7 @@ function clusteredDifferenceStats(
   if (rows.length === 0) return { delta: null, ci: null, p: null };
   const delta = rows.reduce((sum, row) => sum + row.difference, 0) / rows.length;
   const clusters = [...groupBy(rows, (row) => row.base_bundle_id).values()];
-  const clusterMeans = clusters.map((cluster) => cluster.reduce((sum, row) => sum + row.difference, 0) / cluster.length);
-  const p = exactPairedSignTest(clusterMeans);
-  if (clusters.length < 2) return { delta, ci: null, p };
+  if (clusters.length < 2) return { delta, ci: null, p: null };
 
   const random = deterministicRandom(seedMaterial);
   const bootstrap: number[] = [];
@@ -897,7 +907,7 @@ function clusteredDifferenceStats(
       quantile(bootstrap, PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY),
       quantile(bootstrap, 1 - PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY)
     ],
-    p
+    p: null
   };
 }
 
@@ -923,43 +933,10 @@ function clusteredMeanInterval(
     bootstrap.push(sum / count);
   }
   bootstrap.sort((left, right) => left - right);
-  const percentileInterval: [number, number] = [
+  return [
     quantile(bootstrap, PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY),
     quantile(bootstrap, 1 - PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY)
   ];
-  // Binary percentile intervals otherwise collapse to zero width at the boundary.
-  if (rows.every((row) => row.value === 0)) {
-    return [
-      0,
-      1 - Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / clusters.length)
-    ];
-  }
-  if (rows.every((row) => row.value === 1)) {
-    return [
-      Math.pow(PROMOTION_CONFIRMATORY_INTERVAL_TAIL_PROBABILITY, 1 / clusters.length),
-      1
-    ];
-  }
-  return percentileInterval;
-}
-
-function exactPairedSignTest(values: number[]): number | null {
-  const nonTies = values.filter((value) => Math.abs(value) > Number.EPSILON);
-  if (nonTies.length === 0) return null;
-  const positives = nonTies.filter((value) => value > 0).length;
-  const tail = Math.min(positives, nonTies.length - positives);
-  let cumulative = 0;
-  for (let successes = 0; successes <= tail; successes += 1) {
-    cumulative += binomialCoefficient(nonTies.length, successes) * (0.5 ** nonTies.length);
-  }
-  return Math.min(1, 2 * cumulative);
-}
-
-function binomialCoefficient(n: number, k: number): number {
-  const limit = Math.min(k, n - k);
-  let result = 1;
-  for (let index = 1; index <= limit; index += 1) result = (result * (n - limit + index)) / index;
-  return result;
 }
 
 function deterministicRandom(seedMaterial: string): () => number {
@@ -1010,18 +987,18 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
       formatMetric(system.trace_coverage)
     ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
     "",
-    "## Clustered Metric Uncertainty",
+    "## Base-Bundle Resampling Sensitivity",
     "",
-    "Intervals use base_bundle_id as the resampling cluster; all-zero and all-one binary outcomes use a two-sided exact boundary guard.",
+    "Intervals resample observed base_bundle_id groups as a finite-suite sensitivity diagnostic. They are not population confidence intervals and do not claim coverage for unseen bundles.",
     "",
-    "| System | False promotion 95% CI | Concern-conflict 95% CI | Clean promotion 95% CI | Repair owner 95% CI |",
+    "| System | False promotion interval | Concern-conflict interval | Clean promotion interval | Repair owner interval |",
     "| --- | ---: | ---: | ---: | ---: |",
     ...report.systems.map((system) => [
       system.system_id,
-      formatInterval(system.false_paper_ready_cluster_bootstrap_95_ci),
-      formatInterval(system.concern_acceptance_conflict_cluster_bootstrap_95_ci),
-      formatInterval(system.clean_case_promotion_accuracy_cluster_bootstrap_95_ci),
-      formatInterval(system.repair_owner_exact_match_accuracy_cluster_bootstrap_95_ci)
+      formatInterval(system.false_paper_ready_base_bundle_resampling_interval),
+      formatInterval(system.concern_acceptance_conflict_base_bundle_resampling_interval),
+      formatInterval(system.clean_case_promotion_accuracy_base_bundle_resampling_interval),
+      formatInterval(system.repair_owner_exact_match_accuracy_base_bundle_resampling_interval)
     ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
     "",
     "## Mutation Families",
@@ -1076,10 +1053,10 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
       lines.push(
         `### Omit Family ${analysis.omitted_source_family_id_sha256.slice(0, 12)}`,
         "",
-        "| System A | System B | Decision delta | Decision 95% CI | Sign-test p | False-promotion delta | False-promotion 95% CI | Sign-test p |",
+        "| System A | System B | Decision delta | Decision sensitivity interval | Sign-test p | False-promotion delta | False-promotion sensitivity interval | Sign-test p |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         ...analysis.comparisons.map((comparison) =>
-          `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
+          `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_base_bundle_resampling_interval)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_base_bundle_resampling_interval)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
         ),
         ""
       );
@@ -1088,25 +1065,25 @@ function renderPromotionScoreMarkdown(report: PromotionBenchmarkScoreReport): st
   lines.push(
     "## Paired Repair-Owner Analysis",
     "",
-    "| System A | System B | Common cases | Repair-owner delta | Repair-owner 95% CI | Sign-test p |",
+    "| System A | System B | Common cases | Repair-owner delta | Repair-owner sensitivity interval | Sign-test p |",
     "| --- | --- | ---: | ---: | ---: | ---: |",
     ...report.paired_analysis.comparisons.map((comparison) => [
       comparison.system_a,
       comparison.system_b,
       String(comparison.repair_owner_common_case_count),
       formatMetric(comparison.repair_owner_exact_match_accuracy_delta),
-      formatInterval(comparison.repair_owner_cluster_bootstrap_95_ci),
+      formatInterval(comparison.repair_owner_base_bundle_resampling_interval),
       formatMetric(comparison.repair_owner_exact_paired_sign_test_p)
     ].join(" | ").replace(/^/u, "| ").replace(/$/u, " |")),
     "",
     "## Paired Analysis",
     "",
-    `Inference unit: ${report.paired_analysis.inference_unit}. Bootstrap replicates: ${report.paired_analysis.bootstrap_replicates}. Exploratory only: ${report.paired_analysis.exploratory_only}.`,
+    `Resampling unit: ${report.paired_analysis.resampling_unit}. Resampling replicates: ${report.paired_analysis.resampling_replicates}. Interval percentiles: ${report.paired_analysis.resampling_interval_percentiles.join(", ")}. Seed derivation: ${report.paired_analysis.resampling_seed_derivation}. Interpretation: ${report.paired_analysis.resampling_interpretation}. Exploratory only: ${report.paired_analysis.exploratory_only}.`,
     "",
-    "| System A | System B | Decision delta | Decision 95% CI | Sign-test p | False-promotion delta | False-promotion 95% CI | Sign-test p |",
+    "| System A | System B | Decision delta | Decision sensitivity interval | Sign-test p | False-promotion delta | False-promotion sensitivity interval | Sign-test p |",
     "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ...report.paired_analysis.comparisons.map((comparison) =>
-      `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_cluster_bootstrap_95_ci)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
+      `| ${comparison.system_a} | ${comparison.system_b} | ${formatMetric(comparison.decision_accuracy_delta)} | ${formatInterval(comparison.decision_accuracy_base_bundle_resampling_interval)} | ${formatMetric(comparison.decision_accuracy_exact_paired_sign_test_p)} | ${formatMetric(comparison.false_paper_ready_rate_delta)} | ${formatInterval(comparison.false_paper_ready_base_bundle_resampling_interval)} | ${formatMetric(comparison.false_paper_ready_exact_paired_sign_test_p)} |`
     ),
     ""
   );
@@ -1933,7 +1910,15 @@ async function collectTraceableConcerns(
           ref: `${prediction.system_id}:${prediction.trial_id}:${prediction.case_id}:${concern.code}:${refs[index]}`
         });
       });
-      if (validity.every(Boolean)) traceable.add(concern);
+      const relevant = promotionConcernEvidenceRefsAreRelevant(concern.code, refs);
+      if (!relevant) {
+        issues.push({
+          code: "prediction_evidence_ref_irrelevant",
+          message: "Prediction evidence_refs do not include the registered artifact targets for this concern code.",
+          ref: `${prediction.system_id}:${prediction.trial_id}:${prediction.case_id}:${concern.code}:${refs.join(",")}`
+        });
+      }
+      if (validity.every(Boolean) && relevant) traceable.add(concern);
     }
   }
   return traceable;
@@ -2078,7 +2063,8 @@ export async function hashPromotionBenchmarkSuiteSnapshot(suitePath: string): Pr
 }
 
 function harmonicMean(left: number | null, right: number | null): number | null {
-  return left == null || right == null || left + right === 0 ? null : (2 * left * right) / (left + right);
+  if (left == null || right == null) return null;
+  return left + right === 0 ? 0 : (2 * left * right) / (left + right);
 }
 
 function ratioOrNull(numerator: number, denominator: number): number | null {

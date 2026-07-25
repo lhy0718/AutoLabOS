@@ -6,6 +6,10 @@ import { ensureDir, fileExists, normalizeFsPath, readJsonFile, writeJsonFile } f
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import type { PublicRunManifest } from "./publicOutputPublisher.js";
 import { buildPublicRunManifestPath, sanitizeSlug } from "./publicArtifacts.js";
+import {
+  inspectReferenceAuthorityGate,
+  type ReferenceAuthorityGateArtifact
+} from "./referenceAuthorityGate.js";
 
 export interface RepositoryKnowledgeSectionEntry {
   name: string;
@@ -120,11 +124,12 @@ export async function indexRunKnowledge(input: {
   }
 
   const runRoot = path.join(input.workspaceRoot, ".autolabos", "runs", input.run.id);
-  const [resultAnalysis, reviewDecision, paperReadiness, publicManifest] = await Promise.all([
+  const [resultAnalysis, reviewDecision, paperReadiness, publicManifest, referenceAuthorityGate] = await Promise.all([
     readOptionalJson<Record<string, unknown>>(path.join(runRoot, "result_analysis.json")),
     readOptionalJson<Record<string, unknown>>(path.join(runRoot, "review", "decision.json")),
     readOptionalJson<Record<string, unknown>>(path.join(runRoot, "paper", "paper_readiness.json")),
-    readOptionalJson<PublicRunManifest>(buildPublicRunManifestPath(input.workspaceRoot, input.run))
+    readOptionalJson<PublicRunManifest>(buildPublicRunManifestPath(input.workspaceRoot, input.run)),
+    inspectReferenceAuthorityGate(path.join(runRoot, "paper"))
   ]);
 
   const entry = buildCompletedRunKnowledgeEntry({
@@ -134,6 +139,7 @@ export async function indexRunKnowledge(input: {
     resultAnalysis,
     reviewDecision,
     paperReadiness,
+    referenceAuthorityGate,
     publicManifest
   });
 
@@ -404,6 +410,7 @@ function buildCompletedRunKnowledgeEntry(input: {
   resultAnalysis?: Record<string, unknown>;
   reviewDecision?: Record<string, unknown>;
   paperReadiness?: Record<string, unknown>;
+  referenceAuthorityGate: ReferenceAuthorityGateArtifact;
   publicManifest?: PublicRunManifest;
 }): RepositoryKnowledgeEntry {
   return {
@@ -428,7 +435,8 @@ function buildCompletedRunKnowledgeEntry(input: {
     entry_kind: "completed_run",
     final_node: input.run.currentNode,
     final_status: input.run.status,
-    paper_ready: extractBoolean(input.paperReadiness?.paper_ready),
+    paper_ready: input.paperReadiness?.paper_ready === true
+      && input.referenceAuthorityGate.status === "pass",
     review_decision: extractReviewDecision(input.reviewDecision),
     key_metrics: extractKeyMetrics(input.resultAnalysis),
     analysis_summary: extractAnalysisSummary(input.resultAnalysis),

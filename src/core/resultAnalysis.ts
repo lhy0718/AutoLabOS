@@ -260,6 +260,82 @@ export interface AnalysisReport {
   transition_recommendation?: TransitionRecommendation;
 }
 
+export function buildPersistedAnalysisMetricsProjection(
+  metrics: Record<string, unknown>,
+  sourceMetricsRef: string
+): Record<string, unknown> {
+  const projected: Record<string, unknown> = { ...metrics };
+  const omittedFields: string[] = [];
+  const rawConditionResults = Array.isArray(metrics.raw_condition_results)
+    ? metrics.raw_condition_results
+    : undefined;
+
+  if (rawConditionResults) {
+    delete projected.raw_condition_results;
+    projected.raw_condition_result_count = rawConditionResults.length;
+    omittedFields.push("raw_condition_results");
+  }
+
+  for (const key of ["conditions", "condition_results", "condition_summaries", "per_condition"]) {
+    const rows = metrics[key];
+    if (!Array.isArray(rows)) {
+      continue;
+    }
+    projected[key] = rows.map((row) => compactPersistedCondition(row, key, omittedFields));
+  }
+
+  if (metrics.best_condition && typeof metrics.best_condition === "object" && !Array.isArray(metrics.best_condition)) {
+    projected.best_condition = compactPersistedCondition(metrics.best_condition, "best_condition", omittedFields);
+  }
+
+  projected.analysis_artifact_projection = {
+    schema_version: "1.0",
+    source_metrics_ref: sourceMetricsRef,
+    omitted_fields: [...new Set(omittedFields)]
+  };
+  return projected;
+}
+
+function compactPersistedCondition(
+  value: unknown,
+  fieldPath: string,
+  omittedFields: string[]
+): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value;
+  }
+  const condition = value as Record<string, unknown>;
+  const evaluation = condition.evaluation;
+  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
+    return { ...condition };
+  }
+
+  const compactEvaluation: Record<string, unknown> = {};
+  for (const [task, taskValue] of Object.entries(evaluation as Record<string, unknown>)) {
+    if (!taskValue || typeof taskValue !== "object" || Array.isArray(taskValue)) {
+      compactEvaluation[task] = taskValue;
+      continue;
+    }
+    const taskRecord = taskValue as Record<string, unknown>;
+    const predictions = Array.isArray(taskRecord.predictions) ? taskRecord.predictions : undefined;
+    if (!predictions) {
+      compactEvaluation[task] = { ...taskRecord };
+      continue;
+    }
+    const { predictions: _predictions, ...taskSummary } = taskRecord;
+    compactEvaluation[task] = {
+      ...taskSummary,
+      prediction_count: predictions.length
+    };
+    omittedFields.push(`${fieldPath}[*].evaluation.${task}.predictions`);
+  }
+
+  return {
+    ...condition,
+    evaluation: compactEvaluation
+  };
+}
+
 interface ExecutionObservation {
   command?: string;
   source?: string;

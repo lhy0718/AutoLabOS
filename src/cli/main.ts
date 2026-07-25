@@ -57,8 +57,10 @@ import {
   runPromotionConfirmatoryAuditCli,
   runPromotionConfirmatoryFreezeCli,
   runPromotionDevelopmentRecoveryCli,
+  runPromotionControlledRecoveryCli,
   runPromotionRecoveryEvaluationCli,
   runPromotionConfirmatoryGateCli,
+  runPromotionAuditPackageExportCli,
   runPromotionDevelopmentEvidenceExportCli,
   runPromotionFailureAnalysisCli,
   runPromotionBenchmarkScoreCli
@@ -153,9 +155,11 @@ function printHelp(): void {
     "  autolabos governance-benchmark run-promotion-development-recovery --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --repaired-suite-id <id> --repaired-trial-id <id> [--out-dir outputs/governance-benchmark/promotion-development-recovery]",
     "  autolabos governance-benchmark evaluate-promotion-recovery --manifest <recovery-manifest.json> [--out-dir outputs/governance-benchmark/promotion-recovery]",
     "  autolabos governance-benchmark gate-promotion-confirmatory --suite <suite.json> --predictions <non-provider-predictions.jsonl> [--system-run-manifest <manifest.json>] --ungated-system <id> --checklist-system <id> --manuscript-system <id> --full-system <id> [--ablation-system <id>] [--provider-run-manifest <manifest.json>] [--recovery-manifest <manifest.json>] [--out-dir <new-output-dir>]",
+    "  autolabos governance-benchmark export-promotion-audit-package --gate <promotion-confirmatory-gate.json> --paper-root <paper-package> --support-root <evidence-root> --support-manifest <audit-support-manifest.json> --out-dir <new-output-dir>",
     "  autolabos governance-benchmark build-promotion --recipe <recipe.json> [--freeze-manifest <frozen-intake-manifest.json>] [--out-dir outputs/governance-benchmark/promotion-suite]",
     "  autolabos governance-benchmark run-promotion --suite <suite.json> [--system always-promote|presence-checklist|advisory-artifact-audit|artifact-audit] [--trial <id>] [--out-dir outputs/governance-benchmark/promotion-predictions]",
-    "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai|ollama --model <id> --reasoning <effort|off> --system <id> --trial <id> --out-dir <new-output-dir> [--base-url <ollama-url>]",
+    "  autolabos governance-benchmark run-promotion-provider --suite <suite.json> --provider openai|ollama --model <id> --reasoning <effort|off> --system <id> --trial <id> --out-dir <output-dir> [--base-url <ollama-url>] [--resume]",
+    "  autolabos governance-benchmark run-promotion-controlled-recovery --suite <suite.json> --predictions <predictions.jsonl> --system-run-manifest <manifest.json> --repaired-suite-id <id> --repaired-trial-id <id> --out-dir <new-output-dir>",
     "  autolabos governance-benchmark aggregate-promotion-provider-runs --suite <suite.json> --run-manifest <trial-a/provider-run-manifest.json> --run-manifest <trial-b/provider-run-manifest.json> --run-manifest <trial-c/provider-run-manifest.json> --out-dir <new-output-dir>",
     "  autolabos governance-benchmark export-promotion-prompts --suite <suite.json> [--out-dir outputs/governance-benchmark/promotion-prompts]",
     "  autolabos governance-benchmark import-promotion-responses --map <private-request-map.json> --responses <responses.jsonl> --system <id> --trial <id> [--out-dir outputs/governance-benchmark/provider-predictions]",
@@ -839,6 +843,19 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (action.kind === "governance-benchmark-run-promotion-controlled-recovery") {
+    await runPromotionControlledRecoveryCli({
+      cwd: process.cwd(),
+      suitePath: action.suitePath,
+      originalPredictionsPath: action.predictionsPath,
+      originalSystemRunManifestPath: action.systemRunManifestPath,
+      repairedSuiteId: action.repairedSuiteId,
+      repairedTrialId: action.repairedTrialId,
+      outDir: action.outDir
+    });
+    return;
+  }
+
   if (action.kind === "governance-benchmark-gate-promotion-confirmatory") {
     await runPromotionConfirmatoryGateCli({
       cwd: process.cwd(),
@@ -848,6 +865,18 @@ async function main(): Promise<void> {
       providerRunManifestPaths: action.providerRunManifestPaths,
       recoveryManifestPath: action.recoveryManifestPath,
       systemRoles: action.systemRoles,
+      outDir: action.outDir
+    });
+    return;
+  }
+
+  if (action.kind === "governance-benchmark-export-promotion-audit-package") {
+    await runPromotionAuditPackageExportCli({
+      cwd: process.cwd(),
+      gatePath: action.gatePath,
+      paperRoot: action.paperRoot,
+      supportRoot: action.supportRoot,
+      supportManifestPath: action.supportManifestPath,
       outDir: action.outDir
     });
     return;
@@ -920,7 +949,8 @@ async function main(): Promise<void> {
       systemId: action.systemId,
       trialId: action.trialId,
       outDir: action.outDir,
-      baseUrl: action.baseUrl
+      baseUrl: action.baseUrl,
+      resume: action.resume
     });
     return;
   }

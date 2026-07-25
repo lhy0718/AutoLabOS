@@ -13,6 +13,7 @@ export const REFERENCE_CLAIM_REVIEW_PREFLIGHT = "reference-claim-review-prefligh
 export const REFERENCE_CLAIM_REVIEW_APPROVAL_TEMPLATE = "final-approval-template.json";
 export const REFERENCE_CLAIM_REVIEW_IMPORT = "reference-claim-review-import.json";
 export const REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS = "refgate_claims.reviewed.tsv";
+export const REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR = "reference-authority-evidence";
 export const REFERENCE_CLAIM_REVIEW_PRIVATE_DISTRIBUTION =
   "reference-claim-review-private-distribution.json";
 export const REFERENCE_CLAIM_REVIEW_PRIVATE_PACKAGE =
@@ -255,6 +256,12 @@ export interface ReferenceClaimReviewImportReceipt {
   preflight_report_sha256: string;
   approval_sha256: string;
   imported_claims_sha256: string;
+  authority_evidence: {
+    packet_manifest_ref: string;
+    review_ref: string;
+    preflight_report_ref: string;
+    approval_ref: string;
+  };
   reviewed_claim_count: number;
   checked_claim_count: number;
   remaining_unchecked_claim_count: number;
@@ -273,6 +280,7 @@ export interface ImportReferenceClaimReviewResult {
   receipt_path: string;
   claims_path: string;
   summary_path: string;
+  authority_evidence_dir: string;
 }
 
 export async function prepareReferenceClaimReview(
@@ -887,6 +895,7 @@ export async function importReferenceClaimReview(
     packetRoot,
     path.join(packetRoot, REFERENCE_CLAIM_REVIEW_MANIFEST)
   );
+  const reviewBytes = await readRegularFile(reviewPath);
   const importId = `reference-claim-review-import-${sha256(Buffer.from([
     evaluation.manifest.handoff_id,
     sha256(claimsBytes),
@@ -922,6 +931,12 @@ export async function importReferenceClaimReview(
     preflight_report_sha256: preflightSha256,
     approval_sha256: sha256(approvalBytes),
     imported_claims_sha256: sha256(importedClaimsBytes),
+    authority_evidence: {
+      packet_manifest_ref: `${REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR}/packet-manifest.json`,
+      review_ref: `${REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR}/completed-review.json`,
+      preflight_report_ref: `${REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR}/preflight-report.json`,
+      approval_ref: `${REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR}/final-approval.json`
+    },
     reviewed_claim_count: evaluation.tasks.length,
     checked_claim_count: updatedClaims.length - uncheckedClaims.length,
     remaining_unchecked_claim_count: uncheckedClaims.length,
@@ -936,6 +951,14 @@ export async function importReferenceClaimReview(
   };
 
   await fs.mkdir(outDir, { recursive: true });
+  const authorityEvidenceDir = path.join(outDir, REFERENCE_CLAIM_REVIEW_AUTHORITY_EVIDENCE_DIR);
+  await fs.mkdir(authorityEvidenceDir, { recursive: true });
+  await Promise.all([
+    fs.writeFile(path.join(authorityEvidenceDir, "packet-manifest.json"), packetManifestBytes),
+    fs.writeFile(path.join(authorityEvidenceDir, "completed-review.json"), reviewBytes),
+    fs.writeFile(path.join(authorityEvidenceDir, "preflight-report.json"), preflightBytes),
+    fs.writeFile(path.join(authorityEvidenceDir, "final-approval.json"), approvalBytes)
+  ]);
   const claimsOutputPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_IMPORTED_CLAIMS);
   const receiptPath = path.join(outDir, REFERENCE_CLAIM_REVIEW_IMPORT);
   const summaryPath = path.join(outDir, "reference-claim-review-import.md");
@@ -946,7 +969,8 @@ export async function importReferenceClaimReview(
     receipt,
     receipt_path: portableRef(cwd, receiptPath),
     claims_path: portableRef(cwd, claimsOutputPath),
-    summary_path: portableRef(cwd, summaryPath)
+    summary_path: portableRef(cwd, summaryPath),
+    authority_evidence_dir: portableRef(cwd, authorityEvidenceDir)
   };
 }
 
@@ -1529,7 +1553,7 @@ function assertReviewSourceContent(
 
 export function parseReferenceClaimsTsv(text: string): ReferenceClaimRow[] {
   const lines = text.replace(/\r/gu, "").split("\n").filter((line) => line.length > 0);
-  if (lines.length < 2 || lines[0].split("\t").join("\t") !== CLAIM_COLUMNS.join("\t")) {
+  if (lines.length < 1 || lines[0].split("\t").join("\t") !== CLAIM_COLUMNS.join("\t")) {
     throw new Error("Reference claims TSV header is invalid.");
   }
   return lines.slice(1).map((line, index) => {

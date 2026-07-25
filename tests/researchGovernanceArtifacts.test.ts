@@ -14,6 +14,7 @@ import {
 
 import {
   buildMetaHarnessPatchPlanArtifact,
+  buildPaperReadinessBundleArtifact,
   buildReviewReportArtifact,
   portableArtifactRef,
   validateResearchGovernanceArtifact,
@@ -209,6 +210,99 @@ describe("research governance artifacts", () => {
     expect(plan.targets.every((target) => target.validation_commands.length > 0)).toBe(true);
     expect(validateResearchGovernanceArtifact(review).ok).toBe(true);
     expect(validateResearchGovernanceArtifact(plan).ok).toBe(true);
+  });
+
+  it("caps deterministic-only paper readiness at candidate in review and pack artifacts", () => {
+    const gate = makeGateReport();
+    gate.verdict = "pass";
+    gate.claim_ceiling = "paper_ready";
+    gate.findings = [];
+
+    const review = buildReviewReportArtifact(gate, { gateReportSha256: digest("gate-report-bytes") });
+    const pack = buildPaperReadinessBundleArtifact({
+      gate,
+      review,
+      files: [{ path: "artifacts/review-report.json", sha256: digest("review-report-bytes"), bytes: 128 }],
+      limitations: []
+    });
+
+    expect(review.reviewer_assurance).toEqual(expect.objectContaining({
+      tier: "A0_deterministic",
+      can_promote: false
+    }));
+    expect(review.readiness_class).toBe("paper_scale_candidate");
+    expect(review.paper_ready).toBe(false);
+    expect(pack.readiness_class).toBe("paper_scale_candidate");
+    expect(pack.paper_ready).toBe(false);
+
+    const inconsistentReview = {
+      ...review,
+      readiness_class: "paper_ready" as const,
+      paper_ready: true
+    };
+    const defensivePack = buildPaperReadinessBundleArtifact({
+      gate,
+      review: inconsistentReview,
+      files: [],
+      limitations: []
+    });
+
+    expect(validateResearchGovernanceArtifact(inconsistentReview)).toEqual(expect.objectContaining({
+      ok: false,
+      issues: expect.arrayContaining([
+        expect.objectContaining({ path: "$.paper_ready" })
+      ])
+    }));
+    expect(defensivePack.readiness_class).toBe("paper_scale_candidate");
+    expect(defensivePack.paper_ready).toBe(false);
+  });
+
+  it("lets hash-bound A2 preserve but not raise the deterministic readiness ceiling", () => {
+    const gate = makeGateReport();
+    gate.verdict = "pass";
+    gate.claim_ceiling = "paper_ready";
+    gate.findings = [];
+    const gateSha256 = digest("paper-ready-gate-report-bytes");
+    const bundle = makeModelReviewBundle(gate.artifact_id, gateSha256);
+    bundle.adjudicator.findings = [];
+    bindReviewHashes(bundle);
+
+    const review = buildReviewReportArtifact(gate, {
+      modelReviewBundle: bundle,
+      modelReviewBundleSha256: digest("paper-ready-model-review-bundle-bytes"),
+      gateReportSha256: gateSha256
+    });
+
+    expect(review.reviewer_assurance).toEqual(expect.objectContaining({
+      tier: "A2_model_conservative",
+      can_promote: false,
+      gate_report_sha256: gateSha256,
+      model_review_bundle_sha256: digest("paper-ready-model-review-bundle-bytes")
+    }));
+    expect(review.readiness_class).toBe("paper_ready");
+    expect(review.paper_ready).toBe(true);
+    expect(buildPaperReadinessBundleArtifact({
+      gate,
+      review,
+      files: [],
+      limitations: []
+    })).toEqual(expect.objectContaining({
+      readiness_class: "paper_ready",
+      paper_ready: true
+    }));
+
+    gate.claim_ceiling = "paper_scale_candidate";
+    const lowerGateSha256 = digest("candidate-gate-report-bytes");
+    bundle.gate_report.sha256 = lowerGateSha256;
+    bindReviewHashes(bundle);
+    const lowerReview = buildReviewReportArtifact(gate, {
+      modelReviewBundle: bundle,
+      modelReviewBundleSha256: digest("candidate-model-review-bundle-bytes"),
+      gateReportSha256: lowerGateSha256
+    });
+
+    expect(lowerReview.readiness_class).toBe("paper_scale_candidate");
+    expect(lowerReview.paper_ready).toBe(false);
   });
 
   it("rejects malformed nested review targets and unbound patch plans", () => {
