@@ -263,7 +263,7 @@ candidate contract supplies the selected data/task identifier.
 Required:
 - dataset(s)
 - task type
-- train/eval protocol
+- execution/evaluation protocol
 - split or validation discipline
 - known limitations
 

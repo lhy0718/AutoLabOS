@@ -61,6 +61,10 @@ import {
   TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
 } from "../src/core/topicProbeOutcomeArtifacts.js";
 import { buildTopicProbeLineageFixture } from "./support/topicProbePortfolioFixture.js";
+import {
+  buildEvidenceAdequacyContract,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+} from "../src/core/analysis/evidenceAdequacy.js";
 
 vi.mock("../src/core/runs/topicProbeExecutionAuthorizationGate.js", async (importOriginal) => {
   const original = await importOriginal<
@@ -1776,6 +1780,46 @@ describe("ImplementSessionManager", () => {
     mkdirSync(path.join(runDir, "memory"), { recursive: true });
     mkdirSync(path.join(runDir, "design_experiments_panel"), { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - bounded_comparison\n", "utf8");
+    const evidenceAdequacyContract = buildEvidenceAdequacyContract({
+      primaryComparisonId: "primary_comparison",
+      designSource: {
+        kind: "estimator_protocol",
+        contentSha256: hashCanonical({ fixture: "generic_estimator_protocol" })
+      },
+      independentUnit: {
+        key: "source item",
+        analysisUnit: "recorded outcome"
+      },
+      plannedIndependentCoverage: {
+        mode: "sampled",
+        targetUniqueUnits: 2,
+        targetDenominatorPerArm: 2
+      },
+      requiredContrast: {
+        arms: ["reference", "intervention"],
+        paired: true,
+        requiredCompletePairs: 2
+      },
+      uncertaintyRequirement: {
+        mode: "required",
+        allowedMethods: ["paired_resampling"],
+        confidenceLevel: 0.95,
+        decisionRule: "directed_interval_bound_meets_effect_criterion"
+      },
+      effectResolution: {
+        scale: "mean",
+        minimumResolvableEffect: 0.5
+      },
+      executionBudget: {
+        applicable: false,
+        notApplicableRationale: "No additional execution-budget floor is declared for this fixture."
+      }
+    });
+    writeFileSync(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      `${JSON.stringify(evidenceAdequacyContract, null, 2)}\n`,
+      "utf8"
+    );
     const topicProbeLineage = buildTopicProbeLineageFixture({
       runId: run.id,
       researchCycle: run.graph.researchCycle,
@@ -1897,6 +1941,15 @@ describe("ImplementSessionManager", () => {
         ]
       }
     });
+    expect(taskSpec.context.evidence_adequacy_contract).toMatchObject({
+      primary_comparison_id: "primary_comparison",
+      planned_independent_coverage: {
+        mode: "sampled",
+        target_unique_units: 2
+      }
+    });
+    expect(capturedPrompt).toContain('"evidence_adequacy_contract": {');
+    expect(capturedPrompt).toContain("evidence_adequacy_execution_evidence");
     expect(capturedPrompt).toContain('"topic_probe_compute_contract": {');
     expect(capturedPrompt).toContain('"additionalProperties": false');
     expect(capturedPrompt).toContain('"max_trials": 10');

@@ -3012,6 +3012,61 @@ describe("App", () => {
     expect(screen.getByText("declared-comparison")).toBeInTheDocument();
   });
 
+  it("renders evidence adequacy trust, paper permission, reasons, and artifact refs separately", async () => {
+    renderAppWithResearchFunnel(
+      {},
+      {
+        status: "available",
+        evidence_ready: true,
+        trusted: true,
+        comparison_count: 1,
+        primary_comparison_id: "baseline-primary",
+        warnings: []
+      },
+      [],
+      undefined,
+      {
+        status: "unknown",
+        trusted: true,
+        integrity_valid: true,
+        paper_evidence_allowed: false,
+        contract_present: true,
+        receipt_present: true,
+        assessment_present: true,
+        review_reassessment_present: true,
+        primary_comparison_id: "adequacy-primary",
+        overall_status: "unknown",
+        reason_codes: ["evidence_adequacy_uncertainty_unknown"],
+        artifact_refs: [
+          {
+            kind: "assessment",
+            label: "Evidence adequacy assessment",
+            path: "evidence_adequacy_assessment.json"
+          },
+          {
+            kind: "review_reassessment",
+            label: "Review evidence reassessment",
+            path: "review/evidence_adequacy_reassessment.json"
+          }
+        ]
+      }
+    );
+
+    expect(await screen.findByText("Evidence readiness")).toBeInTheDocument();
+    expect(screen.getByText("Comparison ready")).toBeInTheDocument();
+    expect(screen.getByText("Evidence adequacy")).toBeInTheDocument();
+    expect(screen.getByText("Unknown")).toBeInTheDocument();
+    expect(screen.getByText("Trusted yes · Integrity valid")).toBeInTheDocument();
+    expect(screen.getByText("Paper evidence")).toBeInTheDocument();
+    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    expect(screen.getByText("Adequacy comparison")).toBeInTheDocument();
+    expect(screen.getByText("adequacy-primary")).toBeInTheDocument();
+    expect(screen.getByText("Adequacy reasons")).toBeInTheDocument();
+    expect(screen.getByText("evidence_adequacy_uncertainty_unknown")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Evidence adequacy assessment" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Review evidence reassessment" })).toBeInTheDocument();
+  });
+
   it("keeps the latest applied backtrack reason visible from the compact run index", async () => {
     renderAppWithResearchFunnel({}, undefined, [], {
       action: "backtrack_to_hypotheses",
@@ -3364,7 +3419,8 @@ function renderAppWithResearchFunnel(
   overrides: Partial<ResearchFunnelProjection>,
   evidenceReadiness?: RunJobProjection["evidence_readiness"],
   transitionHistory: NonNullable<RunRecord["graph"]["transitionHistory"]> = [],
-  lastAppliedTransition?: NonNullable<RunRecord["graph"]["lastAppliedTransition"]>
+  lastAppliedTransition?: NonNullable<RunRecord["graph"]["lastAppliedTransition"]>,
+  evidenceAdequacy?: RunJobProjection["evidence_adequacy"]
 ): void {
   const funnel: ResearchFunnelProjection = {
     research_mode: "topic_discovery",
@@ -3511,7 +3567,8 @@ function renderAppWithResearchFunnel(
             review_ready: false,
             paper_ready: false,
             research_funnel: funnel,
-            evidence_readiness: evidenceReadiness
+            evidence_readiness: evidenceReadiness,
+            evidence_adequacy: evidenceAdequacy
           }],
           top_failures: []
         },

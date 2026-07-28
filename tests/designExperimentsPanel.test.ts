@@ -151,7 +151,7 @@ describe("designExperimentsPanel", () => {
     expect(result.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
   });
 
-  it("prefers confirmatory repeated evidence over a single-run screening design", () => {
+  it("prefers a confirmatory design over an explicitly screening-only design", () => {
     const confirmatory = candidate({
       id: "confirmatory",
       plan_summary: "Run matched comparisons over independent repetitions and report a confidence interval.",
@@ -180,6 +180,26 @@ describe("designExperimentsPanel", () => {
     expect(result.selection.scores.find((score) => score.candidate_id === "screening")?.evidence_strength_score).toBeLessThan(
       result.selection.scores.find((score) => score.candidate_id === "confirmatory")?.evidence_strength_score || 0
     );
+  });
+
+  it("does not reject a valid deterministic exhaustive design merely because it uses one execution", () => {
+    const exhaustive = candidate({
+      id: "deterministic_exhaustive",
+      plan_summary: "Use a single deterministic run to evaluate every declared independent unit in both arms.",
+      evaluation_steps: [
+        "Execute the complete frozen corpus and report the registered paired estimand."
+      ],
+      estimator_protocol: estimatorProtocol()
+    });
+
+    const result = runDesignExperimentsPanel({
+      candidates: [exhaustive],
+      objectiveProfile: objective(),
+      requireExecutableEstimator: true
+    });
+
+    expect(result.selection.mode).toBe("best_non_blocked");
+    expect(result.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
   });
 
   it("allows screening-only evidence only for an explicitly bounded probe", () => {

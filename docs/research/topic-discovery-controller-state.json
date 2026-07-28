@@ -23,6 +23,26 @@
     ]
   },
   "objective": "Produce a workshop-submission-level paper from a real, locally executable study while making evidence-grounded topic discovery a reusable AutoLabOS capability.",
+  "venue_targets": {
+    "primary": {
+      "name": "The Future of the AI-Driven Research Ecosystem, NeurIPS 2026 Workshop",
+      "official_url": "https://the-future-of-research-ecosystem.github.io/",
+      "submission_deadline": "2026-09-15 AoE",
+      "format": "9-page long or 4-page short research paper, references and appendices excluded",
+      "archival_status": "non_archival",
+      "fit_basis": "The official call explicitly prioritizes empirical and technical work on producing, representing, verifying, composing, and evaluating AI-driven research."
+    },
+    "secondary": {
+      "name": "Who Verifies the Agents?, NeurIPS 2026 Workshop",
+      "official_url": "https://verify-agents-workshop.github.io/",
+      "submission_deadline": "2026-08-29 AoE",
+      "format": "4 to 9 pages, references and appendices excluded",
+      "archival_status": "non_archival",
+      "fit_basis": "The official call covers verifier robustness, evaluation-harness red teaming, environment-grounded verification, and agents that verify other agents."
+    },
+    "verified_at": "2026-07-28",
+    "selection_status": "venue_fit_verified_topic_not_selected"
+  },
   "completion_condition": "One selected topic has verified closest-prior differentiation, a strong baseline, real repeated experiments, uncertainty and error analysis, claim-to-evidence mapping, a reproducibility bundle, an official template, independent review and meta-review, passing repository validation, and a reviewable commit.",
   "non_completion_states": [
     "repository audit completed",
@@ -70,14 +90,12 @@
   ],
   "multi_agent_review": {
     "enabled": true,
-    "parallel_sidecar_task_count": 4,
-    "completed_outputs_inspected": 15,
-    "active_sidecar_task_count": 4,
+    "parallel_sidecar_task_count": 2,
+    "completed_outputs_inspected": 19,
+    "active_sidecar_task_count": 2,
     "active_sidecar_roles": [
-      "topic_funnel_architecture_auditor",
-      "evidence_ceiling_writing_auditor",
-      "review_obligation_alignment_auditor",
-      "localized_source_repair_auditor"
+      "independent_review_provenance_repair",
+      "topic_portfolio_meta_reviewer"
     ],
     "consensus_is_evidence": false,
     "subagent_outputs_bypass_evidence_gates": false,
@@ -583,6 +601,45 @@
       "remaining_narrow_route": "Reproduce real SIGKILL crash windows and durable write ordering across AppWorld and tau task families while correcting the independent scientific unit.",
       "narrow_route_status": "AUDIT_ONLY",
       "narrow_route_blocker": "The route must reproduce the official Atomix Tx-Full baseline, preserve benchmark state across process death, expose at least 40 independent effectful units per benchmark, and find a new failure class or a material cost or validity difference rather than merely restating distributed-systems idempotency."
+    },
+    "topic_localized_scientific_source_repair": {
+      "title": "Consequence Localization versus Causal Edit-Site Repair under Hard Patch Contracts",
+      "status": "narrow_route_audit",
+      "decision": "AUDIT",
+      "execution_allowed": false,
+      "main_controller_verified": false,
+      "closest_prior_status": "broad_method_novelty_preempted_narrow_contrast_unresolved",
+      "dataset_preflight": {
+        "candidate_dataset": "FLAWS",
+        "independent_paper_lineages_observed": 540,
+        "non_ml_pairs_audited": 115,
+        "gold_patch_source": "exact altered-to-clean source diff",
+        "critical_distinction": "Evidence or consequence locations and causal mutation locations must remain separate variables.",
+        "redistribution_rights": "unresolved_per_paper_source_licensing"
+      },
+      "remaining_narrow_route": "Test whether explicit separation of consequence localization from causal edit-site localization improves exact safe repair under equal budgets and a hard patch contract.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "Before selection, independently reproduce gold representability and pinned-build rates, resolve source redistribution rights, implement the strongest deterministic and soft-minimal baselines, and verify that the narrow contrast is not absorbed by the closest repair systems."
+    },
+    "topic_evidence_ceiling_scientific_revision": {
+      "title": "Evidence-Ceiling-Preserving Scientific Revision",
+      "status": "narrow_route_audit",
+      "decision": "AUDIT",
+      "execution_allowed": false,
+      "main_controller_verified": false,
+      "remaining_narrow_route": "Compare evidence-aware revision against deterministic template and equal-compute generic repair baselines across independent claim families.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The primary endpoint currently requires substantial blinded human evaluation, so this route does not yet satisfy the fast-local-study constraint."
+    },
+    "topic_atomic_review_obligation_evaluation": {
+      "title": "Atomic Obligation Evaluation for Scientific Review",
+      "status": "narrow_route_audit",
+      "decision": "AUDIT",
+      "execution_allowed": false,
+      "main_controller_verified": false,
+      "remaining_narrow_route": "Evaluate review quality at atomic obligation level against premise-matched and strongest prior comparators.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The current design requires a large scoring workload and human gold annotations, exceeding the intended rapid local preflight budget."
     }
   },
   "recent_candidate_audit": {
@@ -597,6 +654,24 @@
         "candidate_id": "topic_action_conditioned_agent_uq_lodo",
         "decision": "KILL_CURRENT_FORMULATION",
         "reason": "Direct priors absorb the central metric family and the public artifact lacks complete action-aligned uncertainty fields and repeated independent trials.",
+        "execution_allowed": false
+      },
+      {
+        "candidate_id": "topic_localized_scientific_source_repair",
+        "decision": "AUDIT",
+        "reason": "A narrow localization-versus-edit-site contrast may survive, but closest-prior non-overlap, pinned-build feasibility, and per-paper source rights remain unresolved.",
+        "execution_allowed": false
+      },
+      {
+        "candidate_id": "topic_evidence_ceiling_scientific_revision",
+        "decision": "AUDIT",
+        "reason": "The route is falsifiable but its current primary human-evaluation burden conflicts with the fast-local-study constraint.",
+        "execution_allowed": false
+      },
+      {
+        "candidate_id": "topic_atomic_review_obligation_evaluation",
+        "decision": "AUDIT",
+        "reason": "Broad novelty is absorbed and the surviving controlled comparison exceeds the current local scoring and annotation budget.",
         "execution_allowed": false
       }
     ],
@@ -658,11 +733,14 @@
     ],
     "alive_unselected_portfolio": [
       "topic_multilingual_typed_tool_normalization",
-      "topic_structured_output_boundary_attribution"
+      "topic_structured_output_boundary_attribution",
+      "topic_localized_scientific_source_repair",
+      "topic_evidence_ceiling_scientific_revision",
+      "topic_atomic_review_obligation_evaluation"
     ],
     "selected_candidate_id": null,
     "subagent_output_verified_by_main_controller": false,
-    "unverified_subagent_output_count": 4,
+    "unverified_subagent_output_count": 5,
     "requires_wide_resampling": true,
     "multi_agent_consensus_used_as_evidence": false
   },
@@ -671,14 +749,20 @@
     "high_risk_runtime_substitution_removed": true,
     "topic_funnel_runtime_contract_implemented": true,
     "topic_funnel_tui_web_projection_implemented": true,
-    "topic_refresh_semantic_divergence_contract_implemented": true,
-    "topic_refresh_semantic_divergence_contract_validated": true,
+    "topic_refresh_semantic_divergence_contract_implemented": false,
+    "topic_refresh_semantic_divergence_contract_validated": false,
+    "topic_refresh_semantic_reentry_defect_reproduced": true,
+    "independent_review_provenance_repair_in_progress": true,
+    "prior_absorption_axis_verification_implemented": true,
+    "prior_absorption_axis_verification_focused_tests_pass": true,
+    "prior_absorption_integrated_fixture_migration_complete": false,
+    "empty_prior_search_receipt_rejected": true,
     "generic_result_and_manuscript_schema_refactor_complete": false,
     "collect_attempt_lineage_repair_implemented": true,
     "collect_attempt_lineage_live_revalidated": true,
     "compute_budget_p0_repair_in_progress": false,
     "current_paper_ready": false,
-    "topic_portfolio_verified": true,
+    "topic_portfolio_verified": false,
     "portfolio_refresh_required": true,
     "open_repository_audit_completed": true,
     "open_repository_audit_count": 24,
@@ -715,5 +799,5 @@
     "leading_target_is_selected": false,
     "next_action": "Wide resampling across a different research object, evidence modality, and evaluation unit; held narrow routes remain comparison points rather than default winners."
   },
-  "next_allowed_state": "Run a wide topic resampling round that changes research object, evidence modality, and evaluation unit. Compare new candidates against the two held narrow routes, select only a candidate with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, then freeze a protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
+  "next_allowed_state": "Finish and integrate the independent-review provenance boundary, semantic topic reentry gate, and prior-absorption fixture migration; re-run focused, build, public-sanitization, harness, TUI, and Web validation; then independently verify and score the held and newly audited candidates. Select only a candidate with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, and freeze an outcome-blind protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
 }

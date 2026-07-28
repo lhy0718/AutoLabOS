@@ -1,5 +1,13 @@
 # Research Topic Search Portfolio: Adversarial Refresh
 
+> **Superseded and non-authoritative.** This snapshot predates the bound
+> `KILL_PRE_EXECUTION` decision in
+> `studies/grader-conform/v2/preflight/kill-decision.v2.json`. It must not be
+> used to authorize that study, select a paper topic, or launch an experiment.
+> A replacement candidate requires a new study identifier, a materially
+> distinct research object, a fresh closest-prior audit, and a newly frozen
+> pre-execution contract.
+
 ## Controller State
 
 - Search date: 2026-07-28

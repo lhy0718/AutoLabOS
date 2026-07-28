@@ -1,6 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { ActiveTopicProbeContract } from "../src/core/activeTopicProbeContract.js";
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+  type EvidenceAdequacyAssessmentV2,
+  type EvidenceAdequacyContractV2
+} from "../src/core/analysis/evidenceAdequacy.js";
+import {
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyAuthorization
+} from "../src/core/analysis/evidenceAdequacyArtifacts.js";
 import {
   buildCandidateObjectiveRaw,
   buildCandidateObjectiveProfileBinding
@@ -16,6 +34,60 @@ import {
   makeTopicProbeComputeBudgetDeclaration,
   makeTopicProbeComputeBudgetLimits
 } from "./support/topicProbeComputeBudget.js";
+
+const GENERATED_AT = "2026-01-01T00:00:00.000Z";
+const DEFAULT_TARGET_INDEPENDENT_UNITS = 4;
+const DEFAULT_CONFIDENCE_LEVEL = 0.9;
+const DEFAULT_UNCERTAINTY_METHOD = "paired_bootstrap";
+const DEFAULT_EFFECT_RESOLUTION = 0.01;
+const temporaryRunDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryRunDirs.splice(0).map((runDir) =>
+      fs.rm(runDir, { recursive: true, force: true })
+    )
+  );
+});
+
+interface ReportOverrides {
+  delta?: number;
+  judgement?: string;
+  analysisVersion?: number;
+  executedTrials?: number;
+  cachedTrials?: number;
+  includeCi?: boolean;
+  highFailure?: boolean;
+  metricId?: string;
+  metricDirection?: "higher_better" | "lower_better";
+  subjectSeriesId?: string;
+  referenceSeriesId?: string;
+  observationScope?: Record<string, string>;
+  planScope?: Record<string, string>;
+  ciComparisonId?: string;
+  ciEstimand?: "metric_value" | "effect_delta";
+  ciMetricScale?: "raw" | "proportion" | "percent" | "percentage_point";
+  ciTrialSource?: "fresh_executed" | "mixed" | "cached";
+  ciMethod?: string;
+  ciLower?: number;
+  ciUpper?: number;
+  ciLevel?: number;
+  ciSampleSize?: number;
+}
+
+interface EvidenceFixtureOverrides {
+  targetIndependentUnits?: number;
+  confidenceLevel?: number;
+  uncertaintyMethod?: string;
+  minimumResolvableEffect?: number;
+}
+
+interface AuthorizedEvidenceFixture {
+  runDir: string;
+  evidenceContract: EvidenceAdequacyContractV2;
+  assessment: EvidenceAdequacyAssessmentV2;
+  authorization: EvidenceAdequacyAuthorization;
+}
 
 function makeContract(input: {
   direction?: "maximize" | "minimize";
@@ -70,30 +142,154 @@ function makeContract(input: {
   return { ...payload, content_sha256: hashCanonical(payload) };
 }
 
+async function issueEvidenceAuthorization(
+  contract: ActiveTopicProbeContract,
+  input: EvidenceFixtureOverrides = {}
+): Promise<AuthorizedEvidenceFixture> {
+  const binding = buildTopicProbeExecutionBinding({
+    candidateId: contract.candidate_id,
+    candidateContentSha256: contract.candidate_content_sha256,
+    comparator: contract.comparator,
+    datasetTaskScope: contract.dataset_task_bench
+  });
+  const targetIndependentUnits = input.targetIndependentUnits
+    ?? DEFAULT_TARGET_INDEPENDENT_UNITS;
+  const confidenceLevel = input.confidenceLevel
+    ?? DEFAULT_CONFIDENCE_LEVEL;
+  const uncertaintyMethod = input.uncertaintyMethod
+    ?? DEFAULT_UNCERTAINTY_METHOD;
+  const evidenceContract = buildEvidenceAdequacyContract({
+    primaryComparisonId: binding.primary_comparison_id,
+    designSource: {
+      kind: "estimator_protocol",
+      contentSha256: hashCanonical({
+        fixture_kind: "topic_probe_outcome_test_design",
+        primary_comparison_id: binding.primary_comparison_id,
+        target_independent_units: targetIndependentUnits,
+        confidence_level: confidenceLevel,
+        uncertainty_method: uncertaintyMethod
+      })
+    },
+    independentUnit: {
+      key: "matched_item_id",
+      analysisUnit: "matched candidate-reference outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "sampled",
+      targetUniqueUnits: targetIndependentUnits,
+      targetDenominatorPerArm: targetIndependentUnits
+    },
+    requiredContrast: {
+      arms: ["candidate", "reference"],
+      paired: true,
+      requiredCompletePairs: targetIndependentUnits
+    },
+    uncertaintyRequirement: {
+      mode: "required",
+      allowedMethods: [uncertaintyMethod],
+      confidenceLevel,
+      decisionRule: "directed_interval_bound_meets_effect_criterion"
+    },
+    effectResolution: {
+      scale: contract.metric_scale,
+      minimumResolvableEffect: input.minimumResolvableEffect
+        ?? DEFAULT_EFFECT_RESOLUTION
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The outcome unit test freezes evidence coverage instead of an execution-cost floor."
+    }
+  });
+  const primaryEvidenceRefs = [
+    "metrics.json#/candidate",
+    "metrics.json#/reference",
+    "metrics.json#/comparison"
+  ];
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: evidenceContract.content_sha256,
+    primaryComparisonId: evidenceContract.primary_comparison_id,
+    uniqueExecutionIds: Array.from(
+      { length: targetIndependentUnits * 2 },
+      (_, index) => `execution_${index + 1}`
+    ),
+    observedIndependentUnitIds: Array.from(
+      { length: targetIndependentUnits },
+      (_, index) => `matched_item_${index + 1}`
+    ),
+    observedDenominatorByArm: {
+      candidate: targetIndependentUnits,
+      reference: targetIndependentUnits
+    },
+    observedPairCoverage: {
+      completePairIds: Array.from(
+        { length: targetIndependentUnits },
+        (_, index) => `matched_pair_${index + 1}`
+      ),
+      incompletePairIds: []
+    },
+    observedUncertaintyMethods: [uncertaintyMethod],
+    primaryEvidenceRefs
+  });
+  const assessment = assessEvidenceAdequacy({
+    contract: evidenceContract,
+    receipt,
+    verifiedEvidenceRefs: receipt.primary_evidence_refs
+  });
+  const runDir = await fs.mkdtemp(
+    path.join(os.tmpdir(), "autolabos-topic-probe-outcome-")
+  );
+  temporaryRunDirs.push(runDir);
+  await Promise.all([
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      `${JSON.stringify(evidenceContract, null, 2)}\n`,
+      "utf8"
+    ),
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+      "utf8"
+    ),
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH),
+      `${JSON.stringify(assessment, null, 2)}\n`,
+      "utf8"
+    ),
+    fs.writeFile(
+      path.join(runDir, "metrics.json"),
+      `${JSON.stringify({
+        candidate: { value: 0.56 },
+        reference: { value: 0.5 },
+        comparison: { delta: 0.06 }
+      }, null, 2)}\n`,
+      "utf8"
+    )
+  ]);
+  const reassessment = await reassessEvidenceAdequacyArtifacts({
+    runDir,
+    evidenceRoots: [runDir],
+    expectedPrimaryComparisonId: binding.primary_comparison_id,
+    requireStoredAssessment: true
+  });
+  if (!reassessment.authorization || !reassessment.assessment) {
+    throw new Error(
+      `test_evidence_authorization_missing:${reassessment.issues.join("|")}`
+    );
+  }
+  return {
+    runDir,
+    evidenceContract,
+    assessment: reassessment.assessment,
+    authorization: reassessment.authorization
+  };
+}
+
 function makeReport(
   contract: ActiveTopicProbeContract,
-  input: {
-    delta?: number;
-    judgement?: string;
-    executedTrials?: number;
-    cachedTrials?: number;
-    includeCi?: boolean;
-    highFailure?: boolean;
-    metricId?: string;
-    metricDirection?: "higher_better" | "lower_better";
-    subjectSeriesId?: string;
-    referenceSeriesId?: string;
-    observationScope?: Record<string, string>;
-    planScope?: Record<string, string>;
-    ciComparisonId?: string;
-    ciEstimand?: "metric_value" | "effect_delta";
-    ciMetricScale?: "raw" | "proportion" | "percent" | "percentage_point";
-    ciTrialSource?: "fresh_executed" | "mixed" | "cached";
-    ciLower?: number;
-    ciUpper?: number;
-    ciLevel?: number;
-    ciSampleSize?: number;
-  } = {}
+  evidenceContract: EvidenceAdequacyContractV2,
+  assessment: EvidenceAdequacyAssessmentV2,
+  input: ReportOverrides = {}
 ): AnalysisReport {
   const executionBinding = buildTopicProbeExecutionBinding({
     candidateId: contract.candidate_id,
@@ -122,6 +318,8 @@ function makeReport(
   });
 
   return {
+    analysis_version: input.analysisVersion ?? 1,
+    generated_at: GENERATED_AT,
     objective_metric: {
       profile: {
         candidate_contract: candidateBinding
@@ -210,7 +408,7 @@ function makeReport(
       }]
     },
     statistical_summary: {
-      executed_trials: input.executedTrials ?? 2,
+      executed_trials: input.executedTrials ?? 1,
       cached_trials: input.cachedTrials ?? 0,
       confidence_intervals: input.includeCi === false
         ? []
@@ -220,11 +418,16 @@ function makeReport(
             estimand: input.ciEstimand ?? "effect_delta",
             metric_scale: input.ciMetricScale ?? contract.metric_scale,
             trial_source: input.ciTrialSource ?? "fresh_executed",
+            method: input.ciMethod
+              ?? evidenceContract.uncertainty_requirement.allowed_methods[0],
             label: "Primary interval",
             lower: input.ciLower ?? delta - 0.01,
             upper: input.ciUpper ?? delta + 0.01,
-            level: input.ciLevel ?? 0.95,
-            sample_size: input.ciSampleSize ?? input.executedTrials ?? 2,
+            level: input.ciLevel
+              ?? evidenceContract.uncertainty_requirement.confidence_level
+              ?? 1,
+            sample_size: input.ciSampleSize
+              ?? evidenceContract.planned_independent_coverage.target_unique_units,
             source: "metrics",
             summary: "Interval over fresh bounded trials."
           }],
@@ -238,6 +441,7 @@ function makeReport(
       }],
       notes: []
     },
+    evidence_adequacy_assessment: assessment,
     failure_taxonomy: input.highFailure
       ? [{
           id: "execution_integrity_failure",
@@ -251,18 +455,59 @@ function makeReport(
   } as unknown as AnalysisReport;
 }
 
+async function makeAuthorizedReport(
+  contract: ActiveTopicProbeContract,
+  reportOverrides: ReportOverrides = {},
+  evidenceOverrides: EvidenceFixtureOverrides = {}
+): Promise<AuthorizedEvidenceFixture & { report: AnalysisReport }> {
+  const evidence = await issueEvidenceAuthorization(
+    contract,
+    evidenceOverrides
+  );
+  return {
+    ...evidence,
+    report: makeReport(
+      contract,
+      evidence.evidenceContract,
+      evidence.assessment,
+      reportOverrides
+    )
+  };
+}
+
+function rehash<T extends { content_sha256: string }>(value: T): T {
+  const { content_sha256: _contentSha256, ...payload } = value;
+  return {
+    ...payload,
+    content_sha256: hashCanonical(payload)
+  } as T;
+}
+
 describe("topicProbeOutcome", () => {
-  it("promotes only a supported, floor-meeting probe with two fresh trials and a matching CI", () => {
+  it("promotes a supported probe when frozen sampled coverage and its matching CI are satisfied", async () => {
     const contract = makeContract();
-    const report = makeReport(contract, { cachedTrials: 7 });
-    const decision = buildTopicProbeOutcomeDecision({ contract, report });
+    const fixture = await makeAuthorizedReport(contract, { cachedTrials: 7 });
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
     const binding = buildTopicProbeExecutionBinding({
       candidateId: contract.candidate_id,
       candidateContentSha256: contract.candidate_content_sha256,
       comparator: contract.comparator,
       datasetTaskScope: contract.dataset_task_bench
     });
+    const interval = fixture.report.statistical_summary.confidence_intervals[0];
 
+    expect(fixture.report.analysis_version).toBe(1);
+    expect(fixture.report.evidence_adequacy_assessment).toEqual(fixture.assessment);
+    expect(interval).toMatchObject({
+      method: fixture.evidenceContract.uncertainty_requirement.allowed_methods[0],
+      level: fixture.evidenceContract.uncertainty_requirement.confidence_level,
+      sample_size:
+        fixture.evidenceContract.planned_independent_coverage.target_unique_units
+    });
     expect(decision).toMatchObject({
       schema_version: 1,
       artifact_kind: "topic_probe_outcome_decision",
@@ -276,7 +521,10 @@ describe("topicProbeOutcome", () => {
       observed_delta: 0.06,
       directed_delta: 0.06,
       required_magnitude: 0.05,
-      executed_trials: 2,
+      evidence_adequacy_contract_sha256: fixture.evidenceContract.content_sha256,
+      evidence_adequacy_assessment_sha256: fixture.assessment.content_sha256,
+      evidence_adequacy_status: "pass",
+      executed_trials: 1,
       cached_trials: 7,
       primary_metric_ci_present: true,
       primary_effect_ci_criterion_met: true,
@@ -290,15 +538,20 @@ describe("topicProbeOutcome", () => {
       expectedRunId: contract.run_id,
       expectedResearchCycle: contract.research_cycle,
       contract,
-      report
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     })).toMatchObject({ measured: true, valid: true, reasons: [] });
   });
 
-  it("rejects unsupported hypotheses and routes to a deferred candidate", () => {
+  it("rejects unsupported hypotheses and routes to a deferred candidate", async () => {
     const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract, {
+      judgement: "not_supported"
+    });
     const decision = buildTopicProbeOutcomeDecision({
       contract,
-      report: makeReport(contract, { judgement: "not_supported" })
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
 
     expect(decision.disposition).toBe("reject_candidate");
@@ -306,11 +559,13 @@ describe("topicProbeOutcome", () => {
     expect(decision.next_action).toBe("try_deferred_candidate");
   });
 
-  it("refreshes the portfolio after rejection when no deferred candidate remains", () => {
+  it("refreshes the portfolio after rejection when no deferred candidate remains", async () => {
     const contract = makeContract({ deferredCandidateIds: [] });
+    const fixture = await makeAuthorizedReport(contract, { delta: 0.01 });
     const decision = buildTopicProbeOutcomeDecision({
       contract,
-      report: makeReport(contract, { delta: 0.01 })
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
 
     expect(decision.disposition).toBe("reject_candidate");
@@ -318,19 +573,37 @@ describe("topicProbeOutcome", () => {
     expect(decision.next_action).toBe("refresh_topic_portfolio");
   });
 
-  it.each([
-    [{ executedTrials: 1, includeCi: false }, "fresh_trial_count_below_confirmatory_floor"],
-    [{ includeCi: false }, "primary_metric_confidence_interval_missing"],
-    [{ ciLower: 0.049 }, "primary_effect_confidence_interval_floor_not_met"]
-  ] as const)("repeats a promising probe when confirmatory prerequisites remain", (overrides, reason) => {
+  it("repeats a sampled probe when adequacy passes but its required CI is absent", async () => {
     const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract, { includeCi: false });
     const decision = buildTopicProbeOutcomeDecision({
       contract,
-      report: makeReport(contract, overrides)
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
+
+    expect(fixture.assessment.passed).toBe(true);
+    expect(decision.executed_trials).toBe(1);
+    expect(decision.disposition).toBe("repeat_probe");
+    expect(decision.reason_codes).toEqual([
+      "primary_metric_confidence_interval_missing"
+    ]);
+    expect(decision.next_action).toBe("repeat_bounded_probe");
+  });
+
+  it("repeats a promising probe when the contract-bound CI misses the effect floor", async () => {
+    const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract, { ciLower: 0.049 });
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
 
     expect(decision.disposition).toBe("repeat_probe");
-    expect(decision.reason_codes).toContain(reason);
+    expect(decision.reason_codes).toContain(
+      "primary_effect_confidence_interval_floor_not_met"
+    );
     expect(decision.next_action).toBe("repeat_bounded_probe");
   });
 
@@ -340,19 +613,23 @@ describe("topicProbeOutcome", () => {
     [{ metricId: "secondary_score" }, "primary_metric_binding_mismatch"],
     [{ ciComparisonId: "unbound_comparison" }, "primary_effect_confidence_interval_binding_mismatch"],
     [{ ciEstimand: "metric_value" }, "primary_effect_confidence_interval_binding_mismatch"],
-    [{ ciTrialSource: "cached" }, "primary_effect_confidence_interval_binding_mismatch"],
-    [{ ciSampleSize: 1 }, "primary_effect_confidence_interval_sample_invalid"]
-  ] as const)("blocks invalid probe evidence before considering apparent performance", (overrides, reason) => {
-    const contract = makeContract();
-    const decision = buildTopicProbeOutcomeDecision({
-      contract,
-      report: makeReport(contract, overrides)
-    });
+    [{ ciTrialSource: "cached" }, "primary_effect_confidence_interval_binding_mismatch"]
+  ] as const)(
+    "blocks invalid probe evidence before considering apparent performance",
+    async (overrides, reason) => {
+      const contract = makeContract();
+      const fixture = await makeAuthorizedReport(contract, overrides);
+      const decision = buildTopicProbeOutcomeDecision({
+        contract,
+        report: fixture.report,
+        evidenceAdequacyAuthorization: fixture.authorization
+      });
 
-    expect(decision.disposition).toBe("blocked_invalid_evidence");
-    expect(decision.reason_codes).toContain(reason);
-    expect(decision.next_action).toBe("repair_probe_evidence");
-  });
+      expect(decision.disposition).toBe("blocked_invalid_evidence");
+      expect(decision.reason_codes).toContain(reason);
+      expect(decision.next_action).toBe("repair_probe_evidence");
+    }
+  );
 
   it.each([
     [{ subjectSeriesId: "other_treatment" }, "primary_treatment_binding_mismatch"],
@@ -367,11 +644,13 @@ describe("topicProbeOutcome", () => {
     ]
   ] as const)(
     "blocks a same-metric result with a different treatment, reference, or dataset/task scope",
-    (overrides, reason) => {
+    async (overrides, reason) => {
       const contract = makeContract();
+      const fixture = await makeAuthorizedReport(contract, overrides);
       const decision = buildTopicProbeOutcomeDecision({
         contract,
-        report: makeReport(contract, overrides)
+        report: fixture.report,
+        evidenceAdequacyAuthorization: fixture.authorization
       });
 
       expect(decision.disposition).toBe("blocked_invalid_evidence");
@@ -383,55 +662,229 @@ describe("topicProbeOutcome", () => {
   it.each([
     ["maximize", 0.06, 0.06],
     ["minimize", -0.06, 0.06]
-  ] as const)("normalizes %s deltas so improvement is positive", (direction, observed, directed) => {
-    const contract = makeContract({ direction });
-    const decision = buildTopicProbeOutcomeDecision({
-      contract,
-      report: makeReport(contract, { delta: observed })
-    });
+  ] as const)(
+    "normalizes %s deltas so improvement is positive",
+    async (direction, observed, directed) => {
+      const contract = makeContract({ direction });
+      const fixture = await makeAuthorizedReport(contract, { delta: observed });
+      const decision = buildTopicProbeOutcomeDecision({
+        contract,
+        report: fixture.report,
+        evidenceAdequacyAuthorization: fixture.authorization
+      });
 
-    expect(decision.observed_delta).toBe(observed);
-    expect(decision.directed_delta).toBe(directed);
-    expect(decision.disposition).toBe("promote_to_confirmatory");
-  });
+      expect(decision.observed_delta).toBe(observed);
+      expect(decision.directed_delta).toBe(directed);
+      expect(decision.disposition).toBe("promote_to_confirmatory");
+    }
+  );
 
   it.each([
     [true, "promote_to_confirmatory"],
     [false, "reject_candidate"]
-  ] as const)("honors an inclusive=%s effect-floor boundary", (inclusive, disposition) => {
-    const contract = makeContract({ inclusive, magnitude: 0.05 });
-    const decision = buildTopicProbeOutcomeDecision({
-      contract,
-      report: makeReport(contract, { delta: 0.05, ciLower: 0.05, ciUpper: 0.06 })
-    });
+  ] as const)(
+    "honors an inclusive=%s effect-floor boundary",
+    async (inclusive, disposition) => {
+      const contract = makeContract({ inclusive, magnitude: 0.05 });
+      const fixture = await makeAuthorizedReport(contract, {
+        delta: 0.05,
+        ciLower: 0.05,
+        ciUpper: 0.06
+      });
+      const decision = buildTopicProbeOutcomeDecision({
+        contract,
+        report: fixture.report,
+        evidenceAdequacyAuthorization: fixture.authorization
+      });
 
-    expect(decision.directed_delta).toBe(0.05);
-    expect(decision.disposition).toBe(disposition);
+      expect(decision.directed_delta).toBe(0.05);
+      expect(decision.disposition).toBe(disposition);
+    }
+  );
+
+  it("does not promote a forged, rehashed inline assessment without an authorization", async () => {
+    const contract = makeContract();
+    const evidence = await issueEvidenceAuthorization(contract);
+    const forgedAssessment = rehash<EvidenceAdequacyAssessmentV2>({
+      ...evidence.assessment,
+      receipt_sha256: "f".repeat(64)
+    });
+    const report = makeReport(
+      contract,
+      evidence.evidenceContract,
+      forgedAssessment
+    );
+    const decision = buildTopicProbeOutcomeDecision({ contract, report });
+
+    expect(forgedAssessment.content_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.evidence_adequacy_status).toBe("missing");
+    expect(decision.reason_codes).toContain(
+      "evidence_adequacy_authorization_missing"
+    );
+    expect(decision.next_action).toBe("repair_probe_evidence");
   });
 
-  it("detects content tampering and rehashed report-derived tampering", () => {
+  it("blocks an unknown analysis_version even with trusted evidence", async () => {
     const contract = makeContract();
-    const report = makeReport(contract);
-    const decision = buildTopicProbeOutcomeDecision({ contract, report });
+    const fixture = await makeAuthorizedReport(contract, {
+      analysisVersion: 99
+    });
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
+
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.reason_codes).toContain("analysis_report_version_invalid");
+    expect(decision.next_action).toBe("repair_probe_evidence");
+  });
+
+  it("rejects a structurally valid rehashed promotion in authoritative validation when report context is absent", async () => {
+    const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract);
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
+    const rehashedPromotion = rehash({
+      ...decision,
+      cached_trials: decision.cached_trials + 100
+    });
+
+    expect(validateTopicProbeOutcomeDecision(JSON.stringify(rehashedPromotion), {
+      contract,
+      structuralOnly: true
+    })).toMatchObject({ valid: true, reasons: [] });
+    const authoritative = validateTopicProbeOutcomeDecision(
+      JSON.stringify(rehashedPromotion),
+      {
+        contract,
+        evidenceAdequacyAuthorization: fixture.authorization
+      }
+    );
+    expect(authoritative.valid).toBe(false);
+    expect(authoritative.reasons).toContain(
+      "topic_probe_outcome_authorization_context_missing"
+    );
+  });
+
+  it("blocks a CI method outside the frozen evidence contract", async () => {
+    const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract, {
+      ciMethod: "unapproved_interval_method"
+    });
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
+
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.reason_codes).toContain(
+      "primary_effect_confidence_interval_method_mismatch"
+    );
+  });
+
+  it("blocks a CI below the contract-required confidence level", async () => {
+    const contract = makeContract();
+    const evidence = await issueEvidenceAuthorization(contract);
+    const requiredLevel = evidence.evidenceContract
+      .uncertainty_requirement.confidence_level;
+    if (requiredLevel === null) {
+      throw new Error("test_sampled_confidence_level_missing");
+    }
+    const report = makeReport(
+      contract,
+      evidence.evidenceContract,
+      evidence.assessment,
+      { ciLevel: requiredLevel - 0.01 }
+    );
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report,
+      evidenceAdequacyAuthorization: evidence.authorization
+    });
+
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.reason_codes).toContain(
+      "primary_effect_confidence_interval_sample_invalid"
+    );
+  });
+
+  it("blocks a CI whose sample size misses the contract target independent units", async () => {
+    const contract = makeContract();
+    const evidence = await issueEvidenceAuthorization(contract);
+    const targetUnits = evidence.evidenceContract
+      .planned_independent_coverage.target_unique_units;
+    const report = makeReport(
+      contract,
+      evidence.evidenceContract,
+      evidence.assessment,
+      { ciSampleSize: targetUnits - 1 }
+    );
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report,
+      evidenceAdequacyAuthorization: evidence.authorization
+    });
+
+    expect(targetUnits).toBeGreaterThan(1);
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.reason_codes).toContain(
+      "primary_effect_confidence_interval_sample_invalid"
+    );
+  });
+
+  it("blocks evidence whose attainable resolution is coarser than the topic effect criterion", async () => {
+    const contract = makeContract();
+    const fixture = await makeAuthorizedReport(
+      contract,
+      {},
+      {
+        minimumResolvableEffect:
+          contract.effect_criterion.magnitude + 0.01
+      }
+    );
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
+
+    expect(fixture.assessment.passed).toBe(true);
+    expect(decision.disposition).toBe("blocked_invalid_evidence");
+    expect(decision.reason_codes).toContain(
+      "evidence_adequacy_effect_resolution_incompatible"
+    );
+  });
+
+  it("detects content tampering and rehashed report-derived tampering", async () => {
+    const contract = makeContract();
+    const fixture = await makeAuthorizedReport(contract);
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
     const hashTamper = { ...decision, executed_trials: 99 };
 
     expect(validateTopicProbeOutcomeDecision(JSON.stringify(hashTamper)).reasons).toContain(
       "topic_probe_outcome_decision_content_hash_mismatch"
     );
 
-    const { content_sha256: _oldHash, ...changedPayload } = {
+    const rehashed = rehash({
       ...decision,
       disposition: "repeat_probe" as const,
       reason_codes: ["primary_metric_confidence_interval_missing"] as const,
       next_action: "repeat_bounded_probe" as const
-    };
-    const rehashed = {
-      ...changedPayload,
-      content_sha256: hashCanonical(changedPayload)
-    };
+    });
     const validation = validateTopicProbeOutcomeDecision(JSON.stringify(rehashed), {
       contract,
-      report
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
 
     expect(validation.valid).toBe(false);
@@ -442,10 +895,14 @@ describe("topicProbeOutcome", () => {
     ]));
   });
 
-  it("rejects schema, runtime context, and contract binding mismatches", () => {
+  it("rejects schema, runtime context, and contract binding mismatches", async () => {
     const contract = makeContract();
-    const report = makeReport(contract);
-    const decision = buildTopicProbeOutcomeDecision({ contract, report });
+    const fixture = await makeAuthorizedReport(contract);
+    const decision = buildTopicProbeOutcomeDecision({
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
+    });
     const { content_sha256: _oldHash, ...unknownFieldPayload } = {
       ...decision,
       unexpected_field: true
@@ -461,7 +918,10 @@ describe("topicProbeOutcome", () => {
 
     const contextValidation = validateTopicProbeOutcomeDecision(JSON.stringify(decision), {
       expectedRunId: "another_run",
-      expectedResearchCycle: 7
+      expectedResearchCycle: 7,
+      contract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
     expect(contextValidation.reasons).toEqual(expect.arrayContaining([
       "topic_probe_outcome_decision_run_id_mismatch",
@@ -470,7 +930,9 @@ describe("topicProbeOutcome", () => {
 
     const otherContract = makeContract({ magnitude: 0.08 });
     const contractValidation = validateTopicProbeOutcomeDecision(JSON.stringify(decision), {
-      contract: otherContract
+      contract: otherContract,
+      report: fixture.report,
+      evidenceAdequacyAuthorization: fixture.authorization
     });
     expect(contractValidation.reasons).toEqual(expect.arrayContaining([
       "topic_probe_outcome_decision_contract_binding_mismatch:contract_content_sha256",

@@ -15,9 +15,208 @@ Path placeholders:
 
 ---
 
+## Issue: LV-673
+
+- Status: repair implemented; focused portfolio regressions passing; full harness and live validation pending
+- Category: research completion risk / explicitly rejected portfolio candidates were incorrectly required to be probe-eligible
+- Validation target: a rejected candidate must remain inspectable without being executable, while every kept candidate must satisfy the complete probe contract.
+- Environment/session context: `buildTopicPortfolio(...)`, portfolio validation, and design admission audited on 2026-07-28.
+- Reproduction steps:
+  1. Build a five-candidate portfolio with four independently rejected candidates and one complete kept candidate.
+  2. Leave the rejected candidates intentionally ineligible for execution.
+  3. Observe the pre-repair portfolio-level admission gate.
+- Expected behavior: rejected candidates are auditable terminal records; only kept candidates must be probe-eligible.
+- Actual behavior: the portfolio required every candidate, including rejected records, to be probe-eligible and therefore made an honest mixed portfolio impossible.
+- Fresh vs existing session comparison:
+  - Fresh session: a constructed mixed-disposition portfolio reproduced the block deterministically.
+  - Existing session: persisted portfolios use the same validator and therefore inherit the same policy error.
+  - Divergence: none; this was a shared admission-rule defect.
+- Root-cause hypothesis:
+  - Type: research-integrity policy bug.
+  - Audit retention and execution admission were collapsed into one candidate predicate.
+- Code/test changes:
+  - Added one shared disposition-aware predicate used by portfolio construction and design admission.
+  - Rejected candidates remain visible; kept candidates still require full eligibility.
+- Regression status: focused research-funnel tests pass; full harness and fresh TUI/Web validation remain pending.
+- Follow-up risks: a rejected candidate must never re-enter execution through a later shortlist without a new reviewed formulation.
+- Evidence/artifacts: `src/core/researchFunnel.ts`, `src/core/nodes/designExperiments.ts`, and `tests/researchFunnel.test.ts`.
+
+---
+
+## Issue: LV-672
+
+- Status: repair implemented; 68 focused closed-chain, portfolio, and semantic-memory tests passing; live validation pending
+- Category: research completion risk / bound review bytes did not determine the portfolio review disposition
+- Validation target: `reviews.jsonl` must bind each candidate's `keep` value and critique summary to the portfolio's `review_status` and `review_summary`.
+- Environment/session context: closed-chain validation audited on 2026-07-28.
+- Reproduction steps:
+  1. Build a valid closed chain with one independently kept candidate.
+  2. Change the bound review record to `keep=false` and update only the review artifact binding.
+  3. Leave the portfolio candidate as `review_status=kept`.
+- Expected behavior: closed-chain validation rejects the disposition mismatch.
+- Actual behavior: the pre-repair validator checked candidate-set coverage and provenance but not the review decision itself.
+- Fresh vs existing session comparison:
+  - Fresh session: a re-bound review fixture reproduced the bypass.
+  - Existing session: any reloaded chain with mutually inconsistent but individually hashed artifacts followed the same incomplete comparison.
+  - Divergence: none; the semantic relation between two persisted artifacts was missing.
+- Root-cause hypothesis:
+  - Type: persisted artifact binding bug.
+  - Byte integrity was validated without recomputing the cross-artifact review projection.
+- Code/test changes:
+  - Closed-chain validation now derives `kept`, `rejected`, or `not_reviewed` from the bound review and authorizing provenance.
+  - Review disposition and summary mismatches receive candidate-specific reasons.
+- Regression status: 68 focused tests pass across closed-chain integrity, portfolio logic, and semantic topic memory.
+- Follow-up risks: future review fields that authorize execution must be added to the same cross-artifact recomputation boundary.
+- Evidence/artifacts: `src/core/researchFunnel.ts` and `tests/researchFunnelIntegrity.test.ts`.
+
+---
+
+## Issue: LV-671
+
+- Status: repair implemented; SQLite idempotence and adjacent integrity regressions passing; node-level and live validation pending
+- Category: persisted-state research risk / terminal pre-experiment candidate decisions were not written to project topic memory
+- Validation target: prior-absorbed and independently rejected formulations must be persisted before a survivor is admitted, with an auditable update artifact and no stale-ledger authorization.
+- Environment/session context: topic-memory writes in `generate_hypotheses` and `analyze_results` audited on 2026-07-28.
+- Reproduction steps:
+  1. Generate a candidate that is terminally absorbed by full-text prior work or rejected by independent review.
+  2. End or backtrack before executing a bounded probe.
+  3. Reload project topic memory.
+- Expected behavior: the terminal formulation is present and cannot silently re-enter a later portfolio.
+- Actual behavior: only bounded-probe rejection in `analyze_results` appended to topic memory; earlier terminal decisions disappeared.
+- Fresh vs existing session comparison:
+  - Fresh session: an independently rejected candidate produced no project-level record before the repair.
+  - Existing session: a resumed topic search could regenerate the same formulation because no durable kill record existed.
+  - Divergence: the resumed session exposed the missing persistence more clearly, but both paths shared it.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`.
+  - Topic memory was attached to experiment outcomes but not to earlier terminal gates.
+- Code/test changes:
+  - Added idempotent terminal-disposition persistence for prior absorption and independent rejection.
+  - Writes occur before survivor semantic review; the updated ledger is then used for all survivor audits and portfolio construction.
+  - Added a content-hashed terminal-update artifact.
+- Regression status: focused SQLite append/replay, topic-memory semantic audit, closed-chain, and public-code tests pass.
+- Follow-up risks: full node integration must prove that a mixed portfolio writes terminal siblings and then re-audits the survivor against the advanced ledger.
+- Evidence/artifacts: `src/core/runs/terminalTopicMemoryDispositions.ts`, `src/core/nodes/generateHypotheses.ts`, and `tests/terminalTopicMemoryDispositions.test.ts`.
+
+---
+
+## Issue: LV-670
+
+- Status: repair implemented; focused receipt, node, and public-code tests passing
+- Category: research completion risk / a valid but all-zero candidate-prior receipt was treated as observed search coverage
+- Validation target: a candidate-conditioned prior-search receipt authorizes progression only when at least one bound retrieval attempt fetched an observed result and all count invariants hold.
+- Environment/session context: candidate-prior plan/receipt validation and `generate_hypotheses` routing audited on 2026-07-28.
+- Reproduction steps:
+  1. Build a structurally valid receipt whose attempts all report `fetched=0` and `selected=0`.
+  2. Bind it to the selected candidate contract.
+  3. Re-enter `generate_hypotheses`.
+- Expected behavior: the candidate remains uncovered and another bounded collection round is requested or exhaustion is reported.
+- Actual behavior: receipt validity alone was treated as evidence that direct-prior search had occurred.
+- Fresh vs existing session comparison:
+  - Fresh session: the all-zero receipt fixture bypassed observed-retrieval coverage.
+  - Existing session: a resumed run trusted the same empty receipt because its hashes remained valid.
+  - Divergence: none; this was a semantic receipt predicate error.
+- Root-cause hypothesis:
+  - Type: persisted artifact semantics bug.
+  - Structural integrity and empirical retrieval were represented by one boolean.
+- Code/test changes:
+  - Added an observed-retrieval predicate and count invariants (`selected <= fetched`, selected IDs equal the selected count).
+  - Empty valid receipts now carry an explicit reason and remain uncovered.
+- Regression status: candidate-prior focused tests and public-code sanitization pass; full suite remains pending.
+- Follow-up risks: provider failures and genuine zero-result queries must remain auditable without being relabeled as completed evidence coverage.
+- Evidence/artifacts: `src/core/candidatePriorSearch.ts`, `src/core/nodes/generateHypotheses.ts`, `tests/candidatePriorSearch.test.ts`, and `tests/generateHypothesesNode.test.ts`.
+
+---
+
+## Issue: LV-669
+
+- Status: repair implemented; 26 focused prior-absorption/node tests and public-code sanitization passing; integrated fixture migration pending
+- Category: research completion risk / exact evidence-span presence was mistaken for axis-level prior-absorption entailment
+- Validation target: each candidate/prior axis relation must receive its own input-bound, context-isolated semantic verification with explicit provenance and a supported, contradicted, or insufficient verdict.
+- Environment/session context: prior-absorption schema and generated matrix validation audited on 2026-07-28.
+- Reproduction steps:
+  1. Reuse one exact full-text span across all five candidate/prior axes.
+  2. Label every relation non-overlapping.
+  3. Build and validate the matrix.
+- Expected behavior: unsupported axis relations fail closed even when the cited span exists verbatim.
+- Actual behavior: the pre-repair matrix accepted span existence and source identity as if they established the reported semantic relation.
+- Fresh vs existing session comparison:
+  - Fresh session: a single-span five-axis fixture reproduced false `probe_eligible=true`.
+  - Existing session: a persisted schema-v1 matrix retained the same self-attested relation labels.
+  - Divergence: schema-v1 artifacts are now explicitly stale instead of being silently upgraded.
+- Root-cause hypothesis:
+  - Type: evidence-entailment validation bug.
+  - Citation integrity and claim support were not separate verification stages.
+- Code/test changes:
+  - Prior-absorption schema v2 binds candidate position, prior position, relation, evidence ref, verifier input, verdict, and provenance per axis.
+  - Missing, contradicted, insufficient, or hash-mismatched verification becomes uncertain and ineligible.
+- Regression status: focused tests and build pass; older integration fixtures still require migration to the stronger schema and independent-review contract.
+- Follow-up risks: the verifier identity is auditable provenance, not proof that its semantic judgment is correct; review and downstream outcome gates remain necessary.
+- Evidence/artifacts: `src/core/priorAbsorption.ts`, `src/core/nodes/generateHypotheses.ts`, `tests/priorAbsorption.test.ts`, and `tests/support/priorAbsorptionFixture.ts`.
+
+---
+
+## Issue: LV-668
+
+- Status: repair in progress; provenance module and focused boundary tests present; integrated fixture migration and full validation pending
+- Category: research completion risk / the same model client could propose and independently review a topic
+- Validation target: topic-probe authorization requires distinct proposer and reviewer clients, distinct resolved identities, and hash-bound input/output invocation provenance.
+- Environment/session context: staged hypothesis generation and review admission audited on 2026-07-28.
+- Reproduction steps:
+  1. Supply one LLM client as both candidate proposer and reviewer.
+  2. Label the two calls with different role names.
+  3. Observe the pre-repair independent-review gate.
+- Expected behavior: the review remains diagnostic self-review and cannot authorize a probe.
+- Actual behavior: role labels were treated as independence even when the exact client produced both proposal and review.
+- Fresh vs existing session comparison:
+  - Fresh session: same-client fixtures reproduced false independence.
+  - Existing session: persisted reviews lacked enough invocation identity to prove separation after reload.
+  - Divergence: the persisted path had the additional provenance-loss problem.
+- Root-cause hypothesis:
+  - Type: research-governance provenance bug.
+  - Logical roles were recorded without a trustworthy execution boundary.
+- Code/test changes:
+  - In progress: resolve public actor identities, compare client object and identity fingerprints, bind proposer/reviewer invocation hashes, and withhold authorization for self-review.
+- Regression status: focused provenance and review-boundary tests exist; existing node fixtures are being migrated before the repair can be reported complete.
+- Follow-up risks: distinct labels or model aliases must not substitute for a distinct client and identity boundary.
+- Evidence/artifacts: `src/core/analysis/hypothesisReviewProvenance.ts`, `src/core/analysis/researchPlanning.ts`, `tests/hypothesisReviewProvenance.test.ts`, and `tests/researchPlanningReviewBoundary.test.ts`.
+
+---
+
+## Issue: LV-667
+
+- Status: repair implemented; 18 focused topic-memory tests and 68 adjacent integrity tests passing; full node, TUI/Web, and harness validation pending
+- Category: research completion risk / synonym and paraphrase changes bypassed project topic memory
+- Validation target: every lexically clear candidate must receive independent semantic comparison against every killed formulation record before it can be marked clear.
+- Environment/session context: topic descriptor identity, lineage similarity, portfolio admission, and generation prompts audited on 2026-07-28.
+- Reproduction steps:
+  1. Persist a killed formulation.
+  2. Restate the same research object using disjoint synonyms and renamed surface terms.
+  3. Keep contribution and method semantics equivalent while changing dataset and metric wording.
+  4. Evaluate the candidate against topic memory.
+- Expected behavior: semantic identity review flags the same research object and requires adjudication.
+- Actual behavior: token Jaccard similarity was 0.088235, all five normalized strings appeared changed, and the candidate was marked clear.
+- Fresh vs existing session comparison:
+  - Fresh session: a synonym fixture reproduced the lexical-clear bypass.
+  - Existing session: an accumulated kill ledger made the risk larger because only recent records were shown to generation and no full-ledger semantic clearance was required.
+  - Divergence: existing sessions could omit older records from generation context, while both paths shared the lexical decision flaw.
+- Root-cause hypothesis:
+  - Type: research-integrity identity bug.
+  - Exact hashes and token overlap were used as semantic topic identity.
+- Code/test changes:
+  - Added partitioned, hash-bound semantic comparisons over every ledger record with distinct proposer/reviewer provenance.
+  - Core identity is derived only from contribution-object and method-mechanism relations; dataset, metric, and claim wording alone cannot establish novelty.
+  - Missing, partial, duplicate, invented, self-reviewed, timed-out, uncertain, or stale-ledger audits fail closed.
+  - Portfolios embed the audit and downstream design revalidates it against the current ledger.
+- Regression status: focused semantic-memory, closed-chain, portfolio, terminal-memory, and public-code tests pass; node integration and live TUI/Web validation remain pending.
+- Follow-up risks: semantic reviewer judgments are fallible; reentry still requires independent evidence and explicit adjudication, and full-ledger prompt partitioning must remain bounded.
+- Evidence/artifacts: `src/core/topicMemorySemanticAudit.ts`, `src/core/topicMemory.ts`, `src/core/researchFunnel.ts`, `src/core/nodes/generateHypotheses.ts`, `src/core/nodes/designExperiments.ts`, and `tests/topicMemorySemanticAudit.test.ts`.
+
+---
+
 ## Issue: LV-666
 
-- Status: reproduced by shared-projection audit; repair in progress and real TUI/Web revalidation pending
+- Status: repair implemented; focused projection, TUI, Web, public-code, and build checks passing; real TUI/Web revalidation pending
 - Category: `in_memory_projection_bug` / topic portfolio evidence is discarded before operator surfaces
 - Validation target: every generated topic candidate must remain inspectable in the shared projection and both operator surfaces, including its scorecard, comparison contract, closest-prior absorption result, reviewer objection, non-overlap claim, kill signal, minimum evidence, topic-memory disposition, and blocking gates.
 - Environment/session context: current worktree audit of `hypothesis_generation/topic_portfolio.json`, the shared jobs projection, TUI run detail, and the Web research-funnel summary on 2026-07-28.
@@ -35,8 +234,8 @@ Path placeholders:
   - Type: `in_memory_projection_bug`
   - The topic portfolio evolved into an auditable scientific scorecard, but the operator projection retained its earlier count-and-shortlist contract.
 - Code/test changes:
-  - In progress: add a non-authoritative candidate audit projection, preserve trust and lineage-sensitive fields, render compact TUI summaries and full Web rows, and cover valid and tampered portfolios.
-- Regression status: pending focused projection, TUI, Web, public-code, build, and same-flow live validation.
+  - Added a non-authoritative candidate audit projection, preserved trust and lineage-sensitive fields, rendered compact TUI summaries and full Web rows, and covered valid and tampered portfolios.
+- Regression status: focused projection/TUI tests, 32 Web tests, public-code sanitization, and build pass; same-flow live validation remains pending.
 - Follow-up risks: candidate diagnostics must remain display-only; selection and execution authority continue to require the validated closed chain, candidate-prior receipt, active probe contract, and estimator gate.
 - Evidence/artifacts: `src/core/researchFunnel.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/runs/jobsProjection.ts`, `src/types.ts`, `src/tui/runProjection.ts`, and `web/src/App.tsx`.
 

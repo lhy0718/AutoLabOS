@@ -121,7 +121,7 @@ function makeValidResearchBriefMarkdown(topic = "Candidate evaluation on a publi
     "",
     "- dataset(s): public_evaluation_dataset.",
     "- task type: configured evaluation task.",
-    "- train/eval protocol: fixed declared evaluation protocol.",
+    "- execution/evaluation protocol: fixed declared evaluation protocol.",
     "- split or validation discipline: one held-out evaluation slice.",
     "- known limitations: the evaluation slice is smaller than a paper-ready full run.",
     "",

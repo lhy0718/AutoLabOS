@@ -2,6 +2,14 @@ import {
   validateActiveTopicProbeContract,
   type ActiveTopicProbeContract
 } from "./activeTopicProbeContract.js";
+import {
+  validateEvidenceAdequacyAssessment,
+  type EvidenceAdequacyContractV2
+} from "./analysis/evidenceAdequacy.js";
+import {
+  isEvidenceAdequacyAuthorization,
+  type EvidenceAdequacyAuthorization
+} from "./analysis/evidenceAdequacyArtifacts.js";
 import type {
   CandidateMetricScale,
   EffectCriterionScale
@@ -31,6 +39,7 @@ export type TopicProbeOutcomeNextAction =
   | "repair_probe_evidence";
 
 export type TopicProbeOutcomeReasonCode =
+  | "analysis_report_version_invalid"
   | "primary_comparison_binding_missing"
   | "primary_comparison_binding_mismatch"
   | "primary_treatment_binding_mismatch"
@@ -42,6 +51,13 @@ export type TopicProbeOutcomeReasonCode =
   | "primary_metric_binding_mismatch"
   | "primary_metric_direction_mismatch"
   | "primary_metric_unit_mismatch"
+  | "evidence_adequacy_assessment_missing"
+  | "evidence_adequacy_assessment_invalid"
+  | "evidence_adequacy_authorization_missing"
+  | "evidence_adequacy_primary_comparison_mismatch"
+  | "evidence_adequacy_requirements_not_satisfied"
+  | "evidence_adequacy_effect_resolution_incompatible"
+  | "deterministic_exhaustive_verifier_missing"
   | "executed_trial_count_invalid"
   | "cached_trial_count_invalid"
   | "fresh_executed_trials_missing"
@@ -52,6 +68,7 @@ export type TopicProbeOutcomeReasonCode =
   | "fresh_trial_count_below_confirmatory_floor"
   | "primary_metric_confidence_interval_missing"
   | "primary_effect_confidence_interval_binding_mismatch"
+  | "primary_effect_confidence_interval_method_mismatch"
   | "primary_effect_confidence_interval_sample_invalid"
   | "primary_effect_confidence_interval_floor_not_met"
   | "confirmatory_gate_satisfied";
@@ -69,6 +86,13 @@ export interface TopicProbeOutcomeDecision {
   observed_delta: number | null;
   directed_delta: number | null;
   required_magnitude: number;
+  evidence_adequacy_contract_sha256?: string | null;
+  evidence_adequacy_assessment_sha256?: string | null;
+  evidence_adequacy_status?:
+    | "pass"
+    | "fail"
+    | "missing"
+    | "invalid";
   executed_trials: number;
   cached_trials: number;
   primary_metric_ci_present: boolean;
@@ -86,6 +110,8 @@ export interface TopicProbeOutcomeDecisionValidationContext {
   expectedResearchCycle?: number;
   contract?: ActiveTopicProbeContract;
   report?: AnalysisReport;
+  evidenceAdequacyAuthorization?: EvidenceAdequacyAuthorization;
+  structuralOnly?: boolean;
 }
 
 export interface TopicProbeOutcomeDecisionValidation {
@@ -108,6 +134,9 @@ const TOPIC_PROBE_OUTCOME_FIELDS = new Set([
   "observed_delta",
   "directed_delta",
   "required_magnitude",
+  "evidence_adequacy_contract_sha256",
+  "evidence_adequacy_assessment_sha256",
+  "evidence_adequacy_status",
   "executed_trials",
   "cached_trials",
   "primary_metric_ci_present",
@@ -121,6 +150,7 @@ const TOPIC_PROBE_OUTCOME_FIELDS = new Set([
 ]);
 
 const REASON_CODES = new Set<TopicProbeOutcomeReasonCode>([
+  "analysis_report_version_invalid",
   "primary_comparison_binding_missing",
   "primary_comparison_binding_mismatch",
   "primary_treatment_binding_mismatch",
@@ -132,6 +162,13 @@ const REASON_CODES = new Set<TopicProbeOutcomeReasonCode>([
   "primary_metric_binding_mismatch",
   "primary_metric_direction_mismatch",
   "primary_metric_unit_mismatch",
+  "evidence_adequacy_assessment_missing",
+  "evidence_adequacy_assessment_invalid",
+  "evidence_adequacy_authorization_missing",
+  "evidence_adequacy_primary_comparison_mismatch",
+  "evidence_adequacy_requirements_not_satisfied",
+  "evidence_adequacy_effect_resolution_incompatible",
+  "deterministic_exhaustive_verifier_missing",
   "executed_trial_count_invalid",
   "cached_trial_count_invalid",
   "fresh_executed_trials_missing",
@@ -142,6 +179,7 @@ const REASON_CODES = new Set<TopicProbeOutcomeReasonCode>([
   "fresh_trial_count_below_confirmatory_floor",
   "primary_metric_confidence_interval_missing",
   "primary_effect_confidence_interval_binding_mismatch",
+  "primary_effect_confidence_interval_method_mismatch",
   "primary_effect_confidence_interval_sample_invalid",
   "primary_effect_confidence_interval_floor_not_met",
   "confirmatory_gate_satisfied"
@@ -160,6 +198,9 @@ const DERIVED_FIELDS: Array<Exclude<keyof TopicProbeOutcomeDecision, "content_sh
   "observed_delta",
   "directed_delta",
   "required_magnitude",
+  "evidence_adequacy_contract_sha256",
+  "evidence_adequacy_assessment_sha256",
+  "evidence_adequacy_status",
   "executed_trials",
   "cached_trials",
   "primary_metric_ci_present",
@@ -174,12 +215,16 @@ const DERIVED_FIELDS: Array<Exclude<keyof TopicProbeOutcomeDecision, "content_sh
 export function buildTopicProbeOutcomeDecision(input: {
   contract: ActiveTopicProbeContract;
   report: AnalysisReport;
+  evidenceAdequacyAuthorization?: EvidenceAdequacyAuthorization;
 }): TopicProbeOutcomeDecision {
   assertValidContract(input.contract);
 
   const contract = input.contract;
   const report = input.report;
   const blockingReasons: TopicProbeOutcomeReasonCode[] = [];
+  if (report.analysis_version !== 1) {
+    blockingReasons.push("analysis_report_version_invalid");
+  }
   const expectedBinding = buildTopicProbeExecutionBinding({
     candidateId: contract.candidate_id,
     candidateContentSha256: contract.candidate_content_sha256,
@@ -230,6 +275,29 @@ export function buildTopicProbeOutcomeDecision(input: {
     && (metricDefinition?.unit?.trim() || undefined) !== contract.metric_unit
   ) {
     blockingReasons.push("primary_metric_unit_mismatch");
+  }
+  const evidenceAdequacy = resolveEvidenceAdequacyGate(
+    report,
+    expectedBinding.primary_comparison_id,
+    input.evidenceAdequacyAuthorization
+  );
+  blockingReasons.push(...evidenceAdequacy.blockingReasons);
+  const evidenceContract = isEvidenceAdequacyAuthorization(
+    input.evidenceAdequacyAuthorization
+  )
+    ? input.evidenceAdequacyAuthorization.contract
+    : undefined;
+  if (
+    evidenceContract
+    && !evidenceResolutionSupportsEffectCriterion(contract, evidenceContract)
+  ) {
+    blockingReasons.push("evidence_adequacy_effect_resolution_incompatible");
+  }
+  if (
+    evidenceContract?.planned_independent_coverage.mode
+      === "deterministic_exhaustive"
+  ) {
+    blockingReasons.push("deterministic_exhaustive_verifier_missing");
   }
 
   const executedTrials = readTrialCount(
@@ -319,22 +387,51 @@ export function buildTopicProbeOutcomeDecision(input: {
   if (metricBound && primaryMetricIntervals.length > 0 && boundEffectIntervals.length === 0) {
     blockingReasons.push("primary_effect_confidence_interval_binding_mismatch");
   }
-  const validBoundEffectIntervals = boundEffectIntervals.filter(({ interval }) => {
+  const uncertaintyRequirement = evidenceContract?.uncertainty_requirement;
+  const requiredConfidenceLevel = uncertaintyRequirement?.mode === "required"
+    ? uncertaintyRequirement.confidence_level
+    : null;
+  const allowedUncertaintyMethods = uncertaintyRequirement?.mode === "required"
+    ? uncertaintyRequirement.allowed_methods
+    : [];
+  const methodBoundEffectIntervals =
+    uncertaintyRequirement?.mode === "required"
+      ? boundEffectIntervals.filter(
+          ({ interval }) =>
+            typeof interval.method === "string"
+            && allowedUncertaintyMethods.includes(interval.method)
+        )
+      : [];
+  if (
+    metricBound
+    && uncertaintyRequirement?.mode === "required"
+    && boundEffectIntervals.length > 0
+    && methodBoundEffectIntervals.length !== boundEffectIntervals.length
+  ) {
+    blockingReasons.push("primary_effect_confidence_interval_method_mismatch");
+  }
+  const minimumIndependentUnits =
+    evidenceContract?.planned_independent_coverage.target_unique_units;
+  const validBoundEffectIntervals = methodBoundEffectIntervals.filter(({ interval }) => {
     const sampleSize = interval.sample_size;
     return Number.isFinite(interval.lower)
       && Number.isFinite(interval.upper)
       && interval.lower <= interval.upper
       && Number.isFinite(interval.level)
-      && interval.level >= 0.95
+      && typeof requiredConfidenceLevel === "number"
+      && interval.level + 1e-12 >= requiredConfidenceLevel
       && interval.level <= 1
       && Number.isInteger(sampleSize)
-      && Number(sampleSize) >= 2
-      && Number(sampleSize) <= executedTrials
+      && typeof minimumIndependentUnits === "number"
+      && Number(sampleSize) >= minimumIndependentUnits
       && observedDelta !== null
       && interval.lower <= observedDelta + 1e-12
       && interval.upper >= observedDelta - 1e-12;
   });
-  if (metricBound && boundEffectIntervals.length > validBoundEffectIntervals.length) {
+  if (
+    metricBound
+    && methodBoundEffectIntervals.length > validBoundEffectIntervals.length
+  ) {
     blockingReasons.push("primary_effect_confidence_interval_sample_invalid");
   }
   const matchingCiIndexes = validBoundEffectIntervals.map(({ index }) => index);
@@ -383,12 +480,9 @@ export function buildTopicProbeOutcomeDecision(input: {
     nextAction = contract.deferred_candidate_ids.length > 0
       ? "try_deferred_candidate"
       : "refresh_topic_portfolio";
-  } else if (executedTrials < 2 || !primaryMetricCiPresent || !primaryEffectCiCriterionMet) {
+  } else if (!primaryMetricCiPresent || !primaryEffectCiCriterionMet) {
     disposition = "repeat_probe";
     reasonCodes = uniqueReasonCodes([
-      ...(executedTrials < 2
-        ? ["fresh_trial_count_below_confirmatory_floor" as const]
-        : []),
       ...(!primaryMetricCiPresent
         ? ["primary_metric_confidence_interval_missing" as const]
         : []),
@@ -410,6 +504,9 @@ export function buildTopicProbeOutcomeDecision(input: {
     "result_analysis.json#/results_plan/required_comparisons/0",
     "result_analysis.json#/statistical_summary/executed_trials",
     "result_analysis.json#/statistical_summary/cached_trials",
+    ...(report.evidence_adequacy_assessment
+      ? ["result_analysis.json#/evidence_adequacy_assessment"]
+      : []),
     ...(primaryComparison?.evidence_links || []),
     ...matchingCiIndexes.map(
       (index) => `result_analysis.json#/statistical_summary/confidence_intervals/${index}`
@@ -435,6 +532,11 @@ export function buildTopicProbeOutcomeDecision(input: {
     observed_delta: observedDelta,
     directed_delta: directedDelta,
     required_magnitude: contract.effect_criterion.magnitude,
+    evidence_adequacy_contract_sha256:
+      evidenceAdequacy.contractContentSha256,
+    evidence_adequacy_assessment_sha256:
+      evidenceAdequacy.assessmentContentSha256,
+    evidence_adequacy_status: evidenceAdequacy.status,
     executed_trials: executedTrials,
     cached_trials: cachedTrials,
     primary_metric_ci_present: primaryMetricCiPresent,
@@ -529,10 +631,30 @@ export function validateTopicProbeOutcomeDecision(
     }
   }
 
-  if (contract && contractValid && context.report) {
+  if (!context.structuralOnly && (
+    !contract
+    || !context.report
+    || !isEvidenceAdequacyAuthorization(
+      context.evidenceAdequacyAuthorization
+    )
+  )) {
+    reasons.push("topic_probe_outcome_authorization_context_missing");
+  }
+
+  if (
+    !context.structuralOnly
+    && contract
+    && contractValid
+    && context.report
+    && isEvidenceAdequacyAuthorization(
+      context.evidenceAdequacyAuthorization
+    )
+  ) {
     const expected = buildTopicProbeOutcomeDecision({
       contract,
-      report: context.report
+      report: context.report,
+      evidenceAdequacyAuthorization:
+        context.evidenceAdequacyAuthorization
     });
     for (const field of DERIVED_FIELDS) {
       if (!valuesEqual(value[field], expected[field])) {
@@ -559,6 +681,88 @@ function assertValidContract(contract: ActiveTopicProbeContract): void {
       `topic_probe_outcome_active_contract_invalid:${validation.reasons.join(",")}`
     );
   }
+}
+
+type EvidenceAdequacyStatus = NonNullable<
+  TopicProbeOutcomeDecision["evidence_adequacy_status"]
+>;
+
+interface EvidenceAdequacyGateResolution {
+  status: EvidenceAdequacyStatus;
+  contractContentSha256: string | null;
+  assessmentContentSha256: string | null;
+  blockingReasons: TopicProbeOutcomeReasonCode[];
+}
+
+function resolveEvidenceAdequacyGate(
+  report: AnalysisReport,
+  expectedPrimaryComparisonId: string,
+  authorization: EvidenceAdequacyAuthorization | undefined
+): EvidenceAdequacyGateResolution {
+  if (!isEvidenceAdequacyAuthorization(authorization)) {
+    return {
+      status: "missing",
+      contractContentSha256: null,
+      assessmentContentSha256: null,
+      blockingReasons: ["evidence_adequacy_authorization_missing"]
+    };
+  }
+
+  const assessment = report.evidence_adequacy_assessment;
+  const trustedAssessment = authorization.assessment;
+  const contractContentSha256 = authorization.contract.content_sha256;
+  const assessmentContentSha256 = trustedAssessment.content_sha256;
+  if (!assessment) {
+    return {
+      status: "missing",
+      contractContentSha256,
+      assessmentContentSha256,
+      blockingReasons: ["evidence_adequacy_assessment_missing"]
+    };
+  }
+  const validation = validateEvidenceAdequacyAssessment(assessment, {
+    contract: authorization.contract,
+    receipt: authorization.receipt,
+    verifiedEvidenceRefs: [...authorization.verifiedEvidenceRefs]
+  });
+  if (!validation.valid) {
+    return {
+      status: "invalid",
+      contractContentSha256,
+      assessmentContentSha256,
+      blockingReasons: ["evidence_adequacy_assessment_invalid"]
+    };
+  }
+  if (
+    assessment.content_sha256 !== trustedAssessment.content_sha256
+    || authorization.contract.primary_comparison_id
+      !== expectedPrimaryComparisonId
+    || assessment.primary_comparison_id !== expectedPrimaryComparisonId
+  ) {
+    return {
+      status: "invalid",
+      contractContentSha256,
+      assessmentContentSha256,
+      blockingReasons: ["evidence_adequacy_primary_comparison_mismatch"]
+    };
+  }
+  if (
+    !trustedAssessment.passed
+    || trustedAssessment.overall_status !== "pass"
+  ) {
+    return {
+      status: "fail",
+      contractContentSha256,
+      assessmentContentSha256,
+      blockingReasons: ["evidence_adequacy_requirements_not_satisfied"]
+    };
+  }
+  return {
+    status: "pass",
+    contractContentSha256,
+    assessmentContentSha256,
+    blockingReasons: []
+  };
 }
 
 function resolveCandidateContractBindingReasons(
@@ -734,6 +938,35 @@ function convertScale(
   return fromHundred && toHundred ? value : null;
 }
 
+function evidenceResolutionSupportsEffectCriterion(
+  topicContract: ActiveTopicProbeContract,
+  evidenceContract: EvidenceAdequacyContractV2
+): boolean {
+  if (!isCandidateMetricScale(evidenceContract.effect_resolution.scale)) {
+    return false;
+  }
+  const convertedResolution = convertScale(
+    evidenceContract.effect_resolution.minimum_resolvable_effect,
+    evidenceContract.effect_resolution.scale,
+    topicContract.effect_criterion.scale
+  );
+  return convertedResolution !== null
+    && (
+      convertedResolution < topicContract.effect_criterion.magnitude
+      || numbersEqual(
+        convertedResolution,
+        topicContract.effect_criterion.magnitude
+      )
+    );
+}
+
+function isCandidateMetricScale(value: unknown): value is CandidateMetricScale {
+  return value === "raw"
+    || value === "proportion"
+    || value === "percent"
+    || value === "percentage_point";
+}
+
 function isTopicProbeOutcomeDecision(value: unknown): value is TopicProbeOutcomeDecision {
   if (!isRecord(value) || !hasOnlyKnownFields(value, TOPIC_PROBE_OUTCOME_FIELDS)) {
     return false;
@@ -752,6 +985,14 @@ function isTopicProbeOutcomeDecision(value: unknown): value is TopicProbeOutcome
     && isFiniteNumberOrNull(value.directed_delta)
     && (value.observed_delta === null) === (value.directed_delta === null)
     && isNonNegativeFiniteNumber(value.required_magnitude)
+    && (value.evidence_adequacy_contract_sha256 === undefined
+      || value.evidence_adequacy_contract_sha256 === null
+      || isSha256(value.evidence_adequacy_contract_sha256))
+    && (value.evidence_adequacy_assessment_sha256 === undefined
+      || value.evidence_adequacy_assessment_sha256 === null
+      || isSha256(value.evidence_adequacy_assessment_sha256))
+    && (value.evidence_adequacy_status === undefined
+      || isEvidenceAdequacyStatus(value.evidence_adequacy_status))
     && isNonNegativeInteger(value.executed_trials)
     && isNonNegativeInteger(value.cached_trials)
     && typeof value.primary_metric_ci_present === "boolean"
@@ -816,6 +1057,7 @@ function reasonCodesMatchDisposition(
             "primary_effect_confidence_interval_floor_not_met"
           ])
         : new Set<TopicProbeOutcomeReasonCode>([
+            "analysis_report_version_invalid",
             "primary_comparison_binding_missing",
             "primary_comparison_binding_mismatch",
             "primary_treatment_binding_mismatch",
@@ -827,12 +1069,20 @@ function reasonCodesMatchDisposition(
             "primary_metric_binding_mismatch",
             "primary_metric_direction_mismatch",
             "primary_metric_unit_mismatch",
+            "evidence_adequacy_assessment_missing",
+            "evidence_adequacy_assessment_invalid",
+            "evidence_adequacy_authorization_missing",
+            "evidence_adequacy_primary_comparison_mismatch",
+            "evidence_adequacy_requirements_not_satisfied",
+            "evidence_adequacy_effect_resolution_incompatible",
+            "deterministic_exhaustive_verifier_missing",
             "executed_trial_count_invalid",
             "cached_trial_count_invalid",
             "fresh_executed_trials_missing",
             "high_severity_failure_present",
             "hypothesis_support_missing",
             "primary_effect_confidence_interval_binding_mismatch",
+            "primary_effect_confidence_interval_method_mismatch",
             "primary_effect_confidence_interval_sample_invalid"
           ]);
   return reasonCodes.every((reason) => allowed.has(reason));
@@ -843,6 +1093,15 @@ function isReasonCodeArray(value: unknown): value is TopicProbeOutcomeReasonCode
     && value.length > 0
     && value.every((item) => typeof item === "string" && REASON_CODES.has(item as TopicProbeOutcomeReasonCode))
     && new Set(value).size === value.length;
+}
+
+function isEvidenceAdequacyStatus(
+  value: unknown
+): value is EvidenceAdequacyStatus {
+  return value === "pass"
+    || value === "fail"
+    || value === "missing"
+    || value === "invalid";
 }
 
 function isUniqueStringArray(value: unknown): value is string[] {

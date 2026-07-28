@@ -22,8 +22,8 @@ function makeContract(overrides: Partial<ExperimentContract> = {}): ExperimentCo
     single_change: "Replace free-form chat with shared_state_schema",
     confounded: false,
     expected_metric_effect: "Improve macro-F1 by +0.5",
-    abort_condition: "Abort if metric drops",
-    keep_or_discard_rule: "Keep if improved",
+    abort_condition: "Abort only if input validity checks fail",
+    keep_or_discard_rule: "Retain every contract-valid execution regardless of outcome direction",
     ...overrides
   };
 }
@@ -137,7 +137,7 @@ describe("checkBriefDesignConsistency", () => {
       experimentContract: makeContract({
         single_change: "Locked baseline-first retrieval feature ablation",
         expected_metric_effect: "Improve macro-F1 relative to the locked baseline.",
-        keep_or_discard_rule: "Keep if the retrieval condition improves versus baseline.",
+        keep_or_discard_rule: "Retain every contract-valid execution and classify it against the declared baseline.",
         baselines: ["compact_text_classifier"]
       }),
       designTitle: "Locked baseline vs frozen retrieval feature ablation",

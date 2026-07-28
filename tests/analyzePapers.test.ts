@@ -42,7 +42,8 @@ import {
 } from "../src/core/collection/topicDiscoveryArtifactVersions.js";
 import {
   buildCandidatePriorSearchPlan,
-  buildCandidatePriorSearchReceipt
+  buildCandidatePriorSearchReceipt,
+  validateCandidatePriorSearchReceipt
 } from "../src/core/candidatePriorSearch.js";
 import { buildPriorAbsorptionCandidateContract } from "../src/core/priorAbsorption.js";
 import type { HypothesisCandidate } from "../src/core/analysis/researchPlanning.js";
@@ -949,7 +950,7 @@ async function writeCandidatePriorCollectLineage(input: {
   corpusRaw: string;
   candidateId: string;
   researchCycle: number;
-}): Promise<void> {
+}): Promise<string> {
   const runDir = path.join(".autolabos", "runs", input.run.id);
   const candidate: HypothesisCandidate = {
     id: input.candidateId,
@@ -983,27 +984,70 @@ async function writeCandidatePriorCollectLineage(input: {
       candidateContract: buildPriorAbsorptionCandidateContract(candidate)
     }]
   });
+  const firstCorpusRow = input.corpusRaw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find(Boolean);
+  if (!firstCorpusRow) {
+    throw new Error("candidate_prior_fixture_requires_nonempty_corpus");
+  }
+  const selectedPaperId = (JSON.parse(firstCorpusRow) as { paper_id?: string }).paper_id;
+  if (!selectedPaperId) {
+    throw new Error("candidate_prior_fixture_requires_paper_id");
+  }
+  const candidateFamilyIds = plan.candidates.flatMap((candidatePlan) =>
+    candidatePlan.families.map((family) => family.family_id)
+  );
+  const resultCorpusRaw = input.corpusRaw
+    .split(/\r?\n/u)
+    .filter((line) => line.trim())
+    .map((line) => {
+      const row = JSON.parse(line) as Record<string, unknown> & { paper_id?: string };
+      if (row.paper_id !== selectedPaperId) {
+        return JSON.stringify(row);
+      }
+      const existingFamilies = Array.isArray(row.query_families)
+        ? row.query_families.filter((value): value is string => typeof value === "string")
+        : [];
+      return JSON.stringify({
+        ...row,
+        query_families: [...new Set([...existingFamilies, ...candidateFamilyIds])].sort()
+      });
+    })
+    .join("\n") + "\n";
   const receipt = buildCandidatePriorSearchReceipt({
     plan,
     collectAttemptId: input.collectAttemptId,
     generatedAt: "2026-07-28T08:35:00.000Z",
     resultCorpusSha256: createHash("sha256")
-      .update(input.corpusRaw, "utf8")
+      .update(resultCorpusRaw, "utf8")
       .digest("hex"),
-    resultCorpusByteLength: Buffer.byteLength(input.corpusRaw, "utf8"),
+    resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
     attempts: plan.candidates.flatMap((plannedCandidate) =>
       plannedCandidate.families.flatMap((family) =>
         family.lanes.map((lane) => ({
           familyId: family.family_id,
           retrievalLane: lane.retrieval_lane,
           query: family.query,
-          fetched: 0,
-          selected: 0,
-          selectedPaperIds: []
+          fetched: 1,
+          selected: 1,
+          selectedPaperIds: [selectedPaperId]
         }))
       )
     )
   });
+  const receiptValidation = validateCandidatePriorSearchReceipt(receipt, {
+    plan,
+    expectedCollectAttemptId: input.collectAttemptId,
+    sourceCorpusRaw: input.corpusRaw,
+    resultCorpusRaw
+  });
+  if (!receiptValidation.valid) {
+    throw new Error(
+      `candidate_prior_fixture_invalid:${input.researchCycle}:`
+      + receiptValidation.reasons.join(",")
+    );
+  }
   const queryPlan = {
     collect_attempt_id: input.collectAttemptId,
     research_mode: "topic_discovery",
@@ -1036,14 +1080,14 @@ async function writeCandidatePriorCollectLineage(input: {
     JSON.stringify(receipt),
     "utf8"
   );
-  await writeFile(path.join(runDir, "corpus.jsonl"), input.corpusRaw, "utf8");
+  await writeFile(path.join(runDir, "corpus.jsonl"), resultCorpusRaw, "utf8");
   await writeFile(
     path.join(runDir, "collect_result.json"),
     JSON.stringify({
       collect_attempt_id: input.collectAttemptId,
       completed: true,
-      fetched: 0,
-      stored: input.corpusRaw.trim().split("\n").filter(Boolean).length
+      fetched: 1,
+      stored: resultCorpusRaw.trim().split("\n").filter(Boolean).length
     }),
     "utf8"
   );
@@ -1062,6 +1106,7 @@ async function writeCandidatePriorCollectLineage(input: {
   const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
   await runContext.put("collect_papers.current_generation_id", input.collectAttemptId);
   await runContext.put("collect_papers.active_attempt_id", null);
+  return resultCorpusRaw;
 }
 
 async function writeTopicDiscoveryBrief(run: RunRecord): Promise<void> {
@@ -1167,7 +1212,15 @@ function jsonOutput(summary: string, claim: string): string {
 function topicMeasurementContract() {
   return {
     primary_metric: "primary_score",
+    metric_unit: "unitless",
+    metric_scale: "raw" as const,
     metric_direction: "maximize" as const,
+    effect_criterion: {
+      basis: "delta_vs_reference" as const,
+      magnitude: 0.05,
+      scale: "raw" as const,
+      inclusive: true
+    },
     meaningful_effect: "At least 0.05 over the declared comparator.",
     measurement_signals: ["primary_score", "uncertainty_interval"],
     measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
@@ -2061,7 +2114,7 @@ describe("analyzePapers node", () => {
     await writeTopicDiscoveryBrief(run);
     const runDir = path.join(".autolabos", "runs", runId);
     const corpusRaw = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
-    await writeCandidatePriorCollectLineage({
+    const firstCandidateCorpusRaw = await writeCandidatePriorCollectLineage({
       run,
       sourceAttemptId: baseAttemptId,
       collectAttemptId: firstCandidateAttemptId,
@@ -2073,7 +2126,7 @@ describe("analyzePapers node", () => {
       run,
       sourceAttemptId: firstCandidateAttemptId,
       collectAttemptId: secondCandidateAttemptId,
-      corpusRaw,
+      corpusRaw: firstCandidateCorpusRaw,
       candidateId: "candidate_second",
       researchCycle: 1
     });
@@ -4210,54 +4263,54 @@ describe("analyzePapers node", () => {
     expect(summariesRaw).not.toContain('"paper_id":"off_topic_medical_vision"');
   });
 
-  it("keeps fallback shortlist focused on compact-model instruction-tuning anchors for a broader brief", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-compact-brief-guard-"));
+  it("keeps fallback shortlist focused on the brief mechanism instead of keyword-heavy adjacent domains", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-mechanism-brief-guard-"));
     tempDirs.push(root);
     process.chdir(root);
 
-    const runId = "run-analyze-compact-brief-guard";
+    const runId = "run-analyze-mechanism-brief-guard";
     const run = {
       ...makeRun(runId),
-      title: "Identify which lightweight instruction-tuning recipe choices matter most for compact open language models",
+      title: "Identify which bounded graph-sketch update choices matter for local anomaly detectors",
       topic:
-        "Identify which lightweight instruction-tuning recipe choices matter most for compact open language models under a local workstation budget while keeping the experiment small and executable."
+        "Identify which graph-sketch update and retention choices matter for local anomaly detection under a workstation budget while keeping the comparison small and executable."
     };
     await writeCorpus(runId, [
       {
-        paper_id: "relevant_compact_method",
-        title: "Instruction Tuning with Low-Parameter x Adaptation for Compact Open Language Models",
+        paper_id: "relevant_graph_update",
+        title: "Degree-Aware Sketch Updates for Local Graph Anomaly Detection",
         abstract:
-          "A compact-model study of adaptation under a bounded local budget.",
+          "A bounded study of graph-sketch update rules under a local compute budget.",
         authors: ["Alice"],
         citation_count: 52,
         year: 2024,
-        pdf_url: "https://example.com/compact-configuration.pdf"
+        pdf_url: "https://example.com/graph-update.pdf"
       },
       {
-        paper_id: "relevant_recipe_tradeoff",
-        title: "Lightweight Recipe Trade-offs for Compact Instruction-Tuned Language Models",
+        paper_id: "relevant_retention_tradeoff",
+        title: "Retention Policy Trade-offs in Compact Graph Sketches",
         abstract:
-          "Compares small recipe changes for compact instruction-tuned open models under fixed compute.",
+          "Compares bounded retention-policy changes for local graph sketches under fixed compute.",
         authors: ["Bob"],
         citation_count: 15,
         year: 2025,
-        pdf_url: "https://example.com/recipe-tradeoffs.pdf"
+        pdf_url: "https://example.com/retention-tradeoffs.pdf"
       },
       {
-        paper_id: "off_topic_clinical_notes",
-        title: "Using fine-tuned large language models to parse clinical notes in musculoskeletal pain disorders",
+        paper_id: "off_topic_clinical_graph",
+        title: "Graph Representations for Longitudinal Clinical Risk Modeling",
         abstract:
-          "This clinical-note study uses large language models under local constraints and mentions instruction tuning and low-parameter x adaptation in the abstract background.",
+          "This clinical study mentions local graph updates and anomaly signals but targets longitudinal patient-risk prediction.",
         authors: ["Cara"],
         citation_count: 75,
         year: 2023,
-        pdf_url: "https://example.com/clinical-notes.pdf"
+        pdf_url: "https://example.com/clinical-graph.pdf"
       },
       {
-        paper_id: "off_topic_multimodal_recommender",
-        title: "ATFLRec: A Multimodal Recommender System with Audio-Text Fusion and Low-Parameter x Adaptation via Instruction-Tuned Large Language Model",
+        paper_id: "off_topic_graph_recommender",
+        title: "A Multimodal Recommender with Dynamic Graph Retention",
         abstract:
-          "A multimodal recommender paper that mentions instruction tuning and low-parameter x adaptation but targets recommendation-specific fusion rather than compact-model recipe trade-offs.",
+          "A recommender study that mentions graph retention and anomaly-aware updates but targets recommendation-specific fusion.",
         authors: ["Dina"],
         citation_count: 66,
         year: 2025,
@@ -4302,13 +4355,13 @@ describe("analyzePapers node", () => {
 
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     const manifest = JSON.parse(manifestRaw);
-    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_compact_method", "relevant_recipe_tradeoff"]));
+    expect(new Set(manifest.selectedPaperIds)).toEqual(new Set(["relevant_graph_update", "relevant_retention_tradeoff"]));
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
-    expect(summariesRaw).toContain('"paper_id":"relevant_compact_method"');
-    expect(summariesRaw).toContain('"paper_id":"relevant_recipe_tradeoff"');
-    expect(summariesRaw).not.toContain('"paper_id":"off_topic_clinical_notes"');
-    expect(summariesRaw).not.toContain('"paper_id":"off_topic_multimodal_recommender"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_graph_update"');
+    expect(summariesRaw).toContain('"paper_id":"relevant_retention_tradeoff"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_clinical_graph"');
+    expect(summariesRaw).not.toContain('"paper_id":"off_topic_graph_recommender"');
   });
 
   it("pauses instead of accepting a deterministic shortlist when top-n rerank fails", async () => {
@@ -6072,16 +6125,29 @@ describe("analyzePapers node", () => {
     expect(analyzeLogs.some((text) => text.includes("Detected inconsistent analysis artifacts."))).toBe(true);
     expect(analyzeLogs.some((text) => text.includes("Re-queueing 1 completed paper(s)"))).toBe(true);
 
+    const hypothesisOutputs = hypothesisPipelineOutputs("ev_p1_1");
+    const hypothesisProposer = new SequenceJsonLLM(
+      hypothesisOutputs.slice(0, 4)
+    );
+    const hypothesisReviewer = new SequenceJsonLLM([
+      hypothesisOutputs[4] || ""
+    ]);
     const generateNode = createGenerateHypothesesNode({
       config: {} as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new SequenceJsonLLM(hypothesisPipelineOutputs("ev_p1_1")),
+      llm: hypothesisProposer,
       pdfTextLlm: new SequenceJsonLLM([]),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
+    }, {
+      proposerIdentity: { identity: "fixture_proposer" },
+      reviewer: {
+        llm: hypothesisReviewer,
+        identity: { identity: "fixture_reviewer" }
+      }
     });
 
     const generated = await generateNode.execute({ run, graph: run.graph });

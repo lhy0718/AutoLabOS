@@ -15,6 +15,7 @@ import {
   type TopicReentryTicket
 } from "../topicMemory.js";
 import { normalizeFsPath } from "../../utils/fs.js";
+import type { TopicMemorySemanticAudit } from "../topicMemorySemanticAudit.js";
 
 interface TopicMemoryRow {
   sequence_id: number;
@@ -112,12 +113,14 @@ export class TopicMemoryStore {
 
   evaluate(
     descriptor: TopicFormulationDescriptor,
-    reentryTicket?: TopicReentryTicket
+    reentryTicket?: TopicReentryTicket,
+    semanticAudit?: TopicMemorySemanticAudit
   ): TopicMemoryDecision {
     return evaluateTopicMemory(
       this.loadLedger(),
       descriptor,
-      reentryTicket
+      reentryTicket,
+      semanticAudit
     );
   }
 

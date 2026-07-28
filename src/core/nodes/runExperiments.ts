@@ -100,6 +100,20 @@ import {
   validateTopicProbeComputeUsageLedger,
   type TopicProbeComputeBudgetContract
 } from "../topicProbeComputeBudget.js";
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyExecutionReceiptFromEvidence,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_METRICS_FIELD,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+  type EvidenceAdequacyAssessmentV2,
+  type EvidenceAdequacyContractV2,
+  type EvidenceAdequacyExecutionReceiptV2
+} from "../analysis/evidenceAdequacy.js";
+import {
+  loadEvidenceAdequacyContractFromRunDir,
+  resolveVerifiedEvidenceRefs
+} from "../analysis/evidenceAdequacyArtifacts.js";
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
 interface ManagedSupplementalProfile {
@@ -195,6 +209,57 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           + researchModeGuard.reasons.join(", ");
         return {
           status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const evidenceAdequacyContractLoad =
+        await loadEvidenceAdequacyContractFromRunDir(
+          path.join(process.cwd(), ".autolabos", "runs", run.id)
+        );
+      if (
+        evidenceAdequacyContractLoad.present
+        && !evidenceAdequacyContractLoad.contract
+      ) {
+        const error =
+          "run_experiments_evidence_adequacy_contract_invalid:"
+          + evidenceAdequacyContractLoad.reasons.join(",");
+        return {
+          status: "failure",
+          failureKind: "gate_blocked",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const evidenceAdequacyContract =
+        evidenceAdequacyContractLoad.contract;
+      if (
+        evidenceAdequacyContract
+        && experimentContract?.results_plan.primary_comparison_id
+          !== evidenceAdequacyContract.primary_comparison_id
+      ) {
+        const error =
+          "run_experiments_evidence_primary_comparison_binding_mismatch:"
+          + `results_plan=${experimentContract?.results_plan.primary_comparison_id || "missing"},`
+          + `evidence_contract=${evidenceAdequacyContract.primary_comparison_id}`;
+        return {
+          status: "failure",
+          failureKind: "gate_blocked",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      if (
+        researchModeGuard.effectiveMode === "topic_discovery"
+        && !evidenceAdequacyContract
+      ) {
+        const error = "topic_probe_evidence_adequacy_contract_missing";
+        return {
+          status: "failure",
+          failureKind: "gate_blocked",
           error,
           summary: error,
           toolCallsUsed: 0
@@ -1685,14 +1750,43 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       objectiveEvaluationSummary = objectiveEvaluation.summary;
       await writeRunArtifact(run, "metrics.json", JSON.stringify(parsedMetrics, null, 2));
       await writeRunArtifact(run, "objective_evaluation.json", JSON.stringify(objectiveEvaluation, null, 2));
-      const metricsContractIssues = validateRunMetricsContract({
-        metrics: parsedMetrics,
-        objectiveEvaluation,
-        comparisonContract,
-        experimentContract,
-        briefSections,
-        experimentPortfolio
+      const evidenceAdequacyEvaluation = await evaluateRunEvidenceAdequacy({
+        contract: evidenceAdequacyContract,
+        rawEvidence: parsedMetrics[EVIDENCE_ADEQUACY_METRICS_FIELD],
+        metricsPath: resolved.metricsPath,
+        runDir: path.join(process.cwd(), ".autolabos", "runs", run.id),
+        executionCwd: resolved.cwd,
+        publicDir: implementPublicDir
       });
+      if (evidenceAdequacyEvaluation.receipt) {
+        await writeRunArtifact(
+          run,
+          EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+          `${JSON.stringify(evidenceAdequacyEvaluation.receipt, null, 2)}\n`
+        );
+      }
+      if (evidenceAdequacyEvaluation.assessment) {
+        await writeRunArtifact(
+          run,
+          EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+          `${JSON.stringify(evidenceAdequacyEvaluation.assessment, null, 2)}\n`
+        );
+      }
+      await runContext.put(
+        "run_experiments.evidence_adequacy_assessment",
+        evidenceAdequacyEvaluation.assessment || null
+      );
+      const metricsContractIssues = [
+        ...validateRunMetricsContract({
+          metrics: parsedMetrics,
+          objectiveEvaluation,
+          comparisonContract,
+          experimentContract,
+          briefSections,
+          experimentPortfolio
+        }),
+        ...evidenceAdequacyEvaluation.issues
+      ];
       if (metricsContractIssues.length > 0) {
         const contractMessage = appendExperimentFailureArtifactEvidence(
           appendMetricsFailureEvidence(
@@ -6942,6 +7036,16 @@ async function publishRunExperimentOutputs(input: {
       sourcePath: path.join(runDir, "trial_group_matrix.json"),
       targetRelativePath: "trial_group_matrix.json",
       optional: true
+    },
+    {
+      sourcePath: path.join(runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH),
+      targetRelativePath: EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+      optional: true
+    },
+    {
+      sourcePath: path.join(runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH),
+      targetRelativePath: EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+      optional: true
     }
   ];
   if (input.supplementalPlan) {
@@ -7766,6 +7870,86 @@ function parseDeclaredPrimarySeedCount(briefSections?: MarkdownRunBriefSections)
   return undefined;
 }
 
+async function evaluateRunEvidenceAdequacy(input: {
+  contract?: EvidenceAdequacyContractV2;
+  rawEvidence: unknown;
+  metricsPath: string;
+  runDir: string;
+  executionCwd: string;
+  publicDir?: string;
+}): Promise<{
+  issues: string[];
+  receipt?: EvidenceAdequacyExecutionReceiptV2;
+  assessment?: EvidenceAdequacyAssessmentV2;
+}> {
+  await Promise.all([
+    fs.rm(path.join(input.runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH), {
+      force: true
+    }),
+    fs.rm(path.join(input.runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH), {
+      force: true
+    })
+  ]);
+  if (!input.contract) {
+    return input.rawEvidence === undefined
+      ? { issues: [] }
+      : {
+          issues: [
+            "Experiment metrics declared evidence_adequacy_execution_evidence without a frozen evidence adequacy contract."
+          ]
+        };
+  }
+  if (input.rawEvidence === undefined) {
+    return {
+      issues: [
+        `Experiment metrics omitted ${EVIDENCE_ADEQUACY_METRICS_FIELD} required by the frozen evidence adequacy contract.`
+      ]
+    };
+  }
+  const issuance = buildEvidenceAdequacyExecutionReceiptFromEvidence(
+    input.rawEvidence
+  );
+  if (!issuance.valid || !issuance.artifact) {
+    return {
+      issues: [
+        "Experiment execution evidence is invalid: "
+          + issuance.reasons.join(", ")
+      ]
+    };
+  }
+  const receipt = issuance.artifact;
+  const verifiedEvidenceRefs = await resolveVerifiedEvidenceRefs({
+    references: [
+      ...receipt.primary_evidence_refs,
+      ...receipt.auxiliary_evidence_refs
+    ],
+    roots: [
+      path.dirname(input.metricsPath),
+      input.runDir,
+      input.executionCwd,
+      input.publicDir
+    ].filter((value): value is string => Boolean(value))
+  });
+  const assessment = assessEvidenceAdequacy({
+    contract: input.contract,
+    receipt,
+    verifiedEvidenceRefs
+  });
+  const nonPassingChecks = assessment.checks.filter(
+    (check) => check.status !== "pass"
+  );
+  return {
+    receipt,
+    assessment,
+    issues: assessment.passed
+      ? []
+      : [
+          `Evidence adequacy assessment did not pass (status=${assessment.overall_status}): ${nonPassingChecks
+            .map((check) => `${check.check_id}=${check.status}:${check.reasons.join("|") || "unspecified"}`)
+            .join("; ")}`
+        ]
+  };
+}
 
 function validateRunMetricsContract(input: {
   metrics: Record<string, unknown>;

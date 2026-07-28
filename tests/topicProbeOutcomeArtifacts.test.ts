@@ -10,10 +10,25 @@ import {
   buildActiveTopicProbeContract,
   type ActiveTopicProbeContract
 } from "../src/core/activeTopicProbeContract.js";
+import {
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  type EvidenceAdequacyCoverageMode
+} from "../src/core/analysis/evidenceAdequacy.js";
+import {
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyArtifactReassessment,
+  type EvidenceAdequacyAuthorization
+} from "../src/core/analysis/evidenceAdequacyArtifacts.js";
 import type {
   HypothesisCandidate,
   HypothesisReview
 } from "../src/core/analysis/researchPlanning.js";
+import { makeIndependentHypothesisReviewProvenance } from "./support/hypothesisReviewProvenance.js";
 import {
   buildCandidateObjectiveProfileBinding
 } from "../src/core/effectCriterion.js";
@@ -41,6 +56,7 @@ import {
 } from "../src/core/topicProbeOutcomeArtifacts.js";
 import {
   buildTopicProbeOutcomeDecision,
+  validateTopicProbeOutcomeDecision,
   type TopicProbeOutcomeDecision,
   type TopicProbeOutcomeDisposition,
   type TopicProbeOutcomeNextAction
@@ -210,6 +226,209 @@ describe("topicProbeOutcomeArtifacts", () => {
         content_sha256: fixture.outcome.content_sha256
       }
     });
+  });
+
+  it("blocks deterministic exhaustive promotion until an independent replay verifier exists", async () => {
+    const fixture = await createWorkspaceFixture({ includeOutcome: false });
+    const governed = buildProbeEvidenceAssessment(fixture.report, {
+      mode: "deterministic_exhaustive",
+      observedUnitCount: 2,
+      includeDeterministicOracle: true
+    });
+    const report: AnalysisReport = {
+      ...fixture.report,
+      analysis_version: 1,
+      statistical_summary: {
+        ...fixture.report.statistical_summary,
+        executed_trials: 1,
+        confidence_intervals: []
+      },
+      evidence_adequacy_assessment: governed.assessment
+    };
+    const reassessment = await persistProbeEvidenceAndReassess(
+      fixture.workspaceRoot,
+      report,
+      governed
+    );
+
+    expect(governed.assessment.passed).toBe(true);
+    expect(reassessment.authorization).toBeDefined();
+
+    const decision = buildTopicProbeOutcomeDecision({
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: reassessment.authorization
+    });
+
+    expect(decision).toMatchObject({
+      disposition: "blocked_invalid_evidence",
+      evidence_adequacy_status: "pass",
+      evidence_adequacy_contract_sha256: governed.contract.content_sha256,
+      evidence_adequacy_assessment_sha256: governed.assessment.content_sha256,
+      executed_trials: 1,
+      primary_metric_ci_present: false,
+      reason_codes: ["deterministic_exhaustive_verifier_missing"],
+      next_action: "repair_probe_evidence"
+    });
+    expect(decision.evidence_refs).toContain(
+      "result_analysis.json#/evidence_adequacy_assessment"
+    );
+    expect(validateTopicProbeOutcomeDecision(JSON.stringify(decision), {
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: reassessment.authorization
+    })).toMatchObject({ measured: true, valid: true, reasons: [] });
+  });
+
+  it("blocks sampled evidence that misses its frozen independent-unit coverage despite two trials and a CI", async () => {
+    const fixture = await createWorkspaceFixture({ includeOutcome: false });
+    const governed = buildProbeEvidenceAssessment(fixture.report, {
+      mode: "sampled",
+      observedUnitCount: 1,
+      includeDeterministicOracle: false
+    });
+    const report: AnalysisReport = {
+      ...fixture.report,
+      analysis_version: 1,
+      evidence_adequacy_assessment: governed.assessment
+    };
+    const reassessment = await persistProbeEvidenceAndReassess(
+      fixture.workspaceRoot,
+      report,
+      governed
+    );
+
+    const decision = buildTopicProbeOutcomeDecision({
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: reassessment.authorization
+    });
+
+    expect(governed.assessment.passed).toBe(false);
+    expect(reassessment.authorization).toBeUndefined();
+    expect(decision).toMatchObject({
+      disposition: "blocked_invalid_evidence",
+      evidence_adequacy_status: "missing",
+      reason_codes: ["evidence_adequacy_authorization_missing"],
+      next_action: "repair_probe_evidence"
+    });
+  });
+
+  it("fails closed when a current analysis report omits its frozen evidence assessment", async () => {
+    const fixture = await createWorkspaceFixture({ includeOutcome: false });
+    const {
+      evidence_adequacy_assessment: _assessment,
+      ...reportWithoutAssessment
+    } = fixture.report;
+    const report = reportWithoutAssessment as AnalysisReport;
+
+    const decision = buildTopicProbeOutcomeDecision({
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: fixture.evidenceAdequacyAuthorization
+    });
+
+    expect(decision).toMatchObject({
+      disposition: "blocked_invalid_evidence",
+      evidence_adequacy_status: "missing",
+      reason_codes: ["evidence_adequacy_assessment_missing"],
+      next_action: "repair_probe_evidence"
+    });
+  });
+
+  it("blocks deterministic exhaustive evidence when contract-required oracle evidence is absent", async () => {
+    const fixture = await createWorkspaceFixture({ includeOutcome: false });
+    const governed = buildProbeEvidenceAssessment(fixture.report, {
+      mode: "deterministic_exhaustive",
+      observedUnitCount: 2,
+      includeDeterministicOracle: false
+    });
+    const report: AnalysisReport = {
+      ...fixture.report,
+      analysis_version: 1,
+      statistical_summary: {
+        ...fixture.report.statistical_summary,
+        executed_trials: 1,
+        confidence_intervals: []
+      },
+      evidence_adequacy_assessment: governed.assessment
+    };
+    const reassessment = await persistProbeEvidenceAndReassess(
+      fixture.workspaceRoot,
+      report,
+      governed
+    );
+
+    const decision = buildTopicProbeOutcomeDecision({
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: reassessment.authorization
+    });
+
+    expect(governed.assessment.passed).toBe(false);
+    expect(reassessment.authorization).toBeUndefined();
+    expect(decision).toMatchObject({
+      disposition: "blocked_invalid_evidence",
+      evidence_adequacy_status: "missing",
+      reason_codes: ["evidence_adequacy_authorization_missing"]
+    });
+  });
+
+  it.each([
+    { label: "missing", analysisVersion: undefined },
+    { label: "unknown", analysisVersion: 2 }
+  ])("fails closed for a $label analysis_version", async ({ analysisVersion }) => {
+    const fixture = await createWorkspaceFixture({ includeOutcome: false });
+    const reportRecord = { ...fixture.report } as Record<string, unknown>;
+    if (analysisVersion === undefined) {
+      delete reportRecord.analysis_version;
+    } else {
+      reportRecord.analysis_version = analysisVersion;
+    }
+    const report = reportRecord as unknown as AnalysisReport;
+    const outcome = buildTopicProbeOutcomeDecision({
+      contract: fixture.contract,
+      report,
+      evidenceAdequacyAuthorization: fixture.evidenceAdequacyAuthorization
+    });
+    await writeArtifact(
+      fixture.workspaceRoot,
+      TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.outcome,
+      JSON.stringify(outcome, null, 2)
+    );
+
+    const validation = await loadTopicProbeOutcomeArtifacts({
+      workspaceRoot: fixture.workspaceRoot,
+      runId: RUN_ID,
+      researchCycle: RESEARCH_CYCLE,
+      requireOutcome: true,
+      report
+    });
+
+    expect(validation.valid, validation.reasons.join(", ")).toBe(true);
+    expect(validation.decision).toMatchObject({
+      disposition: "blocked_invalid_evidence",
+      reason_codes: ["analysis_report_version_invalid"],
+      next_action: "repair_probe_evidence"
+    });
+  });
+
+  it.each([
+    { label: "empty evidence artifact", metricsRaw: "" },
+    {
+      label: "missing primary JSON fragment",
+      metricsRaw: JSON.stringify({ unrelated: true }, null, 2)
+    }
+  ])("fails closed for an $label", async ({ metricsRaw }) => {
+    const fixture = await createWorkspaceFixture();
+    await writeArtifact(fixture.workspaceRoot, "metrics.json", metricsRaw);
+
+    const validation = await loadFixture(fixture);
+
+    expect(validation.valid).toBe(false);
+    expect(validation.reasons).toContain(
+      "topic_probe_outcome_evidence_authorization_failed"
+    );
   });
 
   it("fails closed when the required outcome is missing", async () => {
@@ -666,6 +885,7 @@ interface WorkspaceFixture {
   portfolio: TopicPortfolio;
   topicDecision: ReturnType<typeof buildTopicDecision>;
   contract: ActiveTopicProbeContract;
+  evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization;
   outcome: TopicProbeOutcomeDecision;
   report: AnalysisReport;
 }
@@ -1038,17 +1258,6 @@ async function createWorkspaceFixture(
     deferredCandidateIds: [...route.deferredCandidateIds],
     generatedAt: GENERATED_AT
   });
-  const report = analysisReport(contract, route);
-  const outcome = buildTopicProbeOutcomeDecision({ contract, report });
-  if (
-    outcome.disposition !== route.disposition
-    || outcome.next_action !== route.nextAction
-  ) {
-    throw new Error(
-      `topic-probe route fixture mismatch: ${outcome.disposition}/${outcome.next_action}`
-    );
-  }
-
   const artifactRows: Array<readonly [string, string]> = [
     [TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.gapMap, gapMapRaw],
     [TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.gapSynthesis, gapSynthesisRaw],
@@ -1074,23 +1283,61 @@ async function createWorkspaceFixture(
       JSON.stringify(contract, null, 2)
     ]
   ];
-  if (options.includeOutcome !== false) {
-    artifactRows.push([
-      TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.outcome,
-      JSON.stringify(outcome, null, 2)
-    ]);
-  }
   await Promise.all(
     artifactRows.map(([relativePath, raw]) =>
       writeArtifact(workspaceRoot, relativePath, raw)
     )
   );
 
+  const baseReport = analysisReport(contract, route);
+  const governedEvidence = buildProbeEvidenceAssessment(baseReport, {
+    mode: "sampled",
+    observedUnitCount: 2,
+    includeDeterministicOracle: false
+  });
+  const report: AnalysisReport = {
+    ...baseReport,
+    evidence_adequacy_assessment: governedEvidence.assessment
+  };
+  const evidenceReassessment = await persistProbeEvidenceAndReassess(
+    workspaceRoot,
+    report,
+    governedEvidence
+  );
+  const evidenceAdequacyAuthorization = evidenceReassessment.authorization;
+  if (!evidenceAdequacyAuthorization) {
+    throw new Error(
+      `topic-probe evidence fixture was not authorized: ${evidenceReassessment.issues.join(",")}`
+    );
+  }
+
+  const outcome = buildTopicProbeOutcomeDecision({
+    contract,
+    report,
+    evidenceAdequacyAuthorization
+  });
+  if (
+    outcome.disposition !== route.disposition
+    || outcome.next_action !== route.nextAction
+  ) {
+    throw new Error(
+      `topic-probe route fixture mismatch: ${outcome.disposition}/${outcome.next_action}`
+    );
+  }
+  if (options.includeOutcome !== false) {
+    await writeArtifact(
+      workspaceRoot,
+      TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.outcome,
+      JSON.stringify(outcome, null, 2)
+    );
+  }
+
   return {
     workspaceRoot,
     portfolio,
     topicDecision,
     contract,
+    evidenceAdequacyAuthorization,
     outcome,
     report
   };
@@ -1239,7 +1486,8 @@ function review(candidateId: string): HypothesisReview {
     limitation_reflection: 4,
     measurement_readiness: 4,
     strengths: ["The comparison and falsifier are explicit."],
-    weaknesses: ["The claim remains bounded to the declared evaluation."]
+    weaknesses: ["The claim remains bounded to the declared evaluation."],
+    provenance: makeIndependentHypothesisReviewProvenance(candidateId)
   };
 }
 
@@ -1277,11 +1525,13 @@ function analysisReport(
         upper: route.confidenceInterval[1],
         level: 0.95,
         sample_size: route.executedTrials,
+        method: "paired_bootstrap",
         source: "metrics",
         summary: "Interval over fresh bounded trials."
       }]
     : [];
   return {
+    analysis_version: 1,
     objective_metric: {
       profile: {
         candidate_contract: candidateBinding
@@ -1383,4 +1633,185 @@ function analysisReport(
     },
     failure_taxonomy: []
   } as unknown as AnalysisReport;
+}
+
+function buildProbeEvidenceAssessment(
+  report: AnalysisReport,
+  input: {
+    mode: EvidenceAdequacyCoverageMode;
+    observedUnitCount: number;
+    includeDeterministicOracle: boolean;
+  }
+) {
+  const primaryComparisonId = report.primary_comparison_id;
+  if (!primaryComparisonId) {
+    throw new Error("primary comparison fixture missing");
+  }
+  const exhaustive = input.mode === "deterministic_exhaustive";
+  const populationManifestSha256 = exhaustive
+    ? hashCanonical({
+        artifact_kind: "independent_unit_population",
+        unit_ids: ["unit_alpha", "unit_beta"]
+      })
+    : undefined;
+  const contract = buildEvidenceAdequacyContract({
+    primaryComparisonId,
+    designSource: {
+      kind: exhaustive
+        ? "deterministic_exhaustive_manifest"
+        : "estimator_protocol",
+      contentSha256: hashCanonical({
+        artifact_kind: exhaustive
+          ? "deterministic_exhaustive_manifest"
+          : "estimator_protocol",
+        primary_comparison_id: primaryComparisonId
+      })
+    },
+    independentUnit: {
+      key: "evaluation_unit_id",
+      analysisUnit: "paired evaluation unit"
+    },
+    plannedIndependentCoverage: {
+      mode: input.mode,
+      targetUniqueUnits: 2,
+      targetDenominatorPerArm: 2,
+      ...(populationManifestSha256
+        ? { populationManifestSha256 }
+        : {})
+    },
+    requiredContrast: {
+      arms: ["candidate_arm", "reference_arm"],
+      paired: true,
+      requiredCompletePairs: 2
+    },
+    uncertaintyRequirement: exhaustive
+      ? {
+          mode: "none",
+          deterministicExhaustiveRationale:
+            "The frozen population is exhaustively paired and independently replayed with hash verification."
+        }
+      : {
+          mode: "required",
+          allowedMethods: ["paired_bootstrap"],
+          confidenceLevel: 0.95,
+          decisionRule: "directed_interval_bound_meets_effect_criterion"
+        },
+    effectResolution: {
+      scale: "raw",
+      minimumResolvableEffect: 0.01
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The bounded probe contract declares no additional numeric execution floor."
+    }
+  });
+  const unitIds = ["unit_alpha", "unit_beta"].slice(
+    0,
+    input.observedUnitCount
+  );
+  const oracleRefs = exhaustive && input.includeDeterministicOracle
+    ? [
+        "metrics.json#/deterministic_oracle",
+        "reproducibility.json#/rerun_hash_match"
+      ]
+    : [];
+  const primaryEvidenceRefs = [
+    "metrics.json#/primary_comparison",
+    ...oracleRefs
+  ];
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: contract.content_sha256,
+    primaryComparisonId,
+    ...(populationManifestSha256
+      ? { observedPopulationManifestSha256: populationManifestSha256 }
+      : {}),
+    uniqueExecutionIds: exhaustive
+      ? ["execution_initial", "execution_replay"]
+      : ["execution_sampled"],
+    observedIndependentUnitIds: unitIds,
+    observedDenominatorByArm: {
+      candidate_arm: input.observedUnitCount,
+      reference_arm: input.observedUnitCount
+    },
+    observedPairCoverage: {
+      completePairIds: unitIds,
+      incompletePairIds: []
+    },
+    observedUncertaintyMethods: exhaustive ? [] : ["paired_bootstrap"],
+    primaryEvidenceRefs,
+    deterministicOracleEvidenceRefs: oracleRefs
+  });
+  return {
+    contract,
+    receipt,
+    assessment: assessEvidenceAdequacy({
+      contract,
+      receipt,
+      verifiedEvidenceRefs: primaryEvidenceRefs
+    })
+  };
+}
+
+async function persistProbeEvidenceAndReassess(
+  workspaceRoot: string,
+  report: AnalysisReport,
+  governed: ReturnType<typeof buildProbeEvidenceAssessment>
+): Promise<EvidenceAdequacyArtifactReassessment> {
+  const metricsEvidence = {
+    primary_comparison: {
+      comparison_id: report.primary_comparison_id,
+      verified: true
+    },
+    candidate: { value: 0.56 },
+    reference: { value: 0.5 },
+    comparison: { delta: 0.06 },
+    deterministic_oracle: {
+      replay_verified: true
+    }
+  };
+  const reproducibilityEvidence = {
+    rerun_hash_match: true
+  };
+  await Promise.all([
+    writeArtifact(
+      workspaceRoot,
+      EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+      JSON.stringify(governed.contract, null, 2)
+    ),
+    writeArtifact(
+      workspaceRoot,
+      EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+      JSON.stringify(governed.receipt, null, 2)
+    ),
+    writeArtifact(
+      workspaceRoot,
+      EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+      JSON.stringify(governed.assessment, null, 2)
+    ),
+    writeArtifact(
+      workspaceRoot,
+      "result_analysis.json",
+      JSON.stringify(report, null, 2)
+    ),
+    writeArtifact(
+      workspaceRoot,
+      "metrics.json",
+      JSON.stringify(metricsEvidence, null, 2)
+    ),
+    writeArtifact(
+      workspaceRoot,
+      "reproducibility.json",
+      JSON.stringify(reproducibilityEvidence, null, 2)
+    )
+  ]);
+
+  const runRoot = buildWorkspaceRunRoot(workspaceRoot, RUN_ID);
+  return reassessEvidenceAdequacyArtifacts({
+    runDir: runRoot,
+    evidenceRoots: [runRoot],
+    expectedPrimaryComparisonId:
+      report.results_plan?.primary_comparison_id,
+    requireStoredAssessment: true
+  });
 }

@@ -1350,6 +1350,54 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
             <strong><code>{props.selectedJob.evidence_readiness.primary_comparison_id}</code></strong>
           </article>
         ) : null}
+        {props.selectedJob?.evidence_adequacy ? (
+          <article>
+            <span>Evidence adequacy</span>
+            <strong>{formatEvidenceAdequacy(props.selectedJob.evidence_adequacy)}</strong>
+            <p>
+              Trusted {props.selectedJob.evidence_adequacy.trusted ? "yes" : "no"}
+              {" · "}
+              Integrity {props.selectedJob.evidence_adequacy.integrity_valid ? "valid" : "invalid"}
+            </p>
+          </article>
+        ) : null}
+        {props.selectedJob?.evidence_adequacy ? (
+          <article>
+            <span>Paper evidence</span>
+            <strong>{props.selectedJob.evidence_adequacy.paper_evidence_allowed ? "Allowed" : "Blocked"}</strong>
+          </article>
+        ) : null}
+        {props.selectedJob?.evidence_adequacy?.primary_comparison_id ? (
+          <article>
+            <span>Adequacy comparison</span>
+            <strong><code>{props.selectedJob.evidence_adequacy.primary_comparison_id}</code></strong>
+          </article>
+        ) : null}
+        {shouldShowEvidenceAdequacyReasons(props.selectedJob?.evidence_adequacy) ? (
+          <article>
+            <span>Adequacy reasons</span>
+            <strong><code>{formatEvidenceAdequacyReasons(props.selectedJob!.evidence_adequacy!)}</code></strong>
+          </article>
+        ) : null}
+        {props.selectedJob?.evidence_adequacy?.artifact_refs.length ? (
+          <article>
+            <span>Adequacy artifacts</span>
+            <div className="decision-actions">
+              {props.selectedJob.evidence_adequacy.artifact_refs.map((artifact) => (
+                <button
+                  key={`${artifact.kind}-${artifact.path}`}
+                  className="button button-secondary button-small"
+                  type="button"
+                  disabled={props.isBusy}
+                  onClick={() => props.onOpenInsightReference(artifact.path)}
+                  aria-label={`Open ${artifact.label}`}
+                >
+                  {formatEvidenceAdequacyArtifactKind(artifact.kind)}
+                </button>
+              ))}
+            </div>
+          </article>
+        ) : null}
         {props.selectedJob?.review_gate_status ? (
           <article><span>Review gate</span><strong>{props.selectedJob.review_gate_label || formatReviewGateStatus(props.selectedJob.review_gate_status, props.selectedJob.review_decision_outcome, props.selectedJob.review_recommended_transition)}</strong></article>
         ) : null}
@@ -3479,6 +3527,64 @@ function formatEvidenceReadiness(
   return input.evidence_ready && input.trusted
     ? "Comparison ready"
     : "Available, not authoritative";
+}
+
+function formatEvidenceAdequacy(
+  input: NonNullable<RunJobProjection["evidence_adequacy"]>
+): string {
+  switch (input.status) {
+    case "unmeasured":
+      return "Unmeasured";
+    case "awaiting_execution":
+      return "Awaiting execution";
+    case "missing_contract":
+      return "Contract missing";
+    case "missing_receipt":
+      return "Receipt missing";
+    case "pass":
+      return "Pass";
+    case "fail":
+      return "Fail";
+    case "unknown":
+      return "Unknown";
+    case "invalid":
+      return "Invalid";
+  }
+}
+
+function shouldShowEvidenceAdequacyReasons(
+  input: RunJobProjection["evidence_adequacy"]
+): input is NonNullable<RunJobProjection["evidence_adequacy"]> {
+  return Boolean(
+    input
+    && input.reason_codes.length > 0
+    && input.status !== "unmeasured"
+    && input.status !== "awaiting_execution"
+    && input.status !== "pass"
+  );
+}
+
+function formatEvidenceAdequacyReasons(
+  input: NonNullable<RunJobProjection["evidence_adequacy"]>
+): string {
+  const visible = input.reason_codes.slice(0, 3);
+  const remaining = input.reason_codes.length - visible.length;
+  return `${visible.join(", ")}${remaining > 0 ? ` (+${remaining})` : ""}`;
+}
+
+function formatEvidenceAdequacyArtifactKind(
+  kind: NonNullable<RunJobProjection["evidence_adequacy"]>["artifact_refs"][number]["kind"]
+): string {
+  switch (kind) {
+    case "contract":
+      return "Contract";
+    case "receipt":
+      return "Receipt";
+    case "assessment":
+      return "Assessment";
+    case "review_reassessment":
+      return "Review reassessment";
+  }
 }
 
 function renderJobBucket(

@@ -21,14 +21,18 @@ import type {
 import { RESEARCH_GAP_SYNTHESIS_SEMANTICS_VERSION } from "../src/core/analysis/researchGapSynthesis.js";
 import {
   PRIOR_ABSORPTION_AXES,
+  buildPriorAbsorptionCandidateContract,
   buildPriorAbsorptionMatrix,
+  parsePriorAbsorptionAxisVerificationResponse,
   type PriorAbsorptionAssessment,
   type PriorAbsorptionEvidenceSeed
 } from "../src/core/priorAbsorption.js";
+import type { CandidatePriorSearchReviewBinding } from "../src/core/candidatePriorSearch.js";
 import {
   makeTopicProbeComputeBudgetDeclaration,
   makeTopicProbeComputeBudgetLimits
 } from "./support/topicProbeComputeBudget.js";
+import { makeIndependentHypothesisReviewProvenance } from "./support/hypothesisReviewProvenance.js";
 
 const GENERATED_AT = "2026-01-01T00:00:00.000Z";
 const RUN_ID = "run_funnel_fixture";
@@ -418,6 +422,13 @@ describe("research funnel", () => {
     expect(portfolio.candidates).toHaveLength(5);
     expect(portfolio.cluster_policy.observed_distinct_nonempty).toBe(3);
     expect(portfolio.probe_candidate_ids).toHaveLength(1);
+    expect(
+      portfolio.candidates.flatMap((candidate) =>
+        candidate.gates
+          .filter((gate) => gate.status === "block")
+          .map((gate) => `${candidate.source_candidate_id}:${gate.code}`)
+      )
+    ).toEqual([]);
     expect(portfolio.probe_allowed).toBe(true);
     expect(portfolio.gates.every((gate) => gate.status === "pass")).toBe(true);
     const validation = validateTopicPortfolioArtifact(JSON.stringify(portfolio));
@@ -452,6 +463,126 @@ describe("research funnel", () => {
         inclusive: true
       }
     });
+  });
+
+  it("requires every selected direct prior in closest-prior and absorption coverage", () => {
+    const evidenceRows = [
+      evidence("ev_primary", "paper_primary", "A declared comparison remains incomplete.", "full_text"),
+      evidence("ev_secondary", "paper_secondary", "A declared comparison remains incomplete.", "full_text")
+    ];
+    const gapMap = buildResearchGapMap({
+      evidence: evidenceRows,
+      runId: RUN_ID,
+      researchCycle: RESEARCH_CYCLE,
+      generatedAt: GENERATED_AT
+    });
+    const candidates = Array.from({ length: 5 }, (_, index) =>
+      candidate(
+        `candidate_${index + 1}`,
+        ["ev_primary", "ev_secondary"],
+        [`axis_${(index % 3) + 1}`]
+      )
+    );
+    const sharedInput = {
+      candidates,
+      evidenceAxes: evidenceAxesFor(candidates),
+      reviews: candidates.map((item) => review(item.id, true)),
+      probeCandidateIds: [candidates[0].id],
+      evidence: evidenceRows,
+      gapMap,
+      runId: RUN_ID,
+      researchCycle: RESEARCH_CYCLE,
+      generatedAt: GENERATED_AT,
+      priorAbsorptionMatrix: passingPriorAbsorptionMatrix(candidates, evidenceRows),
+      sourceArtifactBindings: sourceArtifactBindings()
+    };
+
+    const omitted = buildTopicPortfolio({
+      ...sharedInput,
+      candidatePriorSearchBindingsByCandidateId: new Map([
+        [
+          candidates[0].id,
+          candidatePriorSearchReviewBinding(candidates[0], ["paper_omitted"])
+        ]
+      ])
+    });
+    expect(
+      omitted.candidates[0].gates.find(
+        (gate) =>
+          gate.code === "candidate_prior_search_selected_prior_coverage_complete"
+      )?.status
+    ).toBe("block");
+    expect(omitted.candidates[0].probe_eligible).toBe(false);
+    expect(omitted.probe_allowed).toBe(false);
+    expect(validateTopicPortfolioArtifact(JSON.stringify(omitted))).toMatchObject({
+      valid: true,
+      reasons: []
+    });
+
+    const complete = buildTopicPortfolio({
+      ...sharedInput,
+      candidatePriorSearchBindingsByCandidateId: new Map([
+        [
+          candidates[0].id,
+          candidatePriorSearchReviewBinding(candidates[0], ["paper_secondary"])
+        ]
+      ])
+    });
+    expect(complete.candidates[0].candidate_prior_search).toMatchObject({
+      selected_direct_prior_ids: ["paper_secondary"]
+    });
+    expect(
+      complete.candidates[0].gates.filter((gate) =>
+        gate.code.startsWith("candidate_prior_search_")
+      ).map((gate) => gate.status)
+    ).toEqual(["pass", "pass"]);
+    expect(complete.candidates[0].probe_eligible).toBe(true);
+    expect(complete.probe_allowed).toBe(true);
+    expect(validateTopicPortfolioArtifact(JSON.stringify(complete))).toMatchObject({
+      valid: true,
+      reasons: []
+    });
+  });
+
+  it("preserves an explicitly rejected non-shortlisted candidate without blocking an eligible shortlist", () => {
+    const evidenceRows = [
+      evidence("ev_a", "paper_a", "The evaluation omits a held-out task family.", "full_text"),
+      evidence("ev_b", "paper_b", "The evaluation omits a held-out task family.", "full_text")
+    ];
+    const gapMap = buildResearchGapMap({
+      evidence: evidenceRows,
+      runId: RUN_ID,
+      researchCycle: RESEARCH_CYCLE,
+      generatedAt: GENERATED_AT
+    });
+    const candidates = Array.from({ length: 5 }, (_, index) =>
+      candidate(`candidate_${index + 1}`, ["ev_a", "ev_b"], [`axis_${(index % 3) + 1}`])
+    );
+    const reviews = candidates.map((item, index) => review(item.id, index !== 1));
+    const portfolio = buildTopicPortfolio({
+      candidates,
+      evidenceAxes: evidenceAxesFor(candidates),
+      reviews,
+      probeCandidateIds: [candidates[0]!.id],
+      evidence: evidenceRows,
+      gapMap,
+      runId: RUN_ID,
+      researchCycle: RESEARCH_CYCLE,
+      generatedAt: GENERATED_AT,
+      priorAbsorptionMatrix: passingPriorAbsorptionMatrix(candidates, evidenceRows),
+      sourceArtifactBindings: sourceArtifactBindings()
+    });
+
+    expect(portfolio.candidates[1]).toMatchObject({
+      review_status: "rejected",
+      probe_status: "not_shortlisted",
+      probe_eligible: false
+    });
+    expect(
+      portfolio.gates.find((gate) => gate.code === "portfolio_candidates_admissible")?.status
+    ).toBe("pass");
+    expect(portfolio.probe_candidate_ids).toEqual([candidates[0]!.id]);
+    expect(portfolio.probe_allowed).toBe(true);
   });
 
   it("requires a candidate to bind every evidence row in a supported gap", () => {
@@ -817,6 +948,28 @@ function sourceArtifactBindings() {
   );
 }
 
+function candidatePriorSearchReviewBinding(
+  sourceCandidate: HypothesisCandidate,
+  selectedDirectPriorIds: string[]
+): CandidatePriorSearchReviewBinding {
+  const payload: Omit<CandidatePriorSearchReviewBinding, "content_sha256"> = {
+    schema_version: 1,
+    artifact_kind: "candidate_prior_search_review_binding",
+    candidate_id: sourceCandidate.id,
+    candidate_content_sha256: hashCanonical(sourceCandidate),
+    prior_absorption_contract_sha256:
+      buildPriorAbsorptionCandidateContract(sourceCandidate).content_sha256,
+    plan_content_sha256: "a".repeat(64),
+    receipt_content_sha256: "b".repeat(64),
+    candidate_receipt_content_sha256: "c".repeat(64),
+    selected_direct_prior_ids: [...selectedDirectPriorIds].sort()
+  };
+  return {
+    ...payload,
+    content_sha256: hashCanonical(payload)
+  };
+}
+
 function evidenceAxesFor(candidates: HypothesisCandidate[]) {
   const evidenceByAxis = new Map<string, string[]>();
   for (const item of candidates) {
@@ -858,7 +1011,7 @@ function passingPriorAbsorptionMatrix(
       independent_evidence_ids: independentEvidenceIds
     }))
   );
-  return buildPriorAbsorptionMatrix({
+  const input = {
     candidates,
     evidence: evidenceRows,
     assessments,
@@ -866,6 +1019,35 @@ function passingPriorAbsorptionMatrix(
     researchCycle: RESEARCH_CYCLE,
     generatedAt: GENERATED_AT,
     assessmentSource: "llm_structured_comparison"
+  } as const;
+  const provisional = buildPriorAbsorptionMatrix(input);
+  const axisVerifications = parsePriorAbsorptionAxisVerificationResponse(
+    JSON.stringify({
+      verifications: provisional.candidates.flatMap((candidateRow) =>
+        candidateRow.comparisons.flatMap((comparison) =>
+          comparison.axes.map((axis) => ({
+            candidate_id: candidateRow.candidate_id,
+            prior_paper_id: comparison.prior_paper_id,
+            axis: axis.axis,
+            reported_relation: axis.relation,
+            verification_input_sha256: axis.verification_input_sha256,
+            verdict: "supported",
+            rationale: `The fixture independently verifies ${axis.axis}.`
+          }))
+        )
+      )
+    }),
+    {
+      verifier_id: "fixture_axis_verifier",
+      provider: "fixture_provider",
+      model: "fixture_review_model",
+      verification_run_id: "fixture_verification_run",
+      context_isolated: true
+    }
+  );
+  return buildPriorAbsorptionMatrix({
+    ...input,
+    axisVerifications
   });
 }
 
@@ -948,6 +1130,7 @@ function review(candidateId: string, keep: boolean): HypothesisReview {
     limitation_reflection: 4,
     measurement_readiness: 4,
     strengths: ["The comparison is explicit."],
-    weaknesses: keep ? ["The scope is narrow."] : ["The proposed intervention is absorbed by the comparator."]
+    weaknesses: keep ? ["The scope is narrow."] : ["The proposed intervention is absorbed by the comparator."],
+    provenance: makeIndependentHypothesisReviewProvenance(candidateId)
   };
 }

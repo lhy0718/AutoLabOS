@@ -17,12 +17,14 @@ describe("stale execution artifact cleanup", () => {
       "objective_evaluation.json",
       "run_experiments_matrix_trial_groups.json",
       "run_experiments_supplemental_expectation.json",
-      "run_experiments_supplemental_runs.json"
+      "run_experiments_supplemental_runs.json",
+      "evidence_adequacy_execution_receipt.json",
+      "evidence_adequacy_assessment.json"
     ];
     for (const artifact of staleArtifacts) {
       await writeFile(path.join(runDir, artifact), JSON.stringify({ stale: true }), "utf8");
     }
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.5 }), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_outcome: 0.5 }), "utf8");
     await writeFile(path.join(runDir, "exec_logs", "attempt.log"), "failed attempt\n", "utf8");
 
     const removed = await clearExecutionSummaryArtifactsInvalidatedByDesign(runDir);
@@ -31,7 +33,7 @@ describe("stale execution artifact cleanup", () => {
     for (const artifact of staleArtifacts) {
       await expect(readFile(path.join(runDir, artifact), "utf8")).rejects.toThrow();
     }
-    await expect(readFile(path.join(runDir, "metrics.json"), "utf8")).resolves.toContain("accuracy");
+    await expect(readFile(path.join(runDir, "metrics.json"), "utf8")).resolves.toContain("primary_outcome");
     await expect(readFile(path.join(runDir, "exec_logs", "attempt.log"), "utf8")).resolves.toContain("failed attempt");
   });
 });

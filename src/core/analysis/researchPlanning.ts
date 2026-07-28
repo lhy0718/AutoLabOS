@@ -19,6 +19,18 @@ import {
   normalizeEstimatorProtocolDeclaration,
   type EstimatorProtocolDeclaration
 } from "../estimatorProtocol.js";
+import {
+  buildHypothesisLlmInvocationProvenance,
+  buildHypothesisPlanningProvenance,
+  buildHypothesisReviewProvenance,
+  resolveHypothesisReviewBoundary,
+  type HypothesisLlmIdentity,
+  type HypothesisLlmInvocationProvenance,
+  type HypothesisPlanningProvenance,
+  type HypothesisReviewBoundary,
+  type HypothesisReviewerDependency,
+  type HypothesisReviewProvenance
+} from "./hypothesisReviewProvenance.js";
 
 export interface HypothesisEvidenceSeed {
   evidence_id?: string;
@@ -109,6 +121,7 @@ export interface HypothesisReview {
   critique_summary?: string;
   revised_text?: string;
   revised_rationale?: string;
+  provenance?: HypothesisReviewProvenance;
 }
 
 export interface HypothesisSelectionScore {
@@ -151,6 +164,7 @@ export interface HypothesisPlanningArtifacts {
     ranked_candidate_ids: string[];
     scores: HypothesisSelectionScore[];
   };
+  provenance: HypothesisPlanningProvenance;
   llm_trace: {
     axes?: HypothesisLlmExchange;
     axes_partial?: HypothesisLlmExchange;
@@ -446,6 +460,8 @@ class HypothesisHardGateError extends Error {
 
 export async function generateHypothesesFromEvidence(args: {
   llm: LLMClient;
+  proposerIdentity?: HypothesisLlmIdentity;
+  reviewer?: HypothesisReviewerDependency;
   runTitle: string;
   runTopic: string;
   objectiveMetric: string;
@@ -460,13 +476,19 @@ export async function generateHypothesesFromEvidence(args: {
   const branchCount = Math.max(2, args.branchCount ?? 6);
   const topK = Math.max(1, args.topK ?? 2);
   const timeoutMs = Math.max(1, args.timeoutMs ?? 1_800_000);
+  const reviewBoundary = resolveHypothesisReviewBoundary({
+    proposerLlm: args.llm,
+    proposerIdentity: args.proposerIdentity,
+    reviewer: args.reviewer
+  });
 
   try {
     return await runStagedHypothesisPipeline({
       ...args,
       branchCount,
       topK,
-      timeoutMs
+      timeoutMs,
+      reviewBoundary
     });
   } catch (stagedError) {
     const stagedReason = stagedError instanceof Error ? stagedError.message : String(stagedError);
@@ -487,6 +509,7 @@ export async function generateHypothesesFromEvidence(args: {
         SINGLE_PASS_HYPOTHESIS_EVIDENCE_LIMIT
       );
       const singlePassPromptExchanges: HypothesisLlmExchange[] = [];
+      const singlePassProposerInvocations: HypothesisLlmInvocationProvenance[] = [];
       const singlePassCandidates: HypothesisCandidate[] = [];
       const singlePassSummaries: string[] = [];
       const singlePassBatches = chunkArray(singlePassEvidencePanel, SINGLE_PASS_EVIDENCE_BATCH_SIZE);
@@ -528,6 +551,17 @@ export async function generateHypothesesFromEvidence(args: {
               }
             })
         });
+        singlePassProposerInvocations.push(
+          buildHypothesisLlmInvocationProvenance({
+            role: "proposer",
+            stage: "single_pass_generation",
+            invocationIndex: singlePassProposerInvocations.length + 1,
+            actor: reviewBoundary.proposer,
+            prompt: singlePassPrompt,
+            systemPrompt: resolveHypothesisPrompts(args.promptOverrides).systemPrompt,
+            output: completion.text
+          })
+        );
         singlePassPromptExchanges.push({
           prompt: singlePassPrompt,
           completion: completion.text
@@ -574,6 +608,20 @@ export async function generateHypothesesFromEvidence(args: {
           gatedCandidates.rejected
         );
       }
+      const planningProvenance = buildHypothesisPlanningProvenance({
+        boundary: reviewBoundary,
+        proposerInvocations: singlePassProposerInvocations,
+        reviewProvenances: []
+      });
+      const executableSelected: HypothesisCandidate[] = [];
+      const authorizationRejections = gatedCandidates.kept.map((candidate) => ({
+        generation_path: "single_pass" as const,
+        candidate_id: candidate.id,
+        reasons: [[
+          "independent_review_required",
+          ...planningProvenance.review_authorization.reason_codes
+        ].join(":")]
+      }));
       const summary =
         singlePassSummaries.at(-1) ||
         buildHypothesisProbeShortlistSummary(gatedCandidates.kept, selected.selected, [], "single-pass");
@@ -581,7 +629,7 @@ export async function generateHypothesesFromEvidence(args: {
         source: "llm",
         summary,
         candidates: gatedCandidates.kept,
-        probe_candidates: selected.selected,
+        probe_candidates: executableSelected,
         fallbackReason: stagedReason,
         toolCallsUsed: singlePassPromptExchanges.length,
         artifacts: {
@@ -591,13 +639,15 @@ export async function generateHypothesesFromEvidence(args: {
           reviews: [],
           hard_gate_rejections: [
             ...stagedHardGateRejections,
-            ...gatedCandidates.rejected
+            ...gatedCandidates.rejected,
+            ...authorizationRejections
           ],
           probe_shortlist: {
-            probe_candidate_ids: selected.selected.map((candidate) => candidate.id),
+            probe_candidate_ids: executableSelected.map((candidate) => candidate.id),
             ranked_candidate_ids: selected.ranked.map((candidate) => candidate.id),
             scores: selected.scores
           },
+          provenance: planningProvenance,
           llm_trace: {
             drafts: [],
             ...stagedPartialTrace,
@@ -621,12 +671,17 @@ export async function generateHypothesesFromEvidence(args: {
         args.objectiveMetric,
         args.evidenceSeeds
       );
-      const fallbackSelected = fallbackSelection.selected.length > 0 ? fallbackSelection.selected : fallback.selected;
+      const fallbackProvenance = buildHypothesisPlanningProvenance({
+        boundary: reviewBoundary,
+        proposerInvocations: [],
+        reviewProvenances: []
+      });
+      const executableFallbackSelected: HypothesisCandidate[] = [];
       return {
         source: "fallback",
         summary: `Fallback generated ${fallback.candidates.length} hypothesis candidate(s).`,
         candidates: fallback.candidates,
-        probe_candidates: fallbackSelected,
+        probe_candidates: executableFallbackSelected,
         fallbackReason: `${stagedReason}; single_pass=${compatibilityReason}`,
         toolCallsUsed: 0,
         artifacts: {
@@ -636,13 +691,22 @@ export async function generateHypothesesFromEvidence(args: {
           reviews: [],
           hard_gate_rejections: [
             ...stagedHardGateRejections,
-            ...singlePassHardGateRejections
+            ...singlePassHardGateRejections,
+            ...fallback.candidates.map((candidate) => ({
+              generation_path: "single_pass" as const,
+              candidate_id: candidate.id,
+              reasons: [[
+                "independent_review_required",
+                ...fallbackProvenance.review_authorization.reason_codes
+              ].join(":")]
+            }))
           ],
           probe_shortlist: {
-            probe_candidate_ids: fallbackSelected.map((candidate) => candidate.id),
+            probe_candidate_ids: executableFallbackSelected.map((candidate) => candidate.id),
             ranked_candidate_ids: fallbackSelection.ranked.map((candidate) => candidate.id),
             scores: fallbackSelection.scores
           },
+          provenance: fallbackProvenance,
           llm_trace: {
             drafts: [],
             ...stagedPartialTrace,
@@ -656,6 +720,7 @@ export async function generateHypothesesFromEvidence(args: {
 
 async function runStagedHypothesisPipeline(args: {
   llm: LLMClient;
+  reviewBoundary: HypothesisReviewBoundary;
   runTitle: string;
   runTopic: string;
   objectiveMetric: string;
@@ -670,6 +735,8 @@ async function runStagedHypothesisPipeline(args: {
   const prompts = resolveHypothesisPrompts(args.promptOverrides);
   const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, STAGED_HYPOTHESIS_EVIDENCE_PANEL_LIMIT);
   let toolCallsUsed = 0;
+  const proposerInvocations: HypothesisLlmInvocationProvenance[] = [];
+  const reviewProvenances: HypothesisReviewProvenance[] = [];
   const llmTrace: HypothesisPlanningArtifacts["llm_trace"] = {
     drafts: [],
     draft_partials: []
@@ -714,6 +781,15 @@ async function runStagedHypothesisPipeline(args: {
         })
     });
     toolCallsUsed += 1;
+    proposerInvocations.push(buildHypothesisLlmInvocationProvenance({
+      role: "proposer",
+      stage: "evidence_axes",
+      invocationIndex: proposerInvocations.length + 1,
+      actor: args.reviewBoundary.proposer,
+      prompt: axesPrompt,
+      systemPrompt: prompts.axesSystemPrompt,
+      output: axesCompletion.text
+    }));
     axesPromptExchanges.push({
       prompt: axesPrompt,
       completion: axesCompletion.text
@@ -789,6 +865,15 @@ async function runStagedHypothesisPipeline(args: {
           })
       });
       toolCallsUsed += 1;
+      proposerInvocations.push(buildHypothesisLlmInvocationProvenance({
+        role: "proposer",
+        stage: "candidate_generation",
+        invocationIndex: proposerInvocations.length + 1,
+        actor: args.reviewBoundary.proposer,
+        prompt: rolePrompt,
+        systemPrompt: prompts.systemPrompt,
+        output: completion.text
+      }));
       llmTrace.drafts.push({
         kind: role.kind,
         requested_count: requestedCount,
@@ -844,7 +929,7 @@ async function runStagedHypothesisPipeline(args: {
             }
           : {},
       promiseFactory: (captureProgress, abortSignal) =>
-        args.llm.complete(reviewPrompt, {
+        args.reviewBoundary.reviewerLlm.complete(reviewPrompt, {
           systemPrompt: prompts.reviewSystemPrompt,
           abortSignal,
           onProgress: (event) => {
@@ -854,6 +939,21 @@ async function runStagedHypothesisPipeline(args: {
         })
     });
     toolCallsUsed += 1;
+    const reviewerInvocation = buildHypothesisLlmInvocationProvenance({
+      role: "reviewer",
+      stage: "hypothesis_review",
+      invocationIndex: reviewProvenances.length + 1,
+      actor: args.reviewBoundary.reviewer,
+      prompt: reviewPrompt,
+      systemPrompt: prompts.reviewSystemPrompt,
+      output: reviewCompletion.text
+    });
+    const reviewProvenance = buildHypothesisReviewProvenance({
+      boundary: args.reviewBoundary,
+      proposerInvocations,
+      reviewerInvocation
+    });
+    reviewProvenances.push(reviewProvenance);
     reviewPromptExchanges.push({
       prompt: reviewPrompt,
       completion: reviewCompletion.text
@@ -863,7 +963,11 @@ async function runStagedHypothesisPipeline(args: {
     if (parsedReviewSummary) {
       reviewSummaries.push(parsedReviewSummary);
     }
-    const normalizedReviews = normalizeHypothesisReviews(parsedReviews.reviews, draftBatch);
+    const normalizedReviews = normalizeHypothesisReviews(
+      parsedReviews.reviews,
+      draftBatch,
+      reviewProvenance
+    );
     if (normalizedReviews.length === 0) {
       throw new Error("no_hypothesis_reviews");
     }
@@ -875,10 +979,22 @@ async function runStagedHypothesisPipeline(args: {
     reviews.push(...normalizedReviews);
   }
   llmTrace.review = combineLlmExchanges(reviewPromptExchanges);
-  const reviewedCandidates = dedupeHypothesisCandidates(applyHypothesisReviews(drafts, reviews));
+  const planningProvenance = buildHypothesisPlanningProvenance({
+    boundary: args.reviewBoundary,
+    proposerInvocations,
+    reviewProvenances
+  });
+  const reviewAuthorized =
+    planningProvenance.review_authorization.authorized_for_probe;
+  const authorizingReviews = !reviewAuthorized
+    ? []
+    : reviews;
+  const reviewedCandidates = dedupeHypothesisCandidates(
+    applyHypothesisReviews(drafts, authorizingReviews)
+  );
   const gatedCandidates = applyHypothesisHardGates({
     candidates: reviewedCandidates,
-    reviews,
+    reviews: authorizingReviews,
     evidenceSeeds: evidencePanel,
     evidenceAxes: axes,
     requireEvidenceAxisReferences:
@@ -886,20 +1002,39 @@ async function runStagedHypothesisPipeline(args: {
     generationPath: "staged",
     objectiveMetric: args.objectiveMetric
   });
+  if (!reviewAuthorized) {
+    const reason = [
+      "independent_review_required",
+      ...planningProvenance.review_authorization.reason_codes
+    ].join(":");
+    gatedCandidates.rejected.push(
+      ...gatedCandidates.kept.map((candidate) => ({
+        generation_path: "staged" as const,
+        candidate_id: candidate.id,
+        reasons: [reason]
+      }))
+    );
+  }
   if (gatedCandidates.rejected.length > 0) {
     args.onProgress?.(
       `Hard-gated ${gatedCandidates.rejected.length} staged hypothesis candidate(s) for weak grounding or missing measurement detail.`
     );
   }
-  const selection = selectHypothesesWithDiversity(
+  const diagnosticSelection = selectHypothesesWithDiversity(
     gatedCandidates.kept,
-    reviews,
+    authorizingReviews,
     args.topK,
     args.objectiveMetric,
     evidencePanel
   );
+  const selection = !reviewAuthorized
+    ? { ...diagnosticSelection, selected: [] }
+    : diagnosticSelection;
 
-  if (selection.selected.length === 0) {
+  if (
+    selection.selected.length === 0
+    && reviewAuthorized
+  ) {
     throw new HypothesisHardGateError("no_probe_candidates", gatedCandidates.rejected);
   }
 
@@ -923,6 +1058,7 @@ async function runStagedHypothesisPipeline(args: {
         ranked_candidate_ids: selection.ranked.map((candidate) => candidate.id),
         scores: selection.scores
       },
+      provenance: planningProvenance,
       llm_trace: llmTrace
     }
   };
@@ -1795,7 +1931,8 @@ function normalizeHypothesisAxis(
 
 function normalizeHypothesisReviews(
   rawReviews: unknown,
-  candidates: HypothesisCandidate[]
+  candidates: HypothesisCandidate[],
+  provenance: HypothesisReviewProvenance
 ): HypothesisReview[] {
   const byId = new Set(candidates.map((candidate) => candidate.id));
   const items = Array.isArray(rawReviews) ? rawReviews : [];
@@ -1805,7 +1942,10 @@ function normalizeHypothesisReviews(
     if (!review || !byId.has(review.candidate_id)) {
       continue;
     }
-    normalized.push(review);
+    normalized.push({
+      ...review,
+      provenance
+    });
   }
   return dedupeById(normalized, (review) => review.candidate_id);
 }
@@ -2790,24 +2930,11 @@ function mergeDesignGuidance(items: DesignGuidance[]): DesignGuidance {
   };
 }
 
-function scoreHypothesis(candidate: HypothesisCandidate): number {
-  return (
-    candidate.novelty +
-    candidate.feasibility +
-    candidate.testability +
-    candidate.expected_gain -
-    candidate.cost +
-    (candidate.limitation_reflection ?? 0) +
-    (candidate.measurement_readiness ?? 0)
-  );
-}
-
 function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: string): number {
   let score =
     candidate.novelty +
     candidate.feasibility +
     candidate.testability * 1.5 +
-    candidate.expected_gain +
     (candidate.groundedness ?? 0) * 1.5 +
     (candidate.causal_clarity ?? 0) * 1.25 +
     (candidate.falsifiability ?? 0) * 1.5 +

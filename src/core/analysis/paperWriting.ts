@@ -777,7 +777,7 @@ export function normalizePaperDraft(input: {
 }): PaperDraft {
   const fallback = buildFallbackPaperDraft(input.bundle);
   const evidenceIds = new Set(input.bundle.evidenceRows.map((item) => item.evidence_id));
-  const paperIds = new Set(input.bundle.corpus.map((item) => item.paper_id));
+  const paperIds = buildValidCitationPaperIds(input.bundle);
   const evidenceToPaper = new Map(
     input.bundle.evidenceRows.map((item) => [item.evidence_id, item.paper_id] as const)
   );
@@ -967,7 +967,7 @@ export function validatePaperDraft(input: {
   const evidenceById = new Map(
     input.bundle.evidenceRows.map((item) => [item.evidence_id, item] as const)
   );
-  const validPaperIds = new Set(input.bundle.corpus.map((item) => item.paper_id));
+  const validPaperIds = buildValidCitationPaperIds(input.bundle);
   const issues: PaperDraftValidationIssue[] = [];
 
   const normalizedSections = input.draft.sections.map((section) => {
@@ -2288,6 +2288,13 @@ function normalizeParagraph(
       ...inferredCitations
     ])
   );
+}
+
+function buildValidCitationPaperIds(bundle: PaperWritingBundle): Set<string> {
+  return new Set([
+    ...bundle.corpus.map((item) => item.paper_id),
+    ...bundle.paperSummaries.map((item) => item.paper_id)
+  ].filter(Boolean));
 }
 
 function normalizeSections(

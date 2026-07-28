@@ -15,6 +15,11 @@ import {
 } from "./analysis/resultsTableSchema.js";
 import type { ResultsArtifactProjectionResult } from "./analysis/resultsArtifactProjection.js";
 import type { CandidateMetricScale } from "./effectCriterion.js";
+import {
+  normalizeEstimatorProtocolDeclaration,
+  type EstimatorProtocolDeclaration
+} from "./estimatorProtocol.js";
+import type { EvidenceAdequacyAssessmentV2 } from "./analysis/evidenceAdequacy.js";
 
 export interface AnalysisMetricEntry {
   key: string;
@@ -99,6 +104,7 @@ export interface AnalysisSelectedDesign {
   risks: string[];
   resource_notes: string[];
   runtime_guardrail_pct?: number;
+  estimator_protocol?: EstimatorProtocolDeclaration;
 }
 
 export interface AnalysisPlanContext {
@@ -207,6 +213,7 @@ export interface AnalysisConfidenceInterval {
   estimand?: "metric_value" | "effect_delta";
   metric_scale?: CandidateMetricScale;
   trial_source?: "fresh_executed" | "mixed" | "cached";
+  method?: string;
   label: string;
   lower: number;
   upper: number;
@@ -316,6 +323,7 @@ export interface AnalysisReport {
   };
   external_comparisons: AnalysisExternalComparison[];
   statistical_summary: AnalysisStatisticalSummary;
+  evidence_adequacy_assessment?: EvidenceAdequacyAssessmentV2;
   failure_taxonomy: AnalysisFailureCategory[];
   synthesis?: AnalysisSynthesis;
   transition_recommendation?: TransitionRecommendation;
@@ -438,13 +446,6 @@ interface ExecutionObservation {
   status?: string;
   stderr?: string;
   log_file?: string;
-}
-
-interface AnalysisEvidenceScope {
-  max_seed_count?: number;
-  max_ci_sample_size?: number;
-  has_condition_correct_totals: boolean;
-  has_task_correct_totals: boolean;
 }
 
 interface BuildAnalysisReportArgs {
@@ -605,10 +606,9 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     supplementalMetrics: args.supplementalMetrics || [],
     supplementalExpectation: args.supplementalExpectation
   });
-  const evidenceScope = buildAnalysisEvidenceScope(statisticalSummary);
-  const planContext = groundPlanContextToAnalysisEvidence(rawPlanContext, evidenceScope);
-  const experimentPortfolio = groundExperimentPortfolioToAnalysisEvidence(rawExperimentPortfolio, evidenceScope);
-  const limitations = buildLimitations(planContext, warnings, evidenceScope);
+  const planContext = rawPlanContext;
+  const experimentPortfolio = rawExperimentPortfolio;
+  const limitations = buildLimitations(planContext, warnings);
   const executionRuns =
     typeof experimentPortfolio?.executed_trials === "number"
       ? experimentPortfolio.executed_trials
@@ -623,7 +623,6 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     verifierFeedback,
     supplementalRuns,
     statisticalSummary,
-    evidenceScope,
     supplementalExpectation: args.supplementalExpectation
   });
   const figureSpecs = buildFigureSpecs(
@@ -778,6 +777,9 @@ export function parseAnalysisReport(raw: string): AnalysisReport | undefined {
       return undefined;
     }
     const report = parsed as Record<string, unknown>;
+    if (report.analysis_version !== 1) {
+      return undefined;
+    }
     if (Object.hasOwn(report, "results_artifact")) {
       if (!validateResultsArtifactV2(report.results_artifact).valid) {
         return undefined;
@@ -910,6 +912,9 @@ function parseExperimentPlan(raw: string): AnalysisPlanContext {
   const root = asRecord(parsed);
   const selectedDesignRaw = asRecord(root.selected_design);
   const confirmatory = asRecord(selectedDesignRaw.confirmatory_extension);
+  const estimatorProtocol = normalizeEstimatorProtocolDeclaration(
+    selectedDesignRaw.estimator_protocol
+  );
   const selectedDesign =
     Object.keys(selectedDesignRaw).length > 0
       ? {
@@ -941,7 +946,10 @@ function parseExperimentPlan(raw: string): AnalysisPlanContext {
             ...asStringList(selectedDesignRaw.resource_notes),
             ...asStringList(confirmatory.resource_notes)
           ]),
-          runtime_guardrail_pct: extractRuntimeGuardrailPct(selectedDesignRaw, confirmatory)
+          runtime_guardrail_pct: extractRuntimeGuardrailPct(selectedDesignRaw, confirmatory),
+          ...(estimatorProtocol.valid && estimatorProtocol.protocol
+            ? { estimator_protocol: estimatorProtocol.protocol }
+            : {})
         }
       : undefined;
 
@@ -1205,8 +1213,7 @@ function isBenignExecutionStderr(excerpt: string): boolean {
 
 function buildLimitations(
   planContext: AnalysisPlanContext,
-  warnings: string[],
-  evidenceScope: AnalysisEvidenceScope
+  warnings: string[]
 ): string[] {
   const designRisks = planContext.selected_design?.risks || [];
   const resourceNotes = planContext.selected_design?.resource_notes || [];
@@ -1216,122 +1223,7 @@ function buildLimitations(
     ...planContext.assumptions,
     ...warnings
   ])
-    .filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope))
     .slice(0, 6);
-}
-
-function groundPlanContextToAnalysisEvidence(
-  planContext: AnalysisPlanContext,
-  evidenceScope: AnalysisEvidenceScope
-): AnalysisPlanContext {
-  const selectedDesign = planContext.selected_design;
-  return {
-    ...planContext,
-    selected_design: selectedDesign
-      ? {
-        ...selectedDesign,
-        title: selectedDesign.title && !contradictsAnalysisEvidenceScope(selectedDesign.title, evidenceScope)
-          ? selectedDesign.title
-          : undefined,
-        summary: selectedDesign.summary && !contradictsAnalysisEvidenceScope(selectedDesign.summary, evidenceScope)
-          ? selectedDesign.summary
-          : undefined,
-        implementation_notes: selectedDesign.implementation_notes.filter(
-          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
-        ),
-        evaluation_steps: selectedDesign.evaluation_steps.filter(
-          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
-        ),
-        risks: selectedDesign.risks.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
-        resource_notes: selectedDesign.resource_notes.filter(
-          (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
-        )
-      }
-      : undefined,
-    shortlisted_designs: planContext.shortlisted_designs.map((design) => ({
-      ...design,
-      title: design.title && !contradictsAnalysisEvidenceScope(design.title, evidenceScope)
-        ? design.title
-        : undefined,
-      summary: design.summary && !contradictsAnalysisEvidenceScope(design.summary, evidenceScope)
-        ? design.summary
-        : undefined
-    })).filter((design) => design.id || design.title || design.summary),
-    design_notes: planContext.design_notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
-    implementation_notes: planContext.implementation_notes.filter(
-      (item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)
-    ),
-    evaluation_notes: planContext.evaluation_notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
-    assumptions: planContext.assumptions.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope))
-  };
-}
-
-function groundExperimentPortfolioToAnalysisEvidence(
-  portfolio: AnalysisExperimentPortfolio | undefined,
-  evidenceScope: AnalysisEvidenceScope
-): AnalysisExperimentPortfolio | undefined {
-  if (!portfolio) {
-    return undefined;
-  }
-  return {
-    ...portfolio,
-    trial_groups: portfolio.trial_groups.map((group) => ({
-      ...group,
-      notes: group.notes.filter((item) => !contradictsAnalysisEvidenceScope(item, evidenceScope)),
-      summary: group.summary && !contradictsAnalysisEvidenceScope(group.summary, evidenceScope)
-        ? group.summary
-        : undefined
-    }))
-  };
-}
-
-function buildAnalysisEvidenceScope(
-  statisticalSummary: AnalysisStatisticalSummary
-): AnalysisEvidenceScope {
-  return {
-    max_ci_sample_size: maxFiniteNumber(
-      statisticalSummary.confidence_intervals.map((item) => item.sample_size)
-    ),
-    has_condition_correct_totals: false,
-    has_task_correct_totals: false
-  };
-}
-
-function contradictsAnalysisEvidenceScope(text: string, scope: AnalysisEvidenceScope): boolean {
-  const normalized = text.toLowerCase();
-  if (
-    (scope.max_seed_count ?? 0) > 1 &&
-    /\b(?:single[- ]seed|one[- ]seed|only\s+(?:one|1)\s+seed|seed[- ]?\d+\b|seed\s*=\s*\d+\s+only|full\s+grid[\s\S]{0,80}only[\s\S]{0,40}seed|expected\s+training\s+workload[\s\S]{0,160}\bat\s+seed\s*\d+|train\s+\d+\s+(?:primary\s+)?(?:factorial\s+)?cells?\s+at\s+seed\s*\d+|baseline[- ]replicate[\s\S]{0,100}\bseeds?|seed[- ]\d+\s+deltas?)\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  if (
-    (scope.max_seed_count ?? 0) >= 3 &&
-    /\b(?:requires?\s+at\s+least\s+3\s+(?:completed\s+)?seeds?|paper[- ]scale\s+floor\s+not\s+met[\s\S]{0,120}3\s+(?:completed\s+)?seeds?)\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  if ((scope.max_ci_sample_size ?? 0) > 6 && /\b(?:n\s*=\s*6|6\s+prediction)s?\b/u.test(normalized)) {
-    return true;
-  }
-  if (
-    scope.has_condition_correct_totals &&
-    /\b(?:missing|not provided|lack(?:ing)?|unavailable|without)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function maxFiniteNumber(values: Array<number | undefined>): number | undefined {
-  const numbers = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  return numbers.length > 0 ? Math.max(...numbers) : undefined;
 }
 
 function buildPrimaryFindings(args: {
@@ -1807,7 +1699,6 @@ function buildFailureTaxonomy(args: {
   verifierFeedback?: AnalysisVerifierFeedback;
   supplementalRuns: AnalysisSupplementalRun[];
   statisticalSummary: AnalysisStatisticalSummary;
-  evidenceScope: AnalysisEvidenceScope;
   supplementalExpectation?: {
     applicable: boolean;
     profiles: string[];
@@ -1885,7 +1776,7 @@ function buildFailureTaxonomy(args: {
     ...(args.planContext.selected_design?.risks || []),
     ...(args.planContext.selected_design?.resource_notes || []),
     ...args.planContext.assumptions
-  ].find((item) => !contradictsAnalysisEvidenceScope(item, args.evidenceScope));
+  ][0];
   if (scopeRisk) {
     categories.push({
       id: "scope_limit",
@@ -2043,6 +1934,10 @@ function readDirectConfidenceInterval(args: {
   const trialSource = isConfidenceIntervalTrialSource(args.value.trial_source)
     ? args.value.trial_source
     : undefined;
+  const method =
+    asString(args.value.uncertainty_method)
+    || asString(args.value.ci_method)
+    || asString(args.value.method);
   const sampleSize = asNumber(args.value.sample_size) ?? args.sampleSize;
   const source = args.source || "metrics";
   const label = humanizeMetricLabel(metricKey);
@@ -2053,6 +1948,7 @@ function readDirectConfidenceInterval(args: {
     ...(estimand ? { estimand } : {}),
     ...(metricScale ? { metric_scale: metricScale } : {}),
     ...(trialSource ? { trial_source: trialSource } : {}),
+    ...(method ? { method } : {}),
     label,
     lower,
     upper,

@@ -292,7 +292,7 @@ async function writeTaskFile(contextDir: string): Promise<void> {
     "review/node_strengthening_recommendations.json 또는 review/paper_scale_diagnostics.json이 있으면, 그 artifact가 지목한 target_node와 recheck_condition을 우선 반영하세요.",
     "prompt_target_map.json이 있으면, target_node가 직접 node-prompts 파일을 갖지 않는 경우에도 recommended_prompt_node를 사용해 가장 가까운 강화 가능 프롬프트로 결함을 되돌리세요.",
     "paper/render_validation.json, paper/compile_report.json, paper/submission_validation.json, paper/scientific_validation.json, paper/manuscript_quality_gate.json, paper/gate_decision.json이 있으면 템플릿, 인용, BibTeX/style 파일, 표/그림, page-budget, manuscript-quality, scientific-quality 결함도 원인 노드로 되돌려 분석하세요.",
-    "샘플 수 부족, seed 반복 부재, 한 문제 차이의 headline gain, smoke-test 수준 train budget, 핵심 문헌 누락은 polish가 아니라 upstream node 강화 대상으로 다루세요.",
+    "동결된 evidence contract가 요구하는 독립 단위, 반복 또는 cluster coverage, attainable resolution, primary contrast, uncertainty, execution validity, 핵심 근거가 충족되지 않은 경우 polish가 아니라 해당 upstream node 강화 대상으로 다루세요.",
     "반드시 다음 형식으로만 출력하세요:",
     "TARGET_FILE: node-prompts/<node>.md",
     "--- a/node-prompts/<node>.md",
@@ -760,25 +760,46 @@ export function parseMetaHarnessResponse(
   raw: string
 ): { targetFile: string; diffText: string } | null {
   const normalized = raw.replace(/\r\n/g, "\n").trim();
-  const targetMatch = normalized.match(/^TARGET_FILE:\s+(.+)$/m);
+  const targetMatches = [...normalized.matchAll(/^TARGET_FILE:\s+(.+)$/gm)];
   const diffStart = normalized.indexOf("--- a/");
-  if (!targetMatch || diffStart < 0) {
+  if (targetMatches.length !== 1 || diffStart < 0) {
     return null;
   }
-  const targetFile = targetMatch[1].trim();
+  const targetFile = targetMatches[0][1].trim();
   const diffText = normalized.slice(diffStart).trim();
-  if (!targetFile.startsWith("node-prompts/")) {
+  const allowedTargets = new Set(
+    META_HARNESS_PROMPT_NODES.map((node) => `node-prompts/${node}.md`)
+  );
+  if (!allowedTargets.has(targetFile)) {
     return null;
   }
-  if (!diffText.includes("+++ b/")) {
+  const diffLines = diffText.split("\n");
+  if (
+    diffLines[0] !== `--- a/${targetFile}`
+    || diffLines[1] !== `+++ b/${targetFile}`
+    || !diffLines[2]?.startsWith("@@")
+  ) {
+    return null;
+  }
+  if (
+    diffLines.filter((line) => line.startsWith("--- ")).length !== 1
+    || diffLines.filter((line) => line.startsWith("+++ ")).length !== 1
+  ) {
     return null;
   }
   return { targetFile, diffText };
 }
 
 export function applyUnifiedDiff(originalContent: string, diffText: string): string {
-  const lines = diffText.replace(/\r\n/g, "\n").split("\n");
-  const hunks: Array<{ oldStart: number; oldCount: number; lines: string[] }> = [];
+  const normalizedDiff = diffText.replace(/\r\n/g, "\n").replace(/\n$/u, "");
+  const lines = normalizedDiff.split("\n");
+  const hunks: Array<{
+    oldStart: number;
+    oldCount: number;
+    newStart: number;
+    newCount: number;
+    lines: string[];
+  }> = [];
   let index = 0;
   while (index < lines.length && !lines[index].startsWith("@@")) {
     index += 1;
@@ -791,13 +812,29 @@ export function applyUnifiedDiff(originalContent: string, diffText: string): str
     }
     const oldStart = Number(match[1]);
     const oldCount = Number(match[2] || "1");
+    const newStart = Number(match[3]);
+    const newCount = Number(match[4] || "1");
     index += 1;
     const hunkLines: string[] = [];
     while (index < lines.length && !lines[index].startsWith("@@")) {
       hunkLines.push(lines[index]);
       index += 1;
     }
-    hunks.push({ oldStart, oldCount, lines: hunkLines });
+    const countedOldLines = hunkLines.filter(
+      (line) => line.startsWith(" ") || line.startsWith("-")
+    ).length;
+    const countedNewLines = hunkLines.filter(
+      (line) => line.startsWith(" ") || line.startsWith("+")
+    ).length;
+    if (countedOldLines !== oldCount || countedNewLines !== newCount) {
+      throw new Error(
+        `Unified diff hunk count mismatch: declared old=${oldCount}, new=${newCount}; actual old=${countedOldLines}, new=${countedNewLines}.`
+      );
+    }
+    hunks.push({ oldStart, oldCount, newStart, newCount, lines: hunkLines });
+  }
+  if (hunks.length === 0) {
+    throw new Error("Unified diff must contain at least one hunk.");
   }
 
   const sourceLines = originalContent.replace(/\r\n/g, "\n").split("\n");
@@ -805,16 +842,34 @@ export function applyUnifiedDiff(originalContent: string, diffText: string): str
   let sourceIndex = 0;
 
   for (const hunk of hunks) {
-    const targetIndex = Math.max(hunk.oldStart - 1, 0);
+    const targetIndex = hunk.oldCount === 0
+      ? hunk.oldStart
+      : hunk.oldStart === 0
+        ? 0
+        : hunk.oldStart - 1;
+    if (targetIndex < sourceIndex) {
+      throw new Error("Unified diff hunks overlap or are out of order.");
+    }
+    if (targetIndex > sourceLines.length) {
+      throw new Error("Unified diff hunk starts beyond the source content.");
+    }
     while (sourceIndex < targetIndex) {
       output.push(sourceLines[sourceIndex]);
       sourceIndex += 1;
     }
+    const expectedNewStart = hunk.newCount === 0 ? output.length : output.length + 1;
+    if (hunk.newStart !== expectedNewStart) {
+      throw new Error(
+        `Unified diff new hunk start mismatch: declared=${hunk.newStart}, expected=${expectedNewStart}.`
+      );
+    }
     for (const line of hunk.lines) {
       if (line.startsWith(" ")) {
+        assertDiffSourceLine(sourceLines, sourceIndex, line.slice(1), "context");
         output.push(line.slice(1));
         sourceIndex += 1;
       } else if (line.startsWith("-")) {
+        assertDiffSourceLine(sourceLines, sourceIndex, line.slice(1), "deleted");
         sourceIndex += 1;
       } else if (line.startsWith("+")) {
         output.push(line.slice(1));
@@ -834,10 +889,27 @@ export function applyUnifiedDiff(originalContent: string, diffText: string): str
   return output.join("\n");
 }
 
+function assertDiffSourceLine(
+  sourceLines: string[],
+  sourceIndex: number,
+  expectedLine: string,
+  lineKind: "context" | "deleted"
+): void {
+  const actualLine = sourceLines[sourceIndex];
+  if (actualLine !== expectedLine) {
+    throw new Error(
+      `Unified diff ${lineKind} line does not match source at line ${sourceIndex + 1}: expected=${JSON.stringify(expectedLine)}, actual=${JSON.stringify(actualLine)}.`
+    );
+  }
+}
+
 function formatApplyResultLine(result: HarnessApplyResult): string {
   const scores = `score_before=${formatEvaluationScore(result.scoreBefore)}, score_after=${formatEvaluationScore(result.scoreAfter)}`;
   if (result.applied) {
     return `Promotion committed after matched re-evaluation (${scores}). Audit log: ${result.auditLogPath}`;
+  }
+  if (result.gitCommitAfter && !result.commitVerificationPassed) {
+    return `Promotion commit could not be verified (${scores}). The repository may already have changed; inspect commit ${result.gitCommitAfter} and the audit log before continuing. Reason: ${result.blockedReason || "commit verification failed"}. Audit log: ${result.auditLogPath}`;
   }
   if (result.rolledBack) {
     return `Promotion blocked; restored original file (${scores}). Reason: ${result.blockedReason || "promotion criteria not met"}. Audit log: ${result.auditLogPath}`;

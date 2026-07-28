@@ -319,6 +319,7 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     path.join(runDir, "result_analysis.json"),
     JSON.stringify(
       {
+        analysis_version: 1,
         overview: {
           objective_status: "observed",
           selected_design_title: "Configured workflow comparison"
@@ -343,7 +344,15 @@ function buildSessionResponses(): string[] {
   const outline = JSON.stringify({
     title: "Configured Evaluation Report",
     abstract_focus: ["configured evaluation", "result traceability"],
-    section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+    section_headings: [
+      "Introduction",
+      "Related Work",
+      "Method",
+      "Results",
+      "Discussion",
+      "Limitations",
+      "Conclusion"
+    ],
     key_claim_themes: ["The evaluated workflow improves result traceability."],
     citation_plan: ["paper_1"]
   });
@@ -354,19 +363,57 @@ function buildSessionResponses(): string[] {
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["This paper studies PDF-backed drafting for configured workflow evaluation workflows."],
+        paragraphs: [
+          "This paper studies PDF-backed drafting for configured workflow evaluation workflows.",
+          "This study evaluates whether role-bound result artifacts preserve declared links through the paper-writing workflow.",
+          "The contribution is bounded to the inspected evaluation suite and its explicit comparison."
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          "Prior work separates result-schema validation, workflow evaluation, and evidence-grounded scientific reporting.",
+          "The present study examines how explicit series roles constrain a primary comparison during manuscript production."
+        ],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Method",
-        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."],
+        paragraphs: [
+          "The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX.",
+          "Both series use the same preprocessing order and fixed selection procedure.",
+          "The outcome and resource measurements remain linked to explicit observations."
+        ],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Results",
-        paragraphs: ["The declared primary comparison remained traceable across repeated evaluations."],
+        paragraphs: [
+          "The declared primary comparison remained traceable across repeated evaluations.",
+          "The main table preserves the linked observations for the same role-bound comparison.",
+          "The observed difference remains bounded to the declared evaluation scope."
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Discussion",
+        paragraphs: [
+          "The result suggests that explicit comparison semantics can keep quantitative reporting auditable within the tested workflow.",
+          "The practical value lies in preserving declared roles, scope, and evidence references across revisions."
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["paper_1"]
+      },
+      {
+        heading: "Limitations",
+        paragraphs: [
+          "The evaluation is limited to one configured suite and one declared comparison."
+        ],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -401,7 +448,7 @@ function buildExternalCitationResponses(): string[] {
   const outline = JSON.stringify({
     title: "Externally Verified Citation Paper",
     abstract_focus: ["configured evaluation", "citation verification"],
-    section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+    section_headings: ["Introduction", "Related Work", "Method", "Results", "Conclusion"],
     key_claim_themes: ["External citation verification repairs missing corpus references."],
     citation_plan: ["Recovered External Title"]
   });
@@ -414,25 +461,33 @@ function buildExternalCitationResponses(): string[] {
         heading: "Introduction",
         paragraphs: ["This paper grounds its framing in an externally recovered citation."],
         evidence_ids: ["ev_1"],
-        citation_paper_ids: ["Recovered External Title"]
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
+      },
+      {
+        heading: "Related Work",
+        paragraphs: [
+          "The externally recovered study provides the declared prior-work anchor for the bounded comparison."
+        ],
+        evidence_ids: ["ev_1"],
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
       },
       {
         heading: "Method",
         paragraphs: ["The manuscript cites a missing reference and lets the registry repair it conservatively while Evaluated workflow (primary role) and Reference workflow (baseline role) retain the same protocol."],
         evidence_ids: ["ev_1"],
-        citation_paper_ids: ["Recovered External Title"]
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
       },
       {
         heading: "Results",
         paragraphs: ["Bounded external verification restored the missing citation without broadening the claim ceiling."],
         evidence_ids: ["ev_1"],
-        citation_paper_ids: ["Recovered External Title"]
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
       },
       {
         heading: "Conclusion",
         paragraphs: ["External citation repair stays local to bibliography support rather than changing the evidence bar."],
         evidence_ids: ["ev_1"],
-        citation_paper_ids: ["Recovered External Title"]
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
       }
     ],
     claims: [
@@ -441,7 +496,7 @@ function buildExternalCitationResponses(): string[] {
         statement: "Bounded external verification restored the missing citation without broadening the claim ceiling.",
         section_heading: "Results",
         evidence_ids: ["ev_1"],
-        citation_paper_ids: ["Recovered External Title"]
+        citation_paper_ids: ["Recovered External Title", "paper_1"]
       }
     ]
   });
@@ -2026,6 +2081,7 @@ function buildInconsistentScientificResponses(): string[] {
 function buildMediumResultAnalysis(): Record<string, unknown> {
   const contract = buildResultsContractFixture({ includeResourceMetrics: true });
   return {
+    analysis_version: 1,
     ...contract,
     objective_metric: {
       evaluation: {
@@ -2926,7 +2982,7 @@ describe("writePaper PDF build", () => {
               doi: "10.1000/recovered-external",
               url: "https://example.org/recovered-external",
               citationStylesBibtex:
-                "@article{recovered_external,title={Recovered External Title},doi={10.1000/recovered-external},url={https://example.org/recovered-external}}"
+                "@article{RecoveredExternal2025,title={Recovered External Title},doi={10.1000/recovered-external},url={https://example.org/recovered-external}}"
             }
           ];
         }
@@ -3179,6 +3235,7 @@ describe("writePaper PDF build", () => {
       path.join(runDir, "result_analysis.json"),
       JSON.stringify(
         {
+          analysis_version: 1,
           objective_metric: {
             evaluation: {
               summary: "A unstructured scalar summary is present without an explicit comparison."
@@ -3726,6 +3783,7 @@ describe("writePaper PDF build", () => {
       ].join("\n"),
       "result_analysis.json": JSON.stringify(
         {
+          analysis_version: 1,
           ...buildResultsContractFixture({ subjectValue: 0.72, referenceValue: 0.71 }),
           objective_metric: {
             evaluation: {
@@ -3904,14 +3962,14 @@ describe("writePaper PDF build", () => {
       classification_summary: { auto_repair_count: number };
     };
     expect(gateDecision.status).not.toBe("fail");
-    expect(gateDecision.classification_summary.auto_repair_count).toBeGreaterThan(0);
+    expect(gateDecision.classification_summary.auto_repair_count).toBe(0);
     const manuscript = JSON.parse(await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")) as {
       sections: Array<{ heading: string; paragraphs: string[] }>;
       appendix_sections?: Array<{ heading: string; paragraphs: string[] }>;
       appendix_tables?: Array<{ caption: string; rows: Array<{ label: string; value: number }> }>;
     };
     expect(manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.length).toBeGreaterThanOrEqual(3);
-    expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(4);
+    expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(3);
     expect(manuscript.appendix_sections?.length).toBeGreaterThan(0);
     expect(manuscript.appendix_sections).toEqual(
       expect.arrayContaining([
@@ -4204,6 +4262,7 @@ describe("writePaper PDF build", () => {
       path.join(runDir, "result_analysis.json"),
       JSON.stringify(
         {
+          analysis_version: 1,
           overview: { objective_status: "observed" },
           execution_summary: { observation_count: runArtifactContract.results_artifact.observations.length },
           ...runArtifactContract

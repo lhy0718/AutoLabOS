@@ -110,6 +110,10 @@ import {
   TopicMemoryStore
 } from "../runs/topicMemoryStore.js";
 import type { TopicKillPublicReasonCode } from "../topicMemory.js";
+import {
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyAuthorization
+} from "../analysis/evidenceAdequacyArtifacts.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -117,6 +121,7 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run }) {
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
       const comparisonContract = await loadExperimentComparisonContract(run, runContextMemory);
       const experimentContract = await loadExperimentContract(run.id);
       const implementationContext = await loadExperimentImplementationContext(run, runContextMemory);
@@ -332,6 +337,23 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           inputWarnings,
           "run_manifest.json"
         )) || undefined;
+      const evidenceAdequacyReassessment =
+        await reassessEvidenceAdequacyArtifacts({
+          runDir,
+          evidenceRoots: [
+            path.dirname(metricsPath),
+            runDir,
+            resolveMaybeRelative(
+              await runContextMemory.get<string>("run_experiments.cwd"),
+              process.cwd()
+            ),
+            publicDir
+          ],
+          expectedPrimaryComparisonId:
+            experimentContract?.results_plan.primary_comparison_id,
+          requireStoredAssessment: true
+        });
+      inputWarnings.push(...evidenceAdequacyReassessment.warnings);
       const supplementalMetrics = await loadSupplementalMetrics(publicDir, inputWarnings);
       const supplementalExpectation = await loadSupplementalExpectation(run.id, inputWarnings);
       const recentPaperComparisonPath =
@@ -368,6 +390,30 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         resultsPlan: experimentContract?.results_plan,
         primaryComparisonId: experimentContract?.results_plan.primary_comparison_id
       });
+      if (evidenceAdequacyReassessment.assessment) {
+        summary.evidence_adequacy_assessment =
+          evidenceAdequacyReassessment.assessment;
+      }
+      if (evidenceAdequacyReassessment.issues.length > 0) {
+        summary.warnings = uniqueStrings([
+          ...summary.warnings,
+          ...evidenceAdequacyReassessment.issues
+        ]);
+        summary.failure_taxonomy = [
+          ...summary.failure_taxonomy,
+          {
+            id: "evidence_adequacy_reassessment_failed",
+            category: "evidence_gap",
+            severity: "high",
+            status: "observed",
+            summary:
+              "The frozen evidence adequacy contract could not be revalidated against current execution artifacts.",
+            evidence: evidenceAdequacyReassessment.issues,
+            recommended_action:
+              "Restore or rerun the contract-bound primary evidence and regenerate the canonical execution receipt before paper-scale review."
+          }
+        ];
+      }
       const resultsArtifactValidation = buildResultsArtifactValidation({
         report: summary,
         experimentContract,
@@ -512,7 +558,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
       await runContextMemory.put("analyze_results.brief_evidence_assessment", briefEvidenceAssessment);
       const topicProbeOutcomeState =
         researchMode === "topic_discovery"
-          ? await evaluateAndPersistTopicProbeOutcome(run, summary)
+          ? await evaluateAndPersistTopicProbeOutcome(
+              run,
+              summary,
+              evidenceAdequacyReassessment.authorization
+            )
           : undefined;
       if (topicProbeOutcomeState) {
         await runContextMemory.put(
@@ -687,7 +737,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         "result_table.json",
         `${JSON.stringify(summary.results_artifact, null, 2)}\n`
       );
-      const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
       const baselineComparisonSurface = buildBaselineComparisonSurface({
         runId: run.id,
         report: summary,
@@ -1057,7 +1106,8 @@ interface TopicProbeOutcomeCompletionFailure {
 
 async function evaluateAndPersistTopicProbeOutcome(
   run: RunRecord,
-  report: AnalysisReport
+  report: AnalysisReport,
+  evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
 ): Promise<TopicProbeOutcomeAnalysisState> {
   const sourceValidation = await loadTopicProbeOutcomeArtifacts({
     workspaceRoot: process.cwd(),
@@ -1076,7 +1126,8 @@ async function evaluateAndPersistTopicProbeOutcome(
     try {
       const candidateDecision = buildTopicProbeOutcomeDecision({
         contract: sourceValidation.contract,
-        report
+        report,
+        evidenceAdequacyAuthorization
       });
       outcomePath = await writeRunArtifact(
         run,
@@ -1088,7 +1139,8 @@ async function evaluateAndPersistTopicProbeOutcome(
         runId: run.id,
         expectedResearchCycle: run.graph.researchCycle,
         requireOutcome: true,
-        report
+        report,
+        evidenceAdequacyAuthorization
       });
       if (verified.valid && verified.decision) {
         decision = verified.decision;

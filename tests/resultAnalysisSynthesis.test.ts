@@ -5,7 +5,7 @@ import type { LLMClient } from "../src/core/llm/client.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
 
 describe("resultAnalysisSynthesis", () => {
-  it("grounds LLM synthesis against explicit evidence-accounting fields", async () => {
+  it("preserves synthesis text while exposing generic evidence-accounting fields", async () => {
     let capturedPrompt = "";
     const emittedEvents: Array<Record<string, any>> = [];
     const llm: LLMClient = {
@@ -19,18 +19,18 @@ describe("resultAnalysisSynthesis", () => {
           text: JSON.stringify({
             discussion_points: [
               "The objective was met by Candidate A.",
-              "The evidence should be treated as weak because raw correct-count denominators are not provided and available CI summaries cite only n=6 predictions.",
+              "The evidence should be treated as weak because numerator/denominator pairs are not provided and interval sample sizes are absent.",
               "The payload has trial-accounting ambiguity between primary and executed trials."
             ],
             failure_analysis: [
-              "Residual evidence risk remains from single-seed primary evaluation and missing raw correct/total counts."
+              "Residual evidence risk remains from a single repetition and missing denominator evidence."
             ],
             follow_up_actions: [
-              "Export per-task raw correct/total counts before making claims.",
+              "Export numerator/denominator pairs before making claims.",
               "Use the structured result table in the writeup."
             ],
             confidence_statement:
-              "Confidence is low because the result is single-seed, n=6, and raw counts are missing."
+              "Confidence is low because repetition and denominator evidence are missing."
           })
         };
       }
@@ -82,9 +82,9 @@ describe("resultAnalysisSynthesis", () => {
             lower: 0.42,
             upper: 0.54,
             level: 0.95,
-            sample_size: 6,
+            sample_size: 24,
             source: "metrics",
-            summary: "95% CI [0.42, 0.54], n=6."
+            summary: "95% interval [0.42, 0.54] over 24 analysis units."
           }
         ],
         effect_estimates: [],
@@ -99,39 +99,39 @@ describe("resultAnalysisSynthesis", () => {
         condition_results: [
           {
             condition_marker: "reference",
-            seed_count: 3,
-            correct_count: 132,
-            total_count: 288,
-            confidence_interval: { sample_size: 288, correct_count: 132, total_count: 288 },
+            replicate_count: 3,
+            event_count: 132,
+            observation_count: 288,
+            confidence_interval: { sample_size: 288 },
             evaluation: {
               validation_partition: {
-                correct_count: 69,
-                total_count: 144,
-                confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
+                event_count: 69,
+                observation_count: 144,
+                confidence_interval: { sample_size: 144 }
               },
               held_out_partition: {
-                correct_count: 63,
-                total_count: 144,
-                confidence_interval: { sample_size: 144, correct_count: 63, total_count: 144 }
+                event_count: 63,
+                observation_count: 144,
+                confidence_interval: { sample_size: 144 }
               }
             }
           },
           {
             condition_marker: "candidate_a",
-            seed_count: 3,
-            correct_count: 138,
-            total_count: 288,
-            confidence_interval: { sample_size: 288, correct_count: 138, total_count: 288 },
+            replicate_count: 3,
+            event_count: 138,
+            observation_count: 288,
+            confidence_interval: { sample_size: 288 },
             evaluation: {
               validation_partition: {
-                correct_count: 69,
-                total_count: 144,
-                confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
+                event_count: 69,
+                observation_count: 144,
+                confidence_interval: { sample_size: 144 }
               },
               held_out_partition: {
-                correct_count: 69,
-                total_count: 144,
-                confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
+                event_count: 69,
+                observation_count: 144,
+                confidence_interval: { sample_size: 144 }
               }
             }
           }
@@ -158,8 +158,11 @@ describe("resultAnalysisSynthesis", () => {
     });
 
     expect(capturedPrompt).toContain('"evidence_accounting"');
-    expect(capturedPrompt).toContain('"max_seed_count": 3');
-    expect(capturedPrompt).toContain('"max_ci_sample_size": 288');
+    expect(capturedPrompt).toContain('"max_repetition_count": 3');
+    expect(capturedPrompt).toContain('"replicate_count"');
+    expect(capturedPrompt).toContain('"max_interval_sample_size": 288');
+    expect(capturedPrompt).toContain('"has_condition_denominator_pairs": true');
+    expect(capturedPrompt).toContain('"has_nested_denominator_pairs": true');
     expect(capturedPrompt).toContain('"primary_comparison_id": "comparison_primary"');
     expect(capturedPrompt).toContain('"is_primary": true');
     expect(capturedPrompt.indexOf('"id": "comparison_primary"')).toBeLessThan(
@@ -167,7 +170,9 @@ describe("resultAnalysisSynthesis", () => {
     );
     expect(synthesis.discussion_points[0]).toContain("Evidence accounting:");
     const combined = JSON.stringify(synthesis);
-    expect(combined).not.toMatch(/single[- ]seed|n=6|raw counts are missing|raw correct\/total counts|raw correct-count denominators are not provided|trial-accounting ambiguity/iu);
+    expect(combined).toContain("numerator/denominator pairs are not provided");
+    expect(combined).toContain("single repetition");
+    expect(combined).toContain("trial-accounting ambiguity");
     expect(combined).toContain("Use the structured result table in the writeup.");
     const progressTexts = emittedEvents
       .map((event) => event.payload?.text)

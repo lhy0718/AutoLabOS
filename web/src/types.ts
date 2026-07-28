@@ -151,6 +151,36 @@ export type RunRecommendedNextAction =
   | "completed";
 export type RunValidationScope = "full_run" | "live_fixture";
 export type RunNetworkDependencySeverity = "info" | "warning" | "attention" | "blocking";
+export type RunEvidenceAdequacyStatus =
+  | "unmeasured"
+  | "awaiting_execution"
+  | "missing_contract"
+  | "missing_receipt"
+  | "pass"
+  | "fail"
+  | "unknown"
+  | "invalid";
+
+export interface RunEvidenceAdequacyArtifactRef {
+  kind: "contract" | "receipt" | "assessment" | "review_reassessment";
+  label: string;
+  path: string;
+}
+
+export interface RunEvidenceAdequacyProjection {
+  status: RunEvidenceAdequacyStatus;
+  trusted: boolean;
+  integrity_valid: boolean;
+  paper_evidence_allowed: boolean;
+  contract_present: boolean;
+  receipt_present: boolean;
+  assessment_present: boolean;
+  review_reassessment_present: boolean;
+  primary_comparison_id?: string;
+  overall_status?: "pass" | "fail" | "unknown";
+  reason_codes: string[];
+  artifact_refs: RunEvidenceAdequacyArtifactRef[];
+}
 
 export interface RunStatusFailureSeed {
   key: string;
@@ -188,6 +218,7 @@ export interface RunOperatorStatusArtifact {
     reason?: string;
     operator_label?: string;
   };
+  evidence_adequacy: RunEvidenceAdequacyProjection;
   network_dependency: {
     enabled: boolean;
     policy?: "blocked" | "declared" | "required";
@@ -458,6 +489,7 @@ export interface RunJobProjection {
   validation_scope?: RunValidationScope;
   research_funnel?: ResearchFunnelProjection;
   evidence_readiness?: EvidenceReadinessProjection;
+  evidence_adequacy?: RunEvidenceAdequacyProjection;
 }
 
 export interface RunJobsSnapshot {

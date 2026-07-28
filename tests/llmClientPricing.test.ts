@@ -28,6 +28,15 @@ describe("LLM client pricing propagation", () => {
         inputTokens: 100,
         outputTokens: 20,
         costUsd: 0.00055
+      },
+      provenance: {
+        provider: "openai",
+        requestedModel: "gpt-5.4",
+        effectiveModel: "gpt-5.4",
+        reasoningEffort: "default",
+        responseId: "resp_1",
+        contextMode: "fresh",
+        identityBasis: "provider_response"
       }
     });
   });
@@ -59,6 +68,15 @@ describe("LLM client pricing propagation", () => {
         inputTokens: 1_000,
         outputTokens: 200,
         costUsd: 0.00455
+      },
+      provenance: {
+        provider: "codex",
+        requestedModel: "gpt-5.2-codex",
+        effectiveModel: "gpt-5.2-codex",
+        reasoningEffort: "default",
+        responseId: "thread_1",
+        contextMode: "fresh",
+        identityBasis: "provider_response"
       }
     });
   });

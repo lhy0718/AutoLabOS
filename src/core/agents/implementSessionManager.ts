@@ -75,6 +75,12 @@ import {
   loadTopicProbeExecutionAuthorizationGate,
   type TopicProbeExecutionAuthorizationGateArtifact
 } from "../runs/topicProbeExecutionAuthorizationGate.js";
+import {
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_METRICS_FIELD,
+  validateEvidenceAdequacyContract,
+  type EvidenceAdequacyContractV2
+} from "../analysis/evidenceAdequacy.js";
 
 export interface ImplementSessionSummary {
   summary: string;
@@ -409,6 +415,7 @@ interface ImplementTaskSpec {
     estimator_feasibility?: ReturnType<
       typeof compactEstimatorFeasibilityForImplementation
     >;
+    evidence_adequacy_contract?: EvidenceAdequacyContractV2;
     topic_probe_execution_authorization?: {
       status: TopicProbeExecutionAuthorizationGateArtifact["status"];
       effective_execution_authorized: boolean;
@@ -630,6 +637,36 @@ export class ImplementSessionManager {
         0
       );
     }
+    const runDir = path.join(this.deps.workspaceRoot, ".autolabos", "runs", run.id);
+    const evidenceAdequacyRaw = await readJsonArtifact(
+      runDir,
+      EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+    );
+    const evidenceAdequacyValidation = validateEvidenceAdequacyContract(
+      evidenceAdequacyRaw
+    );
+    if (evidenceAdequacyRaw !== undefined && !evidenceAdequacyValidation.valid) {
+      throw new ImplementSessionStopError(
+        "implement_experiments_evidence_adequacy_contract_invalid:"
+          + evidenceAdequacyValidation.reasons.join(","),
+        "gate_blocked",
+        0
+      );
+    }
+    if (
+      researchModeGuard.effectiveMode === "topic_discovery"
+      && !evidenceAdequacyValidation.valid
+    ) {
+      throw new ImplementSessionStopError(
+        "topic_probe_evidence_adequacy_contract_missing",
+        "gate_blocked",
+        0
+      );
+    }
+    await runContext.put(
+      "research_governance.evidence_adequacy_contract",
+      evidenceAdequacyValidation.artifact || null
+    );
     if (researchModeGuard.effectiveMode === "topic_discovery") {
       const executionAuthorizationGate = await loadTopicProbeExecutionAuthorizationGate({
         workspaceRoot: this.deps.workspaceRoot,
@@ -672,7 +709,6 @@ export class ImplementSessionManager {
     const longTermStore = new LongTermStore(
       resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.longTermPath)
     );
-    const runDir = path.join(this.deps.workspaceRoot, ".autolabos", "runs", run.id);
     const metricsPath = path.join(runDir, "metrics.json");
     const defaultPublicDir = buildPublicExperimentDir(this.deps.workspaceRoot, run);
     const experimentLlmProfile = resolveExperimentLlmProfile(this.deps.config);
@@ -2227,6 +2263,9 @@ export class ImplementSessionManager {
     const estimatorFeasibility = estimatorGate
       ? compactEstimatorFeasibilityForImplementation(estimatorGate)
       : undefined;
+    const evidenceAdequacyContract = await runContext.get<
+      EvidenceAdequacyContractV2 | null
+    >("research_governance.evidence_adequacy_contract");
     const plannedConditionContract = derivePlannedConditionContract({
       plan,
       brief,
@@ -2261,6 +2300,17 @@ export class ImplementSessionManager {
           ? [
               "Implement the exact estimator units, arms, primary contrast, pairing, and analysis family declared in context.estimator_feasibility; do not substitute a prose-inferred analysis.",
               "Preserve the estimator contract bindings and write raw outputs at the declared outcome and analysis units so downstream verification can recompute the primary comparison."
+            ]
+          : []),
+        ...(evidenceAdequacyContract
+          ? [
+              `Write metrics.${EVIDENCE_ADEQUACY_METRICS_FIELD} as raw execution evidence that exactly matches context.evidence_adequacy_contract; do not emit a pass/fail verdict or a content hash.`,
+              "List only artifacts supporting the frozen primary comparison in primary_evidence_refs; every path#fragment reference must resolve to an existing JSON value. Keep diagnostics and secondary analyses in auxiliary_evidence_refs. Preserve unique execution and independent-unit identifiers so AutoLabOS can issue and verify the canonical receipt.",
+              ...(evidenceAdequacyContract.uncertainty_requirement.mode === "required"
+                ? [
+                    `Persist a structured primary effect confidence interval in metrics with comparison_id=${evidenceAdequacyContract.primary_comparison_id}, estimand=effect_delta, trial_source=fresh_executed, uncertainty_method equal to one of ${evidenceAdequacyContract.uncertainty_requirement.allowed_methods.join(", ")}, confidence_level at least ${evidenceAdequacyContract.uncertainty_requirement.confidence_level}, and sample_size measured in the frozen independent unit with at least ${evidenceAdequacyContract.planned_independent_coverage.target_unique_units} units.`
+                  ]
+                : [])
             ]
           : [])
       ],
@@ -2335,6 +2385,7 @@ export class ImplementSessionManager {
             )
           : undefined,
         estimator_feasibility: estimatorFeasibility,
+        evidence_adequacy_contract: evidenceAdequacyContract || undefined,
         topic_probe_compute_contract: topicProbeComputeContract,
         planned_condition_contract: plannedConditionContract,
         plan_changed: planChanged,
@@ -2585,6 +2636,16 @@ export class ImplementSessionManager {
         JSON.stringify(sandboxTaskSpec.context.estimator_feasibility, null, 2),
         "",
         "Implement these units, arms, contrast, pairing, estimator, and multiplicity choices exactly. Emit raw evidence at the declared analysis unit; do not replace this contract with an inferred alternative."
+      );
+    }
+    if (sandboxTaskSpec.context.evidence_adequacy_contract) {
+      lines.push(
+        "",
+        "Locked evidence adequacy contract:",
+        JSON.stringify(sandboxTaskSpec.context.evidence_adequacy_contract, null, 2),
+        "",
+        `Emit raw execution evidence under metrics.${EVIDENCE_ADEQUACY_METRICS_FIELD}. Do not emit content_sha256, passed, overall_status, or any runner-authored gate verdict.`,
+        "Primary evidence references must support the frozen primary comparison directly. Keep diagnostic, resource, and secondary-analysis references separate as auxiliary evidence."
       );
     }
     if (sandboxTaskSpec.context.planned_condition_contract) {
@@ -8198,6 +8259,7 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
         }
         : undefined,
       estimator_feasibility: taskSpec.context.estimator_feasibility,
+      evidence_adequacy_contract: taskSpec.context.evidence_adequacy_contract,
       topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
       planned_condition_contract: taskSpec.context.planned_condition_contract,
       plan_changed: taskSpec.context.plan_changed,
@@ -8239,6 +8301,7 @@ function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<
         }
         : undefined,
       estimator_feasibility: taskSpec.context.estimator_feasibility,
+      evidence_adequacy_contract: taskSpec.context.evidence_adequacy_contract,
       planned_condition_contract: taskSpec.context.planned_condition_contract,
       topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
     }
@@ -8281,6 +8344,7 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
         }
         : undefined,
       estimator_feasibility: taskSpec.context.estimator_feasibility,
+      evidence_adequacy_contract: taskSpec.context.evidence_adequacy_contract,
       planned_condition_contract: taskSpec.context.planned_condition_contract,
       topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
     }

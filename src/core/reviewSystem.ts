@@ -1,7 +1,27 @@
+import { randomUUID } from "node:crypto";
+
 import { EventStream } from "./events.js";
 import type { RiskSignal } from "./analysis/riskSignals.js";
 import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
-import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
+import {
+  LLMClient,
+  LLMCompletionUsage,
+  type LLMCompletionProvenance
+} from "./llm/client.js";
+import { hashCanonical } from "./canonicalHash.js";
+import type { GateFinding } from "./researchGovernanceArtifacts.js";
+import {
+  hashModelReviewAdjudicatorInput,
+  hashModelReviewOutput,
+  REQUIRED_MODEL_REVIEW_ROLES,
+  validateModelReviewBundle,
+  type ModelReviewBundle,
+  type ModelReviewAdjudicator,
+  type ModelReviewGateBinding,
+  type ModelReviewerProvenance,
+  type ModelReviewRole,
+  type ModelSpecialistReview
+} from "./modelReviewProtocol.js";
 import type { FigureAuditSummary } from "./exploration/types.js";
 import {
   AnalysisFailureCategory,
@@ -16,6 +36,8 @@ export type ReviewDimension =
   | "claim_verification"
   | "methodology"
   | "statistics"
+  | "reproducibility"
+  | "adversarial"
   | "writing_readiness"
   | "integrity";
 
@@ -153,6 +175,47 @@ export interface ReviewPanelResult {
   llm_cost_usd?: number;
   llm_input_tokens?: number;
   llm_output_tokens?: number;
+  meta_review?: SpecialistReviewResult;
+  model_review_bundle?: ModelReviewBundle;
+  assurance: ReviewAssurance;
+}
+
+export interface ReviewActorProfile {
+  provider: string;
+  model: string;
+  reasoning_effort: string;
+}
+
+export interface ReviewAgentBinding {
+  llm: LLMClient;
+  profile: ReviewActorProfile;
+}
+
+export type ReviewAssuranceClass =
+  | "runtime_attested_actor_diverse_panel_with_meta_review"
+  | "runtime_attested_context_isolated_panel_with_meta_review"
+  | "role_separated_panel"
+  | "heuristic_only";
+
+export interface ReviewAssurance {
+  schema_version: 1;
+  required_for_paper_ready: boolean;
+  assurance_class: ReviewAssuranceClass;
+  requested_specialist_roles: ModelReviewRole[];
+  completed_model_specialist_roles: ModelReviewRole[];
+  heuristic_fallback_roles: ModelReviewRole[];
+  transport_receipt_failure_roles: ModelReviewRole[];
+  meta_review_completed: boolean;
+  unique_actor_count: number;
+  unique_execution_count: number;
+  provider_response_receipt_count: number;
+  adapter_attested_receipt_count: number;
+  isolation_evidence: "runtime_attested" | "unverified";
+  model_review_bundle_valid: boolean;
+  paper_ready_eligible: boolean;
+  reason_codes: string[];
+  model_review_bundle_content_sha256: string | null;
+  content_sha256: string;
 }
 
 interface ReviewPanelArgs {
@@ -165,6 +228,10 @@ interface ReviewPanelArgs {
   riskSignals?: RiskSignal[];
   figureAuditSummary?: FigureAuditSummary;
   llm: LLMClient;
+  specialistAgent?: ReviewAgentBinding;
+  metaReviewer?: ReviewAgentBinding;
+  gateBinding?: ModelReviewGateBinding;
+  requireIndependentReview?: boolean;
   eventStream?: EventStream;
   abortSignal?: AbortSignal;
 }
@@ -173,6 +240,7 @@ interface ReviewerSpec {
   reviewer_id: string;
   reviewer_label: string;
   dimension: ReviewDimension;
+  model_review_role: ModelReviewRole;
   buildFallback: (report: AnalysisReport, presence: ReviewArtifactPresence) => SpecialistReviewResult;
 }
 
@@ -199,42 +267,69 @@ const REVIEWER_SPECS: ReviewerSpec[] = [
     reviewer_id: "claim_verifier",
     reviewer_label: "Claim verifier",
     dimension: "claim_verification",
+    model_review_role: "claim_evidence",
     buildFallback: buildClaimVerificationFallback
   },
   {
     reviewer_id: "methodology_reviewer",
     reviewer_label: "Methodology reviewer",
     dimension: "methodology",
+    model_review_role: "methodology",
     buildFallback: buildMethodologyFallback
   },
   {
     reviewer_id: "statistics_reviewer",
     reviewer_label: "Statistics reviewer",
     dimension: "statistics",
+    model_review_role: "statistics",
     buildFallback: buildStatisticsFallback
   },
   {
-    reviewer_id: "writing_readiness_reviewer",
-    reviewer_label: "Writing readiness reviewer",
-    dimension: "writing_readiness",
-    buildFallback: buildWritingReadinessFallback
+    reviewer_id: "reproducibility_reviewer",
+    reviewer_label: "Reproducibility reviewer",
+    dimension: "reproducibility",
+    model_review_role: "reproducibility",
+    buildFallback: buildReproducibilityFallback
   },
   {
-    reviewer_id: "integrity_reviewer",
-    reviewer_label: "Integrity reviewer",
-    dimension: "integrity",
-    buildFallback: buildIntegrityFallback
+    reviewer_id: "adversarial_reviewer",
+    reviewer_label: "Adversarial reviewer",
+    dimension: "adversarial",
+    model_review_role: "adversarial",
+    buildFallback: buildAdversarialFallback
   }
 ];
 
 const DEFAULT_REVIEW_REFINEMENT_TIMEOUT_MS = 20_000;
 
+interface ReviewerRefinement {
+  result: SpecialistReviewResult;
+  usedLlm: boolean;
+  costUsd?: number;
+  usage?: LLMCompletionUsage;
+  modelReview?: ModelSpecialistReview;
+}
+
+interface MetaReviewerRefinement {
+  result: SpecialistReviewResult;
+  usedLlm: boolean;
+  costUsd?: number;
+  usage?: LLMCompletionUsage;
+  adjudicator?: ModelReviewAdjudicator;
+}
+
 export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanelResult> {
   const reviewers: SpecialistReviewResult[] = [];
+  const modelReviews: ModelSpecialistReview[] = [];
+  const transportReceiptFailureRoles: ModelReviewRole[] = [];
   let llmCallsUsed = 0;
   let llmCostUsd = 0;
   let llmInputTokens = 0;
   let llmOutputTokens = 0;
+  const specialistAgent = args.specialistAgent ?? {
+    llm: args.llm,
+    profile: unverifiedReviewActorProfile()
+  };
 
   for (const spec of REVIEWER_SPECS) {
     args.eventStream?.emit({
@@ -248,7 +343,7 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     });
 
     const fallback = spec.buildFallback(args.report, args.presence);
-    const refined = await refineReviewerWithLlm(args, spec, fallback);
+    const refined = await refineReviewerWithLlm(args, specialistAgent, spec, fallback);
     if (refined.usedLlm) {
       llmCallsUsed += 1;
       llmCostUsd += refined.costUsd ?? 0;
@@ -256,11 +351,54 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
       llmOutputTokens += refined.usage?.outputTokens ?? 0;
     }
     reviewers.push(refined.result);
+    if (refined.modelReview) {
+      modelReviews.push(refined.modelReview);
+    } else if (refined.usedLlm) {
+      transportReceiptFailureRoles.push(spec.model_review_role);
+    }
   }
 
+  let metaReview: SpecialistReviewResult | undefined;
+  let adjudicator: ModelReviewAdjudicator | undefined;
+  let metaTransportReceiptFailed = false;
+  if (
+    args.gateBinding
+    && args.metaReviewer
+    && modelReviews.length === REQUIRED_MODEL_REVIEW_ROLES.length
+  ) {
+    const meta = await refineMetaReviewerWithLlm(args, args.metaReviewer, reviewers, modelReviews);
+    metaReview = meta.result;
+    adjudicator = meta.adjudicator;
+    metaTransportReceiptFailed = meta.usedLlm && !meta.adjudicator;
+    if (meta.usedLlm) {
+      llmCallsUsed += 1;
+      llmCostUsd += meta.costUsd ?? 0;
+      llmInputTokens += meta.usage?.inputTokens ?? 0;
+      llmOutputTokens += meta.usage?.outputTokens ?? 0;
+    }
+  }
+
+  const modelReviewBundle = args.gateBinding && adjudicator
+    ? buildModelReviewBundle(args.gateBinding, modelReviews, adjudicator)
+    : undefined;
+  const assurance = buildReviewAssurance({
+    modelReviews,
+    metaReviewCompleted: Boolean(adjudicator),
+    modelReviewBundle,
+    gateBindingPresent: Boolean(args.gateBinding),
+    metaReviewerPresent: Boolean(args.metaReviewer),
+    transportReceiptFailureRoles,
+    metaTransportReceiptFailed,
+    requireIndependentReview: args.requireIndependentReview === true
+  });
+  const assuranceFindings = args.requireIndependentReview === true && !assurance.paper_ready_eligible
+    ? [buildReviewAssuranceFinding(assurance)]
+    : [];
   const findings = dedupeFindings([
     ...reviewers.flatMap((reviewer) => reviewer.findings),
-    ...buildPaperSurfaceFindings(args.paperSurfaceIssues ?? [])
+    ...(metaReview?.findings ?? []),
+    ...buildPaperSurfaceFindings(args.paperSurfaceIssues ?? []),
+    ...assuranceFindings
   ]);
   const scorecard = buildScorecard(reviewers);
   const consistency = buildConsistencyReport(reviewers, findings);
@@ -279,34 +417,41 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     llm_calls_used: llmCallsUsed,
     llm_cost_usd: llmCallsUsed > 0 ? roundTwo(llmCostUsd) : undefined,
     llm_input_tokens: llmCallsUsed > 0 ? Math.max(0, Math.round(llmInputTokens)) : undefined,
-    llm_output_tokens: llmCallsUsed > 0 ? Math.max(0, Math.round(llmOutputTokens)) : undefined
+    llm_output_tokens: llmCallsUsed > 0 ? Math.max(0, Math.round(llmOutputTokens)) : undefined,
+    meta_review: metaReview,
+    model_review_bundle: modelReviewBundle,
+    assurance
   };
 }
 
 async function refineReviewerWithLlm(
   args: ReviewPanelArgs,
+  agent: ReviewAgentBinding,
   spec: ReviewerSpec,
   fallback: SpecialistReviewResult
-): Promise<{ result: SpecialistReviewResult; usedLlm: boolean; costUsd?: number; usage?: LLMCompletionUsage }> {
+): Promise<ReviewerRefinement> {
   const timeoutMs = resolveReviewRefinementTimeoutMs();
+  const prompt = buildReviewerPrompt(
+    args.run,
+    args.report,
+    args.presence,
+    spec,
+    args.orphanCitations,
+    args.paperSurfaceIssues,
+    args.riskSignals,
+    args.figureAuditSummary
+  );
+  const systemPrompt = buildReviewerSystemPrompt(spec);
+  const invocationAttemptId = randomUUID();
   try {
     const completion = await runWithAbortableTimeout(
       timeoutMs,
       args.abortSignal,
       (abortSignal) =>
-        args.llm.complete(buildReviewerPrompt(
-          args.run,
-          args.report,
-          args.presence,
-          spec,
-          fallback,
-          args.orphanCitations,
-          args.paperSurfaceIssues,
-          args.riskSignals,
-          args.figureAuditSummary
-        ), {
-          // The prompt builder reads orphan citations from args to keep specialist context auditably explicit.
-          systemPrompt: buildReviewerSystemPrompt(spec),
+        agent.llm.complete(prompt, {
+          systemPrompt,
+          model: agent.profile.model,
+          reasoningEffort: agent.profile.reasoning_effort,
           abortSignal
         }),
       `review_refinement_timeout_after_${timeoutMs}ms`
@@ -323,11 +468,43 @@ async function refineReviewerWithLlm(
         }
       });
     }
+    const result = mergeReviewerResults(fallback, parsed.result);
+    const findings = result.findings.map(toGateFinding);
+    const inputSha256 = hashCanonical({ prompt, system_prompt: systemPrompt });
+    const outputSha256 = hashModelReviewOutput({
+        reviewer_id: spec.reviewer_id,
+        role: spec.model_review_role,
+        findings
+      });
+    const provenance = buildTransportBoundModelProvenance({
+      expected: agent.profile,
+      observed: completion.provenance,
+      invocationAttemptId,
+      inputSha256,
+      outputSha256
+    });
+    if (!provenance) {
+      args.eventStream?.emit({
+        type: "OBS_RECEIVED",
+        runId: args.run.id,
+        node: args.node,
+        agentRole: "reviewer",
+        payload: {
+          text: `Review output for ${spec.reviewer_label.toLowerCase()} was not counted as an assured model review because its transport receipt was missing or mismatched.`
+        }
+      });
+    }
     return {
-      result: mergeReviewerResults(fallback, parsed.result),
+      result,
       usedLlm: true,
       costUsd: completion.usage?.costUsd,
-      usage: completion.usage
+      usage: completion.usage,
+      modelReview: provenance ? {
+        reviewer_id: spec.reviewer_id,
+        role: spec.model_review_role,
+        provenance,
+        findings
+      } : undefined
     };
   } catch (error) {
     const reason = describeReviewRefinementFallbackReason(error);
@@ -347,6 +524,365 @@ async function refineReviewerWithLlm(
   }
 }
 
+async function refineMetaReviewerWithLlm(
+  args: ReviewPanelArgs,
+  agent: ReviewAgentBinding,
+  reviewers: SpecialistReviewResult[],
+  modelReviews: ModelSpecialistReview[]
+): Promise<MetaReviewerRefinement> {
+  const timeoutMs = resolveReviewRefinementTimeoutMs();
+  const spec: ReviewerSpec = {
+    reviewer_id: "meta_reviewer",
+    reviewer_label: "Meta reviewer",
+    dimension: "adversarial",
+    model_review_role: "adversarial",
+    buildFallback: () => buildMetaReviewFallback(reviewers)
+  };
+  const fallback = buildMetaReviewFallback(reviewers);
+  const prompt = buildMetaReviewerPrompt(args.gateBinding!, reviewers, modelReviews);
+  const systemPrompt = [
+    "You are the final meta reviewer for a governed research workflow.",
+    "Adjudicate conflicts across frozen specialist outputs without treating consensus as evidence.",
+    "You may only add concerns or preserve a conservative recommendation; you cannot override a deterministic gate or create evidence."
+  ].join(" ");
+  const invocationAttemptId = randomUUID();
+  try {
+    const completion = await runWithAbortableTimeout(
+      timeoutMs,
+      args.abortSignal,
+      (abortSignal) => agent.llm.complete(prompt, {
+        systemPrompt,
+        model: agent.profile.model,
+        reasoningEffort: agent.profile.reasoning_effort,
+        abortSignal
+      }),
+      `meta_review_timeout_after_${timeoutMs}ms`
+    );
+    const parsed = parseReviewerResponse(completion.text, spec, fallback);
+    const result = mergeReviewerResults(fallback, parsed.result);
+    const findings = result.findings.map(toGateFinding);
+    const inputSha256 = hashModelReviewAdjudicatorInput(args.gateBinding!, modelReviews);
+    const outputSha256 = hashModelReviewOutput({
+        reviewer_id: spec.reviewer_id,
+        role: "meta_reviewer",
+        findings
+      });
+    const provenance = buildTransportBoundModelProvenance({
+      expected: agent.profile,
+      observed: completion.provenance,
+      invocationAttemptId,
+      inputSha256,
+      outputSha256
+    });
+    if (!provenance) {
+      return { result, usedLlm: true, costUsd: completion.usage?.costUsd, usage: completion.usage };
+    }
+    args.eventStream?.emit({
+      type: "OBS_RECEIVED",
+      runId: args.run.id,
+      node: args.node,
+      agentRole: "reviewer",
+      payload: { text: "Review panel: completed a fresh-context meta review bound to all specialist outputs." }
+    });
+    return {
+      result,
+      usedLlm: true,
+      costUsd: completion.usage?.costUsd,
+      usage: completion.usage,
+      adjudicator: {
+        reviewer_id: spec.reviewer_id,
+        role: "meta_reviewer",
+        provenance,
+        findings
+      }
+    };
+  } catch (error) {
+    const reason = describeReviewRefinementFallbackReason(error);
+    args.eventStream?.emit({
+      type: "OBS_RECEIVED",
+      runId: args.run.id,
+      node: args.node,
+      agentRole: "reviewer",
+      payload: { text: `Review panel meta-review fallback: ${reason}` }
+    });
+    return { result: fallback, usedLlm: false };
+  }
+}
+
+function buildMetaReviewerPrompt(
+  gateBinding: ModelReviewGateBinding,
+  reviewers: SpecialistReviewResult[],
+  modelReviews: ModelSpecialistReview[]
+): string {
+  const roleByReviewer = new Map(
+    modelReviews.map((review) => [review.reviewer_id, review.role])
+  );
+  return [
+    "Return one JSON object using the same review schema:",
+    '{"summary": string, "score_1_to_5": number, "confidence": number, "recommendation": "advance" | "revise_in_place" | "backtrack_to_hypotheses" | "backtrack_to_design" | "backtrack_to_implement" | "manual_block", "findings": [{"title": string, "severity": "low" | "medium" | "high", "detail": string, "evidence_paths": string[], "claim_ids": string[], "fix_hint": string, "confidence": number}]}',
+    "Rules:",
+    "- Treat the deterministic gate as a non-overridable floor.",
+    "- Consensus is not evidence; inspect disagreement, shared blind spots, and unsupported advancement.",
+    "- Do not invent evidence paths or claims.",
+    "- Return at most four adjudicated findings.",
+    JSON.stringify({
+      gate_report: gateBinding,
+      specialists: reviewers.map((reviewer) => ({
+        reviewer_id: reviewer.reviewer_id,
+        role: roleByReviewer.get(reviewer.reviewer_id),
+        score_1_to_5: reviewer.score_1_to_5,
+        confidence: reviewer.confidence,
+        recommendation: reviewer.recommendation,
+        summary: reviewer.summary,
+        findings: reviewer.findings,
+        output_sha256: modelReviews.find(
+          (review) => review.reviewer_id === reviewer.reviewer_id
+        )?.provenance.output_sha256
+      }))
+    }, null, 2)
+  ].join("\n");
+}
+
+function buildMetaReviewFallback(reviewers: SpecialistReviewResult[]): SpecialistReviewResult {
+  const scores = reviewers.map((reviewer) => reviewer.score_1_to_5);
+  const confidence = reviewers.length > 0
+    ? reviewers.reduce((sum, reviewer) => sum + reviewer.confidence, 0) / reviewers.length
+    : 0.5;
+  const recommendation = reviewers.reduce<ReviewRecommendation>(
+    (current, reviewer) => moreConservativeRecommendation(current, reviewer.recommendation),
+    "advance"
+  );
+  return {
+    reviewer_id: "meta_reviewer",
+    reviewer_label: "Meta reviewer",
+    dimension: "adversarial",
+    score_1_to_5: scores.length > 0
+      ? roundTwo(scores.reduce((sum, score) => sum + score, 0) / scores.length)
+      : 1,
+    confidence: roundTwo(confidence),
+    recommendation,
+    summary: "The deterministic fallback preserves the most conservative specialist recommendation but does not count as an independent meta review.",
+    findings: [],
+    source: "heuristic"
+  };
+}
+
+function buildModelReviewBundle(
+  gateBinding: ModelReviewGateBinding,
+  reviewers: ModelSpecialistReview[],
+  adjudicator: ModelReviewAdjudicator
+): ModelReviewBundle {
+  return {
+    schema_version: "1.0",
+    artifact_type: "ModelReviewBundle",
+    gate_report: { ...gateBinding },
+    policy: {
+      consensus_is_evidence: false,
+      may_override_deterministic_gate: false,
+      may_create_external_evidence: false
+    },
+    reviewers,
+    adjudicator
+  };
+}
+
+function buildReviewAssurance(input: {
+  modelReviews: ModelSpecialistReview[];
+  metaReviewCompleted: boolean;
+  modelReviewBundle?: ModelReviewBundle;
+  gateBindingPresent: boolean;
+  metaReviewerPresent: boolean;
+  transportReceiptFailureRoles: ModelReviewRole[];
+  metaTransportReceiptFailed: boolean;
+  requireIndependentReview: boolean;
+}): ReviewAssurance {
+  const completedRoles = input.modelReviews.map((review) => review.role);
+  const completedRoleSet = new Set(completedRoles);
+  const fallbackRoles = REQUIRED_MODEL_REVIEW_ROLES.filter(
+    (role) => !completedRoleSet.has(role)
+  );
+  const participants = [
+    ...input.modelReviews.map((review) => review.provenance),
+    ...(input.modelReviewBundle ? [input.modelReviewBundle.adjudicator.provenance] : [])
+  ];
+  const uniqueActors = new Set(
+    participants.map((provenance) => [
+      provenance.provider.trim().toLowerCase(),
+      provenance.model.trim().toLowerCase(),
+      provenance.reasoning_effort.trim().toLowerCase()
+    ].join(":"))
+  );
+  const uniqueExecutions = new Set(
+    participants.map((provenance) => provenance.execution_id)
+  );
+  const providerResponseReceiptCount = participants.filter(
+    (provenance) => provenance.execution_id.startsWith("provider-receipt-")
+  ).length;
+  const adapterAttestedReceiptCount = participants.filter(
+    (provenance) => provenance.execution_id.startsWith("adapter-attested-")
+  ).length;
+  const reasonCodes: string[] = [];
+  if (!input.gateBindingPresent) reasonCodes.push("deterministic_gate_binding_missing");
+  if (!input.metaReviewerPresent) reasonCodes.push("meta_reviewer_not_configured");
+  if (fallbackRoles.length > 0) reasonCodes.push("specialist_model_review_incomplete");
+  if (input.transportReceiptFailureRoles.length > 0) {
+    reasonCodes.push("specialist_transport_receipt_missing_or_mismatched");
+  }
+  if (!input.metaReviewCompleted) reasonCodes.push("meta_review_incomplete");
+  if (input.metaTransportReceiptFailed) {
+    reasonCodes.push("meta_transport_receipt_missing_or_mismatched");
+  }
+  if (participants.some((provenance) => !isVerifiedModelProvenance(provenance))) {
+    reasonCodes.push("review_actor_profile_unverified");
+  }
+  if (uniqueExecutions.size !== participants.length) {
+    reasonCodes.push("review_execution_context_reused");
+  }
+  const bundleValidation = input.modelReviewBundle
+    ? validateModelReviewBundle(input.modelReviewBundle, input.modelReviewBundle.gate_report)
+    : { ok: false, issues: [] };
+  if (!bundleValidation.ok) reasonCodes.push("model_review_bundle_invalid");
+  const normalizedReasons = uniqueStrings(reasonCodes);
+  const eligible = normalizedReasons.length === 0;
+  const assuranceClass: ReviewAssuranceClass = eligible
+    ? uniqueActors.size > 1
+      ? "runtime_attested_actor_diverse_panel_with_meta_review"
+      : "runtime_attested_context_isolated_panel_with_meta_review"
+    : input.modelReviews.length > 0
+      ? "role_separated_panel"
+      : "heuristic_only";
+  const payload = {
+    schema_version: 1 as const,
+    required_for_paper_ready: input.requireIndependentReview,
+    assurance_class: assuranceClass,
+    requested_specialist_roles: [...REQUIRED_MODEL_REVIEW_ROLES],
+    completed_model_specialist_roles: completedRoles,
+    heuristic_fallback_roles: fallbackRoles,
+    transport_receipt_failure_roles: [...input.transportReceiptFailureRoles],
+    meta_review_completed: input.metaReviewCompleted,
+    unique_actor_count: uniqueActors.size,
+    unique_execution_count: uniqueExecutions.size,
+    provider_response_receipt_count: providerResponseReceiptCount,
+    adapter_attested_receipt_count: adapterAttestedReceiptCount,
+    isolation_evidence: eligible ? "runtime_attested" as const : "unverified" as const,
+    model_review_bundle_valid: bundleValidation.ok,
+    paper_ready_eligible: eligible,
+    reason_codes: normalizedReasons,
+    model_review_bundle_content_sha256: input.modelReviewBundle
+      ? hashCanonical(input.modelReviewBundle)
+      : null
+  };
+  return {
+    ...payload,
+    content_sha256: hashCanonical(payload)
+  };
+}
+
+function buildReviewAssuranceFinding(assurance: ReviewAssurance): ReviewFinding {
+  return createFinding(
+    "review_assurance_gate",
+    "Review assurance gate",
+    "adversarial",
+    "high",
+    "Independent model review is incomplete",
+    `The review panel cannot authorize paper readiness because ${assurance.reason_codes.join(", ") || "its model-review provenance is incomplete"}.`,
+    ["review/review_assurance.json", "review/model_review_bundle.json", "review/minimum_gate.json"],
+    [],
+    "Rerun review with five successful fresh-context specialist calls and one separately bound meta-review call, then validate the resulting ModelReviewBundle.",
+    0.99
+  );
+}
+
+function toGateFinding(finding: ReviewFinding): GateFinding {
+  return {
+    code: `review.${slugify(finding.id) || "finding"}`,
+    severity: finding.severity === "high" ? "blocker" : "warning",
+    message: finding.detail.trim(),
+    evidence_refs: uniqueStrings(
+      finding.evidence_paths.filter(isPortableReviewEvidenceRef)
+    ),
+    ...(finding.fix_hint ? { recheck_condition: finding.fix_hint.trim() } : {})
+  };
+}
+
+function isPortableReviewEvidenceRef(value: string): boolean {
+  return Boolean(value)
+    && !value.startsWith("/")
+    && !/^[A-Za-z]:[\\/]/u.test(value)
+    && !/^[a-z][a-z0-9+.-]*:\/\//iu.test(value)
+    && !value.includes("\\")
+    && !value.split("/").some((segment) => segment === "..");
+}
+
+function buildTransportBoundModelProvenance(input: {
+  expected: ReviewActorProfile;
+  observed: LLMCompletionProvenance | undefined;
+  invocationAttemptId: string;
+  inputSha256: string;
+  outputSha256: string;
+}): ModelReviewerProvenance | undefined {
+  const observed = input.observed;
+  if (!observed || observed.identityBasis === "mock" || observed.provider === "mock") {
+    return undefined;
+  }
+  const expectedProvider = input.expected.provider.trim().toLowerCase();
+  const expectedModel = input.expected.model.trim().toLowerCase();
+  const expectedReasoning = input.expected.reasoning_effort.trim().toLowerCase();
+  const requestedModel = observed.requestedModel.trim().toLowerCase();
+  const effectiveModel = observed.effectiveModel.trim().toLowerCase();
+  const observedReasoning = observed.reasoningEffort.trim().toLowerCase();
+  if (
+    !expectedProvider
+    || !expectedModel
+    || !expectedReasoning
+    || observed.provider !== expectedProvider
+    || requestedModel !== expectedModel
+    || effectiveModel !== expectedModel
+    || observedReasoning !== expectedReasoning
+    || observed.contextMode === "continued"
+    || (observed.contextMode === "fresh" && !observed.responseId)
+  ) {
+    return undefined;
+  }
+  const executionDigest = observed.responseId
+    ? hashCanonical({ provider: observed.provider, response_id: observed.responseId })
+    : hashCanonical({
+        provider: observed.provider,
+        model: observed.effectiveModel,
+        invocation_attempt_id: input.invocationAttemptId,
+        input_sha256: input.inputSha256
+      });
+  const executionPrefix = observed.identityBasis === "provider_response"
+    ? "provider-receipt"
+    : "adapter-attested";
+  return {
+    actor: "model",
+    provider: observed.provider,
+    model: observed.effectiveModel.trim(),
+    reasoning_effort: observed.reasoningEffort.trim(),
+    execution_id: `${executionPrefix}-${executionDigest.slice(0, 48)}`,
+    context_isolated: true,
+    input_sha256: input.inputSha256,
+    output_sha256: input.outputSha256
+  };
+}
+
+function isVerifiedModelProvenance(provenance: ModelReviewerProvenance): boolean {
+  const values = [provenance.provider, provenance.model, provenance.reasoning_effort]
+    .map((value) => value.trim().toLowerCase());
+  return values.every(
+    (value) => Boolean(value) && value !== "unknown" && value !== "unverified" && value !== "unconfigured"
+  );
+}
+
+function unverifiedReviewActorProfile(): ReviewActorProfile {
+  return {
+    provider: "unverified",
+    model: "unverified",
+    reasoning_effort: "unverified"
+  };
+}
+
 function buildReviewerSystemPrompt(spec: ReviewerSpec): string {
   return loadReviewPromptSections()
     .reviewerSystemTemplate
@@ -359,7 +895,6 @@ function buildReviewerPrompt(
   report: AnalysisReport,
   presence: ReviewArtifactPresence,
   spec: ReviewerSpec,
-  fallback: SpecialistReviewResult,
   orphanCitations: string[] = [],
   paperSurfaceIssues: PaperSurfaceReviewIssue[] = [],
   riskSignals: RiskSignal[] = [],
@@ -456,20 +991,7 @@ function buildReviewerPrompt(
       status: item.status,
       summary: item.summary,
       recommended_action: item.recommended_action
-    })),
-    heuristic_baseline: {
-      summary: fallback.summary,
-      score_1_to_5: fallback.score_1_to_5,
-      confidence: fallback.confidence,
-      recommendation: fallback.recommendation,
-      findings: fallback.findings.map((item) => ({
-        title: item.title,
-        severity: item.severity,
-        detail: item.detail,
-        evidence_paths: item.evidence_paths,
-        fix_hint: item.fix_hint
-      }))
-    }
+    }))
   };
 
   return [
@@ -497,7 +1019,7 @@ function buildReviewerPrompt(
     "- score_1_to_5: 1 means not ready at all, 5 means publication-ready for this dimension.",
     "- confidence: 0.0 to 1.0.",
     "- findings: up to 4 concrete issues, conservative and evidence-grounded.",
-    "- Do not repeat the heuristic baseline verbatim if you disagree, but stay grounded.",
+    "- Review the supplied artifacts independently; no prior reviewer conclusion is authoritative.",
     "",
     JSON.stringify(payload, null, 2)
   ].join("\n");
@@ -678,15 +1200,34 @@ function buildMethodologyFallback(
     );
   }
 
-  const executedTrials =
-    report.statistical_summary.executed_trials ??
-    report.statistical_summary.total_trials ??
-    report.overview.execution_runs ??
-    report.execution_summary.observation_count ??
-    0;
-  if (executedTrials <= 1) {
+  const coverageChecks = report.evidence_adequacy_assessment?.checks.filter(
+    (check) =>
+      [
+        "execution_identity_uniqueness",
+        "independent_coverage",
+        "contrast_coverage",
+        "denominator_coverage",
+        "pair_coverage",
+        "execution_budget",
+        "evidence_linkage"
+      ].includes(check.check_id)
+      && check.status !== "pass"
+  ) ?? [];
+  if (coverageChecks.length > 0) {
+    const failed = coverageChecks.some((check) => check.status === "fail");
     findings.push(
-      createFinding("methodology_reviewer", "Methodology reviewer", "methodology", "medium", "Single-run methodology coverage", "Only one observed execution was recorded, so methodology robustness is still limited.", ["result_analysis.json"], [], "Run confirmatory variants or multiple seeds to widen methodological coverage.", 0.75)
+      createFinding(
+        "methodology_reviewer",
+        "Methodology reviewer",
+        "methodology",
+        failed ? "high" : "medium",
+        "Frozen evidence coverage incomplete",
+        `The contract-bound assessment has non-pass coverage checks: ${coverageChecks.map((check) => `${check.check_id}=${check.status}`).join(", ")}.`,
+        ["result_analysis.json", "evidence_adequacy_assessment.json"],
+        [],
+        "Complete the independent-unit, contrast, denominator, pairing, budget, and evidence-linkage requirements declared by the frozen contract.",
+        0.92
+      )
     );
   }
 
@@ -725,21 +1266,29 @@ function buildStatisticsFallback(
     );
   }
 
-  if (report.statistical_summary.confidence_intervals.length === 0) {
+  const uncertaintyCheck = report.evidence_adequacy_assessment?.checks.find(
+    (check) => check.check_id === "uncertainty"
+  );
+  if (uncertaintyCheck && uncertaintyCheck.status !== "pass") {
     findings.push(
-      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", executedTrials >= 1 ? "medium" : "high", "No confidence intervals", "The report does not provide confidence intervals for the primary metrics.", ["result_analysis.json"], [], "Add repeated-trial confidence intervals before writing stronger results claims.", 0.84)
+      createFinding(
+        "statistics_reviewer",
+        "Statistics reviewer",
+        "statistics",
+        uncertaintyCheck.status === "fail" ? "high" : "medium",
+        "Frozen uncertainty requirement unresolved",
+        `The contract-bound uncertainty check is ${uncertaintyCheck.status}: ${uncertaintyCheck.reasons.join(", ") || "no reason recorded"}.`,
+        ["result_analysis.json", "evidence_adequacy_assessment.json"],
+        [],
+        "Satisfy the uncertainty method declared by the frozen evidence contract, or use its predeclared deterministic-exhaustive rationale.",
+        0.93
+      )
     );
   }
 
   if (primaryComparison && !hasPrimaryEffectEstimate) {
     findings.push(
       createFinding("statistics_reviewer", "Statistics reviewer", "statistics", "medium", "Missing primary effect estimate summary", "The explicitly selected primary comparison has no matching structured effect estimate.", ["result_analysis.json"], [], "Add an effect estimate whose comparison_id matches primary_comparison_id.", 0.73)
-    );
-  }
-
-  if (report.overview.objective_status === "met" && executedTrials > 0 && executedTrials < 3) {
-    findings.push(
-      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", "medium", "Small-sample success", "The objective is met, but fewer than three executed trials limit confidence in stability.", ["result_analysis.json"], [], "Add confirmatory or repeated runs before finalizing claims.", 0.78)
     );
   }
 
@@ -753,47 +1302,53 @@ function buildStatisticsFallback(
   });
 }
 
-function buildWritingReadinessFallback(
+function buildReproducibilityFallback(
   report: AnalysisReport,
   presence: ReviewArtifactPresence
 ): SpecialistReviewResult {
   const findings: ReviewFinding[] = [];
 
-  if (!presence.paperSummariesPresent) {
+  if (!presence.experimentPlanPresent) {
     findings.push(
-      createFinding("writing_readiness_reviewer", "Writing readiness reviewer", "writing_readiness", "medium", "Missing paper summaries", "paper_summaries.jsonl is missing, which weakens literature-grounded drafting.", ["paper_summaries.jsonl"], [], "Regenerate paper_summaries.jsonl before drafting related work.", 0.83)
+      createFinding("reproducibility_reviewer", "Reproducibility reviewer", "reproducibility", "high", "Experiment plan is not reproducible", "experiment_plan.yaml is missing, so an independent rerun cannot recover the declared design.", ["experiment_plan.yaml"], [], "Restore the governed experiment plan before review.", 0.94)
     );
   }
 
-  if ((report.paper_claims?.length || 0) === 0) {
+  if (!presence.metricsPresent || !presence.resultTablePresent) {
     findings.push(
-      createFinding("writing_readiness_reviewer", "Writing readiness reviewer", "writing_readiness", "medium", "No paper-facing claims", "The report does not expose grounded paper claims for Results/Conclusion drafting.", ["result_analysis.json"], [], "Generate paper_claims from the analysis report.", 0.81)
+      createFinding("reproducibility_reviewer", "Reproducibility reviewer", "reproducibility", "high", "Machine-readable results are incomplete", "The review cannot reconstruct the reported comparisons without both the metric snapshot and the structured result table.", ["metrics.json", "result_table.json"], [], "Persist both machine-readable artifacts from the same executed observations and rerun analysis.", 0.95)
     );
   }
 
-  if (!presence.figurePresent || report.figure_specs.length === 0) {
+  if (!presence.evidenceStorePresent) {
     findings.push(
-      createFinding("writing_readiness_reviewer", "Writing readiness reviewer", "writing_readiness", "medium", "Primary figure missing", "A primary performance figure is missing, so the draft would lack a clear visual anchor.", ["figures/performance.svg", "result_analysis.json"], [], "Generate at least one primary result figure before writing.", 0.79)
+      createFinding("reproducibility_reviewer", "Reproducibility reviewer", "reproducibility", "high", "Evidence lineage is missing", "evidence_store.jsonl is absent, so claims and aggregates cannot be traced back to executed evidence.", ["evidence_store.jsonl", "result_analysis.json"], [], "Rebuild the evidence store from immutable run outputs and verify every claim reference.", 0.96)
     );
   }
 
-  if (!presence.synthesisPresent || !report.synthesis?.confidence_statement) {
+  if (!presence.baselineSummaryPresent) {
     findings.push(
-      createFinding("writing_readiness_reviewer", "Writing readiness reviewer", "writing_readiness", "medium", "Narrative synthesis missing", "A conservative discussion/confidence synthesis is missing, reducing writing readiness.", ["result_analysis_synthesis.json", "result_analysis.json"], [], "Generate structured discussion synthesis before drafting.", 0.8)
+      createFinding("reproducibility_reviewer", "Reproducibility reviewer", "reproducibility", "medium", "Comparator reconstruction is incomplete", "baseline_summary.json is missing, so the declared comparator cannot be independently checked against the primary result.", ["baseline_summary.json", "result_analysis.json"], [], "Persist the comparator summary and bind it to the same result-table observations.", 0.84)
+    );
+  }
+
+  if (report.verifier_feedback?.status === "fail") {
+    findings.push(
+      createFinding("reproducibility_reviewer", "Reproducibility reviewer", "reproducibility", "high", "Execution verifier did not pass", "The analysis verifier reports a failure, so the persisted outputs do not yet support an independent replay.", ["result_analysis.json", "verification_report.json"], [], "Repair the verifier failure and rerun the exact execution and analysis path before review.", 0.97)
     );
   }
 
   return finalizeFallbackReviewer({
-    reviewer_id: "writing_readiness_reviewer",
-    reviewer_label: "Writing readiness reviewer",
-    dimension: "writing_readiness",
+    reviewer_id: "reproducibility_reviewer",
+    reviewer_label: "Reproducibility reviewer",
+    dimension: "reproducibility",
     findings,
-    cleanSummary: "Writing readiness requires grounded claims, literature traceability, a primary figure, and a conservative narrative scaffold.",
-    issueSummary: findings[0]?.detail || "Writing prerequisites remain incomplete."
+    cleanSummary: "Reproducibility requires a governed plan, machine-readable outcomes, comparator reconstruction, and traceable evidence lineage.",
+    issueSummary: findings[0]?.detail || "Reproducibility artifacts remain incomplete."
   });
 }
 
-function buildIntegrityFallback(
+function buildAdversarialFallback(
   report: AnalysisReport,
   presence: ReviewArtifactPresence
 ): SpecialistReviewResult {
@@ -806,41 +1361,41 @@ function buildIntegrityFallback(
 
   if (transition?.action === "advance" && report.overview.objective_status !== "met" && report.overview.objective_status !== "observed") {
     findings.push(
-      createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "high", "Advance recommendation conflicts with unmet objective", "The report recommends advancing even though the configured objective is not met.", ["transition_recommendation.json", "result_analysis.json"], [], "Hold the run for manual review and revisit the transition recommendation.", 0.93)
+      createFinding("adversarial_reviewer", "Adversarial reviewer", "adversarial", "high", "Advance recommendation conflicts with unmet objective", "The report recommends advancing even though the configured objective is not met.", ["transition_recommendation.json", "result_analysis.json"], [], "Hold the run for manual review and revisit the transition recommendation.", 0.93)
     );
   }
 
   if (transition?.action === "advance" && highObserved.length > 0) {
     findings.push(
-      createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "high", "Concern-acceptance conflict", "The report still contains high-severity observed issues while recommending an advance to the next stage.", ["transition_recommendation.json", "result_analysis.json"], [], "Resolve the blocking issue or downgrade the recommendation before continuing.", 0.91)
+      createFinding("adversarial_reviewer", "Adversarial reviewer", "adversarial", "high", "Concern-acceptance conflict", "The report still contains high-severity observed issues while recommending an advance to the next stage.", ["transition_recommendation.json", "result_analysis.json"], [], "Resolve the blocking issue or downgrade the recommendation before continuing.", 0.91)
     );
   }
 
   if (transition?.action === "advance" && mediumOrHighConcerns.length >= 2 && (transition.confidence || 0) >= 0.8) {
     findings.push(
-      createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "medium", "Positive outcome bias risk", "The advance recommendation is highly confident despite multiple unresolved concerns.", ["transition_recommendation.json", "result_analysis.json"], [], "Run a more conservative review pass and document the unresolved concerns explicitly.", 0.78)
+      createFinding("adversarial_reviewer", "Adversarial reviewer", "adversarial", "medium", "Positive outcome bias risk", "The advance recommendation is highly confident despite multiple unresolved concerns.", ["transition_recommendation.json", "result_analysis.json"], [], "Run a more conservative review pass and document the unresolved concerns explicitly.", 0.78)
     );
   }
 
   if (!presence.evidenceStorePresent && transition?.action === "advance") {
     findings.push(
-      createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "high", "Advance recommendation without evidence store", "The run is marked ready to advance even though evidence_store.jsonl is missing.", ["evidence_store.jsonl", "transition_recommendation.json"], [], "Regenerate the evidence store and re-evaluate the transition recommendation.", 0.94)
+      createFinding("adversarial_reviewer", "Adversarial reviewer", "adversarial", "high", "Advance recommendation without evidence store", "The run is marked ready to advance even though evidence_store.jsonl is missing.", ["evidence_store.jsonl", "transition_recommendation.json"], [], "Regenerate the evidence store and re-evaluate the transition recommendation.", 0.94)
     );
   }
 
   if ((report.warnings?.length || 0) >= 3 && transition?.action === "advance") {
     findings.push(
-      createFinding("integrity_reviewer", "Integrity reviewer", "integrity", "medium", "Warning-heavy advance", "The analysis carries several warnings but still recommends advancing.", ["result_analysis.json", "transition_recommendation.json"], [], "Review the warnings and justify why they do not block the paper stage.", 0.72)
+      createFinding("adversarial_reviewer", "Adversarial reviewer", "adversarial", "medium", "Warning-heavy advance", "The analysis carries several warnings but still recommends advancing.", ["result_analysis.json", "transition_recommendation.json"], [], "Review the warnings and justify why they do not block the paper stage.", 0.72)
     );
   }
 
   return finalizeFallbackReviewer({
-    reviewer_id: "integrity_reviewer",
-    reviewer_label: "Integrity reviewer",
-    dimension: "integrity",
+    reviewer_id: "adversarial_reviewer",
+    reviewer_label: "Adversarial reviewer",
+    dimension: "adversarial",
     findings,
-    cleanSummary: "Integrity review looks for overclaiming, concern-acceptance conflicts, and overly optimistic transitions.",
-    issueSummary: findings[0]?.detail || "Integrity checks are incomplete."
+    cleanSummary: "Adversarial review looks for overclaiming, concern-acceptance conflicts, shared blind spots, and optimistic transitions.",
+    issueSummary: findings[0]?.detail || "Adversarial checks are incomplete."
   });
 }
 
@@ -1016,6 +1571,9 @@ function buildDecision(
       hasClaimBlocker
     );
   const hasMethodologyBlocker = highFindings.some((item) => item.dimension === "methodology" || item.dimension === "statistics");
+  const hasReproducibilityBlocker = highFindings.some((item) => item.dimension === "reproducibility");
+  const hasAdversarialBlocker = highFindings.some((item) => item.dimension === "adversarial" || item.dimension === "integrity");
+  const hasReviewAssuranceBlocker = highFindings.some((item) => item.reviewer_id === "review_assurance_gate");
   const hasIntegrityBlocker = highFindings.some((item) => item.dimension === "integrity" || item.dimension === "claim_verification");
   const hasWritingBlocker = highFindings.some((item) => item.dimension === "writing_readiness");
   const mediumCount = findings.filter((item) => item.severity === "medium").length;
@@ -1023,7 +1581,9 @@ function buildDecision(
   let outcome: ReviewRecommendation = "advance";
   let recommendedTransition: ReviewDecision["recommended_transition"];
   const shouldCarryRevisionChecklist = mediumCount >= 3 || revisionPlan.items.some((item) => item.owner === "writing");
-  if (hasRuntimeFailure) {
+  if (hasReviewAssuranceBlocker) {
+    outcome = "manual_block";
+  } else if (hasRuntimeFailure || hasReproducibilityBlocker) {
     outcome = "backtrack_to_implement";
     recommendedTransition = "backtrack_to_implement";
   } else if (shouldResetHypotheses) {
@@ -1032,7 +1592,7 @@ function buildDecision(
   } else if (hasMethodologyBlocker) {
     outcome = "backtrack_to_design";
     recommendedTransition = "backtrack_to_design";
-  } else if (hasIntegrityBlocker || bias.flags.some((item) => item.severity === "high")) {
+  } else if (hasAdversarialBlocker || hasIntegrityBlocker || bias.flags.some((item) => item.severity === "high")) {
     if (report.transition_recommendation?.action === "backtrack_to_implement" || revisionPlan.items.some((item) => item.owner === "implementation")) {
       outcome = "backtrack_to_implement";
       recommendedTransition = "backtrack_to_implement";
@@ -1319,13 +1879,16 @@ function ownerForDimension(
   if (dimension === "methodology" || dimension === "statistics") {
     return "design";
   }
+  if (dimension === "reproducibility") {
+    return "implementation";
+  }
   if (dimension === "writing_readiness") {
     return "writing";
   }
-  if (dimension === "integrity" && /runtime|verifier|implement/iu.test(title)) {
+  if ((dimension === "integrity" || dimension === "adversarial") && /runtime|verifier|implement/iu.test(title)) {
     return "implementation";
   }
-  if (dimension === "integrity") {
+  if (dimension === "integrity" || dimension === "adversarial") {
     return "human_review";
   }
   return "analysis";

@@ -484,6 +484,7 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
     path.join(runDir, "result_analysis.json"),
     JSON.stringify(
       {
+        analysis_version: 1,
         overview: {
           objective_status: "observed",
           selected_design_title: "Constraint propagation benchmark"
@@ -1227,6 +1228,7 @@ describe("constraint propagation", () => {
       path.join(runDir, "result_analysis.json"),
       JSON.stringify(
         {
+          analysis_version: 1,
           metrics: {
             scope: {
               pilot_size: 1,
@@ -1672,7 +1674,7 @@ describe("constraint propagation", () => {
       JSON.stringify({
         title: "Robustness-First Benchmarking for Multi-Agent Collaboration",
         abstract_focus: ["robustness", "recovery"],
-        section_headings: ["Introduction", "Method", "Results", "Conclusion"],
+        section_headings: ["Introduction", "Related Work", "Method", "Results", "Conclusion"],
         key_claim_themes: ["Robustness-first benchmarking"],
         citation_plan: []
       }),
@@ -1888,6 +1890,7 @@ describe("constraint propagation", () => {
     await writeFile(
       path.join(runDir, "result_analysis.json"),
       JSON.stringify({
+        analysis_version: 1,
         mean_score: 0.88,
         objective_metric: {
           evaluation: {
@@ -2011,6 +2014,12 @@ describe("constraint propagation", () => {
             citation_paper_ids: ["paper_1"]
           },
           {
+            heading: "Related Work",
+            paragraphs: ["Prior coordination research motivates an explicit schema-grounded comparison."],
+            evidence_ids: ["ev_paper_1_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
             heading: "Method",
             paragraphs: ["We compare a schema-grounded coordination benchmark against a free-form baseline."],
             evidence_ids: ["ev_paper_1_1"],
@@ -2061,6 +2070,12 @@ describe("constraint propagation", () => {
           {
             heading: "Introduction",
             paragraphs: ["Structured coordination is a promising way to stabilize multi-agent workflows."],
+            evidence_ids: ["ev_paper_1_1"],
+            citation_paper_ids: ["paper_1"]
+          },
+          {
+            heading: "Related Work",
+            paragraphs: ["Prior coordination research motivates an explicit schema-grounded comparison."],
             evidence_ids: ["ev_paper_1_1"],
             citation_paper_ids: ["paper_1"]
           },

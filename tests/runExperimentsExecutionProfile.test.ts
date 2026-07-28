@@ -21,6 +21,13 @@ import {
   TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
 } from "../src/core/topicProbeOutcomeArtifacts.js";
 import { buildTopicProbeLineageFixture } from "./support/topicProbePortfolioFixture.js";
+import {
+  buildEvidenceAdequacyContract,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_METRICS_FIELD,
+  type EvidenceAdequacyContractV2
+} from "../src/core/analysis/evidenceAdequacy.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
 
 vi.mock("../src/core/runs/topicProbeExecutionAuthorizationGate.js", async (importOriginal) => {
   const original = await importOriginal<
@@ -117,6 +124,7 @@ async function executeMeaningPreservationFixture(input: {
   run.objectiveMetric = input.objectiveMetric || "quality_index >= 0";
   const runDir = path.join(root, ".autolabos", "runs", run.id);
   await mkdir(path.join(runDir, "memory"), { recursive: true });
+  let topicEvidenceContract: EvidenceAdequacyContractV2 | undefined;
   if (input.activeTopicProbeContract) {
     const panelDir = path.join(runDir, "design_experiments_panel");
     await mkdir(panelDir, { recursive: true });
@@ -152,6 +160,46 @@ async function executeMeaningPreservationFixture(input: {
       `${JSON.stringify(input.activeTopicProbeContract, null, 2)}\n`,
       "utf8"
     );
+    topicEvidenceContract = buildEvidenceAdequacyContract({
+      primaryComparisonId: "comparison-primary-reference",
+      designSource: {
+        kind: "estimator_protocol",
+        contentSha256: hashCanonical({ fixture: "generic_estimator_protocol" })
+      },
+      independentUnit: {
+        key: "source item",
+        analysisUnit: "paired outcome"
+      },
+      plannedIndependentCoverage: {
+        mode: "sampled",
+        targetUniqueUnits: 1,
+        targetDenominatorPerArm: 1
+      },
+      requiredContrast: {
+        arms: ["reference", "intervention"],
+        paired: true,
+        requiredCompletePairs: 1
+      },
+      uncertaintyRequirement: {
+        mode: "required",
+        allowedMethods: ["exact_paired"],
+        confidenceLevel: 0.95,
+        decisionRule: "directed_interval_bound_meets_effect_criterion"
+      },
+      effectResolution: {
+        scale: "mean",
+        minimumResolvableEffect: 1
+      },
+      executionBudget: {
+        applicable: false,
+        notApplicableRationale: "Compute governance is tested by a separate locked contract."
+      }
+    });
+    await writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      `${JSON.stringify(topicEvidenceContract, null, 2)}\n`,
+      "utf8"
+    );
   }
   if (input.portfolio) {
     await writeFile(
@@ -160,10 +208,41 @@ async function executeMeaningPreservationFixture(input: {
       "utf8"
     );
   }
-  if (input.experimentContract) {
+  const experimentContract = input.experimentContract
+    || (topicEvidenceContract
+      ? {
+          ...buildExperimentContractV2Fixture({
+            runId: input.runId,
+            metricId: "quality_index"
+          }),
+          results_plan: {
+            ...buildExperimentContractV2Fixture({
+              runId: input.runId,
+              metricId: "quality_index"
+            }).results_plan,
+            minimum_series_count: 2,
+            minimum_comparison_count: 1,
+            required_series: [
+              { id: "series-reference", role: "baseline" },
+              { id: "series-primary", role: "primary" }
+            ],
+            required_comparisons: [
+              {
+                id: topicEvidenceContract.primary_comparison_id,
+                subject_series_id: "series-primary",
+                reference_series_id: "series-reference",
+                metric_id: "quality_index",
+                scope: { partition: "validation" }
+              }
+            ],
+            primary_comparison_id: topicEvidenceContract.primary_comparison_id
+          }
+        }
+      : undefined);
+  if (experimentContract) {
     await writeFile(
       path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(input.experimentContract, null, 2),
+      JSON.stringify(experimentContract, null, 2),
       "utf8"
     );
   }
@@ -214,7 +293,38 @@ async function executeMeaningPreservationFixture(input: {
             "utf8"
           );
         }
-        await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(input.metrics, null, 2), "utf8");
+        const metrics = {
+          ...input.metrics,
+          ...(topicEvidenceContract
+            && input.metrics[EVIDENCE_ADEQUACY_METRICS_FIELD] === undefined
+            ? {
+                [EVIDENCE_ADEQUACY_METRICS_FIELD]: {
+                  schema: "autolabos.evidence_adequacy",
+                  version: 2,
+                  kind: "evidence_adequacy_execution_evidence",
+                  contract_sha256: topicEvidenceContract.content_sha256,
+                  primary_comparison_id: topicEvidenceContract.primary_comparison_id,
+                  observed_population_manifest_sha256: null,
+                  unique_execution_ids: ["execution_reference", "execution_intervention"],
+                  observed_independent_unit_ids: ["source_1"],
+                  observed_denominator_by_arm: {
+                    reference: 1,
+                    intervention: 1
+                  },
+                  observed_pair_coverage: {
+                    complete_pair_ids: ["pair_1"],
+                    incomplete_pair_ids: []
+                  },
+                  observed_uncertainty_methods: ["exact_paired"],
+                  execution_budget_measurements: {},
+                  primary_evidence_refs: ["metrics.json#results_artifact"],
+                  auxiliary_evidence_refs: [],
+                  deterministic_oracle_evidence_refs: []
+                }
+              }
+            : {})
+        };
+        await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(metrics, null, 2), "utf8");
         return {
           status: "ok" as const,
           stdout: "metrics written",
@@ -2290,7 +2400,7 @@ describe("run_experiments execution profile behavior", () => {
       }
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
     expect(metrics.results_artifact.series).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ id: "series-reference", role: "baseline" }),
@@ -7098,7 +7208,9 @@ describe("run_experiments topic-probe compute governance", () => {
         quality_index: 0.7,
         ...buildExplicitResultsV2Fixture({
           metricId: "quality_index",
-          primaryValue: 0.7
+          primaryValue: 0.7,
+          referenceValue: 0.4,
+          comparisonDelta: 0.3
         }),
         compute_usage: {
           schema_version: 1,
@@ -7110,7 +7222,7 @@ describe("run_experiments topic-probe compute governance", () => {
       }
     });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result, null, 2)).toBe("success");
     const ledgerLines = (
       await readFile(
         path.join(
@@ -7148,6 +7260,69 @@ describe("run_experiments topic-probe compute governance", () => {
     expect(ledgerLines[1].usage_evidence_sha256).toBe(
       createHash("sha256").update(storedEvidenceBytes).digest("hex")
     );
+    const evidenceReceipt = JSON.parse(
+      await readFile(
+        path.join(runDir, "evidence_adequacy_execution_receipt.json"),
+        "utf8"
+      )
+    );
+    const evidenceAssessment = JSON.parse(
+      await readFile(
+        path.join(runDir, "evidence_adequacy_assessment.json"),
+        "utf8"
+      )
+    );
+    expect(evidenceReceipt).toMatchObject({
+      kind: "evidence_adequacy_execution_receipt",
+      primary_comparison_id: "comparison-primary-reference"
+    });
+    expect(evidenceAssessment).toMatchObject({
+      kind: "evidence_adequacy_assessment",
+      overall_status: "pass",
+      passed: true
+    });
+  });
+
+  it("rejects a runner-authored evidence verdict instead of issuing a receipt", async () => {
+    const runId = "run-topic-forged-evidence-verdict";
+    const { result, runDir } = await executeMeaningPreservationFixture({
+      runId,
+      briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+      activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+      comparisonContract: buildTopicProbeComparisonContract(runId),
+      metrics: {
+        status: "completed",
+        success: true,
+        quality_index: 0.7,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7,
+          referenceValue: 0.4,
+          comparisonDelta: 0.3
+        }),
+        compute_usage: {
+          schema_version: 1,
+          execution_kind: "gpu_execution",
+          actual_gpu_count: 1,
+          fresh_executed_trials: 1,
+          cached_trials: 0
+        },
+        [EVIDENCE_ADEQUACY_METRICS_FIELD]: {
+          passed: true
+        }
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "evidence_adequacy_execution_evidence_schema_invalid"
+    );
+    await expect(
+      readFile(
+        path.join(runDir, "evidence_adequacy_execution_receipt.json"),
+        "utf8"
+      )
+    ).rejects.toThrow();
   });
 
   it("fails before ACI when topic discovery reaches execution without active probe lineage", async () => {

@@ -86,7 +86,7 @@ describe("topic-probe execution authorization preflight", () => {
     expectNoAciCalls(aci);
   });
 
-  it("blocks run_experiments before tests, experiment commands, or LLM calls", async () => {
+  it("blocks run_experiments on a missing evidence contract before tests, experiment commands, or LLM calls", async () => {
     const fixture = await prepareIncompleteTopicDiscoveryRun(
       "run_estimator_execution_preflight",
       "run_experiments"
@@ -105,7 +105,7 @@ describe("topic-probe execution authorization preflight", () => {
       failureKind: "gate_blocked",
       toolCallsUsed: 0
     });
-    expect(result.error).toContain("topic_probe_execution_preflight_blocked");
+    expect(result.error).toContain("topic_probe_evidence_adequacy_contract_missing");
     expect(codexRun).not.toHaveBeenCalled();
     expect(llmComplete).not.toHaveBeenCalled();
     expectNoAciCalls(aci);

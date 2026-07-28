@@ -197,7 +197,7 @@ function buildStatisticalReview(
   const primaryMetricMatch = !objectiveDeclaresMetric || preferredMetrics.includes(declaredPrimaryMetric);
   const metricMatch = !objectiveDeclaresMetric || declaredMetrics.some((metric) => preferredMetrics.includes(metric));
   const objectiveDrift = objectiveDeclaresMetric && !primaryMetricMatch;
-  const insufficientPaperScaleEvidence = isInsufficientPaperScaleEvidence(candidate);
+  const screeningOnlyCeiling = hasExplicitScreeningOnlyCeiling(candidate);
   const estimatorProtocolValidation = normalizeEstimatorProtocolDeclaration(
     candidate.estimator_protocol
   );
@@ -210,7 +210,7 @@ function buildStatisticalReview(
     !primaryMetricIncluded ||
     objectiveDrift ||
     (requireExecutableEstimator && !executableEstimatorReady) ||
-    (evidenceStage === "confirmatory" && insufficientPaperScaleEvidence);
+    (evidenceStage === "confirmatory" && screeningOnlyCeiling);
   const rawScore =
     2 +
     (metricsDeclared ? 1 : 0) +
@@ -219,7 +219,7 @@ function buildStatisticalReview(
     (metricMatch ? 1 : 0) -
     (requireExecutableEstimator && !executableEstimatorReady ? 3 : 0) -
     (objectiveDrift ? 2 : 0) -
-    (insufficientPaperScaleEvidence ? 3 : 0);
+    (screeningOnlyCeiling ? 3 : 0);
   return {
     reviewer_id: "statistical_reviewer",
     reviewer_label: "Statistical reviewer",
@@ -227,7 +227,7 @@ function buildStatisticalReview(
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? insufficientPaperScaleEvidence && evidenceStage === "confirmatory"
+      ? screeningOnlyCeiling && evidenceStage === "confirmatory"
         ? "The plan is explicitly limited to screening evidence and cannot support the requested paper-scale claim."
         : requireExecutableEstimator && !executableEstimatorReady
         ? "The plan has no valid executable estimator protocol, so its comparison cannot be identified before implementation."
@@ -238,10 +238,10 @@ function buildStatisticalReview(
         ? "The plan is statistically aligned with the objective metric and comparison requirements."
         : "The plan is viable, but the metric set is only loosely aligned with the objective profile.",
     findings: uniqueStrings([
-      insufficientPaperScaleEvidence
+      screeningOnlyCeiling
         ? evidenceStage === "bounded_probe"
           ? "The candidate is explicitly screening-only; it may run as a bounded probe but cannot support paper-scale claims."
-          : "The candidate states a screening-only ceiling or a single-execution limitation, so it cannot serve as paper-scale evidence."
+          : "The candidate explicitly states a screening-only claim ceiling, so it cannot serve as confirmatory evidence."
         : "",
       requireExecutableEstimator && !executableEstimatorReady
         ? `Executable estimator protocol is invalid: ${estimatorProtocolValidation.reasons.join(", ")}.`
@@ -266,24 +266,16 @@ function buildStatisticalReview(
   };
 }
 
-function isInsufficientPaperScaleEvidence(
+function hasExplicitScreeningOnlyCeiling(
   candidate: ExperimentDesignCandidate
 ): boolean {
   const text = buildCandidateText(candidate);
-  const explicitPilotOnly =
+  return (
     /\b(?:pilot|preflight|screening)\s+ceiling\b/u.test(text) ||
     /\b(?:pilot|preflight)\s+(?:only|stage|record|evidence)\b/u.test(text) ||
     /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?[^.!?]{0,72}(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
-    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|confirmatory|statistically supported)\b/u.test(text);
-  const singleExecutionOnly =
-    /\b(?:single|one)[- ](?:run|repeat|replicate|seed|trial)\b/u.test(text) ||
-    /\bonly\s+(?:a\s+)?single\s+(?:run|repeat|replicate|seed|trial)\b/u.test(text) ||
-    /\b1\s+(?:run|repeat|replicate|seed|trial)\s+per\s+(?:cell|condition|arm|group)\b/u.test(text);
-  const repeatedExecution =
-    /\b(?:repeated|multiple|replicated|independent)\s+(?:runs?|repeats?|replicates?|seeds?|trials?)\b/u.test(text) ||
-    /\bat\s+least\s+(?:[2-9]|two|three|four|five)\s+(?:runs?|repeats?|replicates?|seeds?|trials?)\b/u.test(text);
-
-  return explicitPilotOnly || (singleExecutionOnly && !repeatedExecution);
+    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|confirmatory|statistically supported)\b/u.test(text)
+  );
 }
 
 function buildOpsCapacityReview(candidate: ExperimentDesignCandidate): DesignExperimentsPanelReview {
@@ -343,15 +335,18 @@ function buildEvidenceStrengthScore(
   candidate: ExperimentDesignCandidate
 ): number {
   const candidateText = buildCandidateText(candidate);
+  const estimatorProtocolReady = normalizeEstimatorProtocolDeclaration(
+    candidate.estimator_protocol
+  ).valid;
   let score = 3;
 
-  if (/\b(repeat(?:ed)?|replication|replicate|multi[- ]seed|multiple\s+seeds?|at\s+least\s+(?:[3-9]|three|four|five)\s+seeds?|confidence|interval|bootstrap|paired|stability)\b/u.test(candidateText)) {
+  if (estimatorProtocolReady) {
     score += 1;
   }
   if (/\b(full\s+(?:validation|test|split|grid)|all\s+cells?|complete\s+(?:table|grid)|raw\s+n|sample\s+size|per\s+condition|condition\s+table)\b/u.test(candidateText)) {
     score += 1;
   }
-  if (isInsufficientPaperScaleEvidence(candidate)) {
+  if (hasExplicitScreeningOnlyCeiling(candidate)) {
     score -= 2;
   }
 

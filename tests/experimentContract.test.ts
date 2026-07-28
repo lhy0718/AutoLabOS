@@ -104,18 +104,18 @@ describe("ExperimentContract", () => {
     const run = makeMinimalRun("test-run-1");
     const contract = buildExperimentContract({
       run,
-      hypothesis: "Shared state schema improves multi-agent coordination",
-      causalMechanism: "Structured JSON handoff reduces information loss between agents",
-      singleChange: "Replace free-form chat with shared_state_schema",
-      expectedMetricEffect: "Improve macro-F1 by at least +0.5 points",
-      abortCondition: "Abort if F1 drops below baseline by more than 1 point",
-      keepOrDiscardRule: "Keep if macro-F1 improves; discard if no improvement",
+      hypothesis: "A structured handoff changes the primary outcome",
+      causalMechanism: "A typed handoff reduces information loss between components",
+      singleChange: "Replace a free-form handoff with a typed handoff",
+      expectedMetricEffect: "Increase the primary measure by the declared effect size",
+      abortCondition: "Abort only if input validity checks fail",
+      keepOrDiscardRule: "Retain every contract-valid execution regardless of outcome direction",
       resultsPlan: makeResultsPlan("metric-coordination")
     });
 
     expect(contract.version).toBe(2);
     expect(contract.run_id).toBe("test-run-1");
-    expect(contract.hypothesis).toContain("Shared state schema");
+    expect(contract.hypothesis).toContain("structured handoff");
     expect(contract.confounded).toBe(false);
     expect(contract.additional_changes).toBeUndefined();
     expect(contract.results_plan.required_metrics).toEqual([
@@ -133,7 +133,7 @@ describe("ExperimentContract", () => {
       additionalChanges: ["Change B", "Change C"],
       expectedMetricEffect: "Improve metric",
       abortCondition: "None",
-      keepOrDiscardRule: "Keep if improved",
+      keepOrDiscardRule: "Retain every contract-valid execution regardless of outcome direction",
       resultsPlan: makeResultsPlan()
     });
 
@@ -188,7 +188,7 @@ describe("ExperimentContract", () => {
       singleChange: "Enable the bounded intervention",
       expectedMetricEffect: "Increase the primary metric by at least 0.5 points",
       abortCondition: "Abort on incomplete paired evidence",
-      keepOrDiscardRule: "Keep only if the frozen effect criterion is met",
+      keepOrDiscardRule: "Retain every contract-valid execution and classify it using the frozen effect criterion",
       resultsPlan
     });
 
@@ -213,8 +213,8 @@ describe("ExperimentContract", () => {
       single_change: "Real change",
       confounded: false,
       expected_metric_effect: "Positive effect",
-      abort_condition: "Abort if degraded",
-      keep_or_discard_rule: "Keep if improved",
+      abort_condition: "Abort only for a predeclared data-integrity failure",
+      keep_or_discard_rule: "Retain every contract-valid execution regardless of outcome direction",
       baselines: ["current-system"],
       results_plan: makeResultsPlan()
     };
@@ -243,6 +243,31 @@ describe("ExperimentContract", () => {
     const result = validateExperimentContract(contract);
     expect(result.valid).toBe(false);
     expect(result.issues.length).toBeGreaterThanOrEqual(2); // missing hypothesis + mechanism + confounded
+  });
+
+  it("rejects outcome-dependent retention and optional stopping", () => {
+    const contract: ExperimentContract = {
+      version: 2,
+      run_id: "test",
+      created_at: new Date().toISOString(),
+      hypothesis: "A bounded intervention changes the primary outcome",
+      causal_mechanism: "The intervention changes the measured process",
+      single_change: "Enable the bounded intervention",
+      confounded: false,
+      expected_metric_effect: "Increase the primary outcome",
+      abort_condition: "Abort if the primary outcome drops below the reference",
+      keep_or_discard_rule: "Retain only if the primary outcome improves",
+      baselines: ["reference-series"],
+      results_plan: makeResultsPlan()
+    };
+
+    const result = validateExperimentContract(contract);
+
+    expect(result.valid).toBe(false);
+    expect(result.issues).toEqual(expect.arrayContaining([
+      expect.stringContaining("Outcome-dependent keep/discard rule"),
+      expect.stringContaining("Outcome-dependent abort condition")
+    ]));
   });
 
   it("round-trips through write and load", async () => {
@@ -318,7 +343,7 @@ describe("ExperimentContract", () => {
       confounded: false,
       expected_metric_effect: "Positive effect",
       abort_condition: "Abort if degraded",
-      keep_or_discard_rule: "Keep if improved",
+      keep_or_discard_rule: "Retain every contract-valid execution regardless of outcome direction",
       baselines: ["current-system"]
     } as ExperimentContract;
 

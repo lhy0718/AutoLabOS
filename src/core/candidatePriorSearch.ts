@@ -159,6 +159,98 @@ export interface CandidatePriorSearchReceiptValidation {
   receipt?: CandidatePriorSearchReceipt;
 }
 
+export interface CandidatePriorSearchReviewBinding {
+  schema_version: 1;
+  artifact_kind: "candidate_prior_search_review_binding";
+  candidate_id: string;
+  candidate_content_sha256: string;
+  prior_absorption_contract_sha256: string;
+  plan_content_sha256: string;
+  receipt_content_sha256: string;
+  candidate_receipt_content_sha256: string;
+  selected_direct_prior_ids: string[];
+  content_sha256: string;
+}
+
+export function candidatePriorSearchCandidateReceiptHasObservedRetrieval(
+  receipt: CandidatePriorSearchCandidateReceipt
+): boolean {
+  return receipt.attempts.some((attempt) => attempt.selected > 0);
+}
+
+export function buildCandidatePriorSearchReviewBindings(
+  receipt: CandidatePriorSearchReceipt
+): Map<string, CandidatePriorSearchReviewBinding> {
+  const bindings = new Map<string, CandidatePriorSearchReviewBinding>();
+  for (const candidate of receipt.candidates) {
+    const selectedDirectPriorIds = uniqueSorted(
+      candidate.attempts.flatMap((attempt) => attempt.selected_paper_ids)
+    );
+    if (selectedDirectPriorIds.length === 0) {
+      throw new Error(
+        `candidate_prior_search_review_binding_selected_papers_empty:${candidate.candidate_id}`
+      );
+    }
+    const payload: Omit<CandidatePriorSearchReviewBinding, "content_sha256"> = {
+      schema_version: 1,
+      artifact_kind: "candidate_prior_search_review_binding",
+      candidate_id: candidate.candidate_id,
+      candidate_content_sha256: candidate.candidate_content_sha256,
+      prior_absorption_contract_sha256:
+        candidate.prior_absorption_contract_sha256,
+      plan_content_sha256: receipt.plan_content_sha256,
+      receipt_content_sha256: receipt.content_sha256,
+      candidate_receipt_content_sha256: candidate.content_sha256,
+      selected_direct_prior_ids: selectedDirectPriorIds
+    };
+    bindings.set(candidate.candidate_id, {
+      ...payload,
+      content_sha256: hashCanonical(payload)
+    });
+  }
+  return bindings;
+}
+
+export function isCandidatePriorSearchReviewBinding(
+  value: unknown
+): value is CandidatePriorSearchReviewBinding {
+  if (
+    !isRecord(value)
+    || !hasOnlyFields(value, new Set([
+      "schema_version",
+      "artifact_kind",
+      "candidate_id",
+      "candidate_content_sha256",
+      "prior_absorption_contract_sha256",
+      "plan_content_sha256",
+      "receipt_content_sha256",
+      "candidate_receipt_content_sha256",
+      "selected_direct_prior_ids",
+      "content_sha256"
+    ]))
+    || value.schema_version !== 1
+    || value.artifact_kind !== "candidate_prior_search_review_binding"
+    || !hasText(value.candidate_id)
+    || !isSha256(value.candidate_content_sha256)
+    || !isSha256(value.prior_absorption_contract_sha256)
+    || !isSha256(value.plan_content_sha256)
+    || !isSha256(value.receipt_content_sha256)
+    || !isSha256(value.candidate_receipt_content_sha256)
+    || !Array.isArray(value.selected_direct_prior_ids)
+    || value.selected_direct_prior_ids.length === 0
+    || !value.selected_direct_prior_ids.every(hasText)
+    || !stringArraysEqual(
+      value.selected_direct_prior_ids,
+      uniqueSorted(value.selected_direct_prior_ids)
+    )
+    || !isSha256(value.content_sha256)
+  ) {
+    return false;
+  }
+  const { content_sha256: contentSha256, ...payload } = value;
+  return hashCanonical(payload) === contentSha256;
+}
+
 const MAX_CANDIDATES = 16;
 const MAX_IDENTIFIER_LENGTH = 160;
 const MAX_TEXT_LENGTH = 1_200;
@@ -333,12 +425,26 @@ export function buildCandidatePriorSearchReceipt(
             requireText(paperId, "selected_paper_id", MAX_IDENTIFIER_LENGTH)
           )
         );
+        const fetched = requireNonNegativeInteger(
+          result.fetched,
+          "attempt_fetched"
+        );
+        const selected = requireNonNegativeInteger(
+          result.selected,
+          "attempt_selected"
+        );
+        if (selected > fetched) {
+          throw new Error("candidate_prior_search_receipt_selected_exceeds_fetched");
+        }
+        if (selected !== selectedPaperIds.length) {
+          throw new Error("candidate_prior_search_receipt_selected_count_mismatch");
+        }
         const payload: Omit<CandidatePriorSearchAttemptReceipt, "content_sha256"> = {
           family_id: family.family_id,
           retrieval_lane: lane.retrieval_lane,
           query: family.query,
-          fetched: requireNonNegativeInteger(result.fetched, "attempt_fetched"),
-          selected: requireNonNegativeInteger(result.selected, "attempt_selected"),
+          fetched,
+          selected,
           selected_paper_ids: selectedPaperIds
         };
         return { ...payload, content_sha256: hashCanonical(payload) };
@@ -473,6 +579,16 @@ export function validateCandidatePriorSearchReceipt(
           `candidate_prior_search_receipt_attempt_contract_mismatch:${attempt.family_id}:${attempt.retrieval_lane}`
         );
       }
+      if (attempt.selected > attempt.fetched) {
+        reasons.push(
+          `candidate_prior_search_receipt_selected_exceeds_fetched:${attempt.family_id}:${attempt.retrieval_lane}`
+        );
+      }
+      if (attempt.selected !== attempt.selected_paper_ids.length) {
+        reasons.push(
+          `candidate_prior_search_receipt_selected_count_mismatch:${attempt.family_id}:${attempt.retrieval_lane}`
+        );
+      }
       for (const paperId of attempt.selected_paper_ids) {
         if (!corpusFamilies.get(paperId)?.has(attempt.family_id)) {
           reasons.push(
@@ -487,6 +603,11 @@ export function validateCandidatePriorSearchReceipt(
     if (expectedAttempts.size > 0) {
       reasons.push(
         `candidate_prior_search_receipt_attempt_coverage_incomplete:${candidateReceipt.candidate_id}`
+      );
+    }
+    if (!candidatePriorSearchCandidateReceiptHasObservedRetrieval(candidateReceipt)) {
+      reasons.push(
+        `candidate_prior_search_receipt_selected_papers_empty:${candidateReceipt.candidate_id}`
       );
     }
     const { content_sha256: candidateHash, ...candidatePayload } = candidateReceipt;
@@ -554,8 +675,15 @@ function validateSourceCorpusExtension(input: {
       continue;
     }
     const sourceFamilies = normalizeFamilyList(sourceRow.query_families);
-    const resultFamilies = normalizeFamilyList(resultRow.query_families)
-      .filter((familyId) => !input.plannedFamilies.has(familyId));
+    const resultFamilies = normalizeFamilyList(resultRow.query_families);
+    const sourceFamilySet = new Set(sourceFamilies);
+    const resultFamilySet = new Set(resultFamilies);
+    const familyProvenanceChanged = sourceFamilies.some(
+      (familyId) => !resultFamilySet.has(familyId)
+    ) || resultFamilies.some(
+      (familyId) =>
+        !sourceFamilySet.has(familyId) && !input.plannedFamilies.has(familyId)
+    );
     const sourceComparable = {
       ...sourceRow,
       ...(sourceFamilies.length > 0
@@ -567,14 +695,17 @@ function validateSourceCorpusExtension(input: {
     }
     const resultComparable = {
       ...resultRow,
-      ...(resultFamilies.length > 0
-        ? { query_families: resultFamilies }
+      ...(sourceFamilies.length > 0
+        ? { query_families: sourceFamilies }
         : {})
     };
-    if (resultFamilies.length === 0) {
+    if (sourceFamilies.length === 0) {
       delete resultComparable.query_families;
     }
-    if (hashCanonical(sourceComparable) !== hashCanonical(resultComparable)) {
+    if (
+      familyProvenanceChanged
+      || hashCanonical(sourceComparable) !== hashCanonical(resultComparable)
+    ) {
       input.reasons.push(
         `candidate_prior_search_source_paper_modified:${paperId}`
       );
@@ -1415,6 +1546,11 @@ function uniqueTerms(values: string[]): string[] {
 
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].sort(compareText);
+}
+
+function stringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index]);
 }
 
 function compareText(left: string, right: string): number {

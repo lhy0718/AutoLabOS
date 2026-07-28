@@ -15,6 +15,7 @@ import * as llmPaperQualityEvaluatorModule from "../src/core/analysis/llmPaperQu
 import { evaluateMinimumGate } from "../src/core/analysis/paperMinimumGate.js";
 import type { FigureAuditSummary } from "../src/core/exploration/types.js";
 import { GRAPH_NODE_ORDER, RunRecord } from "../src/types.js";
+import { buildPassingEvidenceAdequacyFixture } from "./support/evidenceAdequacyFixture.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -681,6 +682,9 @@ describe("figure_audit node integration", () => {
         results_table: [{ metric: "primary_score", baseline: 0.87, comparator: 0.91, delta: 0.04, direction: "higher_better" }],
         results_artifact: buildExplicitResultsArtifact(0.87, 0.91),
         primary_comparison_id: "comparison_subject_reference",
+        evidence_adequacy_assessment: buildPassingEvidenceAdequacyFixture({
+          primaryComparisonId: "comparison_subject_reference"
+        }).assessment,
         limitations: [],
         warnings: [],
         statistical_summary: { total_trials: 3, executed_trials: 3, cached_trials: 0, confidence_intervals: [], stability_metrics: [], effect_estimates: [], notes: [] },

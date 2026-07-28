@@ -24,6 +24,9 @@ import {
   makeTopicProbeComputeBudgetLimits
 } from "./topicProbeComputeBudget.js";
 import type { TopicProbeComputeBudgetLimits } from "../../src/core/topicProbeComputeBudget.js";
+import { makeIndependentHypothesisReviewProvenance } from "./hypothesisReviewProvenance.js";
+import type { TopicMemoryLedger } from "../../src/core/topicMemory.js";
+import type { TopicMemorySemanticAudit } from "../../src/core/topicMemorySemanticAudit.js";
 
 export const TOPIC_PROBE_FIXTURE_CANDIDATE_IDS = [
   "candidate_reference_1",
@@ -45,6 +48,11 @@ export interface TopicProbePortfolioFixtureOptions {
   generatedAt?: string;
   probeCandidateIds?: string[];
   computeBudgetLimits?: TopicProbeComputeBudgetLimits;
+  topicMemoryLedger?: TopicMemoryLedger;
+  topicSemanticAuditsByCandidateId?: ReadonlyMap<
+    string,
+    TopicMemorySemanticAudit
+  >;
 }
 
 export interface TopicProbeLineageFixture extends TopicProbePortfolioFixture {
@@ -107,7 +115,10 @@ export function buildTopicProbePortfolioFixture(
     generatedAt,
     sourceArtifactBindings,
     priorAbsorptionMatrix,
-    computeBudgetCeiling: computeBudgetLimits
+    computeBudgetCeiling: computeBudgetLimits,
+    topicMemoryLedger: options.topicMemoryLedger,
+    topicSemanticAuditsByCandidateId:
+      options.topicSemanticAuditsByCandidateId
   });
   const validation = validateTopicPortfolioArtifact(JSON.stringify(portfolio), {
     expectedRunId: runId,
@@ -264,6 +275,7 @@ function buildReview(candidateId: string): HypothesisReview {
     limitation_reflection: 4,
     measurement_readiness: 4,
     strengths: ["The comparison and falsifier are explicit."],
-    weaknesses: ["The bounded scope requires later external validation."]
+    weaknesses: ["The bounded scope requires later external validation."],
+    provenance: makeIndependentHypothesisReviewProvenance(candidateId)
   };
 }

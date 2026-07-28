@@ -4,6 +4,15 @@ import { promises as fs } from "node:fs";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH
+} from "../src/core/analysis/evidenceAdequacy.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { buildResearchGapMap } from "../src/core/researchFunnel.js";
 import {
@@ -292,10 +301,60 @@ describe("jobsProjection", () => {
         trusted: true,
         comparison_count: 1,
         primary_comparison_id: "declared-comparison"
+      },
+      evidence_adequacy: {
+        status: "missing_contract",
+        trusted: false,
+        paper_evidence_allowed: false
       }
     });
-    expect(formatRunJobProjectionLines({ projection: snapshot.runs[0]! })).toContain(
+    const lines = formatRunJobProjectionLines({ projection: snapshot.runs[0]! });
+    expect(lines).toContain(
       "  evidence readiness: status=available ready=yes trusted=yes comparisons=1 primary=declared-comparison"
+    );
+    expect(lines).toContain(
+      "  evidence adequacy: status=missing_contract trusted=no integrity_valid=no paper_evidence_allowed=no overall=unmeasured primary=unmeasured"
+    );
+  });
+
+  it("projects a revalidated deterministic pass and its artifact references into TUI output", async () => {
+    workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-jobs-adequacy-"));
+    const run = makeRun("run-adequacy-pass", {
+      currentNode: "analyze_results",
+      status: "paused"
+    });
+    run.graph.currentNode = "analyze_results";
+    run.graph.nodeStates.run_experiments.status = "completed";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    await seedPassingEvidenceAdequacy(workspaceRoot, run);
+
+    const snapshot = await buildRunJobsSnapshot({
+      workspaceRoot,
+      runs: [run],
+      approvalMode: "minimal"
+    });
+    const projection = snapshot.runs[0]!;
+
+    expect(projection).toMatchObject({
+      evidence_readiness: {
+        status: "unmeasured",
+        evidence_ready: false
+      },
+      evidence_adequacy: {
+        status: "pass",
+        trusted: true,
+        integrity_valid: true,
+        paper_evidence_allowed: true,
+        primary_comparison_id: "primary_comparison",
+        overall_status: "pass"
+      }
+    });
+    const lines = formatRunJobProjectionLines({ projection });
+    expect(lines).toContain(
+      "  evidence adequacy: status=pass trusted=yes integrity_valid=yes paper_evidence_allowed=yes overall=pass primary=primary_comparison"
+    );
+    expect(lines).toContain(
+      "  evidence adequacy artifacts: contract=evidence_adequacy_contract.json | receipt=evidence_adequacy_execution_receipt.json | assessment=evidence_adequacy_assessment.json"
     );
   });
 
@@ -802,4 +861,110 @@ function makeJobProjection(
     paper_ready: false,
     research_funnel: researchFunnel
   };
+}
+
+async function seedPassingEvidenceAdequacy(
+  root: string,
+  run: RunRecord
+): Promise<void> {
+  const runDir = path.join(root, ".autolabos", "runs", run.id);
+  await fs.mkdir(runDir, { recursive: true });
+  const populationManifestSha256 = hashCanonical({
+    independent_unit_ids: ["unit_a"]
+  });
+  const contract = buildEvidenceAdequacyContract({
+    primaryComparisonId: "primary_comparison",
+    designSource: {
+      kind: "deterministic_exhaustive_manifest",
+      contentSha256: populationManifestSha256
+    },
+    independentUnit: {
+      key: "unit identity",
+      analysisUnit: "deterministic outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "deterministic_exhaustive",
+      targetUniqueUnits: 1,
+      targetDenominatorPerArm: 1,
+      populationManifestSha256
+    },
+    requiredContrast: {
+      arms: ["subject", "reference"],
+      paired: false,
+      requiredCompletePairs: null
+    },
+    uncertaintyRequirement: {
+      mode: "none",
+      deterministicExhaustiveRationale:
+        "The complete declared population is evaluated by a deterministic oracle."
+    },
+    effectResolution: {
+      scale: "proportion",
+      minimumResolvableEffect: 1
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The deterministic exhaustive evaluation has no iterative budget floor."
+    }
+  });
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: contract.content_sha256,
+    primaryComparisonId: contract.primary_comparison_id,
+    observedPopulationManifestSha256: populationManifestSha256,
+    uniqueExecutionIds: ["execution_a"],
+    observedIndependentUnitIds: ["unit_a"],
+    observedDenominatorByArm: {
+      subject: 1,
+      reference: 1
+    },
+    primaryEvidenceRefs: ["metrics.json"],
+    deterministicOracleEvidenceRefs: ["metrics.json"]
+  });
+  const assessment = assessEvidenceAdequacy({
+    contract,
+    receipt,
+    verifiedEvidenceRefs: ["metrics.json"]
+  });
+  await Promise.all([
+    fs.writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify({
+        version: 2,
+        run_id: run.id,
+        created_at: "2026-01-01T00:00:00.000Z",
+        hypothesis: "The intervention changes the declared outcome.",
+        causal_mechanism: "The intervention changes the measured process.",
+        single_change: "Apply the intervention.",
+        confounded: false,
+        expected_metric_effect: "A measurable change.",
+        abort_condition: "Abort on validity failure.",
+        keep_or_discard_rule: "Retain every contract-valid execution.",
+        results_plan: {
+          schema_version: "2.0",
+          required_metrics: [],
+          minimum_series_count: 2,
+          minimum_comparison_count: 1,
+          primary_comparison_id: contract.primary_comparison_id
+        }
+      }),
+      "utf8"
+    ),
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      JSON.stringify(contract),
+      "utf8"
+    ),
+    fs.writeFile(path.join(runDir, "metrics.json"), "{}\n", "utf8"),
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH),
+      JSON.stringify(receipt),
+      "utf8"
+    ),
+    fs.writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH),
+      JSON.stringify(assessment),
+      "utf8"
+    )
+  ]);
 }

@@ -194,7 +194,7 @@ For a manuscript to be marked `paper_ready=true`, all of the following should ho
 10. Any brief-governed minimum evidence requirement (for example repeated runs, baseline count, or uncertainty reporting) has been satisfied.
 11. The experiment evidence is not just a single thin run; it includes repeated trials or explicit robustness/uncertainty reporting.
 12. Positive headline gains are not explainable by a single changed evaluation example.
-13. Positive tuning claims have repeated-seed support or are explicitly downgraded.
+13. Comparative claims satisfy the declared independent-unit, repetition, and uncertainty requirements or are explicitly downgraded.
 14. Evaluation sample sizes are large enough for the claimed genre, not merely enough for a smoke or preflight run.
 15. A measured figure audit confirms that figures, result tables, captions, and underlying evidence are mutually consistent.
 
@@ -209,9 +209,9 @@ The manuscript must not be labeled `paper_ready` when any of the following is tr
 - the main contribution is only pipeline validation rather than a falsifiable
   comparison on an external task or certified controlled benchmark
 - the evidence is only a single thin run with no repeated-trial or robustness support
-- the headline result is a one-example gain on a tiny evaluation set
-- repeated-seed support is missing for a positive tuning claim
-- optimizer steps or training examples are only sufficient for pipeline validation, while the manuscript claims a tuning effect
+- the headline result is at the minimum observable quantum without a defensible resolution-aware analysis
+- independent repetition, cluster coverage, or another declared uncertainty requirement is missing
+- the executed budget is only sufficient for pipeline validation while the manuscript claims an empirical effect
 - the manuscript is mostly generated filler around weak artifacts
 - a governed brief explicitly required stronger evidence than the run actually produced
 - figure audit evidence is missing, malformed, intentionally ablated, or reports a blocking figure/result/caption mismatch

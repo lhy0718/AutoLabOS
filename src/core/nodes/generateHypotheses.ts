@@ -12,6 +12,11 @@ import {
   type HypothesisGenerationGovernance
 } from "../analysis/researchPlanning.js";
 import {
+  resolveHypothesisReviewBoundary,
+  HypothesisLlmIdentity,
+  HypothesisReviewerDependency
+} from "../analysis/hypothesisReviewProvenance.js";
+import {
   bindResearchGapMapArtifact,
   buildResearchFunnelArtifactBinding,
   buildTopicPortfolio,
@@ -25,18 +30,23 @@ import {
 import {
   buildPriorAbsorptionCandidateContract,
   buildPriorAbsorptionAssessmentPrompt,
+  buildPriorAbsorptionAxisVerificationPrompt,
   buildPriorAbsorptionMatrix,
   parsePriorAbsorptionAssessmentResponse,
+  parsePriorAbsorptionAxisVerificationResponse,
   validatePriorAbsorptionMatrixArtifact,
   type PriorAbsorptionAssessment,
+  type PriorAbsorptionAxisVerificationSeed,
   type PriorAbsorptionMatrix
 } from "../priorAbsorption.js";
 import {
   buildCandidatePriorSearchPlan,
+  buildCandidatePriorSearchReviewBindings,
   validateCandidatePriorSearchPlanIntegrity,
   validateCandidatePriorSearchReceipt,
   type CandidatePriorSearchPlan,
-  type CandidatePriorSearchReceipt
+  type CandidatePriorSearchReceipt,
+  type CandidatePriorSearchReviewBinding
 } from "../candidatePriorSearch.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import {
@@ -51,8 +61,13 @@ import {
   buildTopicMemoryDatabasePath,
   TopicMemoryStore
 } from "../runs/topicMemoryStore.js";
+import { persistTerminalTopicMemoryDispositions } from "../runs/terminalTopicMemoryDispositions.js";
 import { hashCanonical } from "../canonicalHash.js";
 import type { TopicMemoryLedger } from "../topicMemory.js";
+import {
+  runTopicMemorySemanticAudit,
+  type TopicMemorySemanticAudit
+} from "../topicMemorySemanticAudit.js";
 
 export interface GenerateHypothesesRequest {
   topK: number;
@@ -67,11 +82,15 @@ const HYPOTHESIS_PROGRESS_STATUS_ARTIFACT = "hypothesis_generation/status.json";
 const HYPOTHESIS_PROGRESS_LOG_ARTIFACT = "hypothesis_generation/progress.jsonl";
 const HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT =
   "hypothesis_generation/hard_gate_rejections.json";
+const HYPOTHESIS_REVIEW_PROVENANCE_ARTIFACT =
+  "hypothesis_generation/review_provenance.json";
 
 const PRIOR_ABSORPTION_MATRIX_ARTIFACT =
   "hypothesis_generation/prior_absorption_matrix.json";
 const TOPIC_MEMORY_AUDIT_ARTIFACT =
   "hypothesis_generation/topic_memory_audit.json";
+const TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT =
+  "hypothesis_generation/terminal_topic_memory_updates.json";
 const CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT =
   "hypothesis_generation/candidate_prior_search_plan.json";
 const CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT =
@@ -83,7 +102,20 @@ const COLLECT_CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT =
 const MAX_CANDIDATE_PRIOR_SEARCH_ROUNDS = 2;
 const CANDIDATE_PRIOR_SEARCH_PER_LANE_LIMIT = 4;
 const TOPIC_MEMORY_PROMPT_RECORD_LIMIT = 40;
-export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNodeHandler {
+
+export interface GenerateHypothesesReviewDependencies {
+  proposerIdentity?: HypothesisLlmIdentity;
+  reviewer?: HypothesisReviewerDependency;
+}
+
+export function createGenerateHypothesesNode(
+  deps: NodeExecutionDeps,
+  reviewDependencies?: GenerateHypothesesReviewDependencies
+): GraphNodeHandler {
+  const resolvedReviewDependencies = resolveGenerateHypothesesReviewDependencies(
+    deps,
+    reviewDependencies
+  );
   return {
     id: "generate_hypotheses",
     async execute({ run, abortSignal }) {
@@ -445,6 +477,8 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       );
       const planning = await generateHypothesesFromEvidence({
         llm: deps.llm,
+        proposerIdentity: resolvedReviewDependencies.proposerIdentity,
+        reviewer: resolvedReviewDependencies.reviewer,
         runTitle: run.title,
         runTopic: run.topic,
         objectiveMetric: planningObjectiveMetric,
@@ -485,18 +519,154 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         research_cycle: run.graph.researchCycle,
         supported_gap_ids: resolveSupportedGapIds(candidate.evidence_links, gapMap)
       }));
+      const portfolioRankByCandidateId = new Map(
+        planning.artifacts.probe_shortlist.ranked_candidate_ids.map(
+          (candidateId, index) => [candidateId, index] as const
+        )
+      );
+      const rankedBoundDrafts = [...boundDrafts].sort((left, right) =>
+        (portfolioRankByCandidateId.get(left.id) ?? Number.MAX_SAFE_INTEGER)
+          - (portfolioRankByCandidateId.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+        || left.id.localeCompare(right.id)
+      );
       const boundReviews = planning.artifacts.reviews.map((review) => ({
         ...review,
         run_id: run.id,
         research_cycle: run.graph.researchCycle
       }));
+      await writeRunArtifact(
+        run,
+        HYPOTHESIS_REVIEW_PROVENANCE_ARTIFACT,
+        `${JSON.stringify(planning.artifacts.provenance, null, 2)}\n`
+      );
+      if (
+        !planning.artifacts.provenance.review_authorization.authorized_for_probe
+      ) {
+        const reviewAuthorization =
+          planning.artifacts.provenance.review_authorization;
+        const reviewDisposition =
+          reviewAuthorization.completed_review_invocation_sha256s.length > 0
+            ? "retained non-authorizing review output as diagnostic self-review"
+            : "completed candidate generation without an authorizing independent review";
+        const message =
+          `Hypothesis generation ${reviewDisposition} and blocked probe authorization: `
+          + (reviewAuthorization.reason_codes.join(", ")
+            || "independent_review_provenance_missing")
+          + ". Configure a distinct reviewer client and identity before retrying.";
+        const evidenceAxesRaw = `${JSON.stringify(
+          planning.artifacts.evidence_axes,
+          null,
+          2
+        )}\n`;
+        const diagnosticShortlist = {
+          run_id: run.id,
+          research_cycle: run.graph.researchCycle,
+          probe_candidate_ids: [] as string[],
+          probe_topic_ids: [] as string[],
+          ranked_candidate_ids:
+            planning.artifacts.probe_shortlist.ranked_candidate_ids,
+          scores: planning.artifacts.probe_shortlist.scores,
+          review_authorization: reviewAuthorization
+        };
+        if (planning.artifacts.evidence_axes.length > 0) {
+          await writeRunArtifact(
+            run,
+            "hypothesis_generation/evidence_axes.json",
+            evidenceAxesRaw
+          );
+        }
+        await appendJsonl(
+          run,
+          "hypothesis_generation/drafts.jsonl",
+          boundDrafts
+        );
+        await appendJsonl(
+          run,
+          "hypothesis_generation/reviews.jsonl",
+          boundReviews
+        );
+        await writeRunArtifact(
+          run,
+          "hypothesis_generation/probe_shortlist.json",
+          `${JSON.stringify(diagnosticShortlist, null, 2)}\n`
+        );
+        await writeRunArtifact(
+          run,
+          "hypothesis_generation/llm_trace.json",
+          JSON.stringify(planning.artifacts.llm_trace, null, 2)
+        );
+        emitLog(message);
+        await flushProgressUpdates();
+        await runContextMemory.put("generate_hypotheses.top_k", 0);
+        await runContextMemory.put(
+          "generate_hypotheses.probe_candidate_count",
+          0
+        );
+        await runContextMemory.put(
+          "generate_hypotheses.candidate_count",
+          planning.artifacts.drafts.length
+        );
+        await runContextMemory.put(
+          "generate_hypotheses.source",
+          "blocked_independent_review"
+        );
+        await runContextMemory.put(
+          "generate_hypotheses.pipeline",
+          planning.artifacts.pipeline
+        );
+        await runContextMemory.put("generate_hypotheses.summary", message);
+        await writeHypothesisProgressStatus(run, runContextMemory, {
+          status: "failed",
+          stage: "gating",
+          message,
+          startedAt,
+          updatedAt: new Date().toISOString(),
+          evidenceCount: evidenceRows.length,
+          weakEvidenceCount,
+          request,
+          progressCount,
+          pipeline: planning.artifacts.pipeline,
+          source: "blocked_independent_review",
+          fallbackReason: planning.fallbackReason,
+          candidateCount: planning.artifacts.drafts.length,
+          probeCandidateCount: 0,
+          artifactPaths: [
+            HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
+            HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
+            ...(planning.artifacts.evidence_axes.length > 0
+              ? ["hypothesis_generation/evidence_axes.json"]
+              : []),
+            "hypothesis_generation/drafts.jsonl",
+            "hypothesis_generation/reviews.jsonl",
+            "hypothesis_generation/probe_shortlist.json",
+            HYPOTHESIS_REVIEW_PROVENANCE_ARTIFACT,
+            HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
+            "hypothesis_generation/llm_trace.json"
+          ]
+        });
+        return {
+          status: "failure",
+          failureKind: "gate_blocked",
+          summary: message,
+          error: message,
+          toolCallsUsed: Math.max(1, planning.toolCallsUsed)
+        };
+      }
       let priorAbsorptionToolCalls = 0;
+      let topicMemorySemanticToolCalls = 0;
       let priorAbsorptionMatrix: PriorAbsorptionMatrix | undefined;
       let priorAbsorptionMatrixRaw: string | undefined;
+      let candidatePriorSearchReceiptState:
+        CandidatePriorSearchReceiptState | undefined;
+      let candidatePriorSearchBindingsByCandidateId: ReadonlyMap<
+        string,
+        CandidatePriorSearchReviewBinding
+      > | undefined;
       if (researchMode === "topic_discovery") {
         emitLog("Building the candidate-by-prior absorption matrix from exact full-text evidence references.");
         const generated = await generatePriorAbsorptionMatrixArtifact({
           llm: deps.llm,
+          config: deps.config,
           candidates: boundDrafts,
           evidence: evidenceRows,
           run,
@@ -512,12 +682,30 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             `Prior absorption P0 blocks ${blockedCount}/${generated.matrix.candidates.length} candidate(s) pending complete evidence-grounded comparisons.`
           );
         }
+        candidatePriorSearchReceiptState =
+          await loadCurrentCandidatePriorSearchReceipt({
+            run,
+            collectAttemptId,
+            resultCorpusRaw: corpusRaw
+          });
+        if (candidatePriorSearchReceiptState.receipt) {
+          candidatePriorSearchBindingsByCandidateId =
+            buildCandidatePriorSearchReviewBindings(
+              candidatePriorSearchReceiptState.receipt
+            );
+        }
       }
       const portfolioGeneratedAt = new Date().toISOString();
-      const preliminaryPortfolio =
+      const topicSemanticAuditsByCandidateId = new Map<
+        string,
+        TopicMemorySemanticAudit
+      >();
+      const preliminaryPortfolioInput: Parameters<
+        typeof buildTopicPortfolio
+      >[0] | undefined =
         researchMode === "topic_discovery"
-          ? buildTopicPortfolio({
-              candidates: boundDrafts,
+          ? {
+              candidates: rankedBoundDrafts,
               reviews: boundReviews,
               probeCandidateIds: planning.artifacts.probe_shortlist.probe_candidate_ids,
               evidence: evidenceRows,
@@ -528,10 +716,132 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
               generatedAt: portfolioGeneratedAt,
               sourceGapMapSha256: gapMap?.content_sha256,
               priorAbsorptionMatrix,
+              candidatePriorSearchBindingsByCandidateId,
               computeBudgetCeiling,
               topicMemoryLedger
-            })
+            }
           : undefined;
+      let preliminaryPortfolio = preliminaryPortfolioInput
+        ? buildTopicPortfolio(preliminaryPortfolioInput)
+        : undefined;
+      if (preliminaryPortfolio && topicMemoryLedger) {
+        try {
+          const terminalUpdates = persistTerminalTopicMemoryDispositions({
+            workspaceRoot: process.cwd(),
+            runId: run.id,
+            researchCycle: run.graph.researchCycle,
+            generatedAt: portfolioGeneratedAt,
+            portfolio: preliminaryPortfolio,
+            priorAbsorptionMatrix
+          });
+          topicMemoryLedger = terminalUpdates.ledger;
+          await writeRunArtifact(
+            run,
+            TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
+            `${JSON.stringify(terminalUpdates.artifact, null, 2)}\n`
+          );
+          preliminaryPortfolio = buildTopicPortfolio({
+            ...preliminaryPortfolioInput,
+            candidates: rankedBoundDrafts,
+            evidence: evidenceRows,
+            evidenceAxes: planning.artifacts.evidence_axes,
+            topicMemoryLedger
+          });
+          if (terminalUpdates.artifact.updates.length > 0) {
+            emitLog(
+              `Persisted or confirmed ${terminalUpdates.artifact.updates.length} terminal topic disposition(s) before survivor admission.`
+            );
+          }
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          const message =
+            "Hypothesis generation blocked because a terminal topic disposition could not be persisted: "
+            + detail;
+          await writeHypothesisProgressStatus(run, runContextMemory, {
+            status: "failed",
+            stage: "gating",
+            message,
+            startedAt,
+            updatedAt: new Date().toISOString(),
+            evidenceCount: evidenceRows.length,
+            weakEvidenceCount,
+            request,
+            progressCount,
+            pipeline: planning.artifacts.pipeline,
+            source: "blocked_terminal_topic_memory_persistence",
+            candidateCount: planning.candidates.length,
+            probeCandidateCount: 0,
+            artifactPaths: [
+              HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
+              HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
+              PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+              HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
+              "hypothesis_generation/llm_trace.json"
+            ]
+          });
+          return {
+            status: "failure",
+            failureKind: "gate_blocked",
+            summary: message,
+            error: message,
+            toolCallsUsed: Math.max(
+              1,
+              planning.toolCallsUsed
+                + priorAbsorptionToolCalls
+                + topicMemorySemanticToolCalls
+            )
+          };
+        }
+      }
+      if (
+        preliminaryPortfolio
+        && topicMemoryLedger
+        && topicMemoryLedger.records.length > 0
+        && resolvedReviewDependencies.reviewer
+      ) {
+        const semanticBoundary = resolveHypothesisReviewBoundary({
+          proposerLlm: deps.llm,
+          proposerIdentity: resolvedReviewDependencies.proposerIdentity,
+          reviewer: resolvedReviewDependencies.reviewer
+        });
+        const candidatesRequiringAudit = preliminaryPortfolio.candidates.filter(
+          (candidate) =>
+            candidate.topic_memory?.descriptor
+            && candidate.topic_memory.decision.reason_codes.includes(
+              "topic_memory_semantic_audit_required"
+            )
+        );
+        if (candidatesRequiringAudit.length > 0) {
+          emitLog(
+            `Running independent semantic topic-memory audit for ${candidatesRequiringAudit.length} candidate(s) against all ${topicMemoryLedger.records.length} killed formulation record(s).`
+          );
+        }
+        for (const candidate of candidatesRequiringAudit) {
+          const descriptor = candidate.topic_memory?.descriptor;
+          if (!descriptor) {
+            continue;
+          }
+          const audit = await runTopicMemorySemanticAudit({
+            boundary: semanticBoundary,
+            ledger: topicMemoryLedger,
+            descriptor,
+            abortSignal
+          });
+          topicMemorySemanticToolCalls += audit.reviewer_invocations.length;
+          topicSemanticAuditsByCandidateId.set(
+            candidate.source_candidate_id,
+            audit
+          );
+        }
+        preliminaryPortfolio = buildTopicPortfolio({
+          ...preliminaryPortfolioInput,
+          candidates: rankedBoundDrafts,
+          evidence: evidenceRows,
+          evidenceAxes: planning.artifacts.evidence_axes,
+          topicMemoryLedger,
+          topicSemanticAuditsByCandidateId
+        });
+      }
       const portfolioCandidateBySourceId = new Map(
         (preliminaryPortfolio?.candidates || []).map(
           (candidate) => [candidate.source_candidate_id, candidate] as const
@@ -540,30 +850,29 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       const probeCandidatesById = new Map(
         planning.probe_candidates.map((candidate) => [candidate.id, candidate] as const)
       );
-      const probeCandidateIds =
-        preliminaryPortfolio
-          ? preliminaryPortfolio.candidates
-              .filter(
-                (candidate) =>
-                  candidate.probe_status === "shortlisted"
-                  && candidate.probe_eligible
-              )
-              .map((candidate) => candidate.source_candidate_id)
-          : planning.artifacts.probe_shortlist.probe_candidate_ids;
-      const shortlistedCandidateIds =
-        preliminaryPortfolio?.candidates
-          .filter((candidate) => candidate.probe_status === "shortlisted")
-          .map((candidate) => candidate.source_candidate_id)
-        ?? [];
-      const blockedShortlistedCandidateIds =
-        preliminaryPortfolio?.candidates
-          .filter(
-            (candidate) =>
-              candidate.probe_status === "shortlisted"
-              && !candidate.probe_eligible
+      const plannedProbeCandidateIds =
+        planning.artifacts.probe_shortlist.probe_candidate_ids;
+      const probeCandidateIds = preliminaryPortfolio
+        ? plannedProbeCandidateIds.filter((candidateId) => {
+            const candidate = portfolioCandidateBySourceId.get(candidateId);
+            return candidate?.probe_status === "shortlisted"
+              && candidate.probe_eligible;
+          })
+        : plannedProbeCandidateIds;
+      const shortlistedCandidateIds = preliminaryPortfolio
+        ? plannedProbeCandidateIds.filter(
+            (candidateId) =>
+              portfolioCandidateBySourceId.get(candidateId)?.probe_status
+                === "shortlisted"
           )
-          .map((candidate) => candidate.source_candidate_id)
-        ?? [];
+        : [];
+      const blockedShortlistedCandidateIds = preliminaryPortfolio
+        ? plannedProbeCandidateIds.filter((candidateId) => {
+            const candidate = portfolioCandidateBySourceId.get(candidateId);
+            return candidate?.probe_status === "shortlisted"
+              && !candidate.probe_eligible;
+          })
+        : [];
       if (blockedShortlistedCandidateIds.length > 0) {
         emitLog(
           "Removed blocked candidates from the executable probe shortlist: "
@@ -578,13 +887,15 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
       ) {
         const candidatePriorSearch = await prepareCandidatePriorSearchDecision({
           run,
-          candidates: planning.artifacts.drafts,
+          candidates: rankedBoundDrafts,
           matrix: priorAbsorptionMatrix,
           shortlistedCandidateIds,
+          eligibleShortlistedCandidateIds: probeCandidateIds,
           collectAttemptId,
           corpusRaw,
           corpusSha256: gapEvidenceChain.corpusSha256,
-          corpusByteLength: gapEvidenceChain.corpusByteLength
+          corpusByteLength: gapEvidenceChain.corpusByteLength,
+          receiptState: candidatePriorSearchReceiptState
         });
         await writeRunArtifact(
           run,
@@ -613,6 +924,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
               HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
               HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
               PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+              TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
               CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT,
               HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
               "hypothesis_generation/llm_trace.json"
@@ -625,7 +937,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             error: message,
             toolCallsUsed: Math.max(
               1,
-              planning.toolCallsUsed + priorAbsorptionToolCalls
+              planning.toolCallsUsed
+                + priorAbsorptionToolCalls
+                + topicMemorySemanticToolCalls
             )
           };
         }
@@ -689,6 +1003,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
               "hypothesis_generation/drafts.jsonl",
               "hypothesis_generation/reviews.jsonl",
               PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+              TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
               CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT,
               CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT,
               HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
@@ -701,7 +1016,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             needsApproval: true,
             toolCallsUsed: Math.max(
               1,
-              planning.toolCallsUsed + priorAbsorptionToolCalls
+              planning.toolCallsUsed
+                + priorAbsorptionToolCalls
+                + topicMemorySemanticToolCalls
             ),
             transitionRecommendation: {
               action: "backtrack_to_collection",
@@ -715,7 +1032,8 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
               evidence: [
                 CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT,
                 CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT,
-                PRIOR_ABSORPTION_MATRIX_ARTIFACT
+                PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+                TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT
               ],
               suggestedCommands: [
                 "/agent jump collect_papers",
@@ -729,14 +1047,32 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           .filter(
             (candidate) =>
               !candidate.absorbed_by_prior
-              && !candidate.covered_by_valid_receipt
+              && (
+                (
+                  candidate.selected_direct_prior_ids.length > 0
+                  && !candidate.selected_prior_coverage_complete
+                )
+                || (
+                  candidate.probe_eligible
+                  && !candidate.covered_by_valid_receipt
+                )
+              )
           )
           .map((candidate) => candidate.candidate_id);
         if (uncoveredCandidateIds.length > 0) {
-          const message =
-            "Hypothesis generation blocked because candidate-conditioned direct-prior search "
-            + `did not produce a valid receipt within ${candidatePriorSearch.artifact.max_rounds} bounded round(s): `
-            + uncoveredCandidateIds.join(", ");
+          const selectedPriorCoverageMissing =
+            candidatePriorSearch.artifact.candidates.some(
+              (candidate) =>
+                uncoveredCandidateIds.includes(candidate.candidate_id)
+                && candidate.selected_direct_prior_ids.length > 0
+                && !candidate.selected_prior_coverage_complete
+            );
+          const message = (
+            selectedPriorCoverageMissing
+              ? "Hypothesis generation blocked because at least one selected direct prior is omitted from the candidate closest-prior absorption coverage: "
+              : "Hypothesis generation blocked because candidate-conditioned direct-prior search "
+                + `did not produce a valid receipt within ${candidatePriorSearch.artifact.max_rounds} bounded round(s): `
+          ) + uncoveredCandidateIds.join(", ");
           await writeHypothesisProgressStatus(run, runContextMemory, {
             status: "failed",
             stage: "direct_prior_search",
@@ -748,13 +1084,16 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             request,
             progressCount,
             pipeline: planning.artifacts.pipeline,
-            source: "blocked_candidate_prior_exhausted",
+            source: selectedPriorCoverageMissing
+              ? "blocked_candidate_prior_absorption_coverage"
+              : "blocked_candidate_prior_exhausted",
             candidateCount: planning.candidates.length,
             probeCandidateCount: 0,
             artifactPaths: [
               HYPOTHESIS_PROGRESS_STATUS_ARTIFACT,
               HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
               PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+              TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
               CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT,
               HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
               "hypothesis_generation/llm_trace.json"
@@ -767,7 +1106,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             error: message,
             toolCallsUsed: Math.max(
               1,
-              planning.toolCallsUsed + priorAbsorptionToolCalls
+              planning.toolCallsUsed
+                + priorAbsorptionToolCalls
+                + topicMemorySemanticToolCalls
             )
           };
         }
@@ -870,7 +1211,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
             "hypothesis_generation/probe_shortlist.json",
             ...(researchMode === "topic_discovery"
-              ? [PRIOR_ABSORPTION_MATRIX_ARTIFACT]
+              ? [
+                  PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+                  TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT
+                ]
               : []),
             HYPOTHESIS_HARD_GATE_REJECTIONS_ARTIFACT,
             "hypothesis_generation/llm_trace.json"
@@ -880,7 +1224,12 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           status: "failure",
           summary: fallbackQualityBlock,
           error: fallbackQualityBlock,
-          toolCallsUsed: Math.max(1, planning.toolCallsUsed + priorAbsorptionToolCalls)
+          toolCallsUsed: Math.max(
+            1,
+            planning.toolCallsUsed
+              + priorAbsorptionToolCalls
+              + topicMemorySemanticToolCalls
+          )
         };
       }
 
@@ -905,7 +1254,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             }
           : {}),
         ranked_candidate_ids: planning.artifacts.probe_shortlist.ranked_candidate_ids,
-        scores: planning.artifacts.probe_shortlist.scores
+        scores: planning.artifacts.probe_shortlist.scores,
+        review_authorization:
+          planning.artifacts.provenance.review_authorization
       };
       const probeShortlistRaw = JSON.stringify(shortlist, null, 2);
       const evidenceAxesRaw = `${JSON.stringify(
@@ -955,7 +1306,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           )
         ];
         const topicPortfolio = buildTopicPortfolio({
-          candidates: boundDrafts,
+          candidates: rankedBoundDrafts,
           reviews: boundReviews,
           probeCandidateIds: shortlist.probe_candidate_ids,
           evidence: evidenceRows,
@@ -967,8 +1318,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           sourceArtifactBindings,
           sourceGapMapSha256: gapMap?.content_sha256,
           priorAbsorptionMatrix,
+          candidatePriorSearchBindingsByCandidateId,
           computeBudgetCeiling,
-          topicMemoryLedger
+          topicMemoryLedger,
+          topicSemanticAuditsByCandidateId
         });
         const topicPortfolioRaw = JSON.stringify(topicPortfolio, null, 2);
         await writeRunArtifact(
@@ -990,6 +1343,10 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             formulation_id: candidate.formulation_id,
             disposition: candidate.topic_memory?.decision.disposition || "blocked",
             blocked: candidate.topic_memory?.decision.blocked ?? true,
+            semantic_audit_sha256:
+              candidate.topic_memory?.semantic_audit?.content_sha256,
+            semantic_audit_valid:
+              candidate.topic_memory?.decision.semantic_audit_valid ?? false,
             matching_record_sha256s:
               candidate.topic_memory?.decision.matching_record_sha256s || []
           }))
@@ -1091,6 +1448,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
             HYPOTHESIS_PROGRESS_LOG_ARTIFACT,
             "hypothesis_generation/probe_shortlist.json",
             PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+            TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
             "hypothesis_generation/topic_portfolio.json",
             TOPIC_MEMORY_AUDIT_ARTIFACT,
             ...(shortlistedCandidateIds.length > 0
@@ -1107,7 +1465,9 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           error: topicDiscoveryAuthorizationFailure,
           toolCallsUsed: Math.max(
             1,
-            planning.toolCallsUsed + priorAbsorptionToolCalls
+            planning.toolCallsUsed
+              + priorAbsorptionToolCalls
+              + topicMemorySemanticToolCalls
           )
         };
       }
@@ -1169,6 +1529,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
           ...(researchMode === "topic_discovery"
             ? [
                 PRIOR_ABSORPTION_MATRIX_ARTIFACT,
+                TERMINAL_TOPIC_MEMORY_UPDATES_ARTIFACT,
                 "hypothesis_generation/topic_portfolio.json",
                 TOPIC_MEMORY_AUDIT_ARTIFACT,
                 CANDIDATE_PRIOR_SEARCH_DECISION_ARTIFACT
@@ -1183,7 +1544,12 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
         status: "success",
         summary: finalSummary,
         needsApproval: true,
-        toolCallsUsed: Math.max(1, planning.toolCallsUsed + priorAbsorptionToolCalls)
+        toolCallsUsed: Math.max(
+          1,
+          planning.toolCallsUsed
+            + priorAbsorptionToolCalls
+            + topicMemorySemanticToolCalls
+        )
       };
     }
   };
@@ -1191,6 +1557,7 @@ export function createGenerateHypothesesNode(deps: NodeExecutionDeps): GraphNode
 
 async function generatePriorAbsorptionMatrixArtifact(input: {
   llm: NodeExecutionDeps["llm"];
+  config: NodeExecutionDeps["config"];
   candidates: HypothesisCandidate[];
   evidence: EvidenceRow[];
   run: RunRecord;
@@ -1202,6 +1569,7 @@ async function generatePriorAbsorptionMatrixArtifact(input: {
   toolCallsUsed: number;
 }> {
   let assessments: PriorAbsorptionAssessment[] = [];
+  let axisVerifications: PriorAbsorptionAxisVerificationSeed[] = [];
   let assessmentSource: PriorAbsorptionMatrix["assessment_source"] = "unavailable";
   let toolCallsUsed = 0;
   try {
@@ -1232,13 +1600,50 @@ async function generatePriorAbsorptionMatrixArtifact(input: {
       `Prior absorption assessment was unavailable (${detail}); all unsupported comparisons will remain uncertain.`
     );
   }
-  const matrix = buildPriorAbsorptionMatrix({
+  const matrixInput = {
     candidates: input.candidates,
     evidence: input.evidence,
     assessments,
     runId: input.run.id,
     researchCycle: input.run.graph.researchCycle,
     assessmentSource
+  } as const;
+  const provisionalMatrix = buildPriorAbsorptionMatrix(matrixInput);
+  if (assessmentSource === "llm_structured_comparison") {
+    try {
+      toolCallsUsed += 1;
+      const response = await input.llm.complete(
+        buildPriorAbsorptionAxisVerificationPrompt(provisionalMatrix),
+        {
+          systemPrompt:
+            "Verify each prior-absorption axis independently from the supplied positions and exact spans. Return JSON only. Use contradicted or insufficient unless the reported relation is actually supported.",
+          abortSignal: input.abortSignal,
+          onProgress: (event) => {
+            if (event.type === "status" && event.text.trim()) {
+              input.onProgress(event.text);
+            }
+          }
+        }
+      );
+      axisVerifications = parsePriorAbsorptionAxisVerificationResponse(
+        response.text,
+        resolvePriorAbsorptionAxisVerifierIdentity({
+          config: input.config,
+          run: input.run,
+          responseThreadId: response.threadId,
+          responseText: response.text
+        })
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      input.onProgress(
+        `Prior absorption axis verification was unavailable (${detail}); every unverified axis will fail closed.`
+      );
+    }
+  }
+  const matrix = buildPriorAbsorptionMatrix({
+    ...matrixInput,
+    axisVerifications
   });
   const raw = `${JSON.stringify(matrix, null, 2)}\n`;
   const validation = validatePriorAbsorptionMatrixArtifact(raw, {
@@ -1250,6 +1655,46 @@ async function generatePriorAbsorptionMatrixArtifact(input: {
   }
   await writeRunArtifact(input.run, PRIOR_ABSORPTION_MATRIX_ARTIFACT, raw);
   return { matrix, raw, toolCallsUsed };
+}
+
+function resolvePriorAbsorptionAxisVerifierIdentity(input: {
+  config: NodeExecutionDeps["config"];
+  run: RunRecord;
+  responseThreadId?: string;
+  responseText: string;
+}) {
+  const providers = input.config?.providers;
+  const mode = providers?.llm_mode;
+  const provider = mode === "openai_api"
+    ? "openai"
+    : mode === "ollama"
+      ? "ollama"
+      : mode === "codex" || mode === "codex_chatgpt_only"
+        ? "codex"
+        : "unconfigured";
+  const model = mode === "openai_api"
+    ? providers?.openai?.model
+    : mode === "ollama"
+      ? providers?.ollama?.research_model
+      : mode === "codex" || mode === "codex_chatgpt_only"
+        ? providers?.codex?.model
+        : undefined;
+  const responseThreadId = input.responseThreadId?.trim();
+  const fallbackRunId = createHash("sha256")
+    .update([
+      input.run.id,
+      String(input.run.graph.researchCycle),
+      "prior_absorption_axis_relation_verifier_v1",
+      input.responseText
+    ].join("\u0000"))
+    .digest("hex");
+  return {
+    verifier_id: "prior_absorption_axis_relation_verifier_v1",
+    provider,
+    model: model?.trim() || "unconfigured",
+    verification_run_id: responseThreadId || fallbackRunId,
+    context_isolated: true as const
+  };
 }
 
 interface CandidatePriorSearchDecisionArtifact {
@@ -1269,6 +1714,10 @@ interface CandidatePriorSearchDecisionArtifact {
     reason_codes: string[];
     absorbed_by_prior: boolean;
     covered_by_valid_receipt: boolean;
+    selected_direct_prior_ids: string[];
+    selected_prior_coverage_complete: boolean;
+    review_binding?: CandidatePriorSearchReviewBinding;
+    probe_eligible: boolean;
     selected_for_search: boolean;
   }>;
   plan_content_sha256?: string;
@@ -1281,10 +1730,12 @@ export async function prepareCandidatePriorSearchDecision(input: {
   candidates: HypothesisCandidate[];
   matrix: PriorAbsorptionMatrix;
   shortlistedCandidateIds: string[];
+  eligibleShortlistedCandidateIds: string[];
   collectAttemptId?: string;
   corpusRaw: string;
   corpusSha256: string;
   corpusByteLength: number;
+  receiptState?: CandidatePriorSearchReceiptState;
 }): Promise<{
   artifact: CandidatePriorSearchDecisionArtifact;
   plan?: CandidatePriorSearchPlan;
@@ -1292,20 +1743,22 @@ export async function prepareCandidatePriorSearchDecision(input: {
 }> {
   const generatedAt = new Date().toISOString();
   const shortlistedIds = new Set(input.shortlistedCandidateIds);
+  const eligibleShortlistedIds = new Set(
+    input.eligibleShortlistedCandidateIds
+  );
   const candidateById = new Map(
     input.candidates.map((candidate) => [candidate.id, candidate] as const)
   );
   const completedRounds = countCandidatePriorSearchRounds(input.run);
-  const receiptState = await loadCurrentCandidatePriorSearchReceipt({
-    run: input.run,
-    collectAttemptId: input.collectAttemptId,
-    resultCorpusRaw: input.corpusRaw
-  });
-  const coveredContractHashes = new Set(
-    receiptState.receipt?.candidates.map(
-      (candidate) => candidate.prior_absorption_contract_sha256
-    ) || []
-  );
+  const receiptState = input.receiptState
+    || await loadCurrentCandidatePriorSearchReceipt({
+      run: input.run,
+      collectAttemptId: input.collectAttemptId,
+      resultCorpusRaw: input.corpusRaw
+    });
+  const reviewBindings = receiptState.receipt
+    ? buildCandidatePriorSearchReviewBindings(receiptState.receipt)
+    : new Map<string, CandidatePriorSearchReviewBinding>();
   const rows = input.matrix.candidates
     .filter((candidate) => shortlistedIds.has(candidate.candidate_id))
     .map((matrixCandidate) => {
@@ -1316,17 +1769,39 @@ export async function prepareCandidatePriorSearchDecision(input: {
       const absorbedByPrior = matrixCandidate.comparisons.some(
         (comparison) => comparison.disposition === "absorbed"
       );
-      const coveredByValidReceipt = coveredContractHashes.has(
-        expectedContract.content_sha256
+      const reviewBinding = reviewBindings.get(matrixCandidate.candidate_id);
+      const coveredByValidReceipt = Boolean(
+        reviewBinding
+        && reviewBinding.prior_absorption_contract_sha256
+          === expectedContract.content_sha256
       );
+      const selectedPriorCoverageComplete = Boolean(
+        coveredByValidReceipt
+        && reviewBinding?.selected_direct_prior_ids.every(
+          (paperId) =>
+            matrixCandidate.prior_paper_ids.includes(paperId)
+            && matrixCandidate.comparisons.some(
+              (comparison) => comparison.prior_paper_id === paperId
+            )
+        )
+      );
+      const baseProbeEligible = eligibleShortlistedIds.has(
+        matrixCandidate.candidate_id
+      );
+      const probeEligible = baseProbeEligible
+        && (!reviewBinding || selectedPriorCoverageComplete);
       return {
         candidate,
         expectedContract,
         matrixCandidate,
         absorbedByPrior,
         coveredByValidReceipt,
+        reviewBinding,
+        selectedPriorCoverageComplete,
+        probeEligible,
         selectedForSearch:
           Boolean(candidate)
+          && probeEligible
           && !absorbedByPrior
           && !coveredByValidReceipt
       };
@@ -1398,9 +1873,22 @@ export async function prepareCandidatePriorSearchDecision(input: {
     candidates: rows.map((row) => ({
       candidate_id: row.matrixCandidate.candidate_id,
       prior_absorption_contract_sha256: row.expectedContract.content_sha256,
-      reason_codes: [...row.matrixCandidate.reason_codes],
+      reason_codes: uniqueStrings([
+        ...row.matrixCandidate.reason_codes,
+        ...(row.reviewBinding && !row.selectedPriorCoverageComplete
+          ? ["candidate_prior_search_selected_prior_absorption_coverage_incomplete"]
+          : []),
+        ...(!row.probeEligible
+          ? ["candidate_prior_search_candidate_not_probe_eligible"]
+          : [])
+      ]),
       absorbed_by_prior: row.absorbedByPrior,
       covered_by_valid_receipt: row.coveredByValidReceipt,
+      selected_direct_prior_ids:
+        row.reviewBinding?.selected_direct_prior_ids || [],
+      selected_prior_coverage_complete: row.selectedPriorCoverageComplete,
+      ...(row.reviewBinding ? { review_binding: row.reviewBinding } : {}),
+      probe_eligible: row.probeEligible,
       selected_for_search: Boolean(
         plan?.candidates.some(
           (candidate) =>
@@ -1423,15 +1911,17 @@ export async function prepareCandidatePriorSearchDecision(input: {
   };
 }
 
+interface CandidatePriorSearchReceiptState {
+  status: CandidatePriorSearchDecisionArtifact["current_receipt_status"];
+  receipt?: CandidatePriorSearchReceipt;
+  failure?: string;
+}
+
 async function loadCurrentCandidatePriorSearchReceipt(input: {
   run: RunRecord;
   collectAttemptId?: string;
   resultCorpusRaw: string;
-}): Promise<{
-  status: CandidatePriorSearchDecisionArtifact["current_receipt_status"];
-  receipt?: CandidatePriorSearchReceipt;
-  failure?: string;
-}> {
+}): Promise<CandidatePriorSearchReceiptState> {
   const runRoot = path.join(".autolabos", "runs", input.run.id);
   const queryPlanRaw = await safeRead(path.join(runRoot, "collect_query_plan.json"));
   const queryPlan = parseJsonObject(queryPlanRaw);
@@ -1604,9 +2094,12 @@ interface HypothesisProgressStatus {
   source?:
     | "llm"
     | "fallback"
+    | "blocked_independent_review"
     | "blocked_topic_probe_authorization"
+    | "blocked_terminal_topic_memory_persistence"
     | "blocked_candidate_prior_lineage"
     | "blocked_candidate_prior_exhausted"
+    | "blocked_candidate_prior_absorption_coverage"
     | "candidate_prior_search_backtrack";
   fallbackReason?: string;
   candidateCount?: number;
@@ -1720,7 +2213,6 @@ function scoreCandidate(
     candidate.novelty +
     candidate.feasibility +
     candidate.testability +
-    candidate.expected_gain +
     (candidate.groundedness ?? 0) +
     (candidate.causal_clarity ?? 0) +
     (candidate.falsifiability ?? 0) +
@@ -1883,4 +2375,81 @@ function hasRecentHypothesisBacktrackFromQualityGate(run: RunRecord): boolean {
 
 function isWeakEvidenceSeed(evidence: EvidenceRow): boolean {
   return evidence.source_type === "abstract" || estimateEvidenceAdjustment(evidence) <= -0.75;
+}
+
+export function resolveGenerateHypothesesReviewDependencies(
+  deps: Pick<NodeExecutionDeps, "config" | "llm" | "experimentLlm">,
+  overrides?: GenerateHypothesesReviewDependencies
+): GenerateHypothesesReviewDependencies {
+  const proposerIdentity = overrides?.proposerIdentity
+    ?? resolveConfiguredHypothesisLlmIdentity(deps, "research");
+  if (overrides?.reviewer) {
+    return {
+      proposerIdentity,
+      reviewer: overrides.reviewer
+    };
+  }
+  const reviewerLlm = deps.experimentLlm;
+  return {
+    proposerIdentity,
+    ...(reviewerLlm
+      ? {
+          reviewer: {
+            llm: reviewerLlm,
+            identity: resolveConfiguredHypothesisLlmIdentity(
+              deps,
+              "reviewer"
+            )
+          }
+        }
+      : {})
+  };
+}
+
+function resolveConfiguredHypothesisLlmIdentity(
+  deps: Pick<NodeExecutionDeps, "config">,
+  role: "research" | "reviewer"
+): HypothesisLlmIdentity | undefined {
+  const providers = deps.config?.providers;
+  const mode = providers?.llm_mode;
+  if (!mode) {
+    return undefined;
+  }
+  if (mode === "openai_api") {
+    const model = role === "reviewer"
+      ? providers.openai?.experiment_model || providers.openai?.model
+      : providers.openai?.model;
+    return model
+      ? {
+          backend: "responses_api",
+          provider: "openai",
+          model
+        }
+      : undefined;
+  }
+  if (mode === "ollama") {
+    const model = role === "reviewer"
+      ? providers.ollama?.experiment_model
+        || providers.ollama?.research_model
+      : providers.ollama?.research_model;
+    return model
+      ? {
+          backend: "local_inference",
+          provider: "ollama",
+          model
+        }
+      : undefined;
+  }
+  const model = role === "reviewer"
+    ? providers.codex?.experiment_model || providers.codex?.model
+    : providers.codex?.model;
+  return model
+    ? {
+        backend: providers.codex?.text_transport === "cli"
+          ? "codex_cli"
+          : "codex_oauth_responses",
+        provider: "codex",
+        model
+      }
+    : undefined;
 }

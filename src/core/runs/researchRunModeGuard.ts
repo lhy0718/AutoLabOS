@@ -505,7 +505,8 @@ async function validateSuccessorReceiptBinding(input: {
     {
       expectedRunId: receipt.parent_run_id,
       expectedResearchCycle: receipt.parent_research_cycle,
-      contract
+      contract,
+      structuralOnly: true
     }
   );
   reasons.push(...prefixReasons(

@@ -329,13 +329,12 @@ describe("pre-draft critique", () => {
     expect(critique.claim_ceiling_applied).toBe(true);
   });
 
-  it("projects deterministic evidence failures into experiment and statistics requirements", () => {
+  it("projects governed evidence failures into experiment and statistics requirements", () => {
     const critique = buildPreDraftCritique(makePreDraftInput({
       minimumGateCeiling: "blocked_for_paper_scale",
       minimumGateFailedChecks: [
-        "seed_replication",
-        "planned_execution_coverage",
-        "training_budget_depth"
+        "evidence_depth",
+        "results_artifact_comparison"
       ]
     }));
 

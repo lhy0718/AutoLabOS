@@ -3,7 +3,10 @@ import type {
   AnalysisStatisticalSummary
 } from "../resultAnalysis.js";
 import {
-  RESULTS_COMPARISON_DELTA_TOLERANCE,
+  validateEvidenceAdequacyAssessment,
+  type EvidenceAdequacyAssessmentV2
+} from "./evidenceAdequacy.js";
+import {
   validateResultsArtifactV2,
   type ResultsArtifactV2,
   type ResultsComparisonV2,
@@ -11,15 +14,11 @@ import {
   type ResultsObservationV2,
   type ResultsSeriesV2
 } from "./resultsTableSchema.js";
-import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
 
 export type PaperScaleDiagnosticSeverity = "blocking" | "warning";
 
 export type PaperScaleDiagnosticCategory =
-  | "evaluation_sample_size"
   | "statistical_adequacy"
-  | "training_budget"
-  | "execution_coverage"
   | "related_work_depth"
   | "resource_claim";
 
@@ -59,6 +58,92 @@ type PrimaryComparisonSelection =
     comparisonCount: number;
     primaryComparisonId?: string;
   };
+
+export type PaperEvidenceAdequacyState =
+  | "pass"
+  | "fail"
+  | "unknown"
+  | "unverified_missing_assessment"
+  | "invalid"
+  | "primary_mismatch";
+
+export interface PaperEvidenceAdequacyGate {
+  passed: boolean;
+  state: PaperEvidenceAdequacyState;
+  detail: string;
+  measuredValue: string;
+  thresholdValue: string;
+}
+
+export function evaluatePaperEvidenceAdequacy(
+  report: AnalysisReport
+): PaperEvidenceAdequacyGate {
+  const rawAssessment: unknown = report.evidence_adequacy_assessment;
+  const thresholdValue =
+    "valid_assessment;overall_status=pass;all_checks=pass;primary_comparison_binding=match";
+
+  if (rawAssessment === undefined) {
+    return {
+      passed: false,
+      state: "unverified_missing_assessment",
+      detail: "No governed evidence adequacy assessment is attached. Ungoverned evidence summaries are not sufficient for paper-scale promotion.",
+      measuredValue: "assessment=missing;state=unverified_missing_assessment",
+      thresholdValue
+    };
+  }
+
+  const validation = validateEvidenceAdequacyAssessment(rawAssessment);
+  if (!validation.valid || !validation.artifact) {
+    return {
+      passed: false,
+      state: "invalid",
+      detail: `The governed evidence adequacy assessment is invalid: ${validation.reasons.join(", ") || "validation_failed"}.`,
+      measuredValue: `assessment=invalid;issues=${validation.reasons.length}`,
+      thresholdValue
+    };
+  }
+
+  const assessment = validation.artifact;
+  const reportPrimaryComparisonId = typeof report.primary_comparison_id === "string"
+    ? report.primary_comparison_id.trim()
+    : "";
+  if (
+    reportPrimaryComparisonId
+    && assessment.primary_comparison_id !== reportPrimaryComparisonId
+  ) {
+    return {
+      passed: false,
+      state: "primary_mismatch",
+      detail: `The assessment is bound to primary comparison "${assessment.primary_comparison_id}", but the report declares "${reportPrimaryComparisonId}".`,
+      measuredValue: `assessment_primary=${assessment.primary_comparison_id};report_primary=${reportPrimaryComparisonId}`,
+      thresholdValue
+    };
+  }
+
+  const unresolvedChecks = assessment.checks.filter(
+    (check) => check.status !== "pass"
+  );
+  if (assessment.overall_status !== "pass") {
+    const checkDetail = unresolvedChecks.length > 0
+      ? unresolvedChecks.map(formatAssessmentCheck).join("; ")
+      : "no non-pass check details were recorded";
+    return {
+      passed: false,
+      state: assessment.overall_status,
+      detail: `Evidence adequacy overall_status=${assessment.overall_status}. Non-pass checks: ${checkDetail}.`,
+      measuredValue: `overall_status=${assessment.overall_status};non_pass_checks=${unresolvedChecks.length}`,
+      thresholdValue
+    };
+  }
+
+  return {
+    passed: true,
+    state: "pass",
+    detail: `Evidence adequacy overall_status=pass with ${assessment.checks.length} verified checks for primary comparison "${assessment.primary_comparison_id}".`,
+    measuredValue: `overall_status=pass;checks=${assessment.checks.length}`,
+    thresholdValue
+  };
+}
 
 export function evaluatePaperScaleDiagnostics(input: {
   report: AnalysisReport;
@@ -109,140 +194,9 @@ export function evaluatePaperScaleDiagnostics(input: {
     }
   }
 
-  const sampleSummary = extractSampleSummary(statisticalSummary, artifact);
-  if (
-    sampleSummary.minimumCount !== undefined
-    && sampleSummary.minimumCount < GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale
-  ) {
-    diagnostics.push({
-      id: "tiny_eval_sample",
-      severity: "blocking",
-      category: "evaluation_sample_size",
-      source_node: "run_experiments",
-      target_node: "run_experiments",
-      summary: "An explicitly reported evaluation sample is too small for paper-scale claims.",
-      evidence: `Minimum structured confidence-interval sample size is n=${sampleSummary.minimumCount} across ${sampleSummary.reportedCount} matched metric interval(s).`,
-      recommended_action: "Increase the evaluated sample or restrict the claim ceiling to a small-sample screening result.",
-      recheck_condition: `Every explicitly linked interval reports at least ${GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale} evaluated observations, or the claim ceiling is downgraded.`
-    });
-  }
-
-  const selectedComparison =
-    primarySelection.status === "selected" ? primarySelection.value : undefined;
-  const improvementSignal =
-    selectedComparison && comparisonImproves(selectedComparison)
-      ? formatImprovementSignal(selectedComparison)
-      : undefined;
-  const seedSummary = extractSeedSummary(input.report);
-  if (
-    improvementSignal
-    && seedSummary.minimumCount < GATE_THRESHOLDS.minDistinctSeedsForPaperScale
-  ) {
-    diagnostics.push({
-      id: "missing_seed_replication",
-      severity: "blocking",
-      category: "statistical_adequacy",
-      source_node: "run_experiments",
-      target_node: "run_experiments",
-      summary: "The primary comparative improvement lacks explicit repeated-seed support.",
-      evidence: `${improvementSignal} ${
-        seedSummary.evidencePresent
-          ? `Minimum structured seed count is ${seedSummary.minimumCount} across ${seedSummary.reportedCount} seed-coverage entr${seedSummary.reportedCount === 1 ? "y" : "ies"}.`
-          : "No structured seed count is present in statistical_summary.stability_metrics or metrics.condition_results."
-      }`,
-      recommended_action: "Repeat the explicit subject/reference comparison across seeds and report the structured seed count and uncertainty.",
-      recheck_condition: `Structured seed coverage reaches at least ${GATE_THRESHOLDS.minDistinctSeedsForPaperScale}, or the comparative improvement claim is downgraded.`
-    });
-  }
-
-  const executionCoverage = extractExecutionCoverage(input.report);
-  if (
-    executionCoverage.totalTrials !== undefined
-    && executionCoverage.executedTrials !== undefined
-    && executionCoverage.executedTrials < executionCoverage.totalTrials
-  ) {
-    diagnostics.push({
-      id: "incomplete_planned_runs",
-      severity: "blocking",
-      category: "execution_coverage",
-      source_node: "run_experiments",
-      target_node: "run_experiments",
-      summary: "Executed trials do not cover the structured trial total.",
-      evidence: `Executed ${executionCoverage.executedTrials} of ${executionCoverage.totalTrials} declared trial(s) (${formatRatio(executionCoverage.executedTrials, executionCoverage.totalTrials)} coverage).`,
-      recommended_action: "Execute the missing trials or explicitly lower the governed evidence scope.",
-      recheck_condition: "statistical_summary.executed_trials reaches statistical_summary.total_trials, or both the scope and claim ceiling are revised."
-    });
-  }
-
-  const oneItemGain = selectedComparison
-    ? detectOneItemGain(selectedComparison, statisticalSummary)
-    : undefined;
-  if (oneItemGain) {
-    diagnostics.push({
-      id: "single_item_gain",
-      severity: "blocking",
-      category: "statistical_adequacy",
-      source_node: "analyze_results",
-      target_node: "analyze_results",
-      summary: "The primary improvement is consistent with a one-observation change.",
-      evidence: oneItemGain,
-      recommended_action: "Treat the result as a screening signal until a larger paired evaluation or robust repeated-trial analysis supports it.",
-      recheck_condition: "The explicit subject/reference effect exceeds one-observation granularity or is supported by robust paired statistics."
-    });
-  }
-
-  const stepSummary = extractOptimizerStepSummary(input.report);
-  if (
-    improvementSignal
-    && stepSummary.maximumSteps !== undefined
-    && stepSummary.maximumSteps < GATE_THRESHOLDS.minOptimizerStepsForTuningClaim
-  ) {
-    diagnostics.push({
-      id: "thin_training_budget",
-      severity: "warning",
-      category: "training_budget",
-      source_node: "implement_experiments",
-      target_node: "implement_experiments",
-      summary: "The explicit comparative improvement was produced with a smoke-scale optimizer budget.",
-      evidence: `Maximum structured optimizer step count is ${stepSummary.maximumSteps}; reported step counts: ${stepSummary.stepValues.join(", ")}.`,
-      recommended_action: "Increase the training budget or restrict the comparative result to pipeline/preflight evidence.",
-      recheck_condition: `Optimizer steps reach at least ${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim}, or the tuning-effect claim is downgraded.`
-    });
-  }
-
-  const trainingSampleBudget = extractTrainingSampleBudget(input.report);
-  if (
-    improvementSignal
-    && trainingSampleBudget.plannedSamples !== undefined
-    && trainingSampleBudget.actualSamples !== undefined
-    && trainingSampleBudget.actualSamples < trainingSampleBudget.plannedSamples
-  ) {
-    diagnostics.push({
-      id: "training_budget_mismatch",
-      severity: "blocking",
-      category: "training_budget",
-      source_node: "implement_experiments",
-      target_node: "implement_experiments",
-      summary: "The executed training sample budget is below the explicitly recorded plan.",
-      evidence: `Run configuration used at most ${trainingSampleBudget.actualSamples} training sample(s), while its structured planned budget is ${trainingSampleBudget.plannedSamples} (${formatRatio(trainingSampleBudget.actualSamples, trainingSampleBudget.plannedSamples)} coverage).`,
-      recommended_action: "Rerun with the recorded training budget, or govern the experiment and claim ceiling down to the executed budget.",
-      recheck_condition: "The actual training sample budget reaches the explicit planned budget, or both the plan and claim ceiling adopt the smaller budget."
-    });
-  }
-
-  const smokeRisk = detectSmokeOnlyEvidence(statisticalSummary);
-  if (smokeRisk) {
-    diagnostics.push({
-      id: "smoke_only_evidence",
-      severity: "blocking",
-      category: "statistical_adequacy",
-      source_node: "run_experiments",
-      target_node: "run_experiments",
-      summary: "The structured evidence supports only a smoke-level execution claim.",
-      evidence: smokeRisk,
-      recommended_action: "Run repeated trials and emit structured uncertainty or stability evidence before making paper-scale claims.",
-      recheck_condition: `At least ${GATE_THRESHOLDS.minRobustnessTotalTrials} trials are executed, or structured repeated-measure uncertainty or stability evidence is present.`
-    });
+  const evidenceAdequacy = evaluatePaperEvidenceAdequacy(input.report);
+  if (!evidenceAdequacy.passed) {
+    diagnostics.push(buildEvidenceAdequacyDiagnostic(evidenceAdequacy));
   }
 
   const resourceRisk = artifact
@@ -334,227 +288,48 @@ function selectPrimaryComparison(
   };
 }
 
-function comparisonImproves(comparison: ResolvedComparison): boolean {
-  const delta = comparison.comparison.delta;
-  if (Math.abs(delta) <= RESULTS_COMPARISON_DELTA_TOLERANCE) {
-    return false;
-  }
-  return comparison.metric.direction === "lower_better" ? delta < 0 : delta > 0;
+function formatAssessmentCheck(
+  check: EvidenceAdequacyAssessmentV2["checks"][number]
+): string {
+  const reasons = check.reasons.length > 0
+    ? check.reasons.join(",")
+    : "no_reason_recorded";
+  return `${check.check_id}=${check.status}(${reasons})`;
 }
 
-function formatImprovementSignal(comparison: ResolvedComparison): string {
-  const unit = comparison.metric.unit ? `, unit=${comparison.metric.unit}` : "";
-  return `The selected explicit subject/reference comparison improves according to direction=${comparison.metric.direction}${unit}: subject=${formatNumber(comparison.subjectObservation.value)}, reference=${formatNumber(comparison.referenceObservation.value)}, delta=${formatNumber(comparison.comparison.delta)}.`;
-}
-
-function extractSampleSummary(
-  summary: AnalysisStatisticalSummary | undefined,
-  artifact: ResultsArtifactV2 | undefined
-): { minimumCount?: number; reportedCount: number } {
-  if (!artifact) {
-    return { reportedCount: 0 };
-  }
-  const metricIds = new Set(artifact.metrics.map((metric) => metric.id));
-  const sampleCounts = safeArray(summary?.confidence_intervals)
-    .filter((interval) => metricIds.has(interval.metric_key))
-    .map((interval) => asPositiveInteger(interval.sample_size))
-    .filter((value): value is number => value !== undefined);
-  return {
-    minimumCount: minimumDefined(sampleCounts),
-    reportedCount: sampleCounts.length
-  };
-}
-
-function extractSeedSummary(
-  report: AnalysisReport
-): { minimumCount: number; reportedCount: number; evidencePresent: boolean } {
-  const summarySeedCounts = safeArray(report.statistical_summary?.stability_metrics)
-    .filter((entry) => isSeedCoverageKey(entry.key))
-    .map((entry) => asNonNegativeInteger(entry.value))
-    .filter((value): value is number => value !== undefined);
-  const metrics = asRecord(report.metrics);
-  const reportedConditionSeedCounts = asRecordArray(metrics.condition_results)
-    .map(readConditionSeedCount);
-  const conditionSeedCounts = reportedConditionSeedCounts.some((value) => value !== undefined)
-    ? reportedConditionSeedCounts.map((value) => value ?? 0)
-    : [];
-  const seedCounts = [
-    ...summarySeedCounts,
-    ...conditionSeedCounts
-  ];
-  return {
-    minimumCount: minimumDefined(seedCounts) ?? 0,
-    reportedCount: seedCounts.length,
-    evidencePresent: seedCounts.length > 0
-  };
-}
-
-function isSeedCoverageKey(value: string): boolean {
-  const normalized = normalizeEvidenceKey(value);
-  return /(?:^|_)(?:distinct_seed_count|distinct_seeds|completed_seed_count|completed_seeds|executed_seed_count|executed_seeds|seed_count|seeds|num_seeds|number_of_seeds|n_seeds|seed_repetitions|seed_replication_count)$/u.test(
-    normalized
-  );
-}
-
-function extractExecutionCoverage(
-  report: AnalysisReport
-): { totalTrials?: number; executedTrials?: number } {
-  const summary = report.statistical_summary;
-  const portfolio = report.experiment_portfolio;
-  const groupExpectedTrials = safeArray(portfolio?.trial_groups)
-    .map((group) => asNonNegativeInteger(group.expected_trials))
-    .filter((value): value is number => value !== undefined);
-  const groupExecutedTrials = safeArray(portfolio?.trial_groups)
-    .map((group) => asNonNegativeInteger(group.executed_trials))
-    .filter((value): value is number => value !== undefined);
-  const expectedCandidates = [
-    asNonNegativeInteger(summary?.total_trials),
-    asNonNegativeInteger(portfolio?.total_expected_trials),
-    sumDefined(groupExpectedTrials)
-  ].filter((value): value is number => value !== undefined);
-  const executedCandidates = [
-    asNonNegativeInteger(summary?.executed_trials),
-    asNonNegativeInteger(portfolio?.executed_trials),
-    sumDefined(groupExecutedTrials)
-  ].filter((value): value is number => value !== undefined);
+function buildEvidenceAdequacyDiagnostic(
+  gate: PaperEvidenceAdequacyGate
+): PaperScaleDiagnostic {
+  const id = gate.state === "unverified_missing_assessment"
+    ? "evidence_adequacy_unverified"
+    : gate.state === "invalid"
+      ? "evidence_adequacy_invalid"
+      : gate.state === "primary_mismatch"
+        ? "evidence_adequacy_primary_mismatch"
+        : "evidence_adequacy_not_passed";
+  const summary = gate.state === "unverified_missing_assessment"
+    ? "The run has no verified evidence adequacy assessment."
+    : gate.state === "invalid"
+      ? "The evidence adequacy assessment failed integrity validation."
+      : gate.state === "primary_mismatch"
+        ? "The evidence adequacy assessment is bound to a different primary comparison."
+        : `The evidence adequacy assessment is ${gate.state}.`;
+  const redesignRequired =
+    gate.state === "unverified_missing_assessment"
+    || gate.state === "invalid"
+    || gate.state === "primary_mismatch";
 
   return {
-    totalTrials: maximumDefined(expectedCandidates),
-    executedTrials:
-      minimumDefined(executedCandidates)
-      ?? asNonNegativeInteger(report.overview?.execution_runs)
+    id,
+    severity: "blocking",
+    category: "statistical_adequacy",
+    source_node: redesignRequired ? "design_experiments" : "run_experiments",
+    target_node: redesignRequired ? "design_experiments" : "run_experiments",
+    summary,
+    evidence: gate.detail,
+    recommended_action: "Regenerate the contract-bound execution receipt and assessment, then resolve every non-pass check before paper-scale promotion.",
+    recheck_condition: gate.thresholdValue
   };
-}
-
-function readConditionSeedCount(condition: Record<string, unknown>): number | undefined {
-  const declaredCount = asNonNegativeInteger(condition.seed_count);
-  if (!Array.isArray(condition.seeds)) {
-    return declaredCount;
-  }
-
-  const distinctSeeds = new Set(
-    condition.seeds
-      .map(normalizeSeedValue)
-      .filter((value): value is string => value !== undefined)
-  ).size;
-  return declaredCount === undefined
-    ? distinctSeeds
-    : Math.min(distinctSeeds, declaredCount);
-}
-
-function normalizeSeedValue(value: unknown): string | undefined {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  return undefined;
-}
-
-function extractOptimizerStepSummary(
-  report: AnalysisReport
-): { stepValues: number[]; maximumSteps?: number } {
-  const metrics = asRecord(report.metrics);
-  const runConfig = asRecord(metrics.run_config);
-  const stepValues = [
-    runConfig.max_steps,
-    runConfig.optimizer_steps,
-    runConfig.steps_completed,
-    ...asRecordArray(metrics.condition_results).map((condition) => condition.steps_completed)
-  ]
-    .map(asNonNegativeInteger)
-    .filter((value): value is number => value !== undefined);
-  return {
-    stepValues,
-    maximumSteps: maximumDefined(stepValues)
-  };
-}
-
-function extractTrainingSampleBudget(
-  report: AnalysisReport
-): { plannedSamples?: number; actualSamples?: number } {
-  const runConfig = asRecord(asRecord(report.metrics).run_config);
-  const actualSamples = maximumDefined([
-    runConfig.max_train_samples,
-    runConfig.train_samples,
-    runConfig.training_examples,
-    runConfig.max_training_examples
-  ]
-    .map(asNonNegativeInteger)
-    .filter((value): value is number => value !== undefined));
-  const plannedSamples = maximumDefined([
-    runConfig.planned_max_train_samples,
-    runConfig.planned_train_samples,
-    runConfig.planned_training_examples,
-    runConfig.expected_train_samples,
-    runConfig.expected_training_examples
-  ]
-    .map(asNonNegativeInteger)
-    .filter((value): value is number => value !== undefined));
-  return { plannedSamples, actualSamples };
-}
-
-function detectOneItemGain(
-  comparison: ResolvedComparison,
-  summary: AnalysisStatisticalSummary | undefined
-): string | undefined {
-  if (!comparisonImproves(comparison)) {
-    return undefined;
-  }
-  const unitScale = oneItemUnitScale(comparison.metric.unit);
-  if (unitScale === undefined) {
-    return undefined;
-  }
-  const sampleSizes = new Set(
-    safeArray(summary?.confidence_intervals)
-      .filter((interval) => interval.metric_key === comparison.metric.id)
-      .map((interval) => asPositiveInteger(interval.sample_size))
-      .filter((value): value is number => value !== undefined)
-  );
-  if (sampleSizes.size !== 1) {
-    return undefined;
-  }
-  const sampleSize = [...sampleSizes][0];
-  const itemEquivalent = Math.abs(comparison.comparison.delta) * sampleSize * unitScale;
-  if (Math.abs(itemEquivalent - 1) > 0.05) {
-    return undefined;
-  }
-  return `The explicit ${comparison.metric.direction} delta ${formatNumber(comparison.comparison.delta)} at unit=${comparison.metric.unit} and n=${sampleSize} corresponds to approximately ${formatNumber(itemEquivalent)} observation.`;
-}
-
-function oneItemUnitScale(unit: string | undefined): number | undefined {
-  const normalized = normalizeUnit(unit);
-  if (["ratio", "proportion", "fraction", "rate"].includes(normalized)) {
-    return 1;
-  }
-  if (["%", "percent", "percentage", "percentagepoint", "percentagepoints", "pp"].includes(normalized)) {
-    return 0.01;
-  }
-  return undefined;
-}
-
-function detectSmokeOnlyEvidence(
-  summary: AnalysisStatisticalSummary | undefined
-): string | undefined {
-  const executedTrials = asNonNegativeInteger(summary?.executed_trials);
-  const totalTrials = asNonNegativeInteger(summary?.total_trials);
-  const observedTrials = executedTrials ?? totalTrials;
-  if (
-    observedTrials === undefined
-    || observedTrials <= 0
-    || observedTrials >= GATE_THRESHOLDS.minRobustnessTotalTrials
-  ) {
-    return undefined;
-  }
-
-  const confidenceIntervalCount = safeArray(summary?.confidence_intervals).length;
-  const stabilityMetricCount = safeArray(summary?.stability_metrics).length;
-  if (confidenceIntervalCount > 0 || stabilityMetricCount > 0) {
-    return undefined;
-  }
-  const effectEstimateCount = safeArray(summary?.effect_estimates).length;
-  return `Structured evidence reports total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, and effect_estimates=${effectEstimateCount}.`;
 }
 
 function detectResourceClaimRisk(
@@ -628,67 +403,12 @@ function normalizeUnit(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase().replace(/[\s_-]+/gu, "");
 }
 
-function normalizeEvidenceKey(value: string): string {
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/gu, "_")
-    .replace(/^_+|_+$/gu, "");
-}
-
 function safeArray<T>(value: T[] | undefined): T[] {
   return Array.isArray(value) ? value : [];
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-function asRecordArray(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value)
-    ? value.filter(
-      (item): item is Record<string, unknown> =>
-        Boolean(item) && typeof item === "object" && !Array.isArray(item)
-    )
-    : [];
-}
-
-function asPositiveInteger(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0
-    ? value
-    : undefined;
 }
 
 function asNonNegativeInteger(value: unknown): number | undefined {
   return typeof value === "number" && Number.isInteger(value) && value >= 0
     ? value
     : undefined;
-}
-
-function minimumDefined(values: number[]): number | undefined {
-  return values.length > 0
-    ? values.reduce((minimum, value) => value < minimum ? value : minimum)
-    : undefined;
-}
-
-function maximumDefined(values: number[]): number | undefined {
-  return values.length > 0
-    ? values.reduce((maximum, value) => value > maximum ? value : maximum)
-    : undefined;
-}
-
-function sumDefined(values: number[]): number | undefined {
-  return values.length > 0
-    ? values.reduce((sum, value) => sum + value, 0)
-    : undefined;
-}
-
-function formatRatio(numerator: number, denominator: number): string {
-  return denominator > 0 ? `${((numerator / denominator) * 100).toFixed(1)}%` : "unknown";
-}
-
-function formatNumber(value: number): string {
-  return Number(value.toPrecision(6)).toString();
 }

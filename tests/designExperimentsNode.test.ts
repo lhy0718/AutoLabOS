@@ -25,7 +25,12 @@ import {
   buildTopicMemoryDatabasePath,
   TopicMemoryStore
 } from "../src/core/runs/topicMemoryStore.js";
-import type { TopicMemoryLedger } from "../src/core/topicMemory.js";
+import {
+  buildTopicFormulationDescriptor,
+  type TopicMemoryLedger
+} from "../src/core/topicMemory.js";
+import { runTopicMemorySemanticAudit } from "../src/core/topicMemorySemanticAudit.js";
+import { resolveHypothesisReviewBoundary } from "../src/core/analysis/hypothesisReviewProvenance.js";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
@@ -49,6 +54,25 @@ const ORIGINAL_CWD = process.cwd();
 afterEach(() => {
   process.chdir(ORIGINAL_CWD);
 });
+
+class DistinctSemanticReviewLlm extends MockLLMClient {
+  override async complete(prompt: string): Promise<{ text: string }> {
+    const payloadText = prompt.slice(prompt.lastIndexOf("\n\n") + 2);
+    const payload = JSON.parse(payloadText) as {
+      prior_records?: Array<{ record_sha256: string }>;
+    };
+    return {
+      text: JSON.stringify({
+        comparisons: (payload.prior_records ?? []).map((record) => ({
+          prior_record_sha256: record.record_sha256,
+          contribution_object_relation: "distinct",
+          method_mechanism_relation: "distinct",
+          rationale: "The fixture candidate changes both core research axes."
+        }))
+      })
+    };
+  }
+}
 
 function makeRun(runId: string): RunRecord {
   return {
@@ -554,5 +578,92 @@ describe("design_experiments topic-memory head binding", () => {
     expect(activeCandidate.topic_memory?.ledger_sha256).toBe(
       currentLedger.ledger_sha256
     );
+  });
+
+  it("preserves a current-ledger semantic audit through portfolio rebase", async () => {
+    const runId = "run_design_current_semantic_memory";
+    const researchCycle = 4;
+    const seed = buildTopicProbePortfolioFixture({ runId, researchCycle });
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-memory-"));
+    const store = new TopicMemoryStore(path.join(root, "topic-memory.sqlite"));
+    let currentLedger: TopicMemoryLedger;
+    try {
+      store.append({
+        descriptor: buildTopicFormulationDescriptor({
+          statement:
+            "Estimate calibrated abstention from conflicting audio and text evidence.",
+          contribution_claim:
+            "Calibrated abstention under cross-modal evidence conflict.",
+          dataset_task_bench: "A licensed multimodal contradiction benchmark.",
+          comparator: "A declared multimodal reference.",
+          primary_metric: "selective_risk",
+          metric_unit: "proportion",
+          meaningful_effect: "At least five percentage points.",
+          minimum_publishable_evidence:
+            "Repeated independent units with paired uncertainty."
+        }),
+        kill_scope: "exact_formulation",
+        disposition_category: "prior_work_absorbed",
+        public_reason_codes: ["closest_prior_absorbs_contribution"],
+        source_run_id: "run_unrelated_memory",
+        source_research_cycle: 1,
+        source_full_text_evidence_ids: ["source_one", "source_two"],
+        source_topic_content_sha256: "c".repeat(64),
+        source_decision_content_sha256: "d".repeat(64)
+      });
+      currentLedger = store.loadLedger();
+    } finally {
+      store.close();
+    }
+
+    const boundary = resolveHypothesisReviewBoundary({
+      proposerLlm: new MockLLMClient(),
+      proposerIdentity: { identity: "portfolio_proposer" },
+      reviewer: {
+        llm: new DistinctSemanticReviewLlm(),
+        identity: { identity: "semantic_reviewer" },
+        topicMemoryTransmissionPolicy: {
+          reviewer_trust_class: "local",
+          payload_mode: "raw_descriptors",
+          raw_descriptor_consent: true
+        }
+      }
+    });
+    const audits = new Map();
+    for (const candidate of seed.portfolio.candidates) {
+      const descriptor = candidate.topic_memory?.descriptor;
+      if (!descriptor) {
+        throw new Error("semantic_rebase_descriptor_missing");
+      }
+      audits.set(candidate.source_candidate_id, await runTopicMemorySemanticAudit({
+        boundary,
+        ledger: currentLedger,
+        descriptor
+      }));
+    }
+    const fixture = buildTopicProbePortfolioFixture({
+      runId,
+      researchCycle,
+      topicMemoryLedger: currentLedger,
+      topicSemanticAuditsByCandidateId: audits
+    });
+
+    const resolution = rebaseTopicPortfolioToCurrentMemory({
+      portfolio: fixture.portfolio,
+      currentLedger
+    });
+
+    expect(resolution.valid, resolution.reasons.join(", ")).toBe(true);
+    expect(resolution.snapshot_relation).toBe("current");
+    expect(
+      resolution.portfolio?.candidates.every(
+        (candidate) => candidate.topic_memory?.semantic_audit?.ledger_sha256
+          === currentLedger.ledger_sha256
+      )
+    ).toBe(true);
+    expect(validateTopicPortfolioArtifact(
+      JSON.stringify(resolution.portfolio),
+      { expectedRunId: runId, expectedResearchCycle: researchCycle }
+    )).toMatchObject({ valid: true, reasons: [] });
   });
 });

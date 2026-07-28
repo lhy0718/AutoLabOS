@@ -257,9 +257,9 @@ describe("applyWithSafetyNet", () => {
   it("commits only after matched re-evaluation improves and passes explicit criteria", async () => {
     const workspace = await createWorkspace();
     const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    const { stdout: gitCommitBefore } = await execFile("git", ["rev-parse", "HEAD"], { cwd: workspace });
     const evaluator = createPhaseEvaluator({ before: 0.61, after: 0.84 });
     const runValidateHarness = vi.fn().mockResolvedValue(undefined);
-    const gitCommit = vi.fn().mockResolvedValue(undefined);
 
     const result = await applyWithSafetyNet(
       {
@@ -278,9 +278,7 @@ describe("applyWithSafetyNet", () => {
         }
       },
       {
-        runValidateHarness,
-        gitRevParseHead: vi.fn().mockResolvedValue("abc123"),
-        gitCommit
+        runValidateHarness
       }
     );
 
@@ -295,18 +293,24 @@ describe("applyWithSafetyNet", () => {
     expect(result.subjectHashAfter).toMatch(/^[a-f0-9]{64}$/u);
     expect(result.subjectHashAfter).not.toBe(result.subjectHashBefore);
     expect(result.blockedReason).toBeNull();
+    expect(result.gitCommitBefore).toBe(gitCommitBefore.trim());
+    expect(result.gitCommitAfter).toMatch(/^[a-f0-9]{40}$/u);
+    expect(result.gitCommitAfter).not.toBe(result.gitCommitBefore);
+    expect(result.commitVerificationPassed).toBe(true);
     expect(evaluator.mock.calls.map(([input]) => input.phase)).toEqual(["before", "after"]);
     expect(runValidateHarness).toHaveBeenCalledTimes(1);
-    expect(gitCommit).toHaveBeenCalledWith(
-      workspace,
-      targetFile,
-      expect.stringContaining("auto-apply meta-harness")
-    );
     expect(await fs.readFile(targetFile, "utf8")).toBe("improved prompt\n");
+    const { stdout: committedPrompt } = await execFile(
+      "git",
+      ["show", "HEAD:node-prompts/analyze_results.md"],
+      { cwd: workspace }
+    );
+    expect(committedPrompt).toBe("improved prompt\n");
 
     const audit = await readLastAuditEntry(result.auditLogPath);
     expect(audit).toMatchObject({
       applied: true,
+      commit_verification_passed: true,
       structural_validation_passed: true,
       promotion_allowed: true,
       score_before: 0.61,
@@ -354,11 +358,6 @@ describe("applyWithSafetyNet", () => {
     const workspace = await createWorkspace();
     const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
     const original = await fs.readFile(targetFile, "utf8");
-    await execFile("git", ["init"], { cwd: workspace });
-    await execFile("git", ["config", "user.name", "Harness Test"], { cwd: workspace });
-    await execFile("git", ["config", "user.email", "harness@example.invalid"], { cwd: workspace });
-    await execFile("git", ["add", "node-prompts/analyze_results.md"], { cwd: workspace });
-    await execFile("git", ["commit", "-m", "seed"], { cwd: workspace });
     const hookPath = path.join(workspace, ".git", "hooks", "pre-commit");
     await fs.writeFile(hookPath, "#!/bin/sh\nexit 1\n", "utf8");
     await fs.chmod(hookPath, 0o755);
@@ -385,6 +384,116 @@ describe("applyWithSafetyNet", () => {
     expect(result.blockedReason).toContain("commit_failed");
     expect(stagedNames.trim()).toBe("");
     expect(await fs.readFile(targetFile, "utf8")).toBe(original);
+  });
+
+  it("blocks before evaluation when the worktree is not clean", async () => {
+    const workspace = await createWorkspace();
+    const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    await fs.writeFile(path.join(workspace, "unrelated.txt"), "dirty\n", "utf8");
+    const evaluator = createPhaseEvaluator({ before: 0.4, after: 0.9 });
+
+    const result = await applyWithSafetyNet({
+      targetFile,
+      newContent: "candidate prompt\n",
+      source: "meta-harness",
+      candidateId: "candidate-dirty-worktree",
+      evaluator
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.blockedReason).toContain("worktree_not_clean");
+    expect(evaluator).not.toHaveBeenCalled();
+    expect(await fs.readFile(targetFile, "utf8")).toBe("original prompt\n");
+  });
+
+  it("does not overwrite a target changed by the evaluator", async () => {
+    const workspace = await createWorkspace();
+    const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    const evaluator: HarnessEvaluator = vi.fn(async ({ phase, subjectHash }) => {
+      if (phase === "after") {
+        await fs.writeFile(targetFile, "concurrent evaluator edit\n", "utf8");
+      }
+      return evaluationResult({
+        score: phase === "before" ? 0.4 : 0.9,
+        subjectHash
+      });
+    });
+
+    const result = await applyWithSafetyNet(
+      {
+        targetFile,
+        newContent: "candidate prompt\n",
+        source: "meta-harness",
+        candidateId: "candidate-concurrent-edit",
+        evaluator
+      },
+      { runValidateHarness: vi.fn().mockResolvedValue(undefined) }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(result.blockedReason).toContain("candidate_subject_hash_changed_during_evaluation");
+    expect(result.rolledBack).toBe(false);
+    expect(result.rollbackReason).toContain("rollback_skipped_concurrent_target_change");
+    expect(await fs.readFile(targetFile, "utf8")).toBe("concurrent evaluator edit\n");
+  });
+
+  it("blocks when HEAD changes during evaluation", async () => {
+    const workspace = await createWorkspace();
+    const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    const evaluator = createPhaseEvaluator({ before: 0.4, after: 0.9 });
+    const gitRevParseHead = vi.fn()
+      .mockResolvedValueOnce("head-before")
+      .mockResolvedValueOnce("head-after");
+
+    const result = await applyWithSafetyNet(
+      {
+        targetFile,
+        newContent: "candidate prompt\n",
+        source: "meta-harness",
+        candidateId: "candidate-head-race",
+        evaluator
+      },
+      {
+        runValidateHarness: vi.fn().mockResolvedValue(undefined),
+        gitRevParseHead
+      }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(result.blockedReason).toContain("git_head_changed");
+    expect(result.rolledBack).toBe(true);
+    expect(await fs.readFile(targetFile, "utf8")).toBe("original prompt\n");
+  });
+
+  it("fails closed when the committed blob does not match the candidate", async () => {
+    const workspace = await createWorkspace();
+    const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    const evaluator = createPhaseEvaluator({ before: 0.4, after: 0.9 });
+    const gitRevParseHead = vi.fn()
+      .mockResolvedValueOnce("head-before")
+      .mockResolvedValueOnce("head-before")
+      .mockResolvedValueOnce("head-after");
+
+    const result = await applyWithSafetyNet(
+      {
+        targetFile,
+        newContent: "candidate prompt\n",
+        source: "meta-harness",
+        candidateId: "candidate-blob-mismatch",
+        evaluator
+      },
+      {
+        runValidateHarness: vi.fn().mockResolvedValue(undefined),
+        gitRevParseHead,
+        gitCommit: vi.fn().mockResolvedValue(undefined),
+        gitReadFileAtCommit: vi.fn().mockResolvedValue("different committed prompt\n")
+      }
+    );
+
+    expect(result.applied).toBe(false);
+    expect(result.promotionAllowed).toBe(false);
+    expect(result.commitVerificationPassed).toBe(false);
+    expect(result.blockedReason).toContain("commit_verification_failed: subject_hash_mismatch");
   });
 
   it("rejects target files outside node-prompts", async () => {
@@ -443,5 +552,10 @@ async function createWorkspace(): Promise<string> {
   await fs.mkdir(path.join(workspace, "node-prompts"), { recursive: true });
   await fs.mkdir(path.join(workspace, ".autolabos"), { recursive: true });
   await fs.writeFile(path.join(workspace, "node-prompts", "analyze_results.md"), "original prompt\n", "utf8");
+  await execFile("git", ["init"], { cwd: workspace });
+  await execFile("git", ["config", "user.name", "Harness Test"], { cwd: workspace });
+  await execFile("git", ["config", "user.email", "harness@example.invalid"], { cwd: workspace });
+  await execFile("git", ["add", "node-prompts/analyze_results.md"], { cwd: workspace });
+  await execFile("git", ["commit", "-m", "seed"], { cwd: workspace });
   return workspace;
 }

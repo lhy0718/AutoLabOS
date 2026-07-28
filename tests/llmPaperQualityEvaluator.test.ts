@@ -340,5 +340,8 @@ describe("runLLMPaperQualityEvaluation", () => {
     expect(capturedPrompt.indexOf('"id": "comparison_primary"')).toBeLessThan(
       capturedPrompt.indexOf('"id": "comparison_secondary"')
     );
+    expect(capturedPrompt).toContain("frozen evidence-contract");
+    expect(capturedPrompt).toContain("valid deterministic exhaustive design");
+    expect(capturedPrompt).not.toContain("missing independent repetitions");
   });
 });

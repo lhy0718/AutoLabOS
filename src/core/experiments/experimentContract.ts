@@ -53,7 +53,10 @@ export interface ExperimentContract {
   /** Conditions under which the experiment should be stopped early. */
   abort_condition: string;
 
-  /** Rule for deciding whether to keep or discard the result. */
+  /**
+   * Outcome-blind retention and classification rule.
+   * Contract-valid executions must remain available regardless of effect direction.
+   */
   keep_or_discard_rule: string;
 
   /** Explicit baselines/comparators expected in the design. */
@@ -126,7 +129,9 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
     additional_changes: confounded ? additionalChanges : undefined,
     expected_metric_effect: input.expectedMetricEffect || "(not specified)",
     abort_condition: input.abortCondition || "No explicit abort condition defined.",
-    keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise.",
+    keep_or_discard_rule:
+      input.keepOrDiscardRule
+      || "Retain every contract-valid execution regardless of outcome direction; classify it under the frozen analysis protocol.",
     baselines: baselines.length > 0 ? baselines : undefined,
     selected_design: selectedDesignTitle
       ? {
@@ -232,6 +237,16 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
       `Baseline requirement unmet: brief requires at least ${contract.brief_required_baseline_count} baseline(s), but the design declares ${(contract.baselines?.length ?? 0)}.`
     );
   }
+  if (isOutcomeDependentRetentionRule(contract.keep_or_discard_rule)) {
+    issues.push(
+      "Outcome-dependent keep/discard rule: retain every contract-valid execution regardless of observed effect direction."
+    );
+  }
+  if (isOutcomeDependentAbortCondition(contract.abort_condition)) {
+    issues.push(
+      "Outcome-dependent abort condition: early stopping may depend only on predeclared safety, validity, or resource conditions, not the observed effect direction."
+    );
+  }
 
   // Enhanced confounding detection (Target 3): heuristic multi-change detection
   const confoundingHints = detectConfoundingHints(contract);
@@ -240,6 +255,33 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+function isOutcomeDependentRetentionRule(rule: string): boolean {
+  const normalized = rule.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  const outcomeCondition =
+    /\b(?:keep|retain|include|accept)\b[\s\S]{0,80}\b(?:if|only if|when)\b[\s\S]{0,100}\b(?:improv|gain|better|higher|lower|positive|significant|meet|exceed|win)/u;
+  const adverseDiscard =
+    /\b(?:discard|drop|exclude|reject|remove)\b[\s\S]{0,100}\b(?:no improvement|not improve|worse|negative|null|insignificant|fail|below)/u;
+  return outcomeCondition.test(normalized) || adverseDiscard.test(normalized);
+}
+
+function isOutcomeDependentAbortCondition(condition: string): boolean {
+  const normalized = condition.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const allowedBoundary =
+    /\b(?:safety|harm|privacy|ethical|validity|invalid|corrupt|contaminat|leakage|resource|budget|memory|out of memory|oom|timeout|hardware|data integrity|missing|incomplete|schema|execution failure)\b/u;
+  if (allowedBoundary.test(normalized)) {
+    return false;
+  }
+  return /\b(?:improv|gain|better|worse|drop|decreas|increas|below baseline|above baseline|positive|negative|null|signific|effect direction|objective (?:is )?met|exceed)\w*\b/u.test(
+    normalized
+  );
 }
 
 interface HistoricalExperimentContractV1

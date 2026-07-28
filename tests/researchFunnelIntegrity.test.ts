@@ -24,11 +24,13 @@ import type {
 import {
   PRIOR_ABSORPTION_AXES,
   buildPriorAbsorptionMatrix,
+  parsePriorAbsorptionAxisVerificationResponse,
   projectPriorAbsorptionCandidate,
   type PriorAbsorptionAssessment,
   type PriorAbsorptionEvidenceSeed
 } from "../src/core/priorAbsorption.js";
 import { makeTopicProbeComputeBudgetDeclaration } from "./support/topicProbeComputeBudget.js";
+import { makeIndependentHypothesisReviewProvenance } from "./support/hypothesisReviewProvenance.js";
 
 const GENERATED_AT = "2026-01-01T00:00:00.000Z";
 const RUN_ID = "run_integrity_fixture";
@@ -54,6 +56,57 @@ describe("research funnel semantic integrity", () => {
       approvedCandidateIds: [ROUTE_IDS[0]],
       reasons: []
     });
+  });
+
+  it("rejects a re-bound review artifact when independent provenance is removed", () => {
+    const fixture = buildClosedChainFixture();
+    const reviewsWithoutProvenance = fixture.boundReviews.map((review) => {
+      const { provenance: _provenance, ...rest } = review;
+      return rest;
+    });
+    const reviewsRaw = serializeJsonl(reviewsWithoutProvenance);
+    const portfolio = replaceSourceBinding(
+      fixture.portfolio,
+      "hypothesis_generation/reviews.jsonl",
+      reviewsRaw
+    );
+    const validation = validateResearchFunnelClosedChain({
+      ...fixture.input,
+      reviewsRaw,
+      portfolioRaw: JSON.stringify(portfolio, null, 2),
+      decisionRaw: undefined,
+      requireDecision: false
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.reasons).toContain(
+      "research_funnel_review_provenance_not_independent:route_alpha"
+    );
+  });
+
+  it("rejects a review disposition that disagrees with the bound review artifact", () => {
+    const fixture = buildClosedChainFixture();
+    const reboundReviews = structuredClone(fixture.boundReviews);
+    reboundReviews[0]!.keep = false;
+    const reviewsRaw = serializeJsonl(reboundReviews);
+    const portfolio = replaceSourceBinding(
+      fixture.portfolio,
+      "hypothesis_generation/reviews.jsonl",
+      reviewsRaw
+    );
+
+    const validation = validateResearchFunnelClosedChain({
+      ...fixture.input,
+      reviewsRaw,
+      portfolioRaw: JSON.stringify(portfolio, null, 2),
+      decisionRaw: undefined,
+      requireDecision: false
+    });
+
+    expect(validation.valid).toBe(false);
+    expect(validation.reasons).toContain(
+      `research_funnel_review_disposition_mismatch:${ROUTE_IDS[0]}`
+    );
   });
 
   it("rejects forged candidate gates even after candidate and portfolio hashes are recomputed", () => {
@@ -689,7 +742,7 @@ function passingPriorAbsorptionMatrix(
       independent_evidence_ids: independentEvidenceIds
     }))
   );
-  return buildPriorAbsorptionMatrix({
+  const input = {
     candidates,
     evidence: evidenceRows,
     assessments,
@@ -697,6 +750,35 @@ function passingPriorAbsorptionMatrix(
     researchCycle: RESEARCH_CYCLE,
     generatedAt: GENERATED_AT,
     assessmentSource: "llm_structured_comparison"
+  } as const;
+  const provisional = buildPriorAbsorptionMatrix(input);
+  const axisVerifications = parsePriorAbsorptionAxisVerificationResponse(
+    JSON.stringify({
+      verifications: provisional.candidates.flatMap((candidateRow) =>
+        candidateRow.comparisons.flatMap((comparison) =>
+          comparison.axes.map((axis) => ({
+            candidate_id: candidateRow.candidate_id,
+            prior_paper_id: comparison.prior_paper_id,
+            axis: axis.axis,
+            reported_relation: axis.relation,
+            verification_input_sha256: axis.verification_input_sha256,
+            verdict: "supported",
+            rationale: `The fixture independently verifies ${axis.axis}.`
+          }))
+        )
+      )
+    }),
+    {
+      verifier_id: "fixture_axis_verifier",
+      provider: "fixture_provider",
+      model: "fixture_review_model",
+      verification_run_id: "fixture_verification_run",
+      context_isolated: true
+    }
+  );
+  return buildPriorAbsorptionMatrix({
+    ...input,
+    axisVerifications
   });
 }
 
@@ -782,6 +864,7 @@ function review(candidateId: string): HypothesisReview {
     limitation_reflection: 4,
     measurement_readiness: 4,
     strengths: ["The comparison and falsifier are explicit."],
-    weaknesses: ["The claim is limited to controlled campaigns."]
+    weaknesses: ["The claim is limited to controlled campaigns."],
+    provenance: makeIndependentHypothesisReviewProvenance(candidateId)
   };
 }

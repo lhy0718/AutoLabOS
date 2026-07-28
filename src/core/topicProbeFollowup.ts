@@ -13,6 +13,7 @@ import {
   type TopicPortfolioCandidate
 } from "./researchFunnel.js";
 import { isPriorAbsorptionCandidateProjection } from "./priorAbsorption.js";
+import { isCandidatePriorSearchReviewBinding } from "./candidatePriorSearch.js";
 import { isTopicProbeComputeBudgetLimits } from "./topicProbeComputeBudget.js";
 import {
   buildGuidedResearchBriefMarkdown,
@@ -119,6 +120,7 @@ const TOPIC_PORTFOLIO_CANDIDATE_FIELDS = new Set([
   "unresolved_evidence_links",
   "closest_prior_paper_ids",
   "closest_prior_full_text_paper_ids",
+  "candidate_prior_search",
   "prior_absorption",
   "closest_prior_non_overlap",
   "reviewer_absorption_objection",
@@ -336,7 +338,8 @@ function collectSourceChainReasons(
     {
       expectedRunId: input.contract.run_id,
       expectedResearchCycle: input.contract.research_cycle,
-      contract: input.contract
+      contract: input.contract,
+      structuralOnly: true
     }
   );
   for (const reason of outcomeValidation.reasons) {
@@ -1023,6 +1026,10 @@ function isTopicPortfolioCandidate(
     && isStringArray(value.unresolved_evidence_links)
     && isStringArray(value.closest_prior_paper_ids)
     && isStringArray(value.closest_prior_full_text_paper_ids)
+    && (
+      value.candidate_prior_search === undefined
+      || isCandidatePriorSearchReviewBinding(value.candidate_prior_search)
+    )
     && (
       value.prior_absorption === undefined
       || isPriorAbsorptionCandidateProjection(value.prior_absorption)

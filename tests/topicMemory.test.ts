@@ -178,7 +178,7 @@ describe("topic memory", () => {
     });
   });
 
-  it("leaves an unrelated research object clear", () => {
+  it("requires semantic review before clearing a lexically unrelated research object", () => {
     const unrelated = formulation({
       contribution_claim:
         "Calibrate abstention under multimodal evidence conflicts.",
@@ -191,8 +191,13 @@ describe("topic memory", () => {
     });
 
     expect(evaluateTopicMemory(killed(), unrelated)).toMatchObject({
-      disposition: "clear",
-      blocked: false
+      disposition: "blocked",
+      blocked: true,
+      semantic_audit_required: true,
+      semantic_audit_valid: false,
+      reason_codes: expect.arrayContaining([
+        "topic_memory_semantic_audit_required"
+      ])
     });
   });
 

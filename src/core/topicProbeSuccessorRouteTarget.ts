@@ -203,7 +203,8 @@ function collectSourceReasons(
     {
       expectedRunId: input.contract.run_id,
       expectedResearchCycle: input.contract.research_cycle,
-      contract: input.contract
+      contract: input.contract,
+      structuralOnly: true
     }
   );
   reasons.push(...outcomeValidation.reasons.map(

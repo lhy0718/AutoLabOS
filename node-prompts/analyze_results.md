@@ -17,7 +17,8 @@ Use only facts explicitly present in the payload.
 Do not invent metrics, thresholds, failure causes, or comparisons.
 Do not reinterpret a treatment-only or unbound metric interval as an effect interval. Preserve comparison id, estimand, metric scale, fresh/cached trial source, and sample size when those fields are present; otherwise report the effect interval as missing.
 If a failure cause is uncertain, label it as a risk or remaining uncertainty.
-Report raw denominators and correct-count changes whenever accuracy deltas are used.
-If a headline gain is explainable by one changed evaluation example, classify it as a pilot/screening signal rather than a stable effect.
-Flag missing repeated seeds, tiny evaluation samples, and smoke-scale optimizer steps as evidence-ceiling blockers for paper-scale claims.
-Keep runtime/VRAM as diagnostics unless repeated condition-level resource aggregates support an efficiency claim.
+Report raw denominators and changed-unit counts whenever a bounded or proportion-based delta is used.
+Judge effect granularity, independent coverage, repetition, and execution depth against the frozen evidence contract and the declared stochastic or deterministic design; do not impose a universal sample, seed, or step threshold.
+If the observed contrast is at the minimum attainable resolution or a single independent-unit change can explain it, enforce the contract's declared claim ceiling unless its prespecified robustness checks pass.
+Flag missing or failed contract checks as evidence-ceiling blockers, and preserve valid deterministic exhaustive designs without inventing a repetition requirement.
+Keep time, memory, and accelerator use as diagnostics unless repeated condition-level resource aggregates support an efficiency claim.

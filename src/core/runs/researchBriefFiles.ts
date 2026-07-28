@@ -190,7 +190,7 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
     lines: [
       "- dataset(s):",
       "- task type:",
-      "- train/eval protocol:",
+      "- execution/evaluation protocol:",
       "- split or validation discipline:",
       "- known limitations:"
     ]

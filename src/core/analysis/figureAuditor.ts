@@ -191,14 +191,8 @@ export async function checkFigureEvidenceScale(input: FigureAuditInput): Promise
       || report.objective_metric?.raw
       || ""
   });
-  const relevantDiagnostics = diagnosticSummary.diagnostics.filter((diagnostic) =>
-    [
-      "missing_seed_replication",
-      "single_item_gain",
-      "incomplete_planned_runs",
-      "thin_training_budget",
-      "training_budget_mismatch"
-    ].includes(diagnostic.id)
+  const relevantDiagnostics = diagnosticSummary.diagnostics.filter(
+    (diagnostic) => diagnostic.category === "statistical_adequacy"
   );
   if (relevantDiagnostics.length === 0) {
     return [];
@@ -219,7 +213,7 @@ export async function checkFigureEvidenceScale(input: FigureAuditInput): Promise
         issueType: FIGURE_EVIDENCE_SCALE_ISSUE_TYPE,
         severity: hasBlockingDiagnostic && !explicitlyDescriptive ? "severe" : "warning",
         description: `Figure ${figureId} presents comparative performance metrics beyond the supported evidence scale: ${relevantDiagnostics.map((diagnostic) => diagnostic.summary).join(" ")}`,
-        recommendedAction: "Add valid repetition-level uncertainty and complete the approved execution scope, or label the figure as descriptive/incomplete and move it out of the main-result role.",
+        recommendedAction: "Resolve the frozen evidence-contract and primary-comparison diagnostics, or label the figure under the approved descriptive claim ceiling and move it out of the main-result role.",
         evidenceAlignmentStatus: "misaligned",
         empiricalValidityImpact: hasBlockingDiagnostic ? "major" : "minor",
         publicationReadiness: hasBlockingDiagnostic ? "not_ready" : "needs_revision",

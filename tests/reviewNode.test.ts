@@ -6,6 +6,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH
+} from "../src/core/analysis/evidenceAdequacy.js";
+import { buildExperimentContract } from "../src/core/experiments/experimentContract.js";
 import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
@@ -231,6 +241,138 @@ function canonicalResultsFixture(
       ? { primary_comparison_id: comparisonId }
       : {})
   };
+}
+
+async function seedEvidenceAdequacy(
+  run: RunRecord,
+  runDir: string,
+  options: {
+    primaryComparisonId?: string;
+    adequate?: boolean;
+  } = {}
+): Promise<void> {
+  const primaryComparisonId =
+    options.primaryComparisonId ?? "declared_primary_comparison";
+  const adequate = options.adequate ?? true;
+  const plannedUnitIds = adequate
+    ? ["evaluation_unit_1"]
+    : ["evaluation_unit_1", "evaluation_unit_2"];
+  const observedUnitIds = ["evaluation_unit_1"];
+  const populationManifestSha256 = hashCanonical({
+    independent_unit_ids: plannedUnitIds
+  });
+  const observedPopulationManifestSha256 = hashCanonical({
+    independent_unit_ids: observedUnitIds
+  });
+  const evidenceContract = buildEvidenceAdequacyContract({
+    primaryComparisonId,
+    designSource: {
+      kind: "deterministic_exhaustive_manifest",
+      contentSha256: populationManifestSha256
+    },
+    independentUnit: {
+      key: "evaluation unit identity",
+      analysisUnit: "deterministic evaluation outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "deterministic_exhaustive",
+      targetUniqueUnits: plannedUnitIds.length,
+      targetDenominatorPerArm: plannedUnitIds.length,
+      populationManifestSha256
+    },
+    requiredContrast: {
+      arms: ["candidate_series", "reference_series"],
+      paired: false,
+      requiredCompletePairs: null
+    },
+    uncertaintyRequirement: {
+      mode: "none",
+      deterministicExhaustiveRationale:
+        "The complete declared fixture population is scored by a deterministic oracle."
+    },
+    effectResolution: {
+      scale: "points",
+      minimumResolvableEffect: 1 / plannedUnitIds.length
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The deterministic exhaustive fixture has no iterative execution floor."
+    }
+  });
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: evidenceContract.content_sha256,
+    primaryComparisonId,
+    observedPopulationManifestSha256,
+    uniqueExecutionIds: ["execution_1"],
+    observedIndependentUnitIds: observedUnitIds,
+    observedDenominatorByArm: {
+      candidate_series: 1,
+      reference_series: 1
+    },
+    primaryEvidenceRefs: ["metrics.json"],
+    deterministicOracleEvidenceRefs: ["metrics.json"]
+  });
+  const assessment = assessEvidenceAdequacy({
+    contract: evidenceContract,
+    receipt,
+    verifiedEvidenceRefs: ["metrics.json"]
+  });
+  const experimentContract = buildExperimentContract({
+    run,
+    hypothesis: "A bounded intervention changes the primary measure.",
+    causalMechanism: "The intervention changes the measured process.",
+    singleChange: "Enable the bounded intervention.",
+    expectedMetricEffect: "Change the primary measure by the declared estimand.",
+    abortCondition: "Abort only if input validity checks fail.",
+    keepOrDiscardRule:
+      "Retain every contract-valid execution regardless of outcome direction.",
+    baselines: ["reference_series"],
+    resultsPlan: {
+      schema_version: "2.0",
+      required_metrics: [{
+        id: "primary_measure",
+        label: "Primary measure",
+        direction: "higher_better",
+        unit: "points"
+      }],
+      minimum_series_count: 2,
+      minimum_comparison_count: 1,
+      required_series: [
+        { id: "candidate_series", role: "primary" },
+        { id: "reference_series", role: "baseline" }
+      ],
+      required_comparisons: [{
+        id: primaryComparisonId,
+        subject_series_id: "candidate_series",
+        reference_series_id: "reference_series",
+        metric_id: "primary_measure"
+      }],
+      primary_comparison_id: primaryComparisonId
+    }
+  });
+  await Promise.all([
+    writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      `${JSON.stringify(experimentContract, null, 2)}\n`,
+      "utf8"
+    ),
+    writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      `${JSON.stringify(evidenceContract, null, 2)}\n`,
+      "utf8"
+    ),
+    writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH),
+      `${JSON.stringify(receipt, null, 2)}\n`,
+      "utf8"
+    ),
+    writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH),
+      `${JSON.stringify(assessment, null, 2)}\n`,
+      "utf8"
+    )
+  ]);
 }
 
 function reviewAnalysisReportFixture() {
@@ -775,6 +917,7 @@ describe("review node", () => {
       )}\n`,
       "utf8"
     );
+    await seedEvidenceAdequacy(run, runDir);
 
     const node = createReviewNode({
       config: {
@@ -848,6 +991,12 @@ describe("review node", () => {
     expect(await readFile(path.join(publicReviewDir, "readiness_risks.json"), "utf8")).toContain(
       '"review_network_dependency_declared_logging"'
     );
+    expect(
+      await readFile(
+        path.join(publicReviewDir, "evidence_adequacy_reassessment.json"),
+        "utf8"
+      )
+    ).toContain('"paper_evidence_allowed": true');
     expect(typeof (await readFile(path.join(publicReviewDir, "findings.jsonl"), "utf8"))).toBe("string");
     const publicRunDir = buildPublicRunOutputDir(root, run);
     expect(await readFile(path.join(publicRunDir, "results", "operator_summary.md"), "utf8")).toContain(
@@ -887,6 +1036,7 @@ describe("review node", () => {
         "review/decision.json",
         "review/findings.jsonl",
         "review/readiness_risks.json",
+        "review/evidence_adequacy_reassessment.json",
         "results/operator_summary.md",
         "results/run_status.json",
         "results/run_completeness_checklist.json",
@@ -900,7 +1050,8 @@ describe("review node", () => {
         "review/checklist.md",
         "review/decision.json",
         "review/findings.jsonl",
-        "review/readiness_risks.json"
+        "review/readiness_risks.json",
+        "review/evidence_adequacy_reassessment.json"
       ])
     );
     expect(manifest.sections?.results?.generated_files).toEqual(
@@ -916,6 +1067,57 @@ describe("review node", () => {
     expect(await memory.get("review.last_summary")).toContain("primary_measure=0.91");
     expect(await memory.get("review.last_decision")).toMatchObject({ outcome: "advance" });
     expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
+
+    await writeFile(
+      path.join(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      "{}\n",
+      "utf8"
+    );
+    const tamperedResult = await node.execute({ run, graph: run.graph });
+    expect(tamperedResult.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments"
+    });
+    const tamperedReassessment = JSON.parse(
+      await readFile(
+        path.join(runDir, "review", "evidence_adequacy_reassessment.json"),
+        "utf8"
+      )
+    ) as {
+      status: string;
+      trusted: boolean;
+      paper_evidence_allowed: boolean;
+      issues: string[];
+    };
+    expect(tamperedReassessment).toMatchObject({
+      status: "invalid",
+      trusted: false,
+      paper_evidence_allowed: false
+    });
+    expect(tamperedReassessment.issues.join(" ")).toContain(
+      "Evidence adequacy contract is invalid"
+    );
+    const strengthening = JSON.parse(
+      await readFile(
+        path.join(runDir, "review", "node_strengthening_recommendations.json"),
+        "utf8"
+      )
+    ) as {
+      recommendations: Array<{
+        node: string;
+        diagnostic_ids: string[];
+      }>;
+    };
+    expect(strengthening.recommendations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          node: "design_experiments",
+          diagnostic_ids: expect.arrayContaining([
+            "evidence_adequacy_unverified"
+          ])
+        })
+      ])
+    );
   });
 
   it("includes analysis risk signals and current ACL surface issues in the review panel prompt context", async () => {
@@ -1559,6 +1761,19 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
     await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.62 }, null, 2), "utf8");
+    await seedEvidenceAdequacy(run, runDir, {
+      primaryComparisonId: "declared_primary_comparison"
+    });
+    await writeFile(
+      path.join(runDir, "baseline_summary.json"),
+      JSON.stringify({ baseline: "reference_series", primary_measure: 0.71 }, null, 2),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "result_table.json"),
+      JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }, null, 2),
+      "utf8"
+    );
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -2022,6 +2237,7 @@ describe("review node", () => {
         generatedAt: new Date().toISOString()
       }
     }, null, 2), "utf8");
+    await seedEvidenceAdequacy(run, runDir);
 
     const node = createReviewNode({
       config: {} as any,
@@ -2050,7 +2266,7 @@ describe("review node", () => {
     expect(critique.blocking_issues.map((issue) => issue.summary)).not.toContain("Single-run methodology coverage");
   });
 
-  it("does not recommend write_paper when cycle cap meets a blocked_for_paper_scale critique", async () => {
+  it("does not recommend write_paper when cycle cap meets a non-pass governed evidence critique", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-blocked-cycle-cap-"));
     process.chdir(root);
 
@@ -2166,6 +2382,7 @@ describe("review node", () => {
       requirements: { minimum_baseline_count: 1, requires_confidence_intervals: true },
       checks: []
     });
+    await seedEvidenceAdequacy(run, runDir, { adequate: false });
 
     const node = createReviewNode({
       config: {} as any,
@@ -2193,7 +2410,7 @@ describe("review node", () => {
     expect(decision.outcome).toBe("backtrack_to_implement");
     expect(decision.recommended_transition).toBe("backtrack_to_implement");
     expect((decision.blocking_finding_ids ?? []).length).toBeGreaterThan(0);
-    expect((decision.required_actions ?? []).join(" ").toLowerCase()).toContain("seed");
+    expect((decision.required_actions ?? []).join(" ").toLowerCase()).toContain("contract");
 
     const reviewPacket = JSON.parse(await readFile(path.join(runDir, "review", "review_packet.json"), "utf8")) as {
       decision?: { outcome?: string; recommended_transition?: string };
@@ -2207,7 +2424,7 @@ describe("review node", () => {
       needs_additional_experiments: boolean;
       needs_additional_statistics: boolean;
     };
-    expect(critique.manuscript_type).toBe("blocked_for_paper_scale");
+    expect(critique.manuscript_type).not.toBe("paper_ready");
     expect(critique.claim_ceiling_applied).toBe(true);
     expect(critique.needs_additional_experiments).toBe(true);
     expect(critique.needs_additional_statistics).toBe(true);

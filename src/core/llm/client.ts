@@ -13,10 +13,21 @@ export interface LLMCompletionUsage {
   costUsd?: number;
 }
 
+export interface LLMCompletionProvenance {
+  provider: "codex" | "openai" | "ollama" | "mock";
+  requestedModel: string;
+  effectiveModel: string;
+  reasoningEffort: string;
+  responseId?: string;
+  contextMode: "fresh" | "continued" | "stateless";
+  identityBasis: "provider_response" | "adapter_request" | "mock";
+}
+
 export interface LLMCompletion {
   text: string;
   threadId?: string;
   usage?: LLMCompletionUsage;
+  provenance?: LLMCompletionProvenance;
 }
 
 export interface LLMProgressEvent {
@@ -73,7 +84,9 @@ export class CodexNativeLLMClient implements LLMClient {
     progress?.flush();
 
     const codexUsage = extractCodexCompletionUsageFromEvents(result.events);
-    const resolvedModel = codexUsage?.model || opts?.model || this.defaults.model;
+    const requestedModel = opts?.model || this.defaults.model || "";
+    const resolvedModel = codexUsage?.model || requestedModel;
+    const reasoningEffort = opts?.reasoningEffort || this.defaults.reasoningEffort || "default";
 
     return {
       text: result.finalText,
@@ -85,6 +98,15 @@ export class CodexNativeLLMClient implements LLMClient {
           inputTokens: codexUsage?.inputTokens,
           outputTokens: codexUsage?.outputTokens
         })
+      },
+      provenance: {
+        provider: "codex",
+        requestedModel,
+        effectiveModel: resolvedModel,
+        reasoningEffort,
+        responseId: result.threadId,
+        contextMode: opts?.threadId ? "continued" : "fresh",
+        identityBasis: codexUsage?.model ? "provider_response" : "adapter_request"
       }
     };
   }
@@ -101,13 +123,15 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     prompt: string,
     opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
+    const requestedModel = opts?.model || this.defaults.model || "";
+    const reasoningEffort = opts?.reasoningEffort || this.defaults.reasoningEffort || "default";
     opts?.onProgress?.({ type: "status", text: "Submitting request to OpenAI Responses API." });
     const result = await this.openai.complete({
       prompt,
       threadId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
-      model: opts?.model || this.defaults.model,
-      reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
+      model: requestedModel,
+      reasoningEffort,
       background: this.defaults.background,
       abortSignal: opts?.abortSignal,
       onProgress: (message) => {
@@ -119,7 +143,16 @@ export class OpenAiResponsesLLMClient implements LLMClient {
     return {
       text: result.text,
       threadId: result.responseId || this.openai.lastResponseId(),
-      usage: result.usage
+      usage: result.usage,
+      provenance: {
+        provider: "openai",
+        requestedModel,
+        effectiveModel: result.model || requestedModel,
+        reasoningEffort,
+        responseId: result.responseId || this.openai.lastResponseId(),
+        contextMode: opts?.threadId ? "continued" : "fresh",
+        identityBasis: result.model ? "provider_response" : "adapter_request"
+      }
     };
   }
 }
@@ -134,14 +167,16 @@ export class CodexOAuthResponsesLLMClient implements LLMClient {
     prompt: string,
     opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
+    const requestedModel = opts?.model || this.defaults.model || "";
+    const reasoningEffort = opts?.reasoningEffort || this.defaults.reasoningEffort || "default";
     opts?.onProgress?.({ type: "status", text: "Submitting request to Codex OAuth backend." });
     const result = await this.codexOAuth.complete({
       prompt,
       threadId: opts?.threadId,
       systemPrompt: opts?.systemPrompt,
       inputImagePaths: opts?.inputImagePaths,
-      model: opts?.model || this.defaults.model,
-      reasoningEffort: opts?.reasoningEffort || this.defaults.reasoningEffort,
+      model: requestedModel,
+      reasoningEffort,
       abortSignal: opts?.abortSignal,
       onProgress: (event) => {
         opts?.onProgress?.(event);
@@ -151,7 +186,16 @@ export class CodexOAuthResponsesLLMClient implements LLMClient {
     return {
       text: result.text,
       threadId: result.responseId || this.codexOAuth.lastResponseId(),
-      usage: result.usage
+      usage: result.usage,
+      provenance: {
+        provider: "codex",
+        requestedModel,
+        effectiveModel: result.model || requestedModel,
+        reasoningEffort,
+        responseId: result.responseId || this.codexOAuth.lastResponseId(),
+        contextMode: opts?.threadId ? "continued" : "fresh",
+        identityBasis: result.model ? "provider_response" : "adapter_request"
+      }
     };
   }
 }
@@ -219,6 +263,14 @@ export class OllamaLLMClient implements LLMClient {
         inputTokens: result.promptEvalCount,
         outputTokens: result.evalCount,
         costUsd: 0
+      },
+      provenance: {
+        provider: "ollama",
+        requestedModel: model,
+        effectiveModel: model,
+        reasoningEffort: opts?.reasoningEffort || "default",
+        contextMode: "stateless",
+        identityBasis: "adapter_request"
       }
     };
   }
@@ -236,13 +288,21 @@ export class RoutedLLMClient implements LLMClient {
 }
 
 export class MockLLMClient implements LLMClient {
-  async complete(prompt: string, _opts?: LLMCompleteOptions): Promise<LLMCompletion> {
+  async complete(prompt: string, opts?: LLMCompleteOptions): Promise<LLMCompletion> {
     return {
       text: `[mock] ${prompt.slice(0, 120)}`,
       usage: {
         inputTokens: prompt.length / 4,
         outputTokens: 32,
         costUsd: 0
+      },
+      provenance: {
+        provider: "mock",
+        requestedModel: opts?.model || "mock",
+        effectiveModel: "mock",
+        reasoningEffort: opts?.reasoningEffort || "mock",
+        contextMode: "stateless",
+        identityBasis: "mock"
       }
     };
   }

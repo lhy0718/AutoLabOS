@@ -33,6 +33,7 @@ import type {
   ResultsSeriesRole
 } from "../src/core/analysis/resultsTableSchema.js";
 import type { ExperimentContract } from "../src/core/experiments/experimentContract.js";
+import { writePassingEvidenceAdequacyFixture } from "./support/evidenceAdequacyFixture.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -1116,6 +1117,11 @@ describe("objective metric propagation", () => {
     expect(await memory.get("implement_experiments.pending_handoff_to_run_experiments")).toBe(false);
     const previousMetricsBackup = await memory.get<string>("run_experiments.previous_metrics_backup");
     expect(previousMetricsBackup).toContain("exec_logs/preexisting_metrics_");
+    await writePassingEvidenceAdequacyFixture({
+      runDir,
+      primaryComparisonId: "candidate_a_vs_reference",
+      evidenceRefs: ["metrics.json#/primary_score"]
+    });
 
     const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
     expect(evaluationRaw).toContain('"status": "met"');
@@ -1320,7 +1326,7 @@ describe("objective metric propagation", () => {
     expect(tex).not.toContain("Artifact: Performance overview figures/performance.svg.");
     expect(tex).not.toContain("Statistical summary:");
     expect(tex).not.toContain("Failure taxonomy:");
-    expect(tex).toContain("\\section{Discussion}");
+    expect(tex).not.toContain("\\section{Discussion}");
     const publicTex = await readFile(path.join(buildPublicPaperDir(root, run), "main.tex"), "utf8");
     expect(publicTex).toContain("Primary objective: primary\\_score at least 0.9.");
     expect(publicTex).toContain("The selected experimental design is Primary score evaluation");
@@ -1600,6 +1606,11 @@ describe("objective metric propagation", () => {
       root,
       run,
       seeds: repeatedSeeds
+    });
+    await writePassingEvidenceAdequacyFixture({
+      runDir,
+      primaryComparisonId: "candidate_a_vs_reference",
+      evidenceRefs: ["metrics.json#/primary_score_delta_vs_baseline"]
     });
 
     const analyzeNode = createAnalyzeResultsNode({

@@ -39,6 +39,10 @@ import {
   RESULTS_ARTIFACT_SCHEMA_VERSION,
   type ResultsPlanV2
 } from "../analysis/resultsTableSchema.js";
+import {
+  buildEvidenceAdequacyContractFromEstimatorProtocol,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+} from "../analysis/evidenceAdequacy.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import {
@@ -52,6 +56,7 @@ import { ExplorationManager } from "../exploration/explorationManager.js";
 import {
   buildTopicDecision,
   hashCanonical,
+  isTopicPortfolioCandidateDispositionAuditable,
   validateResearchFunnelClosedChain,
   type TopicPortfolio,
   type TopicPortfolioCandidate,
@@ -191,8 +196,14 @@ export function rebaseTopicPortfolioToCurrentMemory(input: {
     const decision = evaluateTopicMemory(
       current,
       descriptor,
-      candidate.topic_memory?.reentry_ticket
+      candidate.topic_memory?.reentry_ticket,
+      candidate.topic_memory?.semantic_audit
     );
+    const currentSemanticAudit =
+      candidate.topic_memory?.semantic_audit?.ledger_sha256
+        === current.ledger_sha256
+        ? candidate.topic_memory.semantic_audit
+        : undefined;
     const memoryEligible =
       decision.disposition === "clear"
       || decision.disposition === "reentry_allowed";
@@ -215,6 +226,9 @@ export function rebaseTopicPortfolioToCurrentMemory(input: {
         descriptor,
         ...(candidate.topic_memory?.reentry_ticket
           ? { reentry_ticket: candidate.topic_memory.reentry_ticket }
+          : {}),
+        ...(currentSemanticAudit
+          ? { semantic_audit: currentSemanticAudit }
           : {}),
         decision
       },
@@ -266,7 +280,7 @@ export function rebaseTopicPortfolioToCurrentMemory(input: {
     gates,
     "portfolio_candidates_admissible",
     candidates.length > 0
-      && candidates.every((candidate) => candidate.probe_eligible)
+      && candidates.every(isTopicPortfolioCandidateDispositionAuditable)
   );
   gates = setGateStatus(
     gates,
@@ -1180,9 +1194,10 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           panelResult.selected
         ),
         abortCondition: panelResult.selected.risks.length > 0
-          ? `Abort if: ${panelResult.selected.risks[0]}`
-          : "Abort if primary metric degrades significantly or execution fails repeatedly.",
-        keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive.",
+          ? `Abort only if this predeclared safety, validity, or resource risk materializes: ${panelResult.selected.risks[0]}`
+          : "Abort only for a predeclared safety, validity, or resource-budget violation; do not stop based on observed effect direction.",
+        keepOrDiscardRule:
+          "Retain every contract-valid execution regardless of outcome direction; classify the primary comparison as supportive, non-supportive, or inconclusive under the frozen analysis protocol.",
         baselines: panelResult.selected.baselines,
         selectedDesign: {
           id: panelResult.selected.id,
@@ -1317,7 +1332,58 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           };
         }
       }
+      const evidenceAdequacyContract = panelResult.selected.estimator_protocol
+        ? buildEvidenceAdequacyContractFromEstimatorProtocol({
+            protocol: panelResult.selected.estimator_protocol,
+            effectResolutionScale:
+              experimentContract.results_plan.primary_effect_criterion
+                ?.metric_scale
+          })
+        : undefined;
+      if (
+        evidenceAdequacyContract
+        && experimentContract.results_plan.primary_comparison_id
+          !== evidenceAdequacyContract.primary_comparison_id
+      ) {
+        const message =
+          "Experiment design evidence contract is not bound to the results plan primary comparison: "
+          + `results_plan=${experimentContract.results_plan.primary_comparison_id || "missing"}, `
+          + `evidence_contract=${evidenceAdequacyContract.primary_comparison_id}.`;
+        emitLog(message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 1
+        };
+      }
       await writeExperimentContract(run, experimentContract);
+      if (evidenceAdequacyContract) {
+        await writeRunArtifact(
+          run,
+          EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+          `${JSON.stringify(evidenceAdequacyContract, null, 2)}\n`
+        );
+        await runContextMemory.put(
+          "design_experiments.evidence_adequacy_contract",
+          evidenceAdequacyContract
+        );
+      } else {
+        await fs.rm(
+          path.join(
+            process.cwd(),
+            ".autolabos",
+            "runs",
+            run.id,
+            EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+          ),
+          { force: true }
+        );
+        await runContextMemory.put(
+          "design_experiments.evidence_adequacy_contract",
+          null
+        );
+      }
       const experimentPortfolio = buildExperimentPortfolioFromDesign({
         runId: run.id,
         selectedDesign: panelResult.selected
@@ -1427,6 +1493,17 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
             targetRelativePath: "baseline_summary.json",
             optional: true
+          },
+          {
+            sourcePath: path.join(
+              process.cwd(),
+              ".autolabos",
+              "runs",
+              run.id,
+              EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+            ),
+            targetRelativePath: EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+            optional: !evidenceAdequacyContract
           },
           {
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "design_experiments_panel", "active_topic_probe_contract.json"),

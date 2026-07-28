@@ -7,6 +7,7 @@ import type {
   HypothesisEvidenceSeed,
   HypothesisReview
 } from "./analysis/researchPlanning.js";
+import { isHypothesisReviewProvenanceAuthorizing } from "./analysis/hypothesisReviewProvenance.js";
 import { classifyResearchOpportunityEvidence } from "./analysis/researchGapSynthesis.js";
 import {
   isResearchOpportunityType,
@@ -47,6 +48,11 @@ import {
   type TopicMemoryLedger,
   type TopicReentryTicket
 } from "./topicMemory.js";
+import type { TopicMemorySemanticAudit } from "./topicMemorySemanticAudit.js";
+import {
+  isCandidatePriorSearchReviewBinding,
+  type CandidatePriorSearchReviewBinding
+} from "./candidatePriorSearch.js";
 
 export { hashCanonical } from "./canonicalHash.js";
 
@@ -163,6 +169,7 @@ export interface TopicPortfolioCandidate {
   unresolved_evidence_links: string[];
   closest_prior_paper_ids: string[];
   closest_prior_full_text_paper_ids: string[];
+  candidate_prior_search?: CandidatePriorSearchReviewBinding;
   prior_absorption?: PriorAbsorptionCandidateProjection;
   closest_prior_non_overlap?: string;
   reviewer_absorption_objection?: string;
@@ -188,6 +195,7 @@ export interface TopicPortfolioCandidate {
     ledger_sha256: string;
     descriptor?: TopicFormulationDescriptor;
     reentry_ticket?: TopicReentryTicket;
+    semantic_audit?: TopicMemorySemanticAudit;
     decision: TopicMemoryDecision;
   };
   scores: {
@@ -782,9 +790,17 @@ export function buildTopicPortfolio(input: {
   sourceArtifactBindings?: ResearchFunnelArtifactBinding[];
   sourceGapMapSha256?: string;
   priorAbsorptionMatrix?: PriorAbsorptionMatrix;
+  candidatePriorSearchBindingsByCandidateId?: ReadonlyMap<
+    string,
+    CandidatePriorSearchReviewBinding
+  >;
   computeBudgetCeiling?: TopicProbeComputeBudgetLimits;
   topicMemoryLedger?: TopicMemoryLedger;
   topicReentryTicketsByCandidateId?: ReadonlyMap<string, TopicReentryTicket>;
+  topicSemanticAuditsByCandidateId?: ReadonlyMap<
+    string,
+    TopicMemorySemanticAudit
+  >;
 }): TopicPortfolio {
   const evidenceById = new Map(
     input.evidence.map((item, index) => [item.evidence_id || `ev_${index + 1}`, item] as const)
@@ -807,9 +823,11 @@ export function buildTopicPortfolio(input: {
       evidenceAxisIds,
       input.gapMap,
       input.priorAbsorptionMatrix,
+      input.candidatePriorSearchBindingsByCandidateId?.get(candidate.id),
       input.computeBudgetCeiling,
       topicMemoryLedger,
-      input.topicReentryTicketsByCandidateId?.get(candidate.id)
+      input.topicReentryTicketsByCandidateId?.get(candidate.id),
+      input.topicSemanticAuditsByCandidateId?.get(candidate.id)
     )
   );
   const overflowCandidates = input.candidates.slice(TOPIC_PORTFOLIO_MAX_CANDIDATES).map((candidate) => ({
@@ -825,7 +843,8 @@ export function buildTopicPortfolio(input: {
   const probeCandidatesEligible =
     probeCandidates.length > 0 && probeCandidates.every((candidate) => candidate.probe_eligible);
   const portfolioCandidatesAdmissible =
-    candidates.length > 0 && candidates.every((candidate) => candidate.probe_eligible);
+    candidates.length > 0
+    && candidates.every(isTopicPortfolioCandidateDispositionAuditable);
   const sourceArtifactBindings = normalizeArtifactBindings(input.sourceArtifactBindings || []);
   const sourceArtifacts =
     input.sourceArtifacts ||
@@ -882,8 +901,8 @@ export function buildTopicPortfolio(input: {
       "portfolio_candidates_admissible",
       portfolioCandidatesAdmissible,
       portfolioCandidatesAdmissible
-        ? "Every bounded portfolio candidate passed independent review and the complete evidence-linked contract."
-        : "At least one bounded portfolio candidate is rejected, synthetic fallback, or contract-incomplete; regenerate the portfolio instead of using it as filler."
+        ? "Every bounded portfolio candidate has an explicit review disposition, and every kept candidate has a complete evidence-linked contract."
+        : "At least one bounded candidate is unreviewed, or a kept candidate is contract-incomplete; regenerate the portfolio instead of using it as filler."
     ),
     gate(
       "probe_candidate_present",
@@ -931,6 +950,16 @@ export function buildTopicPortfolio(input: {
     ...payload,
     content_sha256: hashCanonical(payload)
   };
+}
+
+export function isTopicPortfolioCandidateDispositionAuditable(
+  candidate: TopicPortfolioCandidate
+): boolean {
+  return candidate.review_status === "rejected"
+    || (
+      candidate.review_status === "kept"
+      && candidate.probe_eligible
+    );
 }
 
 export function validateTopicPortfolioArtifact(
@@ -1025,7 +1054,8 @@ export function validateTopicPortfolioArtifact(
         expectedTopicMemoryDecision = evaluateTopicMemory(
           topicMemoryLedger,
           expectedDescriptor,
-          candidate.topic_memory?.reentry_ticket
+          candidate.topic_memory?.reentry_ticket,
+          candidate.topic_memory?.semantic_audit
         );
       }
     } catch {
@@ -1071,7 +1101,8 @@ export function validateTopicPortfolioArtifact(
       candidate.evidence_links,
       candidate.unresolved_evidence_links,
       candidate.closest_prior_paper_ids,
-      candidate.closest_prior_full_text_paper_ids
+      candidate.closest_prior_full_text_paper_ids,
+      candidate.candidate_prior_search?.selected_direct_prior_ids || []
     ];
     if (identifierLists.some((items) => uniqueStrings(items).length !== items.length)) {
       reasons.push(`topic_candidate_duplicate_identifier:${candidate.topic_id}`);
@@ -1634,6 +1665,14 @@ function validateClosedChainSourceArtifacts(
     }
   }
   const reviewIds = collectRecordIdentifiers(reviews.records, "candidate_id", "review", reasons);
+  for (const review of reviews.records) {
+    const candidateId = normalizeOptionalText(review.candidate_id) || "missing";
+    if (!isHypothesisReviewProvenanceAuthorizing(review.provenance)) {
+      reasons.push(
+        `research_funnel_review_provenance_not_independent:${candidateId}`
+      );
+    }
+  }
   const hypothesisCandidateIds = collectRecordIdentifiers(
     hypotheses.records,
     "candidate_id",
@@ -1750,7 +1789,7 @@ function validateClosedChainSourceArtifacts(
     ...portfolio.candidates.map((candidate) => candidate.source_candidate_id),
     ...portfolio.overflow_candidates.map((candidate) => candidate.source_candidate_id)
   ];
-  if (!stringArraysEqual(draftIds, portfolioCandidateIds)) {
+  if (!stringSetsEqual(draftIds, portfolioCandidateIds)) {
     reasons.push("research_funnel_portfolio_draft_candidate_set_mismatch");
   }
   if (!stringSetsEqual(reviewIds, draftIds)) {
@@ -1764,6 +1803,41 @@ function validateClosedChainSourceArtifacts(
   for (const candidateId of reviewIds) {
     if (!draftIds.includes(candidateId)) {
       reasons.push(`research_funnel_review_candidate_unknown:${candidateId}`);
+    }
+  }
+  const reviewsByCandidateId = new Map(
+    reviews.records.flatMap((review) => {
+      const candidateId = normalizeOptionalText(review.candidate_id);
+      return candidateId ? [[candidateId, review] as const] : [];
+    })
+  );
+  for (const candidate of portfolio.candidates) {
+    const review = reviewsByCandidateId.get(candidate.source_candidate_id);
+    if (!review) {
+      continue;
+    }
+    const reviewIsIndependent = isHypothesisReviewProvenanceAuthorizing(
+      review.provenance
+    );
+    const expectedReviewStatus = reviewIsIndependent
+      ? review.keep === true
+        ? "kept"
+        : review.keep === false
+          ? "rejected"
+          : "not_reviewed"
+      : "not_reviewed";
+    if (candidate.review_status !== expectedReviewStatus) {
+      reasons.push(
+        `research_funnel_review_disposition_mismatch:${candidate.source_candidate_id}`
+      );
+    }
+    if (
+      normalizeOptionalText(candidate.review_summary)
+      !== normalizeOptionalText(review.critique_summary)
+    ) {
+      reasons.push(
+        `research_funnel_review_summary_mismatch:${candidate.source_candidate_id}`
+      );
     }
   }
 
@@ -2269,9 +2343,11 @@ function buildTopicPortfolioCandidate(
   evidenceAxisIds: Set<string>,
   gapMap: ResearchGapMap | undefined,
   priorAbsorptionMatrix: PriorAbsorptionMatrix | undefined,
+  candidatePriorSearchBinding: CandidatePriorSearchReviewBinding | undefined,
   computeBudgetCeiling: TopicProbeComputeBudgetLimits | undefined,
   topicMemoryLedger: TopicMemoryLedger,
-  topicReentryTicket: TopicReentryTicket | undefined
+  topicReentryTicket: TopicReentryTicket | undefined,
+  topicSemanticAudit: TopicMemorySemanticAudit | undefined
 ): TopicPortfolioCandidate {
   const clusterIds = normalizeClusterIds(candidate.axis_ids || []);
   const unresolvedClusterIds = clusterIds.filter(
@@ -2329,7 +2405,14 @@ function buildTopicPortfolioCandidate(
     uniqueStrings(linkedEvidence.map((item) => item.limitation_slot)).join("; ") ||
     undefined;
   const supportedGapIds = resolveSupportedGapIds(candidate.evidence_links, gapMap);
-  const reviewStatus = review ? (review.keep ? "kept" : "rejected") : "not_reviewed";
+  const independentReviewRecorded = Boolean(
+    review && isHypothesisReviewProvenanceAuthorizing(review.provenance)
+  );
+  const reviewStatus = independentReviewRecorded && review
+    ? review.keep
+      ? "kept"
+      : "rejected"
+    : "not_reviewed";
   let topicDescriptor: TopicFormulationDescriptor | undefined;
   let topicMemoryDecision: TopicMemoryDecision;
   try {
@@ -2349,7 +2432,8 @@ function buildTopicPortfolioCandidate(
     topicMemoryDecision = evaluateTopicMemory(
       topicMemoryLedger,
       topicDescriptor,
-      topicReentryTicket
+      topicReentryTicket,
+      topicSemanticAudit
     );
   } catch (error) {
     topicMemoryDecision = {
@@ -2384,6 +2468,27 @@ function buildTopicPortfolioCandidate(
   );
   const priorAbsorptionDispositionEligible = Boolean(
     priorAbsorptionCoverageComplete && priorAbsorption?.probe_eligible
+  );
+  const currentPriorAbsorptionContract =
+    buildPriorAbsorptionCandidateContract(candidate);
+  const candidatePriorSearchLineageBound = Boolean(
+    candidatePriorSearchBinding
+    && isCandidatePriorSearchReviewBinding(candidatePriorSearchBinding)
+    && candidatePriorSearchBinding.candidate_id === candidate.id
+    && candidatePriorSearchBinding.prior_absorption_contract_sha256
+      === currentPriorAbsorptionContract.content_sha256
+  );
+  const selectedDirectPriorCoverageComplete = Boolean(
+    candidatePriorSearchLineageBound
+    && candidatePriorSearchBinding?.selected_direct_prior_ids.every(
+      (paperId) =>
+        closestPriorPaperIds.includes(paperId)
+        && closestPriorFullTextPaperIds.includes(paperId)
+        && priorAbsorption?.prior_paper_ids.includes(paperId)
+        && priorAbsorption.comparisons.some(
+          (comparison) => comparison.prior_paper_id === paperId
+        )
+    )
   );
   const gates: ResearchFunnelGate[] = [
     gate(
@@ -2466,6 +2571,24 @@ function buildTopicPortfolioCandidate(
         ? "Every closest prior has an evidence-grounded eligible absorption disposition."
         : `Prior absorption blocks probe eligibility: ${priorAbsorption?.reason_codes.join(", ") || "matrix entry missing"}.`
     ),
+    ...(candidatePriorSearchBinding
+      ? [
+          gate(
+            "candidate_prior_search_lineage_bound",
+            candidatePriorSearchLineageBound,
+            candidatePriorSearchLineageBound
+              ? "The direct-prior review is bound to the candidate contract, search plan, and validated receipt lineage."
+              : "The direct-prior review does not match the candidate contract or receipt lineage."
+          ),
+          gate(
+            "candidate_prior_search_selected_prior_coverage_complete",
+            selectedDirectPriorCoverageComplete,
+            selectedDirectPriorCoverageComplete
+              ? "Every selected direct prior is linked as full-text closest-prior evidence and covered by the absorption matrix."
+              : "At least one selected direct prior is omitted from full-text closest-prior or absorption-matrix coverage."
+          )
+        ]
+      : []),
     requiredTextGate(
       "closest_prior_non_overlap_present",
       candidate.closest_prior_non_overlap,
@@ -2534,6 +2657,15 @@ function buildTopicPortfolioCandidate(
         : `Project topic memory blocks this candidate: ${topicMemoryDecision.reason_codes.join(", ")}.`
     ),
     gate(
+      "review_provenance_independent",
+      independentReviewRecorded,
+      independentReviewRecorded
+        ? "The review is bound to distinct proposer and reviewer identities plus validated invocation hashes."
+        : review
+          ? "The recorded review is self-review or lacks authorizing provenance."
+          : "No review provenance is recorded."
+    ),
+    gate(
       "review_kept",
       reviewStatus === "kept",
       reviewStatus === "kept"
@@ -2553,6 +2685,7 @@ function buildTopicPortfolioCandidate(
     closest_prior_paper_ids: closestPriorPaperIds,
     unresolved_evidence_links: unresolvedEvidenceLinks,
     closest_prior_full_text_paper_ids: closestPriorFullTextPaperIds,
+    candidate_prior_search: candidatePriorSearchBinding,
     prior_absorption: priorAbsorption,
     closest_prior_non_overlap: normalizeOptionalText(candidate.closest_prior_non_overlap),
     reviewer_absorption_objection: normalizeOptionalText(candidate.reviewer_absorption_objection),
@@ -2597,6 +2730,7 @@ function buildTopicPortfolioCandidate(
     unresolved_evidence_links: unresolvedEvidenceLinks,
     comparator,
     closest_prior_full_text_paper_ids: closestPriorFullTextPaperIds,
+    candidate_prior_search: candidatePriorSearchBinding,
     prior_absorption: priorAbsorption,
     closest_prior_non_overlap: normalizeOptionalText(candidate.closest_prior_non_overlap),
     reviewer_absorption_objection: normalizeOptionalText(candidate.reviewer_absorption_objection),
@@ -2621,6 +2755,7 @@ function buildTopicPortfolioCandidate(
       ledger_sha256: topicMemoryLedger.ledger_sha256,
       ...(topicDescriptor ? { descriptor: topicDescriptor } : {}),
       ...(topicReentryTicket ? { reentry_ticket: topicReentryTicket } : {}),
+      ...(topicSemanticAudit ? { semantic_audit: topicSemanticAudit } : {}),
       decision: topicMemoryDecision
     },
     scores: {
@@ -2850,6 +2985,45 @@ function expectedTopicCandidateGates(
       candidate.closest_prior_paper_ids
     )
   );
+  const candidatePriorSearchBinding = candidate.candidate_prior_search;
+  const expectedPriorAbsorptionContract =
+    buildPriorAbsorptionCandidateContract({
+      id: candidate.source_candidate_id,
+      text: candidate.statement,
+      novelty: candidate.scores.novelty,
+      feasibility: candidate.scores.feasibility,
+      testability: candidate.scores.testability,
+      cost: candidate.scores.cost,
+      expected_gain: candidate.scores.expected_gain,
+      evidence_links: candidate.evidence_links,
+      contribution_claim: candidate.contribution_claim,
+      dataset_task_bench: candidate.dataset_task_bench,
+      comparator: candidate.comparator,
+      primary_metric: candidate.primary_metric,
+      effect_criterion: candidate.effect_criterion,
+      meaningful_effect: candidate.meaningful_effect,
+      minimum_publishable_evidence: candidate.minimum_publishable_evidence,
+      falsifier: candidate.falsifier
+    });
+  const candidatePriorSearchLineageBound = Boolean(
+    candidatePriorSearchBinding
+    && isCandidatePriorSearchReviewBinding(candidatePriorSearchBinding)
+    && candidatePriorSearchBinding.candidate_id === candidate.source_candidate_id
+    && candidatePriorSearchBinding.prior_absorption_contract_sha256
+      === expectedPriorAbsorptionContract.content_sha256
+  );
+  const selectedDirectPriorCoverageComplete = Boolean(
+    candidatePriorSearchLineageBound
+    && candidatePriorSearchBinding?.selected_direct_prior_ids.every(
+      (paperId) =>
+        candidate.closest_prior_paper_ids.includes(paperId)
+        && candidate.closest_prior_full_text_paper_ids.includes(paperId)
+        && priorAbsorption?.prior_paper_ids.includes(paperId)
+        && priorAbsorption.comparisons.some(
+          (comparison) => comparison.prior_paper_id === paperId
+        )
+    )
+  );
   const computeBudgetValidation = validateTopicProbeComputeBudgetDeclaration(
     candidate.local_budget
   );
@@ -2915,6 +3089,20 @@ function expectedTopicCandidateGates(
       Boolean(priorAbsorptionCoverageComplete && priorAbsorption?.probe_eligible),
       "Prior-absorption disposition eligibility is recomputed."
     ),
+    ...(candidatePriorSearchBinding
+      ? [
+          gate(
+            "candidate_prior_search_lineage_bound",
+            candidatePriorSearchLineageBound,
+            "Candidate-prior search lineage is recomputed from the embedded binding."
+          ),
+          gate(
+            "candidate_prior_search_selected_prior_coverage_complete",
+            selectedDirectPriorCoverageComplete,
+            "Selected direct-prior coverage is recomputed from closest-prior and absorption identifiers."
+          )
+        ]
+      : []),
     requiredTextGate(
       "closest_prior_non_overlap_present",
       candidate.closest_prior_non_overlap,
@@ -2977,6 +3165,12 @@ function expectedTopicCandidateGates(
         || topicMemoryDecision?.disposition === "reentry_allowed",
       "Project topic-memory eligibility is recomputed from the embedded ledger snapshot."
     ),
+    gate(
+      "review_provenance_independent",
+      candidate.review_status === "kept"
+        || candidate.review_status === "rejected",
+      "Independent review provenance eligibility is recomputed from the bound review disposition."
+    ),
     gate("review_kept", candidate.review_status === "kept", "Independent review disposition is recomputed.")
   ];
 }
@@ -3038,7 +3232,7 @@ function expectedTopicPortfolioGates(portfolio: TopicPortfolio): ResearchFunnelG
     probeCandidates.length > 0 && probeCandidates.every((candidate) => candidate.probe_eligible);
   const portfolioCandidatesAdmissible =
     portfolio.candidates.length > 0
-    && portfolio.candidates.every((candidate) => candidate.probe_eligible);
+    && portfolio.candidates.every(isTopicPortfolioCandidateDispositionAuditable);
   return [
     gate("gap_map_hash_bound", isSha256(portfolio.source_gap_map_sha256), "Gap-map binding is recomputed."),
     gate(
@@ -3376,6 +3570,7 @@ const TOPIC_PORTFOLIO_CANDIDATE_FIELDS = new Set([
   "closest_prior_paper_ids",
   "unresolved_evidence_links",
   "comparator",
+  "candidate_prior_search",
   "prior_absorption",
   "closest_prior_full_text_paper_ids",
   "closest_prior_non_overlap",
@@ -3473,6 +3668,8 @@ function isTopicPortfolioCandidate(value: unknown): value is TopicPortfolioCandi
     isStringArray(item.unresolved_evidence_links) &&
     isStringArray(item.closest_prior_paper_ids) &&
     ["kept", "rejected", "not_reviewed"].includes(String(item.review_status)) &&
+    (item.candidate_prior_search === undefined
+      || isCandidatePriorSearchReviewBinding(item.candidate_prior_search)) &&
     (item.prior_absorption === undefined || isPriorAbsorptionCandidateProjection(item.prior_absorption)) &&
     isStringArray(item.closest_prior_full_text_paper_ids) &&
     ["shortlisted", "not_shortlisted"].includes(String(item.probe_status)) &&
@@ -3511,10 +3708,17 @@ function isTopicMemoryProjection(
     isSha256(value.ledger_sha256)
     && (value.descriptor === undefined || isRecord(value.descriptor))
     && (value.reentry_ticket === undefined || isRecord(value.reentry_ticket))
+    && (value.semantic_audit === undefined || isRecord(value.semantic_audit))
     && isRecord(value.decision)
     && hasOnlyKnownFields(
       value,
-      new Set(["ledger_sha256", "descriptor", "reentry_ticket", "decision"])
+      new Set([
+        "ledger_sha256",
+        "descriptor",
+        "reentry_ticket",
+        "semantic_audit",
+        "decision"
+      ])
     )
   );
 }

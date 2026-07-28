@@ -710,9 +710,10 @@ describe("scientificWriting", () => {
     expect(report.warnings[0]).toContain("10-page target budget");
   });
 
-  it("expands a terse draft into a richer main paper and appendix when detailed artifacts exist", () => {
+  it("validates a terse draft without inventing missing sections or paragraphs", () => {
     const bundle = makeRichBundle();
     const draft = makeTerseDraft();
+    const originalDraft = structuredClone(draft);
 
     const scientific = applyScientificWritingPolicy({
       draft,
@@ -724,70 +725,48 @@ describe("scientificWriting", () => {
     expect(scientific.results_richness.status).toBe("complete");
     expect(scientific.related_work_richness.status).toBe("complete");
     expect(scientific.discussion_richness.status).toBe("complete");
-    expect(scientific.draft.sections.find((section) => section.heading === "Discussion")).toBeTruthy();
-    expect(scientific.draft.sections.find((section) => section.heading === "Limitations")).toBeTruthy();
-    expect(scientific.draft.sections.find((section) => section.heading === "Method")?.paragraphs.length).toBeGreaterThanOrEqual(3);
-    expect(scientific.draft.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(4);
+    expect(draft).toEqual(originalDraft);
+    expect(scientific.draft.sections).toEqual(originalDraft.sections);
+    expect(scientific.draft.sections.map((section) => section.heading)).toEqual([
+      "Introduction",
+      "Method",
+      "Results",
+      "Conclusion"
+    ]);
+    expect(scientific.draft.sections.some((section) => section.heading === "Related Work")).toBe(false);
+    expect(scientific.draft.sections.some((section) => section.heading === "Discussion")).toBe(false);
+    expect(scientific.draft.sections.some((section) => section.heading === "Limitations")).toBe(false);
+    expect(scientific.page_budget.status).toBe("fail");
+    expect(scientific.page_budget.estimated_main_words).toBeLessThan(scientific.page_budget.minimum_main_words);
+    expect(scientific.auto_repairs.expanded_sections).toEqual([]);
+    expect(scientific.auto_repairs.expansion_recheck.attempted).toBe(false);
+    expect(scientific.claim_rewrite_report.rewrites).toEqual([]);
+    expect(scientific.draft).toEqual(originalDraft);
     expect(scientific.appendix_plan.sections.length).toBeGreaterThan(0);
-
-    const candidate: PaperManuscript = {
-      title: "Repeated Declared-Series Comparison",
-      abstract: "A short abstract.",
-      keywords: ["declared comparison"],
-      sections: scientific.draft.sections.map((section) => ({
-        heading: section.heading,
-        paragraphs: section.paragraphs.map((paragraph) => paragraph.text)
-      }))
-    };
-
-    const manuscript = materializeScientificManuscript({
-      candidate,
-      draft: scientific.draft,
-      bundle,
-      profile: PAPER_PROFILE,
-      appendixPlan: scientific.appendix_plan,
-      pageBudget: scientific.page_budget
-    });
-
-    expect(manuscript.manuscript.appendix_sections?.length).toBeGreaterThan(0);
-    expect(manuscript.manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.at(-1)).toMatch(/Appendix/i);
-    expect(manuscript.manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.at(-1)).toMatch(/Appendix/i);
-    const relatedText = manuscript.manuscript.sections.find((section) => section.heading === "Related Work")?.paragraphs.join(" ") || "";
-    expect(relatedText).toContain("repeated evaluation design");
-    expect(relatedText).toContain("resource-aware evaluation");
-    expect(relatedText).toMatch(/positioning anchors rather than direct numerical baselines/i);
-    const conclusionText = manuscript.manuscript.sections.find((section) => section.heading === "Conclusion")?.paragraphs.join(" ") || "";
-    expect(conclusionText).toMatch(/keeps execution coverage and supplementary metrics secondary/i);
-    expect(conclusionText).not.toMatch(/Detailed protocol and repeat-level evidence/i);
-    expect(
-      manuscript.consistency_lint.ok,
-      JSON.stringify(manuscript.consistency_lint.issues, null, 2)
-    ).toBe(true);
-    expect(manuscript.appendix_lint.ok).toBe(true);
-    expect(manuscript.provenance_map.paragraph_anchors.length).toBeGreaterThan(0);
-    expect(
-      manuscript.provenance_map.numeric_anchors.some(
-        (anchor) => anchor.fact.metric_key === "metric_m1"
-      )
-    ).toBe(true);
   });
 
-  it("records auto-repair recheck state after expanding thin sections", () => {
+  it("records unresolved page-budget headings without attempting automatic expansion", () => {
+    const draft = makeTerseDraft();
+    const originalDraft = structuredClone(draft);
     const scientific = applyScientificWritingPolicy({
-      draft: makeTerseDraft(),
+      draft,
       bundle: makeRichBundle(),
       profile: PAPER_PROFILE
     });
 
-    expect(scientific.auto_repairs.expansion_recheck.attempted).toBe(true);
-    expect(scientific.auto_repairs.expanded_sections.length).toBeGreaterThan(0);
-    expect(
-      scientific.auto_repairs.expansion_recheck.resolved_headings.length
-      + scientific.auto_repairs.expansion_recheck.unresolved_headings.length
-    ).toBe(scientific.auto_repairs.expanded_sections.length);
+    expect(draft).toEqual(originalDraft);
+    expect(scientific.draft.sections).toEqual(originalDraft.sections);
+    expect(scientific.auto_repairs.expansion_recheck.attempted).toBe(false);
+    expect(scientific.auto_repairs.expanded_sections).toEqual([]);
+    expect(scientific.auto_repairs.expansion_recheck.page_budget_before).toBe("fail");
+    expect(scientific.auto_repairs.expansion_recheck.page_budget_after).toBe("fail");
+    expect(scientific.auto_repairs.expansion_recheck.resolved_headings).toEqual([]);
+    expect(scientific.auto_repairs.expansion_recheck.unresolved_headings).toEqual(
+      scientific.page_budget.auto_expand_headings
+    );
   });
 
-  it("keeps related-work expansion from turning raw abstracts, authors, or metric bullets into prose", () => {
+  it("does not turn related-work artifacts, raw abstracts, authors, or metric bullets into draft prose", () => {
     const bundle = makeRichBundle();
     bundle.experimentPlan = {
       ...(bundle.experimentPlan || {}),
@@ -877,8 +856,9 @@ describe("scientificWriting", () => {
       ]
     };
 
+    const draft = makeTerseDraft();
     const scientific = applyScientificWritingPolicy({
-      draft: makeTerseDraft(),
+      draft,
       bundle,
       profile: PAPER_PROFILE
     });
@@ -890,60 +870,36 @@ describe("scientificWriting", () => {
       "stateful coordination"
     ]));
 
-    const relatedText = scientific.draft.sections.find((section) => section.heading === "Related Work")?.paragraphs
-      .map((paragraph) => paragraph.text)
-      .join(" ") || "";
-    expect(relatedText).not.toContain("Dana Example");
-    expect(relatedText).not.toContain("Institute of Evaluation");
-    expect(relatedText).not.toContain("- Primary metric:");
-    expect(relatedText).not.toMatch(/comparison axes concern Recently,/i);
-    expect(relatedText).toMatch(/literature discovery|stateful coordination/i);
-    expect(relatedText).toContain("Stateful coordination across external tools provides a contrasting systems axis.");
-    expect(relatedText).toMatch(/method family|resource budget|evaluation scope|bounded adaptation/i);
+    expect(scientific.draft.sections).toEqual(draft.sections);
+    expect(scientific.draft.sections.find((section) => section.heading === "Related Work")).toBeUndefined();
+    const draftText = JSON.stringify(scientific.draft.sections);
+    expect(draftText).not.toContain("Dana Example");
+    expect(draftText).not.toContain("Institute of Evaluation");
+    expect(draftText).not.toContain("- Primary metric:");
+    expect(draftText).not.toContain("literature discovery and retrieval");
+    expect(draftText).not.toContain("Stateful coordination across external tools");
   });
 
-  it("restores only available draft evidence when the manuscript remains below the page floor", () => {
-    const scientific = applyScientificWritingPolicy({
-      draft: makeTerseDraft(),
-      bundle: makeRichBundle(),
-      profile: {
-        ...PAPER_PROFILE,
-        target_main_pages: 6,
-        minimum_main_pages: 6,
-        main_page_limit: 6
-      }
-    });
-    const budgetParagraph =
-      "The restored manuscript retains this evidence-grounded detail in the main body so that the compiled paper remains comparable to the page-budgeted scientific draft and does not collapse into a short summary after repair.";
-    const draft = {
-      ...scientific.draft,
-      sections: scientific.draft.sections.map((section) =>
-        ["Method", "Results", "Discussion"].includes(section.heading)
-          ? {
-              ...section,
-              paragraphs: [
-                ...section.paragraphs,
-                ...Array.from({ length: 25 }, (_, index) => ({
-                  text:
-                    index === 0 && section.heading === "Results"
-                      ? "Objective metric met: validation_score=0.72 >= 0.65. candidate_score=0.72 reference_score=0.64."
-                      : index === 2 && section.heading === "Results"
-                        ? "The observed declared subject cleared the configured screening threshold by point estimate, but the result remains a follow-up signal rather than a stable success claim."
-                      : index === 1 && section.heading === "Method"
-                        ? "Workflow audit details describe an internal cached-target validation."
-                      : index === 2 && section.heading === "Method"
-                        ? "The evaluation spans Training: a fixed subset. Models or series include Primary trained baseline: series x with the same budget and configured_primary_baseline."
-                      : `Restoration note ${index + 1} for ${section.heading}: ${budgetParagraph}`,
-                  evidence_ids: section.evidence_ids,
-                  citation_paper_ids: section.citation_paper_ids
-                }))
-              ]
-            }
-          : section
-      )
+  it("restores only authored draft paragraphs and remains below an unattainable page floor", () => {
+    const baseDraft = makeTerseDraft();
+    const draft: PaperDraft = {
+      ...baseDraft,
+      sections: baseDraft.sections.map((section, index) => ({
+        ...section,
+        paragraphs: [
+          ...section.paragraphs,
+          {
+            text: `Authored ${section.heading.toLowerCase()} detail ${index + 1} records a distinct protocol fact linked to existing evidence.`,
+            evidence_ids: [`ev_authored_${index + 1}`],
+            citation_paper_ids: [`paper_authored_${index + 1}`]
+          }
+        ]
+      }))
     };
-    const pageBudget = pageBudgetManager({
+    const originalDraft = structuredClone(draft);
+    const scientific = applyScientificWritingPolicy({
       draft,
+      bundle: makeRichBundle(),
       profile: {
         ...PAPER_PROFILE,
         target_main_pages: 6,
@@ -955,42 +911,36 @@ describe("scientificWriting", () => {
       title: "Compressed manuscript",
       abstract: "A short abstract.",
       keywords: ["declared comparison"],
-      sections: draft.sections.map((section) => ({
+      sections: scientific.draft.sections.map((section) => ({
         heading: section.heading,
         paragraphs: section.paragraphs.slice(0, 1).map((paragraph) => paragraph.text)
       }))
     };
+    const originalParagraphs = new Set(compressed.sections.flatMap((section) => section.paragraphs));
+    const authoredParagraphs = new Set(
+      scientific.draft.sections.flatMap((section) => section.paragraphs.map((paragraph) => paragraph.text))
+    );
 
     const restored = enforceManuscriptPageBudgetFloor({
       manuscript: compressed,
-      draft,
-      pageBudget
+      draft: scientific.draft,
+      pageBudget: scientific.page_budget
     });
+    const restoredParagraphs = restored.manuscript.sections.flatMap((section) => section.paragraphs);
+    const addedParagraphs = restoredParagraphs.filter((paragraph) => !originalParagraphs.has(paragraph));
 
-    const restoredWords = restored.manuscript.sections.reduce(
-      (total, section) => total + section.paragraphs.join(" ").split(/\s+/u).filter(Boolean).length,
-      0
-    );
-    expect(pageBudget.status).toBe("ok");
+    expect(draft).toEqual(originalDraft);
+    expect(scientific.draft.sections).toEqual(originalDraft.sections);
+    expect(scientific.page_budget.status).toBe("fail");
+    expect(scientific.auto_repairs.expansion_recheck.attempted).toBe(false);
     expect(restored.applied).toBe(true);
-    expect(restored.added_paragraph_count).toBeGreaterThan(0);
-    expect(restoredWords).toBeGreaterThan(0);
-    expect(restoredWords).toBeLessThan(pageBudget.minimum_main_words);
-    expect(restored.added_sections).toEqual(expect.arrayContaining(["Method", "Results"]));
-    const restoredText = JSON.stringify(restored.manuscript);
-    expect(restoredText).toContain("The archived objective check cleared its configured screening threshold");
-    expect(restoredText.match(/configured screening threshold/gi)?.length).toBeLessThanOrEqual(2);
-    expect(restoredText).not.toContain("The prespecified baseline-relative primary-measure target was met");
-    expect(restoredText).toContain("observed declared subject");
-    expect(restoredText).not.toContain("validation_score");
-    expect(restoredText).not.toContain("candidate_score");
-    expect(restoredText).not.toContain("reference_score");
-    expect(restoredText).not.toContain("Workflow audit details");
-    expect(restoredText).not.toContain("Evaluation spans Training:");
-    expect(restoredText).not.toContain("Models or series include Primary trained baseline");
-    expect(restoredText).not.toContain("configured_primary_baseline");
-    expect(restoredText).not.toMatch(/review gating|paper-readiness audit|result-table integrity/i);
-    expect(restoredText).not.toMatch(/bounded claim ceiling|claim downgrade correctness/i);
+    expect(restored.added_paragraph_count).toBe(addedParagraphs.length);
+    expect(addedParagraphs.length).toBeGreaterThan(0);
+    expect(addedParagraphs.every((paragraph) => authoredParagraphs.has(paragraph))).toBe(true);
+    expect(restored.estimated_main_words_after).toBeLessThan(restored.minimum_main_words);
+    expect(JSON.stringify(restored.manuscript)).not.toMatch(
+      /audit trail visible|main text dense enough for review|final takeaway is therefore deliberately narrow/i
+    );
   });
   it("does not restore prompt or cache residue while enforcing the final page floor", () => {
     const cachedRecoveryResidue = "Cache recovery note for an internal source snapshot.";
@@ -1316,9 +1266,11 @@ describe("scientificWriting", () => {
         }
       }
     } as any;
+    const draft = makeTerseDraft();
+    const originalDraft = structuredClone(draft);
 
     const scientific = applyScientificWritingPolicy({
-      draft: makeTerseDraft(),
+      draft,
       bundle,
       profile: PAPER_PROFILE
     });
@@ -1380,7 +1332,10 @@ describe("scientificWriting", () => {
     expect(allText).not.toMatch(/doi:|0123456789abcdef0123456789abcdef/i);
     expect(allText).not.toMatch(/Objective metric met|raw_precision|raw_recall/i);
     expect(allText).toContain("archived objective check cleared");
-    expect(allText).toContain("bounded interpretation");
+    expect(allText).toContain("The candidate warrants follow-up.");
+    expect(allText).not.toContain("bounded interpretation");
+    expect(draft).toEqual(originalDraft);
+    expect(scientific.draft.sections).toEqual(originalDraft.sections);
     expect(methodText).toContain("Declared subject (comparator role)");
     expect(methodText).toMatch(/learning rate 0\.0003/i);
     expect(methodText).toMatch(/does not disclose optimizer/i);
@@ -1784,9 +1739,11 @@ describe("scientificWriting", () => {
     expect(scientific.draft.claims[0]?.statement).toMatch(/positive delta|suggests/i);
   });
 
-  it("fills an evidence-rich terse draft to the six-page strict-paper floor without model repair", () => {
+  it("fails closed when an evidence-rich bundle accompanies a terse six-page draft", () => {
+    const draft = makeTerseDraft();
+    const originalDraft = structuredClone(draft);
     const scientific = applyScientificWritingPolicy({
-      draft: makeTerseDraft(),
+      draft,
       bundle: makeRichBundle(),
       profile: {
         ...PAPER_PROFILE,
@@ -1797,11 +1754,20 @@ describe("scientificWriting", () => {
     });
     const validation = buildScientificValidationArtifact(scientific);
 
-    expect(scientific.page_budget.status).toBe("ok");
-    expect(scientific.page_budget.estimated_main_words).toBeGreaterThanOrEqual(
+    expect(draft).toEqual(originalDraft);
+    expect(scientific.draft.sections).toEqual(originalDraft.sections);
+    expect(scientific.page_budget.status).toBe("fail");
+    expect(scientific.page_budget.estimated_main_words).toBeLessThan(
       scientific.page_budget.minimum_main_words
     );
-    expect(validation.issues.some((issue) => issue.code === "page_budget_warning")).toBe(false);
+    expect(scientific.auto_repairs.expanded_sections).toEqual([]);
+    expect(scientific.auto_repairs.expansion_recheck).toMatchObject({
+      attempted: false,
+      page_budget_before: "fail",
+      page_budget_after: "fail",
+      resolved_headings: []
+    });
+    expect(validation.issues.some((issue) => issue.code === "page_budget_shortfall")).toBe(true);
   });
 
   it("treats richness/page-budget issues as warn by default and fail in strict-paper mode", () => {
@@ -2562,7 +2528,8 @@ describe("scientificWriting", () => {
 
     expect(allText).toContain("Supplementary setup details");
     expect(allText).toContain("archived objective check cleared");
-    expect(allText).toContain("bounded interpretation");
+    expect(allText).toContain("The declared subject merits replication.");
+    expect(allText).not.toContain("bounded interpretation");
     expect(
       (manuscript.appendix_sections || []).filter(
         (section) => section.heading === "Supplementary Experimental Details"

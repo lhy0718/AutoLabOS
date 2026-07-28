@@ -30,6 +30,29 @@ class CapturingQueueJsonLLMClient extends QueueJsonLLMClient {
   }
 }
 
+class DelegatingLLMClient extends MockLLMClient {
+  constructor(private readonly delegate: MockLLMClient) {
+    super();
+  }
+
+  override async complete(
+    prompt: string,
+    opts?: Parameters<MockLLMClient["complete"]>[1]
+  ): Promise<{ text: string }> {
+    return await this.delegate.complete(prompt, opts);
+  }
+}
+
+function independentReviewBoundary(llm: MockLLMClient) {
+  return {
+    proposerIdentity: { identity: "fixture_proposer" },
+    reviewer: {
+      llm: new DelegatingLLMClient(llm),
+      identity: { identity: "fixture_reviewer" }
+    }
+  };
+}
+
 class HangingLLMClient extends MockLLMClient {
   override async complete(): Promise<{ text: string }> {
     return await new Promise<{ text: string }>(() => {});
@@ -246,6 +269,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score >= 0.9",
@@ -267,6 +291,118 @@ describe("researchPlanning helpers", () => {
     expect(result.candidates).toHaveLength(2);
     expect(result.probe_candidates.map((item) => item.id)).toEqual(["intervention_1", "mechanism_1"]);
     expect(new Set(result.probe_candidates.map((item) => item.id)).size).toBe(result.probe_candidates.length);
+  });
+
+  it("does not rank candidates by self-reported expected gain", async () => {
+    const candidate = (text: string, expectedGain: number) => ({
+      id: "candidate_input",
+      text,
+      novelty: 4,
+      feasibility: 4,
+      testability: 5,
+      cost: 2,
+      expected_gain: expectedGain,
+      evidence_links: ["ev_1", "ev_2"],
+      axis_ids: ["ax_1"],
+      rationale: "The declared intervention is bounded and directly testable.",
+      ...topicMeasurementContract()
+    });
+    const review = (candidateId: string, keep: boolean) => ({
+      candidate_id: candidateId,
+      keep,
+      groundedness: 5,
+      causal_clarity: 5,
+      falsifiability: 5,
+      experimentability: 5,
+      measurement_specificity: 5,
+      measurement_signals: ["primary_score", "uncertainty_interval"],
+      measurement_hint: "Compare matched conditions using the declared estimator.",
+      limitation_reflection: 4,
+      measurement_readiness: 5,
+      strengths: ["Clear control and concrete intervention."],
+      weaknesses: ["The claim remains bounded."],
+      critique_summary: "The contract is complete."
+    });
+    const llm = new QueueJsonLLMClient([
+      JSON.stringify({
+        summary: "One bounded evidence axis.",
+        axes: [{
+          id: "ax_1",
+          label: "Bounded intervention",
+          mechanism: "A single controlled change may alter the primary outcome.",
+          intervention: "Apply one declared change against a matched comparator.",
+          boundary_condition: "The effect may disappear outside the declared scope.",
+          evaluation_hint: "Use the prespecified estimator and falsifier.",
+          evidence_links: ["ev_1", "ev_2"]
+        }]
+      }),
+      JSON.stringify({
+        summary: "Mechanism candidate.",
+        candidates: [candidate(
+          "A bounded adapter changes the declared primary outcome under a fixed comparator.",
+          5
+        )]
+      }),
+      JSON.stringify({
+        summary: "Contradiction candidate.",
+        candidates: [candidate(
+          "A bounded alternative changes the declared primary outcome under a fixed comparator.",
+          0
+        )]
+      }),
+      JSON.stringify({
+        summary: "Reserve candidate.",
+        candidates: [candidate(
+          "A bounded reserve changes the declared primary outcome under a fixed comparator.",
+          3
+        )]
+      }),
+      JSON.stringify({
+        summary: "Two candidates pass independent review.",
+        reviews: [
+          review("mechanism_1", true),
+          review("contradiction_1", true),
+          review("intervention_1", false)
+        ]
+      })
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      ...independentReviewBoundary(llm),
+      runTitle: "Bounded candidate comparison",
+      runTopic: "Evidence-grounded topic selection",
+      objectiveMetric: "primary_score",
+      evidenceSeeds: [
+        {
+          evidence_id: "ev_1",
+          paper_id: "paper_1",
+          claim: "The first source motivates a bounded comparison.",
+          source_type: "full_text",
+          confidence: 0.95
+        },
+        {
+          evidence_id: "ev_2",
+          paper_id: "paper_2",
+          claim: "The second source motivates a matched estimator.",
+          source_type: "full_text",
+          confidence: 0.95
+        }
+      ],
+      branchCount: 3,
+      topK: 1
+    });
+
+    expect(result.probe_candidates.map((item) => item.id)).toEqual([
+      "contradiction_1"
+    ]);
+    const scores = new Map(
+      result.artifacts.probe_shortlist.scores.map((item) => [
+        item.candidate_id,
+        item.raw_base_score
+      ])
+    );
+    expect(scores.get("mechanism_1")).toBe(scores.get("contradiction_1"));
   });
 
   it.each([
@@ -333,6 +469,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Bounded comparative study",
       runTopic: "Bounded comparative study",
       objectiveMetric: "primary_score >= 0.50",
@@ -412,6 +549,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Bounded comparative study",
       runTopic: "Bounded comparative study",
       objectiveMetric: "primary_score >= 0.50",
@@ -424,14 +562,13 @@ describe("researchPlanning helpers", () => {
     expect(result.artifacts.pipeline).toBe("fallback");
     expect(result.fallbackReason).toContain("no_probe_candidates");
     expect(result.fallbackReason).toContain("No valid hypothesis candidates were returned");
-    expect(result.artifacts.hard_gate_rejections).toHaveLength(2);
-    expect(result.artifacts.hard_gate_rejections.map((item) => item.generation_path)).toEqual([
+    const evidenceGateRejections = result.artifacts.hard_gate_rejections.filter(
+      (item) => item.reasons.includes(expectedReason)
+    );
+    expect(evidenceGateRejections.map((item) => item.generation_path)).toEqual([
       "staged",
       "single_pass"
     ]);
-    expect(
-      result.artifacts.hard_gate_rejections.every((item) => item.reasons.includes(expectedReason))
-    ).toBe(true);
   });
 
   it("fails closed when a topic-discovery candidate references an unknown evidence axis", async () => {
@@ -485,6 +622,11 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      proposerIdentity: { identity: "fixture_proposer" },
+      reviewer: {
+        llm: new DelegatingLLMClient(llm),
+        identity: { identity: "fixture_reviewer" }
+      },
       runTitle: "Bounded comparative study",
       runTopic: "Bounded comparative study",
       objectiveMetric: "primary_score >= 0.50",
@@ -513,6 +655,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score >= 0.9",
@@ -523,8 +666,12 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("fallback");
     expect(result.candidates.length).toBeGreaterThanOrEqual(2);
-    expect(result.probe_candidates).toHaveLength(2);
+    expect(result.probe_candidates).toEqual([]);
     expect(result.artifacts.pipeline).toBe("fallback");
+    expect(result.artifacts.provenance.review_authorization.authorized_for_probe).toBe(false);
+    expect(result.artifacts.provenance.review_authorization.reason_codes).toContain(
+      "independent_review_not_completed"
+    );
   });
 
   it("captures partial staged and single-pass hypothesis output before timeout fallback", async () => {
@@ -535,6 +682,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score >= 0.9",
@@ -557,6 +705,7 @@ describe("researchPlanning helpers", () => {
 
     await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score >= 0.9",
@@ -625,6 +774,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score >= 0.9",
@@ -763,6 +913,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score",
@@ -938,7 +1089,13 @@ describe("researchPlanning helpers", () => {
     expect(result.source).toBe("llm");
     expect(result.artifacts.pipeline).toBe("single_pass");
     expect(result.fallbackReason).toContain("incomplete_hypothesis_reviews:1");
-    expect(result.probe_candidates.map((item) => item.id)).toEqual(["single_pass_1"]);
+    expect(result.probe_candidates).toEqual([]);
+    expect(
+      result.artifacts.provenance.review_authorization.authorized_for_probe
+    ).toBe(false);
+    expect(
+      result.artifacts.provenance.review_authorization.reason_codes
+    ).toContain("independent_review_not_completed");
     const reviewPrompt = llm.prompts.find((prompt) =>
       prompt.includes("Review the hypothesis drafts skeptically")
     ) ?? "";
@@ -998,6 +1155,7 @@ describe("researchPlanning helpers", () => {
 
     await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score",
@@ -1165,6 +1323,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score",
@@ -1315,6 +1474,7 @@ describe("researchPlanning helpers", () => {
 
     const result = await generateHypothesesFromEvidence({
       llm,
+      ...independentReviewBoundary(llm),
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
       objectiveMetric: "primary_score",

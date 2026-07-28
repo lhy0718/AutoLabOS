@@ -8,6 +8,8 @@ import type { HypothesisCandidate } from "../src/core/analysis/researchPlanning.
 import {
   buildCandidatePriorSearchPlan,
   buildCandidatePriorSearchReceipt,
+  buildCandidatePriorSearchReviewBindings,
+  isCandidatePriorSearchReviewBinding,
   validateCandidatePriorSearchPlanIntegrity,
   validateCandidatePriorSearchReceipt,
   validateCandidatePriorSearchPlan,
@@ -110,6 +112,18 @@ describe("candidate-conditioned direct-prior search planning", () => {
       sourceCorpusRaw: SOURCE_CORPUS_RAW,
       resultCorpusRaw: corpusRaw
     })).toMatchObject({ valid: true, reasons: [] });
+    const binding = buildCandidatePriorSearchReviewBindings(receipt).get(
+      "candidate_receipt"
+    );
+    expect(binding).toMatchObject({
+      candidate_id: "candidate_receipt",
+      prior_absorption_contract_sha256:
+        plan.candidates[0].prior_absorption_contract_sha256,
+      plan_content_sha256: plan.content_sha256,
+      receipt_content_sha256: receipt.content_sha256,
+      selected_direct_prior_ids: ["paper_1", "paper_2", "paper_3"]
+    });
+    expect(isCandidatePriorSearchReviewBinding(binding)).toBe(true);
 
     const tampered = structuredClone(receipt);
     tampered.result_corpus.byte_length += 1;
@@ -122,6 +136,131 @@ describe("candidate-conditioned direct-prior search planning", () => {
       "candidate_prior_search_receipt_content_hash_mismatch",
       "candidate_prior_search_receipt_result_corpus_mismatch"
     ]));
+  });
+
+  it("allows a later search to reuse a query family already present on a source paper", () => {
+    const candidates = [
+      candidateInput("candidate_reuse", "structured records", "contract tracing")
+    ];
+    const initialPlan = buildCandidatePriorSearchPlan(planInput(candidates));
+    const existingFamilyId = initialPlan.candidates[0].families[0].family_id;
+    const sourceCorpusRaw = `${JSON.stringify({
+      paper_id: "paper_existing",
+      title: "Existing direct prior",
+      query_families: ["family_original", existingFamilyId]
+    })}\n`;
+    const input = planInput(candidates);
+    input.sourceCorpus = {
+      collect_attempt_id: "collect_previous",
+      sha256: createHash("sha256").update(sourceCorpusRaw, "utf8").digest("hex"),
+      byte_length: Buffer.byteLength(sourceCorpusRaw, "utf8")
+    };
+    const plan = buildCandidatePriorSearchPlan(input);
+    const allFamilyIds = plan.candidates[0].families.map((family) => family.family_id);
+    const resultCorpusRaw = `${JSON.stringify({
+      paper_id: "paper_existing",
+      title: "Existing direct prior",
+      query_families: [...new Set(["family_original", existingFamilyId, ...allFamilyIds])].sort()
+    })}\n`;
+    const receipt = buildCandidatePriorSearchReceipt({
+      plan,
+      collectAttemptId: "collect_reuse",
+      generatedAt: "2026-07-28T09:00:00Z",
+      resultCorpusSha256: createHash("sha256")
+        .update(resultCorpusRaw, "utf8")
+        .digest("hex"),
+      resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
+      attempts: plan.candidates[0].families.flatMap((family) =>
+        family.lanes.map((lane) => ({
+          familyId: family.family_id,
+          retrievalLane: lane.retrieval_lane,
+          query: family.query,
+          fetched: 1,
+          selected: lane.retrieval_lane === "broad_relevance" ? 1 : 0,
+          selectedPaperIds:
+            lane.retrieval_lane === "broad_relevance" ? ["paper_existing"] : []
+        }))
+      )
+    });
+
+    expect(validateCandidatePriorSearchReceipt(receipt, {
+      plan,
+      expectedCollectAttemptId: "collect_reuse",
+      sourceCorpusRaw,
+      resultCorpusRaw
+    })).toMatchObject({ valid: true, reasons: [] });
+  });
+
+  it("rejects a required search receipt with no selected direct prior", () => {
+    const input = planInput([
+      candidateInput("candidate_receipt", "structured records", "contract tracing")
+    ]);
+    const plan = buildCandidatePriorSearchPlan(input);
+    const attempts = plan.candidates[0].families.flatMap((family) =>
+      family.lanes.map((lane) => ({
+        familyId: family.family_id,
+        retrievalLane: lane.retrieval_lane,
+        query: family.query,
+        fetched: 0,
+        selected: 0,
+        selectedPaperIds: []
+      }))
+    );
+    const receipt = buildCandidatePriorSearchReceipt({
+      plan,
+      collectAttemptId: "collect_augmentation",
+      generatedAt: "2026-07-28T09:00:00Z",
+      resultCorpusSha256: createHash("sha256")
+        .update(SOURCE_CORPUS_RAW, "utf8")
+        .digest("hex"),
+      resultCorpusByteLength: Buffer.byteLength(SOURCE_CORPUS_RAW, "utf8"),
+      attempts
+    });
+
+    expect(validateCandidatePriorSearchReceipt(receipt, {
+      plan,
+      expectedCollectAttemptId: "collect_augmentation",
+      sourceCorpusRaw: SOURCE_CORPUS_RAW,
+      resultCorpusRaw: SOURCE_CORPUS_RAW
+    })).toMatchObject({
+      valid: false,
+      reasons: [
+        "candidate_prior_search_receipt_selected_papers_empty:candidate_receipt"
+      ]
+    });
+    expect(() => buildCandidatePriorSearchReviewBindings(receipt)).toThrow(
+      "candidate_prior_search_review_binding_selected_papers_empty:candidate_receipt"
+    );
+
+    expect(() => buildCandidatePriorSearchReceipt({
+      plan,
+      collectAttemptId: "collect_augmentation",
+      generatedAt: "2026-07-28T09:00:00Z",
+      resultCorpusSha256: createHash("sha256")
+        .update(SOURCE_CORPUS_RAW, "utf8")
+        .digest("hex"),
+      resultCorpusByteLength: Buffer.byteLength(SOURCE_CORPUS_RAW, "utf8"),
+      attempts: attempts.map((attempt, index) =>
+        index === 0
+          ? { ...attempt, fetched: 1, selected: 2, selectedPaperIds: ["paper_a", "paper_b"] }
+          : attempt
+      )
+    })).toThrow("candidate_prior_search_receipt_selected_exceeds_fetched");
+
+    expect(() => buildCandidatePriorSearchReceipt({
+      plan,
+      collectAttemptId: "collect_augmentation",
+      generatedAt: "2026-07-28T09:00:00Z",
+      resultCorpusSha256: createHash("sha256")
+        .update(SOURCE_CORPUS_RAW, "utf8")
+        .digest("hex"),
+      resultCorpusByteLength: Buffer.byteLength(SOURCE_CORPUS_RAW, "utf8"),
+      attempts: attempts.map((attempt, index) =>
+        index === 0
+          ? { ...attempt, fetched: 1, selected: 1, selectedPaperIds: [] }
+          : attempt
+      )
+    })).toThrow("candidate_prior_search_receipt_selected_count_mismatch");
   });
 
   it("invalidates changed contracts and rejects an invalid supplied contract hash", () => {

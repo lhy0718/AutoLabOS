@@ -91,6 +91,7 @@ describe("canonical ResultsArtifactV2 analysis contract", () => {
 
   it("adapts a historical results_table only at the AnalysisReport reader boundary", () => {
     const report = parseAnalysisReport(JSON.stringify({
+      analysis_version: 1,
       results_table: [
         {
           metric: "primary_score",

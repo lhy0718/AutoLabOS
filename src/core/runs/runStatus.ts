@@ -5,6 +5,7 @@ import {
   ExperimentNetworkPolicy,
   ExperimentNetworkPurpose,
   GraphNodeId,
+  RunEvidenceAdequacyProjection,
   RunLifecycleStatus,
   RunOperatorStatusArtifact,
   RunRecord,
@@ -13,6 +14,19 @@ import {
   WorkflowApprovalMode
 } from "../../types.js";
 import { fileExists } from "../../utils/fs.js";
+import {
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH
+} from "../analysis/evidenceAdequacy.js";
+import {
+  loadEvidenceAdequacyContractFromRunDir,
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyArtifactReassessment
+} from "../analysis/evidenceAdequacyArtifacts.js";
+import { loadExperimentContract } from "../experiments/experimentContract.js";
+import { RunContextMemory } from "../memory/runContextMemory.js";
+import { buildPublicExperimentDir } from "../publicArtifacts.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
 import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
@@ -50,7 +64,36 @@ interface FailureSeed {
   remediation: string;
 }
 
+interface ExperimentPrimaryBinding {
+  present: boolean;
+  valid: boolean;
+  primaryComparisonId?: string;
+}
+
+interface ReviewEvidenceAdequacyArtifact {
+  status: string;
+  trusted: boolean;
+  paperEvidenceAllowed: boolean;
+  integrityValid: boolean;
+  contractPresent: boolean;
+  receiptPresent: boolean;
+  assessmentPresent: boolean;
+  primaryComparisonId?: string;
+  overallStatus?: "pass" | "fail" | "unknown";
+  issues: string[];
+  warnings: string[];
+}
+
+interface ReviewEvidenceAdequacyLoad {
+  present: boolean;
+  valid: boolean;
+  artifact?: ReviewEvidenceAdequacyArtifact;
+  reasonCode?: string;
+}
+
 export const RUN_STATUS_RELATIVE_PATH = "run_status.json";
+const REVIEW_EVIDENCE_ADEQUACY_RELATIVE_PATH =
+  "review/evidence_adequacy_reassessment.json";
 
 export async function readRunOperatorStatus(runDir: string): Promise<RunOperatorStatusArtifact | undefined> {
   const raw = await readTextArtifact(path.join(runDir, RUN_STATUS_RELATIVE_PATH));
@@ -83,6 +126,13 @@ export async function buildRunOperatorStatus(input: {
   const analysisProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "analyze_results");
   const reviewProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "review");
   const paperProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "write_paper");
+  const evidenceAdequacyPromise = buildRunEvidenceAdequacyProjection({
+    workspaceRoot: input.workspaceRoot,
+    runDir,
+    run: input.run,
+    reviewProjectionActive
+  });
+  const evidenceAdequacy = await evidenceAdequacyPromise;
   const analysisReady = analysisProjectionActive
     && await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
   const reviewReady = reviewProjectionActive
@@ -101,7 +151,9 @@ export async function buildRunOperatorStatus(input: {
     ? await inspectReferenceAuthorityGate(path.join(runDir, "paper"))
     : undefined;
   const paperReady = paperReadiness?.paper_ready === true
-    && referenceAuthorityGate?.status === "pass";
+    && referenceAuthorityGate?.status === "pass"
+    && evidenceAdequacy.trusted
+    && evidenceAdequacy.paper_evidence_allowed;
   const reviewRisks = reviewProjectionActive
     ? await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"))
     : undefined;
@@ -162,7 +214,6 @@ export async function buildRunOperatorStatus(input: {
     policy: input.networkPolicy,
     purpose: input.networkPurpose
   });
-
   return {
     version: 1,
     generated_at: new Date().toISOString(),
@@ -202,6 +253,7 @@ export async function buildRunOperatorStatus(input: {
       reason: paperReadinessReason,
       operator_label: buildPaperGateOperatorLabel(paperReadinessState, paperReady, paperReadinessReason)
     },
+    evidence_adequacy: evidenceAdequacy,
     network_dependency: networkDependency,
     validation_scope: input.validationScope || "full_run"
   };
@@ -209,6 +261,445 @@ export async function buildRunOperatorStatus(input: {
 
 function nodeArtifactsBelongToCurrentGraph(run: RunRecord, node: GraphNodeId): boolean {
   return run.graph.nodeStates[node]?.status !== "pending";
+}
+
+async function buildRunEvidenceAdequacyProjection(input: {
+  workspaceRoot: string;
+  runDir: string;
+  run: RunRecord;
+  reviewProjectionActive: boolean;
+}): Promise<RunEvidenceAdequacyProjection> {
+  const experimentBinding = await loadExperimentPrimaryBinding(
+    input.workspaceRoot,
+    input.runDir,
+    input.run
+  );
+  const evidenceRoots = await loadEvidenceAdequacyRoots(input);
+  const reviewRequired = isReviewEvidenceReassessmentRequired(input.run);
+  const [contractLoad, reassessment, reviewLoad] = await Promise.all([
+    loadEvidenceAdequacyContractFromRunDir(input.runDir),
+    reassessEvidenceAdequacyArtifacts({
+      runDir: input.runDir,
+      evidenceRoots,
+      expectedPrimaryComparisonId: experimentBinding.primaryComparisonId,
+      requireStoredAssessment: true
+    }),
+    input.reviewProjectionActive
+      ? loadReviewEvidenceAdequacyArtifact(input.runDir)
+      : Promise.resolve<ReviewEvidenceAdequacyLoad>({
+          present: false,
+          valid: true
+        })
+  ]);
+
+  const contract = contractLoad.contract;
+  const primaryComparisonId =
+    contract?.primary_comparison_id || experimentBinding.primaryComparisonId;
+  const bindingValid = Boolean(
+    contract
+    && experimentBinding.valid
+    && experimentBinding.primaryComparisonId === contract.primary_comparison_id
+  );
+  const evidenceExpected = isEvidenceAdequacyExpected(input.run);
+  const reasonCodes = collectEvidenceAdequacyReasonCodes(
+    contractLoad.reasons,
+    reassessment
+  );
+  let status: RunEvidenceAdequacyProjection["status"];
+
+  if (
+    !reassessment.contractPresent
+    && !reassessment.receiptPresent
+    && !reassessment.storedAssessmentPresent
+  ) {
+    status = evidenceExpected ? "missing_contract" : "unmeasured";
+    if (status === "missing_contract") {
+      reasonCodes.push("evidence_adequacy_contract_missing");
+    }
+  } else if (!contract) {
+    status = "invalid";
+    reasonCodes.push(
+      reassessment.contractPresent
+        ? "evidence_adequacy_contract_invalid"
+        : "evidence_adequacy_orphan_artifact"
+    );
+  } else if (!bindingValid) {
+    status = "invalid";
+    reasonCodes.push(
+      experimentBinding.present
+        ? "evidence_adequacy_primary_comparison_mismatch"
+        : "evidence_adequacy_experiment_contract_missing"
+    );
+  } else if (!reassessment.receiptPresent) {
+    status = evidenceExpected ? "missing_receipt" : "awaiting_execution";
+    reasonCodes.push(
+      status === "awaiting_execution"
+        ? "evidence_adequacy_execution_pending"
+        : "evidence_adequacy_receipt_missing"
+    );
+  } else if (!reassessment.assessment || !reassessment.integrityValid) {
+    status = "invalid";
+    reasonCodes.push("evidence_adequacy_integrity_invalid");
+  } else {
+    status = reassessment.assessment.overall_status;
+  }
+
+  let integrityValid =
+    reassessment.integrityValid
+    && Boolean(reassessment.assessment)
+    && (status === "pass" || status === "fail" || status === "unknown");
+  let trusted = integrityValid;
+  let paperEvidenceAllowed = trusted && status === "pass";
+
+  if (input.reviewProjectionActive) {
+    if (!reviewLoad.present && reviewRequired) {
+      if (status !== "missing_contract" && status !== "missing_receipt") {
+        status = "invalid";
+      }
+      integrityValid = false;
+      trusted = false;
+      paperEvidenceAllowed = false;
+      reasonCodes.push("evidence_adequacy_review_reassessment_missing");
+    } else if (reviewLoad.present) {
+      const reviewMatches =
+        reviewLoad.valid
+        && Boolean(reviewLoad.artifact)
+        && reviewEvidenceAdequacyMatches({
+          artifact: reviewLoad.artifact!,
+          reassessment,
+          trusted,
+          paperEvidenceAllowed,
+          expectedPrimaryComparisonId: experimentBinding.primaryComparisonId
+        });
+      if (!reviewMatches) {
+        status = "invalid";
+        integrityValid = false;
+        trusted = false;
+        paperEvidenceAllowed = false;
+        reasonCodes.push(
+          reviewLoad.reasonCode
+          || "evidence_adequacy_review_reassessment_mismatch"
+        );
+      }
+    }
+  }
+
+  return {
+    status,
+    trusted,
+    integrity_valid: integrityValid,
+    paper_evidence_allowed: paperEvidenceAllowed,
+    contract_present: reassessment.contractPresent,
+    receipt_present: reassessment.receiptPresent,
+    assessment_present: reassessment.storedAssessmentPresent,
+    review_reassessment_present: reviewLoad.present,
+    primary_comparison_id: primaryComparisonId,
+    overall_status: reassessment.assessment?.overall_status,
+    reason_codes: uniqueStrings(reasonCodes).filter(
+      (reasonCode) => status !== "awaiting_execution"
+        || reasonCode !== "evidence_adequacy_receipt_missing"
+    ),
+    artifact_refs: buildEvidenceAdequacyArtifactRefs({
+      reassessment,
+      reviewReassessmentPresent: reviewLoad.present
+    })
+  };
+}
+
+async function loadExperimentPrimaryBinding(
+  workspaceRoot: string,
+  runDir: string,
+  run: RunRecord
+): Promise<ExperimentPrimaryBinding> {
+  const artifactPath = path.join(runDir, "experiment_contract.json");
+  const present = await fileExists(artifactPath);
+  if (!present) {
+    return { present: false, valid: false };
+  }
+
+  if (path.resolve(workspaceRoot) === path.resolve(process.cwd())) {
+    const loaded = await loadExperimentContract(run.id);
+    const primaryComparisonId = asNonEmptyString(
+      loaded?.results_plan.primary_comparison_id
+    );
+    if (loaded?.run_id === run.id && primaryComparisonId) {
+      return { present: true, valid: true, primaryComparisonId };
+    }
+  }
+
+  const raw = await readJsonArtifact<unknown>(artifactPath);
+  if (!isRecord(raw) || raw.run_id !== run.id || !isRecord(raw.results_plan)) {
+    return { present: true, valid: false };
+  }
+  const primaryComparisonId = asNonEmptyString(
+    raw.results_plan.primary_comparison_id
+  );
+  return {
+    present: true,
+    valid: Boolean(primaryComparisonId),
+    primaryComparisonId
+  };
+}
+
+async function loadEvidenceAdequacyRoots(input: {
+  workspaceRoot: string;
+  runDir: string;
+  run: RunRecord;
+}): Promise<string[]> {
+  const runContextPath = path.isAbsolute(input.run.memoryRefs.runContextPath)
+    ? input.run.memoryRefs.runContextPath
+    : path.resolve(input.workspaceRoot, input.run.memoryRefs.runContextPath);
+  const runContext = new RunContextMemory(runContextPath);
+  const [metricsPath, configuredPublicDir, executionCwd] = await Promise.all([
+    runContext.get<string>("implement_experiments.metrics_path"),
+    runContext.get<string>("implement_experiments.public_dir"),
+    runContext.get<string>("run_experiments.cwd")
+  ]);
+  return uniqueStrings([
+    input.runDir,
+    buildPublicExperimentDir(input.workspaceRoot, input.run),
+    ...(metricsPath
+      ? [path.dirname(resolveWorkspacePath(input.workspaceRoot, metricsPath))]
+      : []),
+    ...(configuredPublicDir
+      ? [resolveWorkspacePath(input.workspaceRoot, configuredPublicDir)]
+      : []),
+    ...(executionCwd
+      ? [resolveWorkspacePath(input.workspaceRoot, executionCwd)]
+      : [])
+  ]);
+}
+
+function resolveWorkspacePath(workspaceRoot: string, value: string): string {
+  return path.isAbsolute(value) ? path.resolve(value) : path.resolve(workspaceRoot, value);
+}
+
+function isEvidenceAdequacyExpected(run: RunRecord): boolean {
+  if (run.graph.nodeStates.run_experiments.status !== "pending") {
+    return true;
+  }
+  return (["analyze_results", "figure_audit", "review", "write_paper"] as const)
+    .some((node) => run.graph.nodeStates[node].status !== "pending");
+}
+
+function isReviewEvidenceReassessmentRequired(run: RunRecord): boolean {
+  const status = run.graph.nodeStates.review.status;
+  return status === "completed"
+    || status === "needs_approval"
+    || status === "failed"
+    || status === "skipped";
+}
+
+async function loadReviewEvidenceAdequacyArtifact(
+  runDir: string
+): Promise<ReviewEvidenceAdequacyLoad> {
+  const artifactPath = path.join(
+    runDir,
+    REVIEW_EVIDENCE_ADEQUACY_RELATIVE_PATH
+  );
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fs.readFile(artifactPath, "utf8")) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { present: false, valid: true };
+    }
+    return {
+      present: true,
+      valid: false,
+      reasonCode: "evidence_adequacy_review_reassessment_invalid"
+    };
+  }
+  if (!isRecord(raw)) {
+    return {
+      present: true,
+      valid: false,
+      reasonCode: "evidence_adequacy_review_reassessment_invalid"
+    };
+  }
+  const issues = readStringArray(raw.issues);
+  const warnings = readStringArray(raw.warnings);
+  const primaryComparisonId = readNullableString(raw.primary_comparison_id);
+  const overallStatus = readEvidenceAdequacyOverallStatus(raw.overall_status);
+  if (
+    raw.schema_version !== 1
+    || raw.artifact_kind !== "review_evidence_adequacy_reassessment"
+    || !asNonEmptyString(raw.status)
+    || typeof raw.trusted !== "boolean"
+    || typeof raw.paper_evidence_allowed !== "boolean"
+    || typeof raw.integrity_valid !== "boolean"
+    || typeof raw.contract_present !== "boolean"
+    || typeof raw.receipt_present !== "boolean"
+    || typeof raw.stored_assessment_present !== "boolean"
+    || issues === undefined
+    || warnings === undefined
+    || primaryComparisonId === undefined
+    || overallStatus === undefined
+  ) {
+    return {
+      present: true,
+      valid: false,
+      reasonCode: "evidence_adequacy_review_reassessment_invalid"
+    };
+  }
+  return {
+    present: true,
+    valid: true,
+    artifact: {
+      status: asNonEmptyString(raw.status)!,
+      trusted: raw.trusted,
+      paperEvidenceAllowed: raw.paper_evidence_allowed,
+      integrityValid: raw.integrity_valid,
+      contractPresent: raw.contract_present,
+      receiptPresent: raw.receipt_present,
+      assessmentPresent: raw.stored_assessment_present,
+      primaryComparisonId: primaryComparisonId || undefined,
+      overallStatus: overallStatus || undefined,
+      issues,
+      warnings
+    }
+  };
+}
+
+function reviewEvidenceAdequacyMatches(input: {
+  artifact: ReviewEvidenceAdequacyArtifact;
+  reassessment: EvidenceAdequacyArtifactReassessment;
+  trusted: boolean;
+  paperEvidenceAllowed: boolean;
+  expectedPrimaryComparisonId?: string;
+}): boolean {
+  const expectedStatus = input.paperEvidenceAllowed
+    ? "pass"
+    : input.trusted
+      ? input.reassessment.assessment?.overall_status || "blocked"
+      : input.reassessment.contractPresent
+        ? "invalid"
+        : "missing_contract";
+  const expectedPrimaryComparisonId =
+    input.reassessment.assessment?.primary_comparison_id
+    || input.expectedPrimaryComparisonId;
+  return input.artifact.status === expectedStatus
+    && input.artifact.trusted === input.trusted
+    && input.artifact.paperEvidenceAllowed === input.paperEvidenceAllowed
+    && input.artifact.integrityValid === input.reassessment.integrityValid
+    && input.artifact.contractPresent === input.reassessment.contractPresent
+    && input.artifact.receiptPresent === input.reassessment.receiptPresent
+    && input.artifact.assessmentPresent === input.reassessment.storedAssessmentPresent
+    && input.artifact.primaryComparisonId === expectedPrimaryComparisonId
+    && input.artifact.overallStatus === input.reassessment.assessment?.overall_status
+    && sameStringSet(input.artifact.issues, input.reassessment.issues)
+    && sameStringSet(input.artifact.warnings, input.reassessment.warnings);
+}
+
+function collectEvidenceAdequacyReasonCodes(
+  contractReasons: string[],
+  reassessment: EvidenceAdequacyArtifactReassessment
+): string[] {
+  const reasonCodes = contractReasons.flatMap(extractEvidenceAdequacyCodes);
+  for (const check of reassessment.assessment?.checks || []) {
+    if (check.status === "pass") {
+      continue;
+    }
+    reasonCodes.push(
+      `evidence_adequacy_${check.check_id}_${check.status}`,
+      ...check.reasons
+    );
+  }
+  for (const message of [...reassessment.issues, ...reassessment.warnings]) {
+    reasonCodes.push(...extractEvidenceAdequacyCodes(message));
+    if (message.includes("primary comparison does not match")) {
+      reasonCodes.push("evidence_adequacy_primary_comparison_mismatch");
+    } else if (message.includes("execution receipt is missing")) {
+      reasonCodes.push("evidence_adequacy_receipt_missing");
+    } else if (message.includes("Persisted evidence adequacy assessment is missing")) {
+      reasonCodes.push("evidence_adequacy_assessment_missing");
+    } else if (message.includes("receipt is invalid")) {
+      reasonCodes.push("evidence_adequacy_receipt_invalid");
+    } else if (message.includes("assessment does not match")) {
+      reasonCodes.push("evidence_adequacy_assessment_invalid");
+    } else if (message.includes("without a valid frozen contract")) {
+      reasonCodes.push("evidence_adequacy_orphan_artifact");
+    }
+  }
+  return uniqueStrings(reasonCodes);
+}
+
+function extractEvidenceAdequacyCodes(value: string): string[] {
+  return value.match(/evidence_adequacy_[a-z0-9_]+(?::[a-z0-9_.-]+)?/giu)
+    ?.map((item) => item.toLowerCase()) || [];
+}
+
+function buildEvidenceAdequacyArtifactRefs(input: {
+  reassessment: EvidenceAdequacyArtifactReassessment;
+  reviewReassessmentPresent: boolean;
+}): RunEvidenceAdequacyProjection["artifact_refs"] {
+  const refs: RunEvidenceAdequacyProjection["artifact_refs"] = [];
+  if (input.reassessment.contractPresent) {
+    refs.push({
+      kind: "contract",
+      label: "Evidence adequacy contract",
+      path: EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH
+    });
+  }
+  if (input.reassessment.receiptPresent) {
+    refs.push({
+      kind: "receipt",
+      label: "Evidence adequacy receipt",
+      path: EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH
+    });
+  }
+  if (input.reassessment.storedAssessmentPresent) {
+    refs.push({
+      kind: "assessment",
+      label: "Evidence adequacy assessment",
+      path: EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH
+    });
+  }
+  if (input.reviewReassessmentPresent) {
+    refs.push({
+      kind: "review_reassessment",
+      label: "Review evidence reassessment",
+      path: REVIEW_EVIDENCE_ADEQUACY_RELATIVE_PATH
+    });
+  }
+  return refs;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value) && value.every((item) => typeof item === "string")
+    ? [...value]
+    : undefined;
+}
+
+function readNullableString(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return asNonEmptyString(value);
+}
+
+function readEvidenceAdequacyOverallStatus(
+  value: unknown
+): "pass" | "fail" | "unknown" | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  return value === "pass" || value === "fail" || value === "unknown"
+    ? value
+    : undefined;
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return JSON.stringify([...new Set(left)].sort())
+    === JSON.stringify([...new Set(right)].sort());
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function collectRiskMessages(
@@ -340,6 +831,25 @@ function deriveRecommendedNextAction(input: {
   paperReady: boolean;
   dominantFailure: boolean;
 }): RunRecommendedNextAction {
+  const pendingTransition = input.run.graph.pendingTransition;
+  if (
+    pendingTransition
+    && (
+      pendingTransition.action === "retry_same"
+      || pendingTransition.action.startsWith("backtrack_to_")
+    )
+  ) {
+    return "inspect_blocker";
+  }
+  if (
+    pendingTransition
+    && (
+      pendingTransition.action === "pause_for_human"
+      || pendingTransition.action === "delegate_successor"
+    )
+  ) {
+    return "waiting_for_input";
+  }
   if (input.run.status === "completed" && input.paperReady) {
     return "completed";
   }

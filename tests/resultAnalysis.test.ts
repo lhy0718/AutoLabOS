@@ -593,7 +593,7 @@ describe("resultAnalysis", () => {
     expect(report.figure_specs).toEqual([]);
   });
 
-  it("fails closed when historical V1 data has no explicit metric unit", () => {
+  it("rejects versionless historical data instead of silently adapting it", () => {
     const report = parseAnalysisReport(JSON.stringify({
       results_table: [
         {
@@ -640,9 +640,14 @@ describe("resultAnalysis", () => {
       }
     }));
 
-    expect(report?.results_artifact.metrics[0]?.unit).toBeUndefined();
-    expect(report?.condition_comparisons).toEqual([]);
-    expect(report?.statistical_summary.effect_estimates).toEqual([]);
+    expect(report).toBeUndefined();
+  });
+
+  it("rejects an unknown analysis version", () => {
+    expect(parseAnalysisReport(JSON.stringify({
+      analysis_version: 99,
+      results_artifact: comparisonArtifact()
+    }))).toBeUndefined();
   });
 
   it("extracts a preset runtime guardrail without raw condition inference", () => {
@@ -660,6 +665,68 @@ selected_design:
     expect(report.plan_context.selected_design?.runtime_guardrail_pct).toBe(25);
     expect(report.limitations.some((line) => /must be specified before analysis/u.test(line))).toBe(false);
     expect(report.primary_findings.some((line) => line.includes("runtime-increase guardrail of 25"))).toBe(true);
+  });
+
+  it("preserves the validated estimator protocol from design into result analysis", () => {
+    const estimatorProtocol = {
+      schema_version: 1,
+      units: {
+        execution_unit: "case execution",
+        exposure_unit: "declared condition",
+        outcome_unit: "case outcome",
+        analysis_unit: "paired case",
+        independent_cluster_key: "case_id"
+      },
+      arms: ["reference", "subject"],
+      primary_contrast: ["subject", "reference"],
+      pairing: {
+        mode: "paired",
+        independent_clusters: 40,
+        observations_per_arm_per_cluster: 1
+      },
+      outcome: {
+        type: "continuous",
+        attainable_resolution: 0.01
+      },
+      estimand: {
+        id: "primary_difference",
+        type: "paired_mean_difference",
+        scale: "mean"
+      },
+      estimator: {
+        family: "paired_mean_difference",
+        covariance: "cluster_bootstrap",
+        separation_policy: "not_applicable"
+      },
+      power: {
+        alpha: 0.05,
+        target_power: 0.8,
+        minimum_detectable_effect: 0.1,
+        assumed_standard_deviation: 0.25,
+        sidedness: "two_sided"
+      },
+      resampling: {
+        minimum_clusters: 30,
+        replicates: 2_000
+      },
+      multiplicity: {
+        primary_comparison_id: "primary_difference",
+        family: ["primary_difference"],
+        method: "none",
+        family_alpha: 0.05
+      }
+    } as const;
+    const report = reportFor(comparisonArtifact(), {
+      experimentPlanRaw: [
+        "selected_design:",
+        '  title: "Bounded paired comparison"',
+        `  estimator_protocol: ${JSON.stringify(estimatorProtocol)}`
+      ].join("\n")
+    });
+
+    expect(report.plan_context.selected_design?.estimator_protocol).toEqual(
+      estimatorProtocol
+    );
   });
 
   it("surfaces neutral portfolio groups and links supplemental runs to the manifest", () => {

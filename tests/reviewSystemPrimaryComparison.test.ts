@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
-import { MockLLMClient } from "../src/core/llm/client.js";
+import {
+  MockLLMClient,
+  type LLMClient,
+  type LLMCompleteOptions
+} from "../src/core/llm/client.js";
 import {
   parseAnalysisReport,
   type AnalysisReport
@@ -249,6 +253,92 @@ async function runPanel(report: AnalysisReport) {
   });
 }
 
+class StructuredReviewLlm implements LLMClient {
+  readonly prompts: string[] = [];
+  private callCount = 0;
+
+  constructor(private readonly failAtCall?: number) {}
+
+  async complete(prompt: string, opts?: LLMCompleteOptions) {
+    this.callCount += 1;
+    this.prompts.push(prompt);
+    if (this.callCount === this.failAtCall) {
+      throw new Error("bounded reviewer failure");
+    }
+    const responseId = `response-${opts?.model || "default"}-${this.callCount}`;
+    return {
+      text: JSON.stringify({
+        summary: "The supplied evidence is reviewable within its declared ceiling.",
+        score_1_to_5: 4,
+        confidence: 0.8,
+        recommendation: "advance",
+        findings: []
+      }),
+      threadId: responseId,
+      usage: { inputTokens: 20, outputTokens: 10, costUsd: 0 },
+      provenance: {
+        provider: "openai" as const,
+        requestedModel: opts?.model || "",
+        effectiveModel: opts?.model || "",
+        reasoningEffort: opts?.reasoningEffort || "",
+        responseId,
+        contextMode: "fresh" as const,
+        identityBasis: "provider_response" as const
+      }
+    };
+  }
+}
+
+function reviewBinding(llm: LLMClient, model = "review-model") {
+  return {
+    llm,
+    profile: {
+      provider: "openai",
+      model,
+      reasoning_effort: "high"
+    }
+  };
+}
+
+async function runAssuredPanel(options: {
+  specialistLlm: LLMClient;
+  metaLlm?: LLMClient;
+  specialistModel?: string;
+  metaModel?: string;
+  unverifiedProfile?: boolean;
+}) {
+  const report = reportWithComparisons({
+    primaryJudgement: "supported",
+    secondaryJudgement: "supported"
+  });
+  const specialist = reviewBinding(options.specialistLlm, options.specialistModel);
+  const meta = reviewBinding(options.metaLlm ?? options.specialistLlm, options.metaModel);
+  if (options.unverifiedProfile) {
+    specialist.profile.provider = "unverified";
+    meta.profile.provider = "unverified";
+  }
+  return runReviewPanel({
+    run: {
+      id: "run-review-assurance",
+      title: "Assured review",
+      topic: "Domain-neutral review assurance",
+      objectiveMetric: "primary_measure improves over the declared reference",
+      constraints: []
+    },
+    node: "review",
+    report,
+    presence: PRESENCE,
+    llm: options.specialistLlm,
+    specialistAgent: specialist,
+    metaReviewer: meta,
+    gateBinding: {
+      artifact_id: "review.minimum_gate",
+      sha256: "a".repeat(64)
+    },
+    requireIndependentReview: true
+  });
+}
+
 describe("review system primary comparison binding", () => {
   it("does not reset the hypothesis when the primary is supported and a secondary is unsupported", async () => {
     const report = reportWithComparisons({
@@ -296,5 +386,98 @@ describe("review system primary comparison binding", () => {
         })
       ])
     );
+  });
+
+  it("authorizes paper readiness only after five model specialists and a bound fresh meta review", async () => {
+    const specialistLlm = new StructuredReviewLlm();
+    const metaLlm = new StructuredReviewLlm();
+
+    const panel = await runAssuredPanel({
+      specialistLlm,
+      metaLlm,
+      specialistModel: "specialist-model",
+      metaModel: "meta-model"
+    });
+
+    expect(panel.assurance).toMatchObject({
+      assurance_class: "runtime_attested_actor_diverse_panel_with_meta_review",
+      completed_model_specialist_roles: [
+        "claim_evidence",
+        "methodology",
+        "statistics",
+        "reproducibility",
+        "adversarial"
+      ],
+      heuristic_fallback_roles: [],
+      meta_review_completed: true,
+      unique_actor_count: 2,
+      unique_execution_count: 6,
+      provider_response_receipt_count: 6,
+      adapter_attested_receipt_count: 0,
+      isolation_evidence: "runtime_attested",
+      model_review_bundle_valid: true,
+      paper_ready_eligible: true,
+      reason_codes: []
+    });
+    expect(panel.model_review_bundle?.reviewers).toHaveLength(5);
+    expect(panel.meta_review?.source).toBe("llm+heuristic");
+    expect(specialistLlm.prompts).toHaveLength(5);
+    expect(metaLlm.prompts).toHaveLength(1);
+    expect(specialistLlm.prompts.every((prompt) => !prompt.includes("heuristic_baseline"))).toBe(true);
+  });
+
+  it("fails closed when one specialist falls back and never runs the meta reviewer", async () => {
+    const specialistLlm = new StructuredReviewLlm(3);
+    const metaLlm = new StructuredReviewLlm();
+
+    const panel = await runAssuredPanel({ specialistLlm, metaLlm });
+
+    expect(panel.assurance).toMatchObject({
+      assurance_class: "role_separated_panel",
+      heuristic_fallback_roles: ["statistics"],
+      meta_review_completed: false,
+      model_review_bundle_valid: false,
+      paper_ready_eligible: false
+    });
+    expect(panel.assurance.reason_codes).toEqual(
+      expect.arrayContaining([
+        "specialist_model_review_incomplete",
+        "meta_review_incomplete",
+        "model_review_bundle_invalid"
+      ])
+    );
+    expect(panel.decision.outcome).toBe("manual_block");
+    expect(panel.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          reviewer_id: "review_assurance_gate",
+          severity: "high"
+        })
+      ])
+    );
+    expect(metaLlm.prompts).toHaveLength(0);
+  });
+
+  it("does not accept caller-supplied unverified actor labels as review assurance", async () => {
+    const llm = new StructuredReviewLlm();
+
+    const panel = await runAssuredPanel({
+      specialistLlm: llm,
+      unverifiedProfile: true
+    });
+
+    expect(panel.assurance.model_review_bundle_valid).toBe(false);
+    expect(panel.assurance.paper_ready_eligible).toBe(false);
+    expect(panel.assurance.transport_receipt_failure_roles).toEqual([
+      "claim_evidence",
+      "methodology",
+      "statistics",
+      "reproducibility",
+      "adversarial"
+    ]);
+    expect(panel.assurance.reason_codes).toContain(
+      "specialist_transport_receipt_missing_or_mismatched"
+    );
+    expect(panel.decision.outcome).toBe("manual_block");
   });
 });

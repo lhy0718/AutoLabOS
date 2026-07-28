@@ -14,6 +14,9 @@ export const PRIOR_ABSORPTION_AXES = [
   "claim_ceiling"
 ] as const;
 
+export const PRIOR_ABSORPTION_MATRIX_SCHEMA_VERSION = 2 as const;
+export const PRIOR_ABSORPTION_AXIS_VERIFICATION_SCHEMA_VERSION = 1 as const;
+
 export type PriorAbsorptionAxis = (typeof PRIOR_ABSORPTION_AXES)[number];
 export type PriorAbsorptionDisposition =
   | "absorbed"
@@ -25,6 +28,14 @@ export type PriorAbsorptionAxisRelation =
   | "partially_overlapping"
   | "distinct"
   | "uncertain";
+export type PriorAbsorptionAxisVerificationVerdict =
+  | "supported"
+  | "contradicted"
+  | "insufficient";
+export type PriorAbsorptionAxisVerificationStatus =
+  | PriorAbsorptionAxisVerificationVerdict
+  | "missing"
+  | "invalid";
 
 export interface PriorAbsorptionEvidenceSeed extends HypothesisEvidenceSeed {
   method_slot?: string;
@@ -56,12 +67,43 @@ export interface PriorAbsorptionEvidenceRef {
   content_sha256: string;
 }
 
+export interface PriorAbsorptionAxisVerificationProvenance {
+  verification_stage: "axis_relation_verifier";
+  verifier_id: string;
+  provider: string;
+  model: string;
+  verification_run_id: string;
+  context_isolated: true;
+  source_response_sha256: string;
+}
+
+export interface PriorAbsorptionAxisVerificationSeed {
+  candidate_id: string;
+  prior_paper_id: string;
+  axis: PriorAbsorptionAxis;
+  reported_relation: PriorAbsorptionAxisRelation;
+  verification_input_sha256: string;
+  verdict: PriorAbsorptionAxisVerificationVerdict;
+  rationale: string;
+  provenance: PriorAbsorptionAxisVerificationProvenance;
+}
+
+export interface PriorAbsorptionAxisVerification
+  extends PriorAbsorptionAxisVerificationSeed {
+  schema_version: 1;
+  artifact_kind: "prior_absorption_axis_verification";
+  content_sha256: string;
+}
+
 export interface PriorAbsorptionAxisComparison {
   axis: PriorAbsorptionAxis;
   candidate_position: string;
   prior_position: string;
   relation: PriorAbsorptionAxisRelation;
   evidence_refs: PriorAbsorptionEvidenceRef[];
+  verification_input_sha256: string;
+  relation_verification: PriorAbsorptionAxisVerification | null;
+  verification_status: PriorAbsorptionAxisVerificationStatus;
   content_sha256: string;
 }
 
@@ -74,6 +116,7 @@ export interface PriorAbsorptionPriorComparison {
   falsifiable_comparison?: string;
   independent_evidence_refs: PriorAbsorptionEvidenceRef[];
   full_text_evidence_complete: boolean;
+  axis_relation_verification_complete: boolean;
   independent_evidence_complete: boolean;
   decision_eligible: boolean;
   reason_codes: string[];
@@ -98,6 +141,7 @@ export interface PriorAbsorptionCandidate {
   comparisons: PriorAbsorptionPriorComparison[];
   coverage_complete: boolean;
   full_text_evidence_complete: boolean;
+  axis_relation_verification_complete: boolean;
   independent_evidence_complete: boolean;
   partial_comparisons_complete: boolean;
   probe_eligible: boolean;
@@ -106,12 +150,13 @@ export interface PriorAbsorptionCandidate {
 }
 
 export interface PriorAbsorptionMatrix {
-  schema_version: 1;
+  schema_version: 2;
   artifact_kind: "prior_absorption_matrix";
   run_id: string;
   research_cycle: number;
   generated_at: string;
   assessment_source: "llm_structured_comparison" | "unavailable";
+  axis_verification_source: "explicit_axis_relation_verifier" | "unavailable";
   candidates: PriorAbsorptionCandidate[];
   content_sha256: string;
 }
@@ -135,6 +180,7 @@ export interface PriorAbsorptionCandidateProjection {
   }>;
   coverage_complete: boolean;
   full_text_evidence_complete: boolean;
+  axis_relation_verification_complete: boolean;
   independent_evidence_complete: boolean;
   partial_comparisons_complete: boolean;
   probe_eligible: boolean;
@@ -145,10 +191,23 @@ interface RawPriorAbsorptionResponse {
   assessments?: unknown;
 }
 
+interface RawPriorAbsorptionAxisVerificationResponse {
+  verifications?: unknown;
+}
+
+export interface PriorAbsorptionAxisVerifierIdentity {
+  verifier_id: string;
+  provider: string;
+  model: string;
+  verification_run_id: string;
+  context_isolated: true;
+}
+
 interface PriorAbsorptionBuildInput {
   candidates: HypothesisCandidate[];
   evidence: PriorAbsorptionEvidenceSeed[];
   assessments?: PriorAbsorptionAssessment[];
+  axisVerifications?: PriorAbsorptionAxisVerificationSeed[];
   runId: string;
   researchCycle: number;
   generatedAt?: string;
@@ -165,6 +224,7 @@ export function buildPriorAbsorptionMatrix(
     })
   );
   const assessments = input.assessments || [];
+  const axisVerifications = input.axisVerifications || [];
   const assessmentCounts = new Map<string, number>();
   const assessmentByKey = new Map<string, PriorAbsorptionAssessment>();
   for (const assessment of assessments) {
@@ -174,17 +234,32 @@ export function buildPriorAbsorptionMatrix(
       assessmentByKey.set(key, assessment);
     }
   }
+  const axisVerificationCounts = new Map<string, number>();
+  const axisVerificationByKey = new Map<string, PriorAbsorptionAxisVerificationSeed>();
+  for (const verification of axisVerifications) {
+    const key = axisVerificationKey(
+      verification.candidate_id,
+      verification.prior_paper_id,
+      verification.axis
+    );
+    axisVerificationCounts.set(key, (axisVerificationCounts.get(key) || 0) + 1);
+    if (!axisVerificationByKey.has(key)) {
+      axisVerificationByKey.set(key, verification);
+    }
+  }
 
   const candidates = input.candidates.map((candidate) =>
     buildCandidateAbsorption({
       candidate,
       evidenceById,
       assessmentByKey,
-      assessmentCounts
+      assessmentCounts,
+      axisVerificationByKey,
+      axisVerificationCounts
     })
   );
   const payload = {
-    schema_version: 1 as const,
+    schema_version: PRIOR_ABSORPTION_MATRIX_SCHEMA_VERSION,
     artifact_kind: "prior_absorption_matrix" as const,
     run_id: input.runId,
     research_cycle: input.researchCycle,
@@ -192,6 +267,10 @@ export function buildPriorAbsorptionMatrix(
     assessment_source:
       input.assessmentSource ||
       (assessments.length > 0 ? "llm_structured_comparison" as const : "unavailable" as const),
+    axis_verification_source:
+      axisVerifications.length > 0
+        ? "explicit_axis_relation_verifier" as const
+        : "unavailable" as const,
     candidates
   };
   return {
@@ -312,6 +391,129 @@ export function parsePriorAbsorptionAssessmentResponse(
   });
 }
 
+export function buildPriorAbsorptionAxisVerificationPrompt(
+  matrix: PriorAbsorptionMatrix
+): string {
+  const targets = matrix.candidates.flatMap((candidate) =>
+    candidate.comparisons.flatMap((comparison) =>
+      comparison.axes.map((axis) => ({
+        candidate_id: candidate.candidate_id,
+        prior_paper_id: comparison.prior_paper_id,
+        axis: axis.axis,
+        candidate_position: axis.candidate_position,
+        prior_position: axis.prior_position,
+        reported_relation: axis.relation,
+        evidence_refs: axis.evidence_refs.map((reference) => ({
+          evidence_id: reference.evidence_id,
+          paper_id: reference.paper_id,
+          source_type: reference.source_type,
+          evidence_span: reference.evidence_span,
+          content_sha256: reference.content_sha256
+        })),
+        verification_input_sha256: axis.verification_input_sha256
+      }))
+    )
+  );
+
+  return [
+    "Act as the context-isolated axis relation verifier for a prior-absorption matrix.",
+    "Evaluate every target independently, including targets that cite the same full-text span.",
+    "A verdict of supported means the cited evidence and prior_position actually support the reported relation to candidate_position for this exact axis.",
+    "Use contradicted when the supplied evidence supports a materially different relation.",
+    "Use insufficient when the span, prior position, or candidate position cannot establish the reported relation.",
+    "Span existence, paper identity, schema validity, and fluent wording are never sufficient by themselves.",
+    "Copy candidate_id, prior_paper_id, axis, reported_relation, and verification_input_sha256 exactly from each target.",
+    "Return JSON only with this shape:",
+    JSON.stringify({
+      verifications: [{
+        candidate_id: "candidate id",
+        prior_paper_id: "prior paper id",
+        axis: "one exact axis",
+        reported_relation: "overlapping|partially_overlapping|distinct|uncertain",
+        verification_input_sha256: "exact target input hash",
+        verdict: "supported|contradicted|insufficient",
+        rationale: "brief axis-specific reason grounded in the supplied positions and spans"
+      }]
+    }),
+    "Targets:",
+    JSON.stringify(targets)
+  ].join("\n");
+}
+
+export function parsePriorAbsorptionAxisVerificationResponse(
+  text: string,
+  identity: PriorAbsorptionAxisVerifierIdentity
+): PriorAbsorptionAxisVerificationSeed[] {
+  const verifierId = normalizeText(identity.verifier_id);
+  const provider = normalizeText(identity.provider);
+  const model = normalizeText(identity.model);
+  const verificationRunId = normalizeText(identity.verification_run_id);
+  if (
+    !verifierId
+    || !provider
+    || !model
+    || !verificationRunId
+    || identity.context_isolated !== true
+  ) {
+    throw new Error("prior_absorption_axis_verifier_identity_invalid");
+  }
+  const parsed = parseStructuredModelJsonObject<RawPriorAbsorptionAxisVerificationResponse>(
+    text,
+    {
+      emptyError: "prior_absorption_axis_verification_response_empty",
+      notFoundError: "prior_absorption_axis_verification_response_json_not_found",
+      incompleteError: "prior_absorption_axis_verification_response_json_incomplete",
+      invalidError: "prior_absorption_axis_verification_response_json_invalid"
+    }
+  ).value;
+  if (!Array.isArray(parsed.verifications)) {
+    throw new Error("prior_absorption_axis_verifications_missing");
+  }
+  const provenance: PriorAbsorptionAxisVerificationProvenance = {
+    verification_stage: "axis_relation_verifier",
+    verifier_id: verifierId,
+    provider,
+    model,
+    verification_run_id: verificationRunId,
+    context_isolated: true,
+    source_response_sha256: hashText(text)
+  };
+  return parsed.verifications.flatMap((value) => {
+    if (!isRecord(value)) {
+      return [];
+    }
+    const candidateId = normalizeText(value.candidate_id);
+    const priorPaperId = normalizeText(value.prior_paper_id);
+    const axis = normalizeAxis(value.axis);
+    const reportedRelation = normalizeRelation(value.reported_relation);
+    const inputHash = normalizeText(value.verification_input_sha256);
+    const verdict = normalizeVerificationVerdict(value.verdict);
+    const rationale = normalizeText(value.rationale);
+    if (
+      !candidateId
+      || !priorPaperId
+      || !axis
+      || !reportedRelation
+      || !inputHash
+      || !isSha256(inputHash)
+      || !verdict
+      || !rationale
+    ) {
+      return [];
+    }
+    return [{
+      candidate_id: candidateId,
+      prior_paper_id: priorPaperId,
+      axis,
+      reported_relation: reportedRelation,
+      verification_input_sha256: inputHash,
+      verdict,
+      rationale,
+      provenance
+    }];
+  });
+}
+
 export function validatePriorAbsorptionMatrixArtifact(
   raw: string,
   context: {
@@ -334,6 +536,19 @@ export function validatePriorAbsorptionMatrixArtifact(
       measured: true,
       valid: false,
       reasons: ["prior_absorption_matrix_invalid_json"]
+    };
+  }
+  if (
+    isRecord(value)
+    && value.artifact_kind === "prior_absorption_matrix"
+    && value.schema_version !== PRIOR_ABSORPTION_MATRIX_SCHEMA_VERSION
+  ) {
+    return {
+      measured: true,
+      valid: false,
+      reasons: [
+        `prior_absorption_matrix_schema_version_unsupported:${String(value.schema_version)}`
+      ]
     };
   }
   if (!isPriorAbsorptionMatrix(value)) {
@@ -386,6 +601,8 @@ export function validatePriorAbsorptionMatrixArtifact(
     if (
       candidate.coverage_complete !== expectedState.coverageComplete
       || candidate.full_text_evidence_complete !== expectedState.fullTextComplete
+      || candidate.axis_relation_verification_complete
+        !== expectedState.axisVerificationComplete
       || candidate.independent_evidence_complete !== expectedState.independentComplete
       || candidate.partial_comparisons_complete !== expectedState.partialComplete
       || candidate.probe_eligible !== expectedState.probeEligible
@@ -422,6 +639,7 @@ export function projectPriorAbsorptionCandidate(
     })),
     coverage_complete: candidate.coverage_complete,
     full_text_evidence_complete: candidate.full_text_evidence_complete,
+    axis_relation_verification_complete: candidate.axis_relation_verification_complete,
     independent_evidence_complete: candidate.independent_evidence_complete,
     partial_comparisons_complete: candidate.partial_comparisons_complete,
     probe_eligible: candidate.probe_eligible,
@@ -448,6 +666,7 @@ export function isPriorAbsorptionCandidateProjection(
       && isSha256(comparison.content_sha256))
     && typeof value.coverage_complete === "boolean"
     && typeof value.full_text_evidence_complete === "boolean"
+    && typeof value.axis_relation_verification_complete === "boolean"
     && typeof value.independent_evidence_complete === "boolean"
     && typeof value.partial_comparisons_complete === "boolean"
     && typeof value.probe_eligible === "boolean"
@@ -460,6 +679,8 @@ function buildCandidateAbsorption(input: {
   evidenceById: Map<string, PriorAbsorptionEvidenceSeed>;
   assessmentByKey: Map<string, PriorAbsorptionAssessment>;
   assessmentCounts: Map<string, number>;
+  axisVerificationByKey: Map<string, PriorAbsorptionAxisVerificationSeed>;
+  axisVerificationCounts: Map<string, number>;
 }): PriorAbsorptionCandidate {
   const candidateContract = buildPriorAbsorptionCandidateContract(input.candidate);
   const priorPaperIds = uniqueStrings(
@@ -478,7 +699,9 @@ function buildCandidateAbsorption(input: {
       evidenceById: input.evidenceById,
       assessment: input.assessmentByKey.get(key),
       duplicateAssessment: (input.assessmentCounts.get(key) || 0) > 1,
-      linkedPriorPaperIds: priorPaperIds
+      linkedPriorPaperIds: priorPaperIds,
+      axisVerificationByKey: input.axisVerificationByKey,
+      axisVerificationCounts: input.axisVerificationCounts
     });
   });
   const coverageComplete =
@@ -488,6 +711,11 @@ function buildCandidateAbsorption(input: {
   const fullTextComplete =
     comparisons.length > 0
     && comparisons.every((comparison) => comparison.full_text_evidence_complete);
+  const axisVerificationComplete =
+    comparisons.length > 0
+    && comparisons.every(
+      (comparison) => comparison.axis_relation_verification_complete
+    );
   const independentComplete =
     comparisons.length > 0
     && comparisons.every((comparison) => comparison.independent_evidence_complete);
@@ -499,12 +727,16 @@ function buildCandidateAbsorption(input: {
   const probeEligible =
     coverageComplete
     && fullTextComplete
+    && axisVerificationComplete
     && independentComplete
     && partialComplete
     && comparisons.every((comparison) => comparison.decision_eligible);
   const reasonCodes = uniqueStrings([
     ...(coverageComplete ? [] : ["prior_absorption_prior_coverage_incomplete"]),
     ...(fullTextComplete ? [] : ["prior_absorption_full_text_evidence_incomplete"]),
+    ...(axisVerificationComplete
+      ? []
+      : ["prior_absorption_axis_relation_verification_incomplete"]),
     ...(independentComplete ? [] : ["prior_absorption_independent_evidence_incomplete"]),
     ...(partialComplete ? [] : ["prior_absorption_partial_comparison_incomplete"]),
     ...comparisons.flatMap((comparison) => comparison.reason_codes)
@@ -516,6 +748,7 @@ function buildCandidateAbsorption(input: {
     comparisons,
     coverage_complete: coverageComplete,
     full_text_evidence_complete: fullTextComplete,
+    axis_relation_verification_complete: axisVerificationComplete,
     independent_evidence_complete: independentComplete,
     partial_comparisons_complete: partialComplete,
     probe_eligible: probeEligible,
@@ -536,19 +769,29 @@ function buildPriorComparison(input: {
   assessment?: PriorAbsorptionAssessment;
   duplicateAssessment: boolean;
   linkedPriorPaperIds: string[];
+  axisVerificationByKey: Map<string, PriorAbsorptionAxisVerificationSeed>;
+  axisVerificationCounts: Map<string, number>;
 }): PriorAbsorptionPriorComparison {
   const assessment = input.assessment;
   const reportedDisposition = assessment?.disposition || "uncertain";
   const axes = PRIOR_ABSORPTION_AXES.map((axis) => {
     const axisAssessments = (assessment?.axes || []).filter((item) => item.axis === axis);
     const axisAssessment = axisAssessments.length === 1 ? axisAssessments[0] : undefined;
+    const verificationKey = axisVerificationKey(
+      input.candidate.id,
+      input.priorPaperId,
+      axis
+    );
     return buildAxisComparison({
+      candidateId: input.candidate.id,
       axis,
       candidateContract: input.candidateContract,
       priorPaperId: input.priorPaperId,
       candidateEvidenceIds: input.candidateEvidenceIds,
       evidenceById: input.evidenceById,
-      assessment: axisAssessment
+      assessment: axisAssessment,
+      verification: input.axisVerificationByKey.get(verificationKey),
+      duplicateVerification: (input.axisVerificationCounts.get(verificationKey) || 0) > 1
     });
   });
   const fullTextComplete = axes.every(
@@ -557,6 +800,9 @@ function buildPriorComparison(input: {
       && Boolean(normalizeText(axis.prior_position))
       && axis.evidence_refs.length > 0
       && axis.relation !== "uncertain"
+  );
+  const axisVerificationComplete = axes.every(
+    (axis) => axis.verification_status === "supported"
   );
   const independentEvidenceRefs = hydrateIndependentEvidenceRefs({
     evidenceIds: assessment?.independent_evidence_ids || [],
@@ -616,6 +862,18 @@ function buildPriorComparison(input: {
   if (!fullTextComplete) {
     reasons.push("prior_absorption_full_text_evidence_incomplete");
   }
+  if (!axisVerificationComplete) {
+    reasons.push("prior_absorption_axis_relation_verification_incomplete");
+  }
+  if (axes.some((axis) => axis.verification_status === "contradicted")) {
+    reasons.push("prior_absorption_axis_relation_verification_contradicted");
+  }
+  if (axes.some((axis) => axis.verification_status === "insufficient")) {
+    reasons.push("prior_absorption_axis_relation_verification_insufficient");
+  }
+  if (axes.some((axis) => axis.verification_status === "invalid")) {
+    reasons.push("prior_absorption_axis_relation_verification_invalid");
+  }
   if (!independentEvidenceComplete) {
     reasons.push("prior_absorption_independent_evidence_incomplete");
   }
@@ -624,7 +882,12 @@ function buildPriorComparison(input: {
   }
 
   let disposition: PriorAbsorptionDisposition = reportedDisposition;
-  if (!assessment || input.duplicateAssessment || !fullTextComplete) {
+  if (
+    !assessment
+    || input.duplicateAssessment
+    || !fullTextComplete
+    || !axisVerificationComplete
+  ) {
     disposition = "uncertain";
   } else if (reportedDisposition === "non_overlapping" && !nonOverlapContractComplete) {
     disposition = "uncertain";
@@ -652,6 +915,7 @@ function buildPriorComparison(input: {
     falsifiable_comparison: falsifiableComparison,
     independent_evidence_refs: independentEvidenceRefs,
     full_text_evidence_complete: fullTextComplete,
+    axis_relation_verification_complete: axisVerificationComplete,
     independent_evidence_complete: independentEvidenceComplete,
     decision_eligible: decisionEligible,
     reason_codes: uniqueStrings(reasons)
@@ -663,12 +927,15 @@ function buildPriorComparison(input: {
 }
 
 function buildAxisComparison(input: {
+  candidateId: string;
   axis: PriorAbsorptionAxis;
   candidateContract: PriorAbsorptionCandidateContract;
   priorPaperId: string;
   candidateEvidenceIds: Set<string>;
   evidenceById: Map<string, PriorAbsorptionEvidenceSeed>;
   assessment?: PriorAbsorptionAxisAssessment;
+  verification?: PriorAbsorptionAxisVerificationSeed;
+  duplicateVerification: boolean;
 }): PriorAbsorptionAxisComparison {
   const evidenceRefs = uniqueStrings(input.assessment?.evidence_ids || []).flatMap((evidenceId) => {
     if (!input.candidateEvidenceIds.has(evidenceId)) {
@@ -684,16 +951,111 @@ function buildAxisComparison(input: {
       return priorAxisPosition(input.axis, evidence);
     })
   ).join(" | ");
+  const candidatePosition = candidateAxisPosition(input.axis, input.candidateContract);
+  const relation = input.assessment?.relation || "uncertain";
+  const verificationInputSha256 = buildAxisVerificationInputSha256({
+    candidateId: input.candidateId,
+    priorPaperId: input.priorPaperId,
+    axis: input.axis,
+    candidatePosition,
+    priorPosition,
+    reportedRelation: relation,
+    evidenceRefs
+  });
+  const hydratedVerification = hydrateAxisVerification({
+    candidateId: input.candidateId,
+    priorPaperId: input.priorPaperId,
+    axis: input.axis,
+    reportedRelation: relation,
+    verificationInputSha256,
+    verification: input.verification,
+    duplicateVerification: input.duplicateVerification
+  });
   const payload = {
     axis: input.axis,
-    candidate_position: candidateAxisPosition(input.axis, input.candidateContract),
+    candidate_position: candidatePosition,
     prior_position: priorPosition,
-    relation: input.assessment?.relation || "uncertain",
-    evidence_refs: evidenceRefs
+    relation,
+    evidence_refs: evidenceRefs,
+    verification_input_sha256: verificationInputSha256,
+    relation_verification: hydratedVerification.verification,
+    verification_status: hydratedVerification.status
   };
   return {
     ...payload,
     content_sha256: hashCanonical(payload)
+  };
+}
+
+function buildAxisVerificationInputSha256(input: {
+  candidateId: string;
+  priorPaperId: string;
+  axis: PriorAbsorptionAxis;
+  candidatePosition: string;
+  priorPosition: string;
+  reportedRelation: PriorAbsorptionAxisRelation;
+  evidenceRefs: PriorAbsorptionEvidenceRef[];
+}): string {
+  return hashCanonical({
+    schema_version: PRIOR_ABSORPTION_AXIS_VERIFICATION_SCHEMA_VERSION,
+    artifact_kind: "prior_absorption_axis_verification_input",
+    candidate_id: input.candidateId,
+    prior_paper_id: input.priorPaperId,
+    axis: input.axis,
+    candidate_position: input.candidatePosition,
+    prior_position: input.priorPosition,
+    reported_relation: input.reportedRelation,
+    evidence_refs: input.evidenceRefs
+  });
+}
+
+function hydrateAxisVerification(input: {
+  candidateId: string;
+  priorPaperId: string;
+  axis: PriorAbsorptionAxis;
+  reportedRelation: PriorAbsorptionAxisRelation;
+  verificationInputSha256: string;
+  verification?: PriorAbsorptionAxisVerificationSeed;
+  duplicateVerification: boolean;
+}): {
+  verification: PriorAbsorptionAxisVerification | null;
+  status: PriorAbsorptionAxisVerificationStatus;
+} {
+  if (!input.verification) {
+    return { verification: null, status: "missing" };
+  }
+  const verification = input.verification;
+  if (
+    input.duplicateVerification
+    || normalizeText(verification.candidate_id) !== input.candidateId
+    || normalizeText(verification.prior_paper_id) !== input.priorPaperId
+    || verification.axis !== input.axis
+    || verification.reported_relation !== input.reportedRelation
+    || verification.verification_input_sha256 !== input.verificationInputSha256
+    || !normalizeText(verification.rationale)
+    || !normalizeVerificationVerdict(verification.verdict)
+    || !isAxisVerificationProvenance(verification.provenance)
+  ) {
+    return { verification: null, status: "invalid" };
+  }
+  const payload = {
+    schema_version: PRIOR_ABSORPTION_AXIS_VERIFICATION_SCHEMA_VERSION,
+    artifact_kind: "prior_absorption_axis_verification" as const,
+    candidate_id: input.candidateId,
+    prior_paper_id: input.priorPaperId,
+    axis: input.axis,
+    reported_relation: input.reportedRelation,
+    verification_input_sha256: input.verificationInputSha256,
+    verdict: verification.verdict,
+    rationale: normalizeText(verification.rationale) || "",
+    provenance: verification.provenance
+  };
+  return {
+    verification: {
+      ...payload,
+      content_sha256: hashCanonical(payload)
+    },
+    status: verification.verdict
   };
 }
 
@@ -828,9 +1190,54 @@ function validateComparisonIntegrity(
     if (axis.candidate_position !== candidateAxisPosition(axis.axis, candidate.candidate_contract)) {
       reasons.push(`prior_absorption_candidate_axis_binding_mismatch:${prefix}:${axis.axis}`);
     }
+    const expectedVerificationInputSha256 = buildAxisVerificationInputSha256({
+      candidateId: candidate.candidate_id,
+      priorPaperId: comparison.prior_paper_id,
+      axis: axis.axis,
+      candidatePosition: axis.candidate_position,
+      priorPosition: axis.prior_position,
+      reportedRelation: axis.relation,
+      evidenceRefs: axis.evidence_refs
+    });
+    if (axis.verification_input_sha256 !== expectedVerificationInputSha256) {
+      reasons.push(
+        `prior_absorption_axis_verification_input_hash_mismatch:${prefix}:${axis.axis}`
+      );
+    }
+    if (axis.relation_verification) {
+      reasons.push(...validateAxisVerification(
+        axis.relation_verification,
+        {
+          candidateId: candidate.candidate_id,
+          priorPaperId: comparison.prior_paper_id,
+          axis: axis.axis,
+          reportedRelation: axis.relation,
+          verificationInputSha256: expectedVerificationInputSha256
+        },
+        prefix
+      ));
+      if (axis.verification_status !== axis.relation_verification.verdict) {
+        reasons.push(
+          `prior_absorption_axis_verification_status_mismatch:${prefix}:${axis.axis}`
+        );
+      }
+    } else if (
+      axis.verification_status !== "missing"
+      && axis.verification_status !== "invalid"
+    ) {
+      reasons.push(
+        `prior_absorption_axis_verification_status_mismatch:${prefix}:${axis.axis}`
+      );
+    }
     for (const reference of axis.evidence_refs) {
       reasons.push(...validateEvidenceRef(reference, comparison.prior_paper_id, prefix));
     }
+  }
+  const verificationInputHashes = comparison.axes.map(
+    (axis) => axis.verification_input_sha256
+  );
+  if (new Set(verificationInputHashes).size !== verificationInputHashes.length) {
+    reasons.push(`prior_absorption_axis_verification_input_reused:${prefix}`);
   }
   for (const reference of comparison.independent_evidence_refs) {
     reasons.push(...validateEvidenceRef(reference, undefined, prefix));
@@ -841,11 +1248,54 @@ function validateComparisonIntegrity(
   const expectedState = recomputeComparisonState(candidate, comparison);
   if (
     comparison.full_text_evidence_complete !== expectedState.fullTextComplete
+    || comparison.axis_relation_verification_complete
+      !== expectedState.axisVerificationComplete
     || comparison.independent_evidence_complete !== expectedState.independentComplete
     || comparison.decision_eligible !== expectedState.decisionEligible
     || comparison.disposition !== expectedState.disposition
   ) {
     reasons.push(`prior_absorption_comparison_gate_state_mismatch:${prefix}`);
+  }
+  return reasons;
+}
+
+function validateAxisVerification(
+  verification: PriorAbsorptionAxisVerification,
+  expected: {
+    candidateId: string;
+    priorPaperId: string;
+    axis: PriorAbsorptionAxis;
+    reportedRelation: PriorAbsorptionAxisRelation;
+    verificationInputSha256: string;
+  },
+  prefix: string
+): string[] {
+  const reasons: string[] = [];
+  const { content_sha256: verificationHash, ...verificationPayload } = verification;
+  if (hashCanonical(verificationPayload) !== verificationHash) {
+    reasons.push(
+      `prior_absorption_axis_verification_content_hash_mismatch:${prefix}:${expected.axis}`
+    );
+  }
+  if (
+    verification.candidate_id !== expected.candidateId
+    || verification.prior_paper_id !== expected.priorPaperId
+    || verification.axis !== expected.axis
+    || verification.reported_relation !== expected.reportedRelation
+  ) {
+    reasons.push(
+      `prior_absorption_axis_verification_binding_mismatch:${prefix}:${expected.axis}`
+    );
+  }
+  if (verification.verification_input_sha256 !== expected.verificationInputSha256) {
+    reasons.push(
+      `prior_absorption_axis_verification_input_hash_mismatch:${prefix}:${expected.axis}`
+    );
+  }
+  if (!isAxisVerificationProvenance(verification.provenance)) {
+    reasons.push(
+      `prior_absorption_axis_verification_provenance_invalid:${prefix}:${expected.axis}`
+    );
   }
   return reasons;
 }
@@ -876,6 +1326,7 @@ function recomputeComparisonState(
 ): {
   disposition: PriorAbsorptionDisposition;
   fullTextComplete: boolean;
+  axisVerificationComplete: boolean;
   independentComplete: boolean;
   decisionEligible: boolean;
 } {
@@ -885,6 +1336,9 @@ function recomputeComparisonState(
       && Boolean(normalizeText(axis.prior_position))
       && axis.evidence_refs.length > 0
       && axis.relation !== "uncertain"
+  );
+  const axisVerificationComplete = comparison.axes.every(
+    (axis) => axis.verification_status === "supported"
   );
   const independentComplete =
     new Set(comparison.independent_evidence_refs.map((reference) => reference.paper_id)).size >= 2;
@@ -913,7 +1367,7 @@ function recomputeComparisonState(
     && independentComplete;
   const nonOverlapComplete = allDistinct && independentComplete;
   let disposition = comparison.reported_disposition;
-  if (!fullTextComplete) {
+  if (!fullTextComplete || !axisVerificationComplete) {
     disposition = "uncertain";
   } else if (disposition === "partially_absorbed" && !partialComplete) {
     disposition = "uncertain";
@@ -923,6 +1377,7 @@ function recomputeComparisonState(
   return {
     disposition,
     fullTextComplete,
+    axisVerificationComplete,
     independentComplete,
     decisionEligible:
       (disposition === "partially_absorbed" && partialComplete)
@@ -933,6 +1388,7 @@ function recomputeComparisonState(
 function recomputeCandidateState(candidate: PriorAbsorptionCandidate): {
   coverageComplete: boolean;
   fullTextComplete: boolean;
+  axisVerificationComplete: boolean;
   independentComplete: boolean;
   partialComplete: boolean;
   probeEligible: boolean;
@@ -946,6 +1402,11 @@ function recomputeCandidateState(candidate: PriorAbsorptionCandidate): {
   const fullTextComplete =
     candidate.comparisons.length > 0
     && candidate.comparisons.every((comparison) => comparison.full_text_evidence_complete);
+  const axisVerificationComplete =
+    candidate.comparisons.length > 0
+    && candidate.comparisons.every(
+      (comparison) => comparison.axis_relation_verification_complete
+    );
   const independentComplete =
     candidate.comparisons.length > 0
     && candidate.comparisons.every((comparison) => comparison.independent_evidence_complete);
@@ -957,11 +1418,13 @@ function recomputeCandidateState(candidate: PriorAbsorptionCandidate): {
   return {
     coverageComplete,
     fullTextComplete,
+    axisVerificationComplete,
     independentComplete,
     partialComplete,
     probeEligible:
       coverageComplete
       && fullTextComplete
+      && axisVerificationComplete
       && independentComplete
       && partialComplete
       && candidate.comparisons.every((comparison) => comparison.decision_eligible)
@@ -1001,6 +1464,32 @@ function normalizeRelation(value: unknown): PriorAbsorptionAxisRelation | undefi
     : undefined;
 }
 
+function normalizeVerificationVerdict(
+  value: unknown
+): PriorAbsorptionAxisVerificationVerdict | undefined {
+  return [
+    "supported",
+    "contradicted",
+    "insufficient"
+  ].includes(String(value))
+    ? value as PriorAbsorptionAxisVerificationVerdict
+    : undefined;
+}
+
+function normalizeVerificationStatus(
+  value: unknown
+): PriorAbsorptionAxisVerificationStatus | undefined {
+  return [
+    "supported",
+    "contradicted",
+    "insufficient",
+    "missing",
+    "invalid"
+  ].includes(String(value))
+    ? value as PriorAbsorptionAxisVerificationStatus
+    : undefined;
+}
+
 function normalizeDisposition(value: unknown): PriorAbsorptionDisposition | undefined {
   return [
     "absorbed",
@@ -1016,10 +1505,22 @@ function assessmentKey(candidateId: string, priorPaperId: string): string {
   return `${candidateId}\u0000${priorPaperId}`;
 }
 
+function axisVerificationKey(
+  candidateId: string,
+  priorPaperId: string,
+  axis: PriorAbsorptionAxis
+): string {
+  return `${candidateId}\u0000${priorPaperId}\u0000${axis}`;
+}
+
 function hashCanonical(value: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(canonicalize(value)))
     .digest("hex");
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function canonicalize(value: unknown): unknown {
@@ -1080,7 +1581,7 @@ function isPriorAbsorptionMatrix(value: unknown): value is PriorAbsorptionMatrix
     return false;
   }
   return (
-    value.schema_version === 1
+    value.schema_version === PRIOR_ABSORPTION_MATRIX_SCHEMA_VERSION
     && value.artifact_kind === "prior_absorption_matrix"
     && typeof value.run_id === "string"
     && typeof value.research_cycle === "number"
@@ -1089,6 +1590,10 @@ function isPriorAbsorptionMatrix(value: unknown): value is PriorAbsorptionMatrix
     && (
       value.assessment_source === "llm_structured_comparison"
       || value.assessment_source === "unavailable"
+    )
+    && (
+      value.axis_verification_source === "explicit_axis_relation_verifier"
+      || value.axis_verification_source === "unavailable"
     )
     && Array.isArray(value.candidates)
     && value.candidates.every(isPriorAbsorptionCandidate)
@@ -1107,6 +1612,7 @@ function isPriorAbsorptionCandidate(value: unknown): value is PriorAbsorptionCan
     && value.comparisons.every(isPriorComparison)
     && typeof value.coverage_complete === "boolean"
     && typeof value.full_text_evidence_complete === "boolean"
+    && typeof value.axis_relation_verification_complete === "boolean"
     && typeof value.independent_evidence_complete === "boolean"
     && typeof value.partial_comparisons_complete === "boolean"
     && typeof value.probe_eligible === "boolean"
@@ -1146,6 +1652,7 @@ function isPriorComparison(value: unknown): value is PriorAbsorptionPriorCompari
     && Array.isArray(value.independent_evidence_refs)
     && value.independent_evidence_refs.every(isEvidenceRef)
     && typeof value.full_text_evidence_complete === "boolean"
+    && typeof value.axis_relation_verification_complete === "boolean"
     && typeof value.independent_evidence_complete === "boolean"
     && typeof value.decision_eligible === "boolean"
     && isStringArray(value.reason_codes)
@@ -1164,7 +1671,49 @@ function isAxisComparison(value: unknown): value is PriorAbsorptionAxisCompariso
     && Boolean(normalizeRelation(value.relation))
     && Array.isArray(value.evidence_refs)
     && value.evidence_refs.every(isEvidenceRef)
+    && isSha256(value.verification_input_sha256)
+    && (
+      value.relation_verification === null
+      || isAxisVerification(value.relation_verification)
+    )
+    && Boolean(normalizeVerificationStatus(value.verification_status))
     && isSha256(value.content_sha256)
+  );
+}
+
+function isAxisVerification(value: unknown): value is PriorAbsorptionAxisVerification {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value.schema_version === PRIOR_ABSORPTION_AXIS_VERIFICATION_SCHEMA_VERSION
+    && value.artifact_kind === "prior_absorption_axis_verification"
+    && typeof value.candidate_id === "string"
+    && typeof value.prior_paper_id === "string"
+    && Boolean(normalizeAxis(value.axis))
+    && Boolean(normalizeRelation(value.reported_relation))
+    && isSha256(value.verification_input_sha256)
+    && Boolean(normalizeVerificationVerdict(value.verdict))
+    && typeof value.rationale === "string"
+    && isAxisVerificationProvenance(value.provenance)
+    && isSha256(value.content_sha256)
+  );
+}
+
+function isAxisVerificationProvenance(
+  value: unknown
+): value is PriorAbsorptionAxisVerificationProvenance {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    value.verification_stage === "axis_relation_verifier"
+    && Boolean(normalizeText(value.verifier_id))
+    && Boolean(normalizeText(value.provider))
+    && Boolean(normalizeText(value.model))
+    && Boolean(normalizeText(value.verification_run_id))
+    && value.context_isolated === true
+    && isSha256(value.source_response_sha256)
   );
 }
 

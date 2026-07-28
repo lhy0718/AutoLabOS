@@ -38,6 +38,17 @@ import {
 } from "../src/core/effectCriterion.js";
 import { buildTopicProbeExecutionBinding } from "../src/core/experimentGovernance.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH,
+  type EvidenceAdequacyAssessmentV2,
+  type EvidenceAdequacyContractV2
+} from "../src/core/analysis/evidenceAdequacy.js";
+import { reassessEvidenceAdequacyArtifacts } from "../src/core/analysis/evidenceAdequacyArtifacts.js";
 import { buildTopicProbeOutcomeDecision } from "../src/core/topicProbeOutcome.js";
 import { buildTopicProbeFollowupHandoff } from "../src/core/topicProbeFollowup.js";
 import { buildTopicProbeReviewGate } from "../src/core/topicProbeReviewGate.js";
@@ -45,6 +56,7 @@ import {
   makeTopicProbeComputeBudgetDeclaration,
   makeTopicProbeComputeBudgetLimits
 } from "./support/topicProbeComputeBudget.js";
+import { makeIndependentHypothesisReviewProvenance } from "./support/hypothesisReviewProvenance.js";
 import {
   buildPriorAbsorptionCandidateContract,
   type PriorAbsorptionEvidenceSeed
@@ -52,7 +64,8 @@ import {
 import { buildPassingPriorAbsorptionMatrixFixture } from "./support/priorAbsorptionFixture.js";
 import {
   buildCandidatePriorSearchPlan,
-  buildCandidatePriorSearchReceipt
+  buildCandidatePriorSearchReceipt,
+  buildCandidatePriorSearchReviewBindings
 } from "../src/core/candidatePriorSearch.js";
 import {
   buildEstimatorFeasibilityArtifacts,
@@ -1019,15 +1032,27 @@ describe("loadResearchFunnelProjection", () => {
 
     const projection = await loadTopicDiscoveryProjection(runDir);
     const apiProjection = projectResearchFunnel(projection);
+    const topicMemoryDecisions = fixture.portfolio.candidates.map(
+      (candidate) => candidate.topic_memory!.decision
+    );
+    const blockedCandidateCount = topicMemoryDecisions.filter(
+      (decision) => decision.blocked
+    ).length;
+    const reentryRequiredCount = topicMemoryDecisions.filter(
+      (decision) => decision.disposition === "requires_reentry_adjudication"
+    ).length;
+    const reentryAllowedCount = topicMemoryDecisions.filter(
+      (decision) => decision.disposition === "reentry_allowed"
+    ).length;
 
     expect(projection.topicMemory).toEqual({
       status: "verified",
       trusted: true,
       ledgerHash: fixture.portfolio.topic_memory_ledger?.ledger_sha256,
       recordCount: 3,
-      blockedCandidateCount: 2,
-      reentryRequiredCount: 1,
-      reentryAllowedCount: 1,
+      blockedCandidateCount,
+      reentryRequiredCount,
+      reentryAllowedCount,
       auditArtifactRef: {
         label: "Topic memory audit",
         path: "hypothesis_generation/topic_memory_audit.json"
@@ -1042,9 +1067,9 @@ describe("loadResearchFunnelProjection", () => {
       trusted: true,
       ledger_sha256: fixture.portfolio.topic_memory_ledger?.ledger_sha256,
       record_count: 3,
-      blocked_candidate_count: 2,
-      reentry_required_count: 1,
-      reentry_allowed_count: 1
+      blocked_candidate_count: blockedCandidateCount,
+      reentry_required_count: reentryRequiredCount,
+      reentry_allowed_count: reentryAllowedCount
     });
     expect(apiProjection.topic_memory).not.toHaveProperty("records");
     expect(apiProjection.topic_memory).not.toHaveProperty("descriptor");
@@ -1156,7 +1181,7 @@ describe("loadResearchFunnelProjection", () => {
     const runDir = await createRunDir();
     const fixture = buildFunnelFixture({ researchCycle: RESEARCH_CYCLE });
     await writeFunnelFixture(runDir, fixture);
-    const postProbe = buildPostProbeFixture(fixture, RESEARCH_CYCLE);
+    const postProbe = await buildPostProbeFixture(runDir, fixture, RESEARCH_CYCLE);
     await writePostProbeArtifacts(runDir, postProbe, "outcome");
 
     const projection = await loadTopicDiscoveryProjection(runDir);
@@ -1197,7 +1222,7 @@ describe("loadResearchFunnelProjection", () => {
     const runDir = await createRunDir();
     const fixture = buildFunnelFixture({ researchCycle: RESEARCH_CYCLE });
     await writeFunnelFixture(runDir, fixture);
-    const postProbe = buildPostProbeFixture(fixture, RESEARCH_CYCLE);
+    const postProbe = await buildPostProbeFixture(runDir, fixture, RESEARCH_CYCLE);
     await writePostProbeArtifacts(runDir, postProbe, "review");
 
     const projection = await loadTopicDiscoveryProjection(runDir);
@@ -1236,7 +1261,7 @@ describe("loadResearchFunnelProjection", () => {
     const runDir = await createRunDir();
     const fixture = buildFunnelFixture({ researchCycle: RESEARCH_CYCLE });
     await writeFunnelFixture(runDir, fixture);
-    const postProbe = buildPostProbeFixture(fixture, RESEARCH_CYCLE);
+    const postProbe = await buildPostProbeFixture(runDir, fixture, RESEARCH_CYCLE);
     await writePostProbeArtifacts(runDir, postProbe, "review");
     await writeRawArtifact(
       runDir,
@@ -1990,7 +2015,8 @@ interface FunnelFixture {
   };
 }
 
-function buildPostProbeFixture(
+async function buildPostProbeFixture(
+  runDir: string,
   fixture: FunnelFixture,
   researchCycle: number
 ) {
@@ -2005,8 +2031,101 @@ function buildPostProbeFixture(
     candidate: activeCandidate,
     generatedAt: GENERATED_AT
   });
-  const report = analysisReport(contract);
-  const outcome = buildTopicProbeOutcomeDecision({ contract, report });
+  const executionBinding = buildTopicProbeExecutionBinding({
+    candidateId: contract.candidate_id,
+    candidateContentSha256: contract.candidate_content_sha256,
+    comparator: contract.comparator,
+    datasetTaskScope: contract.dataset_task_bench
+  });
+  const targetIndependentUnits = 2;
+  const uncertaintyMethod = "paired_bootstrap";
+  const evidenceContract = buildEvidenceAdequacyContract({
+    primaryComparisonId: executionBinding.primary_comparison_id,
+    designSource: {
+      kind: "estimator_protocol",
+      contentSha256: hashCanonical({
+        fixture_kind: "research_funnel_projection_design",
+        primary_comparison_id: executionBinding.primary_comparison_id,
+        target_independent_units: targetIndependentUnits,
+        uncertainty_method: uncertaintyMethod
+      })
+    },
+    independentUnit: {
+      key: "matched_item_id",
+      analysisUnit: "matched candidate-reference outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "sampled",
+      targetUniqueUnits: targetIndependentUnits,
+      targetDenominatorPerArm: targetIndependentUnits
+    },
+    requiredContrast: {
+      arms: ["candidate", "reference"],
+      paired: true,
+      requiredCompletePairs: targetIndependentUnits
+    },
+    uncertaintyRequirement: {
+      mode: "required",
+      allowedMethods: [uncertaintyMethod],
+      confidenceLevel: 0.95,
+      decisionRule: "directed_interval_bound_meets_effect_criterion"
+    },
+    effectResolution: {
+      scale: contract.metric_scale,
+      minimumResolvableEffect: 0.01
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale: "The projection fixture freezes evidence coverage instead of an execution-cost floor."
+    }
+  });
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: evidenceContract.content_sha256,
+    primaryComparisonId: evidenceContract.primary_comparison_id,
+    uniqueExecutionIds: ["execution_1", "execution_2", "execution_3", "execution_4"],
+    observedIndependentUnitIds: ["matched_item_1", "matched_item_2"],
+    observedDenominatorByArm: { candidate: 2, reference: 2 },
+    observedPairCoverage: {
+      completePairIds: ["matched_pair_1", "matched_pair_2"],
+      incompletePairIds: []
+    },
+    observedUncertaintyMethods: [uncertaintyMethod],
+    primaryEvidenceRefs: [
+      "metrics.json#/candidate",
+      "metrics.json#/reference",
+      "metrics.json#/comparison"
+    ]
+  });
+  const assessment = assessEvidenceAdequacy({
+    contract: evidenceContract,
+    receipt,
+    verifiedEvidenceRefs: receipt.primary_evidence_refs
+  });
+  await Promise.all([
+    writeRawArtifact(runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH, JSON.stringify(evidenceContract, null, 2)),
+    writeRawArtifact(runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH, JSON.stringify(receipt, null, 2)),
+    writeRawArtifact(runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH, JSON.stringify(assessment, null, 2)),
+    writeRawArtifact(runDir, "metrics.json", JSON.stringify({
+      candidate: { value: 0.56 },
+      reference: { value: 0.5 },
+      comparison: { delta: 0.06 }
+    }, null, 2))
+  ]);
+  const reassessment = await reassessEvidenceAdequacyArtifacts({
+    runDir,
+    evidenceRoots: [runDir],
+    expectedPrimaryComparisonId: executionBinding.primary_comparison_id,
+    requireStoredAssessment: true
+  });
+  if (!reassessment.authorization || !reassessment.assessment) {
+    throw new Error(`projection_evidence_authorization_missing:${reassessment.issues.join("|")}`);
+  }
+  const report = analysisReport(contract, evidenceContract, reassessment.assessment);
+  const outcome = buildTopicProbeOutcomeDecision({
+    contract,
+    report,
+    evidenceAdequacyAuthorization: reassessment.authorization
+  });
   const outcomeGatePayload = {
     schema_version: 1 as const,
     artifact_kind: "topic_probe_outcome_gate" as const,
@@ -2038,7 +2157,7 @@ function buildPostProbeFixture(
 
 async function writePostProbeArtifacts(
   runDir: string,
-  fixture: ReturnType<typeof buildPostProbeFixture>,
+  fixture: Awaited<ReturnType<typeof buildPostProbeFixture>>,
   through: "outcome" | "review"
 ): Promise<void> {
   const artifacts: Array<readonly [string, string]> = [
@@ -2423,13 +2542,15 @@ function buildFunnelFixture(input: {
   omitMeaningfulEffect?: boolean;
   probeCandidateCount?: number;
   topicMemoryScenario?: "mixed";
+  corpusRawOverride?: string;
 } = {}): FunnelFixture {
   const researchCycle = input.researchCycle ?? RESEARCH_CYCLE;
   const evidenceRows = evidenceRowsFixture();
   const evidenceRaw = serializeJsonl(evidenceRows);
   const collectAttemptId = "20260102030405678-genericattempt";
   const semanticLineage = buildSemanticLineageFixture(collectAttemptId);
-  const corpusRaw = serializeJsonl(semanticLineage.corpusRows);
+  const corpusRaw = input.corpusRawOverride
+    ?? serializeJsonl(semanticLineage.corpusRows);
   const collectGenerationRaw = JSON.stringify({
     version: 1,
     kind: "collect_generation",
@@ -2720,6 +2841,10 @@ async function writeAuthorizedExecutionFixture(
   };
   const currentAttemptId = collectGeneration.collect_attempt_id;
   const parentAttemptId = "20260101000000000-parentprior";
+  const selectedDirectPriorIds = portfolioCandidate.closest_prior_full_text_paper_ids.slice(0, 1);
+  if (selectedDirectPriorIds.length === 0) {
+    throw new Error("authorized_execution_fixture_requires_full_text_prior");
+  }
   const plan = buildCandidatePriorSearchPlan({
     runId: RUN_ID,
     researchCycle: researchCycle - 1,
@@ -2732,25 +2857,63 @@ async function writeAuthorizedExecutionFixture(
     },
     candidates: [{ candidate: sourceCandidate, candidateContract }]
   });
+  const candidateFamilyIds = plan.candidates.flatMap((candidatePlan) =>
+    candidatePlan.families.map((family) => family.family_id)
+  );
+  const resultCorpusRaw = serializeJsonl(
+    parseJsonl(fixture.raw.corpus).map((row) => {
+      if (row.paper_id !== selectedDirectPriorIds[0]) {
+        return row;
+      }
+      const existingFamilies = Array.isArray(row.query_families)
+        ? row.query_families.filter((value): value is string => typeof value === "string")
+        : [];
+      return {
+        ...row,
+        query_families: [...new Set([...existingFamilies, ...candidateFamilyIds])].sort()
+      };
+    })
+  );
+  const authorizedFixture = buildFunnelFixture({
+    researchCycle,
+    corpusRawOverride: resultCorpusRaw
+  });
+  const authorizedCandidateId = authorizedFixture.decision.probe_candidate_ids[0];
+  if (authorizedCandidateId !== selectedCandidateId) {
+    throw new Error("authorized_execution_fixture_candidate_changed_after_rebind");
+  }
+  const authorizedPortfolioCandidate = authorizedFixture.portfolio.candidates.find(
+    (candidate) => candidate.source_candidate_id === selectedCandidateId
+  );
+  if (!authorizedPortfolioCandidate) {
+    throw new Error("authorized_execution_fixture_candidate_missing_after_rebind");
+  }
+  await writeFunnelFixture(runDir, authorizedFixture);
   const receipt = buildCandidatePriorSearchReceipt({
     plan,
     collectAttemptId: currentAttemptId,
     generatedAt: GENERATED_AT,
-    resultCorpusSha256: sha256(fixture.raw.corpus),
-    resultCorpusByteLength: Buffer.byteLength(fixture.raw.corpus, "utf8"),
+    resultCorpusSha256: sha256(resultCorpusRaw),
+    resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
     attempts: plan.candidates.flatMap((candidate) =>
       candidate.families.flatMap((family) =>
         family.lanes.map((lane) => ({
           familyId: family.family_id,
           retrievalLane: lane.retrieval_lane,
           query: family.query,
-          fetched: 0,
-          selected: 0,
-          selectedPaperIds: []
+          fetched: selectedDirectPriorIds.length,
+          selected: selectedDirectPriorIds.length,
+          selectedPaperIds: selectedDirectPriorIds
         }))
       )
     )
   });
+  const reviewBinding = buildCandidatePriorSearchReviewBindings(receipt).get(
+    selectedCandidateId
+  );
+  if (!reviewBinding) {
+    throw new Error("authorized_execution_fixture_requires_prior_review_binding");
+  }
   const priorDecisionPayload = {
     schema_version: 1 as const,
     artifact_kind: "candidate_prior_search_decision" as const,
@@ -2768,8 +2931,13 @@ async function writeAuthorizedExecutionFixture(
       reason_codes: [],
       absorbed_by_prior: false,
       covered_by_valid_receipt: true,
+      selected_direct_prior_ids: selectedDirectPriorIds,
+      selected_prior_coverage_complete: true,
+      review_binding: reviewBinding,
+      probe_eligible: true,
       selected_for_search: false
-    }]
+    }],
+    plan_content_sha256: plan.content_sha256
   };
   const priorDecision = {
     ...priorDecisionPayload,
@@ -2851,14 +3019,14 @@ async function writeAuthorizedExecutionFixture(
     ["collect_query_plan.json", JSON.stringify(candidatePriorQueryPlan, null, 2)],
     ["collect_candidate_prior_search_plan.json", JSON.stringify(plan, null, 2)],
     ["collect_candidate_prior_search_receipt.json", JSON.stringify(receipt, null, 2)],
-    ["corpus.jsonl", fixture.raw.corpus]
+    ["corpus.jsonl", resultCorpusRaw]
   ]);
   const activeProbe = buildActiveTopicProbeContract({
     runId: RUN_ID,
     researchCycle,
     researchMode: "topic_discovery",
-    portfolioContentSha256: fixture.portfolio.content_sha256,
-    candidate: portfolioCandidate,
+    portfolioContentSha256: authorizedFixture.portfolio.content_sha256,
+    candidate: authorizedPortfolioCandidate,
     generatedAt: GENERATED_AT
   });
   const experimentContract = buildProjectionExperimentContract(
@@ -2903,13 +3071,14 @@ async function writeAuthorizedExecutionFixture(
       "collect_candidate_prior_search_receipt.json",
       currentArtifacts.get("collect_candidate_prior_search_receipt.json")!
     ),
+    writeRawArtifact(runDir, "corpus.jsonl", resultCorpusRaw),
     writeRawArtifact(
       runDir,
       "collect_result.json",
       JSON.stringify({
         collect_attempt_id: currentAttemptId,
         completed: true,
-        stored: parseJsonl(fixture.raw.corpus).length
+        stored: parseJsonl(resultCorpusRaw).length
       }, null, 2)
     ),
     writeRawArtifact(
@@ -3294,7 +3463,11 @@ function buildMixedTopicMemoryFixture(candidates: HypothesisCandidate[]): {
   return { ledger, ticketsByCandidateId };
 }
 
-function analysisReport(contract: ActiveTopicProbeContract): AnalysisReport {
+function analysisReport(
+  contract: ActiveTopicProbeContract,
+  evidenceContract: EvidenceAdequacyContractV2,
+  assessment: EvidenceAdequacyAssessmentV2
+): AnalysisReport {
   const delta = 0.06;
   const referenceValue = 0.5;
   const executionBinding = buildTopicProbeExecutionBinding({
@@ -3314,6 +3487,7 @@ function analysisReport(contract: ActiveTopicProbeContract): AnalysisReport {
     objectiveRaw: contract.objective_raw
   });
   return {
+    analysis_version: 1,
     objective_metric: {
       profile: {
         candidate_contract: candidateBinding
@@ -3408,6 +3582,7 @@ function analysisReport(contract: ActiveTopicProbeContract): AnalysisReport {
         estimand: "effect_delta",
         metric_scale: contract.metric_scale,
         trial_source: "fresh_executed",
+        method: evidenceContract.uncertainty_requirement.allowed_methods[0],
         label: "Primary interval",
         lower: 0.05,
         upper: 0.07,
@@ -3426,6 +3601,7 @@ function analysisReport(contract: ActiveTopicProbeContract): AnalysisReport {
       }],
       notes: []
     },
+    evidence_adequacy_assessment: assessment,
     failure_taxonomy: []
   } as unknown as AnalysisReport;
 }
@@ -3570,6 +3746,7 @@ function review(candidateId: string): HypothesisReview {
     limitation_reflection: 4,
     measurement_readiness: 4,
     strengths: ["The comparison is explicit."],
-    weaknesses: ["The bounded scope limits generalization."]
+    weaknesses: ["The bounded scope limits generalization."],
+    provenance: makeIndependentHypothesisReviewProvenance(candidateId)
   };
 }

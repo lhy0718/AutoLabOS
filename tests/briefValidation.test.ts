@@ -48,7 +48,7 @@ function fullBrief(): string {
     "## Dataset / Task / Bench",
     "- dataset(s): public_evaluation_collection.",
     "- task type: deterministic prediction over held-out records.",
-    "- train/eval protocol: compare matched conditions on a held-out evaluation set.",
+    "- execution/evaluation protocol: compare matched conditions on a held-out evaluation set.",
     "- split or validation discipline: fixed evaluation subset first, then full evaluation if promising.",
     "- known limitations: one dataset is not enough for a paper-ready general claim.",
     "",

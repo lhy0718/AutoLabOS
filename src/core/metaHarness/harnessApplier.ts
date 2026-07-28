@@ -50,6 +50,8 @@ export interface HarnessApplyResult {
   applied: boolean;
   targetFile: string;
   gitCommitBefore: string | null;
+  gitCommitAfter: string | null;
+  commitVerificationPassed: boolean;
   validationPassed: boolean;
   structuralValidationPassed: boolean;
   promotionAllowed: boolean;
@@ -81,6 +83,12 @@ export interface HarnessApplyOptions {
 interface HarnessApplierDeps {
   runValidateHarness: (cwd: string) => Promise<void>;
   gitRevParseHead: (cwd: string) => Promise<string | null>;
+  gitStatusEntries: (cwd: string) => Promise<string[]>;
+  gitReadFileAtCommit: (
+    cwd: string,
+    commit: string,
+    relativeTargetFile: string
+  ) => Promise<string>;
   gitCommit: (cwd: string, targetFile: string, message: string) => Promise<void>;
 }
 
@@ -106,6 +114,8 @@ export async function applyWithSafetyNet(
   const resolvedDeps: HarnessApplierDeps = {
     runValidateHarness: defaultRunValidateHarness,
     gitRevParseHead: defaultGitRevParseHead,
+    gitStatusEntries: defaultGitStatusEntries,
+    gitReadFileAtCommit: defaultGitReadFileAtCommit,
     gitCommit: defaultGitCommit,
     ...deps
   };
@@ -120,6 +130,31 @@ export async function applyWithSafetyNet(
       promotionCriteria,
       auditLogPath,
       blockedReason: "dry_run"
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  if (!gitCommitBefore) {
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      promotionCriteria,
+      auditLogPath,
+      blockedReason: "git_head_unavailable"
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  const initialStatusEntries = await resolvedDeps.gitStatusEntries(workspaceRoot);
+  if (initialStatusEntries.length > 0) {
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      promotionCriteria,
+      auditLogPath,
+      blockedReason: `worktree_not_clean: ${formatStatusEntries(initialStatusEntries)}`
     });
     await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
     return result;
@@ -157,7 +192,12 @@ export async function applyWithSafetyNet(
     await resolvedDeps.runValidateHarness(workspaceRoot);
   } catch (error) {
     const blockedReason = `structural_validation_failed: ${errorMessage(error)}`;
-    await fs.writeFile(targetFile, previousContent, "utf8");
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
     const result = buildResult({
       targetFile,
       gitCommitBefore,
@@ -165,8 +205,8 @@ export async function applyWithSafetyNet(
       auditLogPath,
       evaluationBefore,
       blockedReason,
-      rolledBack: true,
-      rollbackReason: blockedReason
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
     });
     await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
     return result;
@@ -175,7 +215,12 @@ export async function applyWithSafetyNet(
   const subjectHashAfterValidation = hashContent(await fs.readFile(targetFile, "utf8"));
   if (subjectHashAfterValidation !== candidateSubjectHash) {
     const blockedReason = `candidate_subject_hash_changed: expected=${candidateSubjectHash}, actual=${subjectHashAfterValidation}`;
-    await fs.writeFile(targetFile, previousContent, "utf8");
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
     const result = buildResult({
       targetFile,
       gitCommitBefore,
@@ -184,8 +229,8 @@ export async function applyWithSafetyNet(
       structuralValidationPassed: true,
       evaluationBefore,
       blockedReason,
-      rolledBack: true,
-      rollbackReason: blockedReason
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
     });
     await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
     return result;
@@ -200,6 +245,32 @@ export async function applyWithSafetyNet(
     scope: evaluationScope,
     subjectHash: candidateSubjectHash
   }, evaluationBefore);
+
+  const subjectHashAfterEvaluation = hashContent(await fs.readFile(targetFile, "utf8"));
+  if (subjectHashAfterEvaluation !== candidateSubjectHash) {
+    const blockedReason = `candidate_subject_hash_changed_during_evaluation: expected=${candidateSubjectHash}, actual=${subjectHashAfterEvaluation}`;
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      blockedReason,
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
   const assessment = assessPromotion(
     evaluationBefore,
     evaluationAfter,
@@ -208,7 +279,12 @@ export async function applyWithSafetyNet(
     candidateSubjectHash
   );
   if (!assessment.allowed) {
-    await fs.writeFile(targetFile, previousContent, "utf8");
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      assessment.reason || "promotion_not_allowed"
+    );
     const result = buildResult({
       targetFile,
       gitCommitBefore,
@@ -219,8 +295,65 @@ export async function applyWithSafetyNet(
       evaluationAfter,
       scoreDelta: assessment.scoreDelta,
       blockedReason: assessment.reason,
-      rolledBack: true,
-      rollbackReason: assessment.reason
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  const gitCommitBeforeApply = await resolvedDeps.gitRevParseHead(workspaceRoot);
+  if (gitCommitBeforeApply !== gitCommitBefore) {
+    const blockedReason = `git_head_changed: expected=${gitCommitBefore}, actual=${gitCommitBeforeApply || "missing"}`;
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      scoreDelta: assessment.scoreDelta,
+      blockedReason,
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  const relativeTargetFile = normalizeGitPath(path.relative(workspaceRoot, targetFile));
+  const preCommitStatusEntries = await resolvedDeps.gitStatusEntries(workspaceRoot);
+  const expectedTargetEntry = ` M ${relativeTargetFile}`;
+  if (
+    preCommitStatusEntries.length !== 1
+    || preCommitStatusEntries[0] !== expectedTargetEntry
+  ) {
+    const blockedReason = `worktree_changed_during_evaluation: expected=${expectedTargetEntry}, actual=${formatStatusEntries(preCommitStatusEntries)}`;
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      scoreDelta: assessment.scoreDelta,
+      blockedReason,
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
     });
     await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
     return result;
@@ -234,7 +367,12 @@ export async function applyWithSafetyNet(
     );
   } catch (error) {
     const blockedReason = `commit_failed: ${errorMessage(error)}`;
-    await fs.writeFile(targetFile, previousContent, "utf8");
+    const rollback = await restorePreviousContentIfCandidateUnchanged(
+      targetFile,
+      candidateSubjectHash,
+      previousContent,
+      blockedReason
+    );
     const result = buildResult({
       targetFile,
       gitCommitBefore,
@@ -245,8 +383,71 @@ export async function applyWithSafetyNet(
       evaluationAfter,
       scoreDelta: assessment.scoreDelta,
       blockedReason,
-      rolledBack: true,
-      rollbackReason: blockedReason
+      rolledBack: rollback.rolledBack,
+      rollbackReason: rollback.reason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  const gitCommitAfter = await resolvedDeps.gitRevParseHead(workspaceRoot);
+  if (!gitCommitAfter || gitCommitAfter === gitCommitBefore) {
+    const blockedReason = `commit_verification_failed: head_not_advanced (before=${gitCommitBefore}, after=${gitCommitAfter || "missing"})`;
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      gitCommitAfter,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      scoreDelta: assessment.scoreDelta,
+      blockedReason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  let committedContent: string;
+  try {
+    committedContent = await resolvedDeps.gitReadFileAtCommit(
+      workspaceRoot,
+      gitCommitAfter,
+      relativeTargetFile
+    );
+  } catch (error) {
+    const blockedReason = `commit_verification_failed: ${errorMessage(error)}`;
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      gitCommitAfter,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      scoreDelta: assessment.scoreDelta,
+      blockedReason
+    });
+    await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
+    return result;
+  }
+
+  const committedSubjectHash = hashContent(committedContent);
+  if (committedSubjectHash !== candidateSubjectHash) {
+    const blockedReason = `commit_verification_failed: subject_hash_mismatch (expected=${candidateSubjectHash}, actual=${committedSubjectHash})`;
+    const result = buildResult({
+      targetFile,
+      gitCommitBefore,
+      gitCommitAfter,
+      promotionCriteria,
+      auditLogPath,
+      structuralValidationPassed: true,
+      evaluationBefore,
+      evaluationAfter,
+      scoreDelta: assessment.scoreDelta,
+      blockedReason
     });
     await appendAuditLog(auditLogPath, buildAuditEntry(options, result));
     return result;
@@ -256,6 +457,8 @@ export async function applyWithSafetyNet(
     applied: true,
     targetFile,
     gitCommitBefore,
+    gitCommitAfter,
+    commitVerificationPassed: true,
     promotionCriteria,
     auditLogPath,
     structuralValidationPassed: true,
@@ -437,6 +640,8 @@ function buildResult(input: {
   applied?: boolean;
   targetFile: string;
   gitCommitBefore: string | null;
+  gitCommitAfter?: string | null;
+  commitVerificationPassed?: boolean;
   promotionCriteria: HarnessPromotionCriteria;
   auditLogPath: string;
   structuralValidationPassed?: boolean;
@@ -455,6 +660,8 @@ function buildResult(input: {
     applied: input.applied || false,
     targetFile: input.targetFile,
     gitCommitBefore: input.gitCommitBefore,
+    gitCommitAfter: input.gitCommitAfter || null,
+    commitVerificationPassed: input.commitVerificationPassed || false,
     validationPassed: structuralValidationPassed,
     structuralValidationPassed,
     promotionAllowed: input.promotionAllowed || false,
@@ -479,6 +686,9 @@ function buildAuditEntry(options: HarnessApplyOptions, result: HarnessApplyResul
     source: options.source,
     node: path.basename(result.targetFile, ".md"),
     target_file: result.targetFile,
+    git_commit_before: result.gitCommitBefore,
+    git_commit_after: result.gitCommitAfter,
+    commit_verification_passed: result.commitVerificationPassed,
     applied: result.applied,
     structural_validation_passed: result.structuralValidationPassed,
     promotion_allowed: result.promotionAllowed,
@@ -527,6 +737,32 @@ function hashContent(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+async function restorePreviousContentIfCandidateUnchanged(
+  targetFile: string,
+  candidateSubjectHash: string,
+  previousContent: string,
+  rollbackReason: string
+): Promise<{ rolledBack: boolean; reason: string }> {
+  const currentContent = await fs.readFile(targetFile, "utf8");
+  const currentHash = hashContent(currentContent);
+  if (currentHash !== candidateSubjectHash) {
+    return {
+      rolledBack: false,
+      reason: `rollback_skipped_concurrent_target_change: expected=${candidateSubjectHash}, actual=${currentHash}; trigger=${rollbackReason}`
+    };
+  }
+  await fs.writeFile(targetFile, previousContent, "utf8");
+  return { rolledBack: true, reason: rollbackReason };
+}
+
+function formatStatusEntries(entries: string[]): string {
+  return entries.length > 0 ? entries.join(" | ") : "clean";
+}
+
+function normalizeGitPath(filePath: string): string {
+  return filePath.split(path.sep).join("/");
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -558,6 +794,28 @@ async function defaultGitRevParseHead(cwd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function defaultGitStatusEntries(cwd: string): Promise<string[]> {
+  const { stdout } = await execFile(
+    "git",
+    ["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    { cwd, encoding: "utf8" }
+  );
+  return stdout.split("\0").filter(Boolean);
+}
+
+async function defaultGitReadFileAtCommit(
+  cwd: string,
+  commit: string,
+  relativeTargetFile: string
+): Promise<string> {
+  const { stdout } = await execFile(
+    "git",
+    ["show", `${commit}:${relativeTargetFile}`],
+    { cwd, encoding: "utf8" }
+  );
+  return stdout;
 }
 
 async function defaultGitCommit(cwd: string, targetFile: string, message: string): Promise<void> {

@@ -11,6 +11,11 @@ import {
   type TopicPortfolio
 } from "./researchFunnel.js";
 import { buildResearchGapEvidenceChain } from "./analysis/researchGapEvidenceChain.js";
+import {
+  isEvidenceAdequacyAuthorization,
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyAuthorization
+} from "./analysis/evidenceAdequacyArtifacts.js";
 import type { AnalysisReport } from "./resultAnalysis.js";
 import {
   validateTopicProbeOutcomeDecision,
@@ -80,6 +85,8 @@ export interface TopicProbeOutcomeArtifactsLoadInput {
   requireOutcome?: boolean;
   report?: AnalysisReport;
   analysisReport?: AnalysisReport;
+  evidenceAdequacyAuthorization?: EvidenceAdequacyAuthorization;
+  evidenceRoots?: string[];
 }
 
 export type LoadTopicProbeOutcomeArtifactsInput =
@@ -232,6 +239,32 @@ async function loadTopicProbeOutcomeArtifactsUnchecked(
   }
   const contract = contractValidation?.contract;
 
+  let evidenceAdequacyAuthorization =
+    input.evidenceAdequacyAuthorization;
+  if (
+    requireOutcome
+    && (input.report ?? input.analysisReport)
+    && !isEvidenceAdequacyAuthorization(evidenceAdequacyAuthorization)
+  ) {
+    const report = input.report ?? input.analysisReport;
+    const reassessment = await reassessEvidenceAdequacyArtifacts({
+      runDir: runRoot,
+      evidenceRoots: input.evidenceRoots?.length
+        ? input.evidenceRoots
+        : [runRoot],
+      expectedPrimaryComparisonId:
+        report?.results_plan?.primary_comparison_id,
+      requireStoredAssessment: true
+    });
+    evidenceAdequacyAuthorization = reassessment.authorization;
+    if (!evidenceAdequacyAuthorization) {
+      validationExceptionReasons.push(
+        ...reassessment.issues,
+        "topic_probe_outcome_evidence_authorization_failed"
+      );
+    }
+  }
+
   let outcomeValidation:
     | ReturnType<typeof validateTopicProbeOutcomeDecision>
     | undefined;
@@ -243,7 +276,8 @@ async function loadTopicProbeOutcomeArtifactsUnchecked(
           expectedRunId: runId,
           expectedResearchCycle: cycle,
           contract,
-          report: input.report ?? input.analysisReport
+          report: input.report ?? input.analysisReport,
+          evidenceAdequacyAuthorization
         }
       );
     } catch {

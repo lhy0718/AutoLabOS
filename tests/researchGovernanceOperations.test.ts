@@ -506,14 +506,14 @@ describe("research governance operations", () => {
     await writeJson(path.join(runRoot, "review", "paper_scale_diagnostics.json"), {
       diagnostics: [
         {
-          id: "missing_seed_replication",
+          id: "evidence_adequacy_not_passed",
           severity: "blocking",
           source_node: "run_experiments",
           target_node: "run_experiments",
           recheck_condition: "Observed repeated-run evidence reaches the governed minimum."
         },
         {
-          id: "training_budget_mismatch",
+          id: "evidence_adequacy_invalid",
           severity: "blocking",
           source_node: "implement_experiments",
           target_node: "implement_experiments",
@@ -568,7 +568,7 @@ describe("research governance operations", () => {
 
     expect(gateResult.artifact.verdict).toBe("blocked");
     expect(gateResult.artifact.findings).toContainEqual(expect.objectContaining({
-      code: "missing_seed_replication",
+      code: "evidence_adequacy_not_passed",
       target_node: "run_experiments",
       target_surface: "validator",
       recheck_condition: "Observed repeated-run evidence reaches the governed minimum."

@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { HypothesisCandidate } from "../src/core/analysis/researchPlanning.js";
 import {
   PRIOR_ABSORPTION_AXES,
+  buildPriorAbsorptionAxisVerificationPrompt,
   buildPriorAbsorptionMatrix,
+  parsePriorAbsorptionAxisVerificationResponse,
   validatePriorAbsorptionMatrixArtifact,
   type PriorAbsorptionAssessment,
+  type PriorAbsorptionAxis,
+  type PriorAbsorptionAxisVerificationSeed,
+  type PriorAbsorptionAxisVerificationVerdict,
   type PriorAbsorptionDisposition,
   type PriorAbsorptionEvidenceSeed
 } from "../src/core/priorAbsorption.js";
@@ -79,7 +84,15 @@ describe("prior absorption matrix", () => {
             axis.evidence_refs.length === 1
             && axis.evidence_refs[0]?.source_type === "full_text"
             && axis.evidence_refs[0]?.evidence_span
+            && axis.verification_status === "supported"
+            && axis.relation_verification?.provenance.context_isolated === true
         )
+    )).toBe(true);
+    expect(candidate.comparisons.every(
+      (comparison) =>
+        new Set(comparison.axes.map(
+          (axis) => axis.relation_verification?.verification_input_sha256
+        )).size === PRIOR_ABSORPTION_AXES.length
     )).toBe(true);
     expect(validatePriorAbsorptionMatrixArtifact(JSON.stringify(matrix), {
       expectedRunId: RUN_ID,
@@ -127,13 +140,124 @@ describe("prior absorption matrix", () => {
       ])
     });
   });
+
+  it("fails closed when one generic full-text span is reused across all axes without axis verification", () => {
+    const matrix = buildMatrix(
+      assessments("non_overlapping"),
+      evidence(),
+      { verifyAxes: false }
+    );
+    const candidate = matrix.candidates[0]!;
+
+    expect(candidate.comparisons.every(
+      (comparison) =>
+        new Set(comparison.axes.flatMap(
+          (axis) => axis.evidence_refs.map((reference) => reference.evidence_span)
+        )).size === 1
+    )).toBe(true);
+    expect(candidate.probe_eligible).toBe(false);
+    expect(candidate.reason_codes).toContain(
+      "prior_absorption_axis_relation_verification_incomplete"
+    );
+  });
+
+  it.each(["contradicted", "insufficient"] as const)(
+    "fails closed when one axis verifier returns %s",
+    (verdict) => {
+      const matrix = buildMatrix(
+        assessments("non_overlapping"),
+        evidence(),
+        {
+          verdictForAxis: (axis) =>
+            axis === "method_mechanism" ? verdict : "supported"
+        }
+      );
+      const candidate = matrix.candidates[0]!;
+
+      expect(candidate.probe_eligible).toBe(false);
+      expect(candidate.comparisons.every(
+        (comparison) => comparison.disposition === "uncertain"
+      )).toBe(true);
+      expect(candidate.reason_codes).toContain(
+        `prior_absorption_axis_relation_verification_${verdict}`
+      );
+    }
+  );
+
+  it("rejects a verification input hash copied from a different axis", () => {
+    const matrix = buildMatrix(
+      assessments("non_overlapping"),
+      evidence(),
+      {
+        transformVerifications: (rows) => {
+          const copiedHash = rows[0]!.verification_input_sha256;
+          return rows.map((row) => ({
+            ...row,
+            verification_input_sha256: copiedHash
+          }));
+        }
+      }
+    );
+
+    expect(matrix.candidates[0]?.probe_eligible).toBe(false);
+    expect(matrix.candidates[0]?.comparisons.some(
+      (comparison) => comparison.axes.some(
+        (axis) => axis.verification_status === "invalid"
+      )
+    )).toBe(true);
+  });
+
+  it("marks schema v1 matrices stale instead of accepting their prior gate state", () => {
+    const matrix = buildMatrix(assessments("non_overlapping"));
+    const staleSchema = {
+      ...structuredClone(matrix),
+      schema_version: 1
+    };
+
+    expect(validatePriorAbsorptionMatrixArtifact(JSON.stringify(staleSchema))).toEqual({
+      measured: true,
+      valid: false,
+      reasons: ["prior_absorption_matrix_schema_version_unsupported:1"]
+    });
+  });
+
+  it("binds the verifier prompt and parsed provenance to every axis input hash", () => {
+    const provisional = buildMatrix(
+      assessments("non_overlapping"),
+      evidence(),
+      { verifyAxes: false }
+    );
+    const prompt = buildPriorAbsorptionAxisVerificationPrompt(provisional);
+    const targets = JSON.parse(prompt.split("Targets:\n")[1] || "[]") as Array<{
+      verification_input_sha256: string;
+      candidate_position: string;
+      prior_position: string;
+    }>;
+
+    for (const axis of provisional.candidates[0]!.comparisons[0]!.axes) {
+      expect(targets).toContainEqual(expect.objectContaining({
+        verification_input_sha256: axis.verification_input_sha256,
+        candidate_position: axis.candidate_position,
+        prior_position: axis.prior_position
+      }));
+    }
+  });
 });
 
 function buildMatrix(
   assessmentRows: PriorAbsorptionAssessment[],
-  evidenceRows = evidence()
+  evidenceRows = evidence(),
+  options: {
+    verifyAxes?: boolean;
+    verdictForAxis?: (
+      axis: PriorAbsorptionAxis
+    ) => PriorAbsorptionAxisVerificationVerdict;
+    transformVerifications?: (
+      rows: PriorAbsorptionAxisVerificationSeed[]
+    ) => PriorAbsorptionAxisVerificationSeed[];
+  } = {}
 ) {
-  return buildPriorAbsorptionMatrix({
+  const baseInput = {
     candidates: [candidate()],
     evidence: evidenceRows,
     assessments: assessmentRows,
@@ -141,6 +265,41 @@ function buildMatrix(
     researchCycle: RESEARCH_CYCLE,
     generatedAt: GENERATED_AT,
     assessmentSource: "llm_structured_comparison"
+  } as const;
+  const provisional = buildPriorAbsorptionMatrix(baseInput);
+  if (options.verifyAxes === false) {
+    return provisional;
+  }
+  const responseText = JSON.stringify({
+    verifications: provisional.candidates.flatMap((candidateRow) =>
+      candidateRow.comparisons.flatMap((comparison) =>
+        comparison.axes.map((axis) => ({
+          candidate_id: candidateRow.candidate_id,
+          prior_paper_id: comparison.prior_paper_id,
+          axis: axis.axis,
+          reported_relation: axis.relation,
+          verification_input_sha256: axis.verification_input_sha256,
+          verdict: options.verdictForAxis?.(axis.axis) || "supported",
+          rationale: `Axis-specific verification for ${axis.axis}.`
+        }))
+      )
+    )
+  });
+  let axisVerifications = parsePriorAbsorptionAxisVerificationResponse(
+    responseText,
+    {
+      verifier_id: "context_isolated_fixture_verifier",
+      provider: "fixture_provider",
+      model: "fixture_model",
+      verification_run_id: "fixture_verification_pass",
+      context_isolated: true
+    }
+  );
+  axisVerifications = options.transformVerifications?.(axisVerifications)
+    || axisVerifications;
+  return buildPriorAbsorptionMatrix({
+    ...baseInput,
+    axisVerifications
   });
 }
 

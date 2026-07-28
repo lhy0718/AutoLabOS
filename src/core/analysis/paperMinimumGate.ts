@@ -18,7 +18,11 @@ import type { AnalysisReport } from "../resultAnalysis.js";
 import type { FigureAuditSummary } from "../exploration/types.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
-import { evaluatePaperScaleDiagnostics, type PaperScaleDiagnostic } from "./paperScaleDiagnostics.js";
+import {
+  evaluatePaperEvidenceAdequacy,
+  evaluatePaperScaleDiagnostics,
+  type PaperScaleDiagnostic
+} from "./paperScaleDiagnostics.js";
 import {
   type ResultsArtifactV2,
   validateResultsArtifactV2,
@@ -146,74 +150,15 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     bibliographyText: input.bibliographyText
   });
 
-  // 5. Evidence goes beyond a single thin run
-  const evidenceDepth = deriveEvidenceDepth(input.report, paperScaleDiagnostics.diagnostics);
+  // 5. Governed evidence adequacy is verified
+  const evidenceDepth = evaluatePaperEvidenceAdequacy(input.report);
   checks.push({
     id: "evidence_depth",
-    label: "Evidence goes beyond a single thin run",
+    label: "Governed evidence adequacy assessment passes",
     passed: evidenceDepth.passed,
     detail: evidenceDepth.detail,
     measured_value: evidenceDepth.measuredValue,
     threshold_value: evidenceDepth.thresholdValue,
-    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
-  });
-
-  const tinyEvalDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "tiny_eval_sample");
-  checks.push({
-    id: "evaluation_sample_size",
-    label: "Evaluation sample size supports paper-scale claims",
-    passed: !tinyEvalDiagnostic,
-    detail: tinyEvalDiagnostic?.evidence || "Evaluation sample size did not trigger tiny-sample diagnostics.",
-    measured_value: tinyEvalDiagnostic ? "tiny_sample_detected" : "no_tiny_sample_detected",
-    threshold_value: `primary_task_eval_examples>=${GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale}`,
-    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
-  });
-
-  const seedDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "missing_seed_replication");
-  checks.push({
-    id: "seed_replication",
-    label: "Positive results have repeated-seed support",
-    passed: !seedDiagnostic,
-    detail: seedDiagnostic?.evidence || "No missing repeated-seed diagnostic was triggered.",
-    measured_value: seedDiagnostic ? "missing_repeated_seed_support" : "seed_support_not_flagged",
-    threshold_value: `distinct_seeds>=${GATE_THRESHOLDS.minDistinctSeedsForPaperScale}`,
-    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
-  });
-
-  const executionCoverageDiagnostic = paperScaleDiagnostics.diagnostics.find(
-    (diagnostic) => diagnostic.id === "incomplete_planned_runs"
-  );
-  checks.push({
-    id: "planned_execution_coverage",
-    label: "Executed runs cover the approved experiment plan",
-    passed: !executionCoverageDiagnostic,
-    detail: executionCoverageDiagnostic?.evidence || "No approved-plan execution coverage gap was detected.",
-    measured_value: executionCoverageDiagnostic ? "planned_runs_incomplete" : "planned_run_coverage_not_flagged",
-    threshold_value: "executed_runs>=approved_planned_runs_or_governed_scope_downgrade",
-    threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
-  });
-
-  const oneItemDiagnostic = paperScaleDiagnostics.diagnostics.find((diagnostic) => diagnostic.id === "single_item_gain");
-  checks.push({
-    id: "effect_granularity",
-    label: "Headline effect exceeds one-example granularity",
-    passed: !oneItemDiagnostic,
-    detail: oneItemDiagnostic?.evidence || "No one-example headline-gain diagnostic was triggered.",
-    measured_value: oneItemDiagnostic ? "one_example_gain_detected" : "no_one_example_gain_detected",
-    threshold_value: "headline_delta_supported_by_more_than_one_example_or_robust_statistics",
-    threshold_source: "docs/paper-quality-bar.md#claim-evidence-table-expectation"
-  });
-
-  const thinTrainingDiagnostic = paperScaleDiagnostics.diagnostics.find(
-    (diagnostic) => diagnostic.id === "thin_training_budget" || diagnostic.id === "training_budget_mismatch"
-  );
-  checks.push({
-    id: "training_budget_depth",
-    label: "Training budget supports tuning-effect claims",
-    passed: !thinTrainingDiagnostic,
-    detail: thinTrainingDiagnostic?.evidence || "Training budget did not trigger a smoke-test diagnostic.",
-    measured_value: thinTrainingDiagnostic ? "thin_training_budget" : "training_budget_not_flagged",
-    threshold_value: `optimizer_steps>=${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim}`,
     threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
@@ -429,44 +374,6 @@ function evaluateExplicitResultsArtifactComparison(
     passed: true,
     detail: `ResultsArtifactV2 comparison "${explicitComparison.id}" explicitly links subject observation "${subject.id}" to reference observation "${reference.id}" for metric "${metric.id}" (${metric.direction}); delta=${explicitComparison.delta} matches subject minus reference.`,
     measuredValue: `valid_explicit_comparisons>=1;comparison_id=${explicitComparison.id}`
-  };
-}
-
-function deriveEvidenceDepth(report: AnalysisReport, diagnostics: PaperScaleDiagnostic[]): {
-  passed: boolean;
-  detail: string;
-  measuredValue: string;
-  thresholdValue: string;
-} {
-  const totalTrials =
-    report.statistical_summary?.total_trials ??
-    report.statistical_summary?.executed_trials ??
-    report.overview.execution_runs;
-  const executedTrials =
-    report.statistical_summary?.executed_trials ??
-    report.overview.execution_runs;
-  const confidenceIntervalCount = report.statistical_summary?.confidence_intervals?.length ?? 0;
-  const stabilityMetricCount = report.statistical_summary?.stability_metrics?.length ?? 0;
-  const effectEstimateCount = report.statistical_summary?.effect_estimates?.length ?? 0;
-  const hasRobustnessEvidence =
-    (typeof totalTrials === "number" && totalTrials >= GATE_THRESHOLDS.minRobustnessTotalTrials) ||
-    confidenceIntervalCount >= GATE_THRESHOLDS.minRobustnessConfidenceIntervalCount ||
-    stabilityMetricCount >= GATE_THRESHOLDS.minRobustnessStabilityMetricCount ||
-    effectEstimateCount >= GATE_THRESHOLDS.minRobustnessEffectEstimateCount;
-  const blockingEvidenceDiagnostics = diagnostics.filter(
-    (diagnostic) =>
-      diagnostic.severity === "blocking"
-      && (diagnostic.category === "statistical_adequacy" || diagnostic.category === "execution_coverage")
-  );
-  const diagnosticDetail = blockingEvidenceDiagnostics.length > 0
-    ? ` Blocking evidence diagnostics: ${blockingEvidenceDiagnostics.map((diagnostic) => diagnostic.id).join(", ")}.`
-    : "";
-
-  return {
-    passed: hasRobustnessEvidence && blockingEvidenceDiagnostics.length === 0,
-    detail: `Observed total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, effect_estimates=${effectEstimateCount}.${diagnosticDetail}`,
-    measuredValue: `total_trials=${totalTrials ?? "unknown"};confidence_intervals=${confidenceIntervalCount};stability_metrics=${stabilityMetricCount};effect_estimates=${effectEstimateCount};blocking_evidence_diagnostics=${blockingEvidenceDiagnostics.length}`,
-    thresholdValue: `robustness_signal_present AND blocking_statistical_or_execution_diagnostics=0`
   };
 }
 

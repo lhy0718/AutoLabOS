@@ -17,6 +17,18 @@ import {
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
 import type { ExperimentContract } from "../src/core/experiments/experimentContract.js";
+import {
+  buildExperimentContract
+} from "../src/core/experiments/experimentContract.js";
+import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH,
+  EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH
+} from "../src/core/analysis/evidenceAdequacy.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
 import type { RunRecord } from "../src/types.js";
 
 const temporaryDirectories: string[] = [];
@@ -271,6 +283,165 @@ describe("analyze_results canonical ResultsArtifactV2 runtime", () => {
     expect(standalone).toEqual(analysis.results_artifact);
     expect(analysis).not.toHaveProperty("results_table");
     expect(analysis.metrics).not.toHaveProperty("results_artifact");
+  });
+
+  it("reassesses a stored pass as fail when primary evidence disappears", async () => {
+    const fixture = prepareAnalyzeRuntime({
+      outcome_measure: 0.6,
+      results_artifact: buildRuntimeArtifact()
+    });
+    const primaryComparisonId = "candidate-vs-reference";
+    const experimentContract = buildExperimentContract({
+      run: fixture.run,
+      hypothesis: "The declared intervention changes the recorded outcome.",
+      causalMechanism: "Only the declared intervention differs between arms.",
+      singleChange: "Apply the declared intervention.",
+      expectedMetricEffect: "A measurable difference in the primary outcome.",
+      abortCondition: "Abort only when primary evidence is incomplete.",
+      keepOrDiscardRule: "Retain every contract-valid execution regardless of outcome direction.",
+      baselines: ["reference"],
+      resultsPlan: {
+        schema_version: "2.0",
+        required_metrics: [
+          {
+            id: "outcome_measure",
+            label: "Outcome measure",
+            direction: "higher_better",
+            unit: "unitless"
+          }
+        ],
+        minimum_series_count: 2,
+        minimum_comparison_count: 1,
+        required_series: [
+          { id: "reference_series", role: "baseline" },
+          { id: "candidate_series", role: "primary" }
+        ],
+        required_comparisons: [
+          {
+            id: primaryComparisonId,
+            subject_series_id: "candidate_series",
+            reference_series_id: "reference_series",
+            metric_id: "outcome_measure",
+            scope: { partition: "validation" }
+          }
+        ],
+        primary_comparison_id: primaryComparisonId
+      }
+    });
+    writeFileSync(
+      path.join(fixture.runDir, "experiment_contract.json"),
+      JSON.stringify(experimentContract, null, 2),
+      "utf8"
+    );
+    const evidenceContract = buildEvidenceAdequacyContract({
+      primaryComparisonId,
+      designSource: {
+        kind: "estimator_protocol",
+        contentSha256: hashCanonical({ fixture: "generic_estimator_protocol" })
+      },
+      independentUnit: {
+        key: "source item",
+        analysisUnit: "paired outcome"
+      },
+      plannedIndependentCoverage: {
+        mode: "sampled",
+        targetUniqueUnits: 1,
+        targetDenominatorPerArm: 1
+      },
+      requiredContrast: {
+        arms: ["reference", "intervention"],
+        paired: true,
+        requiredCompletePairs: 1
+      },
+      uncertaintyRequirement: {
+        mode: "required",
+        allowedMethods: ["exact_paired"],
+        confidenceLevel: 0.95,
+        decisionRule: "directed_interval_bound_meets_effect_criterion"
+      },
+      effectResolution: {
+        scale: "mean",
+        minimumResolvableEffect: 1
+      },
+      executionBudget: {
+        applicable: false,
+        notApplicableRationale: "No additional execution-budget floor applies."
+      }
+    });
+    const primaryEvidenceRef = "primary_evidence.jsonl";
+    const primaryEvidencePath = path.join(fixture.runDir, primaryEvidenceRef);
+    writeFileSync(primaryEvidencePath, '{"source_id":"source_1"}\n', "utf8");
+    const receipt = buildEvidenceAdequacyExecutionReceipt({
+      contractSha256: evidenceContract.content_sha256,
+      primaryComparisonId,
+      uniqueExecutionIds: ["execution_reference", "execution_intervention"],
+      observedIndependentUnitIds: ["source_1"],
+      observedDenominatorByArm: {
+        reference: 1,
+        intervention: 1
+      },
+      observedPairCoverage: {
+        completePairIds: ["pair_1"],
+        incompletePairIds: []
+      },
+      observedUncertaintyMethods: ["exact_paired"],
+      primaryEvidenceRefs: [primaryEvidenceRef]
+    });
+    const storedAssessment = assessEvidenceAdequacy({
+      contract: evidenceContract,
+      receipt,
+      verifiedEvidenceRefs: [primaryEvidenceRef]
+    });
+    writeFileSync(
+      path.join(fixture.runDir, EVIDENCE_ADEQUACY_CONTRACT_RELATIVE_PATH),
+      JSON.stringify(evidenceContract, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(fixture.runDir, EVIDENCE_ADEQUACY_RECEIPT_RELATIVE_PATH),
+      JSON.stringify(receipt, null, 2),
+      "utf8"
+    );
+    writeFileSync(
+      path.join(fixture.runDir, EVIDENCE_ADEQUACY_ASSESSMENT_RELATIVE_PATH),
+      JSON.stringify(storedAssessment, null, 2),
+      "utf8"
+    );
+    rmSync(primaryEvidencePath, { force: true });
+
+    const result = await fixture.node.execute({
+      run: fixture.run,
+      graph: fixture.run.graph
+    });
+    const analysis = readJson(
+      path.join(fixture.runDir, "result_analysis.json")
+    );
+
+    expect(result.status).toBe("success");
+    expect(analysis.evidence_adequacy_assessment).toMatchObject({
+      overall_status: "fail",
+      passed: false,
+      checks: expect.arrayContaining([
+        expect.objectContaining({
+          check_id: "evidence_linkage",
+          status: "fail"
+        })
+      ])
+    });
+    expect(analysis.failure_taxonomy).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "evidence_adequacy_reassessment_failed",
+          severity: "high"
+        })
+      ])
+    );
+    expect(analysis.warnings).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("does not match current artifacts"),
+        expect.stringContaining("evidence_ref_unverified")
+      ])
+    );
   });
 
   it("rewrites objective_evaluation.json after hydrated metrics change the decision", async () => {

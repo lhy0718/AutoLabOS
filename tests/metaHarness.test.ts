@@ -1,9 +1,15 @@
 import os from "node:os";
 import path from "node:path";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { promises as fs } from "node:fs";
 
-import { parseMetaHarnessResponse, runMetaHarness } from "../src/core/metaHarness/metaHarness.js";
+import {
+  applyUnifiedDiff,
+  parseMetaHarnessResponse,
+  runMetaHarness
+} from "../src/core/metaHarness/metaHarness.js";
 import type {
   HarnessApplyResult,
   HarnessEvaluationResult,
@@ -11,6 +17,7 @@ import type {
 } from "../src/core/metaHarness/harnessApplier.js";
 
 const cleanupPaths: string[] = [];
+const execFile = promisify(execFileCallback);
 
 describe("runMetaHarness", () => {
   afterEach(async () => {
@@ -45,6 +52,9 @@ describe("runMetaHarness", () => {
     expect(task).toContain("manuscript_quality_gate.json");
     expect(task).toContain("scientific_validation.json");
     expect(task).toContain("compile_report.json");
+    expect(task).toContain("동결된 evidence contract");
+    expect(task).not.toContain("seed 반복 부재");
+    expect(task).not.toContain("smoke-test 수준 train budget");
     const promptTargetMap = JSON.parse(await fs.readFile(path.join(result.contextDir, "prompt_target_map.json"), "utf8")) as {
       targets: Array<{ source_artifact?: string; target_node: string; recommended_prompt_node: string; prompt_file: string }>;
     };
@@ -221,7 +231,7 @@ describe("runMetaHarness", () => {
       ])
     );
     expect(
-      promptTargetMap.targets.filter((target) => target.diagnostic_ids?.includes("diagnostic:tiny_eval_sample"))
+      promptTargetMap.targets.filter((target) => target.diagnostic_ids?.includes("evidence_adequacy_not_passed"))
     ).toHaveLength(1);
     await expect(fs.stat(path.join(result.contextDir, "node-prompts", "design_experiments.md"))).resolves.toBeTruthy();
   });
@@ -439,11 +449,167 @@ describe("runMetaHarness", () => {
 
     expect(result.lines.join("\n")).toContain("restored original file");
   });
+
+  it("does not claim no changes when a created commit fails verification", async () => {
+    const workspace = await createWorkspaceWithCompletedRun();
+    const targetFile = path.join(workspace, "node-prompts", "analyze_results.md");
+    const diff = [
+      "TARGET_FILE: node-prompts/analyze_results.md",
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1 +1 @@",
+      "-Prompt",
+      "+Prompt improved"
+    ].join("\n");
+    const applyWithSafetyNet = vi.fn().mockResolvedValue({
+      ...harnessApplyResult({
+        applied: false,
+        targetFile,
+        workspace,
+        structuralValidationPassed: true,
+        promotionAllowed: false,
+        scoreBefore: 0.6,
+        scoreAfter: 0.9,
+        blockedReason: "commit_verification_failed: subject_hash_mismatch"
+      }),
+      gitCommitAfter: "def456",
+      commitVerificationPassed: false
+    });
+
+    const result = await runMetaHarness(
+      {
+        cwd: workspace,
+        runs: 1,
+        nodes: ["analyze_results"]
+      },
+      {
+        bootstrapRuntime: fakeBootstrapRuntime(workspace),
+        callLlm: vi.fn().mockResolvedValue(diff),
+        applyWithSafetyNet
+      }
+    );
+
+    expect(result.lines.join("\n")).toContain("repository may already have changed");
+    expect(result.lines.join("\n")).not.toContain("no file changes were applied");
+  });
 });
 
 describe("parseMetaHarnessResponse", () => {
   it("returns null when the response format is invalid", () => {
     expect(parseMetaHarnessResponse("hello")).toBeNull();
+  });
+
+  it("requires both diff headers to match the declared prompt target", () => {
+    const mismatched = [
+      "TARGET_FILE: node-prompts/analyze_results.md",
+      "--- a/node-prompts/review.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1 +1 @@",
+      "-Prompt",
+      "+Prompt improved"
+    ].join("\n");
+
+    expect(parseMetaHarnessResponse(mismatched)).toBeNull();
+  });
+
+  it("rejects undeclared prompt files and multi-file diffs", () => {
+    const undeclared = [
+      "TARGET_FILE: node-prompts/../outside.md",
+      "--- a/node-prompts/../outside.md",
+      "+++ b/node-prompts/../outside.md",
+      "@@ -1 +1 @@",
+      "-before",
+      "+after"
+    ].join("\n");
+    const multiFile = [
+      "TARGET_FILE: node-prompts/analyze_results.md",
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1 +1 @@",
+      "-Prompt",
+      "+Prompt improved",
+      "--- a/node-prompts/review.md",
+      "+++ b/node-prompts/review.md"
+    ].join("\n");
+
+    expect(parseMetaHarnessResponse(undeclared)).toBeNull();
+    expect(parseMetaHarnessResponse(multiFile)).toBeNull();
+  });
+});
+
+describe("applyUnifiedDiff", () => {
+  it("applies ordered multi-hunk diffs only when source context matches", () => {
+    const original = "alpha\nbeta\ngamma\ndelta\n";
+    const diff = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1,2 +1,2 @@",
+      " alpha",
+      "-beta",
+      "+beta revised",
+      "@@ -4 +4 @@",
+      "-delta",
+      "+delta revised"
+    ].join("\n");
+
+    expect(applyUnifiedDiff(original, diff)).toBe(
+      "alpha\nbeta revised\ngamma\ndelta revised\n"
+    );
+  });
+
+  it("applies insertion-only hunks at the declared boundary", () => {
+    const diff = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1,0 +2 @@",
+      "+inserted"
+    ].join("\n");
+
+    expect(applyUnifiedDiff("alpha\nomega\n", diff)).toBe(
+      "alpha\ninserted\nomega\n"
+    );
+  });
+
+  it("rejects context or deleted lines that do not match the source", () => {
+    const badContext = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1 +1 @@",
+      " wrong"
+    ].join("\n");
+    const badDeletion = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1 +1 @@",
+      "-wrong",
+      "+replacement"
+    ].join("\n");
+
+    expect(() => applyUnifiedDiff("original\n", badContext)).toThrow("does not match source");
+    expect(() => applyUnifiedDiff("original\n", badDeletion)).toThrow("does not match source");
+  });
+
+  it("rejects incorrect hunk counts and overlapping hunks", () => {
+    const wrongCount = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1,2 +1 @@",
+      "-alpha",
+      "+revised"
+    ].join("\n");
+    const overlapping = [
+      "--- a/node-prompts/analyze_results.md",
+      "+++ b/node-prompts/analyze_results.md",
+      "@@ -1,2 +1,2 @@",
+      " alpha",
+      " beta",
+      "@@ -2 +2 @@",
+      "-beta",
+      "+revised"
+    ].join("\n");
+
+    expect(() => applyUnifiedDiff("alpha\nbeta\n", wrongCount)).toThrow("hunk count mismatch");
+    expect(() => applyUnifiedDiff("alpha\nbeta\n", overlapping)).toThrow("overlap");
   });
 });
 
@@ -489,6 +655,8 @@ function harnessApplyResult(input: {
     applied: input.applied,
     targetFile: input.targetFile,
     gitCommitBefore: "abc123",
+    gitCommitAfter: input.applied ? "def456" : null,
+    commitVerificationPassed: input.applied,
     validationPassed: input.structuralValidationPassed,
     structuralValidationPassed: input.structuralValidationPassed,
     promotionAllowed: input.promotionAllowed,
@@ -531,7 +699,7 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
   await fs.writeFile(path.join(runRoot, "review", "minimum_gate.json"), JSON.stringify({ passed: false }, null, 2), "utf8");
   await fs.writeFile(
     path.join(runRoot, "review", "paper_scale_diagnostics.json"),
-    JSON.stringify({ diagnostics: [{ id: "tiny_eval_sample", target_node: "run_experiments" }] }, null, 2),
+    JSON.stringify({ diagnostics: [{ id: "evidence_adequacy_not_passed", target_node: "run_experiments" }] }, null, 2),
     "utf8"
   );
   await fs.writeFile(
@@ -603,6 +771,12 @@ async function createWorkspaceWithCompletedRun(): Promise<string> {
   await fs.writeFile(path.join(workspace, "node-prompts", "design_experiments.md"), "Design prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "node-prompts", "review.md"), "Review prompt\n", "utf8");
   await fs.writeFile(path.join(workspace, "outputs", "eval-harness", "history.jsonl"), "{\"timestamp\":\"2026-04-02T00:00:00.000Z\"}\n", "utf8");
+  await fs.writeFile(path.join(workspace, ".gitignore"), ".autolabos/\noutputs/\n", "utf8");
+  await execFile("git", ["init", "-q"], { cwd: workspace });
+  await execFile("git", ["config", "user.name", "Meta Harness Test"], { cwd: workspace });
+  await execFile("git", ["config", "user.email", "meta-harness@example.invalid"], { cwd: workspace });
+  await execFile("git", ["add", ".gitignore", "node-prompts"], { cwd: workspace });
+  await execFile("git", ["commit", "-q", "-m", "seed"], { cwd: workspace });
   return workspace;
 }
 
@@ -632,7 +806,7 @@ async function createExternalRunRoot(
       JSON.stringify({
         recommendations: [
           { node: "write_paper", priority: "high", diagnostic_ids: ["finding:paper_surface"] },
-          { node: "run_experiments", priority: "high", diagnostic_ids: ["diagnostic:tiny_eval_sample"] }
+          { node: "run_experiments", priority: "high", diagnostic_ids: ["evidence_adequacy_not_passed"] }
         ]
       }, null, 2),
       "utf8"
@@ -641,8 +815,8 @@ async function createExternalRunRoot(
       path.join(root, "review", "paper_scale_diagnostics.json"),
       JSON.stringify({
         diagnostics: [
-          { id: "diagnostic:tiny_eval_sample", target_node: "run_experiments" },
-          { id: "diagnostic:tiny_eval_sample", target_node: "run_experiments" }
+          { id: "evidence_adequacy_not_passed", target_node: "run_experiments" },
+          { id: "evidence_adequacy_not_passed", target_node: "run_experiments" }
         ]
       }, null, 2),
       "utf8"

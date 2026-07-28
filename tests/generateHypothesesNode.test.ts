@@ -45,7 +45,15 @@ class QueueJsonLLMClient extends MockLLMClient {
     super();
   }
 
-  override async complete(_prompt: string): Promise<{ text: string }> {
+  override async complete(prompt: string): Promise<{ text: string }> {
+    const axisVerificationOutput = buildAxisVerificationOutput(prompt);
+    if (axisVerificationOutput) {
+      return { text: axisVerificationOutput };
+    }
+    const semanticAuditOutput = buildTopicMemorySemanticAuditOutput(prompt);
+    if (semanticAuditOutput) {
+      return { text: semanticAuditOutput };
+    }
     const output = this.outputs[Math.min(this.index, this.outputs.length - 1)] ?? "";
     this.index += 1;
     return { text: output };
@@ -63,7 +71,15 @@ class BlockingQueueJsonLLMClient extends MockLLMClient {
     super();
   }
 
-  override async complete(_prompt: string): Promise<{ text: string }> {
+  override async complete(prompt: string): Promise<{ text: string }> {
+    const axisVerificationOutput = buildAxisVerificationOutput(prompt);
+    if (axisVerificationOutput) {
+      return { text: axisVerificationOutput };
+    }
+    const semanticAuditOutput = buildTopicMemorySemanticAuditOutput(prompt);
+    if (semanticAuditOutput) {
+      return { text: semanticAuditOutput };
+    }
     const currentIndex = this.index;
     const output = this.outputs[Math.min(currentIndex, this.outputs.length - 1)] ?? "";
     this.index += 1;
@@ -104,6 +120,54 @@ class FailIfCalledLLMClient extends MockLLMClient {
   override async complete(): Promise<{ text: string }> {
     throw new Error("LLM should not be called");
   }
+}
+
+function buildAxisVerificationOutput(prompt: string): string | undefined {
+  const marker = "Targets:\n";
+  if (
+    !prompt.startsWith("Act as the context-isolated axis relation verifier")
+    || !prompt.includes(marker)
+  ) {
+    return undefined;
+  }
+  const targets = JSON.parse(prompt.split(marker)[1] || "[]") as Array<{
+    candidate_id: string;
+    prior_paper_id: string;
+    axis: string;
+    reported_relation: string;
+    verification_input_sha256: string;
+  }>;
+  return JSON.stringify({
+    verifications: targets.map((target) => ({
+      candidate_id: target.candidate_id,
+      prior_paper_id: target.prior_paper_id,
+      axis: target.axis,
+      reported_relation: target.reported_relation,
+      verification_input_sha256: target.verification_input_sha256,
+      verdict: "supported",
+      rationale: `The supplied positions and span support ${target.axis}.`
+    }))
+  });
+}
+
+function buildTopicMemorySemanticAuditOutput(
+  prompt: string
+): string | undefined {
+  if (!prompt.startsWith("Audit semantic topic identity")) {
+    return undefined;
+  }
+  const payloadText = prompt.slice(prompt.lastIndexOf("\n\n") + 2);
+  const payload = JSON.parse(payloadText) as {
+    prior_records?: Array<{ record_sha256?: string }>;
+  };
+  return JSON.stringify({
+    comparisons: (payload.prior_records ?? []).map((record) => ({
+      prior_record_sha256: record.record_sha256,
+      contribution_object_relation: "distinct",
+      method_mechanism_relation: "distinct",
+      rationale: "The fixture candidate changes both governed core axes."
+    }))
+  });
 }
 
 function topicMeasurementContract(candidateLabel = "reference") {
@@ -375,6 +439,21 @@ async function persistCompletedCandidatePriorSearch(input: {
   collectAttemptId: string;
   plan: CandidatePriorSearchPlan;
 }): Promise<void> {
+  const selectedPaperId = "paper_1";
+  const plannedFamilyIds = input.plan.candidates.flatMap((candidate) =>
+    candidate.families.map((family) => family.family_id)
+  );
+  const resultCorpusRaw = input.corpusRaw
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
+    .map((row) =>
+      row.paper_id === selectedPaperId
+        ? { ...row, query_families: plannedFamilyIds }
+        : row
+    )
+    .map((row) => JSON.stringify(row))
+    .join("\n") + "\n";
   const sourceArchiveDir = path.join(
     input.runDir,
     "collect_attempts",
@@ -386,21 +465,58 @@ async function persistCompletedCandidatePriorSearch(input: {
     input.corpusRaw,
     "utf8"
   );
+  await writeFile(
+    path.join(input.runDir, "corpus.jsonl"),
+    resultCorpusRaw,
+    "utf8"
+  );
+  const gapSynthesisPath = path.join(
+    input.runDir,
+    "analysis",
+    "gap_synthesis.json"
+  );
+  const gapSynthesis = JSON.parse(
+    await readFile(gapSynthesisPath, "utf8")
+  ) as Record<string, unknown>;
+  gapSynthesis.corpus_sha256 = createHash("sha256")
+    .update(resultCorpusRaw, "utf8")
+    .digest("hex");
+  const { content_sha256: _gapSynthesisHash, ...gapSynthesisPayload } =
+    gapSynthesis;
+  gapSynthesis.content_sha256 = hashCanonical(gapSynthesisPayload);
+  await writeFile(
+    gapSynthesisPath,
+    JSON.stringify(gapSynthesis, null, 2),
+    "utf8"
+  );
+  const gapMapPath = path.join(input.runDir, "analysis", "gap_map.json");
+  const gapMap = JSON.parse(
+    await readFile(gapMapPath, "utf8")
+  ) as Record<string, any>;
+  gapMap.corpus_sha256 = gapSynthesis.corpus_sha256;
+  gapMap.corpus_byte_length = Buffer.byteLength(resultCorpusRaw, "utf8");
+  gapMap.synthesis_binding.content_sha256 = gapSynthesis.content_sha256;
+  const { content_sha256: _gapMapHash, ...gapMapPayload } = gapMap;
+  gapMap.content_sha256 = hashCanonical(gapMapPayload);
+  await writeFile(gapMapPath, JSON.stringify(gapMap, null, 2), "utf8");
   const receipt = buildCandidatePriorSearchReceipt({
     plan: input.plan,
     collectAttemptId: input.collectAttemptId,
     generatedAt: "2026-01-02T04:05:06.789Z",
-    resultCorpusSha256: createHash("sha256").update(input.corpusRaw, "utf8").digest("hex"),
-    resultCorpusByteLength: Buffer.byteLength(input.corpusRaw, "utf8"),
+    resultCorpusSha256: createHash("sha256").update(resultCorpusRaw, "utf8").digest("hex"),
+    resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
     attempts: input.plan.candidates.flatMap((candidate) =>
       candidate.families.flatMap((family) =>
         family.lanes.map((lane) => ({
           familyId: family.family_id,
           retrievalLane: lane.retrieval_lane,
           query: family.query,
-          fetched: 0,
-          selected: 0,
-          selectedPaperIds: []
+          fetched: lane.retrieval_lane === "broad_relevance" ? 1 : 0,
+          selected: lane.retrieval_lane === "broad_relevance" ? 1 : 0,
+          selectedPaperIds:
+            lane.retrieval_lane === "broad_relevance"
+              ? [selectedPaperId]
+              : []
         }))
       )
     )
@@ -579,6 +695,42 @@ function stagedHypothesisOutputs(): string[] {
   ];
 }
 
+function independentReviewDependencies(reviewer: MockLLMClient) {
+  return {
+    proposerIdentity: {
+      backend: "fixture_backend",
+      provider: "fixture_provider",
+      model: "fixture_proposer_model"
+    },
+    reviewer: {
+      llm: reviewer,
+      identity: {
+        backend: "fixture_backend",
+        provider: "fixture_provider",
+        model: "fixture_reviewer_model"
+      },
+      topicMemoryTransmissionPolicy: {
+        reviewer_trust_class: "local",
+        payload_mode: "raw_descriptors",
+        raw_descriptor_consent: true
+      }
+    }
+  };
+}
+
+function stagedHypothesisClients() {
+  const outputs = stagedHypothesisOutputs();
+  const proposer = new QueueJsonLLMClient([
+    ...outputs.slice(0, 4),
+    outputs[5] || ""
+  ]);
+  const reviewer = new QueueJsonLLMClient([outputs[4] || ""]);
+  return {
+    proposer,
+    reviewDependencies: independentReviewDependencies(reviewer)
+  };
+}
+
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
   let resolve = () => {};
   const promise = new Promise<void>((innerResolve) => {
@@ -616,6 +768,76 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(normalizeGenerateHypothesesRequest({ topK: 5, branchCount: 3 })).toEqual({
       topK: 5,
       branchCount: 5
+    });
+  });
+
+  it("persists same-client self-review provenance and blocks topic-probe authorization", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-boundary-"));
+    process.chdir(root);
+    const run = makeRun("run-review-boundary");
+    const { runDir } = await prepareSupportedTopicDiscoveryInputs(run);
+    const llm = new QueueJsonLLMClient(stagedHypothesisOutputs());
+    const node = createGenerateHypothesesNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      pdfTextLlm: llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    }, {
+      proposerIdentity: { identity: "fixture_proposer" },
+      reviewer: {
+        llm,
+        identity: { identity: "fixture_reviewer" }
+      }
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    const provenance = JSON.parse(await readFile(
+      path.join(runDir, "hypothesis_generation", "review_provenance.json"),
+      "utf8"
+    )) as {
+      review_authorization?: {
+        independence_class?: string;
+        authorized_for_probe?: boolean;
+        reason_codes?: string[];
+      };
+    };
+    const reviews = (await readFile(
+      path.join(runDir, "hypothesis_generation", "reviews.jsonl"),
+      "utf8"
+    )).trim().split("\n").map((line) => JSON.parse(line)) as Array<{
+      provenance?: { independence_class?: string };
+    }>;
+    const shortlist = JSON.parse(await readFile(
+      path.join(runDir, "hypothesis_generation", "probe_shortlist.json"),
+      "utf8"
+    )) as {
+      probe_candidate_ids?: string[];
+      review_authorization?: { authorized_for_probe?: boolean };
+    };
+
+    expect(result).toMatchObject({
+      status: "failure",
+      failureKind: "gate_blocked"
+    });
+    expect(result.error).toContain("diagnostic self-review");
+    expect(provenance.review_authorization).toMatchObject({
+      independence_class: "self_review",
+      authorized_for_probe: false,
+      reason_codes: expect.arrayContaining([
+        "review_client_matches_proposer"
+      ])
+    });
+    expect(reviews.every(
+      (review) => review.provenance?.independence_class === "self_review"
+    )).toBe(true);
+    expect(shortlist).toMatchObject({
+      probe_candidate_ids: [],
+      review_authorization: { authorized_for_probe: false }
     });
   });
 
@@ -761,7 +983,8 @@ describe("normalizeGenerateHypothesesRequest", () => {
       "utf8"
     );
 
-    const llm = new QueueJsonLLMClient(stagedHypothesisOutputs());
+    const staged = stagedHypothesisClients();
+    const llm = staged.proposer;
 
     const node = createGenerateHypothesesNode({
       config: {} as any,
@@ -773,7 +996,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, staged.reviewDependencies);
 
     const initialResult = await node.execute({ run, graph: run.graph });
     expect(initialResult).toMatchObject({
@@ -796,7 +1019,8 @@ describe("normalizeGenerateHypothesesRequest", () => {
       collectAttemptId,
       plan: candidatePriorPlan
     });
-    const continuedLlm = new QueueJsonLLMClient(stagedHypothesisOutputs());
+    const continuedStaged = stagedHypothesisClients();
+    const continuedLlm = continuedStaged.proposer;
     const continuedNode = createGenerateHypothesesNode({
       config: {} as any,
       runStore: {} as any,
@@ -807,13 +1031,13 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, continuedStaged.reviewDependencies);
     const result = await continuedNode.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
     expect(result.failureKind).toBe("gate_blocked");
     expect(result.error).toContain("did not authorize an executable topic probe");
-    expect(result.toolCallsUsed).toBe(6);
+    expect(result.toolCallsUsed).toBe(9);
 
     const hypotheses = await readFile(path.join(runDir, "hypotheses.jsonl"), "utf8");
     const axes = await readFile(path.join(runDir, "hypothesis_generation", "evidence_axes.json"), "utf8");
@@ -835,11 +1059,28 @@ describe("normalizeGenerateHypothesesRequest", () => {
       path.join(runDir, "hypothesis_generation", "prior_absorption_matrix.json"),
       "utf8"
     );
+    const priorAbsorptionMatrixJson = JSON.parse(priorAbsorptionMatrix) as {
+      schema_version?: number;
+      axis_verification_source?: string;
+      candidates?: Array<{
+        axis_relation_verification_complete?: boolean;
+        comparisons?: Array<{
+          axes?: Array<{
+            verification_status?: string;
+            relation_verification?: {
+              provenance?: { context_isolated?: boolean };
+            };
+          }>;
+        }>;
+      }>;
+    };
     const gapMap = await readFile(path.join(runDir, "analysis", "gap_map.json"), "utf8");
     const gapMapJson = JSON.parse(gapMap) as {
       gaps?: Array<{ gap_id: string; evidence_links: string[] }>;
     };
     const probeShortlistJson = JSON.parse(probeShortlist) as {
+      probe_candidate_ids?: string[];
+      ranked_candidate_ids?: string[];
       scores?: Array<{ implementation_bonus?: number; bundling_penalty?: number }>;
     };
     const hardGateRejectionsJson = JSON.parse(hardGateRejections) as {
@@ -863,9 +1104,12 @@ describe("normalizeGenerateHypothesesRequest", () => {
       source_artifact_bindings?: Array<{ path: string; sha256: string; byte_length: number }>;
       candidate_policy?: { observed?: number };
       candidates?: Array<{
+        source_candidate_id?: string;
         review_status?: string;
+        probe_status?: string;
         evidence_links?: string[];
         supported_gap_ids?: string[];
+        candidate_prior_search?: { selected_direct_prior_ids?: string[] };
       }>;
       probe_allowed?: boolean;
     };
@@ -892,6 +1136,21 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(statusJson.status).toBe("failed");
     expect(statusJson.stage).toBe("gating");
     expect(statusJson.probeCandidateCount).toBe(0);
+    expect(priorAbsorptionMatrixJson.schema_version).toBe(2);
+    expect(priorAbsorptionMatrixJson.axis_verification_source).toBe(
+      "explicit_axis_relation_verifier"
+    );
+    expect(priorAbsorptionMatrixJson.candidates?.every(
+      (candidate) =>
+        candidate.axis_relation_verification_complete === true
+        && candidate.comparisons?.every((comparison) =>
+          comparison.axes?.every(
+            (axis) =>
+              axis.verification_status === "supported"
+              && axis.relation_verification?.provenance?.context_isolated === true
+          )
+        ) === true
+    )).toBe(true);
     expect(probeShortlist).toContain('"probe_candidate_ids"');
     expect(probeShortlistJson.scores?.[0]?.implementation_bonus).toBeTypeOf("number");
     expect(probeShortlistJson.scores?.[0]?.bundling_penalty).toBeTypeOf("number");
@@ -903,6 +1162,22 @@ describe("normalizeGenerateHypothesesRequest", () => {
     });
     expect(Array.isArray(hardGateRejectionsJson.rejections)).toBe(true);
     expect(topicPortfolioJson.candidate_policy?.observed).toBe(3);
+    expect(topicPortfolioJson.candidates?.map(
+      (candidate) => candidate.source_candidate_id
+    ).slice(0, probeShortlistJson.ranked_candidate_ids?.length)).toEqual(
+      probeShortlistJson.ranked_candidate_ids
+    );
+    expect(topicPortfolioJson.candidates
+      ?.filter((candidate) => candidate.probe_status === "shortlisted")
+      .map((candidate) => candidate.source_candidate_id)).toEqual(
+      probeShortlistJson.probe_candidate_ids
+    );
+    expect(topicPortfolioJson.candidates
+      ?.filter((candidate) => candidate.probe_status === "shortlisted")
+      .every(
+        (candidate) =>
+          (candidate.candidate_prior_search?.selected_direct_prior_ids?.length ?? 0) > 0
+      )).toBe(true);
     expect(topicPortfolioJson.candidates?.some((candidate) => candidate.review_status === "rejected")).toBe(true);
     expect(topicPortfolioJson.candidates?.every((candidate) => {
       const linkedEvidence = new Set(candidate.evidence_links ?? []);
@@ -952,8 +1227,8 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const run = makeRun("run-candidate-prior-route");
     const { runDir, corpusRaw, collectAttemptId } =
       await prepareSupportedTopicDiscoveryInputs(run);
-    const outputs = stagedHypothesisOutputs();
-    const llm = new QueueJsonLLMClient(outputs);
+    const staged = stagedHypothesisClients();
+    const llm = staged.proposer;
     const node = createGenerateHypothesesNode({
       config: {} as any,
       runStore: {} as any,
@@ -964,14 +1239,14 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, staged.reviewDependencies);
 
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result).toMatchObject({
       status: "success",
       needsApproval: true,
-      toolCallsUsed: 6,
+      toolCallsUsed: 9,
       transitionRecommendation: {
         action: "backtrack_to_collection",
         sourceNode: "generate_hypotheses",
@@ -1034,29 +1309,100 @@ describe("normalizeGenerateHypothesesRequest", () => {
     );
     await mkdir(sourceArchiveDir, { recursive: true });
     await writeFile(path.join(sourceArchiveDir, "corpus.jsonl"), corpusRaw, "utf8");
-    const receipt = buildCandidatePriorSearchReceipt({
-      plan,
+    const matrix = JSON.parse(await readFile(
+      path.join(runDir, "hypothesis_generation", "prior_absorption_matrix.json"),
+      "utf8"
+    ));
+    const drafts = (await readFile(
+      path.join(runDir, "hypothesis_generation", "drafts.jsonl"),
+      "utf8"
+    )).trim().split("\n").map((line) => JSON.parse(line));
+    const eligibleCandidateId = plan.candidates[0]?.candidate_id;
+    const blockedCandidateId = plan.candidates[1]?.candidate_id;
+    if (!eligibleCandidateId || !blockedCandidateId) {
+      throw new Error("candidate_prior_admissibility_fixture_incomplete");
+    }
+    const admissibilityDecision = await prepareCandidatePriorSearchDecision({
+      run,
+      candidates: drafts,
+      matrix,
+      shortlistedCandidateIds: [eligibleCandidateId, blockedCandidateId],
+      eligibleShortlistedCandidateIds: [eligibleCandidateId],
       collectAttemptId: candidateCollectAttemptId,
-      generatedAt: "2026-01-02T04:05:06.789Z",
-      resultCorpusSha256: createHash("sha256").update(corpusRaw, "utf8").digest("hex"),
-      resultCorpusByteLength: Buffer.byteLength(corpusRaw, "utf8"),
-      attempts: plan.candidates.flatMap((candidate: {
-        families: Array<{
-          family_id: string;
-          query: string;
-          lanes: Array<{ retrieval_lane: "broad_relevance" | "recent_direct_prior" }>;
-        }>;
-      }) => candidate.families.flatMap((family) =>
-        family.lanes.map((lane) => ({
-          familyId: family.family_id,
-          retrievalLane: lane.retrieval_lane,
-          query: family.query,
-          fetched: 0,
-          selected: 0,
-          selectedPaperIds: []
-        }))
-      ))
+      corpusRaw,
+      corpusSha256: createHash("sha256").update(corpusRaw, "utf8").digest("hex"),
+      corpusByteLength: Buffer.byteLength(corpusRaw, "utf8")
     });
+    expect(admissibilityDecision.plan?.candidates.map(
+      (candidate) => candidate.candidate_id
+    )).toEqual([eligibleCandidateId]);
+    expect(admissibilityDecision.artifact.candidates).toContainEqual(
+      expect.objectContaining({
+        candidate_id: blockedCandidateId,
+        probe_eligible: false,
+        selected_for_search: false,
+        reason_codes: expect.arrayContaining([
+          "candidate_prior_search_candidate_not_probe_eligible"
+        ])
+      })
+    );
+    const plannedFamilyIds = plan.candidates.flatMap(
+      (candidate: { families: Array<{ family_id: string }> }) =>
+        candidate.families.map((family) => family.family_id)
+    );
+    const resultCorpusFor = (selectedPaperId: string): string => {
+      const rows = corpusRaw.trim().split("\n")
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      const selectedExists = rows.some(
+        (row) => row.paper_id === selectedPaperId
+      );
+      const boundRows = rows.map((row) =>
+        row.paper_id === selectedPaperId
+          ? { ...row, query_families: plannedFamilyIds }
+          : row
+      );
+      if (!selectedExists) {
+        boundRows.push({
+          paper_id: selectedPaperId,
+          title: "Selected direct prior",
+          query_families: plannedFamilyIds
+        });
+      }
+      return `${boundRows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+    };
+    const receiptFor = (resultCorpusRaw: string, selectedPaperId?: string) =>
+      buildCandidatePriorSearchReceipt({
+        plan,
+        collectAttemptId: candidateCollectAttemptId,
+        generatedAt: "2026-01-02T04:05:06.789Z",
+        resultCorpusSha256: createHash("sha256")
+          .update(resultCorpusRaw, "utf8")
+          .digest("hex"),
+        resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
+        attempts: plan.candidates.flatMap((candidate: {
+          families: Array<{
+            family_id: string;
+            query: string;
+            lanes: Array<{
+              retrieval_lane: "broad_relevance" | "recent_direct_prior";
+            }>;
+          }>;
+        }) => candidate.families.flatMap((family) =>
+          family.lanes.map((lane) => {
+            const selected = Boolean(
+              selectedPaperId && lane.retrieval_lane === "broad_relevance"
+            );
+            return {
+              familyId: family.family_id,
+              retrievalLane: lane.retrieval_lane,
+              query: family.query,
+              fetched: selected ? 1 : 0,
+              selected: selected ? 1 : 0,
+              selectedPaperIds: selected ? [selectedPaperId] : []
+            };
+          })
+        ))
+      });
     await writeFile(
       path.join(runDir, "collect_query_plan.json"),
       JSON.stringify({
@@ -1071,34 +1417,21 @@ describe("normalizeGenerateHypothesesRequest", () => {
       JSON.stringify(plan),
       "utf8"
     );
+
+    const emptyReceipt = receiptFor(corpusRaw);
     await writeFile(
       path.join(runDir, "collect_candidate_prior_search_receipt.json"),
-      JSON.stringify(receipt),
+      JSON.stringify(emptyReceipt),
       "utf8"
     );
-    const matrix = JSON.parse(await readFile(
-      path.join(runDir, "hypothesis_generation", "prior_absorption_matrix.json"),
-      "utf8"
-    ));
-    const drafts = (await readFile(
-      path.join(runDir, "hypothesis_generation", "drafts.jsonl"),
-      "utf8"
-    )).trim().split("\n").map((line) => JSON.parse(line));
-    run.graph.transitionHistory.push({
-      action: "backtrack_to_collection",
-      sourceNode: "generate_hypotheses",
-      fromNode: "generate_hypotheses",
-      toNode: "collect_papers",
-      reason: `candidate_prior_search:${plan.content_sha256}:fixture`,
-      confidence: 0.94,
-      autoExecutable: true,
-      appliedAt: "2026-01-02T03:05:00.000Z"
-    });
-    const repeatedDecision = await prepareCandidatePriorSearchDecision({
+    const emptyDecision = await prepareCandidatePriorSearchDecision({
       run,
       candidates: drafts,
       matrix,
       shortlistedCandidateIds: plan.candidates.map(
+        (candidate: { candidate_id: string }) => candidate.candidate_id
+      ),
+      eligibleShortlistedCandidateIds: plan.candidates.map(
         (candidate: { candidate_id: string }) => candidate.candidate_id
       ),
       collectAttemptId: candidateCollectAttemptId,
@@ -1106,114 +1439,94 @@ describe("normalizeGenerateHypothesesRequest", () => {
       corpusSha256: createHash("sha256").update(corpusRaw, "utf8").digest("hex"),
       corpusByteLength: Buffer.byteLength(corpusRaw, "utf8")
     });
-    expect(repeatedDecision.plan).toBeUndefined();
-    expect(repeatedDecision.lineageFailure).toBeUndefined();
-    expect(repeatedDecision.artifact).toMatchObject({
-      action: "already_searched",
-      current_receipt_status: "valid",
-      completed_rounds: 1
-    });
-
-    run.graph.transitionHistory.push({
-      action: "backtrack_to_collection",
-      sourceNode: "generate_hypotheses",
-      fromNode: "generate_hypotheses",
-      toNode: "collect_papers",
-      reason: `candidate_prior_search:${plan.content_sha256}:second-fixture`,
-      confidence: 0.94,
-      autoExecutable: true,
-      appliedAt: "2026-01-02T03:06:00.000Z"
-    });
-    await writeFile(
-      path.join(runDir, "collect_query_plan.json"),
-      JSON.stringify({
-        collect_attempt_id: candidateCollectAttemptId,
-        strategy: "replace"
-      }),
-      "utf8"
+    expect(emptyDecision.lineageFailure).toContain(
+      "candidate_prior_search_receipt_selected_papers_empty"
     );
-    const exhaustedDecision = await prepareCandidatePriorSearchDecision({
-      run,
-      candidates: drafts,
-      matrix,
-      shortlistedCandidateIds: plan.candidates.map(
-        (candidate: { candidate_id: string }) => candidate.candidate_id
-      ),
-      collectAttemptId: candidateCollectAttemptId,
-      corpusRaw,
-      corpusSha256: createHash("sha256").update(corpusRaw, "utf8").digest("hex"),
-      corpusByteLength: Buffer.byteLength(corpusRaw, "utf8")
-    });
-    expect(exhaustedDecision.plan).toBeUndefined();
-    expect(exhaustedDecision.lineageFailure).toBeUndefined();
-    expect(exhaustedDecision.artifact).toMatchObject({
-      action: "exhausted",
-      current_receipt_status: "not_applicable",
-      completed_rounds: 2
-    });
-    const exhaustedLlm = new QueueJsonLLMClient(stagedHypothesisOutputs());
-    const exhaustedNode = createGenerateHypothesesNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: exhaustedLlm,
-      pdfTextLlm: exhaustedLlm,
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any,
-      responsesPdfAnalysis: {} as any
-    });
-    const exhaustedResult = await exhaustedNode.execute({ run, graph: run.graph });
-    expect(exhaustedResult).toMatchObject({
-      status: "failure",
-      failureKind: "gate_blocked"
-    });
-    expect(exhaustedResult.error).toContain(
-      "did not produce a valid receipt within 2 bounded round(s)"
-    );
-    const exhaustedStatus = JSON.parse(await readFile(
-      path.join(runDir, "hypothesis_generation", "status.json"),
-      "utf8"
-    ));
-    expect(exhaustedStatus).toMatchObject({
-      status: "failed",
-      stage: "direct_prior_search",
-      source: "blocked_candidate_prior_exhausted"
-    });
-    await writeFile(
-      path.join(runDir, "collect_query_plan.json"),
-      JSON.stringify({
-        collect_attempt_id: candidateCollectAttemptId,
-        strategy: "candidate_prior_portfolio",
-        candidate_prior_search_plan: plan
-      }),
-      "utf8"
-    );
-
-    await writeFile(
-      path.join(runDir, "collect_candidate_prior_search_receipt.json"),
-      JSON.stringify({ ...receipt, content_sha256: "0".repeat(64) }),
-      "utf8"
-    );
-    const tamperedDecision = await prepareCandidatePriorSearchDecision({
-      run,
-      candidates: drafts,
-      matrix,
-      shortlistedCandidateIds: plan.candidates.map(
-        (candidate: { candidate_id: string }) => candidate.candidate_id
-      ),
-      collectAttemptId: candidateCollectAttemptId,
-      corpusRaw,
-      corpusSha256: createHash("sha256").update(corpusRaw, "utf8").digest("hex"),
-      corpusByteLength: Buffer.byteLength(corpusRaw, "utf8")
-    });
-    expect(tamperedDecision.plan).toBeUndefined();
-    expect(tamperedDecision.lineageFailure).toContain(
-      "candidate_prior_search_receipt_content_hash_mismatch"
-    );
-    expect(tamperedDecision.artifact).toMatchObject({
+    expect(emptyDecision.artifact).toMatchObject({
       action: "blocked_invalid_lineage",
       current_receipt_status: "invalid"
+    });
+
+    const omittedCorpusRaw = resultCorpusFor("paper_selected_omitted");
+    const omittedReceipt = receiptFor(
+      omittedCorpusRaw,
+      "paper_selected_omitted"
+    );
+    await writeFile(
+      path.join(runDir, "collect_candidate_prior_search_receipt.json"),
+      JSON.stringify(omittedReceipt),
+      "utf8"
+    );
+    const omittedDecision = await prepareCandidatePriorSearchDecision({
+      run,
+      candidates: drafts,
+      matrix,
+      shortlistedCandidateIds: plan.candidates.map(
+        (candidate: { candidate_id: string }) => candidate.candidate_id
+      ),
+      eligibleShortlistedCandidateIds: plan.candidates.map(
+        (candidate: { candidate_id: string }) => candidate.candidate_id
+      ),
+      collectAttemptId: candidateCollectAttemptId,
+      corpusRaw: omittedCorpusRaw,
+      corpusSha256: createHash("sha256").update(omittedCorpusRaw, "utf8").digest("hex"),
+      corpusByteLength: Buffer.byteLength(omittedCorpusRaw, "utf8")
+    });
+    expect(omittedDecision.lineageFailure).toBeUndefined();
+    expect(omittedDecision.artifact).toMatchObject({
+      action: "already_searched",
+      current_receipt_status: "valid",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          covered_by_valid_receipt: true,
+          selected_direct_prior_ids: ["paper_selected_omitted"],
+          selected_prior_coverage_complete: false,
+          probe_eligible: false,
+          reason_codes: expect.arrayContaining([
+            "candidate_prior_search_selected_prior_absorption_coverage_incomplete"
+          ]),
+          review_binding: expect.objectContaining({
+            plan_content_sha256: plan.content_sha256,
+            receipt_content_sha256: omittedReceipt.content_sha256
+          })
+        })
+      ])
+    });
+
+    const includedCorpusRaw = resultCorpusFor("paper_1");
+    const includedReceipt = receiptFor(includedCorpusRaw, "paper_1");
+    await writeFile(
+      path.join(runDir, "collect_candidate_prior_search_receipt.json"),
+      JSON.stringify(includedReceipt),
+      "utf8"
+    );
+    const includedDecision = await prepareCandidatePriorSearchDecision({
+      run,
+      candidates: drafts,
+      matrix,
+      shortlistedCandidateIds: plan.candidates.map(
+        (candidate: { candidate_id: string }) => candidate.candidate_id
+      ),
+      eligibleShortlistedCandidateIds: plan.candidates.map(
+        (candidate: { candidate_id: string }) => candidate.candidate_id
+      ),
+      collectAttemptId: candidateCollectAttemptId,
+      corpusRaw: includedCorpusRaw,
+      corpusSha256: createHash("sha256").update(includedCorpusRaw, "utf8").digest("hex"),
+      corpusByteLength: Buffer.byteLength(includedCorpusRaw, "utf8")
+    });
+    expect(includedDecision.lineageFailure).toBeUndefined();
+    expect(includedDecision.artifact).toMatchObject({
+      action: "already_searched",
+      current_receipt_status: "valid",
+      candidates: expect.arrayContaining([
+        expect.objectContaining({
+          covered_by_valid_receipt: true,
+          selected_direct_prior_ids: ["paper_1"],
+          selected_prior_coverage_complete: true,
+          probe_eligible: true
+        })
+      ])
     });
   });
 
@@ -1387,7 +1700,13 @@ describe("normalizeGenerateHypothesesRequest", () => {
     );
 
     const gate = createDeferred();
-    const llm = new BlockingQueueJsonLLMClient(stagedHypothesisOutputs(), 0, gate.promise);
+    const outputs = stagedHypothesisOutputs();
+    const llm = new BlockingQueueJsonLLMClient(
+      [...outputs.slice(0, 4), outputs[5] || ""],
+      0,
+      gate.promise
+    );
+    const reviewer = new QueueJsonLLMClient([outputs[4] || ""]);
     const node = createGenerateHypothesesNode({
       config: {} as any,
       runStore: {} as any,
@@ -1398,7 +1717,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const execution = node.execute({ run, graph: run.graph });
     const statusPath = path.join(runDir, "hypothesis_generation", "status.json");
@@ -1422,7 +1741,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(result.status).toBe("success");
   });
 
-  it("falls back to single-pass hypothesis generation when a staged LLM call exceeds the timeout", async () => {
+  it("persists single-pass fallback diagnostics but blocks probes without a completed independent review", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-timeout-"));
     process.chdir(root);
     process.env.AUTOLABOS_HYPOTHESIS_TIMEOUT_MS = "10";
@@ -1513,6 +1832,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     );
 
     const eventStream = new InMemoryEventStream();
+    const reviewer = new FailIfCalledLLMClient();
     const node = createGenerateHypothesesNode({
       config: {} as any,
       runStore: {} as any,
@@ -1523,15 +1843,15 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const result = await node.execute({ run, graph: run.graph });
     gate.resolve();
 
-    expect(result.status).toBe("success");
-    expect(result.summary).toContain("Single-pass fallback shortlisted two bounded probe candidates.");
-    expect(result.summary).toContain("Falling back after: hypothesis_axes_timeout:10ms");
-    expect(result.summary).not.toContain("No final paper topic was selected.");
+    expect(result.status).toBe("failure");
+    expect(result.failureKind).toBe("gate_blocked");
+    expect(result.summary).toContain("independent_review_not_completed");
+    expect(result.summary).not.toContain("review_client_matches_proposer");
 
     const status = JSON.parse(await readFile(path.join(runDir, "hypothesis_generation", "status.json"), "utf8")) as {
       status?: string;
@@ -1541,15 +1861,18 @@ describe("normalizeGenerateHypothesesRequest", () => {
     };
     const trace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
     const progress = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
-    const hypotheses = await readFile(path.join(runDir, "hypotheses.jsonl"), "utf8");
+    const shortlist = await readFile(path.join(runDir, "hypothesis_generation", "probe_shortlist.json"), "utf8");
+    const provenance = await readFile(path.join(runDir, "hypothesis_generation", "review_provenance.json"), "utf8");
 
-    expect(status.status).toBe("completed");
+    expect(status.status).toBe("failed");
     expect(status.pipeline).toBe("single_pass");
-    expect(status.source).toBe("llm");
+    expect(status.source).toBe("blocked_independent_review");
     expect(status.fallbackReason).toContain("hypothesis_axes_timeout:10ms");
     expect(trace).toContain('"single_pass"');
     expect(progress).toContain("Staged hypothesis pipeline failed, retrying single-pass generation");
-    expect(hypotheses).toContain('"candidate_id":"single_pass_1"');
+    expect(shortlist).toContain('"probe_candidate_ids": []');
+    expect(provenance).toContain('"independent_review_not_completed"');
+    await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
     await expect(access(path.join(runDir, "hypothesis_generation", "topic_portfolio.json"))).rejects.toThrow();
   });
 
@@ -1600,7 +1923,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       "utf8"
     );
 
-    const llm = new QueueJsonLLMClient([
+    const outputs = [
       JSON.stringify({
         summary: "Mapped evidence into two axes.",
         axes: [
@@ -1728,7 +2051,9 @@ describe("normalizeGenerateHypothesesRequest", () => {
           }
         ]
       })
-    ]);
+    ];
+    const llm = new QueueJsonLLMClient(outputs.slice(0, 4));
+    const reviewer = new QueueJsonLLMClient([outputs[4] || ""]);
 
     const eventStream = new InMemoryEventStream();
     const node = createGenerateHypothesesNode({
@@ -1741,7 +2066,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const result = await node.execute({ run, graph: run.graph });
 
@@ -1770,7 +2095,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(logs.some((line) => line.includes("Evidence-quality guardrail"))).toBe(true);
   });
 
-  it("persists partial staged and single-pass traces when hypothesis generation times out into fallback", async () => {
+  it("persists partial timeout traces when unreviewed fallback probe authorization is blocked", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-partial-timeout-"));
     process.chdir(root);
 
@@ -1791,6 +2116,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       '{"summary":"partial axes"',
       '{"summary":"partial single-pass"'
     ]);
+    const reviewer = new FailIfCalledLLMClient();
 
     const node = createGenerateHypothesesNode({
       config: {} as any,
@@ -1802,11 +2128,14 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("failure");
+    expect(result.failureKind).toBe("gate_blocked");
+    expect(result.summary).toContain("independent_review_not_completed");
+    expect(result.summary).not.toContain("review_client_matches_proposer");
     const llmTrace = await readFile(path.join(runDir, "hypothesis_generation", "llm_trace.json"), "utf8");
     expect(llmTrace).toContain('"axes_partial"');
     expect(llmTrace).toContain('partial axes');
@@ -1814,7 +2143,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     expect(llmTrace).toContain('partial single-pass');
   });
 
-  it("blocks low-quality single-paper fallback hypotheses before experiment design", async () => {
+  it("blocks an unreviewed single-paper deterministic fallback before experiment design", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-gating-"));
     process.chdir(root);
 
@@ -1847,6 +2176,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     );
 
     const llm = new QueueJsonLLMClient(["", "", "", "", ""]);
+    const reviewer = new FailIfCalledLLMClient();
     const eventStream = new InMemoryEventStream();
     const node = createGenerateHypothesesNode({
       config: {} as any,
@@ -1858,7 +2188,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const result = await node.execute({ run, graph: run.graph });
     const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
@@ -1866,14 +2196,16 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const logText = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
 
     expect(result.status).toBe("failure");
-    expect(result.summary).toContain("single low-confidence, caveated paper");
+    expect(result.failureKind).toBe("gate_blocked");
+    expect(result.summary).toContain("independent_review_not_completed");
+    expect(result.summary).not.toContain("review_client_matches_proposer");
     await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
-    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_low_quality_fallback");
-    expect(statusText).toContain("single low-confidence, caveated paper");
-    expect(logText).toContain("single low-confidence, caveated paper");
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_independent_review");
+    expect(statusText).toContain("independent_review_not_completed");
+    expect(logText).toContain("independent_review_not_completed");
   });
 
-  it("blocks multi-paper deterministic fallback hypotheses with no operational dataset or metric contract", async () => {
+  it("blocks an unreviewed multi-paper deterministic fallback before experiment design", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-hypothesis-node-operational-fallback-gating-"));
     process.chdir(root);
 
@@ -1914,6 +2246,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
     );
 
     const llm = new QueueJsonLLMClient(["", "", "", "", ""]);
+    const reviewer = new FailIfCalledLLMClient();
     const eventStream = new InMemoryEventStream();
     const node = createGenerateHypothesesNode({
       config: {} as any,
@@ -1925,7 +2258,7 @@ describe("normalizeGenerateHypothesesRequest", () => {
       aci: {} as any,
       semanticScholar: {} as any,
       responsesPdfAnalysis: {} as any
-    });
+    }, independentReviewDependencies(reviewer));
 
     const result = await node.execute({ run, graph: run.graph });
     const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
@@ -1933,11 +2266,13 @@ describe("normalizeGenerateHypothesesRequest", () => {
     const logText = await readFile(path.join(runDir, "hypothesis_generation", "progress.jsonl"), "utf8");
 
     expect(result.status).toBe("failure");
-    expect(result.summary).toContain("operational dataset/metric/testability contract");
+    expect(result.failureKind).toBe("gate_blocked");
+    expect(result.summary).toContain("independent_review_not_completed");
+    expect(result.summary).not.toContain("review_client_matches_proposer");
     await expect(access(path.join(runDir, "hypotheses.jsonl"))).rejects.toThrow();
-    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_low_quality_fallback");
-    expect(statusText).toContain("operational dataset/metric/testability contract");
-    expect(logText).toContain("operational dataset/metric/testability contract");
+    await expect(runContext.get("generate_hypotheses.source")).resolves.toBe("blocked_independent_review");
+    expect(statusText).toContain("independent_review_not_completed");
+    expect(logText).toContain("independent_review_not_completed");
   });
 
   it("blocks post-review hypothesis generation before LLM calls when all evidence is weak", async () => {

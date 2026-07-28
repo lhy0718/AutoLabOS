@@ -1,4 +1,8 @@
 import { hashCanonical } from "./canonicalHash.js";
+import {
+  evaluateTopicMemorySemanticAudit,
+  type TopicMemorySemanticAudit
+} from "./topicMemorySemanticAudit.js";
 
 export const TOPIC_MEMORY_AXES = [
   "contribution_object",
@@ -138,6 +142,11 @@ export interface TopicMemoryDecision {
   maximum_lineage_similarity: number;
   reason_codes: string[];
   accepted_reentry_ticket_sha256?: string;
+  semantic_audit_required?: boolean;
+  semantic_audit_valid?: boolean;
+  semantic_lineage_match?: boolean;
+  semantic_relation_uncertain?: boolean;
+  accepted_semantic_audit_sha256?: string;
 }
 
 export interface TopicMemoryValidation {
@@ -364,7 +373,8 @@ export function buildTopicReentryTicket(input: {
 export function evaluateTopicMemory(
   ledgerValue: unknown,
   descriptorValue: TopicFormulationDescriptor,
-  reentryTicket?: TopicReentryTicket
+  reentryTicket?: TopicReentryTicket,
+  semanticAudit?: TopicMemorySemanticAudit
 ): TopicMemoryDecision {
   const ledger = requireValidTopicMemoryLedger(ledgerValue);
   const descriptor = requireDescriptor(descriptorValue);
@@ -388,7 +398,16 @@ export function evaluateTopicMemory(
       return left.record.record_sha256.localeCompare(right.record.record_sha256);
     });
   if (scored.length === 0) {
-    return clearDecision();
+    if (ledger.records.length === 0) {
+      return clearDecision();
+    }
+    return evaluateSemanticTopicMemoryDecision({
+      ledger,
+      descriptor,
+      semanticAudit,
+      reentryTicket,
+      scored
+    });
   }
 
   const exactFormulation = scored.filter(
@@ -454,20 +473,116 @@ export function evaluateTopicMemory(
     };
   }
 
+  return evaluateSemanticTopicMemoryDecision({
+    ledger,
+    descriptor,
+    semanticAudit,
+    reentryTicket,
+    scored
+  });
+}
+
+function evaluateSemanticTopicMemoryDecision(input: {
+  ledger: TopicMemoryLedger;
+  descriptor: TopicFormulationDescriptor;
+  semanticAudit?: TopicMemorySemanticAudit;
+  reentryTicket?: TopicReentryTicket;
+  scored: Array<{
+    record: TopicKillRecord;
+    similarity: number;
+    near: boolean;
+  }>;
+}): TopicMemoryDecision {
+  const exactLineage = input.scored.filter(
+    ({ record }) =>
+      record.descriptor.lineage_sha256 === input.descriptor.lineage_sha256
+  );
+  const maximumSimilarity = input.scored.length > 0
+    ? Math.max(...input.scored.map((item) => item.similarity))
+    : 0;
+  const lexicalMatches = input.scored.map(
+    ({ record }) => record.record_sha256
+  );
+  const semantic = evaluateTopicMemorySemanticAudit(
+    input.semanticAudit,
+    input.ledger,
+    input.descriptor
+  );
+  if (
+    !semantic.valid
+    || !semantic.independently_reviewed
+    || !semantic.review_complete
+  ) {
+    return {
+      disposition: input.scored.length > 0
+        ? "requires_reentry_adjudication"
+        : "blocked",
+      blocked: true,
+      exact_formulation_match: false,
+      exact_lineage_match: exactLineage.length > 0,
+      near_lineage_match:
+        input.scored.length > 0 && exactLineage.length === 0,
+      matching_record_sha256s: lexicalMatches,
+      maximum_lineage_similarity: maximumSimilarity,
+      reason_codes: uniqueStrings([
+        ...(input.reentryTicket
+          ? ["topic_memory_reentry_ticket_invalid"]
+          : []),
+        input.semanticAudit
+          ? "topic_memory_semantic_audit_invalid"
+          : "topic_memory_semantic_audit_required",
+        ...semantic.reasons
+      ]),
+      semantic_audit_required: true,
+      semantic_audit_valid: false,
+      semantic_lineage_match: false,
+      semantic_relation_uncertain: false
+    };
+  }
+  const semanticMatches = uniqueStrings([
+    ...semantic.same_record_sha256s,
+    ...semantic.uncertain_record_sha256s
+  ]);
+  if (!semantic.materially_distinct_from_all) {
+    return {
+      disposition: "requires_reentry_adjudication",
+      blocked: true,
+      exact_formulation_match: false,
+      exact_lineage_match: exactLineage.length > 0,
+      near_lineage_match:
+        input.scored.length > 0 && exactLineage.length === 0,
+      matching_record_sha256s: semanticMatches,
+      maximum_lineage_similarity: maximumSimilarity,
+      reason_codes: uniqueStrings([
+        ...(input.reentryTicket
+          ? ["topic_memory_reentry_ticket_invalid"]
+          : []),
+        ...(semantic.same_record_sha256s.length > 0
+          ? ["topic_memory_semantic_lineage_requires_ticket"]
+          : []),
+        ...(semantic.uncertain_record_sha256s.length > 0
+          ? ["topic_memory_semantic_relation_uncertain"]
+          : [])
+      ]),
+      semantic_audit_required: true,
+      semantic_audit_valid: true,
+      semantic_lineage_match: semantic.same_record_sha256s.length > 0,
+      semantic_relation_uncertain:
+        semantic.uncertain_record_sha256s.length > 0,
+      accepted_semantic_audit_sha256: semantic.audit_sha256
+    };
+  }
   return {
-    disposition: "requires_reentry_adjudication",
-    blocked: true,
-    exact_formulation_match: false,
+    ...clearDecision(),
     exact_lineage_match: exactLineage.length > 0,
-    near_lineage_match: exactLineage.length === 0,
-    matching_record_sha256s: matchingHashes,
+    near_lineage_match:
+      input.scored.length > 0 && exactLineage.length === 0,
     maximum_lineage_similarity: maximumSimilarity,
-    reason_codes: [
-      ...(reentryTicket ? ["topic_memory_reentry_ticket_invalid"] : []),
-      exactLineage.length > 0
-        ? "topic_memory_lineage_reformulation_requires_ticket"
-        : "topic_memory_near_lineage_requires_ticket"
-    ]
+    semantic_audit_required: true,
+    semantic_audit_valid: true,
+    semantic_lineage_match: false,
+    semantic_relation_uncertain: false,
+    accepted_semantic_audit_sha256: semantic.audit_sha256
   };
 }
 

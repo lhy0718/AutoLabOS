@@ -189,11 +189,6 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     "baseline_or_comparator",
     "executed_result",
     "evidence_depth",
-    "evaluation_sample_size",
-    "seed_replication",
-    "effect_granularity",
-    "planned_execution_coverage",
-    "training_budget_depth",
     "result_artifacts",
     "results_artifact_comparison"
   ]);
@@ -201,10 +196,7 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     blockingIssues.some((i) => i.category === "statistical_adequacy")
     || hasAnyFailedCheck(failedChecks, [
       "evidence_depth",
-      "evaluation_sample_size",
-      "seed_replication",
-      "effect_granularity",
-      "planned_execution_coverage"
+      "results_artifact_comparison"
     ]);
   const needsRelatedWork = categoryScores.find((c) => c.category === "related_work_depth")?.score_1_to_5 ?? 3;
   const needsDesign = blockingIssues.some((i) => i.category === "methodological_completeness");

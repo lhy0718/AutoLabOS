@@ -1,4 +1,5 @@
 import path from "node:path";
+import { createHash } from "node:crypto";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import {
@@ -16,6 +17,7 @@ import {
 } from "../reviewSystem.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { publishPublicRunOutputs } from "../publicOutputPublisher.js";
+import { buildPublicExperimentDir } from "../publicArtifacts.js";
 import {
   buildOperatorHistoryRelativePath,
   renderOperatorHistoryMarkdown,
@@ -69,6 +71,11 @@ import {
   validateTopicProbeReviewGate,
   type TopicProbeReviewGateArtifact
 } from "../topicProbeReviewGate.js";
+import {
+  reassessEvidenceAdequacyArtifacts,
+  type EvidenceAdequacyAuthorization
+} from "../analysis/evidenceAdequacyArtifacts.js";
+import { resolveReviewActorProfiles } from "../reviewModelProfile.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -94,12 +101,85 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           toolCallsUsed: 1
         };
       }
-      const report = buildValidatedWritePaperAnalysisProjection(
+      let report = buildValidatedWritePaperAnalysisProjection(
         loadedReport,
         resultsResolution.contract
       );
 
       const runDir = path.join(".autolabos", "runs", run.id);
+      const experimentContract = await loadExperimentContract(run.id);
+      const configuredMetricsPath = await runContextMemory.get<string>(
+        "implement_experiments.metrics_path"
+      );
+      const configuredPublicDir = await runContextMemory.get<string>(
+        "implement_experiments.public_dir"
+      );
+      const configuredExecutionCwd = await runContextMemory.get<string>(
+        "run_experiments.cwd"
+      );
+      const evidenceAdequacyReassessment =
+        await reassessEvidenceAdequacyArtifacts({
+          runDir,
+          evidenceRoots: [
+            runDir,
+            configuredMetricsPath
+              ? path.dirname(path.resolve(process.cwd(), configuredMetricsPath))
+              : undefined,
+            configuredPublicDir
+              ? path.resolve(process.cwd(), configuredPublicDir)
+              : undefined,
+            configuredExecutionCwd
+              ? path.resolve(process.cwd(), configuredExecutionCwd)
+              : undefined,
+            buildPublicExperimentDir(process.cwd(), run)
+          ],
+          expectedPrimaryComparisonId:
+            experimentContract?.results_plan.primary_comparison_id,
+          requireStoredAssessment: true
+        });
+      const evidenceAdequacyTrusted =
+        evidenceAdequacyReassessment.integrityValid
+        && Boolean(evidenceAdequacyReassessment.assessment);
+      const evidenceAdequacyPassed =
+        evidenceAdequacyTrusted
+        && evidenceAdequacyReassessment.assessment?.passed === true;
+      report = {
+        ...report,
+        evidence_adequacy_assessment: evidenceAdequacyTrusted
+          ? evidenceAdequacyReassessment.assessment
+          : undefined
+      };
+      const evidenceAdequacyReviewArtifact = {
+        schema_version: 1,
+        artifact_kind: "review_evidence_adequacy_reassessment",
+        status: evidenceAdequacyPassed
+          ? "pass"
+          : evidenceAdequacyTrusted
+            ? evidenceAdequacyReassessment.assessment?.overall_status || "blocked"
+            : evidenceAdequacyReassessment.contractPresent
+              ? "invalid"
+            : "missing_contract",
+        trusted: evidenceAdequacyTrusted,
+        paper_evidence_allowed: evidenceAdequacyPassed,
+        integrity_valid: evidenceAdequacyReassessment.integrityValid,
+        contract_present: evidenceAdequacyReassessment.contractPresent,
+        receipt_present: evidenceAdequacyReassessment.receiptPresent,
+        stored_assessment_present:
+          evidenceAdequacyReassessment.storedAssessmentPresent,
+        primary_comparison_id:
+          evidenceAdequacyReassessment.assessment?.primary_comparison_id
+          || experimentContract?.results_plan.primary_comparison_id
+          || null,
+        overall_status:
+          evidenceAdequacyReassessment.assessment?.overall_status || null,
+        issues: evidenceAdequacyReassessment.issues,
+        warnings: evidenceAdequacyReassessment.warnings
+      };
+      const evidenceAdequacyReviewPath = await writeRunArtifact(
+        run,
+        "review/evidence_adequacy_reassessment.json",
+        `${JSON.stringify(evidenceAdequacyReviewArtifact, null, 2)}\n`
+      );
       const rawBrief = await runContextMemory.get<string>("run_brief.raw");
       const researchModeGuard = await resolveResearchRunModeGuard({
         workspaceRoot: process.cwd(),
@@ -127,12 +207,15 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       const researchMode = researchModeGuard.effectiveMode;
       const topicProbeReviewState =
         researchMode === "topic_discovery"
-          ? await evaluateAndPersistTopicProbeReviewGate(run, report)
+          ? await evaluateAndPersistTopicProbeReviewGate(
+              run,
+              report,
+              evidenceAdequacyReassessment.authorization
+            )
           : undefined;
       const priorCompiledPageValidation = await loadPriorCompiledPageValidation(runDir);
 
       // --- Pre-review summary artifact (Target 6) ---
-      const experimentContract = await loadExperimentContract(run.id);
       const attemptDecisions = await loadAttemptDecisions(run.id);
       const failMem = FailureMemory.forRun(run.id);
       const failureClusters = await failMem.failureClusters("run_experiments");
@@ -167,6 +250,31 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runDir,
         run.graph.nodeStates.write_paper?.lastError
       );
+      const briefEvidenceAssessment =
+        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
+      const bibliographyText = [
+        await safeRead(path.join(runDir, "bibtex.bib")),
+        await safeRead(path.join(runDir, "paper", "references.bib"))
+      ].filter(Boolean).join("\n");
+      const minimumGate = evaluateMinimumGate({
+        presence,
+        report,
+        topic: run.topic,
+        objectiveMetric: run.objectiveMetric,
+        briefEvidenceAssessment,
+        evidenceLinksArtifact: await safeReadJson(path.join(runDir, "paper", "evidence_links.json")),
+        claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json")),
+        figureAuditSummaryArtifact: figureAuditSummary,
+        bibliographyText
+      });
+      const minimumGateBytes = `${JSON.stringify(minimumGate, null, 2)}\n`;
+      await writeRunArtifact(run, "review/minimum_gate.json", minimumGateBytes);
+      const minimumGateBinding = {
+        artifact_id: "review.minimum_gate",
+        sha256: createHash("sha256").update(minimumGateBytes).digest("hex")
+      };
+      const reviewActorProfiles = resolveReviewActorProfiles(deps.config);
+      const requireIndependentReview = Boolean(deps.config.providers?.llm_mode);
       const panel = await runReviewPanel({
         run,
         node: "review",
@@ -198,40 +306,34 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
                   ? `Bounded probe disposition ${topicProbeReviewState.decision?.disposition} delegates a machine-governed successor run; write_paper is forbidden in the parent run.`
                   : `Topic-probe artifact validation failed: ${topicProbeReviewState.reasons.join(", ")}. write_paper is forbidden.`
               }]
-            : [])
+            : []),
+          ...(evidenceAdequacyPassed
+            ? []
+            : [{
+                type: "evidence_adequacy_reassessment_failed",
+                severity: "critical" as const,
+                detail:
+                  evidenceAdequacyReassessment.issues.join(" ")
+                  || "No frozen evidence adequacy contract and verified assessment are available."
+              }])
         ],
         figureAuditSummary,
         llm: deps.llm,
+        specialistAgent: requireIndependentReview
+          ? { llm: deps.llm, profile: reviewActorProfiles.specialist }
+          : undefined,
+        metaReviewer: requireIndependentReview
+          ? { llm: deps.experimentLlm ?? deps.llm, profile: reviewActorProfiles.meta_reviewer }
+          : undefined,
+        gateBinding: requireIndependentReview ? minimumGateBinding : undefined,
+        requireIndependentReview,
         eventStream: deps.eventStream,
         abortSignal
       });
       let effectivePanel = applyFigureAuditDecisionGate(panel, figureAuditSummary);
       let packet = buildReviewPacket(report, presence, effectivePanel);
       let completionDecision = checkReviewDecision(packet);
-      const briefEvidenceAssessment =
-        (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
-      const bibliographyText = [
-        await safeRead(path.join(runDir, "bibtex.bib")),
-        await safeRead(path.join(runDir, "paper", "references.bib"))
-      ].filter(Boolean).join("\n");
-
       // --- Layer 1: Deterministic minimum gate ---
-      const minimumGate = evaluateMinimumGate({
-        presence,
-        report,
-        topic: run.topic,
-        objectiveMetric: run.objectiveMetric,
-        briefEvidenceAssessment,
-        evidenceLinksArtifact: await safeReadJson(path.join(runDir, "paper", "evidence_links.json")),
-        claimEvidenceTableArtifact: await safeReadJson(path.join(runDir, "paper", "claim_evidence_table.json")),
-        figureAuditSummaryArtifact: figureAuditSummary,
-        bibliographyText
-      });
-      await writeRunArtifact(
-        run,
-        "review/minimum_gate.json",
-        `${JSON.stringify(minimumGate, null, 2)}\n`
-      );
       const paperScaleDiagnostics = {
         generated_at: minimumGate.evaluated_at,
         diagnostics: minimumGate.paper_scale_diagnostics ?? [],
@@ -344,6 +446,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         minimumGate,
         briefEvidenceAssessment,
         paperScaleDiagnostics: minimumGate.paper_scale_diagnostics ?? [],
+        reviewAssurance: effectivePanel.assurance,
         config: deps.config
       });
 
@@ -355,6 +458,25 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         `${JSON.stringify(panel.consistency, null, 2)}\n`
       );
       await writeRunArtifact(run, "review/bias_report.json", `${JSON.stringify(panel.bias, null, 2)}\n`);
+      const reviewAssurancePath = await writeRunArtifact(
+        run,
+        "review/review_assurance.json",
+        `${JSON.stringify(effectivePanel.assurance, null, 2)}\n`
+      );
+      const modelReviewBundlePath = effectivePanel.model_review_bundle
+        ? await writeRunArtifact(
+            run,
+            "review/model_review_bundle.json",
+            `${JSON.stringify(effectivePanel.model_review_bundle, null, 2)}\n`
+          )
+        : undefined;
+      const metaReviewPath = effectivePanel.meta_review
+        ? await writeRunArtifact(
+            run,
+            "review/meta_review.json",
+            `${JSON.stringify(effectivePanel.meta_review, null, 2)}\n`
+          )
+        : undefined;
       await writeRunArtifact(
         run,
         "review/revision_plan.json",
@@ -373,6 +495,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       );
       const decisionArtifact = {
         ...effectivePanel.decision,
+        review_assurance_content_sha256: effectivePanel.assurance.content_sha256,
+        model_review_bundle_content_sha256:
+          effectivePanel.assurance.model_review_bundle_content_sha256,
         figure_audit_block_required: figureAuditSummary?.review_block_required === true,
         figure_audit_severe_count: figureAuditSummary?.severe_mismatch_count ?? 0
       };
@@ -394,7 +519,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         summary: [
           packet.objective_summary,
           `Review readiness: ${packet.readiness.status}.`,
-          `Panel scorecard: ${effectivePanel.scorecard.overall_score_1_to_5}/5 overall across ${effectivePanel.reviewers.length} reviewer(s).`,
+          `Panel scorecard: ${effectivePanel.scorecard.overall_score_1_to_5}/5 across ${effectivePanel.assurance.completed_model_specialist_roles.length} completed model specialist role(s) and ${effectivePanel.assurance.heuristic_fallback_roles.length} heuristic fallback role(s).`,
+          `Review assurance: ${effectivePanel.assurance.assurance_class}; paper-ready eligible=${effectivePanel.assurance.paper_ready_eligible}.`,
           `Paper quality: ${llmEvalResult.evaluation.overall_score_1_to_10}/10 (${llmEvalResult.evaluation.paper_worthiness}).`
         ],
         decision: `${effectivePanel.decision.outcome}${effectivePanel.decision.recommended_transition ? ` -> ${effectivePanel.decision.recommended_transition}` : ""}. ${effectivePanel.decision.summary}`,
@@ -413,8 +539,16 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           { label: "Review scorecard", path: "review/scorecard.json" },
           { label: "Paper critique", path: "review/paper_critique.json" },
           { label: "Review decision", path: "review/decision.json" },
+          { label: "Review assurance", path: "review/review_assurance.json" },
+          ...(modelReviewBundlePath
+            ? [{ label: "Model review bundle", path: "review/model_review_bundle.json" }]
+            : []),
+          ...(metaReviewPath
+            ? [{ label: "Meta review", path: "review/meta_review.json" }]
+            : []),
           { label: "Minimum gate", path: "review/minimum_gate.json" },
           { label: "Paper-scale diagnostics", path: "review/paper_scale_diagnostics.json" },
+          { label: "Evidence adequacy reassessment", path: "review/evidence_adequacy_reassessment.json" },
           { label: "Node strengthening", path: "review/node_strengthening_recommendations.json" },
           { label: "Readiness risks", path: "review/readiness_risks.json" },
           { label: "Figure audit summary", path: "figure_audit/figure_audit_summary.json" },
@@ -495,8 +629,30 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
             targetRelativePath: "readiness_risks.json"
           },
           {
+            sourcePath: reviewAssurancePath,
+            targetRelativePath: "review_assurance.json"
+          },
+          {
+            sourcePath:
+              modelReviewBundlePath
+              || path.join(runDir, "review", "model_review_bundle.json"),
+            targetRelativePath: "model_review_bundle.json",
+            optional: true
+          },
+          {
+            sourcePath:
+              metaReviewPath
+              || path.join(runDir, "review", "meta_review.json"),
+            targetRelativePath: "meta_review.json",
+            optional: true
+          },
+          {
             sourcePath: paperScaleDiagnosticsPath,
             targetRelativePath: "paper_scale_diagnostics.json"
+          },
+          {
+            sourcePath: evidenceAdequacyReviewPath,
+            targetRelativePath: "evidence_adequacy_reassessment.json"
           },
           {
             sourcePath: nodeStrengtheningPath,
@@ -567,12 +723,18 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.completion_decision", completionDecision);
       await runContextMemory.put("review.last_findings_count", effectivePanel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
+      await runContextMemory.put("review.assurance", effectivePanel.assurance);
+      await runContextMemory.put("review.meta_review", effectivePanel.meta_review || null);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
       await runContextMemory.put("review.minimum_gate", minimumGate);
       await runContextMemory.put("review.paper_quality_evaluation", llmEvalResult.evaluation);
       await runContextMemory.put("review.readiness_risks", readinessRisks);
       await runContextMemory.put("review.paper_scale_diagnostics", paperScaleDiagnostics);
+      await runContextMemory.put(
+        "review.evidence_adequacy_reassessment",
+        evidenceAdequacyReviewArtifact
+      );
       await runContextMemory.put("review.node_strengthening_recommendations", nodeStrengtheningRecommendations);
       if (topicProbeReviewState) {
         await runContextMemory.put("review.topic_probe_gate", topicProbeReviewState.gate);
@@ -584,7 +746,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         runId: run.id,
         node: "review",
         payload: {
-          text: `Review panel completed with ${effectivePanel.reviewers.length} specialist reviewer(s), ${effectivePanel.findings.length} finding(s), outcome ${effectivePanel.decision.outcome}, and completion verdict ${completionDecision.verdict}. Manuscript type: ${preDraftCritique.manuscript_type}.`
+          text: `Review panel completed with ${effectivePanel.assurance.completed_model_specialist_roles.length} model specialist role(s), ${effectivePanel.assurance.heuristic_fallback_roles.length} fallback role(s), assurance ${effectivePanel.assurance.assurance_class}, ${effectivePanel.findings.length} finding(s), and outcome ${effectivePanel.decision.outcome}.`
         }
       });
       deps.eventStream.emit({
@@ -619,7 +781,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           source: "review",
           overall_score: llmEvalResult.evaluation.overall_score_1_to_10,
           specialist_scores: effectivePanel.reviewers.map((reviewer) => reviewer.score_1_to_5),
-          summary: `${llmEvalResult.evaluation.overall_score_1_to_10}/10 overall with ${effectivePanel.reviewers.length} specialist reviewer(s).`
+          summary: `${llmEvalResult.evaluation.overall_score_1_to_10}/10 overall; assurance=${effectivePanel.assurance.assurance_class}, model specialists=${effectivePanel.assurance.completed_model_specialist_roles.length}, fallbacks=${effectivePanel.assurance.heuristic_fallback_roles.length}.`
         },
         toolCallsUsed,
         costUsd,
@@ -640,6 +802,7 @@ function buildReviewReadinessRiskArtifact(input: {
   minimumGate: ReturnType<typeof evaluateMinimumGate>;
   briefEvidenceAssessment?: BriefEvidenceAssessment;
   paperScaleDiagnostics?: PaperScaleDiagnostic[];
+  reviewAssurance: Awaited<ReturnType<typeof runReviewPanel>>["assurance"];
   config: NodeExecutionDeps["config"];
 }): ReadinessRiskArtifact {
   const risks: ReadinessRisk[] = buildNetworkDependencyReadinessRisks({
@@ -648,6 +811,23 @@ function buildReviewReadinessRiskArtifact(input: {
     networkPurpose: input.config.experiments?.network_purpose,
     executionApprovalMode: input.config.workflow?.execution_approval_mode
   });
+  if (
+    input.reviewAssurance.required_for_paper_ready
+    && !input.reviewAssurance.paper_ready_eligible
+  ) {
+    risks.push({
+      risk_code: "review_assurance_incomplete",
+      severity: "blocked",
+      category: "paper_scale",
+      status: "blocked",
+      message: `Independent model review assurance is incomplete: ${input.reviewAssurance.reason_codes.join(", ") || "unknown assurance failure"}.`,
+      triggered_by: ["review_assurance", "model_review_bundle"],
+      affected_claim_ids: [],
+      affected_citation_ids: [],
+      recommended_action: "Rerun all specialist reviewers and the separately bound meta reviewer, then validate their gate-bound ModelReviewBundle.",
+      recheck_condition: "review/review_assurance.json reports paper_ready_eligible=true and its bound ModelReviewBundle validates."
+    });
+  }
   const claimEvidenceCheck = input.minimumGate.checks.find((check) => check.id === "claim_evidence_linkage");
   if (claimEvidenceCheck && !claimEvidenceCheck.passed) {
     risks.push({
@@ -781,14 +961,16 @@ interface TopicProbeReviewState {
 
 async function evaluateAndPersistTopicProbeReviewGate(
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
-  report: AnalysisReport
+  report: AnalysisReport,
+  evidenceAdequacyAuthorization: EvidenceAdequacyAuthorization | undefined
 ): Promise<TopicProbeReviewState> {
   const source = await loadTopicProbeOutcomeArtifacts({
     workspaceRoot: process.cwd(),
     runId: run.id,
     expectedResearchCycle: run.graph.researchCycle,
     requireOutcome: true,
-    report
+    report,
+    evidenceAdequacyAuthorization
   });
   const reasons = source.valid
     ? []
@@ -1133,22 +1315,6 @@ export function buildNodeStrengtheningRecommendations(
 }
 
 function targetNodeForReviewFinding(finding: ReviewFinding): string {
-  const text = `${finding.id} ${finding.dimension} ${finding.title} ${finding.detail} ${finding.fix_hint ?? ""}`.toLowerCase();
-  if (text.includes("claim") && (text.includes("outpace") || text.includes("objective") || text.includes("success"))) {
-    return "generate_hypotheses";
-  }
-  if (text.includes("confidence interval") || text.includes("primary comparison") || text.includes("comparison")) {
-    return "analyze_results";
-  }
-  if (text.includes("seed") || text.includes("evaluation scope") || text.includes("method scope") || text.includes("single-run")) {
-    return "design_experiments";
-  }
-  if (text.includes("train") || text.includes("budget") || text.includes("optimizer")) {
-    return "implement_experiments";
-  }
-  if (text.includes("execute") || text.includes("rerun") || text.includes("run confirmatory")) {
-    return "run_experiments";
-  }
   switch (finding.dimension) {
     case "statistics":
       return "analyze_results";
@@ -1156,6 +1322,10 @@ function targetNodeForReviewFinding(finding: ReviewFinding): string {
       return "design_experiments";
     case "claim_verification":
       return "generate_hypotheses";
+    case "reproducibility":
+      return "implement_experiments";
+    case "adversarial":
+      return "review";
     case "writing_readiness":
       return "write_paper";
     case "integrity":
@@ -1168,7 +1338,7 @@ function recheckConditionForReviewFinding(finding: ReviewFinding): string {
     return "Review no longer reports missing confidence intervals, primary comparisons, or statistical support gaps.";
   }
   if (finding.dimension === "methodology") {
-    return "Review no longer reports narrow methodology, single-run coverage, or missing confirmatory variants.";
+    return "Review no longer reports a mismatch between the declared design, evidence contract, and implemented comparison.";
   }
   if (finding.dimension === "claim_verification") {
     return "Review no longer reports claims that outpace measured outcomes or missing primary comparisons.";
@@ -1190,16 +1360,16 @@ function buildPromptFocus(
     return "When objective metrics are not met, force the hypothesis and claim set to downgrade or reformulate; do not preserve success or interaction framing that the evidence did not support.";
   }
   if (node === "design_experiments") {
-    return "Force the design to declare sample-size, seed, baseline/comparator, and interaction-test requirements before implementation.";
+    return "Force the design to declare independent units, repetition or cluster strategy where applicable, baseline/comparator, estimand, and uncertainty requirements before implementation.";
   }
   if (node === "implement_experiments") {
-    return "Implement enough train/eval budget and artifact fields to distinguish smoke validation from tuning evidence.";
+    return "Implement the declared execution budget and artifact fields needed to distinguish pipeline validation from evidence for the registered estimand.";
   }
   if (node === "run_experiments") {
-    return "Execute the planned sample/seed floor and persist per-task counts, per-seed rows, raw correct totals, and failure visibility.";
+    return "Execute the planned independent-unit and repetition floor, then persist unit-level outcomes, raw denominators where applicable, uncertainty inputs, and failure visibility.";
   }
   if (node === "analyze_results") {
-    return "Translate raw counts into evidence-ceiling judgments, including one-example gains, confidence granularity, and unsupported resource claims.";
+    return "Translate structured outcomes into evidence-ceiling judgments, including minimum-resolution gains, uncertainty granularity, and unsupported resource claims.";
   }
   if (node === "write_paper") {
     return "Keep manuscript drafting under the review-approved claim ceiling and omit template-absent or unsupported paper-surface elements.";
@@ -1222,6 +1392,33 @@ function buildReviewTransitionRecommendation(
     panel.decision.summary,
     ...panel.findings.slice(0, 3).map((finding) => finding.title)
   ].filter((value, index, items) => Boolean(value) && items.indexOf(value) === index);
+
+  const evidenceAdequacyDiagnostic = minimumGate?.paper_scale_diagnostics?.find(
+    (diagnostic) => diagnostic.id.startsWith("evidence_adequacy_")
+  );
+  if (evidenceAdequacyDiagnostic && action !== "backtrack_to_hypotheses") {
+    const redesignRequired =
+      evidenceAdequacyDiagnostic.id === "evidence_adequacy_unverified"
+      || evidenceAdequacyDiagnostic.id === "evidence_adequacy_invalid"
+      || evidenceAdequacyDiagnostic.id === "evidence_adequacy_primary_mismatch";
+    return createReviewTransition({
+      action: redesignRequired
+        ? "backtrack_to_design"
+        : "backtrack_to_implement",
+      targetNode: redesignRequired
+        ? "design_experiments"
+        : "implement_experiments",
+      reason: `${evidenceAdequacyDiagnostic.summary} ${evidenceAdequacyDiagnostic.recommended_action}`,
+      confidence: 0.98,
+      autoExecutable: true,
+      evidence: [
+        evidenceAdequacyDiagnostic.id,
+        evidenceAdequacyDiagnostic.evidence,
+        ...evidence.slice(0, 2)
+      ],
+      suggestedCommands: packet.suggested_actions
+    });
+  }
 
   // Layer 1: If deterministic minimum gate blocks and the panel recommends advance,
   // override to backtrack. The gate is a hard safety boundary.
@@ -1387,6 +1584,17 @@ function buildReviewTransitionRecommendation(
       reason: panel.decision.summary,
       confidence,
       autoExecutable: true,
+      evidence,
+      suggestedCommands: packet.suggested_actions
+    });
+  }
+
+  if (action === "manual_block") {
+    return createReviewTransition({
+      action: "pause_for_human",
+      reason: panel.decision.summary,
+      confidence,
+      autoExecutable: false,
       evidence,
       suggestedCommands: packet.suggested_actions
     });
@@ -2160,7 +2368,9 @@ function buildClaimCeilingDetail(input: {
         claim: "Robust improvement across multiple attempts",
         reason: "Only one kept attempt — single data point insufficient for robustness claim."
       });
-      evidenceNeeded.push("Additional successful attempt to strengthen robustness.");
+      evidenceNeeded.push(
+        "Complete the predeclared independent repetitions and retain every contract-valid outcome."
+      );
     }
     if (hasReplication) {
       blocked.push({

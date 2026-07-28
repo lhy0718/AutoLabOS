@@ -1,315 +1,197 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  type EvidenceAdequacyAssessmentV2
+} from "../src/core/analysis/evidenceAdequacy.js";
+import {
   evaluatePaperScaleDiagnostics,
   type PaperScaleDiagnostic
 } from "../src/core/analysis/paperScaleDiagnostics.js";
 import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
 import type {
   AnalysisReport,
   AnalysisStatisticalSummary
 } from "../src/core/resultAnalysis.js";
 
-describe("paper-scale diagnostics from explicit V2 evidence", () => {
-  it("is invariant to opaque renaming and array reordering without selecting the largest delta", () => {
-    const firstArtifact = buildArtifact("qm");
-    const firstResult = evaluateArtifact(firstArtifact, buildSummary(firstArtifact), {
-      primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
-    });
+describe("paper-scale diagnostics with governed evidence adequacy", () => {
+  it("accepts a valid pass assessment", () => {
+    const artifact = buildArtifact();
+    const result = evaluateArtifact(artifact);
 
-    const renamedArtifact = buildArtifact("vx");
-    const reorderedArtifact: ResultsArtifactV2 = {
-      ...renamedArtifact,
-      metrics: [...renamedArtifact.metrics].reverse(),
-      series: [...renamedArtifact.series].reverse(),
-      observations: [...renamedArtifact.observations].reverse(),
-      comparisons: [...renamedArtifact.comparisons].reverse()
-    };
-    const reorderedResult = evaluateArtifact(
-      reorderedArtifact,
-      buildSummary(reorderedArtifact),
-      { primaryComparisonId: PRIMARY_COMPARISON_IDS.vx }
+    expect(diagnosticIds(result.diagnostics)).not.toEqual(
+      expect.arrayContaining([
+        "evidence_adequacy_unverified",
+        "evidence_adequacy_invalid",
+        "evidence_adequacy_not_passed"
+      ])
     );
-
-    expect(diagnosticFingerprint(firstResult.diagnostics)).toEqual([
-      {
-        id: "missing_seed_replication",
-        severity: "blocking",
-        category: "statistical_adequacy"
-      },
-      {
-        id: "single_item_gain",
-        severity: "blocking",
-        category: "statistical_adequacy"
-      }
-    ]);
-    expect(diagnosticFingerprint(reorderedResult.diagnostics)).toEqual(
-      diagnosticFingerprint(firstResult.diagnostics)
-    );
-    expect(firstResult.diagnostics.find((item) => item.id === "single_item_gain")?.evidence)
-      .toContain("delta 0.01");
+    expect(result.blocking_count).toBe(0);
   });
 
-  it("uses explicit lower-better direction instead of treating a positive delta as improvement", () => {
-    const improvedArtifact = buildArtifact("qm");
-    const improved = resolvePrimaryFixture(improvedArtifact);
-    improved.metric.direction = "lower_better";
-    improved.subject.value = 0.44;
-    improved.reference.value = 0.45;
-    improved.comparison.delta = -0.01;
-
-    const improvedIds = diagnosticIds(
-      evaluateArtifact(improvedArtifact, buildSummary(improvedArtifact), {
-        primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
-      }).diagnostics
-    );
-    expect(improvedIds).toEqual(
-      expect.arrayContaining(["missing_seed_replication", "single_item_gain"])
+  it("fails closed as unverified when the assessment is missing", () => {
+    const result = evaluateArtifact(buildArtifact(), {
+      omitAssessment: true
+    });
+    const diagnostic = result.diagnostics.find(
+      (item) => item.id === "evidence_adequacy_unverified"
     );
 
-    const worseArtifact = structuredClone(improvedArtifact);
-    const worse = resolvePrimaryFixture(worseArtifact);
-    worse.subject.value = 0.46;
-    worse.reference.value = 0.45;
-    worse.comparison.delta = 0.01;
+    expect(diagnostic).toMatchObject({
+      severity: "blocking",
+      category: "statistical_adequacy"
+    });
+    expect(diagnostic?.evidence).toContain("Ungoverned evidence summaries");
+  });
 
-    const worseIds = diagnosticIds(
-      evaluateArtifact(worseArtifact, buildSummary(worseArtifact), {
-        primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
-      }).diagnostics
+  it.each(["unknown", "fail"] as const)(
+    "blocks an assessment whose overall status is %s",
+    (status) => {
+      const artifact = buildArtifact();
+      const result = evaluateArtifact(artifact, {
+        assessment: buildAssessment(PRIMARY_COMPARISON_ID, status)
+      });
+      const diagnostic = result.diagnostics.find(
+        (item) => item.id === "evidence_adequacy_not_passed"
+      );
+
+      expect(diagnostic).toMatchObject({ severity: "blocking" });
+      expect(diagnostic?.evidence).toContain(`overall_status=${status}`);
+      expect(diagnostic?.evidence).toContain(
+        status === "unknown" ? "uncertainty=unknown" : "denominator_coverage=fail"
+      );
+    }
+  );
+
+  it("accepts deterministic exhaustive evidence without seed or optimizer metadata", () => {
+    const artifact = buildArtifact();
+    const result = evaluateArtifact(artifact, {
+      metrics: {},
+      summary: buildSummary(artifact, { totalTrials: 1, executedTrials: 1 })
+    });
+
+    expect(result.blocking_count).toBe(0);
+    expect(diagnosticIds(result.diagnostics)).not.toContain(
+      "evidence_adequacy_not_passed"
     );
-    expect(worseIds).not.toContain("missing_seed_replication");
-    expect(worseIds).not.toContain("single_item_gain");
   });
 
-  it("fails closed when multiple comparisons have no explicit primary subject", () => {
-    const artifact = buildArtifact("qm");
-    const summary = buildSummary(artifact);
+  it("does not accept a raw effect estimate when no assessment exists", () => {
+    const artifact = buildArtifact();
+    const summary = buildSummary(artifact, { includeRawEffect: true });
+    const result = evaluateArtifact(artifact, {
+      omitAssessment: true,
+      summary
+    });
 
-    const result = evaluateArtifact(artifact, summary);
-    const ids = diagnosticIds(result.diagnostics);
-
-    expect(ids).toContain("ambiguous_primary_comparison");
-    expect(ids).not.toContain("missing_seed_replication");
-    expect(ids).not.toContain("single_item_gain");
-    expect(result.diagnostics.find((item) => item.id === "ambiguous_primary_comparison"))
-      .toMatchObject({ severity: "blocking", category: "statistical_adequacy" });
+    expect(summary.effect_estimates).toHaveLength(1);
+    expect(diagnosticIds(result.diagnostics)).toContain(
+      "evidence_adequacy_unverified"
+    );
   });
 
-  it("rejects an inconsistent explicit delta before deriving a comparative claim", () => {
-    const artifact = buildArtifact("qm");
-    resolvePrimaryFixture(artifact).comparison.delta = 0.02;
-
-    const result = evaluateArtifact(artifact, buildSummary(artifact), {
-      primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
+  it("keeps adequacy invariant across positive, negative, and zero deltas", () => {
+    const assessment = buildAssessment(PRIMARY_COMPARISON_ID, "pass");
+    const diagnosticSets = [0.1, -0.1, 0].map((delta) => {
+      const artifact = buildArtifact();
+      setPrimaryDelta(artifact, delta);
+      return diagnosticFingerprint(evaluateArtifact(artifact, {
+        assessment
+      }).diagnostics);
     });
-    const ids = diagnosticIds(result.diagnostics);
 
-    expect(ids).toContain("invalid_results_artifact");
-    expect(ids).not.toContain("missing_seed_replication");
-    expect(ids).not.toContain("single_item_gain");
-    expect(result.diagnostics.find((item) => item.id === "invalid_results_artifact")?.evidence)
-      .toContain("delta must equal subject value minus reference value");
+    expect(diagnosticSets[0]).toEqual(diagnosticSets[1]);
+    expect(diagnosticSets[1]).toEqual(diagnosticSets[2]);
+    expect(diagnosticSets[0]).toEqual([]);
   });
 
-  it("keeps generic tiny-sample, seed, smoke, and execution-coverage diagnostics", () => {
-    const tinyArtifact = buildArtifact("qm");
-    const tinyPrimary = resolvePrimaryFixture(tinyArtifact);
-    tinyPrimary.subject.value = 0.65;
-    tinyPrimary.reference.value = 0.45;
-    tinyPrimary.comparison.delta = 0.2;
-    const tinyIds = diagnosticIds(evaluateArtifact(
-      tinyArtifact,
-      buildSummary(tinyArtifact, { sampleSize: 12, seedCount: 3 }),
-      { primaryComparisonId: PRIMARY_COMPARISON_IDS.qm }
-    ).diagnostics);
-    expect(tinyIds).toContain("tiny_eval_sample");
-    expect(tinyIds).not.toContain("missing_seed_replication");
+  it("retains ResultsArtifactV2 integrity validation", () => {
+    const artifact = buildArtifact();
+    artifact.comparisons[0].delta = 0.25;
 
-    const seedArtifact = buildArtifact("qm");
-    const weakSeedIds = diagnosticIds(evaluateArtifact(
-      seedArtifact,
-      buildSummary(seedArtifact, { sampleSize: 200, seedCount: 1 }),
-      { primaryComparisonId: PRIMARY_COMPARISON_IDS.qm }
-    ).diagnostics);
-    const coveredSeedIds = diagnosticIds(evaluateArtifact(
-      seedArtifact,
-      buildSummary(seedArtifact, { sampleSize: 200, seedCount: 3 }),
-      { primaryComparisonId: PRIMARY_COMPARISON_IDS.qm }
-    ).diagnostics);
-    expect(weakSeedIds).toContain("missing_seed_replication");
-    expect(coveredSeedIds).not.toContain("missing_seed_replication");
+    const result = evaluateArtifact(artifact);
 
-    const smokeSummary = buildSummary(seedArtifact, {
-      sampleSize: null,
-      seedCount: null,
-      totalTrials: 1,
-      executedTrials: 1
-    });
-    expect(diagnosticIds(evaluateArtifact(seedArtifact, smokeSummary, {
-      primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
-    }).diagnostics))
-      .toEqual(expect.arrayContaining(["missing_seed_replication", "smoke_only_evidence"]));
-
-    const incompleteSummary = buildSummary(seedArtifact, {
-      sampleSize: 200,
-      seedCount: 3,
-      totalTrials: 5,
-      executedTrials: 2
-    });
-    expect(diagnosticIds(evaluateArtifact(seedArtifact, incompleteSummary, {
-      primaryComparisonId: PRIMARY_COMPARISON_IDS.qm
-    }).diagnostics))
-      .toContain("incomplete_planned_runs");
+    expect(diagnosticIds(result.diagnostics)).toContain(
+      "invalid_results_artifact"
+    );
+    expect(result.diagnostics.find(
+      (item) => item.id === "invalid_results_artifact"
+    )?.evidence).toContain("delta must equal subject value minus reference value");
   });
 
-  it("uses condition-result seed arrays and explicit numeric training budgets", () => {
-    const artifact = buildArtifact("qm");
-    const summary = buildSummary(artifact, {
-      sampleSize: 200,
-      seedCount: null,
-      totalTrials: 6,
-      executedTrials: 2
+  it("retains exact primary-comparison selection", () => {
+    const result = evaluateArtifact(buildArtifact(), {
+      omitPrimaryComparison: true
     });
-    const result = evaluateArtifact(artifact, summary, {
-      primaryComparisonId: PRIMARY_COMPARISON_IDS.qm,
-      metrics: {
-        run_config: {
-          optimizer_steps: 30,
-          max_train_samples: 60,
-          planned_max_train_samples: 600
-        },
-        condition_results: [
-          { seeds: [101, 102, 103], seed_count: 3 },
-          { seeds: [101, 102, 103], seed_count: 3 }
-        ]
-      }
-    });
-    const ids = diagnosticIds(result.diagnostics);
 
-    expect(ids).not.toContain("missing_seed_replication");
-    expect(ids).toEqual(
-      expect.arrayContaining(["incomplete_planned_runs", "training_budget_mismatch"])
+    expect(diagnosticIds(result.diagnostics)).toContain(
+      "ambiguous_primary_comparison"
+    );
+  });
+
+  it("blocks an assessment bound to a different report primary", () => {
+    const result = evaluateArtifact(buildArtifact(), {
+      assessment: buildAssessment("comparison-other", "pass")
+    });
+
+    expect(diagnosticIds(result.diagnostics)).toContain(
+      "evidence_adequacy_primary_mismatch"
     );
   });
 });
 
-type FixtureVariant = "qm" | "vx";
+const PRIMARY_COMPARISON_ID = "comparison-quality";
 
-const PRIMARY_COMPARISON_IDS: Record<FixtureVariant, string> = {
-  qm: "c-lm",
-  vx: "c-pu"
-};
-
-function buildArtifact(variant: FixtureVariant): ResultsArtifactV2 {
-  const ids = variant === "qm"
-    ? {
-      metric: "m-qx",
-      extraMetric: "m-rj",
-      primarySeries: "s-vp",
-      referenceSeries: "s-kt",
-      extraSeries: "s-nw",
-      primaryObservation: "o-pa",
-      referenceObservation: "o-rb",
-      extraObservation: "o-xc",
-      auxiliaryObservation: "o-yd",
-      primaryComparison: "c-lm",
-      auxiliaryComparison: "c-az",
-      labels: ["Series Quill", "Series Vale", "Series Wren"]
-    }
-    : {
-      metric: "m-uf",
-      extraMetric: "m-dk",
-      primarySeries: "s-hz",
-      referenceSeries: "s-bg",
-      extraSeries: "s-rc",
-      primaryObservation: "o-je",
-      referenceObservation: "o-tn",
-      extraObservation: "o-wf",
-      auxiliaryObservation: "o-gs",
-      primaryComparison: "c-pu",
-      auxiliaryComparison: "c-ex",
-      labels: ["Series Umber", "Series Grove", "Series Firth"]
-    };
-
+function buildArtifact(): ResultsArtifactV2 {
   return {
     schema_version: "2.0",
     metrics: [
       {
-        id: ids.metric,
-        label: "Measure Delta",
+        id: "metric-quality",
+        label: "Outcome quality",
         direction: "higher_better",
-        unit: "ratio"
-      },
-      {
-        id: ids.extraMetric,
-        label: "Measure Sigma",
-        direction: "lower_better",
-        unit: "units"
+        unit: "unitless"
       }
     ],
     series: [
       {
-        id: ids.primarySeries,
-        label: ids.labels[0],
-        role: "primary",
-        dimensions: { cohort: "quartz" }
-      },
-      {
-        id: ids.referenceSeries,
-        label: ids.labels[1],
+        id: "series-reference",
+        label: "Reference series",
         role: "baseline",
-        dimensions: { cohort: "quartz" }
+        dimensions: { partition: "evaluation" }
       },
       {
-        id: ids.extraSeries,
-        label: ids.labels[2],
-        role: "comparator",
-        dimensions: { cohort: "quartz" }
+        id: "series-subject",
+        label: "Subject series",
+        role: "primary",
+        dimensions: { partition: "evaluation" }
       }
     ],
     observations: [
       {
-        id: ids.primaryObservation,
-        series_id: ids.primarySeries,
-        metric_id: ids.metric,
-        scope: { slice: "opal" },
-        value: 0.46
+        id: "observation-reference",
+        series_id: "series-reference",
+        metric_id: "metric-quality",
+        scope: { partition: "evaluation" },
+        value: 0.5
       },
       {
-        id: ids.referenceObservation,
-        series_id: ids.referenceSeries,
-        metric_id: ids.metric,
-        scope: { slice: "opal" },
-        value: 0.45
-      },
-      {
-        id: ids.extraObservation,
-        series_id: ids.extraSeries,
-        metric_id: ids.metric,
-        scope: { slice: "opal" },
-        value: 0.95
-      },
-      {
-        id: ids.auxiliaryObservation,
-        series_id: ids.extraSeries,
-        metric_id: ids.extraMetric,
-        scope: { slice: "opal" },
-        value: 7
+        id: "observation-subject",
+        series_id: "series-subject",
+        metric_id: "metric-quality",
+        scope: { partition: "evaluation" },
+        value: 0.6
       }
     ],
     comparisons: [
       {
-        id: ids.auxiliaryComparison,
-        subject_observation_id: ids.extraObservation,
-        reference_observation_id: ids.referenceObservation,
-        delta: 0.5
-      },
-      {
-        id: ids.primaryComparison,
-        subject_observation_id: ids.primaryObservation,
-        reference_observation_id: ids.referenceObservation,
-        delta: 0.01
+        id: PRIMARY_COMPARISON_ID,
+        subject_observation_id: "observation-subject",
+        reference_observation_id: "observation-reference",
+        delta: 0.1
       }
     ]
   };
@@ -318,95 +200,188 @@ function buildArtifact(variant: FixtureVariant): ResultsArtifactV2 {
 function buildSummary(
   artifact: ResultsArtifactV2,
   options: {
-    sampleSize?: number | null;
-    seedCount?: number | null;
     totalTrials?: number;
     executedTrials?: number;
+    includeRawEffect?: boolean;
   } = {}
 ): AnalysisStatisticalSummary {
-  const primary = resolvePrimaryFixture(artifact);
-  const sampleSize = options.sampleSize === undefined ? 100 : options.sampleSize;
-  const seedCount = options.seedCount === undefined ? 1 : options.seedCount;
   return {
-    total_trials: options.totalTrials ?? 3,
-    executed_trials: options.executedTrials ?? 3,
+    total_trials: options.totalTrials ?? 1,
+    executed_trials: options.executedTrials ?? 1,
     cached_trials: 0,
-    confidence_intervals: sampleSize === null
-      ? []
-      : [{
-        metric_key: primary.metric.id,
-        label: "Structured interval",
-        lower: 0,
-        upper: 1,
-        level: 0.95,
-        sample_size: sampleSize,
-        source: "metrics",
-        summary: "Structured interval evidence."
-      }],
-    stability_metrics: seedCount === null
-      ? []
-      : [{ key: "evidence.distinct_seed_count", value: seedCount }],
-    effect_estimates: artifact.comparisons.map((comparison) => {
-      const subject = artifact.observations.find(
-        (observation) => observation.id === comparison.subject_observation_id
-      );
-      const metric = artifact.metrics.find((item) => item.id === subject?.metric_id);
-      if (!subject || !metric) throw new Error("fixture comparison references are required");
-      const improves = metric.direction === "lower_better"
-        ? comparison.delta < 0
-        : comparison.delta > 0;
-      return {
-        comparison_id: comparison.id,
-        metric_key: metric.id,
-        delta: comparison.delta,
-        direction: comparison.delta === 0 ? "neutral" : improves ? "positive" : "negative",
-        summary: "Structured effect evidence."
-      };
-    }),
+    confidence_intervals: [],
+    stability_metrics: [],
+    effect_estimates: options.includeRawEffect
+      ? [{
+        comparison_id: PRIMARY_COMPARISON_ID,
+        metric_key: "metric-quality",
+        delta: artifact.comparisons[0].delta,
+        direction: artifact.comparisons[0].delta === 0
+          ? "neutral"
+          : artifact.comparisons[0].delta > 0
+            ? "positive"
+            : "negative",
+        summary: "Raw effect only."
+      }]
+      : [],
     notes: []
   };
 }
 
-function resolvePrimaryFixture(artifact: ResultsArtifactV2): {
-  metric: ResultsArtifactV2["metrics"][number];
-  subject: ResultsArtifactV2["observations"][number];
-  reference: ResultsArtifactV2["observations"][number];
-  comparison: ResultsArtifactV2["comparisons"][number];
-} {
-  const primarySeries = artifact.series.find((series) => series.role === "primary");
-  const subject = artifact.observations.find(
-    (observation) => observation.series_id === primarySeries?.id
-  );
-  const comparison = artifact.comparisons.find(
-    (item) => item.subject_observation_id === subject?.id
-  );
-  const reference = artifact.observations.find(
-    (observation) => observation.id === comparison?.reference_observation_id
-  );
-  const metric = artifact.metrics.find((item) => item.id === subject?.metric_id);
-  if (!primarySeries || !subject || !comparison || !reference || !metric) {
-    throw new Error("fixture primary comparison is required");
+function buildAssessment(
+  primaryComparisonId: string,
+  status: "pass" | "unknown" | "fail"
+): EvidenceAdequacyAssessmentV2 {
+  if (status === "pass") {
+    const populationManifestSha256 = hashCanonical({
+      independent_unit_ids: ["unit-a", "unit-b"]
+    });
+    const contract = buildEvidenceAdequacyContract({
+      primaryComparisonId,
+      designSource: {
+        kind: "deterministic_exhaustive_manifest",
+        contentSha256: populationManifestSha256
+      },
+      independentUnit: {
+        key: "fixture identity",
+        analysisUnit: "fixture outcome"
+      },
+      plannedIndependentCoverage: {
+        mode: "deterministic_exhaustive",
+        targetUniqueUnits: 2,
+        targetDenominatorPerArm: 2,
+        populationManifestSha256
+      },
+      requiredContrast: {
+        arms: ["reference", "subject"],
+        paired: false,
+        requiredCompletePairs: null
+      },
+      uncertaintyRequirement: {
+        mode: "none",
+        deterministicExhaustiveRationale:
+          "Every declared unit is evaluated by a deterministic oracle."
+      },
+      effectResolution: {
+        scale: "proportion",
+        minimumResolvableEffect: 0.5
+      },
+      executionBudget: {
+        applicable: false,
+        notApplicableRationale:
+          "The exhaustive evaluation has no iterative budget floor."
+      }
+    });
+    const receipt = buildEvidenceAdequacyExecutionReceipt({
+      contractSha256: contract.content_sha256,
+      primaryComparisonId,
+      observedPopulationManifestSha256: populationManifestSha256,
+      uniqueExecutionIds: ["execution-a", "execution-b"],
+      observedIndependentUnitIds: ["unit-a", "unit-b"],
+      observedDenominatorByArm: { reference: 2, subject: 2 },
+      primaryEvidenceRefs: [
+        "artifact://primary-ledger",
+        "artifact://deterministic-oracle"
+      ],
+      deterministicOracleEvidenceRefs: ["artifact://deterministic-oracle"]
+    });
+    return assessEvidenceAdequacy({ contract, receipt });
   }
-  return { metric, subject, reference, comparison };
+
+  const contract = buildEvidenceAdequacyContract({
+    primaryComparisonId,
+    designSource: {
+      kind: "estimator_protocol",
+      contentSha256: hashCanonical({ design: "sampled-comparison" })
+    },
+    independentUnit: {
+      key: "source identity",
+      analysisUnit: "recorded outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "sampled",
+      targetUniqueUnits: 2,
+      targetDenominatorPerArm: 2
+    },
+    requiredContrast: {
+      arms: ["reference", "subject"],
+      paired: false,
+      requiredCompletePairs: null
+    },
+    uncertaintyRequirement: {
+      mode: "required",
+      allowedMethods: ["paired-resampling"],
+      confidenceLevel: 0.95,
+      decisionRule: "directed_interval_bound_meets_effect_criterion"
+    },
+    effectResolution: {
+      scale: "difference",
+      minimumResolvableEffect: 0.1
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The design declares no separate execution budget floor."
+    }
+  });
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: contract.content_sha256,
+    primaryComparisonId,
+    uniqueExecutionIds: ["execution-a", "execution-b"],
+    observedIndependentUnitIds: ["unit-a", "unit-b"],
+    observedDenominatorByArm: {
+      reference: 2,
+      subject: status === "fail" ? 1 : 2
+    },
+    observedUncertaintyMethods:
+      status === "unknown" ? [] : ["paired-resampling"],
+    primaryEvidenceRefs: ["artifact://primary-ledger"]
+  });
+  return assessEvidenceAdequacy({ contract, receipt });
+}
+
+function setPrimaryDelta(
+  artifact: ResultsArtifactV2,
+  delta: number
+): void {
+  const reference = artifact.observations.find(
+    (observation) => observation.id === "observation-reference"
+  )!;
+  const subject = artifact.observations.find(
+    (observation) => observation.id === "observation-subject"
+  )!;
+  reference.value = 0.5;
+  subject.value = 0.5 + delta;
+  artifact.comparisons[0].delta = delta;
 }
 
 function evaluateArtifact(
   artifact: ResultsArtifactV2,
-  statisticalSummary: AnalysisStatisticalSummary,
   options: {
-    primaryComparisonId?: string;
+    assessment?: EvidenceAdequacyAssessmentV2;
+    omitAssessment?: boolean;
+    omitPrimaryComparison?: boolean;
     metrics?: Record<string, unknown>;
+    summary?: AnalysisStatisticalSummary;
   } = {}
 ) {
+  const report = {
+    metrics: options.metrics ?? {},
+    results_artifact: artifact,
+    ...(!options.omitPrimaryComparison
+      ? { primary_comparison_id: PRIMARY_COMPARISON_ID }
+      : {}),
+    statistical_summary: options.summary ?? buildSummary(artifact),
+    ...(!options.omitAssessment
+      ? {
+        evidence_adequacy_assessment:
+          options.assessment ?? buildAssessment(PRIMARY_COMPARISON_ID, "pass")
+      }
+      : {})
+  } as unknown as AnalysisReport;
+
   return evaluatePaperScaleDiagnostics({
-    report: {
-      metrics: options.metrics ?? {},
-      results_artifact: artifact,
-      ...(options.primaryComparisonId
-        ? { primary_comparison_id: options.primaryComparisonId }
-        : {}),
-      statistical_summary: statisticalSummary
-    } as unknown as AnalysisReport,
+    report,
     topic: "Opaque comparative study",
     bibliographyText: ""
   });

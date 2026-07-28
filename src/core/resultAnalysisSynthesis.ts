@@ -24,10 +24,11 @@ interface EvidenceAccountingSummary {
   primary_trials?: number;
   executed_trials?: number;
   supplemental_run_count: number;
-  max_seed_count?: number;
-  max_ci_sample_size?: number;
-  has_condition_correct_totals: boolean;
-  has_task_correct_totals: boolean;
+  max_repetition_count?: number;
+  repetition_count_kinds: string[];
+  max_interval_sample_size?: number;
+  has_condition_denominator_pairs: boolean;
+  has_nested_denominator_pairs: boolean;
   trial_count_difference_accounted_by_supplemental: boolean;
   summary: string;
 }
@@ -198,11 +199,8 @@ function buildAnalysisSynthesisPrompt(
     "- failure_analysis: 1-3 bullets. If no concrete execution failure occurred, focus on residual risks or remaining uncertainty instead of inventing a failure.",
     "- follow_up_actions: 1-3 concrete next steps grounded in the payload.",
     "- confidence_statement: one sentence explaining confidence level and why.",
-    "- Treat evidence_accounting as authoritative when describing seed counts, CI sample sizes, raw correct/total counts, and primary-vs-supplemental trial accounting.",
-    "- If evidence_accounting.has_condition_correct_totals is true, do not say condition-level raw correct/total counts or denominators are missing.",
-    "- If evidence_accounting.max_seed_count is greater than 1, do not describe the primary evidence as single-seed.",
-    "- If evidence_accounting.max_ci_sample_size is greater than 6, do not cite n=6 as the overall CI/sample-size limitation.",
-    "- If evidence_accounting.trial_count_difference_accounted_by_supplemental is true, do not call primary-vs-executed trial counts an ambiguity.",
+    "- Treat exact structured evidence fields as authoritative. Do not infer primary-comparison coverage from auxiliary conditions or unrelated intervals.",
+    "- If prose conflicts with a structured field, state the conflict and its field path; do not silently rewrite or discard the prose.",
     "- Treat only a condition comparison with is_primary=true as primary. If none is marked, do not infer a primary comparison from array order, labels, or values.",
     "- Do not use markdown or add any keys beyond the required JSON shape.",
     "",
@@ -279,15 +277,23 @@ function buildEvidenceAccountingSummary(report: AnalysisReport): EvidenceAccount
   const conditionRows = Array.isArray(report.metrics.condition_results)
     ? report.metrics.condition_results
     : [];
-  const maxCiSampleSize = maxNumber([
+  const maxIntervalSampleSize = maxNumber([
     ...report.statistical_summary.confidence_intervals.map((item) => item.sample_size),
     ...conditionRows.flatMap((item) => collectConditionConfidenceSampleSizes(item))
   ]);
-  const maxSeedCount = maxNumber(conditionRows.map((item) => objectNumber(item, "seed_count")));
-  const hasConditionCorrectTotals = conditionRows.some(
-    (item) => objectNumber(item, "correct_count") !== undefined && objectNumber(item, "total_count") !== undefined
+  const repetitionCounts = conditionRows.flatMap((item) =>
+    collectConditionRepetitionCounts(item)
   );
-  const hasTaskCorrectTotals = conditionRows.some((item) => hasNestedTaskCorrectTotals(item));
+  const maxRepetitionCount = maxNumber(repetitionCounts.map((item) => item.count));
+  const repetitionCountKinds = uniqueStrings(
+    repetitionCounts.map((item) => item.kind)
+  );
+  const hasConditionDenominatorPairs = conditionRows.some(
+    (item) => hasDenominatorPair(item)
+  );
+  const hasNestedDenominatorPairs = conditionRows.some(
+    (item) => hasNestedDenominatorPair(item)
+  );
   const trialCountDifferenceAccountedBySupplemental =
     typeof primaryTrials === "number" &&
     typeof executedTrials === "number" &&
@@ -298,19 +304,21 @@ function buildEvidenceAccountingSummary(report: AnalysisReport): EvidenceAccount
     primary_trials: primaryTrials,
     executed_trials: executedTrials,
     supplemental_run_count: supplementalRunCount,
-    max_seed_count: maxSeedCount,
-    max_ci_sample_size: maxCiSampleSize,
-    has_condition_correct_totals: hasConditionCorrectTotals,
-    has_task_correct_totals: hasTaskCorrectTotals,
+    max_repetition_count: maxRepetitionCount,
+    repetition_count_kinds: repetitionCountKinds,
+    max_interval_sample_size: maxIntervalSampleSize,
+    has_condition_denominator_pairs: hasConditionDenominatorPairs,
+    has_nested_denominator_pairs: hasNestedDenominatorPairs,
     trial_count_difference_accounted_by_supplemental: trialCountDifferenceAccountedBySupplemental,
     summary: renderEvidenceAccountingSummary({
       primaryTrials,
       executedTrials,
       supplementalRunCount,
-      maxSeedCount,
-      maxCiSampleSize,
-      hasConditionCorrectTotals,
-      hasTaskCorrectTotals,
+      maxRepetitionCount,
+      repetitionCountKinds,
+      maxIntervalSampleSize,
+      hasConditionDenominatorPairs,
+      hasNestedDenominatorPairs,
       trialCountDifferenceAccountedBySupplemental
     })
   };
@@ -320,10 +328,11 @@ function renderEvidenceAccountingSummary(input: {
   primaryTrials?: number;
   executedTrials?: number;
   supplementalRunCount: number;
-  maxSeedCount?: number;
-  maxCiSampleSize?: number;
-  hasConditionCorrectTotals: boolean;
-  hasTaskCorrectTotals: boolean;
+  maxRepetitionCount?: number;
+  repetitionCountKinds: string[];
+  maxIntervalSampleSize?: number;
+  hasConditionDenominatorPairs: boolean;
+  hasNestedDenominatorPairs: boolean;
   trialCountDifferenceAccountedBySupplemental: boolean;
 }): string {
   const parts: string[] = [];
@@ -336,17 +345,20 @@ function renderEvidenceAccountingSummary(input: {
   if (input.supplementalRunCount > 0) {
     parts.push(`supplemental run profiles=${input.supplementalRunCount}`);
   }
-  if (typeof input.maxSeedCount === "number") {
-    parts.push(`max seed count per condition=${input.maxSeedCount}`);
+  if (typeof input.maxRepetitionCount === "number") {
+    const kinds = input.repetitionCountKinds.length > 0
+      ? ` (${input.repetitionCountKinds.join(", ")})`
+      : "";
+    parts.push(`max declared repetition count=${input.maxRepetitionCount}${kinds}`);
   }
-  if (typeof input.maxCiSampleSize === "number") {
-    parts.push(`max CI sample size=${input.maxCiSampleSize}`);
+  if (typeof input.maxIntervalSampleSize === "number") {
+    parts.push(`max interval sample size=${input.maxIntervalSampleSize}`);
   }
-  if (input.hasConditionCorrectTotals) {
-    parts.push("condition-level correct/total counts are present");
+  if (input.hasConditionDenominatorPairs) {
+    parts.push("condition-level numerator/denominator evidence is present");
   }
-  if (input.hasTaskCorrectTotals) {
-    parts.push("task-level correct/total counts are present");
+  if (input.hasNestedDenominatorPairs) {
+    parts.push("nested-scope numerator/denominator evidence is present");
   }
   if (input.trialCountDifferenceAccountedBySupplemental) {
     parts.push("executed-trial count is explained by primary trials plus supplemental profiles");
@@ -361,85 +373,21 @@ function groundAnalysisSynthesisToEvidence(
   const evidencePoint = `Evidence accounting: ${accounting.summary}.`;
   const discussionPoints = uniqueStrings([
     evidencePoint,
-    ...synthesis.discussion_points.filter((item) => !contradictsEvidenceAccounting(item, accounting))
+    ...synthesis.discussion_points
   ]).slice(0, 4);
-  const failureAnalysis = synthesis.failure_analysis.filter(
-    (item) => !contradictsEvidenceAccounting(item, accounting)
-  );
-  const followUpActions = synthesis.follow_up_actions.filter(
-    (item) => !contradictsEvidenceAccounting(item, accounting)
-  );
-  const confidenceStatement = contradictsEvidenceAccounting(synthesis.confidence_statement, accounting)
-    ? buildEvidenceGroundedConfidenceStatement(accounting)
-    : synthesis.confidence_statement;
 
   return {
     discussion_points: discussionPoints.length > 0 ? discussionPoints : [evidencePoint],
     failure_analysis:
-      failureAnalysis.length > 0
-        ? failureAnalysis.slice(0, 3)
+      synthesis.failure_analysis.length > 0
+        ? synthesis.failure_analysis.slice(0, 3)
         : ["No concrete execution failure was identified beyond the structured warnings and limitations."],
     follow_up_actions:
-      followUpActions.length > 0
-        ? followUpActions.slice(0, 3)
+      synthesis.follow_up_actions.length > 0
+        ? synthesis.follow_up_actions.slice(0, 3)
         : ["Use the structured evidence-accounting fields when drafting claims and limitations."],
-    confidence_statement: confidenceStatement
+    confidence_statement: synthesis.confidence_statement
   };
-}
-
-function buildEvidenceGroundedConfidenceStatement(accounting: EvidenceAccountingSummary): string {
-  if (
-    (accounting.max_seed_count ?? 0) > 1 &&
-    (accounting.max_ci_sample_size ?? 0) > 6 &&
-    accounting.has_condition_correct_totals
-  ) {
-    return "Confidence is moderate for a bounded screening interpretation because repeated-condition evidence, confidence intervals, and correct/total counts are present, while broader claims still depend on experiment scope.";
-  }
-  return "Confidence is bounded by the structured evidence-accounting summary and should not exceed the reported experiment scope.";
-}
-
-function contradictsEvidenceAccounting(text: string, accounting: EvidenceAccountingSummary): boolean {
-  const normalized = text.toLowerCase();
-  if (
-    accounting.has_condition_correct_totals &&
-    /\b(?:missing|not provided|lack(?:ing)?|unavailable|without)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  if (
-    accounting.has_condition_correct_totals &&
-    /\b(?:export|add|provide|include)\b[\s\S]{0,120}\b(?:raw|correct|total|denominator|count)s?\b[\s\S]{0,80}\bbefore\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  if (
-    (accounting.max_seed_count ?? 0) > 1 &&
-    /\b(?:single[- ]seed|one[- ]seed|only\s+(?:one|1)\s+seed|seed\s*=\s*\d+\s+only|full\s+grid[\s\S]{0,80}only[\s\S]{0,40}seed)\b/u.test(normalized)
-  ) {
-    return true;
-  }
-  if ((accounting.max_ci_sample_size ?? 0) > 6 && /\b(?:n\s*=\s*6|6\s+prediction)s?\b/u.test(normalized)) {
-    return true;
-  }
-  if (
-    (accounting.max_ci_sample_size ?? 0) >= 30 &&
-    /\btiny\b[\s\S]{0,80}\b(?:confidence[- ]interval\s+)?sample\s+sizes?\b/u.test(normalized)
-  ) {
-    return true;
-  }
-  if (
-    accounting.trial_count_difference_accounted_by_supplemental &&
-    /\b(?:trial[- ]accounting ambiguity|trial[- ]count discrepancy|trial counts?\s+(?:are|is)\s+ambiguous)\b/u.test(
-      normalized
-    )
-  ) {
-    return true;
-  }
-  return false;
 }
 
 function maxNumber(values: Array<number | undefined>): number | undefined {
@@ -455,16 +403,70 @@ function objectNumber(value: unknown, key: string): number | undefined {
   return typeof raw === "number" && Number.isFinite(raw) ? raw : undefined;
 }
 
-function hasNestedTaskCorrectTotals(value: unknown): boolean {
+function collectConditionRepetitionCounts(
+  value: unknown
+): Array<{ kind: string; count: number }> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const record = value as Record<string, unknown>;
+  const scalarKeys = [
+    "repetition_count",
+    "replicate_count",
+    "fold_count",
+    "cluster_count",
+    "seed_count"
+  ];
+  const arrayKeys = ["repetitions", "replicates", "folds", "clusters", "seeds"];
+  const counts: Array<{ kind: string; count: number }> = [];
+  for (const key of scalarKeys) {
+    const count = objectNumber(record, key);
+    if (count !== undefined && Number.isInteger(count) && count >= 0) {
+      counts.push({ kind: key, count });
+    }
+  }
+  for (const key of arrayKeys) {
+    const values = record[key];
+    if (!Array.isArray(values)) {
+      continue;
+    }
+    const count = new Set(values.map((item) => JSON.stringify(item))).size;
+    counts.push({ kind: key, count });
+  }
+  return counts;
+}
+
+function hasDenominatorPair(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  const evaluation = (value as Record<string, unknown>).evaluation;
-  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
+  const record = value as Record<string, unknown>;
+  const pairs = [
+    ["numerator", "denominator"],
+    ["event_count", "observation_count"],
+    ["success_count", "total_count"],
+    ["correct_count", "total_count"]
+  ] as const;
+  return pairs.some(([numeratorKey, denominatorKey]) => {
+    const numerator = objectNumber(record, numeratorKey);
+    const denominator = objectNumber(record, denominatorKey);
+    return numerator !== undefined
+      && denominator !== undefined
+      && numerator >= 0
+      && denominator > 0
+      && numerator <= denominator;
+  });
+}
+
+function hasNestedDenominatorPair(value: unknown, depth = 0): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
-  return Object.values(evaluation as Record<string, unknown>).some(
-    (item) => objectNumber(item, "correct_count") !== undefined && objectNumber(item, "total_count") !== undefined
+  if (depth >= 3) {
+    return false;
+  }
+  return Object.values(value as Record<string, unknown>).some((item) =>
+    hasDenominatorPair(item) || hasNestedDenominatorPair(item, depth + 1)
   );
 }
 

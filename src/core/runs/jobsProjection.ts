@@ -125,7 +125,11 @@ export async function buildAnalyzeResultsOperatorSummary(input: {
     maybeArtifactRef(projected.review_ready, "Review minimum gate", "review/minimum_gate.json"),
     maybeArtifactRef(projected.review_ready, "Review readiness risks", "review/readiness_risks.json"),
     maybeArtifactRef(projected.paper_ready || Boolean(projected.paper_readiness_state), "Paper readiness", "paper/paper_readiness.json"),
-    maybeArtifactRef(await fileExists(path.join(runDir, "run_status.json")), "Run status", "run_status.json")
+    maybeArtifactRef(await fileExists(path.join(runDir, "run_status.json")), "Run status", "run_status.json"),
+    ...(projected.evidence_adequacy?.artifact_refs.map(({ label, path: artifactPath }) => ({
+      label,
+      path: artifactPath
+    })) || [])
   ].filter((item): item is { label: string; path: string } => Boolean(item));
 
   const lines = [
@@ -277,7 +281,8 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     network_dependency: input.network_dependency,
     validation_scope: input.validation_scope,
     research_funnel: input.research_funnel,
-    evidence_readiness: input.evidence_readiness
+    evidence_readiness: input.evidence_readiness,
+    evidence_adequacy: input.evidence_adequacy
   };
 }
 
@@ -439,6 +444,24 @@ export function formatRunJobProjectionLines(input: {
       `  evidence readiness: status=${evidence.status} ready=${yesNo(evidence.evidence_ready)} trusted=${yesNo(evidence.trusted)} comparisons=${evidence.comparison_count}${primary}`
     );
   }
+  if (input.projection.evidence_adequacy) {
+    const adequacy = input.projection.evidence_adequacy;
+    const primary = adequacy.primary_comparison_id || "unmeasured";
+    const overall = adequacy.overall_status || "unmeasured";
+    lines.push(
+      `  evidence adequacy: status=${adequacy.status} trusted=${yesNo(adequacy.trusted)} integrity_valid=${yesNo(adequacy.integrity_valid)} paper_evidence_allowed=${yesNo(adequacy.paper_evidence_allowed)} overall=${overall} primary=${primary}`
+    );
+    if (adequacy.reason_codes.length > 0) {
+      lines.push(`  evidence adequacy reasons: ${adequacy.reason_codes.join(", ")}`);
+    }
+    if (adequacy.artifact_refs.length > 0) {
+      lines.push(
+        `  evidence adequacy artifacts: ${adequacy.artifact_refs
+          .map((artifact) => `${artifact.kind}=${artifact.path}`)
+          .join(" | ")}`
+      );
+    }
+  }
   if (input.projection.research_funnel) {
     const funnel = input.projection.research_funnel;
     lines.push(
@@ -558,7 +581,17 @@ async function loadOrBuildRunStatus(input: {
   const runDir = buildRunDir(input.workspaceRoot, input.run.id);
   const existing = await readRunOperatorStatus(runDir);
   if (existing && runStatusMatchesCurrentRun(existing, input.run)) {
-    return existing;
+    const revalidated = await buildRunOperatorStatus({
+      workspaceRoot: input.workspaceRoot,
+      run: input.run,
+      approvalMode: input.approvalMode,
+      networkPolicy: input.networkPolicy,
+      networkPurpose: input.networkPurpose
+    });
+    return {
+      ...existing,
+      evidence_adequacy: revalidated.evidence_adequacy
+    };
   }
   return buildRunOperatorStatus({
     workspaceRoot: input.workspaceRoot,
@@ -608,6 +641,7 @@ function projectRunStatus(
     validation_scope: status.validation_scope,
     research_funnel: researchFunnel ? projectResearchFunnel(researchFunnel) : undefined,
     evidence_readiness: evidenceReadiness,
+    evidence_adequacy: status.evidence_adequacy,
     dominantFailure: status.dominant_failure
       ? {
           key: status.dominant_failure.key,

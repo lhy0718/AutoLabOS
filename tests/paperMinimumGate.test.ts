@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
 import {
+  assessEvidenceAdequacy,
+  buildEvidenceAdequacyContract,
+  buildEvidenceAdequacyExecutionReceipt,
+  type EvidenceAdequacyAssessmentV2
+} from "../src/core/analysis/evidenceAdequacy.js";
+import {
   evaluateMinimumGate,
   type MinimumGateInput
 } from "../src/core/analysis/paperMinimumGate.js";
+import { hashCanonical } from "../src/core/canonicalHash.js";
 import type { ReviewArtifactPresence } from "../src/core/reviewSystem.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
 import type {
@@ -93,26 +100,10 @@ function minimalReport(): AnalysisReport {
       objective_summary: "Test objective met",
       execution_runs: 3
     },
-    metrics: {
-      run_config: {
-        seed: 11,
-        max_steps: 40
-      },
-      condition_results: [
-        {
-          condition_marker: "reference_condition",
-          seeds: [11, 12, 13],
-          seed_count: 3
-        },
-        {
-          condition_marker: "candidate_condition",
-          seeds: [11, 12, 13],
-          seed_count: 3
-        }
-      ]
-    },
+    metrics: {},
     results_artifact: minimalResultsArtifact(),
     primary_comparison_id: "comparison-quality",
+    evidence_adequacy_assessment: buildEvidenceAssessment("pass"),
     condition_comparisons: [],
     primary_findings: ["The explicit subject observation exceeds the reference observation."],
     paper_claims: [
@@ -146,6 +137,118 @@ function fullInput(): MinimumGateInput {
   };
 }
 
+function buildEvidenceAssessment(
+  status: "pass" | "unknown" | "fail",
+  primaryComparisonId = "comparison-quality"
+): EvidenceAdequacyAssessmentV2 {
+  if (status === "pass") {
+    const populationManifestSha256 = hashCanonical({
+      independent_unit_ids: ["unit-a", "unit-b"]
+    });
+    const contract = buildEvidenceAdequacyContract({
+      primaryComparisonId,
+      designSource: {
+        kind: "deterministic_exhaustive_manifest",
+        contentSha256: populationManifestSha256
+      },
+      independentUnit: {
+        key: "fixture identity",
+        analysisUnit: "fixture outcome"
+      },
+      plannedIndependentCoverage: {
+        mode: "deterministic_exhaustive",
+        targetUniqueUnits: 2,
+        targetDenominatorPerArm: 2,
+        populationManifestSha256
+      },
+      requiredContrast: {
+        arms: ["reference", "subject"],
+        paired: false,
+        requiredCompletePairs: null
+      },
+      uncertaintyRequirement: {
+        mode: "none",
+        deterministicExhaustiveRationale:
+          "Every declared unit is evaluated by a deterministic oracle."
+      },
+      effectResolution: {
+        scale: "proportion",
+        minimumResolvableEffect: 0.5
+      },
+      executionBudget: {
+        applicable: false,
+        notApplicableRationale:
+          "The exhaustive evaluation has no iterative budget floor."
+      }
+    });
+    const receipt = buildEvidenceAdequacyExecutionReceipt({
+      contractSha256: contract.content_sha256,
+      primaryComparisonId,
+      observedPopulationManifestSha256: populationManifestSha256,
+      uniqueExecutionIds: ["execution-a", "execution-b"],
+      observedIndependentUnitIds: ["unit-a", "unit-b"],
+      observedDenominatorByArm: { reference: 2, subject: 2 },
+      primaryEvidenceRefs: [
+        "artifact://primary-ledger",
+        "artifact://deterministic-oracle"
+      ],
+      deterministicOracleEvidenceRefs: ["artifact://deterministic-oracle"]
+    });
+    return assessEvidenceAdequacy({ contract, receipt });
+  }
+
+  const contract = buildEvidenceAdequacyContract({
+    primaryComparisonId,
+    designSource: {
+      kind: "estimator_protocol",
+      contentSha256: hashCanonical({ design: "sampled-comparison" })
+    },
+    independentUnit: {
+      key: "source identity",
+      analysisUnit: "recorded outcome"
+    },
+    plannedIndependentCoverage: {
+      mode: "sampled",
+      targetUniqueUnits: 2,
+      targetDenominatorPerArm: 2
+    },
+    requiredContrast: {
+      arms: ["reference", "subject"],
+      paired: false,
+      requiredCompletePairs: null
+    },
+    uncertaintyRequirement: {
+      mode: "required",
+      allowedMethods: ["paired-resampling"],
+      confidenceLevel: 0.95,
+      decisionRule: "directed_interval_bound_meets_effect_criterion"
+    },
+    effectResolution: {
+      scale: "difference",
+      minimumResolvableEffect: 0.1
+    },
+    executionBudget: {
+      applicable: false,
+      notApplicableRationale:
+        "The design declares no separate execution budget floor."
+    }
+  });
+  const receipt = buildEvidenceAdequacyExecutionReceipt({
+    contractSha256: contract.content_sha256,
+    primaryComparisonId,
+    uniqueExecutionIds: ["execution-a", "execution-b"],
+    observedIndependentUnitIds: ["unit-a", "unit-b"],
+    observedDenominatorByArm: {
+      reference: 2,
+      subject: status === "fail" ? 1 : 2
+    },
+    observedUncertaintyMethods:
+      status === "unknown" ? [] : ["paired-resampling"],
+    primaryEvidenceRefs: ["artifact://primary-ledger"]
+  });
+  return assessEvidenceAdequacy({ contract, receipt });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -173,18 +276,13 @@ describe("paperMinimumGate", () => {
 
   it("has the expected deterministic checks", () => {
     const result = evaluateMinimumGate(fullInput());
-    expect(result.checks).toHaveLength(15);
+    expect(result.checks).toHaveLength(10);
     const checkIds = result.checks.map(c => c.id);
     expect(checkIds).toContain("objective_metric");
     expect(checkIds).toContain("experiment_plan");
     expect(checkIds).toContain("baseline_or_comparator");
     expect(checkIds).toContain("executed_result");
     expect(checkIds).toContain("evidence_depth");
-    expect(checkIds).toContain("evaluation_sample_size");
-    expect(checkIds).toContain("seed_replication");
-    expect(checkIds).toContain("planned_execution_coverage");
-    expect(checkIds).toContain("effect_granularity");
-    expect(checkIds).toContain("training_budget_depth");
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
     expect(checkIds).toContain("claim_evidence_missing");
@@ -509,149 +607,93 @@ describe("paperMinimumGate", () => {
     expect(result.ceiling_type).toBe("research_memo");
   });
 
-  it("assigns research_memo when evidence stays at a single thin run without robustness support", () => {
+  it("fails closed as unverified when the assessment is missing", () => {
     const input = fullInput();
-    (input.report as AnalysisReport).overview.execution_runs = 1;
-    (input.report as AnalysisReport).statistical_summary = {
-      total_trials: 1,
-      executed_trials: 1,
-      cached_trials: 0,
-      confidence_intervals: [],
-      stability_metrics: [],
-      effect_estimates: [],
-      notes: []
-    } as AnalysisReport["statistical_summary"];
+    delete input.report.evidence_adequacy_assessment;
 
     const result = evaluateMinimumGate(input);
+    const evidenceCheck = result.checks.find(
+      (check) => check.id === "evidence_depth"
+    );
 
     expect(result.passed).toBe(false);
-    expect(result.blockers).toContain("Evidence goes beyond a single thin run");
+    expect(result.blockers).toContain(
+      "Governed evidence adequacy assessment passes"
+    );
+    expect(evidenceCheck?.measured_value).toContain("unverified_missing_assessment");
+    expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id))
+      .toContain("evidence_adequacy_unverified");
     expect(result.ceiling_type).toBe("research_memo");
   });
 
-  it("blocks paper-scale promotion for tiny one-example gains without repeated seeds", () => {
+  it.each(["unknown", "fail"] as const)(
+    "blocks an evidence adequacy assessment with %s status",
+    (status) => {
+      const input = fullInput();
+      input.report.evidence_adequacy_assessment =
+        buildEvidenceAssessment(status);
+
+      const result = evaluateMinimumGate(input);
+      const evidenceCheck = result.checks.find(
+        (check) => check.id === "evidence_depth"
+      );
+
+      expect(result.passed).toBe(false);
+      expect(evidenceCheck?.passed).toBe(false);
+      expect(evidenceCheck?.measured_value).toContain(
+        `overall_status=${status}`
+      );
+      expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id))
+        .toContain("evidence_adequacy_not_passed");
+    }
+  );
+
+  it("does not treat a raw effect estimate as evidence adequacy", () => {
     const input = fullInput();
-    input.topic = "bounded configuration tuning";
-    input.report.results_artifact.metrics[0].unit = "ratio";
-    input.report.results_artifact.observations[0].value = 4 / 12;
-    input.report.results_artifact.observations[1].value = 5 / 12;
-    input.report.results_artifact.comparisons[0].delta = 1 / 12;
-    input.report.metrics = {
-      run_config: {
-        max_steps: 4
-      },
-      condition_results: [
-        {
-          condition_marker: "reference_condition",
-          seeds: [],
-          seed_count: 0,
-          steps_completed: 4
-        },
-        {
-          condition_marker: "candidate_condition",
-          seeds: [],
-          seed_count: 0,
-          steps_completed: 4
-        }
-      ]
-    };
-    input.report.statistical_summary.confidence_intervals = [
+    delete input.report.evidence_adequacy_assessment;
+    input.report.statistical_summary.effect_estimates = [
       {
+        comparison_id: "comparison-quality",
         metric_key: "metric-quality",
-        label: "Structured interval",
-        lower: 0.1,
-        upper: 0.7,
-        level: 0.95,
-        sample_size: 12,
-        source: "condition_metrics",
-        summary: "Small-sample interval evidence."
+        delta: 0.05,
+        direction: "positive",
+        summary: "Raw effect only."
       }
     ];
 
     const result = evaluateMinimumGate(input);
 
-    expect(result.passed).toBe(false);
-    expect(result.failed_checks).toEqual(
-      expect.arrayContaining([
-        "evaluation_sample_size",
-        "seed_replication",
-        "effect_granularity",
-        "training_budget_depth"
-      ])
-    );
-    expect(result.ceiling_type).toBe("blocked_for_paper_scale");
-    expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id)).toEqual(
-      expect.arrayContaining(["tiny_eval_sample", "missing_seed_replication", "single_item_gain", "thin_training_budget"])
-    );
+    expect(input.report.statistical_summary.effect_estimates).toHaveLength(1);
+    expect(result.checks.find((check) => check.id === "evidence_depth")?.passed)
+      .toBe(false);
+    expect(result.failed_checks).toContain("evidence_depth");
   });
 
-  it("rejects positive incomplete comparisons when seed, execution, and training coverage are missing", () => {
-    const input = fullInput();
-    input.report.overview = {
-      objective_status: "not_met",
-      objective_summary: "Observed gain stays below the target.",
-      observed_value: 0.004,
-      execution_runs: 2
-    };
-    input.report.results_artifact.metrics[0].unit = "ratio";
-    input.report.results_artifact.observations[0].value = 0.7;
-    input.report.results_artifact.observations[1].value = 0.704;
-    input.report.results_artifact.comparisons[0].delta = 0.004;
-    input.report.metrics = {
-      run_config: {
-        max_steps: 30,
-        optimizer_steps: 30,
-        max_train_samples: 60,
-        planned_max_train_samples: 600
-      },
-      condition_results: [
-        { condition_marker: "reference_condition", seeds: [], seed_count: 0 },
-        { condition_marker: "candidate_condition", seeds: [], seed_count: 0 }
-      ]
-    };
-    input.report.statistical_summary = {
-      total_trials: 6,
-      executed_trials: 2,
-      cached_trials: 0,
-      confidence_intervals: [
-        {
-          metric_key: "metric-quality",
-          label: "Candidate outcome interval",
-          lower: 0.68,
-          upper: 0.73,
-          level: 0.95,
-          sample_size: 120,
-          source: "condition_metrics",
-          summary: "Item-level interval."
-        }
-      ],
-      stability_metrics: [],
-      effect_estimates: [
-        {
-          comparison_id: "comparison-quality",
-          metric_key: "metric-quality",
-          delta: 0.004,
-          direction: "positive",
-          summary: "Small positive delta."
-        }
-      ],
-      notes: []
-    };
+  it("keeps the adequacy verdict invariant across positive, negative, and zero deltas", () => {
+    const verdicts = [0.05, -0.05, 0].map((delta) => {
+      const input = fullInput();
+      input.report.results_artifact.observations[0].value = 0.5;
+      input.report.results_artifact.observations[1].value = 0.5 + delta;
+      input.report.results_artifact.comparisons[0].delta = delta;
+      const result = evaluateMinimumGate(input);
+      return {
+        gatePassed: result.passed,
+        adequacyPassed: result.checks.find(
+          (check) => check.id === "evidence_depth"
+        )?.passed,
+        adequacyDiagnostics: result.paper_scale_diagnostics
+          ?.filter((diagnostic) => diagnostic.id.startsWith("evidence_adequacy"))
+          .map((diagnostic) => diagnostic.id) ?? []
+      };
+    });
 
-    const result = evaluateMinimumGate(input);
-    const diagnosticIds = result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id) ?? [];
-
-    expect(diagnosticIds).toEqual(
-      expect.arrayContaining([
-        "missing_seed_replication",
-        "incomplete_planned_runs",
-        "training_budget_mismatch"
-      ])
-    );
-    expect(result.checks.find((check) => check.id === "evidence_depth")?.passed).toBe(false);
-    expect(result.checks.find((check) => check.id === "seed_replication")?.passed).toBe(false);
-    expect(result.checks.find((check) => check.id === "planned_execution_coverage")?.passed).toBe(false);
-    expect(result.checks.find((check) => check.id === "training_budget_depth")?.passed).toBe(false);
+    expect(verdicts[0]).toEqual(verdicts[1]);
+    expect(verdicts[1]).toEqual(verdicts[2]);
+    expect(verdicts[0]).toEqual({
+      gatePassed: true,
+      adequacyPassed: true,
+      adequacyDiagnostics: []
+    });
   });
 
   it("includes ISO timestamp in evaluated_at", () => {
@@ -669,42 +711,20 @@ describe("paperMinimumGate", () => {
     expect(baselineCheck?.detail).toContain("comparison-quality");
   });
 
-  it("uses condition result seed arrays as repeated-seed evidence", () => {
+  it("accepts deterministic exhaustive evidence without seed or optimizer metadata", () => {
     const input = fullInput();
-    input.report.metrics = {
-      run_config: { seed: 36 },
-      condition_results: [
-        {
-          condition_marker: "reference_condition",
-          seeds: [42, 43, 44],
-          seed_count: 3,
-          correct_count: 132,
-          total_count: 288,
-          evaluation: {
-            validation_partition: { correct_count: 69, total_count: 144 },
-            held_out_partition: { correct_count: 63, total_count: 144 }
-          }
-        },
-        {
-          condition_marker: "candidate_condition",
-          seeds: [42, 43, 44],
-          seed_count: 3,
-          correct_count: 138,
-          total_count: 288,
-          evaluation: {
-            validation_partition: { correct_count: 69, total_count: 144 },
-            held_out_partition: { correct_count: 69, total_count: 144 }
-          }
-        }
-      ]
-    } as unknown as AnalysisReport["metrics"];
+    input.report.metrics = {};
+    input.report.evidence_adequacy_assessment =
+      buildEvidenceAssessment("pass");
 
     const result = evaluateMinimumGate(input);
 
-    expect(result.paper_scale_diagnostics?.map((diagnostic) => diagnostic.id)).not.toContain(
-      "missing_seed_replication"
-    );
-    expect(result.checks.find((check) => check.id === "seed_replication")?.passed).toBe(true);
+    expect(result.passed).toBe(true);
+    expect(result.checks.find((check) => check.id === "evidence_depth")?.passed)
+      .toBe(true);
+    expect(result.paper_scale_diagnostics?.filter(
+      (diagnostic) => diagnostic.id.startsWith("evidence_adequacy")
+    )).toEqual([]);
   });
 });
 
