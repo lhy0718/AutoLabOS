@@ -1,0 +1,130 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "v2_retained_source_identity_freeze",
+  "status": "frozen_before_v2_eligibility_decisions",
+  "frozen_at": "2026-07-28T12:32:19+09:00",
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "v2_eligibility_decisions_observed": false,
+  "old_v1_decisions_used_for_source_selection": false,
+  "bindings": {
+    "controller_frame_content_sha256": "a226bb5cbd563c188191ef1ddbe198df89773e876d7d98a324d0f13adc1810ab",
+    "reviewer_frame_content_sha256": "9831fd6f442aac9b3868d29eeadc9707aca081af462a8c0511a9987d6ed91d9d",
+    "source_plan_sha256": "85e08aa8fea1d717185e2e5add16b488eca66182afcb78d6b9c213f8cb980869"
+  },
+  "selection_contract": {
+    "selection_rule": "Include every public source represented by at least one of the 178 retained controller-frame candidates.",
+    "retained_candidate_count": 178,
+    "source_count": 9,
+    "independence_cluster_count": 7,
+    "source_addition_after_eligibility_review": "forbidden",
+    "source_removal_after_eligibility_review": "forbidden",
+    "repository_count_cannot_substitute_for_cluster_count": true
+  },
+  "verification": {
+    "method": "direct local Git origin, HEAD, and HEAD tree inspection",
+    "remote_identity_normalization": "HTTPS host and repository path with trailing .git removed for equality",
+    "all_origins_verified": true,
+    "all_heads_verified": true,
+    "all_trees_verified": true,
+    "local_paths_published": false
+  },
+  "sources": [
+    {
+      "source_id": "appworld",
+      "cache_key": "appworld",
+      "remote_url": "https://github.com/StonyBrookNLP/appworld.git",
+      "pinned_head": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+      "pinned_tree": "cea4de61c6ff596c2fd99071f6a3a3944f060a94",
+      "license": "Apache-2.0",
+      "independence_cluster": "appworld",
+      "retained_candidate_count": 7
+    },
+    {
+      "source_id": "browsergym",
+      "cache_key": "browsergym",
+      "remote_url": "https://github.com/ServiceNow/BrowserGym.git",
+      "pinned_head": "9e779f087de9a65668b6974d11f9ce9816026e96",
+      "pinned_tree": "d33e398c18d04d5da742b1c1ec11c4aab8bc010b",
+      "license": "Apache-2.0",
+      "independence_cluster": "browser_evaluation",
+      "retained_candidate_count": 10
+    },
+    {
+      "source_id": "terminal-bench-2",
+      "cache_key": "terminal_bench_2",
+      "remote_url": "https://github.com/harbor-framework/terminal-bench-2.git",
+      "pinned_head": "2fd12b88aafdd04a52c298e3940bcb189f9766d6",
+      "pinned_tree": "ec7c02c7f0b59ce8ed2f7c88d1e70cda7427edfa",
+      "license": "Apache-2.0",
+      "independence_cluster": "terminal_bench",
+      "retained_candidate_count": 2
+    },
+    {
+      "source_id": "swe-bench",
+      "cache_key": "swe_bench",
+      "remote_url": "https://github.com/SWE-bench/SWE-bench.git",
+      "pinned_head": "f7bbbb2ccdf479001d6467c9e34af59e44a840f9",
+      "pinned_tree": "81083caddb04c76896805b38eaa4e43ca3ce2d63",
+      "license": "MIT",
+      "independence_cluster": "swe_bench",
+      "retained_candidate_count": 68
+    },
+    {
+      "source_id": "inspect_evals",
+      "cache_key": "inspect_evals",
+      "remote_url": "https://github.com/UKGovernmentBEIS/inspect_evals.git",
+      "pinned_head": "bc6c62254629e9340deffaecba8475513f1f9743",
+      "pinned_tree": "26595e9b11db4ad0e72a367b3c704c7a7d8237a8",
+      "license": "MIT",
+      "independence_cluster": "inspect",
+      "retained_candidate_count": 23
+    },
+    {
+      "source_id": "android_world",
+      "cache_key": "android_world",
+      "remote_url": "https://github.com/google-research/android_world.git",
+      "pinned_head": "3e50888527ef9f29b9157ecd537e408008bb1c85",
+      "pinned_tree": "6648289a1a6a353c42cd992cd0fa4fe7e151563e",
+      "license": "Apache-2.0",
+      "independence_cluster": "android_world",
+      "retained_candidate_count": 15
+    },
+    {
+      "source_id": "inspect_ai",
+      "cache_key": "inspect_ai",
+      "remote_url": "https://github.com/UKGovernmentBEIS/inspect_ai.git",
+      "pinned_head": "487b3e007ec1cc7aea8bf1b214dee829a06b619d",
+      "pinned_tree": "505e31bce07d392e0d87e8c6ab7826c18df07e8c",
+      "license": "MIT",
+      "independence_cluster": "inspect",
+      "retained_candidate_count": 34
+    },
+    {
+      "source_id": "helm",
+      "cache_key": "helm",
+      "remote_url": "https://github.com/stanford-crfm/helm.git",
+      "pinned_head": "63754d05db6f874e41a395880fb573890a13e791",
+      "pinned_tree": "660dd1e01959b9e3064b69295a64128aabf900ff",
+      "license": "Apache-2.0",
+      "independence_cluster": "helm",
+      "retained_candidate_count": 18
+    },
+    {
+      "source_id": "webarena",
+      "cache_key": "webarena",
+      "remote_url": "https://github.com/web-arena-x/webarena.git",
+      "pinned_head": "dce04686a56253aefba7b18a4fa0937cf1dc987b",
+      "pinned_tree": "8feabebb86b035004a0a242f13c5ee7bd1f8c627",
+      "license": "Apache-2.0",
+      "independence_cluster": "browser_evaluation",
+      "retained_candidate_count": 1
+    }
+  ],
+  "analysis_independence_policy": {
+    "minimum_selected_clusters": 6,
+    "inspect_ai_and_inspect_evals_share_one_cluster": true,
+    "browsergym_and_webarena_share_one_cluster": true,
+    "cluster_assignment_change_after_freeze": "forbidden"
+  }
+}

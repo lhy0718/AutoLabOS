@@ -48,6 +48,16 @@ permission from the controlled regime.
 ## 3) Required artifact expectations
 
 ### A. `run_experiments` success expectations
+Before any experiment command runs for `topic_discovery`, the recomputed
+`effective_execution_authorized` gate must pass. It composes:
+- the trusted closed research funnel and active candidate selection
+- a valid candidate-conditioned direct-prior receipt covering that candidate
+- a passing estimator feasibility report whose candidate experiment contract
+  is promoted unchanged to the executable contract
+
+Pre-probe authorization or estimator feasibility alone is insufficient. Direct
+node entry and direct implementation-manager entry must enforce the same gate.
+
 When execution is recorded as successful:
 - `metrics.json` must exist and be parseable as an object.
 - `objective_evaluation.json` should exist.
@@ -117,12 +127,17 @@ A paper-scale candidate should produce a compact structured summary that can be 
 At minimum, the result artifacts should preserve:
 - system / condition name
 - dataset or task
-- primary metric
+- primary metric, explicit unit (`unitless` when genuinely dimensionless), and numeric scale
 - numeric result
+- explicit subject/reference roles and primary comparison identifier
+- a machine-readable primary effect criterion bound to that exact comparison,
+  raw metric, scale, direction, and inclusive/exclusive threshold
 - optional runtime / cost / memory side metrics
 - notes on failure or caveats
 
 If numeric comparison cannot be recovered from artifacts, the paper should not claim a quantitative result.
+If the observed delta has the favorable sign but does not meet the frozen
+effect criterion, the candidate must not be promoted as successful.
 
 ## 7) Failure and negative-result discipline
 Negative or null results are allowed.

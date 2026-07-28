@@ -45,7 +45,24 @@ export interface PaperSelectionResult {
   selectionFingerprint: string;
   rerankApplied: boolean;
   rerankFallbackReason?: string;
+  topicFamilyCoverage?: TopicFamilyCoverageAudit;
   rankedCandidates: RankedPaperCandidate[];
+}
+
+export interface TopicFamilyCoverageAudit {
+  strategy: "rare_family_first_one_per_family_then_rank_fill";
+  targetCount: number;
+  availableFamilies: Array<{
+    queryFamily: string;
+    candidateCount: number;
+  }>;
+  selectedFamilies: string[];
+  uncoveredFamilies: string[];
+  reservedPaperIds: string[];
+  addedPaperIds: string[];
+  droppedPaperIds: string[];
+  applied: boolean;
+  coverageComplete: boolean;
 }
 
 const STOPWORDS = new Set([
@@ -155,8 +172,7 @@ const METHOD_SCOPE_PHRASES = [
 
 const APPLICATION_SCOPE_PATTERNS = [
   /\bfor\s+[a-z0-9\s-]{0,60}\b(prediction|classification|detection|diagnosis|screening|assessment|identification|forecasting)\b/u,
-  /\b(prediction|classification|detection|diagnosis|screening|assessment|identification|forecasting)\b[\s:-]+(of|for)\b/u,
-  /\bpatient\b|\bclinical\b|\bmedical\b|\bcredit\b|\bfraud\b|\battack\b|\bsmart grid\b|\btopic classification\b|\bvideo\b/u
+  /\b(prediction|classification|detection|diagnosis|screening|assessment|identification|forecasting)\b[\s:-]+(of|for)\b/u
 ];
 
 const REFERENCE_MODALITY_SIGNALS = [
@@ -184,6 +200,7 @@ const BENIGN_RERANK_WARNING_PATTERNS = [
   /failed to delete shell snapshot/i
 ];
 const DEFAULT_SELECTION_RERANK_TIMEOUT_MS = 20_000;
+export const ANALYSIS_SELECTION_SEMANTICS_VERSION = 3;
 
 const RERANK_SYSTEM_PROMPT = [
   "You rerank scientific papers for AutoLabOS.",
@@ -233,6 +250,7 @@ export function buildSelectionRequestFingerprint(
   return createHash("sha256")
     .update(
       JSON.stringify({
+        selectionSemanticsVersion: ANALYSIS_SELECTION_SEMANTICS_VERSION,
         request,
         runTitle,
         runTopic
@@ -399,6 +417,161 @@ export function buildSelectionFingerprint(
     selectedPaperIds
   });
   return createHash("sha256").update(payload).digest("hex");
+}
+
+export function applyTopicFamilyCoverageFloor(input: {
+  selection: PaperSelectionResult;
+  runTitle: string;
+  runTopic: string;
+  requiredQueryFamilies?: readonly string[];
+  eligiblePaperIds?: ReadonlySet<string>;
+}): PaperSelectionResult {
+  const targetCount = input.selection.selectedPaperIds.length;
+  if (
+    input.selection.request.selectionMode !== "top_n" ||
+    targetCount === 0 ||
+    input.selection.rankedCandidates.length === 0
+  ) {
+    return input.selection;
+  }
+
+  const orderedCandidates = input.selection.rankedCandidates
+    .slice()
+    .sort(
+      (left, right) =>
+        (right.selectionScore ?? right.deterministicScore) -
+          (left.selectionScore ?? left.deterministicScore) ||
+        right.deterministicScore - left.deterministicScore ||
+        left.paper.paper_id.localeCompare(right.paper.paper_id)
+    );
+  const eligibleCandidates = input.eligiblePaperIds
+    ? orderedCandidates.filter((candidate) => input.eligiblePaperIds?.has(candidate.paper.paper_id))
+    : orderedCandidates;
+  const familiesByPaper = new Map<string, string[]>();
+  const candidatesByFamily = new Map<string, RankedPaperCandidate[]>();
+  for (const candidate of eligibleCandidates) {
+    const queryFamilies = Array.from(
+      new Set(
+        (candidate.paper.query_families ?? [])
+          .map((queryFamily) => queryFamily.trim())
+          .filter(Boolean)
+      )
+    ).sort();
+    familiesByPaper.set(candidate.paper.paper_id, queryFamilies);
+    for (const queryFamily of queryFamilies) {
+      const familyCandidates = candidatesByFamily.get(queryFamily) ?? [];
+      familyCandidates.push(candidate);
+      candidatesByFamily.set(queryFamily, familyCandidates);
+    }
+  }
+  const requiredQueryFamilies = Array.from(
+    new Set(
+      (input.requiredQueryFamilies ?? [...candidatesByFamily.keys()])
+        .map((queryFamily) => queryFamily.trim())
+        .filter(Boolean)
+    )
+  ).sort();
+  if (requiredQueryFamilies.length === 0) {
+    return input.selection;
+  }
+
+  const availableFamilies = requiredQueryFamilies
+    .map((queryFamily) => ({
+      queryFamily,
+      candidateCount: candidatesByFamily.get(queryFamily)?.length ?? 0
+    }))
+    .sort(
+      (left, right) =>
+        left.candidateCount - right.candidateCount ||
+        left.queryFamily.localeCompare(right.queryFamily)
+    );
+  const selectedPaperIds = new Set<string>();
+  const representedFamilies = new Set<string>();
+  const reservedPaperIds: string[] = [];
+
+  for (const family of availableFamilies) {
+    if (selectedPaperIds.size >= targetCount) {
+      break;
+    }
+    if (representedFamilies.has(family.queryFamily)) {
+      continue;
+    }
+    const candidate = candidatesByFamily
+      .get(family.queryFamily)
+      ?.find((item) => !selectedPaperIds.has(item.paper.paper_id));
+    if (!candidate) {
+      continue;
+    }
+    selectedPaperIds.add(candidate.paper.paper_id);
+    reservedPaperIds.push(candidate.paper.paper_id);
+    for (const queryFamily of familiesByPaper.get(candidate.paper.paper_id) ?? []) {
+      representedFamilies.add(queryFamily);
+    }
+  }
+
+  for (const candidate of eligibleCandidates) {
+    if (selectedPaperIds.size >= targetCount) {
+      break;
+    }
+    selectedPaperIds.add(candidate.paper.paper_id);
+  }
+
+  const nextSelectedPaperIds = eligibleCandidates
+    .map((candidate) => candidate.paper.paper_id)
+    .filter((paperId) => selectedPaperIds.has(paperId))
+    .slice(0, targetCount);
+  const requiredFamilySet = new Set(requiredQueryFamilies);
+  const selectedFamilies = Array.from(
+    new Set(
+      nextSelectedPaperIds
+        .flatMap((paperId) => familiesByPaper.get(paperId) ?? [])
+        .filter((queryFamily) => requiredFamilySet.has(queryFamily))
+    )
+  ).sort();
+  const uncoveredFamilies = requiredQueryFamilies.filter(
+    (queryFamily) => !selectedFamilies.includes(queryFamily)
+  );
+  const previousSelectedPaperIds = input.selection.selectedPaperIds;
+  const addedPaperIds = nextSelectedPaperIds.filter(
+    (paperId) => !previousSelectedPaperIds.includes(paperId)
+  );
+  const droppedPaperIds = previousSelectedPaperIds.filter(
+    (paperId) => !nextSelectedPaperIds.includes(paperId)
+  );
+  const applied = addedPaperIds.length > 0 || droppedPaperIds.length > 0;
+  const nextSelectedSet = new Set(nextSelectedPaperIds);
+  const rankedCandidates = orderedCandidates.map((candidate) => ({
+    ...candidate,
+    selected: nextSelectedSet.has(candidate.paper.paper_id),
+    rank: nextSelectedSet.has(candidate.paper.paper_id)
+      ? nextSelectedPaperIds.indexOf(candidate.paper.paper_id) + 1
+      : undefined
+  }));
+  const topicFamilyCoverage: TopicFamilyCoverageAudit = {
+    strategy: "rare_family_first_one_per_family_then_rank_fill",
+    targetCount,
+    availableFamilies,
+    selectedFamilies,
+    uncoveredFamilies,
+    reservedPaperIds,
+    addedPaperIds,
+    droppedPaperIds,
+    applied,
+    coverageComplete: uncoveredFamilies.length === 0
+  };
+
+  return {
+    ...input.selection,
+    selectedPaperIds: nextSelectedPaperIds,
+    selectionFingerprint: buildSelectionFingerprint(
+      input.selection.request,
+      input.runTitle,
+      input.runTopic,
+      nextSelectedPaperIds
+    ),
+    topicFamilyCoverage,
+    rankedCandidates
+  };
 }
 
 function filterAllModeCandidates(referenceTitle: string, ranked: RankedPaperCandidate[]): RankedPaperCandidate[] {
@@ -628,9 +801,10 @@ function buildRerankPrompt(
     "Rerank the candidate papers for deep analysis.",
     "Return JSON with this exact shape:",
     '{ "ordered_paper_ids": ["paper_id"], "rationale": "optional short string" }',
-    "Prefer reusable tabular-learning evidence: benchmark suites, benchmark methodology, leakage-safe preprocessing, nested cross-validation, calibration, feature engineering, and broad comparisons of baseline families on structured datasets.",
-    "Strongly demote papers whose main contribution is an application-specific prediction, detection, diagnosis, topic-classification, or domain deployment result unless they clearly add reusable tabular benchmarking or evaluation methodology.",
-    "If a paper does not clearly focus on tabular data, structured datasets, or generalizable evaluation practice, rank it below papers that do.",
+    "Prioritize direct conceptual fit to the stated research title and topic over citation popularity or generic methodological similarity.",
+    "Prefer papers that expose methods, comparisons, datasets, metrics, limitations, or contradictory findings useful for testing a concrete research gap.",
+    "Treat application-specific work as relevant only when its mechanism, evaluation design, or limitation transfers to the stated research topic.",
+    "Do not introduce a modality, task family, benchmark, or method preference that is absent from the supplied research context.",
     "",
     `Research title: ${referenceTitle || runTopic}`,
     `Research topic: ${runTopic || referenceTitle}`,

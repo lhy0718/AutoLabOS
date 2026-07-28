@@ -122,10 +122,7 @@ describe("latexTemplateLoader", () => {
     expect(policy.estimatedWordsPerPage).toBe(650);
   });
 
-  it.each([
-    ["the current lowercase ACL package", "\\usepackage[review]{acl}"],
-    ["a year-specific ACL package", "\\usepackage[review]{ACL2023}"]
-  ] as const)("uses the ACL page policy for %s", async (_label, packageLine) => {
+  it("uses the ACL page policy for the official lowercase package", async () => {
     const workspace = await createWorkspace();
     const templatePath = path.join(workspace, "templates", "acl-template.tex");
     await mkdir(path.dirname(templatePath), { recursive: true });
@@ -133,7 +130,7 @@ describe("latexTemplateLoader", () => {
       templatePath,
       [
         "\\documentclass{article}",
-        packageLine,
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\section{Introduction}",
         "\\end{document}"

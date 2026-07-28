@@ -1,0 +1,131 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "bounded_historical_evaluator_conformance_preregistration",
+  "study_id": "grader_conform_probe_v1",
+  "frozen_at": "2026-07-28T00:00:00+09:00",
+  "frozen": true,
+  "scientific_outcomes_observed_before_freeze": false,
+  "research_model_calls_completed_before_freeze": 0,
+  "status": "narrow_bounded_discovery_probe_authorized",
+  "research_question": "Can registered semantic conformance relations detect historical deterministic implementation defects in public agent-evaluation pipelines that their pre-fix native tests did not expose?",
+  "claim_boundary": "Any positive claim is limited to grader-local, contract-expressible false accepts and false rejects in the pinned public repositories, admitted historical implementation-fault lineages, and registered relation families. The study does not estimate the prevalence of defects in all benchmarks and does not claim to replace task-level or LLM-based auditing.",
+  "transformation_boundary": {
+    "system_under_test": "deterministic grader, evaluator adapter, replay path, or metric implementation",
+    "allowed_transformation_targets": ["graded artifact", "agent response", "execution trace", "terminal state", "evaluator invocation context"],
+    "forbidden_transformation_target": "grader source code",
+    "contract_source": "independent public task schema, evaluator specification, or cross-entrypoint behavioral contract; never the fix diff"
+  },
+  "closest_prior_boundary": {
+    "already_absorbed": [
+      "generic LLM benchmark auditing",
+      "benchmark-update meta-benchmarks for LLM defect detection",
+      "task annotation and specification auditing",
+      "generic mutation testing",
+      "generic metamorphic testing without evaluator-specific empirical evidence"
+    ],
+    "required_non_overlap": "A deterministic, relation-based test method evaluated on author-acknowledged evaluator implementation fixes, with buggy/fixed replay and native-test comparison.",
+    "novelty_gate_status": "conditional_go_for_narrow_discovery_probe_only"
+  },
+  "candidate_registry": "studies/grader-conform/corpus/lineages.v1.json",
+  "corpus_rules": {
+    "include_only_if": [
+      "the official public repository has an identifiable direct parent and fix commit",
+      "the upstream change explicitly identifies an evaluator, scorer, parser, replay, adapter, or metric implementation defect",
+      "the defect can change a score, verdict, denominator, retry classification, or evaluation-path outcome",
+      "the same registered relation can be executed against the parent and fixed revisions",
+      "the repository license permits local execution and publication of derived measurements"
+    ],
+    "exclude_if": [
+      "the change only repairs task text, annotation, gold data, documentation, UI presentation, or model inference",
+      "the change intentionally changes the evaluation contract rather than repairing its implementation",
+      "the parent or fixed revision cannot be reconstructed without private artifacts",
+      "the probe relies on an LLM judge or on knowledge of the fix diff at execution time",
+      "the intervention transforms grader source rather than the graded artifact, trace, state, response, or invocation context",
+      "the lineage duplicates the same root cause and execution path as another admitted lineage"
+    ],
+    "sampling_unit": "independent root-cause lineage",
+    "minimum_admitted_lineages": 12,
+    "minimum_source_repositories": 3,
+    "replacement_after_outcome_observation": "forbidden"
+  },
+  "registered_relation_families": [
+    "representation_invariance",
+    "live_replay_equivalence",
+    "entrypoint_equivalence",
+    "benign_action_invariance",
+    "cardinality_consistency",
+    "invalid_input_rejection",
+    "adapter_symmetry",
+    "parser_representation_invariance",
+    "environment_context_invariance",
+    "irrelevant_state_invariance",
+    "sequential_state_isolation",
+    "equivalent_state_recovery"
+  ],
+  "primary_endpoint": {
+    "name": "historical_fault_recall",
+    "unit": "proportion_of_admitted_independent_lineages",
+    "direction": "higher_is_better",
+    "detected_definition": "The relation fails on the parent revision and passes on the fixed revision under the same probe and deterministic oracle."
+  },
+  "secondary_endpoints": [
+    "native_parent_test_detection_rate",
+    "incremental_recall_over_native_parent_tests",
+    "fixed_revision_false_alarm_rate",
+    "relation_family_coverage",
+    "median_probe_runtime_seconds",
+    "localization_to_changed_evidence_path"
+  ],
+  "comparators": [
+    "native tests present at the parent revision",
+    "syntax-only source validation",
+    "untyped input perturbation with an equal probe budget"
+  ],
+  "bounded_probe": {
+    "max_wall_clock_hours": 6,
+    "max_gpu_hours": 0,
+    "max_concurrent_gpus": 0,
+    "max_fresh_trials": 48,
+    "minimum_success_condition": "At least 12 lineages from at least 3 repositories are admitted, and the method detects at least 3 lineages missed by parent-native tests across at least 2 repositories, with no fixed-revision false alarm among executed clean pairs.",
+    "kill_conditions": [
+      "fewer than 12 independent reproducible lineages remain",
+      "fewer than 3 parent-native-test-missed defects are detected",
+      "all detections come from one repository",
+      "any executed relation still fails on the corresponding fixed revision without an independently documented remaining defect",
+      "the method requires per-lineage knowledge of the fix diff rather than a preregistered relation family"
+    ]
+  },
+  "confirmatory_stage_if_probe_passes": {
+    "minimum_lineages": 36,
+    "minimum_repositories": 5,
+    "minimum_development_lineages": 12,
+    "minimum_held_out_lineages": 24,
+    "split_policy": "relation templates are frozen on 12 development lineages; final recall is reported on at least 24 root-cause lineages held out by repository or fault family",
+    "required_statistics": [
+      "cluster bootstrap confidence interval by repository",
+      "paired exact or McNemar comparison against each baseline",
+      "leave-one-repository-out sensitivity",
+      "false-alarm upper confidence bound on fixed revisions"
+    ],
+    "required_baselines": [
+      "native grader tests plus schema and static checks",
+      "generic property-based or metamorphic testing",
+      "conventional mutation testing",
+      "EvalPlus-style contract-aware input mutation",
+      "STING-style test-strength diagnosis when technically applicable"
+    ],
+    "promotion_floor": "At least 6 unique held-out defects beyond the strongest deterministic baseline, spanning at least 3 repositories, with a positive 95% confidence-interval lower bound and at most 1 fixed-control false alarm among 24 controls.",
+    "max_gpu_hours": 8,
+    "max_concurrent_gpus": 1,
+    "gpu_use_boundary": "GPU use is allowed only for an explicitly labeled local code-auditor comparator, never for the deterministic primary method."
+  },
+  "integrity_rules": [
+    "Do not count commit-message candidates as detected outcomes.",
+    "Do not transform grader source code and call the result evaluator conformance.",
+    "Do not split one fix commit into multiple sampling units unless independent root causes and probes are adjudicated before execution.",
+    "Do not add or remove lineages after viewing method or baseline outcomes.",
+    "Do not treat a passing post-fix regression test as evidence that the proposed method detected the historical defect.",
+    "Do not use codex_mock, synthetic fixtures, or AutoLabOS workflow smoke runs as paper evidence.",
+    "Publish negative and excluded cases with reasons."
+  ]
+}

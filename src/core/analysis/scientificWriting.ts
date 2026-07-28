@@ -20,7 +20,23 @@ import type {
   PaperManuscriptSection,
   PaperManuscriptTable
 } from "./paperManuscript.js";
-import { AUTHORED_MAIN_FIGURE_SOURCE_REF_ID } from "./paperManuscript.js";
+import {
+  AUTHORED_MAIN_FIGURE_SOURCE_REF_ID,
+  AUTHORED_MAIN_TABLE_SOURCE_REF_ID
+} from "./paperManuscript.js";
+import {
+  checkResultsContractCompleteness,
+  validateResultsArtifactV2,
+  validateResultsPlanV2,
+  type ResultsArtifactV2,
+  type ResultsMetricDefinitionV2,
+  type ResultsPlanV2,
+  type ResultsObservationV2,
+  type ResultsScalar,
+  type ResultsSeriesRole,
+  type ResultsSeriesV2,
+  type ResultsTableDirection
+} from "./resultsTableSchema.js";
 
 export type NumericFactKind = "metric" | "count";
 export type NumericFactSource =
@@ -84,8 +100,6 @@ export interface EvidenceInsufficiencyReport {
   section_diagnostics: SectionEvidenceDiagnostic[];
 }
 
-type ExperimentProtocolKind = "tabular_cv" | "lm_benchmark" | "generic";
-
 export interface ScientificAutoRepairRecheck {
   attempted: boolean;
   page_budget_before: PageBudgetManagerReport["status"];
@@ -139,7 +153,6 @@ export interface ManuscriptProvenanceMap {
 }
 
 export interface ExperimentArtifactContext {
-  protocol_kind: ExperimentProtocolKind;
   method: {
     dataset_names: string[];
     dataset_sources: string[];
@@ -163,11 +176,16 @@ export interface ExperimentArtifactContext {
     model_names: string[];
   };
   results: {
+    canonical_artifact?: ResultsArtifactV2;
+    canonical_plan?: ResultsPlanV2;
+    canonical_observations: CanonicalResultObservationSummary[];
+    primary_comparison?: PrimaryComparisonSummary;
+    primary_comparison_status: PrimaryComparisonResolutionStatus;
+    primary_comparison_issues: string[];
     aggregate_summary: string[];
     aggregate_metric_facts: NormalizedNumericFact[];
     confidence_interval_facts: NormalizedNumericFact[];
     dataset_summaries: DatasetResultSummary[];
-    condition_summaries: ConditionResultSummary[];
     dispersion_notes: string[];
     ci_notes: string[];
     ci_unavailable_reason?: string;
@@ -212,28 +230,39 @@ export interface DatasetResultSummary {
   summary: string;
 }
 
-export interface ConditionResultSummary {
-  condition: string;
-  label: string;
-  status?: string;
-  is_baseline: boolean;
-  is_comparator?: boolean;
-  is_registered_baseline?: boolean;
-  completed_seed_count?: number;
-  condition_parameter_x?: number;
-  condition_parameter_y?: number;
-  average_accuracy_mean?: number;
-  average_accuracy_ci95?: number;
-  accuracy_delta_vs_baseline_mean?: number;
-  accuracy_delta_vs_baseline_ci95?: number;
-  benchmark_task_a_accuracy?: number;
-  benchmark_task_b_accuracy?: number;
-  train_loss?: number;
-  train_loss_mean?: number;
-  runtime_seconds?: number;
-  runtime_seconds_mean?: number;
-  peak_memory_mb?: number;
-  peak_memory_mb_mean?: number;
+export interface CanonicalResultObservationSummary {
+  observation_id: string;
+  series_id: string;
+  series_label: string;
+  series_role?: ResultsSeriesRole;
+  metric_id: string;
+  metric_label: string;
+  metric_direction: ResultsTableDirection;
+  metric_unit?: string;
+  scope: Record<string, ResultsScalar>;
+  value: number;
+  evidence_refs: string[];
+}
+
+export type PrimaryComparisonResolutionStatus =
+  | "resolved"
+  | "unavailable"
+  | "invalid"
+  | "ambiguous";
+
+export interface PrimaryComparisonSummary {
+  comparison_id: string;
+  metric_id: string;
+  metric_label: string;
+  metric_direction: ResultsTableDirection;
+  metric_unit?: string;
+  subject: CanonicalResultObservationSummary & { series_role: "primary" | "comparator" };
+  reference: CanonicalResultObservationSummary & { series_role: "baseline" };
+  delta: number;
+  directional_outcome: "favors_subject" | "favors_reference" | "neutral";
+  judgement?: string;
+  evidence_refs: string[];
+  summary: string;
 }
 
 export interface SectionBudgetEntry {
@@ -540,6 +569,333 @@ const SECTION_MAX_PARAGRAPHS: Record<string, number> = {
   conclusion: 5
 };
 
+interface CanonicalResultsResolution {
+  status: PrimaryComparisonResolutionStatus;
+  issues: string[];
+  artifact?: ResultsArtifactV2;
+  plan?: ResultsPlanV2;
+  observations: CanonicalResultObservationSummary[];
+  primaryComparison?: PrimaryComparisonSummary;
+}
+
+interface CanonicalContractCandidate {
+  value?: unknown;
+  ambiguous: boolean;
+}
+
+function selectCanonicalContractCandidate(...values: unknown[]): CanonicalContractCandidate {
+  const candidates = values.filter((value) => value !== undefined);
+  if (candidates.length === 0) {
+    return { ambiguous: false };
+  }
+  const fingerprints = new Set(candidates.map((value) => canonicalContractFingerprint(value)));
+  return {
+    value: candidates[0],
+    ambiguous: fingerprints.size > 1
+  };
+}
+
+function canonicalContractFingerprint(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => canonicalContractFingerprint(item)).sort().join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalContractFingerprint(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+function resolveCanonicalResults(
+  resultAnalysis: ResultAnalysisArtifact | undefined
+): CanonicalResultsResolution {
+  const reportRecord = asRecord(resultAnalysis);
+  const metricsRecord = asRecord(reportRecord.metrics);
+  const artifactCandidate = selectCanonicalContractCandidate(
+    reportRecord.results_artifact,
+    metricsRecord.results_artifact
+  );
+  const planCandidate = selectCanonicalContractCandidate(
+    reportRecord.results_plan,
+    metricsRecord.results_plan
+  );
+  if (artifactCandidate.ambiguous || planCandidate.ambiguous) {
+    return {
+      status: "ambiguous",
+      issues: ["Multiple non-equivalent canonical result contracts were supplied."],
+      observations: []
+    };
+  }
+  if (artifactCandidate.value === undefined || planCandidate.value === undefined) {
+    return {
+      status: "unavailable",
+      issues: ["A validated ResultsArtifactV2 and ResultsPlanV2 are both required for scientific claim selection."],
+      observations: []
+    };
+  }
+
+  const artifactValidation = validateResultsArtifactV2(artifactCandidate.value);
+  const planValidation = validateResultsPlanV2(planCandidate.value);
+  if (!artifactValidation.valid || !planValidation.valid) {
+    return {
+      status: "invalid",
+      issues: [...artifactValidation.issues, ...planValidation.issues],
+      observations: []
+    };
+  }
+
+  const completeness = checkResultsContractCompleteness(
+    artifactCandidate.value,
+    planCandidate.value
+  );
+  if (!completeness.complete) {
+    return {
+      status: "invalid",
+      issues: completeness.issues,
+      observations: []
+    };
+  }
+
+  const artifact = artifactCandidate.value as ResultsArtifactV2;
+  const plan = planCandidate.value as ResultsPlanV2;
+  const metricsById = new Map(artifact.metrics.map((metric) => [metric.id, metric] as const));
+  const seriesById = new Map(artifact.series.map((series) => [series.id, series] as const));
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  const explicitComparisonId = cleanString(plan.primary_comparison_id);
+  if (!explicitComparisonId) {
+    return {
+      status: "invalid",
+      issues: ["ResultsPlanV2 must explicitly declare primary_comparison_id."],
+      artifact,
+      plan,
+      observations: []
+    };
+  }
+  const reportPrimaryComparisonId = cleanString(resultAnalysis?.primary_comparison_id);
+  if (reportPrimaryComparisonId && reportPrimaryComparisonId !== explicitComparisonId) {
+    return {
+      status: "invalid",
+      issues: ["AnalysisReport.primary_comparison_id must match ResultsPlanV2.primary_comparison_id."],
+      artifact,
+      plan,
+      observations: []
+    };
+  }
+
+  const requiredComparison = plan.required_comparisons?.find(
+    (comparison) => comparison.id === explicitComparisonId
+  );
+  const selectedComparison = artifact.comparisons.find(
+    (comparison) => comparison.id === explicitComparisonId
+  );
+  if (!requiredComparison || !selectedComparison) {
+    return {
+      status: "invalid",
+      issues: ["The declared primary comparison must be present in both ResultsPlanV2 and ResultsArtifactV2."],
+      artifact,
+      plan,
+      observations: []
+    };
+  }
+
+  const observations = artifact.observations.flatMap((observation) => {
+    const metric = metricsById.get(observation.metric_id);
+    const series = seriesById.get(observation.series_id);
+    return metric && series
+      ? [buildCanonicalObservationSummary(observation, metric, series)]
+      : [];
+  });
+
+  const subjectObservation = observationsById.get(selectedComparison.subject_observation_id);
+  const referenceObservation = observationsById.get(selectedComparison.reference_observation_id);
+  const metric = subjectObservation ? metricsById.get(subjectObservation.metric_id) : undefined;
+  const subjectSeries = subjectObservation ? seriesById.get(subjectObservation.series_id) : undefined;
+  const referenceSeries = referenceObservation ? seriesById.get(referenceObservation.series_id) : undefined;
+  const primaryIssues = validatePrimaryComparisonLinks({
+    subjectObservation,
+    referenceObservation,
+    metric,
+    subjectSeries,
+    referenceSeries
+  });
+  if (
+    subjectObservation
+    && referenceObservation
+    && (
+      subjectObservation.series_id !== requiredComparison.subject_series_id
+      || referenceObservation.series_id !== requiredComparison.reference_series_id
+      || subjectObservation.metric_id !== requiredComparison.metric_id
+    )
+  ) {
+    primaryIssues.push("The primary comparison links do not match the subject, reference, and metric declared by ResultsPlanV2.");
+  }
+  if (primaryIssues.length > 0) {
+    return {
+      status: "invalid",
+      issues: primaryIssues,
+      artifact,
+      plan,
+      observations
+    };
+  }
+
+  const primaryComparison = buildPrimaryComparisonSummary({
+    comparison: selectedComparison,
+    metric: metric!,
+    subjectObservation: subjectObservation!,
+    referenceObservation: referenceObservation!,
+    subjectSeries: subjectSeries as ResultsSeriesV2 & { role: "primary" | "comparator" },
+    referenceSeries: referenceSeries as ResultsSeriesV2 & { role: "baseline" }
+  });
+  return {
+    status: "resolved",
+    issues: [],
+    artifact,
+    plan,
+    observations,
+    primaryComparison
+  };
+}
+
+function validatePrimaryComparisonLinks(input: {
+  subjectObservation?: ResultsObservationV2;
+  referenceObservation?: ResultsObservationV2;
+  metric?: ResultsMetricDefinitionV2;
+  subjectSeries?: ResultsSeriesV2;
+  referenceSeries?: ResultsSeriesV2;
+}): string[] {
+  const issues: string[] = [];
+  if (!input.subjectObservation || !input.referenceObservation || !input.metric) {
+    issues.push("The primary comparison does not resolve through its subject/reference observation links.");
+  }
+  if (input.metric && !cleanString(input.metric.unit)) {
+    issues.push("The primary comparison metric must declare a non-empty unit.");
+  }
+  if (
+    input.subjectObservation
+    && input.referenceObservation
+    && input.subjectObservation.series_id === input.referenceObservation.series_id
+  ) {
+    issues.push("The primary comparison subject and reference must belong to distinct series.");
+  }
+  if (
+    input.subjectObservation
+    && input.referenceObservation
+    && canonicalScopeKey(input.subjectObservation.scope) !== canonicalScopeKey(input.referenceObservation.scope)
+  ) {
+    issues.push("The primary comparison subject and reference observations must declare the same scope.");
+  }
+  if (input.subjectSeries?.role !== "primary" && input.subjectSeries?.role !== "comparator") {
+    issues.push("The primary comparison subject series must explicitly declare a primary or comparator role.");
+  }
+  if (input.referenceSeries?.role !== "baseline") {
+    issues.push("The primary comparison reference series must explicitly declare the baseline role.");
+  }
+  return issues;
+}
+
+function canonicalScopeKey(scope: Record<string, ResultsScalar>): string {
+  return JSON.stringify(
+    Object.entries(scope)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => [key, value])
+  );
+}
+
+function buildCanonicalObservationSummary(
+  observation: ResultsObservationV2,
+  metric: ResultsMetricDefinitionV2,
+  series: ResultsSeriesV2
+): CanonicalResultObservationSummary {
+  return {
+    observation_id: observation.id,
+    series_id: series.id,
+    series_label: series.label,
+    ...(series.role ? { series_role: series.role } : {}),
+    metric_id: metric.id,
+    metric_label: metric.label,
+    metric_direction: metric.direction,
+    ...(metric.unit ? { metric_unit: metric.unit } : {}),
+    scope: { ...observation.scope },
+    value: observation.value,
+    evidence_refs: [...(observation.evidence_refs || [])]
+  };
+}
+
+function buildPrimaryComparisonSummary(input: {
+  comparison: ResultsArtifactV2["comparisons"][number];
+  metric: ResultsMetricDefinitionV2;
+  subjectObservation: ResultsObservationV2;
+  referenceObservation: ResultsObservationV2;
+  subjectSeries: ResultsSeriesV2 & { role: "primary" | "comparator" };
+  referenceSeries: ResultsSeriesV2 & { role: "baseline" };
+}): PrimaryComparisonSummary {
+  const subject = buildCanonicalObservationSummary(
+    input.subjectObservation,
+    input.metric,
+    input.subjectSeries
+  ) as PrimaryComparisonSummary["subject"];
+  const reference = buildCanonicalObservationSummary(
+    input.referenceObservation,
+    input.metric,
+    input.referenceSeries
+  ) as PrimaryComparisonSummary["reference"];
+  const directionalOutcome = classifyDirectionalOutcome(
+    input.comparison.delta,
+    input.metric.direction
+  );
+  const directionText = input.metric.direction === "higher_better"
+    ? "higher values preferred"
+    : "lower values preferred";
+  const outcomeText = directionalOutcome === "neutral"
+    ? "the declared direction is neutral at the reported precision"
+    : directionalOutcome === "favors_subject"
+      ? "the declared metric direction favors the subject series"
+      : "the declared metric direction favors the reference series";
+  return {
+    comparison_id: input.comparison.id,
+    metric_id: input.metric.id,
+    metric_label: input.metric.label,
+    metric_direction: input.metric.direction,
+    ...(input.metric.unit ? { metric_unit: input.metric.unit } : {}),
+    subject,
+    reference,
+    delta: input.comparison.delta,
+    directional_outcome: directionalOutcome,
+    ...(cleanString(input.comparison.judgement)
+      ? { judgement: cleanString(input.comparison.judgement) }
+      : {}),
+    evidence_refs: uniqueStrings([
+      ...(input.comparison.evidence_refs || []),
+      ...(input.subjectObservation.evidence_refs || []),
+      ...(input.referenceObservation.evidence_refs || [])
+    ]),
+    summary: cleanString(
+      `For ${input.metric.label}, ${input.subjectSeries.label} (${input.subjectSeries.role} role) recorded ${formatCanonicalMeasurement(input.subjectObservation.value, input.metric.unit)}, while ${input.referenceSeries.label} (baseline role) recorded ${formatCanonicalMeasurement(input.referenceObservation.value, input.metric.unit)}. The declared subject-minus-reference difference is ${formatCanonicalMeasurement(input.comparison.delta, input.metric.unit)}; ${directionText}, so ${outcomeText}.`
+    )
+  };
+}
+
+function classifyDirectionalOutcome(
+  delta: number,
+  direction: ResultsTableDirection
+): PrimaryComparisonSummary["directional_outcome"] {
+  if (Math.abs(delta) < 1e-12) {
+    return "neutral";
+  }
+  const subjectPreferred = direction === "higher_better" ? delta > 0 : delta < 0;
+  return subjectPreferred ? "favors_subject" : "favors_reference";
+}
+
+function formatCanonicalMeasurement(value: number, unit: string | undefined): string {
+  const rendered = formatNumber(value);
+  return cleanString(unit) ? `${rendered} ${cleanString(unit)}` : rendered;
+}
+
 export function experimentArtifactLoader(input: {
   bundle: PaperWritingBundle;
   objectiveEvaluation?: ObjectiveMetricEvaluation;
@@ -548,16 +904,11 @@ export function experimentArtifactLoader(input: {
   const parsedPlan = parsePlanYaml(input.bundle.experimentPlan?.rawText);
   const latestResults = asRecord(input.bundle.latestResults);
   const resultAnalysis = input.bundle.resultAnalysis;
-  const protocolKind = inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis, {
-    run_title: input.bundle.runTitle,
-    topic: input.bundle.topic,
-    objective_metric: input.bundle.objectiveMetric,
-    experiment_plan: input.bundle.experimentPlan
-  });
+  const canonicalResults = resolveCanonicalResults(resultAnalysis);
   const method = {
     dataset_names: collectDatasetNames(input.bundle, parsedPlan, latestResults),
     dataset_sources: collectDatasetSourceHints(parsedPlan, latestResults),
-    sample_size_notes: collectSampleSizeHints(parsedPlan, latestResults, resultAnalysis, protocolKind),
+    sample_size_notes: collectSampleSizeHints(parsedPlan, latestResults, resultAnalysis),
     feature_notes: collectFeatureHints(parsedPlan, latestResults),
     class_notes: collectClassHints(parsedPlan, latestResults),
     imbalance_notes: collectKeywordNotes(parsedPlan, ["imbalance", "imbalanced", "class balance", "class prior"]),
@@ -576,73 +927,86 @@ export function experimentArtifactLoader(input: {
     stratification_notes: collectKeywordNotes(parsedPlan, ["stratified", "stratification"]),
     seeds: collectSeeds(parsedPlan, latestResults),
     hyperparameter_notes: collectHyperparameterNotes(parsedPlan, latestResults, resultAnalysis),
-    selection_metrics: collectSelectionMetrics(parsedPlan, resultAnalysis),
-    reporting_metrics: collectReportingMetrics(parsedPlan, resultAnalysis),
-    runtime_measurement: hasRuntimeMeasurement(resultAnalysis, latestResults),
-    memory_measurement: hasMemoryMeasurement(resultAnalysis, latestResults),
-    model_names: collectModelNames(parsedPlan, latestResults, resultAnalysis)
+    selection_metrics: collectCanonicalMetricLabels(canonicalResults.artifact),
+    reporting_metrics: collectCanonicalMetricLabels(canonicalResults.artifact),
+    runtime_measurement: hasCanonicalResourceMetric(canonicalResults.artifact, "runtime"),
+    memory_measurement: hasCanonicalResourceMetric(canonicalResults.artifact, "memory"),
+    model_names: collectCanonicalSeriesLabels(canonicalResults.artifact)
   };
 
-  const datasetSummaries = collectDatasetResultSummaries({
-    latestResults,
-    resultAnalysis,
-    objectiveMetricProfile: input.objectiveMetricProfile
-  });
-  const conditionSummaries = collectConditionResultSummaries(latestResults, resultAnalysis);
-  const ciNotes = collectCiNotes(resultAnalysis, datasetSummaries);
-  const dispersionNotes = collectDispersionNotes(resultAnalysis, datasetSummaries);
+  const datasetSummaries = collectCanonicalResultSummaries(canonicalResults.primaryComparison);
+  const ciNotes = collectCiNotes(resultAnalysis, canonicalResults.primaryComparison);
   const results = {
-    aggregate_summary: collectAggregateResults(
+    ...(canonicalResults.artifact ? { canonical_artifact: canonicalResults.artifact } : {}),
+    ...(canonicalResults.plan ? { canonical_plan: canonicalResults.plan } : {}),
+    canonical_observations: canonicalResults.observations,
+    ...(canonicalResults.primaryComparison
+      ? { primary_comparison: canonicalResults.primaryComparison }
+      : {}),
+    primary_comparison_status: canonicalResults.status,
+    primary_comparison_issues: canonicalResults.issues,
+    aggregate_summary: collectCanonicalAggregateResults(canonicalResults),
+    aggregate_metric_facts: collectCanonicalArtifactMetricFacts(canonicalResults),
+    confidence_interval_facts: collectConfidenceIntervalMetricFacts(
       resultAnalysis,
-      input.objectiveEvaluation,
-      input.objectiveMetricProfile
+      canonicalResults.primaryComparison
     ),
-    aggregate_metric_facts: collectAggregateMetricFacts(resultAnalysis),
-    confidence_interval_facts: collectConfidenceIntervalMetricFacts(resultAnalysis),
     dataset_summaries: datasetSummaries,
-    condition_summaries: conditionSummaries,
-    dispersion_notes: dispersionNotes,
+    dispersion_notes: ciNotes,
     ci_notes: ciNotes,
-    ...(ciNotes.length === 0 ? { ci_unavailable_reason: buildCiUnavailableReason(resultAnalysis, latestResults) } : {}),
-    paired_artifact_available: hasPairedArtifact(latestResults, resultAnalysis),
-    runtime_notes: collectRuntimeNotes(datasetSummaries, resultAnalysis),
-    memory_notes: collectMemoryNotes(datasetSummaries, resultAnalysis),
-    figure_captions: collectFigureCaptions(resultAnalysis, datasetSummaries),
-    effect_notes: collectEffectNotes(resultAnalysis, datasetSummaries),
-    heterogeneity_notes: collectHeterogeneityNotes(datasetSummaries, resultAnalysis)
+    ...(ciNotes.length === 0
+      ? {
+          ci_unavailable_reason: canonicalResults.primaryComparison
+            ? buildCiUnavailableReason(canonicalResults.primaryComparison)
+            : "Confidence intervals are unavailable because no primary comparison was resolved."
+        }
+      : {}),
+    paired_artifact_available: Boolean(canonicalResults.primaryComparison),
+    runtime_notes: collectCanonicalResourceNotes(canonicalResults, "runtime"),
+    memory_notes: collectCanonicalResourceNotes(canonicalResults, "memory"),
+    figure_captions: canonicalResults.primaryComparison
+      ? [`Declared primary comparison for ${canonicalResults.primaryComparison.metric_label}.`]
+      : [],
+    effect_notes: collectCanonicalEffectNotes(canonicalResults.primaryComparison),
+    heterogeneity_notes: []
   };
 
   const relatedWorkNotes = input.bundle.relatedWorkNotes || [];
   const comparisonAxes = input.bundle.relatedWorkScout?.papers?.length
     ? uniqueStrings(
         input.bundle.relatedWorkScout.papers
-          .map((item) => sanitizeRelatedWorkAxisForNarrative(firstSentence(item.summary), protocolKind))
+          .map((item) => sanitizeRelatedWorkAxisForNarrative(firstSentence(item.summary)))
           .filter(Boolean)
       )
     : [];
   const positioningNotes = relatedWorkNotes.filter((item) => isPositioningRelatedWorkNote(item));
   const safeRelatedWorkAxes = uniqueStrings([
-    ...(input.bundle.relatedWorkNotes || []).map((item) => sanitizeRelatedWorkAxisForNarrative(item.problem_focus, protocolKind)),
+    ...(input.bundle.relatedWorkNotes || []).map((item) => sanitizeRelatedWorkAxisForNarrative(item.problem_focus)),
     ...comparisonAxes
   ]).slice(0, 4);
-  const rawClusters = uniqueStrings(
+  const safeClusters = uniqueStrings(
     relatedWorkNotes
-      .map((item) => sanitizeRelatedWorkAxisForNarrative(item.method_family, protocolKind))
+      .map((item) => sanitizeRelatedWorkAxisForNarrative(item.method_family))
       .filter(Boolean)
   );
-  const safeClusters = completeRelatedWorkClustersForProtocol(rawClusters, protocolKind);
   const relatedWork = {
     clusters: safeClusters,
-    closest_titles: positioningNotes.map((item) => sanitizeRelatedWorkTitleForNarrative(item.title, protocolKind)).filter(Boolean).slice(0, 3),
+    closest_titles: positioningNotes.map((item) => sanitizeRelatedWorkTitleForNarrative(item.title)).filter(Boolean).slice(0, 3),
     comparison_axes: safeRelatedWorkAxes.length > 0 ? safeRelatedWorkAxes : ["method family, resource budget, and evaluation-scope differences"],
     note_count: relatedWorkNotes.length,
     positioning_available: positioningNotes.length > 0
   };
 
   const discussion = {
-    discussion_points: uniqueStrings(resultAnalysis?.synthesis?.discussion_points || []).slice(0, 4),
+    discussion_points: canonicalResults.primaryComparison
+      ? [canonicalResults.primaryComparison.summary]
+      : ["No directional interpretation is available without one resolved primary comparison."],
     limitations: uniqueStrings(resultAnalysis?.limitations || []).slice(0, 6),
-    practical_implications: buildPracticalImplications(input.bundle, datasetSummaries, resultAnalysis)
+    practical_implications: buildPracticalImplications(
+      input.bundle,
+      canonicalResults.primaryComparison,
+      canonicalResults
+    )
   };
 
   const reproducibilityNotes = uniqueStrings([
@@ -654,45 +1018,16 @@ export function experimentArtifactLoader(input: {
   ]).filter(Boolean);
 
   return {
-    protocol_kind: protocolKind,
     method,
     results,
     related_work: relatedWork,
     discussion,
     reproducibility: {
       has_artifact:
-        reproducibilityNotes.length > 0 &&
-        (hasPairedArtifact(latestResults, resultAnalysis) || method.seeds.length > 0 || method.runtime_measurement),
+        Boolean(canonicalResults.artifact) && reproducibilityNotes.length > 0,
       artifact_notes: reproducibilityNotes.slice(0, 6)
     }
   };
-}
-
-function inferExperimentProtocolKind(
-  parsedPlan: Record<string, unknown>,
-  latestResults: Record<string, unknown>,
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  publicRunContext?: unknown
-): ExperimentProtocolKind {
-  const haystack = JSON.stringify({
-    plan: parsedPlan,
-    latest_results_protocol: asRecord(latestResults.protocol),
-    result_metrics: (resultAnalysis?.metric_table || []).slice(0, 120),
-    result_overview: resultAnalysis?.overview,
-    experiment_portfolio: resultAnalysis?.experiment_portfolio,
-    public_run_context: publicRunContext
-  }).toLowerCase();
-  if (
-    /\b(llm|language model|instruction tuning|token budget|vram|gpu)\b/u.test(
-      haystack
-    )
-  ) {
-    return "lm_benchmark";
-  }
-  if (/\b(openml|tabular|outer fold|inner fold|stratified|macro[-_ ]?f1|logistic regression|nested cv)\b/u.test(haystack)) {
-    return "tabular_cv";
-  }
-  return "generic";
 }
 
 function isPositioningRelatedWorkNote(
@@ -712,46 +1047,13 @@ function isPositioningRelatedWorkNote(
 export function methodCompletenessValidator(context: ExperimentArtifactContext): CompletenessReport {
   const present: string[] = [];
   const missing: string[] = [];
-  const isLmBenchmark = context.protocol_kind === "lm_benchmark";
 
   pushFieldStatus(present, missing, context.method.dataset_names.length > 0, "dataset names");
   pushFieldStatus(present, missing, context.method.dataset_sources.length > 0, "dataset source");
   pushFieldStatus(present, missing, context.method.sample_size_notes.length > 0, "#samples");
-  if (isLmBenchmark) {
-    pushFieldStatus(present, missing, context.method.model_names.length > 0, "model/backbone");
-    const hasBenchmarkTaskNames =
-      context.method.dataset_names.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item))
-      || context.results.dataset_summaries.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(`${item.dataset} ${item.label} ${item.summary}`))
-      || context.results.aggregate_summary.some((item) => /benchmark_task_a|benchmark_task_b|benchmark|task|instruction/iu.test(item))
-      || context.results.condition_summaries.some((item) =>
-        typeof item.benchmark_task_a_accuracy === "number" || typeof item.benchmark_task_b_accuracy === "number"
-      );
-    pushFieldStatus(
-      present,
-      missing,
-      hasBenchmarkTaskNames,
-      "benchmark task names"
-    );
-  } else {
-    pushFieldStatus(present, missing, context.method.feature_notes.length > 0, "#features");
-    pushFieldStatus(present, missing, context.method.class_notes.length > 0, "#classes");
-    pushFieldStatus(
-      present,
-      missing,
-      context.method.imbalance_notes.length > 0 || context.method.missingness_notes.length > 0,
-      "imbalance or missingness"
-    );
-  }
+  pushFieldStatus(present, missing, context.method.model_names.length > 0, "declared result series");
   pushFieldStatus(present, missing, context.method.preprocessing_steps.length > 0, "preprocessing steps/order");
-  if (!isLmBenchmark) {
-    pushFieldStatus(present, missing, context.method.fit_scope_notes.length > 0, "fold-internal fit scope");
-    pushFieldStatus(present, missing, context.method.outer_fold_notes.length > 0, "outer folds");
-    pushFieldStatus(present, missing, context.method.inner_fold_notes.length > 0, "inner folds");
-  }
   pushFieldStatus(present, missing, context.method.repeat_notes.length > 0, "repeats");
-  if (!isLmBenchmark) {
-    pushFieldStatus(present, missing, context.method.stratification_notes.length > 0, "stratification");
-  }
   pushFieldStatus(present, missing, context.method.seeds.length > 0, "seeds");
   pushFieldStatus(present, missing, context.method.hyperparameter_notes.length > 0, "hyperparameter search space");
   pushFieldStatus(present, missing, context.method.selection_metrics.length > 0, "selection/reporting metrics");
@@ -768,7 +1070,6 @@ export function methodCompletenessValidator(context: ExperimentArtifactContext):
         : []
   };
 }
-
 export function resultsRichnessValidator(context: ExperimentArtifactContext): CompletenessReport {
   const present: string[] = [];
   const missing: string[] = [];
@@ -876,252 +1177,84 @@ export function statisticalSummaryBuilder(context: ExperimentArtifactContext): s
 }
 
 export function datasetResultTableBuilder(context: ExperimentArtifactContext): PaperManuscriptTable[] {
-  if (context.results.dataset_summaries.length === 0) {
-    return [];
-  }
+  return primaryComparisonTableBuilder(context);
+}
 
-  const rows = context.results.dataset_summaries
-    .slice(0, 6)
-    .map((item) => ({
-      label:
-        item.delta_value !== undefined
-          ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
-          : `${item.dataset}: ${item.main_metric_label}`,
-      value: item.delta_value ?? item.main_metric_value
-    }))
-    .filter((item): item is { label: string; value: number } => typeof item.value === "number");
-
-  if (rows.length === 0) {
+export function primaryComparisonTableBuilder(context: ExperimentArtifactContext): PaperManuscriptTable[] {
+  const comparison = context.results.primary_comparison;
+  if (!comparison) {
     return [];
   }
 
   return [
     {
-      caption: "Dataset-level numeric comparison retained in the main paper to anchor the central empirical story conservatively.",
-      rows
+      caption: `Declared primary comparison for ${comparison.metric_label} (${humanizeMetricDirection(comparison.metric_direction)}${comparison.metric_unit ? `; unit: ${comparison.metric_unit}` : ""}).`,
+      rows: [
+        buildPrimaryComparisonVisualRow(comparison, "subject"),
+        buildPrimaryComparisonVisualRow(comparison, "reference"),
+        {
+          label: "Subject-minus-reference difference",
+          value: comparison.delta,
+          comparison_id: comparison.comparison_id,
+          metric_id: comparison.metric_id,
+          comparison_side: "difference"
+        }
+      ],
+      source_refs: buildArtifactSourceRefs([
+        `result_analysis.results_artifact.comparison:${comparison.comparison_id}`,
+        `result_analysis.results_plan.primary_comparison_id:${comparison.comparison_id}`
+      ])
     }
   ];
 }
 
-export function conditionResultTableBuilder(context: ExperimentArtifactContext): PaperManuscriptTable[] {
-  const rows = context.results.condition_summaries
-    .filter((item) => typeof item.average_accuracy_mean === "number")
-    .slice(0, 8)
-    .map((item) => ({
-      label: buildConditionTableLabel(item),
-      value: item.average_accuracy_mean as number,
-      ...(typeof item.condition_parameter_x === "number" ? { condition_parameter_x: item.condition_parameter_x } : {}),
-      ...(typeof item.condition_parameter_y === "number" ? { condition_parameter_y: item.condition_parameter_y } : {}),
-      ...(typeof item.average_accuracy_mean === "number" ? { average_accuracy: item.average_accuracy_mean } : {}),
-      ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
-        ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
-        : {}),
-      ...(typeof item.benchmark_task_a_accuracy === "number" ? { benchmark_task_a_accuracy: item.benchmark_task_a_accuracy } : {}),
-      ...(typeof item.benchmark_task_b_accuracy === "number" ? { benchmark_task_b_accuracy: item.benchmark_task_b_accuracy } : {}),
-      ...(typeof item.train_loss === "number" ? { train_loss: item.train_loss } : {}),
-      ...(typeof item.runtime_seconds === "number" ? { runtime_seconds: item.runtime_seconds } : {}),
-      ...(typeof item.peak_memory_mb === "number" ? { peak_memory_mb: item.peak_memory_mb } : {}),
-      ...(item.is_baseline ? { is_baseline: true } : {})
-    }));
+function buildPrimaryComparisonVisualRow(
+  comparison: PrimaryComparisonSummary,
+  side: "subject" | "reference"
+): PaperManuscriptVisualRow {
+  const observation = comparison[side];
+  return {
+    label: `${observation.series_label} (${observation.series_role} role, ${side})`,
+    value: observation.value,
+    comparison_id: comparison.comparison_id,
+    observation_id: observation.observation_id,
+    metric_id: observation.metric_id,
+    series_id: observation.series_id,
+    series_role: observation.series_role,
+    comparison_side: side
+  };
+}
 
-  if (rows.length < 2) {
-    return [];
-  }
-
-  return [
-    {
-      caption: "Condition-level mean accuracy across the executed condition-parameter grid; labels identify the locked baseline row.",
-      rows
-    }
-  ];
+function humanizeMetricDirection(direction: ResultsTableDirection): string {
+  return direction === "higher_better" ? "higher values preferred" : "lower values preferred";
 }
 
 export function figureSelectorAndCaptionWriter(context: ExperimentArtifactContext): PaperManuscriptFigure[] {
-  if (context.results.dataset_summaries.length === 0) {
-    return [];
-  }
-  const bars = context.results.dataset_summaries
-    .slice(0, 5)
-    .map((item) => ({
-      label:
-        item.delta_value !== undefined
-          ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
-          : `${item.dataset}: ${item.main_metric_label}`,
-      value: item.delta_value ?? item.main_metric_value
-    }))
-    .filter((item): item is { label: string; value: number } => typeof item.value === "number");
-
-  if (bars.length === 0) {
-    return [];
-  }
-
-  const caption = sanitizeVisualCaption(
-    context.results.figure_captions[0],
-    "Trend-oriented outcome summary retained in the main paper when it adds a distinct visual pattern beyond the table."
-  );
-
-  if (!visualCaptionHasDistinctRole(caption) || !barsShowDistinctPattern(bars)) {
-    return [];
-  }
-
-  return [{ caption, bars }];
+  return primaryComparisonFigureBuilder(context);
 }
 
-export function conditionFigureSelectorAndCaptionWriter(context: ExperimentArtifactContext): PaperManuscriptFigure[] {
-  const accuracySurfaceBars = context.results.condition_summaries
-    .filter((item) => typeof item.average_accuracy_mean === "number")
-    .slice(0, 16)
-    .map((item) => ({
-      label: buildConditionTableLabel(item),
-      value: item.average_accuracy_mean as number,
-      ...(typeof item.condition_parameter_x === "number" ? { condition_parameter_x: item.condition_parameter_x } : {}),
-      ...(typeof item.condition_parameter_y === "number" ? { condition_parameter_y: item.condition_parameter_y } : {}),
-      ...(typeof item.accuracy_delta_vs_baseline_mean === "number"
-        ? { accuracy_delta_vs_baseline: item.accuracy_delta_vs_baseline_mean }
-        : {}),
-      ...(item.is_baseline ? { is_baseline: true } : {})
-    }));
-  if (accuracySurfaceBars.length >= 4 && conditionGridRowsShowPaperFigureValue(accuracySurfaceBars)) {
-    return [
-      {
-        caption: "Condition-level average accuracy across the executed condition-parameter grid; lines separate condition-parameter settings and mark the locked baseline.",
-        bars: accuracySurfaceBars
-      }
-    ];
-  }
-
-  const bars = context.results.condition_summaries
-    .filter((item) => typeof item.accuracy_delta_vs_baseline_mean === "number")
-    .slice(0, 8)
-    .map((item) => ({
-      label: item.label,
-      value: item.accuracy_delta_vs_baseline_mean as number
-    }));
-
-  const nonZeroBars = bars.filter((bar) => Math.abs(bar.value) >= 0.0005);
-  if (nonZeroBars.length <= 1) {
-    const baseline = context.results.condition_summaries.find((item) => item.is_baseline);
-    const best = context.results.condition_summaries
-      .filter((item) => !item.is_baseline && typeof item.accuracy_delta_vs_baseline_mean === "number")
-      .sort((left, right) => (right.accuracy_delta_vs_baseline_mean || 0) - (left.accuracy_delta_vs_baseline_mean || 0))[0];
-    const taskBars = [
-      baseline
-      && best
-      && typeof baseline.benchmark_task_a_accuracy === "number"
-      && typeof best.benchmark_task_a_accuracy === "number"
-        ? {
-            label: "Benchmark Task A task accuracy delta",
-            value: Number((best.benchmark_task_a_accuracy - baseline.benchmark_task_a_accuracy).toFixed(6))
-          }
-        : undefined,
-      baseline
-      && best
-      && typeof baseline.benchmark_task_b_accuracy === "number"
-      && typeof best.benchmark_task_b_accuracy === "number"
-        ? {
-            label: "Benchmark Task B task accuracy delta",
-            value: Number((best.benchmark_task_b_accuracy - baseline.benchmark_task_b_accuracy).toFixed(6))
-          }
-        : undefined
-    ].filter((item): item is { label: string; value: number } => Boolean(item));
-    if (taskBars.length >= 2 && taskBars.some((bar) => Math.abs(bar.value) >= 0.0005)) {
-      return [
-        {
-          caption: "Task-level delta split for the leading condition; bars show how each benchmark task contributes to the average-accuracy gain.",
-          bars: taskBars
-        }
-      ];
-    }
+export function primaryComparisonFigureBuilder(context: ExperimentArtifactContext): PaperManuscriptFigure[] {
+  const comparison = context.results.primary_comparison;
+  if (!comparison) {
     return [];
   }
-  if (!barsShowDistinctPattern(bars)) {
-    return [];
-  }
-
   return [
     {
-      caption: "Condition-level delta-vs-baseline pattern across the executed condition-parameter grid; the table reports the complementary mean accuracy surface.",
-      bars
+      caption: `Observations linked by the declared primary comparison for ${comparison.metric_label}; ${humanizeMetricDirection(comparison.metric_direction)}.`,
+      bars: [
+        buildPrimaryComparisonVisualRow(comparison, "subject"),
+        buildPrimaryComparisonVisualRow(comparison, "reference")
+      ],
+      source_refs: buildArtifactSourceRefs([
+        `result_analysis.results_artifact.comparison:${comparison.comparison_id}`,
+        `result_analysis.results_plan.primary_comparison_id:${comparison.comparison_id}`
+      ])
     }
   ];
-}
-
-function buildConditionTableLabel(item: ConditionResultSummary): string {
-  const label = publicConditionDisplayLabel(item);
-  const details = [
-    typeof item.average_accuracy_ci95 === "number"
-      ? `mean CI95 +/- ${formatNumber(item.average_accuracy_ci95)}`
-      : undefined,
-    typeof item.completed_seed_count === "number"
-      ? `n=${formatNumber(item.completed_seed_count)}`
-      : undefined
-  ].filter(Boolean);
-  return details.length > 0 ? `${label} (${details.join("; ")})` : label;
-}
-
-function publicConditionDisplayLabel(item: ConditionResultSummary): string {
-  const label = item.label || item.condition || "condition";
-  if (item.is_baseline || /\bbaseline\b/iu.test(label)) {
-    return "locked comparison row";
-  }
-  if (typeof item.condition_parameter_x === "number" || typeof item.condition_parameter_y === "number") {
-    const parts = [
-      typeof item.condition_parameter_x === "number" ? `parameter x=${formatNumber(item.condition_parameter_x)}` : undefined,
-      typeof item.condition_parameter_y === "number" ? `parameter y=${formatNumber(item.condition_parameter_y)}` : undefined
-    ].filter(Boolean);
-    return `candidate condition ${stableConditionLabelSuffix(label)} (${parts.join(", ")})`;
-  }
-  if (/\b(?:parameter[_\s-]*x|parameter[_\s-]*y|factor\s*[xy])\b[^.!?]{0,80}\b(?:parameter[_\s-]*x|parameter[_\s-]*y|factor\s*[xy])\b|parameter[_-]?[xy][_-]\d/iu.test(label)) {
-    return `candidate condition ${stableConditionLabelSuffix(label)}`;
-  }
-  return label;
-}
-
-function stableConditionLabelSuffix(label: string): string {
-  const normalized = label.toLowerCase();
-  let hash = 0;
-  for (let index = 0; index < normalized.length; index += 1) {
-    hash = (hash * 31 + normalized.charCodeAt(index)) % 26;
-  }
-  return String.fromCharCode(97 + hash);
 }
 
 function visualCaptionHasDistinctRole(caption: string): boolean {
   return /\b(trend|distribution|trade-?off|trajectory|pattern|heterogeneity|variation)\b/iu.test(caption);
-}
-
-function barsShowDistinctPattern(bars: Array<{ label: string; value: number }>): boolean {
-  const roundedValues = [...new Set(bars.map((bar) => Math.round(bar.value * 1000) / 1000))];
-  if (bars.length >= 3 && roundedValues.length >= 3) {
-    return true;
-  }
-  const zeroCount = bars.filter((bar) => Math.abs(bar.value) < 0.0005).length;
-  const nonZeroCount = bars.length - zeroCount;
-  return bars.length >= 3 && zeroCount > 0 && nonZeroCount > 0;
-}
-
-function conditionGridRowsShowPaperFigureValue(
-  bars: Array<{ label: string; value: number; condition_parameter_x?: number; condition_parameter_y?: number }>
-): boolean {
-  const parameterXs = new Set<number>();
-  const parameterYs = new Set<number>();
-  const values = new Set<number>();
-  for (const bar of bars) {
-    const parameterX = typeof bar.condition_parameter_x === "number"
-      ? bar.condition_parameter_x
-      : Number(bar.label.match(/\bparameter[_\s-]*x\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
-    const parameterY = typeof bar.condition_parameter_y === "number"
-      ? bar.condition_parameter_y
-      : Number(bar.label.match(/\bparameter[_\s-]*y\s*[=:]?\s*([0-9]+(?:\.[0-9]+)?)/iu)?.[1]);
-    if (Number.isFinite(parameterX)) {
-      parameterXs.add(parameterX);
-    }
-    if (Number.isFinite(parameterY)) {
-      parameterYs.add(parameterY);
-    }
-    values.add(Math.round(bar.value * 1000) / 1000);
-  }
-  return (parameterXs.size >= 2 || parameterYs.size >= 2) && values.size >= 2;
 }
 
 function hasInternalCaptionToken(caption: string): boolean {
@@ -1137,12 +1270,7 @@ function sanitizeVisualCaption(caption: string | undefined, fallback: string): s
   if (!normalized || hasInternalCaptionToken(normalized)) {
     return fallback;
   }
-  return normalized
-    .replace(/\bthe leading condition\s*\([^)]*\)/giu, "a tied leading condition")
-    .replace(/\bregistered baseline\s*\([^)]*\)/giu, "registered baseline")
-    .replace(/\bfor the leading condition\s*;/giu, "for tied leading conditions;")
-    .replace(/\bfor the leading condition\b/giu, "for tied leading conditions")
-    .replace(/\bthe leading condition\b/giu, "the tied leading set");
+  return normalized;
 }
 
 function sanitizeCandidateTables(tables: PaperManuscriptTable[] | undefined): PaperManuscriptTable[] | undefined {
@@ -1162,38 +1290,28 @@ function makeMainTablesSelfContained(
   if (!tables?.length) {
     return tables;
   }
-  const baseline = context.results.condition_summaries.find((condition) => condition.is_baseline);
-  const nonBaseline = context.results.condition_summaries.filter((condition) => !condition.is_baseline);
-  const best =
-    [...nonBaseline]
-      .filter((condition) => typeof condition.average_accuracy_mean === "number")
-      .sort((left, right) => (right.average_accuracy_mean || 0) - (left.average_accuracy_mean || 0))[0]
-    || [...nonBaseline]
-      .filter((condition) => typeof condition.accuracy_delta_vs_baseline_mean === "number")
-      .sort((left, right) => (right.accuracy_delta_vs_baseline_mean || 0) - (left.accuracy_delta_vs_baseline_mean || 0))[0];
+  const primaryComparison = context.results.primary_comparison;
   return tables.map((table) => {
-    let changedRows = false;
     const rows = dedupeReaderFacingTableRows(table.rows.map((row) => {
-      const label = cleanString(row.label);
-      if (baseline?.label && /^baseline average accuracy$/iu.test(label)) {
-        changedRows = true;
-        return { ...row, label: `Baseline average accuracy (${baseline.label})` };
+      if (!primaryComparison || row.comparison_id !== primaryComparison.comparison_id) {
+        return row;
       }
-      if (best?.label && /^best surfaced average accuracy$/iu.test(label)) {
-        changedRows = true;
-        return { ...row, label: `Best surfaced average accuracy (${best.label})` };
+      if (row.observation_id === primaryComparison.subject.observation_id) {
+        return {
+          ...row,
+          label: `${primaryComparison.subject.series_label} (${primaryComparison.subject.series_role} role, subject)`
+        };
       }
-      if (best?.label && /^best surfaced accuracy delta vs baseline$/iu.test(label)) {
-        changedRows = true;
-        return { ...row, label: `Best surfaced accuracy delta vs baseline (${best.label} vs ${baseline?.label || "baseline"})` };
+      if (row.observation_id === primaryComparison.reference.observation_id) {
+        return {
+          ...row,
+          label: `${primaryComparison.reference.series_label} (baseline role, reference)`
+        };
       }
       return row;
     }));
     return {
       ...table,
-      caption: !changedRows || /full (?:[a-z]+-)?condition grid|condition-by-condition/iu.test(table.caption)
-        ? table.caption
-        : `${table.caption} Baseline and best-condition labels are included in-row; unavailable full-grid cells remain a stated limitation.`,
       rows
     };
   });
@@ -1205,11 +1323,12 @@ function dedupeReaderFacingTableRows(rows: PaperManuscriptVisualRow[]): PaperMan
   for (const row of rows) {
     const label = cleanString(row.label);
     const valueKey = typeof row.value === "number" ? String(Number(row.value.toFixed(6))) : cleanString(String(row.value));
-    if (/accuracy delta vs baseline/iu.test(label)) {
-      if (seenDeltaValues.has(valueKey)) {
+    if (row.comparison_side === "difference" || /^subject-minus-reference difference$/iu.test(label)) {
+      const differenceKey = `${row.comparison_id || ""}:${row.metric_id || ""}:${valueKey}`;
+      if (seenDeltaValues.has(differenceKey)) {
         continue;
       }
-      seenDeltaValues.add(valueKey);
+      seenDeltaValues.add(differenceKey);
     }
     compact.push(row);
   }
@@ -1290,16 +1409,29 @@ function attachFallbackSourceRefsToFigures(
   }));
 }
 
-function hasExplicitAuthoredFigureMarker(
-  figures: PaperManuscriptFigure[] | undefined
-): boolean {
-  return Boolean(
-    figures?.some((figure) =>
-      (figure.source_refs || []).some(
-        (ref) => ref.kind === "artifact" && ref.id === AUTHORED_MAIN_FIGURE_SOURCE_REF_ID
-      )
-    )
+function filterExplicitAuthoredTables(
+  tables: PaperManuscriptTable[] | undefined
+): PaperManuscriptTable[] | undefined {
+  const authored = tables?.filter((table) =>
+    hasArtifactSourceRef(table.source_refs, AUTHORED_MAIN_TABLE_SOURCE_REF_ID)
   );
+  return authored?.length ? authored : undefined;
+}
+
+function filterExplicitAuthoredFigures(
+  figures: PaperManuscriptFigure[] | undefined
+): PaperManuscriptFigure[] | undefined {
+  const authored = figures?.filter((figure) =>
+    hasArtifactSourceRef(figure.source_refs, AUTHORED_MAIN_FIGURE_SOURCE_REF_ID)
+  );
+  return authored?.length ? authored : undefined;
+}
+
+function hasArtifactSourceRef(
+  refs: PaperSourceRef[] | undefined,
+  id: string
+): boolean {
+  return Boolean(refs?.some((ref) => ref.kind === "artifact" && ref.id === id));
 }
 
 function dropRedundantFiguresAgainstTables(
@@ -1317,49 +1449,16 @@ function dropRedundantFiguresAgainstTables(
     return !tables.some((table) => {
       const tableLabels = new Set(table.rows.map((row) => normalizeVisualComparisonLabel(row.label)));
       const overlap = computeSetOverlap(tableLabels, figureLabels);
-      return overlap >= 0.75 && (!visualCaptionHasDistinctRole(figure.caption) || /table|complementary|same condition/iu.test(figure.caption));
+      return overlap >= 0.75 && (!visualCaptionHasDistinctRole(figure.caption) || /table|complementary|same comparison/iu.test(figure.caption));
     });
   });
 }
 
-function dropTaskDeltaFiguresRedundantWithTables(
-  tables: PaperManuscriptTable[] | undefined,
-  figures: PaperManuscriptFigure[] | undefined
-): PaperManuscriptFigure[] | undefined {
-  if (!tables?.length || !figures?.length) {
-    return figures;
-  }
-  const tableText = tables
-    .flatMap((table) => [table.caption, ...table.rows.map((row) => row.label)])
-    .map(cleanString)
-    .join(" ");
-  const hasBaselineBestTaskTable =
-    /\bbaseline\b/iu.test(tableText)
-    && /\b(?:highest-scoring|best(?:-condition)?)\b/iu.test(tableText)
-    && /\bBenchmark Task A\b/iu.test(tableText)
-    && /\bBenchmark Task B\b/iu.test(tableText);
-  if (!hasBaselineBestTaskTable) {
-    return figures;
-  }
-  const retained = figures.filter((figure) => {
-    const labels = figure.bars.map((row) => cleanString(row.label)).join(" ");
-    const caption = cleanString(figure.caption);
-    const isBestVsBaselineDeltaFigure =
-      /\bdelta\b/iu.test(labels)
-      && /\b(?:Benchmark Task A|Benchmark Task B|Average Accuracy)\b/iu.test(labels)
-      && (/\bbest\b/iu.test(caption) || /\bbaseline\b/iu.test(caption) || /\brelative to the baseline\b/iu.test(caption));
-    return !isBestVsBaselineDeltaFigure;
-  });
-  return retained.length > 0 ? retained : undefined;
-}
-
 function isNoisyMixedMetricFigure(figure: PaperManuscriptFigure): boolean {
-  const labels = figure.bars.map((row) => cleanString(row.label)).join(" ");
-  const hasAccuracy = /accuracy|delta|baseline/iu.test(labels);
-  const hasRawResource =
-    /memory|cuda|vram|bytes|runtime|seconds/iu.test(labels)
-    && figure.bars.some((row) => Number.isFinite(row.value) && Math.abs(row.value) > 10_000);
-  return hasAccuracy && hasRawResource;
+  const metricIds = new Set(
+    figure.bars.map((row) => cleanString(row.metric_id)).filter(Boolean)
+  );
+  return metricIds.size > 1;
 }
 
 function normalizeVisualComparisonLabel(label: string): string {
@@ -1567,19 +1666,12 @@ export function appendixBuilder(input: {
         heading: reference.target_heading,
         paragraphs: input.context.results.dataset_summaries.map((item) => item.summary).slice(0, 6)
       });
-      const rows = input.context.results.dataset_summaries
-        .map((item) => ({
-          label:
-            item.delta_value !== undefined
-              ? `${item.dataset}: ${item.main_metric_label} ${item.delta_label || "delta"}`
-              : `${item.dataset}: ${item.main_metric_label}`,
-          value: item.delta_value ?? item.main_metric_value
-        }))
-        .filter((item): item is { label: string; value: number } => typeof item.value === "number");
-      if (rows.length > 0) {
+      const primaryTable = primaryComparisonTableBuilder(input.context)[0];
+      if (primaryTable) {
         tables.push({
-          caption: "Extended dataset-level outcomes retained outside the main paper.",
-          rows: rows.slice(0, 8)
+          ...primaryTable,
+          caption: "Extended declared primary comparison retained outside the main paper.",
+          rows: primaryTable.rows.map((row) => ({ ...row }))
         });
       }
       continue;
@@ -2075,37 +2167,10 @@ function lintNumericConsistency(input: {
     if (isObjectiveThresholdFact(observedFact)) {
       continue;
     }
-    if (isUncertaintyIntervalMetricFact(observedFact)) {
-      continue;
-    }
-    if (isConditionClusterStatement(observedFact.raw_text)) {
-      continue;
-    }
-    if (isRuntimeBudgetFact(observedFact)) {
-      continue;
-    }
-    if (isAccuracyScoreValueMiskeyedAsDelta(observedFact)) {
-      continue;
-    }
-    if (isReaderFacingFigureAccuracyFact(observedFact)) {
-      continue;
-    }
-    if (isAnonymousPairedAccuracyStatement(observedFact)) {
-      continue;
-    }
     const comparableFacts = expectedFacts.filter(
-      (candidate) =>
-        areComparableNumericFacts(observedFact, candidate)
-        && areStructuredMetricRolesCompatible(observedFact, candidate)
-        && !(observedFact.metric_key === "runtime_seconds" && isRuntimeBudgetFact(candidate))
+      (candidate) => areComparableNumericFacts(observedFact, candidate)
     );
     if (comparableFacts.length === 0) {
-      if (isCitationSupportedIntervalBound(observedFact)) {
-        continue;
-      }
-      if (hasLooseEquivalentMetricFact(observedFact, expectedFacts)) {
-        continue;
-      }
       if (shouldWarnOnUnverifiableFact(observedFact.source)) {
         issues.push({
           kind: "numeric_unverifiable",
@@ -2120,18 +2185,6 @@ function lintNumericConsistency(input: {
       continue;
     }
     if (comparableFacts.some((candidate) => areFactValuesEquivalent(observedFact, candidate))) {
-      continue;
-    }
-    if (isConditionSpecificAccuracyStatement(observedFact) && hasLooseEquivalentMetricFact(observedFact, expectedFacts)) {
-      continue;
-    }
-    if (isBenignFromToStructuredComparison(observedFact, comparableFacts)) {
-      continue;
-    }
-    if (isBenignBaselineComparatorStructuredComparison(observedFact, comparableFacts)) {
-      continue;
-    }
-    if (isDisplayedBaselineComparatorTableValue(observedFact)) {
       continue;
     }
     const appendixMatch = appendixFacts.find(
@@ -2152,276 +2205,19 @@ function lintNumericConsistency(input: {
       });
       continue;
     }
-    // When the observed and expected values are on vastly different scales,
-    // it's likely a metric-key misassignment rather than a real contradiction.
-    const maxVal = Math.max(Math.abs(observedFact.value), Math.abs(comparableFacts[0]?.value ?? 0));
-    const delta = Math.abs(observedFact.value - (comparableFacts[0]?.value ?? 0));
-    const largeDelta = maxVal > 0 && (delta / maxVal) > 0.5;
-    // Also check if the observed value matches a DIFFERENT metric in the expected
-    // facts — if so, the fact extractor likely assigned the wrong metric_key.
-    const crossMetricMatch = expectedFacts.some(
-      (candidate) =>
-        candidate.metric_key !== observedFact.metric_key
-        && areFactValuesEquivalent(observedFact, candidate)
-    );
-    // If the observed value is far from ALL comparable facts (not just the first),
-    // it's more likely a scope/key mismatch than a transcription error.
-    // A real typo would be close to at least one expected value.
-    const minRelDelta = comparableFacts.reduce((best, cf) => {
-      const m = Math.max(Math.abs(observedFact.normalized_value), Math.abs(cf.normalized_value));
-      return m > 0 ? Math.min(best, Math.abs(observedFact.normalized_value - cf.normalized_value) / m) : best;
-    }, 1.0);
-    const farFromAll = minRelDelta > 0.15;
-    const likelyMismatch = largeDelta || crossMetricMatch || farFromAll;
     issues.push({
       kind: "numeric_inconsistency",
-      severity: likelyMismatch ? "warning" : "error",
-      finding: likelyMismatch ? "unverifiable" : "contradiction",
+      severity: "error",
+      finding: "contradiction",
       message: `${observedFact.location} cites ${formatNumber(observedFact.value)}, but the comparable structured results support ${formatNumber(comparableFacts[0]?.normalized_value)} for ${observedFact.metric_key || "that metric"}.`,
       involved_sections: [observedFact.location],
       normalized_facts: [observedFact, ...comparableFacts.slice(0, 2)],
-      reason: likelyMismatch
-        ? "values differ by more than 50%, suggesting a metric-key mismatch rather than a transcription error"
-        : "comparable structured numeric facts disagree with the manuscript claim",
+      reason: "comparable structured numeric facts disagree with the manuscript claim",
       evidence: comparableFacts.slice(0, 2).map((fact) => `${fact.location}: ${fact.raw_text}`)
     });
   }
 
   return dedupeConsistencyIssues(issues);
-}
-
-function isConditionSpecificAccuracyStatement(fact: NormalizedNumericFact): boolean {
-  return fact.fact_kind === "metric"
-    && fact.metric_key === "accuracy"
-    && fact.unit === "score"
-    && /\b(?:locked baseline|baseline condition|best observed|leading observed|candidate condition)\b/iu.test(fact.raw_text);
-}
-
-function areStructuredMetricRolesCompatible(
-  observedFact: NormalizedNumericFact,
-  expectedFact: NormalizedNumericFact
-): boolean {
-  if (observedFact.fact_kind !== "metric" || expectedFact.fact_kind !== "metric") {
-    return true;
-  }
-  if (observedFact.metric_key !== "accuracy" || expectedFact.metric_key !== "accuracy") {
-    return true;
-  }
-  const observedRoleText = cleanString([
-    observedFact.raw_text,
-    observedFact.metric_label || "",
-    observedFact.comparison_target || ""
-  ].join(" "));
-  const expectedRoleText = cleanString([
-    expectedFact.raw_text,
-    expectedFact.metric_label || "",
-    expectedFact.comparison_target || ""
-  ].join(" "));
-  const baselineRolePattern = /\b(?:baseline|reference|locked\s+trained\s+baseline|locked\s+baseline|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
-  const observedBaseline = baselineRolePattern.test(observedRoleText);
-  const expectedBaseline = baselineRolePattern.test(expectedRoleText);
-  const observedComparator = /\b(?:best|best_condition|leading|candidate|comparator)\b/iu.test(observedRoleText);
-  const expectedComparator = /\b(?:best|best_condition|leading|candidate|comparator)\b/iu.test(expectedRoleText);
-  if (observedBaseline && !expectedBaseline && !observedComparator) {
-    return false;
-  }
-  if (observedComparator && !expectedComparator && !observedBaseline) {
-    return false;
-  }
-  if (observedBaseline && expectedComparator && !observedComparator) {
-    return false;
-  }
-  if (observedComparator && expectedBaseline && !observedBaseline) {
-    return false;
-  }
-  return true;
-}
-
-function hasLooseEquivalentMetricFact(
-  observedFact: NormalizedNumericFact,
-  expectedFacts: NormalizedNumericFact[]
-): boolean {
-  if (observedFact.fact_kind !== "metric" || !observedFact.metric_key) {
-    return false;
-  }
-  return expectedFacts.some(
-    (candidate) =>
-      candidate.fact_kind === "metric"
-      && areMetricKeysLooselyEquivalent(observedFact, candidate)
-      && (candidate.unit || "score") === (observedFact.unit || "score")
-      && areFactValuesEquivalent(observedFact, candidate)
-  );
-}
-
-function areMetricKeysLooselyEquivalent(
-  observedFact: NormalizedNumericFact,
-  expectedFact: NormalizedNumericFact
-): boolean {
-  const observedKey = observedFact.metric_key;
-  const expectedKey = expectedFact.metric_key;
-  if (!observedKey || !expectedKey) {
-    return false;
-  }
-  if (observedKey === expectedKey) {
-    return true;
-  }
-  const observedBase = observedFact.base_metric_key || inferMetricSemantics(observedKey).baseMetricKey;
-  const expectedBase = expectedFact.base_metric_key || inferMetricSemantics(expectedKey).baseMetricKey;
-  if (observedBase !== expectedBase) {
-    return false;
-  }
-  const observedDelta = observedFact.unit === "delta" || /\bdelta\b/iu.test(observedKey);
-  const expectedDelta = expectedFact.unit === "delta" || /\bdelta\b/iu.test(expectedKey);
-  return observedDelta && expectedDelta;
-}
-
-function isBenignFromToStructuredComparison(
-  observedFact: NormalizedNumericFact,
-  comparableFacts: NormalizedNumericFact[]
-): boolean {
-  if (
-    observedFact.fact_kind !== "metric"
-    || observedFact.unit !== "score"
-    || (observedFact.metric_key !== "accuracy" && observedFact.metric_key !== "train_loss")
-  ) {
-    return false;
-  }
-  const hasFromToFragment =
-    (observedFact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(observedFact.raw_text))
-    || (observedFact.metric_key === "train_loss" && isFromToTrainLossFragment(observedFact.raw_text));
-  if (!hasFromToFragment || !rawTextContainsApproxValue(observedFact.raw_text, observedFact.normalized_value, observedFact.unit)) {
-    return false;
-  }
-  return comparableFacts.some((candidate) =>
-    candidate.metric_key === observedFact.metric_key
-    && candidate.unit === observedFact.unit
-    && rawTextContainsApproxValue(observedFact.raw_text, candidate.normalized_value, observedFact.unit)
-  );
-}
-
-function isBenignBaselineComparatorStructuredComparison(
-  observedFact: NormalizedNumericFact,
-  comparableFacts: NormalizedNumericFact[]
-): boolean {
-  if (
-    observedFact.fact_kind !== "metric"
-    || observedFact.metric_key !== "accuracy"
-    || observedFact.unit !== "score"
-  ) {
-    return false;
-  }
-  const cleaned = cleanString(observedFact.raw_text);
-  const hasPairedScoreSyntax =
-    /\b(?:while|versus|vs\.?|compared with|from|to)\b/iu.test(cleaned)
-    || (
-      /\band\b/iu.test(cleaned)
-      && /\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|locked\s+delta-reference)\b/iu.test(cleaned)
-      && /\b(?:candidate|leading|best|comparator|displayed\s+condition|leading\s+displayed)\b/iu.test(cleaned)
-    )
-    || (
-      /\band\b/iu.test(cleaned)
-      && /\b(?:condition|cell|row)\b/iu.test(cleaned)
-      && /\b(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
-      && (cleaned.match(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu) || []).length >= 2
-    );
-  if (
-    hasPairedScoreSyntax
-    && rawTextContainsApproxValue(cleaned, observedFact.normalized_value, observedFact.unit)
-    && comparableFacts.some((candidate) =>
-      candidate.metric_key === "accuracy"
-      && candidate.unit === "score"
-      && rawTextContainsApproxValue(cleaned, candidate.normalized_value, observedFact.unit)
-    )
-  ) {
-    return true;
-  }
-  if (
-    !/\b(?:baseline|reference|displayed reference|locked baseline)\b/iu.test(cleaned)
-    || !/\b(?:candidate|leading|comparator|best|displayed leading)\b/iu.test(cleaned)
-    || !/\b(?:while|versus|vs\.?|compared with|from|to|delta|gain)\b/iu.test(cleaned)
-  ) {
-    return false;
-  }
-  if (!rawTextContainsApproxValue(cleaned, observedFact.normalized_value, observedFact.unit)) {
-    return false;
-  }
-  return comparableFacts.some((candidate) =>
-    candidate.metric_key === "accuracy"
-    && candidate.unit === "score"
-    && rawTextContainsApproxValue(cleaned, candidate.normalized_value, observedFact.unit)
-  );
-}
-
-function isDisplayedBaselineComparatorTableValue(fact: NormalizedNumericFact): boolean {
-  if (
-    fact.fact_kind !== "metric"
-    || fact.metric_key !== "accuracy"
-    || fact.unit !== "score"
-    || fact.normalized_value < 0
-    || fact.normalized_value > 1
-  ) {
-    return false;
-  }
-  const cleaned = cleanString(fact.raw_text);
-  return /\bboth\s+(?:rows?|conditions?|cells?)\s+(?:display|show|report|have)\s+(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
-    || (
-      /\b(?:available|reported|main)\s+table\b/iu.test(cleaned)
-      && /\b(?:registered\s+baseline|locked\s+(?:comparison|delta-reference)|recorded\s+comparison)\b/iu.test(cleaned)
-      && /\b(?:display|show|report)\s+(?:mean\s+|average\s+)?accuracy\b/iu.test(cleaned)
-    );
-}
-
-function isRuntimeBudgetFact(fact: NormalizedNumericFact): boolean {
-  return fact.fact_kind === "metric"
-    && fact.metric_key === "runtime_seconds"
-    && /\b(?:timeout|budget|time\s+budget|runtime\s+limit)\b/iu.test(fact.raw_text);
-}
-
-function isReaderFacingFigureAccuracyFact(fact: NormalizedNumericFact): boolean {
-  return fact.fact_kind === "metric"
-    && fact.source === "figure"
-    && fact.metric_key === "accuracy"
-    && fact.unit === "score";
-}
-
-function isAnonymousPairedAccuracyStatement(fact: NormalizedNumericFact): boolean {
-  return fact.fact_kind === "metric"
-    && fact.metric_key === "accuracy"
-    && fact.unit === "score"
-    && /\b(?:mean\s+|average\s+)?accuracy\s+values?\b[^!?]{0,80}\b\d+(?:,\d{3})*(?:\.\d+)?\s+(?:and|versus|vs\.?)\s+\d+(?:,\d{3})*(?:\.\d+)?\b[^!?]{0,60}\brespectively\b/iu.test(fact.raw_text);
-}
-
-function isAccuracyScoreValueMiskeyedAsDelta(fact: NormalizedNumericFact): boolean {
-  if (
-    fact.fact_kind !== "metric"
-    || fact.metric_key !== "accuracy_delta_vs_baseline"
-    || fact.unit !== "delta"
-  ) {
-    return false;
-  }
-  const cleaned = cleanString(fact.raw_text);
-  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
-  const scorePairPatterns = [
-    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,80}\b(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu")
-  ];
-  for (const pattern of scorePairPatterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const scoreValues = match.slice(1, 3)
-        .map((value) => Number(String(value).replace(/,/gu, "")))
-        .filter((value) => Number.isFinite(value));
-      if (scoreValues.some((value) => areApproxEqual(value, fact.normalized_value, "score"))) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function isUncertaintyIntervalMetricFact(fact: NormalizedNumericFact): boolean {
-  return fact.fact_kind === "metric"
-    && /\b(?:95\\?%|ci|confidence intervals?|intervals?)\b|\bspans?\b[^.!?]{0,80}\b(?:to|and)\b/iu.test(fact.raw_text)
-    && /\b(?:accuracy|macro[-\s]?f1|score|loss|metric)\b/iu.test(fact.raw_text);
 }
 
 function lintStrongClaimWording(input: {
@@ -2513,14 +2309,8 @@ function collectExpectedCountFacts(context: ExperimentArtifactContext): Normaliz
       })
     );
   }
-  const completedSeedCounts = uniqueNumbers(
-    context.results.condition_summaries
-      .map((condition) => condition.completed_seed_count)
-      .filter((value): value is number => typeof value === "number" && value > 1)
-  );
-  const completedSeedRepeatCount = completedSeedCounts.length === 1 ? completedSeedCounts[0] : undefined;
   const seedRepeatCount = context.method.seeds.length > 1 ? context.method.seeds.length : undefined;
-  const repeatCount = completedSeedRepeatCount || seedRepeatCount || extractExpectedCountFromNotes(context.method.repeat_notes, "repeat_count");
+  const repeatCount = seedRepeatCount || extractExpectedCountFromNotes(context.method.repeat_notes, "repeat_count");
   if (repeatCount) {
     facts.push(
       buildStructuredNumericFact({
@@ -2621,214 +2411,31 @@ function collectObservedCountFacts(
   ]);
 }
 
-function inferDatasetDeltaMetricKey(
-  item: DatasetResultSummary,
-  mainMetricKey: string | undefined
-): string {
-  const explicitLabel = normalizeMetricIdentifier(item.delta_label || "");
-  if (explicitLabel && explicitLabel.includes("delta")) {
-    return explicitLabel;
-  }
-  const composedLabel = normalizeMetricIdentifier(`${item.main_metric_label} ${item.delta_label || "delta vs logistic regression"}`);
-  if (composedLabel) {
-    return composedLabel;
-  }
-  if (mainMetricKey === "macro_f1") {
-    return "macro_f1_delta_vs_logreg";
-  }
-  return "score_delta_vs_baseline";
-}
-
 function collectExpectedMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
   return dedupeNumericFacts([
     ...context.results.aggregate_metric_facts,
-    ...context.results.confidence_interval_facts,
-    ...collectConditionMetricFacts(context),
-    ...context.results.dataset_summaries.flatMap((item) => {
-      const datasetScope = cleanString(item.dataset) || "unknown";
-      const facts: NormalizedNumericFact[] = [];
-      const mainMetricKey = normalizeMetricIdentifier(item.main_metric_label);
-      const deltaMetricKey = inferDatasetDeltaMetricKey(item, mainMetricKey);
-      if (typeof item.main_metric_value === "number" && mainMetricKey) {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}`,
-            rawText: `${item.main_metric_label} ${formatNumber(item.main_metric_value)}`,
-            value: item.main_metric_value,
-            metricKey: mainMetricKey,
-            metricLabel: item.main_metric_label,
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-          })
-        );
-      }
-      if (typeof item.delta_value === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.delta`,
-            rawText: `${item.delta_label || "delta"} ${formatNumber(item.delta_value)}`,
-            value: item.delta_value,
-            metricKey: deltaMetricKey,
-            metricLabel: item.delta_label || "delta",
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "delta",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-          })
-        );
-      }
-      if (item.ci95) {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.ci.lower`,
-            rawText: `${item.dataset} CI lower ${formatNumber(item.ci95[0])}`,
-            value: item.ci95[0],
-            metricKey: deltaMetricKey,
-            metricLabel: `${item.delta_label || item.main_metric_label} CI lower`,
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "ci_lower",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.repeat_records", "result_analysis.statistical_summary.confidence_intervals"])
-          }),
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.ci.upper`,
-            rawText: `${item.dataset} CI upper ${formatNumber(item.ci95[1])}`,
-            value: item.ci95[1],
-            metricKey: deltaMetricKey,
-            metricLabel: `${item.delta_label || item.main_metric_label} CI upper`,
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "ci_upper",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.repeat_records", "result_analysis.statistical_summary.confidence_intervals"])
-          })
-        );
-      }
-      if (typeof item.pairwise_ranking_agreement === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.pairwise_ranking_agreement`,
-            rawText: `${item.dataset} ranking agreement ${formatNumber(item.pairwise_ranking_agreement)}`,
-            value: item.pairwise_ranking_agreement,
-            metricKey: "pairwise_ranking_agreement",
-            metricLabel: "pairwise ranking agreement",
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-          })
-        );
-      }
-      if (typeof item.winner_consistency === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.winner_consistency`,
-            rawText: `${item.dataset} winner consistency ${formatNumber(item.winner_consistency)}`,
-            value: item.winner_consistency,
-            metricKey: "winner_consistency",
-            metricLabel: "winner consistency",
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-          })
-        );
-      }
-      if (typeof item.runtime_seconds_mean === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.runtime`,
-            rawText: `${item.dataset} runtime ${formatNumber(item.runtime_seconds_mean)}s`,
-            value: item.runtime_seconds_mean,
-            metricKey: "runtime_seconds",
-            metricLabel: "runtime",
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "seconds",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries", "result_analysis.metric_table"])
-          })
-        );
-      }
-      if (typeof item.peak_memory_mb_mean === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.memory`,
-            rawText: `${item.dataset} memory ${formatNumber(item.peak_memory_mb_mean)} MB`,
-            value: item.peak_memory_mb_mean,
-            metricKey: "peak_memory_mb",
-            metricLabel: "peak memory",
-            datasetScope,
-            aggregationLevel: "dataset",
-            unit: "mb",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries", "result_analysis.metric_table"])
-          })
-        );
-      }
-      if (item.heterogeneity_notes.length > 0) {
-        facts.push(
-          ...extractMetricFactsFromText({
-            text: `On ${datasetScope}, ${item.heterogeneity_notes.join(" ")}.`,
-            source: "artifact",
-            location: `artifact.dataset.${datasetScope}.heterogeneity`,
-            context,
-            sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-          })
-        );
-        const rankingAgreement = extractFirstMetricValue(
-          item.heterogeneity_notes,
-          /\branking agreement\s*=\s*(-?\d+(?:\.\d+)?)/iu
-        );
-        if (typeof rankingAgreement === "number") {
-          facts.push(
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.dataset.${datasetScope}.heterogeneity`,
-              rawText: `ranking agreement=${formatNumber(rankingAgreement)}`,
-              value: rankingAgreement,
-              metricKey: "pairwise_ranking_agreement",
-              metricLabel: "pairwise ranking agreement",
-              datasetScope,
-              aggregationLevel: "dataset",
-              unit: "score",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.dataset_summaries"])
-            })
-          );
-        }
-      }
-      return facts;
-    })
+    ...context.results.confidence_interval_facts
   ]);
 }
 
-function collectConfidenceIntervalMetricFacts(resultAnalysis: ResultAnalysisArtifact | undefined): NormalizedNumericFact[] {
-  const confidenceIntervals = resultAnalysis?.statistical_summary?.confidence_intervals || [];
+function collectConfidenceIntervalMetricFacts(
+  resultAnalysis: ResultAnalysisArtifact | undefined,
+  primaryComparison: PrimaryComparisonSummary | undefined
+): NormalizedNumericFact[] {
+  if (!primaryComparison) {
+    return [];
+  }
+  const confidenceIntervals = (resultAnalysis?.statistical_summary?.confidence_intervals || [])
+    .filter((item) => item.metric_key === primaryComparison.metric_id);
   return dedupeNumericFacts(
     confidenceIntervals.flatMap((item) => {
-      const metricKey = normalizeMetricIdentifier(item.metric_key || item.label || "");
+      const metricKey = primaryComparison.metric_id;
       const lower = typeof item.lower === "number" && Number.isFinite(item.lower) ? item.lower : undefined;
       const upper = typeof item.upper === "number" && Number.isFinite(item.upper) ? item.upper : undefined;
-      if (!metricKey || typeof lower !== "number" || typeof upper !== "number") {
+      if (typeof lower !== "number" || typeof upper !== "number") {
         return [];
       }
-      const rawMetricLabel = cleanString(item.label) || cleanString(item.metric_key) || humanizeToken(metricKey);
+      const rawMetricLabel = cleanString(item.label) || primaryComparison.metric_label;
       return [
         buildStructuredNumericFact({
           factKind: "metric",
@@ -2857,216 +2464,6 @@ function collectConfidenceIntervalMetricFacts(resultAnalysis: ResultAnalysisArti
           sourceRefs: buildArtifactSourceRefs(["result_analysis.statistical_summary.confidence_intervals"])
         })
       ];
-    })
-  );
-}
-
-function collectConditionMetricFacts(context: ExperimentArtifactContext): NormalizedNumericFact[] {
-  const baseline = context.results.condition_summaries.find((condition) => condition.is_baseline);
-  return dedupeNumericFacts(
-    context.results.condition_summaries.flatMap((condition) => {
-      const conditionScope = "aggregate";
-      const conditionComparisonTarget = condition.is_baseline ? "baseline" : "candidate";
-      const facts: NormalizedNumericFact[] = [];
-      if (typeof condition.average_accuracy_mean === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}`,
-            rawText: `${condition.label} mean average accuracy ${formatNumber(condition.average_accuracy_mean)}`,
-            value: condition.average_accuracy_mean,
-            metricKey: "accuracy",
-            metricLabel: "mean average accuracy",
-            comparisonTarget: conditionComparisonTarget,
-            datasetScope: conditionScope,
-            aggregationLevel: "repeat",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-        if (typeof condition.average_accuracy_ci95 === "number") {
-          facts.push(
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.average_accuracy_ci95_lower`,
-              rawText: `${condition.label} mean average accuracy lower CI ${formatNumber(condition.average_accuracy_mean - condition.average_accuracy_ci95)}`,
-              value: condition.average_accuracy_mean - condition.average_accuracy_ci95,
-              metricKey: "accuracy",
-              metricLabel: "mean average accuracy lower CI",
-              comparisonTarget: conditionComparisonTarget,
-              datasetScope: conditionScope,
-              aggregationLevel: "repeat",
-              unit: "ci_lower",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-            }),
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.average_accuracy_ci95_upper`,
-              rawText: `${condition.label} mean average accuracy upper CI ${formatNumber(condition.average_accuracy_mean + condition.average_accuracy_ci95)}`,
-              value: condition.average_accuracy_mean + condition.average_accuracy_ci95,
-              metricKey: "accuracy",
-              metricLabel: "mean average accuracy upper CI",
-              comparisonTarget: conditionComparisonTarget,
-              datasetScope: conditionScope,
-              aggregationLevel: "repeat",
-              unit: "ci_upper",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-            })
-          );
-        }
-      }
-      if (typeof condition.accuracy_delta_vs_baseline_mean === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.delta`,
-            rawText: `${condition.label} accuracy delta vs baseline ${formatNumber(condition.accuracy_delta_vs_baseline_mean)}`,
-            value: condition.accuracy_delta_vs_baseline_mean,
-            metricKey: "accuracy_delta_vs_baseline",
-            metricLabel: "accuracy delta vs baseline",
-            datasetScope: conditionScope,
-            aggregationLevel: "repeat",
-            unit: "delta",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-        if (typeof condition.accuracy_delta_vs_baseline_ci95 === "number") {
-          facts.push(
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.delta_ci95_lower`,
-              rawText: `${condition.label} accuracy delta vs baseline lower CI ${formatNumber(condition.accuracy_delta_vs_baseline_mean - condition.accuracy_delta_vs_baseline_ci95)}`,
-              value: condition.accuracy_delta_vs_baseline_mean - condition.accuracy_delta_vs_baseline_ci95,
-              metricKey: "accuracy_delta_vs_baseline",
-              metricLabel: "accuracy delta vs baseline lower CI",
-              datasetScope: conditionScope,
-              aggregationLevel: "repeat",
-              unit: "ci_lower",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-            }),
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.delta_ci95_upper`,
-              rawText: `${condition.label} accuracy delta vs baseline upper CI ${formatNumber(condition.accuracy_delta_vs_baseline_mean + condition.accuracy_delta_vs_baseline_ci95)}`,
-              value: condition.accuracy_delta_vs_baseline_mean + condition.accuracy_delta_vs_baseline_ci95,
-              metricKey: "accuracy_delta_vs_baseline",
-              metricLabel: "accuracy delta vs baseline upper CI",
-              datasetScope: conditionScope,
-              aggregationLevel: "repeat",
-              unit: "ci_upper",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-            })
-          );
-        }
-      }
-      const taskAccuracyFacts: Array<{ key: "benchmark_task_a_accuracy" | "benchmark_task_b_accuracy"; label: string; datasetScope: string }> = [
-        { key: "benchmark_task_a_accuracy", label: "Benchmark Task A accuracy", datasetScope: "Benchmark Task A" },
-        { key: "benchmark_task_b_accuracy", label: "Benchmark Task B accuracy", datasetScope: "Benchmark Task B" }
-      ];
-      for (const task of taskAccuracyFacts) {
-        const value = condition[task.key];
-        if (typeof value !== "number") {
-          continue;
-        }
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.${task.key}`,
-            rawText: `${condition.label} ${task.label} ${formatNumber(value)}`,
-            value,
-            metricKey: "accuracy",
-            metricLabel: task.label,
-            comparisonTarget: conditionComparisonTarget,
-            datasetScope: task.datasetScope,
-            aggregationLevel: "dataset",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-        const baselineValue = baseline?.[task.key];
-        if (!condition.is_baseline && typeof baselineValue === "number") {
-          facts.push(
-            buildStructuredNumericFact({
-              factKind: "metric",
-              source: "artifact",
-              location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.${task.key}.delta`,
-              rawText: `${condition.label} ${task.label} delta vs baseline ${formatNumber(value - baselineValue)}`,
-              value: value - baselineValue,
-              metricKey: task.key === "benchmark_task_a_accuracy"
-                ? "benchmark_task_a_accuracy_delta_vs_baseline"
-                : "benchmark_task_b_accuracy_delta_vs_baseline",
-              metricLabel: `${task.label} delta vs baseline`,
-              comparisonTarget: "candidate",
-              datasetScope: task.datasetScope,
-              aggregationLevel: "dataset",
-              unit: "delta",
-              sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-            })
-          );
-        }
-      }
-      const trainLoss = firstNumber(condition.train_loss, condition.train_loss_mean);
-      if (typeof trainLoss === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.train_loss`,
-            rawText: `${condition.label} training loss ${formatNumber(trainLoss)}`,
-            value: trainLoss,
-            metricKey: "train_loss",
-            metricLabel: "training loss",
-            datasetScope: conditionScope,
-            aggregationLevel: "repeat",
-            unit: "score",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-      }
-      const runtimeSeconds = firstNumber(condition.runtime_seconds, condition.runtime_seconds_mean);
-      if (typeof runtimeSeconds === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.runtime_seconds`,
-            rawText: `${condition.label} runtime ${formatNumber(runtimeSeconds)} seconds`,
-            value: runtimeSeconds,
-            metricKey: "runtime_seconds",
-            metricLabel: "runtime",
-            datasetScope: conditionScope,
-            aggregationLevel: "repeat",
-            unit: "seconds",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-      }
-      const peakMemoryMb = firstNumber(condition.peak_memory_mb, condition.peak_memory_mb_mean);
-      if (typeof peakMemoryMb === "number") {
-        facts.push(
-          buildStructuredNumericFact({
-            factKind: "metric",
-            source: "artifact",
-            location: `artifact.condition.${cleanString(condition.label) || cleanString(condition.condition)}.peak_memory_mb`,
-            rawText: `${condition.label} peak memory ${formatNumber(peakMemoryMb)} MB`,
-            value: peakMemoryMb,
-            metricKey: "peak_memory_mb",
-            metricLabel: "peak memory",
-            datasetScope: conditionScope,
-            aggregationLevel: "repeat",
-            unit: "mb",
-            sourceRefs: buildArtifactSourceRefs(["latest_results.condition_summaries"])
-          })
-        );
-      }
-      return facts;
     })
   );
 }
@@ -3167,21 +2564,6 @@ function buildObservedFactDriftIssues(
     if (fact.unit === "ci_lower" || fact.unit === "ci_upper") {
       continue;
     }
-    if (fact.fact_kind === "metric" && isUncertaintyIntervalMetricFact(fact)) {
-      continue;
-    }
-    if (fact.fact_kind === "metric" && isConditionClusterStatement(fact.raw_text)) {
-      continue;
-    }
-    if (fact.fact_kind === "metric" && isRuntimeBudgetFact(fact)) {
-      continue;
-    }
-    if (fact.fact_kind === "metric" && isAccuracyScoreValueMiskeyedAsDelta(fact)) {
-      continue;
-    }
-    if (fact.fact_kind === "metric" && isReaderFacingFigureAccuracyFact(fact)) {
-      continue;
-    }
     if (!fact.metric_key && !fact.count_kind) {
       continue;
     }
@@ -3207,381 +2589,18 @@ function buildObservedFactDriftIssues(
     if (mainSectionFacts.length < 2 || distinctLocations.length < 2 || distinctValues.length < 2) {
       continue;
     }
-    if (isBenignRepeatedPairedMetricSetDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignPairedMetricWithRepresentativeScoreDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignFromToMetricScoreDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignBaselineLeadingVisualDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignTaskAccuracyVisualComparison(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignBaselineComparatorAccuracyDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignConditionTableComparisonDrift(mainSectionFacts, distinctValues)) {
-      continue;
-    }
-    if (isBenignApproximateMemoryDrift(mainSectionFacts)) {
-      continue;
-    }
-    // When distinct values span a very wide range, it's likely a scope/key
-    // mismatch (e.g. aggregate vs per-condition) rather than a real contradiction.
-    const minDV = Math.min(...distinctValues.map(Math.abs));
-    const maxDV = Math.max(...distinctValues.map(Math.abs));
-    const likelyScopeMismatch = maxDV > 0 && ((maxDV - minDV) / maxDV) > 0.5;
     issues.push({
       kind,
-      severity: likelyScopeMismatch ? "warning" : "error",
-      finding: likelyScopeMismatch ? "unverifiable" : "contradiction",
+      severity: "error",
+      finding: "contradiction",
       message: `${joinHumanList(uniqueStrings(mainSectionFacts.map((fact) => fact.location)))} report conflicting ${humanizeComparableFactKey(bucket[0])} values.`,
       involved_sections: uniqueStrings(mainSectionFacts.map((fact) => fact.location)),
       normalized_facts: mainSectionFacts.slice(0, 4),
-      reason: likelyScopeMismatch
-        ? "values span a wide range, suggesting a scope/key mismatch rather than a true contradiction"
-        : "comparable normalized facts disagree across main-manuscript sections",
+      reason: "comparable canonical facts disagree across main-manuscript sections",
       evidence: mainSectionFacts.slice(0, 4).map((fact) => `${fact.location}: ${fact.raw_text}`)
     });
   }
   return issues;
-}
-
-function isBenignRepeatedPairedMetricSetDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length < 2 || distinctValues.length > 4) {
-    return false;
-  }
-  if (!facts.every((fact) => fact.fact_kind === "metric" && fact.unit === "score")) {
-    return false;
-  }
-  if (!facts.every((fact) => /\b(?:and|versus|vs\.?|compared with|from|to)\b/iu.test(fact.raw_text))) {
-    return false;
-  }
-  const factsByLocation = new Map<string, NormalizedNumericFact[]>();
-  for (const fact of facts) {
-    const bucket = factsByLocation.get(fact.location) || [];
-    bucket.push(fact);
-    factsByLocation.set(fact.location, bucket);
-  }
-  if (factsByLocation.size < 2) {
-    return false;
-  }
-  return Array.from(factsByLocation.values()).every((locationFacts) =>
-    distinctValues.every((value) =>
-      locationFacts.some((fact) => areApproxEqual(fact.normalized_value, value, fact.unit))
-    )
-  );
-}
-
-function isBenignPairedMetricWithRepresentativeScoreDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length < 2 || distinctValues.length > 4) {
-    return false;
-  }
-  if (
-    !facts.every(
-      (fact) =>
-        fact.fact_kind === "metric"
-        && fact.unit === "score"
-        && (fact.metric_key === "accuracy" || fact.base_metric_key === "accuracy")
-        && (fact.dataset_scope === "aggregate" || fact.dataset_scope === "unknown" || !fact.dataset_scope)
-    )
-  ) {
-    return false;
-  }
-  const pairedFacts = facts.filter((fact) =>
-    /\b(?:versus|vs\.?|compared with|from|to)\b/iu.test(fact.raw_text)
-    && rawTextContainsApproxValue(fact.raw_text, fact.normalized_value, fact.unit)
-  );
-  if (pairedFacts.length === 0) {
-    return false;
-  }
-  const representativeFacts = facts.filter((fact) => !pairedFacts.includes(fact));
-  if (representativeFacts.length === 0) {
-    return false;
-  }
-  const pairedValues = distinctValues.filter((value) =>
-    pairedFacts.some((fact) => rawTextContainsApproxValue(fact.raw_text, value, fact.unit))
-  );
-  if (pairedValues.length < 2) {
-    return false;
-  }
-  const joined = facts.map((fact) => cleanString(fact.raw_text)).join(" ");
-  const namesBaseline = /\bbaseline\b|\breference\b|\blocked\s+(?:baseline|comparison|delta-reference)\b|\bcomparison\s+(?:field|row|value|anchor)\b/iu.test(joined);
-  const namesComparator = /\bcandidate\b|\bleading\b|\bbest\b|\bcomparator\b|\bstrongest\b/iu.test(joined);
-  if (!(namesBaseline && namesComparator)) {
-    return false;
-  }
-  return representativeFacts.every((fact) =>
-    pairedValues.some((value) => areApproxEqual(fact.normalized_value, value, fact.unit))
-  );
-}
-
-function isBenignFromToMetricScoreDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  const fromToFacts = facts.filter(
-    (fact) =>
-      fact.fact_kind === "metric"
-      && (fact.metric_key === "accuracy" || fact.metric_key === "train_loss")
-      && fact.unit === "score"
-      && (
-        (fact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(fact.raw_text))
-        || (fact.metric_key === "train_loss" && isFromToTrainLossFragment(fact.raw_text))
-      )
-  );
-  if (
-    fromToFacts.length > 0
-    && distinctValues.every((value) =>
-      fromToFacts.some((fact) =>
-        rawTextContainsApproxValue(fact.raw_text, value, fact.unit)
-        || rawTextContainsRoundedValue(fact.raw_text, value)
-      )
-    )
-  ) {
-    return true;
-  }
-  if (distinctValues.length !== 2) {
-    return false;
-  }
-  if (fromToFacts.length < 2) {
-    const fromToTextFacts = facts.filter(
-      (fact) =>
-        fact.fact_kind === "metric"
-        && (fact.metric_key === "accuracy" || fact.metric_key === "train_loss")
-        && fact.unit === "score"
-        && (
-          (fact.metric_key === "accuracy" && isFromToAccuracyScoreFragment(fact.raw_text))
-          || (fact.metric_key === "train_loss" && isFromToTrainLossFragment(fact.raw_text))
-        )
-    );
-    return fromToTextFacts.some((fact) =>
-      distinctValues.every((value) => rawTextContainsApproxValue(fact.raw_text, value, fact.unit))
-    );
-  }
-  return distinctValues.every((value) =>
-    fromToFacts.some((fact) => areApproxEqual(value, fact.normalized_value, fact.unit))
-  );
-}
-
-function rawTextContainsApproxValue(text: string, value: number, unit: NumericFactUnit | undefined): boolean {
-  const numericMatches = cleanString(text).matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu);
-  for (const match of numericMatches) {
-    const parsed = Number(match[0].replace(/,/gu, ""));
-    if (Number.isFinite(parsed) && areApproxEqual(parsed, value, unit)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function rawTextContainsRoundedValue(text: string, value: number): boolean {
-  const numericMatches = cleanString(text).matchAll(/-?\d+(?:,\d{3})*(?:\.\d+)?/gu);
-  for (const match of numericMatches) {
-    const parsed = Number(match[0].replace(/,/gu, ""));
-    if (Number.isFinite(parsed) && Math.abs(parsed - value) <= 0.001) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function isBenignBaselineLeadingVisualDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length !== 2) {
-    return false;
-  }
-  if (
-    !facts.every(
-      (fact) =>
-        fact.fact_kind === "metric"
-        && fact.metric_key === "accuracy"
-        && fact.unit === "score"
-        && /\b(?:baseline|leading|best|reference|candidate condition|condition)\b/iu.test(fact.raw_text)
-    )
-  ) {
-    return false;
-  }
-  const hasFigureBaseline = facts.some((fact) =>
-    fact.source === "figure" && /\b(?:baseline|reference)\b/iu.test(fact.raw_text)
-  );
-  const hasFigureLeading = facts.some((fact) =>
-    fact.source === "figure" && /\b(?:leading|best)\b/iu.test(fact.raw_text)
-  );
-  const hasComparativeResultText = facts.some(
-    (fact) =>
-      ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
-      && /\b(?:from\s+-?\d|versus|vs\.?|compared with|relative to)\b/iu.test(fact.raw_text)
-  );
-  const hasReaderFacingBaselineOrLeadingText = facts.some(
-    (fact) =>
-      ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
-      && /\b(?:baseline|reference|leading|best)\b/iu.test(fact.raw_text)
-  );
-  return hasFigureBaseline && hasFigureLeading && (hasComparativeResultText || hasReaderFacingBaselineOrLeadingText);
-}
-
-function isBenignConditionTableComparisonDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length < 2) {
-    return false;
-  }
-  if (!facts.every((fact) =>
-    fact.fact_kind === "metric"
-    && fact.metric_key === "accuracy"
-    && fact.unit === "score"
-    && /\b(?:baseline|candidate condition|leading|best|condition)\b/iu.test(fact.raw_text)
-  )) {
-    return false;
-  }
-  const tableFacts = facts.filter((fact) => fact.source === "table");
-  const hasBaselineTable = tableFacts.some((fact) => /\bbaseline\b/iu.test(fact.raw_text));
-  const hasCandidateTable = tableFacts.some((fact) => /\bcandidate condition|\bleading|\bbest/iu.test(fact.raw_text));
-  const hasReaderComparison = facts.some((fact) =>
-    ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
-    && /\b(?:baseline|candidate condition|leading|best)\b/iu.test(fact.raw_text)
-  );
-  return hasBaselineTable && hasCandidateTable && hasReaderComparison;
-}
-
-function isBenignTaskAccuracyVisualComparison(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length < 2 || distinctValues.length > 3) {
-    return false;
-  }
-  if (
-    !facts.every(
-      (fact) =>
-        fact.fact_kind === "metric"
-        && fact.metric_key === "accuracy"
-        && fact.unit === "score"
-        && fact.dataset_scope !== "aggregate"
-        && fact.dataset_scope !== "unknown"
-    )
-  ) {
-    return false;
-  }
-  const hasFigurePair = facts.some((fact) =>
-    fact.source === "figure" && /\b(?:baseline|leading|best|reference)\b/iu.test(fact.raw_text)
-  );
-  const hasFromToTaskText = facts.some(
-    (fact) =>
-      ["abstract", "results", "discussion", "conclusion"].includes(fact.source)
-      && isFromToAccuracyScoreFragment(fact.raw_text)
-  );
-  return hasFigurePair && hasFromToTaskText;
-}
-
-function isBenignBaselineComparatorAccuracyDrift(
-  facts: NormalizedNumericFact[],
-  distinctValues: number[]
-): boolean {
-  if (distinctValues.length < 2 || distinctValues.length > 4) {
-    return false;
-  }
-  if (
-    !facts.every(
-      (fact) =>
-        fact.fact_kind === "metric"
-        && fact.metric_key === "accuracy"
-        && fact.unit === "score"
-        && (fact.dataset_scope === "aggregate" || fact.dataset_scope === "unknown" || !fact.dataset_scope)
-    )
-  ) {
-    return false;
-  }
-  const joined = facts.map((fact) => cleanString(fact.raw_text)).join(" ");
-  const namesBaseline = /\bbaseline\b|\breference\b|\blocked\s+(?:baseline|comparison|delta-reference)\b|\brecorded\s+comparison\b|\bcomparison\s+(?:row|value|anchor)\b/iu.test(joined);
-  const namesComparator = /\bcandidate\b|\bleading\b|\bbest\b|\bcomparator\b|\bstrongest\b/iu.test(joined);
-  const namesComparison = /\b(?:from\s+-?\d|to\s+-?\d|versus|vs\.?|compared with|relative to|increase[sd]?|rising|raises|gain)\b/iu.test(joined);
-  if (!(namesBaseline && namesComparator && namesComparison)) {
-    return false;
-  }
-  return distinctValues.every((value) => value >= 0 && value <= 1);
-}
-
-function isBenignApproximateMemoryPair(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
-  if (
-    left.fact_kind !== "metric"
-    || right.fact_kind !== "metric"
-    || (left.base_metric_key || left.metric_key) !== "peak_memory_mb"
-    || (right.base_metric_key || right.metric_key) !== "peak_memory_mb"
-  ) {
-    return false;
-  }
-  const maxVal = Math.max(Math.abs(left.normalized_value), Math.abs(right.normalized_value));
-  if (maxVal <= 0) {
-    return false;
-  }
-  const relativeDelta = Math.abs(left.normalized_value - right.normalized_value) / maxVal;
-  return relativeDelta <= 0.08 && (isApproximateMemoryFact(left) || isApproximateMemoryFact(right));
-}
-
-function isBenignApproximateMemoryDrift(facts: NormalizedNumericFact[]): boolean {
-  const memoryFacts = facts.filter(
-    (fact) =>
-      fact.fact_kind === "metric"
-      && (fact.base_metric_key || fact.metric_key) === "peak_memory_mb"
-  );
-  if (memoryFacts.length < 2 || memoryFacts.length !== facts.length) {
-    return false;
-  }
-  if (
-    memoryFacts.some(isProtocolCountMisreadAsMemoryFact)
-    && memoryFacts.some((fact) => isApproximateMemoryFact(fact) || /\b(?:bytes?|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text))
-  ) {
-    return true;
-  }
-  if (hasExplicitMemoryMeasurementFact(memoryFacts) && hasLikelyMemoryContextNumberFact(memoryFacts)) {
-    return true;
-  }
-  const values = memoryFacts.map((fact) => Math.abs(fact.normalized_value));
-  const maxVal = Math.max(...values);
-  const minVal = Math.min(...values);
-  if (maxVal <= 0 || (maxVal - minVal) / maxVal > 0.08) {
-    return false;
-  }
-  return memoryFacts.some(isApproximateMemoryFact);
-}
-
-function isApproximateMemoryFact(fact: NormalizedNumericFact): boolean {
-  return /\b(?:about|approx(?:imately)?|roughly)\b|\b(?:bytes?|gb|gib|mb)\b/iu.test(fact.raw_text);
-}
-
-function isProtocolCountMisreadAsMemoryFact(fact: NormalizedNumericFact): boolean {
-  return (fact.base_metric_key || fact.metric_key) === "peak_memory_mb"
-    && /\b(?:examples?|sequence length|timeout|budget|protocol|requested conditions?|completed conditions?|predictions?)\b/iu.test(fact.raw_text)
-    && !/\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text);
-}
-
-function hasExplicitMemoryMeasurementFact(facts: NormalizedNumericFact[]): boolean {
-  return facts.some((fact) =>
-    /\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text)
-  );
-}
-
-function hasLikelyMemoryContextNumberFact(facts: NormalizedNumericFact[]): boolean {
-  return facts.some((fact) =>
-    /\b(?:examples?|sequence length|timeout|budget|protocol|requested conditions?|completed conditions?|predictions?)\b/iu.test(fact.raw_text)
-    || !/\b(?:bytes?|gb|gib|mb|cuda allocation|peak\s+(?:allocated\s+)?memory)\b/iu.test(fact.raw_text)
-  );
 }
 
 function extractCountFactsFromText(input: {
@@ -3660,33 +2679,20 @@ function extractMetricFactsFromText(input: {
   if (!cleaned) {
     return [];
   }
-  const paragraphMetricKey = inferPrimaryMetricKeyFromText(cleaned) || normalizeMetricIdentifier(cleaned);
-  const paragraphDatasetScope = inferDatasetScope(cleaned, input.context.method.dataset_names, input.source);
   const fragments = cleaned
     .split(/(?<=[.!?])\s+/u)
     .map((fragment) => cleanString(fragment))
     .filter(Boolean);
   const facts: NormalizedNumericFact[] = [];
-  for (let fragmentIndex = 0; fragmentIndex < fragments.length; fragmentIndex += 1) {
-    const fragment = fragments[fragmentIndex];
-    const previousFragment = fragmentIndex > 0 ? fragments[fragmentIndex - 1] : input.previousText;
+  for (const fragment of fragments) {
     if (isObjectiveThresholdFragment(fragment)) {
       continue;
     }
-    const fragmentDatasetScope = inferDatasetScope(fragment, input.context.method.dataset_names, input.source);
-    const datasetScope =
-      paragraphDatasetScope !== "aggregate" && paragraphDatasetScope !== "unknown" && fragmentDatasetScope === "aggregate"
-        ? paragraphDatasetScope
-        : fragmentDatasetScope === "unknown"
-          ? paragraphDatasetScope
-          : fragmentDatasetScope;
-    const aggregationLevel = inferAggregationLevel(fragment, datasetScope);
     const assignedFacts = extractAssignedMetricFacts({
       fragment,
       source: input.source,
       location: input.location,
-      datasetScope,
-      aggregationLevel,
+      context: input.context,
       sourceRefs: input.sourceRefs
     });
     if (assignedFacts.length > 0) {
@@ -3694,38 +2700,18 @@ function extractMetricFactsFromText(input: {
       continue;
     }
     const numberMatches = collectNumericLiteralMatches(fragment);
-    const retainedMatches = numberMatches.filter((match) => !shouldSkipMetricToken(fragment, match.raw, match.index));
-    if (retainedMatches.length === 0) {
-      continue;
-    }
-    for (let index = 0; index < retainedMatches.length; index += 1) {
-      const match = retainedMatches[index];
+    for (const match of numberMatches) {
       const rawValue = match.raw;
       const value = Number(rawValue.replace(/,/g, ""));
       if (!Number.isFinite(value)) {
         continue;
       }
-      const metricKey = inferMetricKeyNearNumber(fragment, match.index, paragraphMetricKey);
-      const unit = inferMetricUnit(fragment, metricKey, index, retainedMatches.length, match.index);
-      if (!unit) {
-        continue;
-      }
-      if (!rawValue.includes(".") && !["seconds", "mb"].includes(unit)) {
-        continue;
-      }
-      const normalizedMetricKey = specializeMetricKeyForNumber(
-        normalizeMetricKeyForUnit(metricKey || normalizeMetricIdentifierForUnit(unit), unit),
+      const descriptor = inferCanonicalTextFactDescriptor({
         fragment,
-        unit,
-        match.index
-      );
-      if (!normalizedMetricKey) {
-        continue;
-      }
-      const numberDatasetScope = inferDatasetScopeNearNumber(fragment, match.index, datasetScope);
-      const numberAggregationLevel =
-        numberDatasetScope !== datasetScope ? inferAggregationLevel(fragment, numberDatasetScope) : aggregationLevel;
-      if (shouldSkipAmbiguousMetricFact(fragment, normalizedMetricKey, numberDatasetScope, input.source)) {
+        rawIndex: match.index,
+        context: input.context
+      });
+      if (!descriptor) {
         continue;
       }
       facts.push(
@@ -3735,12 +2721,12 @@ function extractMetricFactsFromText(input: {
           location: input.location,
           rawText: fragment,
           value,
-          metricKey: normalizedMetricKey,
-          metricLabel: humanizeToken(normalizedMetricKey),
-          comparisonTarget: inferConditionComparisonTargetNearNumber(fragment, match.index, previousFragment),
-          datasetScope: numberDatasetScope,
-          aggregationLevel: numberAggregationLevel,
-          unit,
+          metricKey: descriptor.metric.id,
+          metricLabel: descriptor.metric.label,
+          comparisonTarget: descriptor.comparisonTarget,
+          datasetScope: descriptor.datasetScope,
+          aggregationLevel: descriptor.aggregationLevel,
+          unit: descriptor.unit,
           sourceRefs: input.sourceRefs
         })
       );
@@ -3749,287 +2735,229 @@ function extractMetricFactsFromText(input: {
   return dedupeNumericFacts(facts);
 }
 
-function inferVisualMetricKey(text: string): string | undefined {
-  const cleaned = normalizeMetricText(text);
-  if (/\btask\s*a\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\btask\s*a\b/iu.test(cleaned)) {
-    return "benchmark_task_a_accuracy_delta_vs_baseline";
+interface CanonicalTextFactDescriptor {
+  metric: ResultsMetricDefinitionV2;
+  comparisonTarget: string;
+  datasetScope: string;
+  aggregationLevel: NumericFactAggregation;
+  unit: NumericFactUnit;
+}
+
+function inferCanonicalTextFactDescriptor(input: {
+  fragment: string;
+  rawIndex: number;
+  context: ExperimentArtifactContext;
+}): CanonicalTextFactDescriptor | undefined {
+  const metric = findCanonicalMetricMention(input.fragment, input.rawIndex, input.context);
+  if (!metric) {
+    return undefined;
   }
-  if (/\btask\s*b\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\btask\s*b\b/iu.test(cleaned)) {
-    return "benchmark_task_b_accuracy_delta_vs_baseline";
+  const primaryComparison = input.context.results.primary_comparison;
+  const primaryMetric = primaryComparison?.metric_id === metric.id ? primaryComparison : undefined;
+  const differenceValue = Boolean(
+    primaryMetric && isExplicitCanonicalDifferenceValue(input.fragment, input.rawIndex)
+  );
+  if (differenceValue && primaryMetric) {
+    return {
+      metric,
+      comparisonTarget: "subject_minus_reference",
+      datasetScope: formatCanonicalScope(primaryMetric.subject.scope),
+      aggregationLevel: Object.keys(primaryMetric.subject.scope).length > 0 ? "dataset" : "aggregate",
+      unit: "delta"
+    };
   }
-  if (/\baccuracy\b[^.!?]{0,40}\bdeltas?\b|\bdeltas?\b[^.!?]{0,40}\baccuracy\b/iu.test(cleaned)) {
-    return "accuracy_delta_vs_baseline";
+
+  const linkedObservation = findCanonicalObservationMentionNearNumber(
+    input.fragment,
+    input.rawIndex,
+    input.context,
+    metric.id
+  );
+  if (!linkedObservation) {
+    return undefined;
   }
-  if (/\bdeltas?\b.*\blog(?:istic regression|reg)\b/iu.test(cleaned)) {
-    if (/\bmacro f1\b/iu.test(cleaned)) {
-      return "macro_f1_delta_vs_logreg";
-    }
-    return "score_delta_vs_baseline";
+  return {
+    metric,
+    comparisonTarget: input.context.results.primary_comparison?.subject.observation_id === linkedObservation.observation_id
+      ? "subject"
+      : "reference",
+    datasetScope: formatCanonicalScope(linkedObservation.scope),
+    aggregationLevel: Object.keys(linkedObservation.scope).length > 0 ? "dataset" : "aggregate",
+    unit: canonicalNumericFactUnit(metric.unit)
+  };
+}
+
+function findCanonicalMetricMention(
+  text: string,
+  rawIndex: number,
+  context: ExperimentArtifactContext
+): ResultsMetricDefinitionV2 | undefined {
+  const cleaned = normalizeCanonicalLookupText(text);
+  const normalizedNumberIndex = normalizeCanonicalLookupText(text.slice(0, rawIndex)).length;
+  const ranked = (context.results.canonical_artifact?.metrics || []).flatMap((metric) => {
+    const phrases = uniqueStrings([
+      normalizeCanonicalLookupText(metric.id),
+      normalizeCanonicalLookupText(metric.label)
+    ]).filter((phrase) => includesCanonicalPhrase(cleaned, phrase));
+    const distance = nearestPrecedingCanonicalPhraseDistance(cleaned, normalizedNumberIndex, phrases);
+    return typeof distance === "number" ? [{ metric, distance }] : [];
+  });
+  ranked.sort((left, right) => left.distance - right.distance);
+  if (!ranked[0] || ranked[0].distance > 192 || (ranked[1] && ranked[0].distance === ranked[1].distance)) {
+    return undefined;
   }
-  const normalized = normalizeMetricIdentifier(text);
-  if (normalized) {
-    return normalized;
+  return ranked[0].metric;
+}
+
+function normalizeCanonicalLookupText(value: string): string {
+  return cleanString(value)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function includesCanonicalPhrase(text: string, phrase: string): boolean {
+  return Boolean(phrase && ` ${text} `.includes(` ${phrase} `));
+}
+
+function isExplicitCanonicalDifferenceValue(text: string, rawIndex: number): boolean {
+  const before = normalizeCanonicalLookupText(text.slice(Math.max(0, rawIndex - 72), rawIndex));
+  const after = normalizeCanonicalLookupText(text.slice(rawIndex, Math.min(text.length, rawIndex + 32)));
+  return /(?:subject minus reference )?(?:difference|delta|change|gain)\s*(?:of|is|was|equals|at)?$/iu.test(before)
+    || /(?:improved|increased|decreased|changed|differed)\s+by$/iu.test(before)
+    || /^(?:points?\s+)?(?:subject minus reference )?(?:difference|delta|change|gain)\b/iu.test(after);
+}
+
+function findCanonicalObservationMentionNearNumber(
+  text: string,
+  rawIndex: number,
+  context: ExperimentArtifactContext,
+  metricId: string
+): PrimaryComparisonSummary["subject"] | PrimaryComparisonSummary["reference"] | undefined {
+  const primaryComparison = context.results.primary_comparison;
+  if (!primaryComparison) {
+    return undefined;
   }
-  return undefined;
+  const candidates = [primaryComparison.subject, primaryComparison.reference].filter(
+    (observation) => observation.metric_id === metricId
+  );
+  const searchText = normalizeCanonicalLookupText(text);
+  const normalizedNumberIndex = normalizeCanonicalLookupText(text.slice(0, rawIndex)).length;
+  const ranked = candidates.flatMap((observation) => {
+    const side = primaryComparison.subject.observation_id === observation.observation_id
+      ? "subject"
+      : "reference";
+    const phrases = uniqueStrings([
+      normalizeCanonicalLookupText(observation.series_label),
+      normalizeCanonicalLookupText(observation.series_role),
+      side
+    ]).filter(Boolean);
+    const distance = nearestPrecedingCanonicalPhraseDistance(searchText, normalizedNumberIndex, phrases);
+    return typeof distance === "number" ? [{ observation, distance }] : [];
+  });
+  ranked.sort((left, right) => left.distance - right.distance);
+  if (!ranked[0] || ranked[0].distance > 96 || (ranked[1] && ranked[0].distance === ranked[1].distance)) {
+    return undefined;
+  }
+  return ranked[0].observation;
 }
 
 function inferVisualMetricDescriptor(input: {
-  row: { label: string; value: number; condition_parameter_x?: number; condition_parameter_y?: number; is_baseline?: boolean };
-  caption: string;
-  datasetScope: string | "aggregate" | "unknown";
+  row: PaperManuscriptVisualRow;
   context: ExperimentArtifactContext;
 }): {
   metricKey?: string;
   metricLabel?: string;
   comparisonTarget?: string;
+  datasetScope?: string;
   unit?: NumericFactUnit;
   aggregationLevel?: NumericFactAggregation;
 } {
-  const visualText = `${input.caption} ${input.row.label}`;
-  const normalizedVisualText = normalizeMetricText(visualText);
-  const explicitCiUnit: NumericFactUnit | undefined =
-    /\blower\b[^.!?]{0,40}\b(?:95|ci|confidence|bound)\b|\b(?:95|ci|confidence)\b[^.!?]{0,40}\blower\b/iu.test(normalizedVisualText)
-      ? "ci_lower"
-      : /\bupper\b[^.!?]{0,40}\b(?:95|ci|confidence|bound)\b|\b(?:95|ci|confidence)\b[^.!?]{0,40}\bupper\b/iu.test(normalizedVisualText)
-        ? "ci_upper"
-        : undefined;
-  if (explicitCiUnit) {
-    const metricKey = inferVisualMetricKey(visualText);
-    if (metricKey) {
-      return {
-        metricKey,
-        metricLabel: input.row.label,
-        unit: explicitCiUnit,
-        aggregationLevel: input.datasetScope === "aggregate" || input.datasetScope === "unknown" ? "repeat" : "dataset"
-      };
-    }
-  }
-  const taskDeltaDescriptor = inferTaskDeltaVisualDescriptor(input);
-  if (taskDeltaDescriptor) {
-    return taskDeltaDescriptor;
-  }
-  const conditionSummary = findConditionSummaryForVisualRow(input.context, input.row);
+  const primaryComparison = input.context.results.primary_comparison;
   if (
-    conditionSummary
-    && typeof conditionSummary.average_accuracy_mean === "number"
-    && areApproxEqual(input.row.value, conditionSummary.average_accuracy_mean, "score")
+    primaryComparison
+    && input.row.comparison_id === primaryComparison.comparison_id
+    && input.row.comparison_side === "difference"
+    && input.row.metric_id === primaryComparison.metric_id
   ) {
     return {
-      metricKey: "accuracy",
-      metricLabel: "mean average accuracy",
-      comparisonTarget: conditionSummary.is_baseline ? "baseline" : "candidate",
-      unit: "score",
-      aggregationLevel: "repeat"
-    };
-  }
-  if (
-    conditionSummary
-    && typeof conditionSummary.accuracy_delta_vs_baseline_mean === "number"
-    && areApproxEqual(input.row.value, conditionSummary.accuracy_delta_vs_baseline_mean, "delta")
-  ) {
-    return {
-      metricKey: "accuracy_delta_vs_baseline",
-      metricLabel: "accuracy delta vs baseline",
+      metricKey: primaryComparison.metric_id,
+      metricLabel: `${primaryComparison.metric_label} subject-minus-reference difference`,
+      comparisonTarget: "subject_minus_reference",
+      datasetScope: formatCanonicalScope(primaryComparison.subject.scope),
       unit: "delta",
-      aggregationLevel: "repeat"
+      aggregationLevel: Object.keys(primaryComparison.subject.scope).length > 0 ? "dataset" : "aggregate"
     };
   }
 
-  const datasetSummary =
-    input.datasetScope !== "aggregate" && input.datasetScope !== "unknown"
-      ? input.context.results.dataset_summaries.find((item) => cleanString(item.dataset).toLowerCase() === input.datasetScope)
-      : undefined;
-
-  if (!datasetSummary) {
-    return {};
-  }
-
-  if (
-    typeof datasetSummary.delta_value === "number"
-    && areApproxEqual(input.row.value, datasetSummary.delta_value, "delta")
-  ) {
+  const observation = findCanonicalObservationForVisualRow(input.context, input.row);
+  if (observation) {
     return {
-      metricKey: inferDatasetDeltaMetricKey(datasetSummary, normalizeMetricIdentifier(datasetSummary.main_metric_label)),
-      metricLabel: datasetSummary.delta_label || `${datasetSummary.main_metric_label} delta`,
-      unit: "delta",
-      aggregationLevel: "dataset"
+      metricKey: observation.metric_id,
+      metricLabel: observation.metric_label,
+      comparisonTarget: primaryComparison?.subject.observation_id === observation.observation_id
+        ? "subject"
+        : "reference",
+      unit: canonicalNumericFactUnit(observation.metric_unit),
+      datasetScope: formatCanonicalScope(observation.scope),
+      aggregationLevel: Object.keys(observation.scope).length > 0 ? "dataset" : "aggregate"
     };
   }
-
-  if (
-    typeof datasetSummary.main_metric_value === "number"
-    && areApproxEqual(input.row.value, datasetSummary.main_metric_value, "score")
-  ) {
-    return {
-      metricKey: normalizeMetricIdentifier(datasetSummary.main_metric_label),
-      metricLabel: datasetSummary.main_metric_label,
-      unit: "score",
-      aggregationLevel: "dataset"
-    };
-  }
-
-  if (
-    typeof datasetSummary.runtime_seconds_mean === "number"
-    && areApproxEqual(input.row.value, datasetSummary.runtime_seconds_mean, "seconds")
-  ) {
-    return {
-      metricKey: "runtime_seconds",
-      metricLabel: "runtime",
-      unit: "seconds",
-      aggregationLevel: "dataset"
-    };
-  }
-
-  if (
-    typeof datasetSummary.peak_memory_mb_mean === "number"
-    && areApproxEqual(input.row.value, datasetSummary.peak_memory_mb_mean, "mb")
-  ) {
-    return {
-      metricKey: "peak_memory_mb",
-      metricLabel: "peak memory",
-      unit: "mb",
-      aggregationLevel: "dataset"
-    };
-  }
-
   return {};
 }
 
-function inferTaskDeltaVisualDescriptor(input: {
-  row: { label: string; value: number };
-  caption: string;
-  context: ExperimentArtifactContext;
-}): {
-  metricKey: string;
-  metricLabel: string;
-  comparisonTarget: string;
-  unit: NumericFactUnit;
-  aggregationLevel: NumericFactAggregation;
-} | undefined {
-  const text = normalizeMetricText(`${input.caption} ${input.row.label}`);
-  const baseline = input.context.results.condition_summaries.find((condition) => condition.is_baseline);
-  const leading = input.context.results.condition_summaries
-    .filter((condition) => !condition.is_baseline)
-    .sort((left, right) => (right.accuracy_delta_vs_baseline_mean || 0) - (left.accuracy_delta_vs_baseline_mean || 0))[0];
-  if (!baseline || !leading) {
-    return undefined;
-  }
-  const candidates: Array<{
-    pattern: RegExp;
-    metricKey: string;
-    metricLabel: string;
-    leadingValue?: number;
-    baselineValue?: number;
-    aggregationLevel: NumericFactAggregation;
-  }> = [
-    {
-      pattern: /\btask\s*a\b/iu,
-      metricKey: "benchmark_task_a_accuracy_delta_vs_baseline",
-      metricLabel: "Benchmark Task A accuracy delta vs baseline",
-      leadingValue: leading.benchmark_task_a_accuracy,
-      baselineValue: baseline.benchmark_task_a_accuracy,
-      aggregationLevel: "dataset"
-    },
-    {
-      pattern: /\btask\s*b\b/iu,
-      metricKey: "benchmark_task_b_accuracy_delta_vs_baseline",
-      metricLabel: "Benchmark Task B accuracy delta vs baseline",
-      leadingValue: leading.benchmark_task_b_accuracy,
-      baselineValue: baseline.benchmark_task_b_accuracy,
-      aggregationLevel: "dataset"
-    },
-    {
-      pattern: /\baverage\b/iu,
-      metricKey: "accuracy_delta_vs_baseline",
-      metricLabel: "mean average accuracy delta vs baseline",
-      leadingValue: leading.average_accuracy_mean,
-      baselineValue: baseline.average_accuracy_mean,
-      aggregationLevel: "repeat"
-    }
-  ];
-  for (const candidate of candidates) {
-    if (!candidate.pattern.test(text)) {
-      continue;
-    }
-    if (typeof candidate.leadingValue !== "number" || typeof candidate.baselineValue !== "number") {
-      continue;
-    }
-    const expected = candidate.leadingValue - candidate.baselineValue;
-    if (!areApproxEqual(input.row.value, expected, "delta")) {
-      continue;
-    }
-    return {
-      metricKey: candidate.metricKey,
-      metricLabel: candidate.metricLabel,
-      comparisonTarget: "candidate",
-      unit: "delta",
-      aggregationLevel: candidate.aggregationLevel
-    };
-  }
-  return undefined;
-}
-
-function findConditionSummaryForVisualRow(
+function findCanonicalObservationForVisualRow(
   context: ExperimentArtifactContext,
-  row: { label: string; condition_parameter_x?: number; condition_parameter_y?: number; is_baseline?: boolean }
-): ConditionResultSummary | undefined {
-  if (row.is_baseline) {
-    const baseline = context.results.condition_summaries.find((condition) => condition.is_baseline);
-    if (baseline) {
-      return baseline;
-    }
-  }
-  if (typeof row.condition_parameter_x === "number" || typeof row.condition_parameter_y === "number") {
-    const byParameters = context.results.condition_summaries.find((condition) => {
-      const xMatches = typeof row.condition_parameter_x !== "number"
-        || (typeof condition.condition_parameter_x === "number" && areApproxEqual(condition.condition_parameter_x, row.condition_parameter_x, "score"));
-      const yMatches = typeof row.condition_parameter_y !== "number"
-        || (typeof condition.condition_parameter_y === "number" && areApproxEqual(condition.condition_parameter_y, row.condition_parameter_y, "score"));
-      return xMatches && yMatches;
-    });
-    if (byParameters) {
-      return byParameters;
-    }
-  }
-  const normalizedRow = cleanString(row.label).toLowerCase();
-  if (!normalizedRow) {
+  row: PaperManuscriptVisualRow
+): PrimaryComparisonSummary["subject"] | PrimaryComparisonSummary["reference"] | undefined {
+  const primaryComparison = context.results.primary_comparison;
+  if (!primaryComparison) {
     return undefined;
   }
-  return context.results.condition_summaries.find((condition) => {
-    const label = cleanString(condition.label).toLowerCase();
-    const conditionName = cleanString(condition.condition).toLowerCase();
-    return Boolean(
-      (label && normalizedRow.includes(label))
-      || (conditionName && normalizedRow.includes(conditionName.replace(/_/gu, " ")))
+  const linkedObservations = [primaryComparison.subject, primaryComparison.reference];
+  if (row.observation_id) {
+    return linkedObservations.find(
+      (observation) => observation.observation_id === row.observation_id
     );
-  });
+  }
+  if (row.comparison_id === primaryComparison.comparison_id && row.comparison_side === "subject") {
+    return primaryComparison.subject;
+  }
+  if (row.comparison_id === primaryComparison.comparison_id && row.comparison_side === "reference") {
+    return primaryComparison.reference;
+  }
+  if (!row.series_id || !row.metric_id) {
+    return undefined;
+  }
+  const matches = linkedObservations.filter((observation) =>
+    observation.series_id === row.series_id
+    && observation.metric_id === row.metric_id
+  );
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 function extractMetricFactsFromVisual(input: {
   source: Extract<NumericFactSource, "table" | "figure" | "appendix_table" | "appendix_figure">;
   location: string;
   caption: string;
-  rows: Array<{ label: string; value: number }>;
+  rows: PaperManuscriptVisualRow[];
   context: ExperimentArtifactContext;
   sourceRefs?: PaperSourceRef[];
 }): NormalizedNumericFact[] {
   return dedupeNumericFacts(
     input.rows.flatMap((row) => {
-      const contextText = `${input.caption} ${row.label}`;
-      const datasetScope = inferDatasetScope(contextText, input.context.method.dataset_names, input.source);
       const descriptor = inferVisualMetricDescriptor({
         row,
-        caption: input.caption,
-        datasetScope,
         context: input.context
       });
-      const metricKey = descriptor.metricKey || inferVisualMetricKey(contextText);
-      const aggregationLevel = descriptor.aggregationLevel || inferAggregationLevel(contextText, datasetScope);
-      const unit = descriptor.unit || inferMetricUnit(contextText, metricKey, 0, 1);
-      if (!descriptor.metricKey && shouldSkipVisualAccountingRow(row, input.caption)) {
-        return [];
-      }
-      if (!metricKey || !unit || !Number.isFinite(row.value)) {
+      if (
+        !descriptor.metricKey
+        || !descriptor.datasetScope
+        || !descriptor.aggregationLevel
+        || !descriptor.unit
+        || !Number.isFinite(row.value)
+      ) {
         return [];
       }
       return [
@@ -4039,12 +2967,12 @@ function extractMetricFactsFromVisual(input: {
           location: input.location,
           rawText: `${row.label}: ${formatNumber(row.value)} (${cleanString(input.caption)})`,
           value: row.value,
-          metricKey,
+          metricKey: descriptor.metricKey,
           metricLabel: descriptor.metricLabel || row.label,
           comparisonTarget: descriptor.comparisonTarget,
-          datasetScope,
-          aggregationLevel,
-          unit,
+          datasetScope: descriptor.datasetScope,
+          aggregationLevel: descriptor.aggregationLevel,
+          unit: descriptor.unit,
           sourceRefs: input.sourceRefs
         })
       ];
@@ -4058,7 +2986,7 @@ function shouldSkipVisualAccountingRow(row: { label: string; value: number }, ca
   if (!label) {
     return false;
   }
-  if (/(?:threshold|target|minimum|maximum|budget)/iu.test(label)) {
+  if (/\b(?:threshold|target|minimum|maximum|budget)\b/iu.test(label)) {
     return true;
   }
   const accountingPattern =
@@ -4094,17 +3022,8 @@ function buildStructuredNumericFact(input: {
 }): NormalizedNumericFact {
   const rawText = cleanString(input.rawText);
   const normalizedValue = roundMetric(normalizeObservedMetricValue(input.value, input.unit, rawText));
-  const metricKey =
-    input.metricKey && /^[a-z][a-z0-9_]*$/iu.test(input.metricKey)
-      ? input.metricKey
-      : input.metricKey
-        ? normalizeMetricIdentifier(input.metricKey) || input.metricKey
-        : undefined;
-  const semantics = inferMetricSemantics(metricKey);
-  const comparisonTarget =
-    input.comparisonTarget
-    || (isConditionClusterStatement(rawText) ? undefined : inferConditionComparisonTarget(input.rawText))
-    || semantics.comparisonTarget;
+  const metricKey = cleanString(input.metricKey) || undefined;
+  const comparisonTarget = input.comparisonTarget;
   const location = cleanString(input.location);
   return {
     fact_id: [
@@ -4124,7 +3043,6 @@ function buildStructuredNumericFact(input: {
     normalized_value: normalizedValue,
     ...(metricKey ? { metric_key: metricKey } : {}),
     ...(input.metricLabel ? { metric_label: cleanString(input.metricLabel) } : {}),
-    ...(semantics.baseMetricKey ? { base_metric_key: semantics.baseMetricKey } : {}),
     ...(comparisonTarget ? { comparison_target: comparisonTarget } : {}),
     ...(input.countKind ? { count_kind: input.countKind } : {}),
     ...(input.datasetScope ? { dataset_scope: input.datasetScope } : {}),
@@ -4208,7 +3126,7 @@ function areComparableNumericFacts(left: NormalizedNumericFact, right: Normalize
   if ((left.dataset_scope || "unknown") !== (right.dataset_scope || "unknown")) {
     return false;
   }
-  if (!areComparisonTargetsCompatible(left.comparison_target, right.comparison_target, left.unit || "score")) {
+  if (left.comparison_target !== right.comparison_target) {
     return false;
   }
   return true;
@@ -4218,21 +3136,11 @@ function comparableMetricIdentity(fact: NormalizedNumericFact): string | undefin
   if (fact.fact_kind !== "metric") {
     return undefined;
   }
-  const rawMetricKey = fact.metric_key || "";
-  if (
-    (fact.unit || "score") === "delta"
-    || /(?:^|_)(?:delta|gain|improvement)(?:_|$)/iu.test(rawMetricKey)
-  ) {
-    return fact.metric_key || fact.base_metric_key;
-  }
-  return fact.base_metric_key || fact.metric_key;
+  return fact.metric_key;
 }
 
 function areFactValuesEquivalent(left: NormalizedNumericFact, right: NormalizedNumericFact): boolean {
   const unit = left.unit || right.unit;
-  if (unit === "mb" && isBenignApproximateMemoryPair(left, right)) {
-    return true;
-  }
   return areApproxEqual(left.normalized_value, right.normalized_value, unit);
 }
 
@@ -4286,605 +3194,26 @@ function dedupeConsistencyIssues(issues: ConsistencyLintIssue[]): ConsistencyLin
   return unique;
 }
 
-function inferDatasetScope(
+function nearestPrecedingCanonicalPhraseDistance(
   text: string,
-  datasetNames: string[],
-  source: NumericFactSource
-): string | "aggregate" | "unknown" {
-  const cleaned = cleanString(text).toLowerCase();
-  if (/\bmean accuracy\b[^.!?]{0,120}\bdriven entirely by\b/iu.test(cleaned)) {
-    return "aggregate";
-  }
-  const mentionsBenchmarkTaskA = /\bbenchmark(?:[-_\s]?task)?[-_\s]?a\b/iu.test(cleaned);
-  const mentionsBenchmarkTaskB = /\bbenchmark(?:[-_\s]?task)?[-_\s]?b\b/iu.test(cleaned);
-  const matchedDatasets = datasetNames.filter((dataset) => cleaned.includes(cleanString(dataset).toLowerCase()));
-  const mentionsResourceMetric = /\b(?:peak\s+)?(?:gpu\s+|cuda\s+)?memory\b|\bvram\b|\bgb\b|\bmb\b|\bruntime\b|\bwall[-\s]?clock\b|\bseconds?\b|\btimeout\b/iu.test(cleaned);
-  if (
-    mentionsResourceMetric
-    && matchedDatasets.length > 0
-    && /\b(?:full\s+)?(?:sweep|run|benchmark|experiment|study|grid)\b|\boverall\b|\baggregate\b|\bexecute(?:d|s)?\b/iu.test(cleaned)
-  ) {
-    return "aggregate";
-  }
-  if (mentionsResourceMetric && matchedDatasets.length === 1) {
-    return matchedDatasets[0] || "unknown";
-  }
-  if (mentionsResourceMetric && matchedDatasets.length > 1) {
-    return "aggregate";
-  }
-  if (mentionsResourceMetric) {
-    return "aggregate";
-  }
-  if (
-    mentionsBenchmarkTaskA
-    && mentionsBenchmarkTaskB
-    && /\bacross\b|\baverage\b|\bmean\b|\bunweighted\b|\boverall\b|\baggregate\b|\btask[-\s]?average\b/iu.test(cleaned)
-  ) {
-    return "aggregate";
-  }
-  if (mentionsBenchmarkTaskA) {
-    return "Benchmark Task A";
-  }
-  if (mentionsBenchmarkTaskB) {
-    return "Benchmark Task B";
-  }
-  if (
-    matchedDatasets.length > 1
-    && /\bacross\b|\baverage\b|\bmean\b|\bunweighted\b|\boverall\b|\baggregate\b/iu.test(cleaned)
-  ) {
-    return "aggregate";
-  }
-  const matchedDataset = matchedDatasets[0];
-  if (matchedDataset) {
-    return matchedDataset;
-  }
-  if (
-    source === "table"
-    || source === "figure"
-    || source === "appendix_table"
-    || source === "appendix_figure"
-    || /\bacross datasets\b|\baverage across datasets\b|\bmean across datasets\b|\boverall\b|\baggregate\b|\bstrongest workflow\b/iu.test(cleaned)
-  ) {
-    return "aggregate";
-  }
-  return ["abstract", "results", "discussion", "conclusion", "appendix_section"].includes(source) ? "aggregate" : "unknown";
-}
-
-function inferDatasetScopeNearNumber(
-  text: string,
-  rawIndex: number,
-  fallback: string | "aggregate" | "unknown"
-): string | "aggregate" | "unknown" {
-  const explicitTaskScope = inferExplicitTaskAccuracyScopeNearNumber(text, rawIndex);
-  if (explicitTaskScope) {
-    return explicitTaskScope;
-  }
-  const searchText = normalizeMetricSearchText(text);
-  const arcDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark task a", "benchmark_task_a"]);
-  const benchmark_task_bDistance = nearestKeywordDistance(searchText, rawIndex, ["benchmark_task_b"]);
-  if (typeof arcDistance === "number" || typeof benchmark_task_bDistance === "number") {
-    if (typeof arcDistance !== "number") {
-      return "Benchmark Task B";
-    }
-    if (typeof benchmark_task_bDistance !== "number") {
-      return "Benchmark Task A";
-    }
-    return benchmark_task_bDistance < arcDistance ? "Benchmark Task B" : "Benchmark Task A";
-  }
-  return fallback;
-}
-
-function inferExplicitTaskAccuracyScopeNearNumber(
-  text: string,
-  rawIndex: number
-): "Benchmark Task A" | "Benchmark Task B" | undefined {
-  const cleaned = cleanString(text);
-  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
-  const specs: Array<{ scope: "Benchmark Task A" | "Benchmark Task B"; patterns: RegExp[] }> = [
-    {
-      scope: "Benchmark Task A",
-      patterns: [
-        new RegExp(String.raw`\bBenchmark\s+Task\s+A\s+accuracy\b[^.!?]{0,80}\b(?:remained|stayed|was|is|=|unchanged)\s+(?:at\s+)?${numberPattern}`, "giu"),
-        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bBenchmark\s+Task\s+A\s+accuracy\b`, "giu")
-      ]
-    },
-    {
-      scope: "Benchmark Task B",
-      patterns: [
-        new RegExp(String.raw`\bBenchmark\s+Task\s+B\s+accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed|was|is|=|from)\b[^.!?]{0,80}\b(?:from\s+)?${numberPattern}(?:\s+(?:to|up to)\s+${numberPattern})?`, "giu"),
-        new RegExp(String.raw`\bBenchmark\s+Task\s+B\b[^.!?]{0,80}\b(?:improve[sd]?|increased|rose|rises|changed)\b[^.!?]{0,80}\bfrom\s+${numberPattern}\s+(?:to|up to)\s+${numberPattern}`, "giu"),
-        new RegExp(String.raw`\b${numberPattern}[^.!?]{0,80}\bBenchmark\s+Task\s+B\s+accuracy\b`, "giu")
-      ]
-    }
-  ];
-  for (const spec of specs) {
-    for (const pattern of spec.patterns) {
-      for (const match of cleaned.matchAll(pattern)) {
-        const values = match.slice(1).filter(Boolean);
-        for (const value of values) {
-          const valueIndex = (match.index || 0) + match[0].indexOf(value);
-          if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-            return spec.scope;
-          }
-        }
-      }
-    }
-  }
-  return undefined;
-}
-
-function inferAggregationLevel(text: string, datasetScope: string | "aggregate" | "unknown"): NumericFactAggregation {
-  const cleaned = cleanString(text).toLowerCase();
-  if (datasetScope !== "aggregate" && datasetScope !== "unknown") {
-    return "dataset";
-  }
-  if (
-    /\b(?:wall[-\s]?clock|runtime|seconds?)\b/iu.test(cleaned)
-    && (
-      /\b(?:full\s+)?(?:sweep|run|benchmark|experiment|study|grid)\b|\boverall\b|\baggregate\b/iu.test(cleaned)
-      || /\b(?:full|total)\s+(?:run|sweep)\s+(?:finished|completed|took|lasted|runtime)\b/iu.test(cleaned)
-      || /\ball\s+eight\s+planned\s+conditions\b/iu.test(cleaned)
-      || /\bdo(?:es)?\s+not\s+expose\b[^.!?]{0,120}\bper[-\s]?condition\s+efficiency\b/iu.test(cleaned)
-    )
-  ) {
-    return "aggregate";
-  }
-  if (
-    /\bcondition[-\s]?level\b|\bcondition-parameter grid\b|\brank[-\s]?parameter_y grid\b/iu.test(cleaned)
-    || (/\brank[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned) && /\bparameter_y\b/iu.test(cleaned))
-    || /\brank[-\s]+\d+(?:\.\d+)?\b[^.!?]{0,80}\bparameter_y[-\s]+\d+(?:\.\d+)?\b/iu.test(cleaned)
-    || /\b(?:best|leading)\s+(?:reported\s+)?(?:accuracy\s+)?cell\b/iu.test(cleaned)
-    || /\b(?:locked\s+)?baseline\b[^.!?]{0,80}\b(?:condition|cell|reports?)\b/iu.test(cleaned)
-    || /\b(?:average\s+)?accuracy\b[^!?]{0,100}\b(?:improved|increased|rose|rises|changed|raises?|raised|raising)\b[^!?]{0,100}\bfrom\b[^!?]{0,100}\bto\b/iu.test(cleaned)
-    || /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:was|is|=)\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:versus|vs\.?|compared with)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
-  ) {
-    return "repeat";
-  }
-  if (/\bwall[-\s]?clock\b|\bpeak\s+(?:cuda|gpu)?\s*allocation\b|\brequested\b[^.!?]{0,60}\bcompleted conditions?\b|\bcompleted conditions?\b/iu.test(cleaned)) {
-    return "aggregate";
-  }
-  if (/\brepeat|run\b/iu.test(cleaned)) {
-    return "repeat";
-  }
-  if (/\bfold\b/iu.test(cleaned)) {
-    return "fold";
-  }
-  return datasetScope === "aggregate" ? "aggregate" : "unknown";
-}
-
-function inferMetricUnit(
-  text: string,
-  metricKey: string | undefined,
-  index: number,
-  totalMatches: number,
-  rawIndex?: number
-): NumericFactUnit | undefined {
-  const cleaned = cleanString(text).toLowerCase();
-  const normalized = normalizeMetricText(text);
-  const searchText = normalizeMetricSearchText(text);
-  const tokenWindow =
-    typeof rawIndex === "number"
-      ? cleanString(text.slice(rawIndex, Math.min(text.length, rawIndex + 32))).toLowerCase()
-      : "";
-  if (tokenWindow && /^\s*\d+(?:,\d{3})*(?:\.\d+)?\s*(?:s|sec|secs|second|seconds)\b/iu.test(tokenWindow)) {
-    return "seconds";
-  }
-  if (tokenWindow && /^\s*\d+(?:,\d{3})*(?:\.\d+)?\s*(?:bytes?|gb|gib|mb|mib)\b/iu.test(tokenWindow)) {
-    return "mb";
-  }
-  if (metricKey === "train_loss") {
-    return "score";
-  }
-  if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && isExplicitAccuracyDeltaValue(text, rawIndex)
-  ) {
-    return "delta";
-  }
-  if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
-  ) {
-    return "score";
-  }
-  if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && isAbsoluteAccuracyScoreValue(text, rawIndex)
-  ) {
-    return "score";
-  }
-  if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && isExplicitAccuracyScoreValue(text, rawIndex)
-  ) {
-    return "score";
-  }
-  if (metricKey?.includes("delta")) {
-    return "delta";
-  }
-  if (/\bci\b|\bconfidence interval\b|\bintervals?\b|\binterval\b.*\bspan/iu.test(normalized) || cleaned.includes("95%")) {
-    if (totalMatches >= 2) {
-      return index % 2 === 0 ? "ci_lower" : "ci_upper";
-    }
-    return "score";
-  }
-  const memoryDistance =
-    typeof rawIndex === "number"
-      ? nearestKeywordDistance(searchText, rawIndex, ["memory", "cuda memory", "peak memory", "allocated", "bytes", "mb", "gb", "gib", "ram"])
-      : undefined;
-  const runtimeDistance =
-    typeof rawIndex === "number"
-      ? nearestKeywordDistance(searchText, rawIndex, ["runtime", "latency", "wall clock", "wall-clock", "seconds", "second", "sec"])
-      : undefined;
-  if (
-    typeof memoryDistance === "number"
-    && memoryDistance <= 45
-    && (typeof runtimeDistance !== "number" || memoryDistance < runtimeDistance || runtimeDistance > 45)
-  ) {
-    return "mb";
-  }
-  if ((typeof runtimeDistance === "number" && runtimeDistance <= 45) || metricKey === "runtime_seconds") {
-    return "seconds";
-  }
-  if (metricKey === "peak_memory_mb" || /\bmemory\b|\bram\b|\bmb\b|\bgib\b/iu.test(normalized)) {
-    return "mb";
-  }
-  if (
-    (metricKey === "accuracy" || metricKey === "accuracy_delta_vs_baseline")
-    && typeof rawIndex === "number"
-    && (isFromToAccuracyScoreValue(text, rawIndex) || isVersusAccuracyScoreValue(text, rawIndex))
-  ) {
-    return "score";
-  }
-  if (metricKey === "accuracy" && typeof rawIndex === "number" && isExplicitAccuracyScoreValue(text, rawIndex)) {
-    return "score";
-  }
-  if (metricKey?.includes("delta") || /\bdeltas?\b|\bimprov(?:e|ed|es|ement)\b|\bgain\b|\bvs\b|\bby\b/iu.test(normalized)) {
-    return "delta";
-  }
-  return metricKey ? "score" : undefined;
-}
-
-function isFromToAccuracyScoreValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const localBefore = cleanString(text.slice(Math.max(0, rawIndex - 140), rawIndex));
-  const localAfter = cleanString(text.slice(rawIndex, Math.min(text.length, rawIndex + 80)));
-  const localNumber = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?`;
-  const gainRangePrefix = String.raw`\b(?:mean\s+)?(?:average[-\s]+)?accuracy\b[^!?]{0,100}\bgain\b[^!?]{0,100}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s*`;
-  if (
-    new RegExp(String.raw`${gainRangePrefix}$`, "iu").test(localBefore)
-    && new RegExp(String.raw`^${localNumber}\s+(?:to|up to)\s+${localNumber}\b`, "iu").test(localAfter)
-  ) {
-    return true;
-  }
-  if (
-    new RegExp(String.raw`${gainRangePrefix}${localNumber}\s+(?:to|up to)\s*$`, "iu").test(localBefore)
-    && new RegExp(String.raw`^${localNumber}\b`, "iu").test(localAfter)
-  ) {
-    return true;
-  }
-  const betweenScores = String.raw`\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+`;
-  const patterns = [
-    new RegExp(String.raw`\b(?:mean\s+)?(?:average[-\s]+)?accuracy\b[^!?]{0,80}\bgain\b[^!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\b(?:absolute\s+|aggregate\s+|mean\s+|average\s+)?accuracy\b[^!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)`, "giu"),
-    new RegExp(String.raw`\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)${betweenScores}(-?\d+(?:,\d{3})*(?:\.\d+)?)[^!?]{0,80}\b(?:average\s+)?accuracy\b`, "giu")
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const values = [match[1], match[2]].filter(Boolean);
-      for (const value of values) {
-        const valueIndex = (match.index || 0) + match[0].indexOf(value);
-        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function isAbsoluteAccuracyScoreValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const patterns = [
-    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\b[^.!?]{0,60}\b(?:remained|stayed|was|is|=|unchanged(?:\s+at)?|(?:is|was)\s+reported\s+as)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:[A-Z][A-Za-z-]*\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,40}\b(?:in both|for both)\b/giu,
-    /\b(?:display|displays|displayed|show|shows|reported|reports)\s+(?:mean\s+|average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const values = match.slice(1).filter(Boolean);
-      for (const value of values) {
-        const valueIndex = (match.index || 0) + match[0].indexOf(value);
-        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function isExplicitAccuracyScoreValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
-  const patterns = [
-    new RegExp(String.raw`\b(?:baseline|locked baseline|reference)?\s*(?:average\s+)?accuracy\s+(?:of|at|as|=|was|is)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\s+(?:(?:was|is)\s+)?${numberPattern}\s+for\b[^.!?]{0,100}\band\s+${numberPattern}\s+for\b`, "giu"),
-    new RegExp(String.raw`\b(?:baseline|locked baseline|reference|candidate(?:\s+condition)?\s+[a-z0-9_-]+|leading|best|comparator)\b[^.!?]{0,48}\b(?:mean\s+|average\s+)?accuracy\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+(?:mean\s+|average\s+)?accuracy\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:achieved|reached|reported|had)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu"),
-    new RegExp(String.raw`\b${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b[^.!?]{0,64}\b(?:for|of|by)\s+(?:the\s+)?(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b`, "giu"),
-    new RegExp(String.raw`\b${numberPattern}\s+(?:and|versus|vs\.?)\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu"),
-    new RegExp(String.raw`\b(?:mean\s+|average\s+)?accuracy\s+${numberPattern}\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\s+(?:versus|vs\.?|compared with)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:best|leading|strongest|recorded)\s+(?:recorded\s+|reported\s+)?(?:condition|cell)?\s*(?:reach(?:es|ed)?|achiev(?:es|ed)?|reported|had)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:baseline|reference)\b[^.!?]{0,48}\b(?:average\s+)?accuracy\b[^.!?]{0,24}\b(?:was|is|at|of|=)\s+${numberPattern}`, "giu")
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const values = match.slice(1).filter(Boolean);
-      for (const value of values) {
-        const valueIndex = (match.index || 0) + match[0].indexOf(value);
-        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function isExplicitAccuracyDeltaValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const numberPattern = String.raw`(-?\d+(?:,\d{3})*(?:\.\d+)?)`;
-  const patterns = [
-    new RegExp(String.raw`\b(?:absolute\s+)?(?:baseline[-\s]?relative\s+)?(?:(?:mean|average)[-\s]+accuracy[-\s]+|accuracy[-\s]+)?gain\s*(?:of|=|was|is|(?:was|is)?\s*reported\s+as|:)\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\b(?:improv(?:e|ed|es|ement)|outperform(?:ed|s)?|gain(?:ed|s)?)\b[^.!?]{0,80}\b(?:baseline|reference)\b[^.!?]{0,40}\bby\s+${numberPattern}`, "giu"),
-    new RegExp(String.raw`\bby\s+${numberPattern}\s+(?:mean\s+|average\s+)?accuracy\b`, "giu")
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const value = match[1] || "";
-      const valueIndex = (match.index || 0) + match[0].indexOf(value);
-      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function isFromToAccuracyScoreFragment(text: string): boolean {
-  const cleaned = cleanString(text);
-  const numberPair = String.raw`-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:[^0-9.!?]{0,48}\s+)?(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?`;
-  return (
-    new RegExp(String.raw`\b(?:average\s+)?accuracy\b[^.!?]{0,80}\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
-    || new RegExp(String.raw`\b(?:improve[sd]?|improving|increase[sd]?|increasing|rose|rises|rising|changed|raises?|raised|raising)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b[^.!?]{0,80}\bfrom\s+${numberPair}`, "iu").test(cleaned)
-    || new RegExp(String.raw`\bfrom\s+${numberPair}[^.!?]{0,80}\b(?:average\s+)?accuracy\b`, "iu").test(cleaned)
-  );
-}
-
-function isVersusAccuracyScoreValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const patterns = [
-    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(?:(?:was|is)\s+reported\s+as|reported\s+as|was|is|of|=)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
-    /\b(?:mean\s+)?(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?/giu,
-    /\b(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:versus|vs\.?|compared with)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+for\s+(?:the\s+)?(?:locked\s+)?baseline)?[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?accuracy\b/giu
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const values = [match[1], match[2]].filter(Boolean);
-      for (const value of values) {
-        const valueIndex = (match.index || 0) + match[0].indexOf(value);
-        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function isFromToTrainLossValue(text: string, rawIndex: number): boolean {
-  const cleaned = cleanString(text);
-  const patterns = [
-    /\btrain(?:ing)? loss\b[^.!?]{0,80}\b(?:changed|moved|rose|increased|decreased|fell|shifted)?\b[^.!?]{0,80}\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:to|up to)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)[^.!?]{0,80}\btrain(?:ing)? loss\b/giu
-  ];
-  for (const pattern of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const values = [match[1], match[2]].filter(Boolean);
-      for (const value of values) {
-        const valueIndex = (match.index || 0) + match[0].indexOf(value);
-        if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-          return true;
-        }
-      }
-    }
-  }
-  return false;
-}
-
-function isFromToTrainLossFragment(text: string): boolean {
-  const cleaned = cleanString(text);
-  return (
-    /\btrain(?:ing)? loss\b[^.!?]{0,80}\b(?:changed|moved|rose|increased|decreased|fell|shifted)?\b[^.!?]{0,80}\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(cleaned)
-    || /\bfrom\s+-?\d+(?:,\d{3})*(?:\.\d+)?\s+(?:to|up to)\s+-?\d+(?:,\d{3})*(?:\.\d+)?[^.!?]{0,80}\btrain(?:ing)? loss\b/iu.test(cleaned)
-  );
-}
-
-function inferMetricKeyNearNumber(
-  fragment: string,
-  rawIndex: number,
-  paragraphMetricKey: string | undefined
-): string | undefined {
-  if (isSequenceLengthValue(fragment, rawIndex)) {
-    return undefined;
-  }
-  if (isFromToTrainLossValue(fragment, rawIndex)) {
-    return "train_loss";
-  }
-  const localMetricWindow = normalizeMetricText(fragment.slice(Math.max(0, rawIndex - 56), Math.min(fragment.length, rawIndex + 56)));
-  if (/\btrain(?:ing)? loss\b/iu.test(localMetricWindow)) {
-    return "train_loss";
-  }
-  if (isExplicitAccuracyScoreValue(fragment, rawIndex)) {
-    return "accuracy";
-  }
-  if (isExplicitAccuracyDeltaValue(fragment, rawIndex)) {
-    return "accuracy_delta_vs_baseline";
-  }
-  if (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex)) {
-    return "accuracy";
-  }
-  if (/\baccuracy\s+delta\b|\bdelta\b[^.!?]{0,40}\bbaseline\b|\bbaseline\b[^.!?]{0,40}\bdelta\b/iu.test(localMetricWindow)) {
-    return "accuracy_delta_vs_baseline";
-  }
-  const nearestMetricKey = inferMetricKeyByDistance(fragment, rawIndex);
-  if (nearestMetricKey) {
-    return nearestMetricKey;
-  }
-  if (/\bmain score\b|\bmain metric\b|\bdeltas?\b|\binterval spans\b|\bconfidence interval\b/iu.test(fragment)) {
-    return paragraphMetricKey;
-  }
-  return undefined;
-}
-
-function isSequenceLengthValue(text: string, rawIndex: number): boolean {
-  const window = cleanString(text.slice(Math.max(0, rawIndex - 48), Math.min(text.length, rawIndex + 48))).toLowerCase();
-  return /\b(?:max(?:imum)?\s+)?sequence length\b|\bcontext length\b|\bmax(?:imum)? length\b/iu.test(window);
-}
-
-function nearestKeywordDistance(text: string, rawIndex: number, keywords: string[]): number | undefined {
+  normalizedNumberIndex: number,
+  phrases: string[]
+): number | undefined {
   let best: number | undefined;
-  for (const keyword of keywords) {
-    const pattern = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
+  for (const phrase of phrases) {
+    const pattern = new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu");
     for (const match of text.matchAll(pattern)) {
-      const distance = Math.abs((match.index || 0) - rawIndex);
+      const phraseEnd = (match.index || 0) + match[0].length;
+      if (phraseEnd > normalizedNumberIndex) {
+        continue;
+      }
+      const distance = normalizedNumberIndex - phraseEnd;
       if (best === undefined || distance < best) {
         best = distance;
       }
     }
   }
   return best;
-}
-
-function inferMetricKeyByDistance(text: string, rawIndex: number): string | undefined {
-  const cleaned = normalizeMetricSearchText(text);
-  const candidates: Array<{ key: string; distance: number }> = [];
-  const patternSpecs: Array<{ key: string; patterns: string[] }> = [
-    {
-      key: "macro_f1_delta_vs_logreg",
-      patterns: [
-        "macro f1 delta vs logistic regression",
-        "macro f1 delta versus logistic regression",
-        "macro f1 delta vs logreg"
-      ]
-    },
-    { key: "macro_f1_delta", patterns: ["macro f1 delta", "macro f1 deltas"] },
-    { key: "macro_f1", patterns: ["macro f1"] },
-    { key: "pairwise_ranking_agreement", patterns: ["pairwise ranking agreement", "ranking agreement"] },
-    { key: "winner_consistency", patterns: ["winner consistency"] },
-    { key: "train_loss", patterns: ["train loss", "training loss", "baseline loss", "reported loss"] },
-    { key: "runtime_seconds", patterns: ["runtime", "latency", "wall clock", "wall-clock", "seconds", "second", "sec"] },
-    { key: "peak_memory_mb", patterns: ["peak memory", "cuda memory", "memory", "ram", "mb", "gb", "gib"] },
-    { key: "top1_accuracy", patterns: ["top 1 accuracy", "top-1 accuracy"] },
-    { key: "accuracy", patterns: ["accuracy"] }
-  ];
-  for (const spec of patternSpecs) {
-    const distance = nearestKeywordDistance(cleaned, rawIndex, spec.patterns);
-    if (typeof distance === "number") {
-      candidates.push({ key: spec.key, distance });
-    }
-  }
-  const best = candidates.sort((left, right) => left.distance - right.distance || right.key.length - left.key.length)[0];
-  if (!best) {
-    return undefined;
-  }
-  const maximumDistance = /^(?:runtime_seconds|peak_memory_mb|accuracy)$/u.test(best.key) ? 45 : 90;
-  return best.distance <= maximumDistance ? best.key : undefined;
-}
-
-function normalizeMetricIdentifier(value: string): string | undefined {
-  const cleaned = normalizeMetricText(value);
-  if (!cleaned) {
-    return undefined;
-  }
-  if (
-    /\baccuracy\b.*\bdelta\b.*\b(?:vs|versus)\b.*\bbaseline\b|\baccuracy_delta_vs_baseline\b|\bbest_accuracy_delta_vs_baseline\b/iu.test(cleaned)
-  ) {
-    return "accuracy_delta_vs_baseline";
-  }
-  if (/\btimeout\b|\bwall clock runtime\b|\bruntime sec\b|\bruntime seconds\b/iu.test(cleaned)) {
-    return "runtime_seconds";
-  }
-  if (/\bcuda max memory allocated bytes\b|\bpeak memory\b|\bpeak vram\b|\bmemory allocated\b/iu.test(cleaned)) {
-    return "peak_memory_mb";
-  }
-  if (/\btrain(?:ing)? loss\b|\btrain_loss\b/iu.test(cleaned)) {
-    return "train_loss";
-  }
-  if (/\bmacro f1\b.*\bdeltas?\b.*\blogistic regression\b|\bmacro f1 delta vs logreg\b|\bmacro_f1_delta_vs_logreg\b/iu.test(cleaned)) {
-    return "macro_f1_delta_vs_logreg";
-  }
-  if (/\bmacro f1\b.*\bdeltas?\b/iu.test(cleaned)) {
-    return "macro_f1_delta";
-  }
-  if (/\bpairwise ranking agreement\b/iu.test(cleaned)) {
-    return "pairwise_ranking_agreement";
-  }
-  if (/\bwinner consistency\b/iu.test(cleaned)) {
-    return "winner_consistency";
-  }
-  if (/\bruntime\b|\blatency\b/.test(cleaned)) {
-    return "runtime_seconds";
-  }
-  if (/\bpeak memory\b|\bmemory\b|\bram\b/.test(cleaned)) {
-    return "peak_memory_mb";
-  }
-  if (/\btop[- ]?1 accuracy\b/iu.test(cleaned)) {
-    return "top1_accuracy";
-  }
-  if (/\breproducibility(?: score)?\b/iu.test(cleaned)) {
-    return "reproducibility";
-  }
-  if (/\baccuracy\b/iu.test(cleaned)) {
-    return "accuracy";
-  }
-  if (/\bmacro f1\b/iu.test(cleaned)) {
-    return "macro_f1";
-  }
-  if (/\bf1\b/iu.test(cleaned)) {
-    return "f1";
-  }
-  return undefined;
-}
-
-function inferPrimaryMetricKeyFromText(value: string): string | undefined {
-  const cleaned = normalizeMetricText(value);
-  const normalized = normalizeMetricIdentifier(cleaned);
-  if (normalized && normalized !== "macro_f1" && normalized !== "accuracy" && normalized !== "f1") {
-    return normalized;
-  }
-  const candidates: Array<{ key: string; index: number }> = [
-    { key: "macro_f1_delta_vs_logreg", index: cleaned.search(/\bmacro f1\b.*\bdeltas?\b.*\blog(?:istic regression|reg)\b/u) },
-    { key: "macro_f1_delta", index: cleaned.search(/\bmacro f1\b.*\bdeltas?\b/u) },
-    { key: "macro_f1", index: cleaned.search(/\bmacro f1\b/u) },
-    { key: "top1_accuracy", index: cleaned.search(/\btop[- ]?1 accuracy\b/u) },
-    { key: "accuracy", index: cleaned.search(/\baccuracy\b/u) },
-    { key: "pairwise_ranking_agreement", index: cleaned.search(/\bpairwise ranking agreement\b/u) },
-    { key: "winner_consistency", index: cleaned.search(/\bwinner consistency\b/u) },
-    { key: "train_loss", index: cleaned.search(/\btrain(?:ing)? loss\b|\btrain_loss\b/u) },
-    { key: "runtime_seconds", index: cleaned.search(/\bruntime\b|\blatency\b|\bwall clock\b|\bwall-clock\b/u) },
-    { key: "peak_memory_mb", index: cleaned.search(/\bmemory\b|\bram\b|\bgb\b|\bgib\b/u) }
-  ].filter((candidate) => candidate.index >= 0);
-  return candidates.sort((left, right) => left.index - right.index)[0]?.key;
 }
 
 function normalizeMetricText(value: string): string {
@@ -4895,439 +3224,11 @@ function normalizeMetricText(value: string): string {
     .trim();
 }
 
-function normalizeMetricSearchText(value: string): string {
-  return cleanString(value)
-    .toLowerCase()
-    .replace(/[_./-]/gu, " ");
-}
-
-function inferMetricSemantics(metricKey: string | undefined): {
-  baseMetricKey?: string;
-  comparisonTarget?: string;
-} {
-  if (!metricKey) {
-    return {};
-  }
-  if (metricKey === "macro_f1_delta_vs_logreg") {
-    return {
-      baseMetricKey: "macro_f1",
-      comparisonTarget: "logreg"
-    };
-  }
-  if (metricKey === "macro_f1_delta") {
-    return {
-      baseMetricKey: "macro_f1"
-    };
-  }
-  if (metricKey === "f1_delta") {
-    return {
-      baseMetricKey: "f1"
-    };
-  }
-  const baseMetricKey = metricKey.replace(/_delta(?:_vs_[a-z0-9_]+)?$/u, "");
-  const comparisonTarget = metricKey.match(/_vs_([a-z0-9_]+)$/u)?.[1];
-  return {
-    ...(baseMetricKey ? { baseMetricKey } : {}),
-    ...(comparisonTarget ? { comparisonTarget } : {})
-  };
-}
-
-function areComparisonTargetsCompatible(
-  left: string | undefined,
-  right: string | undefined,
-  unit: NumericFactUnit
-): boolean {
-  return !left || !right || left === right;
-}
-
-function normalizeMetricIdentifierForUnit(unit: NumericFactUnit): string | undefined {
-  switch (unit) {
-    case "seconds":
-      return "runtime_seconds";
-    case "mb":
-      return "peak_memory_mb";
-    default:
-      return undefined;
-  }
-}
-
-function normalizeMetricKeyForUnit(metricKey: string | undefined, unit: NumericFactUnit): string | undefined {
-  if (unit === "seconds") {
-    return "runtime_seconds";
-  }
-  if (unit === "mb") {
-    return "peak_memory_mb";
-  }
-  if (!metricKey || unit !== "delta") {
-    return metricKey;
-  }
-  if (metricKey === "macro_f1") {
-    return "macro_f1_delta";
-  }
-  if (metricKey === "f1") {
-    return "f1_delta";
-  }
-  if (metricKey === "reproducibility" || metricKey === "reproducibility_score") {
-    return "reproducibility_delta";
-  }
-  if (metricKey === "accuracy") {
-    return "accuracy_delta";
-  }
-  if (metricKey === "top1_accuracy") {
-    return "top1_accuracy_delta";
-  }
-  return metricKey;
-}
-
-function specializeMetricKeyForFragment(
-  metricKey: string | undefined,
-  fragment: string,
-  unit: NumericFactUnit
-): string | undefined {
-  if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
-    return metricKey;
-  }
-  if (/\bbaseline[-\s]?relative\b|\bbaseline\b[^.!?]{0,80}\bgain\b|\bgain\b[^.!?]{0,80}\bbaseline\b/iu.test(fragment)) {
-    return "accuracy_delta_vs_baseline";
-  }
-  if (/\bstudy[-\s]?level\b|\bstudy objective\b|\bprespecified objective\b/iu.test(fragment)) {
-    return "accuracy_delta_vs_study_baseline";
-  }
-  if (
-    /\bcondition[-\s]?level\b|\bcell\b|\bstrongest\b|\brank\s+\d+(?:\.\d+)?\b|\bparameter_y\s+\d+(?:\.\d+)?\b/iu.test(fragment)
-  ) {
-    return "accuracy_delta_vs_baseline";
-  }
-  return metricKey;
-}
-
-function specializeMetricKeyForNumber(
-  metricKey: string | undefined,
-  fragment: string,
-  unit: NumericFactUnit,
-  rawIndex: number
-): string | undefined {
-  if (
-    metricKey === "accuracy_delta_vs_baseline"
-    && unit === "score"
-    && (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex))
-  ) {
-    return "accuracy";
-  }
-  if (
-    metricKey === "accuracy_delta"
-    && unit === "score"
-    && (isFromToAccuracyScoreValue(fragment, rawIndex) || isVersusAccuracyScoreValue(fragment, rawIndex))
-  ) {
-    return "accuracy";
-  }
-  if (!metricKey || unit !== "delta" || metricKey !== "accuracy_delta") {
-    return specializeMetricKeyForFragment(metricKey, fragment, unit);
-  }
-  const localWindow = fragment.slice(Math.max(0, rawIndex - 90), Math.min(fragment.length, rawIndex + 90));
-  if (/\bstrongest\b|\bcell\b|\bcondition\b|\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s+\d+(?:\.\d+)?\b/iu.test(localWindow)) {
-    return "accuracy_delta_vs_baseline";
-  }
-  if (/\bstudy[-\s]?level\b|\bstudy objective\b|\bstudy[-\s]?wide\b|\boverall\b|\bavailable run summary\b/iu.test(localWindow)) {
-    return "accuracy_delta_vs_study_baseline";
-  }
-  return specializeMetricKeyForFragment(metricKey, fragment, unit);
-}
-
-function inferConditionComparisonTargetNearNumber(
-  fragment: string,
-  rawIndex: number,
-  previousFragment?: string
-): string | undefined {
-  const window = fragment.slice(Math.max(0, rawIndex - 120), Math.min(fragment.length, rawIndex + 120));
-  const offset = Math.max(0, rawIndex - 120);
-  const currentTarget = inferConditionComparisonTarget(window, rawIndex - offset);
-  const anaphoricTarget = inferAnaphoricConditionComparisonTarget(fragment, rawIndex, previousFragment);
-  if (anaphoricTarget && (!currentTarget || shouldPreferAnaphoricConditionTarget(fragment, rawIndex, currentTarget))) {
-    return anaphoricTarget;
-  }
-  return currentTarget;
-}
-
-function inferConditionComparisonTarget(text: string, rawIndex?: number): string | undefined {
-  const cleaned = cleanString(text);
-  if (!cleaned) {
-    return undefined;
-  }
-  if (typeof rawIndex === "number" && isConditionClusterMetricValue(cleaned, rawIndex)) {
-    return undefined;
-  }
-  const explicitBaselineTarget = inferBaselineComparisonTarget(cleaned, rawIndex);
-  if (explicitBaselineTarget) {
-    return explicitBaselineTarget;
-  }
-  const textualTarget = inferTextualConditionComparisonTarget(cleaned, rawIndex);
-  if (textualTarget) {
-    return textualTarget;
-  }
-  if (!/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(cleaned)) {
-    return undefined;
-  }
-  const explicitValueTarget = inferExplicitConditionValueTarget(cleaned, rawIndex);
-  if (explicitValueTarget) {
-    return explicitValueTarget;
-  }
-  const candidates: Array<{ target: string; distance: number }> = [];
-  const patterns: Array<{ pattern: RegExp; xGroup: number; yGroup: number }> = [
-    {
-      pattern: /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/giu,
-      xGroup: 1,
-      yGroup: 2
-    },
-    {
-      pattern: /\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)/giu,
-      xGroup: 2,
-      yGroup: 1
-    }
-  ];
-  for (const { pattern, xGroup, yGroup } of patterns) {
-    for (const match of cleaned.matchAll(pattern)) {
-      const target = formatConditionComparisonTarget(match[xGroup] || "", match[yGroup] || "");
-      if (!target) {
-        continue;
-      }
-      const matchIndex = match.index || 0;
-      candidates.push({
-        target,
-        distance: typeof rawIndex === "number" ? Math.abs(matchIndex - rawIndex) : matchIndex
-      });
-    }
-  }
-  return candidates.sort((left, right) => left.distance - right.distance)[0]?.target;
-}
-
-function inferTextualConditionComparisonTarget(text: string, rawIndex?: number): string | undefined {
-  const cleaned = cleanString(text);
-  const window = typeof rawIndex === "number"
-    ? cleaned.slice(Math.max(0, rawIndex - 72), Math.min(cleaned.length, rawIndex + 96))
-    : cleaned;
-  const before = typeof rawIndex === "number"
-    ? cleaned.slice(Math.max(0, rawIndex - 32), rawIndex)
-    : "";
-  const baselineRole = /\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
-  const candidateRole = /\b(?:candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b/iu;
-  const numberThenBaselineRole = /^\s*-?\d+(?:,\d{3})*(?:\.\d+)?\b[^.!?]{0,64}\b(?:baseline|reference|recorded\s+comparison|comparison\s+row|locked\s+comparison|comparison\s+anchor|comparator\s+of\s+record)\b/iu;
-  const numberThenCandidateRole = /^\s*-?\d+(?:,\d{3})*(?:\.\d+)?\b[^.!?]{0,64}\b(?:candidate|leading(?:\s+recorded)?\s+result|leading\s+observed|best\s+observed|strongest\s+reported|strongest\s+observed)\b/iu;
-  if (numberThenBaselineRole.test(window)) {
-    return "baseline";
-  }
-  if (numberThenCandidateRole.test(window)) {
-    return "candidate";
-  }
-  if (/\bfrom\s*$/iu.test(before) && baselineRole.test(window)) {
-    return "baseline";
-  }
-  if (/\bto\s*$/iu.test(before) && candidateRole.test(window)) {
-    return "candidate";
-  }
-  const roleBeforeNumber = typeof rawIndex === "number"
-    ? cleaned.slice(Math.max(0, rawIndex - 80), Math.min(cleaned.length, rawIndex + 24))
-    : cleaned;
-  if (baselineRole.test(roleBeforeNumber) && !candidateRole.test(roleBeforeNumber)) {
-    return "baseline";
-  }
-  if (candidateRole.test(roleBeforeNumber) && !baselineRole.test(roleBeforeNumber)) {
-    return "candidate";
-  }
-  return undefined;
-}
-
-function isConditionClusterMetricValue(text: string, rawIndex: number): boolean {
-  const patterns = [
-    /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu,
-    /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const value = match[1] || "";
-      const valueIndex = (match.index || 0) + match[0].indexOf(value);
-      if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-function isConditionClusterStatement(text: string): boolean {
-  return /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:conditions?|cells|rows)\s+(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:tied|clustered|sat|were|remained)\s+at\s+-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text)
-    || /\b\d+\s+of\s+(?:the\s+)?\d+\s+(?:conditions?|cells|rows)\b[^.!?]{0,80}\b(?:same|shared|reported)\b[^.!?]{0,80}\b(?:mean\s+)?(?:average\s+)?(?:score|accuracy)\b[^.!?]{0,40}\b-?\d+(?:,\d{3})*(?:\.\d+)?/iu.test(text);
-}
-
-function inferExplicitConditionValueTarget(text: string, rawIndex: number | undefined): string | undefined {
-  if (typeof rawIndex !== "number") {
-    return undefined;
-  }
-  const comparedPattern =
-    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:average\s+)?accuracy\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:compared with|versus|vs\.?)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
-  for (const match of text.matchAll(comparedPattern)) {
-    const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
-    const value = match[3] || "";
-    if (!target || !value) {
-      continue;
-    }
-    const valueIndex = (match.index || 0) + match[0].indexOf(value);
-    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-      return target;
-    }
-  }
-  const comparativeFromToPattern =
-    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:versus|vs\.?|compared with)\s+(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,120}?\b(?:average\s+)?accuracy\s+(?:increased|improved|rose|changed|raises?|raised|rising|raising)\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
-  for (const match of text.matchAll(comparativeFromToPattern)) {
-    const leadingTarget = formatConditionComparisonTarget(match[1] || "", match[2] || "");
-    const baselineTarget = formatConditionComparisonTarget(match[3] || "", match[4] || "");
-    const fromValue = match[5] || "";
-    const toValue = match[6] || "";
-    if (!leadingTarget || !baselineTarget || !fromValue || !toValue) {
-      continue;
-    }
-    const fromIndex = (match.index || 0) + match[0].indexOf(fromValue);
-    const toIndex = (match.index || 0) + match[0].lastIndexOf(toValue);
-    if (rawIndex >= fromIndex && rawIndex <= fromIndex + fromValue.length) {
-      return baselineTarget;
-    }
-    if (rawIndex >= toIndex && rawIndex <= toIndex + toValue.length) {
-      return leadingTarget;
-    }
-  }
-  const fromToPattern =
-    /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\s+(?:with|and|\/)?\s*(?:parameter[_\s-]*y|factor\s*y)\s*(\d+(?:\.\d+)?)[^!?]{0,160}?\b(?:increased|improved|rose|changed|raises?|raised|rising|raising)\b[^!?]{0,80}\b(?:average\s+)?accuracy\s+from\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)/giu;
-  for (const match of text.matchAll(fromToPattern)) {
-    const target = formatConditionComparisonTarget(match[1] || "", match[2] || "");
-    const value = match[4] || "";
-    if (!target || !value) {
-      continue;
-    }
-    const valueIndex = (match.index || 0) + match[0].lastIndexOf(value);
-    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-      return target;
-    }
-  }
-  return undefined;
-}
-
-function inferAnaphoricConditionComparisonTarget(
-  fragment: string,
-  rawIndex: number,
-  previousFragment?: string
-): string | undefined {
-  if (!previousFragment) {
-    return undefined;
-  }
-  const current = cleanString(fragment);
-  if (!/\b(?:its|this|that|leading|best)\b[^.!?]{0,80}\b(?:average\s+)?accuracy\b/iu.test(current)) {
-    return undefined;
-  }
-  const prefix = current.slice(0, Math.max(0, rawIndex));
-  const suffix = current.slice(Math.max(0, rawIndex));
-  if (!/\b(?:average\s+)?accuracy\b/iu.test(prefix) || !/\b(?:compared with|versus|vs\.?)\b[^!?]{0,100}\bbaseline\b/iu.test(suffix)) {
-    return undefined;
-  }
-  return extractConditionTargetFromText(previousFragment);
-}
-
-function extractConditionTargetFromText(text: string): string | undefined {
-  const cleaned = cleanString(text);
-  const patterns: Array<{ pattern: RegExp; xGroup: number; yGroup: number }> = [
-    {
-      pattern: /\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)/iu,
-      xGroup: 1,
-      yGroup: 2
-    },
-    {
-      pattern: /\b(?:parameter[_\s-]*y|factor\s*y)\s*(?:values?|levels?|settings?|of|=|:|is|was|with)?\s*(\d+(?:\.\d+)?)\b[^.!?;,]{0,80}\b(?:parameter[_\s-]*x|factor\s*x)\s*(\d+(?:\.\d+)?)/iu,
-      xGroup: 2,
-      yGroup: 1
-    }
-  ];
-  for (const { pattern, xGroup, yGroup } of patterns) {
-    const match = cleaned.match(pattern);
-    if (!match) {
-      continue;
-    }
-    const target = formatConditionComparisonTarget(match[xGroup] || "", match[yGroup] || "");
-    if (target) {
-      return target;
-    }
-  }
-  return undefined;
-}
-
-function shouldPreferAnaphoricConditionTarget(fragment: string, rawIndex: number, currentTarget: string): boolean {
-  if (!/^condition_\d+(?:_\d+)?_parameter_/u.test(currentTarget)) {
-    return false;
-  }
-  const suffix = fragment.slice(Math.max(0, rawIndex));
-  return /\b(?:compared with|versus|vs\.?)\b[^!?]{0,120}\bbaseline\b[^!?]{0,80}\b(?:parameter|factor)\b/iu.test(suffix);
-}
-
-function inferBaselineComparisonTarget(text: string, rawIndex: number | undefined): string | undefined {
-  if (typeof rawIndex !== "number" || !/\bbaseline\b/iu.test(text)) {
-    return undefined;
-  }
-  const fromToPattern =
-    /\bfrom\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+to\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s+\w+){0,8}\s+(?:relative to|over|against|compared with)?\s*(?:the\s+)?(?:locked\s+|internal\s+)?baseline\b/giu;
-  for (const match of text.matchAll(fromToPattern)) {
-    const first = match[1] || "";
-    const firstIndex = (match.index || 0) + match[0].indexOf(first);
-    if (rawIndex >= firstIndex && rawIndex <= firstIndex + first.length) {
-      return "baseline";
-    }
-  }
-  const comparedBaselinePattern =
-    /\b(?:compared with|relative to|against)\s+(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+for\s+(?:the\s+)?(?:locked\s+|internal\s+)?baseline\b/giu;
-  for (const match of text.matchAll(comparedBaselinePattern)) {
-    const value = match[1] || "";
-    const valueIndex = (match.index || 0) + match[0].indexOf(value);
-    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-      return "baseline";
-    }
-  }
-  const valueForBaselinePattern =
-    /(-?\d+(?:,\d{3})*(?:\.\d+)?)\s+(?:for|as|in)\s+(?:the\s+)?(?:locked\s+|internal\s+)?baseline\b/giu;
-  for (const match of text.matchAll(valueForBaselinePattern)) {
-    const value = match[1] || "";
-    const valueIndex = match.index || 0;
-    if (rawIndex >= valueIndex && rawIndex <= valueIndex + value.length) {
-      return "baseline";
-    }
-  }
-  const localWindow = text.slice(Math.max(0, rawIndex - 48), Math.min(text.length, rawIndex + 48));
-  if (/\b(?:locked\s+|internal\s+)?baseline\b[^.!?]{0,24}(-?\d+(?:,\d{3})*(?:\.\d+)?)/iu.test(localWindow)) {
-    return "baseline";
-  }
-  return undefined;
-}
-
-function formatConditionComparisonTarget(parameterX: string, parameterY: string): string | undefined {
-  const parameterXValue = parseNumericLiteral(parameterX);
-  const parameterYValue = parseNumericLiteral(parameterY);
-  if (!Number.isFinite(parameterXValue) || !Number.isFinite(parameterYValue)) {
-    return undefined;
-  }
-  return `condition_${formatConditionTargetNumber(parameterXValue)}_parameter_${formatConditionTargetNumber(parameterYValue)}`;
-}
-
-function formatConditionTargetNumber(value: number): string {
-  return formatNumber(value).replace(/\./gu, "_");
-}
-
 function extractAssignedMetricFacts(input: {
   fragment: string;
   source: NumericFactSource;
   location: string;
-  datasetScope: string | "aggregate" | "unknown";
-  aggregationLevel: NumericFactAggregation;
+  context: ExperimentArtifactContext;
   sourceRefs?: PaperSourceRef[];
 }): NormalizedNumericFact[] {
   const facts: NormalizedNumericFact[] = [];
@@ -5342,13 +3243,12 @@ function extractAssignedMetricFacts(input: {
     if (!metricToken || !Number.isFinite(value)) {
       continue;
     }
-    const metricKey = normalizeMetricIdentifier(metricToken);
-    const unit = inferMetricUnit(metricToken, metricKey, 0, 1);
-    const normalizedMetricKey = normalizeMetricKeyForUnit(
-      metricKey || normalizeMetricIdentifierForUnit(unit || "score"),
-      unit || "score"
-    );
-    if (!normalizedMetricKey || !unit) {
+    const descriptor = inferCanonicalTextFactDescriptor({
+      fragment: segment,
+      rawIndex: segment.indexOf(rawAssignedValue),
+      context: input.context
+    });
+    if (!descriptor) {
       continue;
     }
     facts.push(
@@ -5358,193 +3258,17 @@ function extractAssignedMetricFacts(input: {
         location: input.location,
         rawText: `${metricToken}=${rawValue}`,
         value,
-        metricKey: normalizedMetricKey,
-        metricLabel: metricToken,
-        datasetScope: input.datasetScope,
-        aggregationLevel: input.aggregationLevel,
-        unit,
+        metricKey: descriptor.metric.id,
+        metricLabel: descriptor.metric.label,
+        comparisonTarget: descriptor.comparisonTarget,
+        datasetScope: descriptor.datasetScope,
+        aggregationLevel: descriptor.aggregationLevel,
+        unit: descriptor.unit,
         sourceRefs: input.sourceRefs
       })
     );
   }
   return dedupeNumericFacts(facts);
-}
-
-function shouldSkipMetricToken(fragment: string, rawToken: string, index: number): boolean {
-  const nextChar = fragment[index + rawToken.length];
-  if (nextChar === "%") {
-    return true;
-  }
-  const previousWindow = fragment.slice(Math.max(0, index - 24), index);
-  const tokenEnd = index + rawToken.length;
-  const localDesignWindow = fragment.slice(Math.max(0, index - 48), Math.min(fragment.length, tokenEnd + 48));
-  const localMetricWindow = fragment.slice(Math.max(0, index - 24), Math.min(fragment.length, tokenEnd + 24));
-  if (/\barxiv\s*:\s*$/iu.test(previousWindow)) {
-    return true;
-  }
-  if (isExplicitAccuracyScoreValue(fragment, index)) {
-    return false;
-  }
-  const nextWindow = fragment.slice(tokenEnd, Math.min(fragment.length, tokenEnd + 32));
-  if (
-    /^\s*(?:of\s+\d+(?:,\d{3})*(?:\.\d+)?\s+)?(?:requested|completed)\s+conditions?\b/iu.test(nextWindow)
-    || /^\s*(?:requested|completed)\s+conditions?\b/iu.test(nextWindow)
-  ) {
-    return true;
-  }
-  if (/^\s*(?:hours?|hrs?)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/^\s*(?:gb|gib)\s+gpu\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (
-    /\b(?:random\s+)?seeds?\s*$/iu.test(previousWindow)
-    || /^\s*(?:random\s+)?seeds?\b/iu.test(nextWindow)
-    || (
-      /\b(?:random\s+)?seeds?\b/iu.test(localDesignWindow)
-      && !/\b(?:accuracy|delta|gain|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
-    )
-  ) {
-    return true;
-  }
-  if (
-    /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*(?:values?|levels?|settings?|of|=|:|,|and|or)?\s*$/iu.test(previousWindow)
-    || /^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)
-    || /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*\\?\{[^}]*$/iu.test(previousWindow)
-    || (
-      /^\s*\\?\}/u.test(nextWindow)
-      && /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*\\?\{[^.!?]*$/iu.test(localDesignWindow)
-    )
-    || (
-      /\b(?:parameter|factor|factorial|grid|condition|cell)\b/iu.test(localDesignWindow)
-      && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
-    )
-  ) {
-    return true;
-  }
-  if (/^\s*(?:percentage[-\s]+)?points?\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/^\s*-?\s*(?:training\s+)?examples?\b|^\s*train\s+dataset\s+tokens?\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/^\s*(?:(?:evaluated|combined|correct|incorrect|total)\s+)?(?:items?|examples?|prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/\b(?:n\s*=\s*)?$/iu.test(previousWindow) && /^\s*(?:prediction|predictions|records?|samples?)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/\bpredictions?\s+per\s+condition\s*:?\s*$/iu.test(previousWindow)) {
-    return true;
-  }
-  if (/^\s*tokens?\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (
-    /^\s*(?:optimizer\s+)?steps?\b/iu.test(nextWindow)
-    || /^\s*-?\s*(?:s|sec|secs|second|seconds)\s+timeout\b/iu.test(nextWindow)
-  ) {
-    return true;
-  }
-  if (/\b(?:max(?:imum)?\s+sequence\s+length|sequence\s+length|max[_\s-]?seq(?:uence)?[_\s-]?length)\s*(?:of|=|:)?\s*$/iu.test(previousWindow)) {
-    return true;
-  }
-  if (/\b(?:runtime\s+limit|timeout|time\s+budget|budget)\s*(?:of|=|:)?\s*$/iu.test(previousWindow)) {
-    return true;
-  }
-  if (/^\s*datasets?\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/^\s*-?\s*(?:runs?|rows?)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  const window = fragment.slice(Math.max(0, index - 8), Math.min(fragment.length, index + rawToken.length + 12));
-  if (/\btop[- ]?1 accuracy\b/iu.test(window) && rawToken === "1") {
-    return true;
-  }
-  const widerWindow = fragment.slice(Math.max(0, index - 20), Math.min(fragment.length, index + rawToken.length + 20));
-  const thresholdBoundaryWindow = fragment.slice(
-    Math.max(0, index - 96),
-    Math.min(fragment.length, index + rawToken.length + 48)
-  );
-  if (/\b(?:parameter[_\s-]*x|factor\s*x)\s+\d+(?:\.\d+)?\s+with\s*$/iu.test(previousWindow) && /^\s*(?:parameter[_\s-]*y|factor\s*y)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/\bwith\s*$/iu.test(previousWindow) && /^\s*(?:parameter[_\s-]*y|factor\s*y)\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (/^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)) {
-    return true;
-  }
-  if (
-    /\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*(?:=|:)?\s*$/iu.test(previousWindow)
-    || /^\s*(?:parameter[_\s-]*[xy]|factor\s*[xy])\b/iu.test(nextWindow)
-  ) {
-    return true;
-  }
-  if (/\[[^\]]*$/u.test(previousWindow) || /^[^\[]*\]/u.test(nextWindow)) {
-    return true;
-  }
-  const uncertaintyWindow = fragment.slice(Math.max(0, index - 48), Math.min(fragment.length, index + rawToken.length + 48));
-  if (
-    /\b(?:standard deviation|standard error|std|sem|ci|confidence interval|interval width|ci95)\b/iu.test(uncertaintyWindow)
-    && !/\b(?:mean|delta|gain|improvement|accuracy)\s+(?:of\s+)?$/iu.test(previousWindow)
-  ) {
-    return true;
-  }
-  if (/\b(?:low|mid|high)\s*$/iu.test(previousWindow) && /\brange\b/iu.test(widerWindow)) {
-    return true;
-  }
-  if (/\b(?:data budget|training used|subset capped|budget capped)\b/iu.test(widerWindow)) {
-    return true;
-  }
-  if (/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s*$/iu.test(fragment.slice(Math.max(0, index - 24), index))) {
-    return true;
-  }
-  if (
-    /\b(?:parameter|factor|grid|sweep)\b/iu.test(localDesignWindow)
-    && !/\b(?:accuracy|delta|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
-  ) {
-    return true;
-  }
-  if (/\b(?:parameter[_\s-]*x|factor\s*x)\s+\d+(?:\.\d+)?\s+(?:with\s+)?(?:and\s+)?(?:parameter[_\s-]*y|factor\s*y)\s*$/iu.test(fragment.slice(Math.max(0, index - 64), index))) {
-    return true;
-  }
-  if (/\b(?:parameter[_\s-]*[xy]|factor\s*[xy])\s+\d+(?:\.\d+)?\s+(?:or|and|to|through)\s*$/iu.test(fragment.slice(Math.max(0, index - 64), index))) {
-    return true;
-  }
-  if (/(?:>=|<=|>|<)\s*$/.test(fragment.slice(Math.max(0, index - 4), index))) {
-    return true;
-  }
-  if (
-    /^0(?:\.0+)?$/u.test(rawToken)
-    && /\bgain\b[^.!?]{0,48}\b(?:versus|vs\.?)\s*$/iu.test(previousWindow)
-  ) {
-    return true;
-  }
-  if (
-    /\b(?:parameter|factor|grid|sweep)\b/iu.test(localDesignWindow)
-    && /\bdelta[-\s]?reference\b/iu.test(localDesignWindow)
-    && !/\b(?:accuracy|gain|improvement|loss|runtime|latency|memory)\b/iu.test(localMetricWindow)
-  ) {
-    return true;
-  }
-  if (/\b(?:target|threshold|objective|goal|constraint|minimum|at least|at most)\b/iu.test(widerWindow)) {
-    return true;
-  }
-  if (/\b(?:target|threshold|objective|goal|constraint|minimum)\b/iu.test(localDesignWindow)) {
-    return true;
-  }
-  if (
-    /\b(?:no[-\s]?signal|threshold|boundary|rule|minimum|maximum|spread)\b/iu.test(thresholdBoundaryWindow)
-    && /\b(?:below|under|less than|at least|at most|exceed(?:s|ed)?|clear(?:s|ed)?|stayed below|remained below)\b/iu.test(
-      thresholdBoundaryWindow
-    )
-  ) {
-    return true;
-  }
-  return false;
 }
 
 function isObjectiveThresholdFragment(fragment: string): boolean {
@@ -5560,62 +3284,6 @@ function isObjectiveThresholdFragment(fragment: string): boolean {
 
 function isObjectiveThresholdFact(fact: NormalizedNumericFact): boolean {
   return fact.fact_kind === "metric" && isObjectiveThresholdFragment(fact.raw_text);
-}
-
-function shouldSkipAmbiguousMetricFact(
-  fragment: string,
-  metricKey: string,
-  datasetScope: string | "aggregate" | "unknown",
-  source: NumericFactSource
-): boolean {
-  if (
-    datasetScope === "aggregate"
-    && ["discussion", "appendix_section"].includes(source)
-    && ["pairwise_ranking_agreement", "winner_consistency"].includes(metricKey)
-    && !/\bacross datasets\b|\baggregate\b|\boverall\b|\bmean\b/iu.test(fragment)
-  ) {
-    return true;
-  }
-  if (
-    metricKey === "peak_memory_mb"
-    && /\brank[-\s]?by[-\s]?parameter_y\b|\brank\s+in\b|\bparameter_y values\b|\brank\s+\d+(?:\.\d+)?\b.*\bparameter_y\b|\bparameter_y\b.*\brank\s+\d+(?:\.\d+)?\b/iu.test(fragment)
-  ) {
-    return true;
-  }
-  if (
-    metricKey === "peak_memory_mb"
-    && /\bcondition[_\s-]*\d+(?:[_\s-]\d+)?[_\s-]*parameter[_\s-]*\d+(?:[_\s-]\d+)?|\b(?:parameter[_\s-]*x|factor\s*x)\s*=\s*\d+(?:\.\d+)?\s*[/,; ]+\s*(?:parameter[_\s-]*y|factor\s*y)\s*=\s*\d+(?:\.\d+)?|\b(?:condition|cell)\s+\d+(?:\.\d+)?\s+(?:parameter|setting)\s+\d+(?:\.\d+)?/iu.test(fragment)
-  ) {
-    return true;
-  }
-  if (
-    metricKey === "peak_memory_mb"
-    && /\b(?:related|prior|previous|external)\b[^.!?]{0,80}\b(?:study|work|paper|authors?)\b|\bwithin\s+\d+(?:,\d{3})*(?:\.\d+)?\s+hours?\b|\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:gb|gib)\s+gpu\b/iu.test(fragment)
-  ) {
-    return true;
-  }
-  if (
-    metricKey === "peak_memory_mb"
-    && /\b\d+(?:\.\d+)?\s*b[-\s]?class\s+model\b|\bmodel\s+scale\b|\blarger[-\s]?memory\s+regimes?\b/iu.test(fragment)
-  ) {
-    return true;
-  }
-  if (
-    metricKey === "runtime_seconds"
-    && /\b\d+(?:,\d{3})*(?:\.\d+)?\s+of\s+\d+(?:,\d{3})*(?:\.\d+)?\s+requested\s+conditions?\b|\b\d+(?:,\d{3})*(?:\.\d+)?\s+(?:requested|completed)\s+conditions?\b/iu.test(fragment)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function isCitationSupportedIntervalBound(fact: NormalizedNumericFact): boolean {
-  return (
-    fact.fact_kind === "metric"
-    && (fact.unit === "ci_lower" || fact.unit === "ci_upper")
-    && Boolean(fact.source_refs?.length)
-    && /\b(?:interval|ci|confidence)\b/iu.test(fact.raw_text)
-  );
 }
 
 function shouldWarnOnUnverifiableFact(source: NumericFactSource): boolean {
@@ -5638,20 +3306,6 @@ function extractNumericNoteCount(notes: string[]): number | undefined {
     )[0];
     if (typeof first === "number") {
       return first;
-    }
-  }
-  return undefined;
-}
-
-function extractFirstMetricValue(notes: string[], pattern: RegExp): number | undefined {
-  for (const note of notes) {
-    const match = cleanString(note).match(pattern);
-    if (!match) {
-      continue;
-    }
-    const value = Number(match[1]);
-    if (Number.isFinite(value)) {
-      return value;
     }
   }
   return undefined;
@@ -6073,53 +3727,37 @@ export function materializeScientificManuscript(input: {
     };
   }), context);
 
-  const conditionTables = conditionResultTableBuilder(context);
-  const mainTables = conditionTables.length > 0 ? conditionTables : datasetResultTableBuilder(context);
-  const candidateTables = attachFallbackSourceRefsToTables(
-    sanitizeCandidateTables(input.candidate.tables),
-    ["result_analysis.metric_table", "latest_results.dataset_summaries"]
+  const primaryTables = primaryComparisonTableBuilder(context);
+  const derivedTables = primaryTables.length > 0 ? primaryTables : undefined;
+  const authoredTables = filterExplicitAuthoredTables(
+    sanitizeCandidateTables(input.candidate.tables)
   );
-  const mainTableSourceIds = conditionTables.length > 0
-    ? ["latest_results.condition_summaries", "result_analysis.condition_comparisons", "result_analysis.statistical_summary"]
-    : ["result_analysis.metric_table", "latest_results.dataset_summaries"];
-  const derivedTables = mainTables.length > 0
-    ? mainTables.map((table) => ({
-        ...table,
-        source_refs: buildArtifactSourceRefs(mainTableSourceIds)
-      }))
-    : undefined;
   const tables = makeMainTablesSelfContained(
-    conditionTables.length > 0 ? derivedTables : (candidateTables?.length ? candidateTables : derivedTables),
+    authoredTables
+      || (context.results.primary_comparison_status === "resolved" ? derivedTables : undefined),
     context
   );
-  const conditionFigures = conditionFigureSelectorAndCaptionWriter(context);
-  const mainFigures = conditionFigures.length > 0 ? conditionFigures : figureSelectorAndCaptionWriter(context);
-  const candidateFigures = attachFallbackSourceRefsToFigures(
-    sanitizeCandidateFigures(input.candidate.figures),
-    ["result_analysis.figure_specs", "latest_results.dataset_summaries"]
+  const primaryFigures = primaryComparisonFigureBuilder(context);
+  const derivedFigures = primaryFigures.length > 0 ? primaryFigures : undefined;
+  const authoredFigures = filterExplicitAuthoredFigures(
+    sanitizeCandidateFigures(input.candidate.figures)
   );
-  const mainFigureSourceIds = conditionFigures.length > 0
-    ? ["latest_results.condition_summaries", "result_analysis.condition_comparisons", "result_analysis.statistical_summary"]
-    : ["result_analysis.figure_specs", "latest_results.dataset_summaries"];
-  const derivedFigures = mainFigures.length > 0
-    ? mainFigures.map((figure) => ({
-        ...figure,
-        source_refs: buildArtifactSourceRefs(mainFigureSourceIds)
-      }))
-    : undefined;
-  const figures = conditionFigures.length > 0 ? derivedFigures : (candidateFigures?.length ? candidateFigures : derivedFigures);
-  const selectedFiguresRaw = conditionFigures.length > 0 || hasExplicitAuthoredFigureMarker(candidateFigures)
-    ? figures
-    : dropRedundantFiguresAgainstTables(tables, figures);
-  const selectedFigures = sanitizeCandidateFigures(dropTaskDeltaFiguresRedundantWithTables(tables, selectedFiguresRaw));
+  const selectedFigures = authoredFigures
+    || sanitizeCandidateFigures(dropRedundantFiguresAgainstTables(
+      tables,
+      context.results.primary_comparison_status === "resolved" ? derivedFigures : undefined
+    ));
   const generatedAppendixSections = input.appendixPlan.sections.map((section) => ({
     ...section,
     source_refs: buildArtifactSourceRefs([`appendix:${section.heading}`, "latest_results", "result_analysis"])
   }));
   const generatedAppendixTables = input.appendixPlan.tables.map((table) => ({
     ...table,
-    caption: sanitizeVisualCaption(table.caption, "Extended dataset-level outcomes retained outside the main paper."),
-    source_refs: buildArtifactSourceRefs(["appendix:dataset_tables", "latest_results.dataset_summaries"])
+    caption: sanitizeVisualCaption(
+      table.caption,
+      "Extended declared primary comparison retained outside the main paper."
+    ),
+    source_refs: mergeSourceRefs(table.source_refs, buildArtifactSourceRefs(["appendix:primary_comparison"]) || [])
   }));
   const generatedAppendixFigures = input.appendixPlan.figures.map((figure) => ({
     ...figure,
@@ -6159,7 +3797,7 @@ export function materializeScientificManuscript(input: {
     appendix_tables: appendixTables,
     appendix_figures: appendixFigures
   };
-  manuscript = compactReaderFacingScientificManuscript(manuscript, context);
+  manuscript = compactReaderFacingScientificManuscript(manuscript);
   attachAppendixCrossReferences(manuscript, input.appendixPlan);
 
   const consistency = manuscriptConsistencyLinter({
@@ -6359,13 +3997,8 @@ function isHumanFacingProtocolChecklistResidue(text: string): boolean {
     || /^Evidence accounting:/iu.test(text)
     || /\bPaper-scale evidence floor:/iu.test(text)
     || /\bCanonical-reference gate:/iu.test(text)
-    || /\bModels or conditions include Primary trained baseline:/iu.test(text)
     || /\b(?:current|selected|configured|registered|locked)_[a-z0-9_]*baseline\b/iu.test(text)
-    || /\bcondition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\s+vs\s+condition\s+[0-9]+\s+parameter\s+[0-9.]+(?:\s+[0-9.]+)?\b/iu.test(text)
     || /^The best nonbaseline row should therefore be read as a selection signal\b/iu.test(text)
-    || /^The leading-condition row carries the strongest follow-up signal\b/iu.test(text)
-    || /\baccuracy_pass_at_1_delta_vs_baseline\b/iu.test(text)
-    || /\baccuracy_improvement_over_baseline\b/iu.test(text)
   );
 }
 
@@ -6399,14 +4032,10 @@ export function strengthenPaperScaleManuscript(
 }
 
 function compactReaderFacingScientificManuscript(
-  manuscript: PaperManuscript,
-  context?: ExperimentArtifactContext
+  manuscript: PaperManuscript
 ): PaperManuscript {
   return {
     ...manuscript,
-    title: context?.protocol_kind === "lm_benchmark"
-      ? softenLmBenchmarkPilotTitle(manuscript.title)
-      : manuscript.title,
     sections: manuscript.sections.map((section) => {
       const normalized = cleanString(section.heading).toLowerCase();
       if (normalized === "method") {
@@ -6427,17 +4056,6 @@ function compactReaderFacingScientificManuscript(
       };
     })
   };
-}
-
-function softenLmBenchmarkPilotTitle(title: string): string {
-  const cleaned = cleanString(title);
-  if (!cleaned) {
-    return title;
-  }
-  if (/\b(?:workflow|audit|paper[- ]?readiness|result[- ]?gating)\b/iu.test(cleaned)) {
-    return "A Governed Experimental Study Under a Fixed Resource Budget";
-  }
-  return title;
 }
 
 function compactReaderFacingMethodParagraphs(paragraphs: string[]): string[] {
@@ -6465,7 +4083,7 @@ function strengthenHumanFacingSections(
     } else if (/^related work$/iu.test(cleanString(section.heading))) {
       strengthened = strengthenRelatedWorkSectionWithPaperContrasts(section, context);
     } else if (/^results$/iu.test(cleanString(section.heading))) {
-      strengthened = strengthenResultsSectionWithConditionNarrative(section, context);
+      strengthened = strengthenResultsSectionNarrative(section, context);
     } else if (/^discussion$/iu.test(cleanString(section.heading))) {
       strengthened = strengthenDiscussionSectionWithEvidenceCeiling(section, context);
     } else if (/^limitations$/iu.test(cleanString(section.heading))) {
@@ -6530,7 +4148,7 @@ function strengthenRelatedWorkSectionWithPaperContrasts(
     : { ...section, paragraphs };
 }
 
-function strengthenResultsSectionWithConditionNarrative(
+function strengthenResultsSectionNarrative(
   section: PaperManuscriptSection,
   _context: ExperimentArtifactContext
 ): PaperManuscriptSection {
@@ -6550,7 +4168,7 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (/\bObjective metric\s+(?:met|not met)\s*:/iu.test(cleaned)) {
     return true;
   }
-  if (/^(?:conditions?|results?|metrics?)\s*\//iu.test(cleaned) && /(?:95%\s+CI|=|:)/u.test(cleaned)) {
+  if (/^(?:results?|metrics?)\s*\//iu.test(cleaned) && /(?:95%\s+CI|=|:)/u.test(cleaned)) {
     return true;
   }
   if (/^(?:wall[_ ]clock[_ ]runtime|device[_ ].*memory)[_ ]/iu.test(cleaned) && /=\s*-?\d/u.test(cleaned)) {
@@ -6562,7 +4180,7 @@ function isRawMetricDumpParagraph(paragraph: string): boolean {
   if (metricAssignments.length >= 2) {
     return true;
   }
-  if (/^The 95% interval for (?:conditions?|comparisons?|results?)\b/iu.test(cleaned)) {
+  if (/^The 95% interval for (?:comparisons?|results?)\b/iu.test(cleaned)) {
     return true;
   }
   return false;
@@ -6705,49 +4323,22 @@ function strengthenMethodSectionWithArtifactDetails(
 }
 
 function buildExecutedProtocolDetailParagraph(context: ExperimentArtifactContext): string {
-  const candidateModelNames = context.method.model_names.filter((item) => !isInternalComparatorModelLabel(item));
-  const modelName = candidateModelNames.find((item) => /llm|language model|backbone|base model/iu.test(item))
-    || candidateModelNames[0]
-    || "";
+  const seriesLabels = context.method.model_names.slice(0, 4);
   const methodNotes = context.method.hyperparameter_notes
     .map((item) => sanitizeHumanFacingManuscriptText(item))
     .filter((item) => item && !isInternalWorkflowNarrative(item));
-  if (!modelName && methodNotes.length === 0) {
+  if (seriesLabels.length === 0 && methodNotes.length === 0) {
     return "";
   }
   const sentences: string[] = [];
-  if (modelName) {
-    sentences.push(`The reported study uses ${modelName} as the trained backbone.`);
+  if (seriesLabels.length > 0) {
+    sentences.push(`Declared result series include ${joinHumanList(seriesLabels)}.`);
   }
   sentences.push(...methodNotes.slice(0, 3));
   return sanitizeHumanFacingManuscriptText(sentences.join(" "));
 }
-
-function isInternalComparatorModelLabel(value: string | undefined): boolean {
-  const cleaned = cleanString(value);
-  if (!cleaned) {
-    return false;
-  }
-  return (
-    /^(?:primary trained baseline|unmodified-system comparator|comparator set for pareto analysis)\s*:/iu.test(cleaned)
-    || /\b(?:evaluated once or repeatedly under the same evaluator|confirm result schema|comparator of record|locked comparator|pareto analysis)\b/iu.test(cleaned)
-  );
-}
-
-function stripInternalComparatorBackboneClaims(text: string): string {
-  return cleanString(text)
-    .replace(
-      /\bThe reported study uses\s+(?:Primary trained baseline|Unmodified-system comparator|Comparator set for Pareto analysis):[\s\S]{0,600}?\bas the trained backbone\.\s*/giu,
-      ""
-    )
-    .replace(
-      /\bThe executed run used\s+(?:Primary trained baseline|Unmodified-system comparator|Comparator set for Pareto analysis):[\s\S]{0,600}?(?:\.|$)\s*/giu,
-      ""
-    );
-}
-
 function sanitizeHumanFacingManuscriptText(text: string): string {
-  const cleaned = stripInternalComparatorBackboneClaims(text);
+  const cleaned = cleanString(text);
   if (!cleaned) {
     return text;
   }
@@ -6788,11 +4379,6 @@ function sanitizeHumanFacingManuscriptText(text: string): string {
     .replace(/\bpaper-readiness audit\b/giu, "paper-scale review")
     .replace(/\bresult-table integrity\b/giu, "result-table consistency")
     .replace(/[.!?]\s+under an explicitly bounded evidence ceiling\b/giu, " under an explicitly bounded evidence ceiling")
-    .replace(
-      /\bcondition summaries?\s*\/\s*[^/]+\s*\/\s*([A-Za-z][A-Za-z0-9 _.-]+?)\s+95%\s+CI\s*\[([^\]]+)\]\s*over\s*n\s*=\s*(\d+)\.?/giu,
-      (_match: string, metric: string, interval: string, count: string) =>
-        `One reported condition-level 95% interval for ${humanizeToken(metric)} spans [${interval}] over ${count} observations.`
-    )
     .replace(
       /\bwall[_ ]clock[_ ]runtime[_ ]sec\s*=\s*(-?\d+(?:,\d{3})*(?:\.\d+)?)\.?/giu,
       "wall-clock runtime was $1 seconds."
@@ -6871,7 +4457,7 @@ function stripInternalProvenanceLabels(value: string): string {
       }
       const labels = label.split(/\s*;\s*/u).filter(Boolean);
       const isInternalLabel = labels.every((item) =>
-        /^(?:(?:the\s+)?(?:configured|selected|fallback|training|evaluation)\s+)?(?:model|backbone|dataset|benchmark(?:\s+task)?|task|condition)(?:\s+[A-Za-z0-9._/-]+){0,4}$/iu.test(item)
+        /^(?:(?:the\s+)?(?:configured|selected|fallback|training|evaluation)\s+)?(?:model|backbone|dataset|benchmark(?:\s+task)?|task)(?:\s+[A-Za-z0-9._/-]+){0,4}$/iu.test(item)
       );
       return isInternalLabel ? "" : match;
     }
@@ -6890,15 +4476,12 @@ function stripHumanFacingDraftInstructionSentences(text: string): string {
   );
 }
 
-function sanitizeRelatedWorkAxisForNarrative(value: string | undefined, protocolKind?: ExperimentProtocolKind): string {
+function sanitizeRelatedWorkAxisForNarrative(value: string | undefined): string {
   const cleaned = sanitizeHumanFacingManuscriptText(cleanString(value))
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
     .trim();
   if (!cleaned || isBibliographicSpilloverText(cleaned)) {
-    return "";
-  }
-  if (protocolKind === "lm_benchmark" && isOffTopicLmBenchmarkRelatedWorkAxis(cleaned)) {
     return "";
   }
   if (cleaned.length > 150) {
@@ -6907,15 +4490,12 @@ function sanitizeRelatedWorkAxisForNarrative(value: string | undefined, protocol
   return cleaned;
 }
 
-function sanitizeRelatedWorkTitleForNarrative(value: string | undefined, protocolKind?: ExperimentProtocolKind): string {
+function sanitizeRelatedWorkTitleForNarrative(value: string | undefined): string {
   const cleaned = cleanString(value)
     .replace(/\.{2,}/gu, ".")
     .replace(/\s+/gu, " ")
     .trim();
   if (!cleaned || isBibliographicSpilloverText(cleaned)) {
-    return "";
-  }
-  if (protocolKind === "lm_benchmark" && isOffTopicLmBenchmarkRelatedWorkAxis(cleaned)) {
     return "";
   }
   const words = cleaned.split(/\s+/u);
@@ -6960,42 +4540,9 @@ function isBibliographicSpilloverText(value: string): boolean {
   return false;
 }
 
-function isOffTopicLmBenchmarkRelatedWorkAxis(value: string): boolean {
-  const text = cleanString(value);
-  if (!text) {
-    return false;
-  }
-  if (
-    /\b(?:literature discovery|retrieval-only|stateful coordination|agent coordination|genetic algorithm|abstract-only fallback)\b/iu.test(
-      text
-    ) ||
-    /^GIFT is\b/iu.test(text)
-  ) {
-    return true;
-  }
-  return !/\b(?:method-family|parameterization|instruction|fine[- ]?tun(?:e|ing)?|quantization|benchmark|evaluation|resource|memory|parameter|factor|prompting|control)\b/iu.test(
-    text
-  );
-}
-
-function completeRelatedWorkClustersForProtocol(
-  clusters: string[],
-  protocolKind: ExperimentProtocolKind
-): string[] {
-  if (protocolKind !== "lm_benchmark" || clusters.length >= 3) {
-    return clusters;
-  }
-  return uniqueStrings([
-    ...clusters,
-    "method and parameterization design",
-    "resource-budgeted training",
-    "benchmark evaluation and claim calibration"
-  ]).slice(0, 4);
-}
-
 function buildRelatedWorkAxisSentence(context: ExperimentArtifactContext): string {
   const axes = context.related_work.comparison_axes
-    .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis, context.protocol_kind))
+    .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis))
     .filter(Boolean)
     .slice(0, 3);
   if (axes.length === 0) {
@@ -7007,23 +4554,23 @@ function buildRelatedWorkAxisSentence(context: ExperimentArtifactContext): strin
 function firstSafeRelatedWorkAxis(context: ExperimentArtifactContext): string {
   return (
     context.related_work.comparison_axes
-      .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis, context.protocol_kind))
+      .map((axis) => sanitizeRelatedWorkAxisForNarrative(axis))
       .find(Boolean) || ""
   );
 }
 
 function safeRelatedWorkClusters(context: ExperimentArtifactContext): string[] {
   return context.related_work.clusters
-    .map((cluster) => sanitizeRelatedWorkAxisForNarrative(cluster, context.protocol_kind))
+    .map((cluster) => sanitizeRelatedWorkAxisForNarrative(cluster))
     .filter(Boolean);
 }
 
 function buildClosestCitedWorkSentence(context: ExperimentArtifactContext): string {
   const clusters = safeRelatedWorkClusters(context).slice(0, 3);
   if (clusters.length > 0) {
-    return `The closest cited work frames ${joinHumanList(clusters)} rather than a condition-matched reproduction of the present run.`;
+    return `The closest cited work frames ${joinHumanList(clusters)} rather than a direct reproduction of the present run.`;
   }
-  return "The closest cited work frames the empirical design rather than a condition-matched reproduction of the present run.";
+  return "The closest cited work frames the empirical design rather than a direct reproduction of the present run.";
 }
 
 function describeScientificObjectiveForNarrative(value: string | undefined): string {
@@ -7031,11 +4578,8 @@ function describeScientificObjectiveForNarrative(value: string | undefined): str
   if (!cleaned || isBibliographicSpilloverText(cleaned)) {
     return "the stated empirical objective";
   }
-  if (/accuracy|benchmark_task_a|benchmark_task_b|baseline|delta/iu.test(cleaned)) {
-    return "baseline-relative task accuracy under the declared local budget";
-  }
-  if (/f1|classification|logreg|tree|tabular/iu.test(cleaned)) {
-    return "baseline-relative predictive performance under the declared evaluation protocol";
+  if (/\b(?:baseline|reference|comparison|difference|delta)\b/iu.test(cleaned)) {
+    return "the declared primary comparison under the stated evaluation budget";
   }
   return cleaned.length > 120 ? "the stated empirical objective" : cleaned;
 }
@@ -7551,27 +5095,26 @@ function buildBudgetFloorParagraph(
   evidenceIds: string[],
   citationPaperIds: string[]
 ): PaperDraftParagraph | undefined {
-  const conditionCount = context.results.condition_summaries.length;
+  const primaryComparison = context.results.primary_comparison;
   const datasetNames = joinHumanList(context.method.dataset_names.slice(0, 4));
-  const conditionSurface =
-    conditionCount > 0
-      ? `${conditionCount} structured condition summaries`
-      : "the structured result summaries";
+  const comparisonSurface = primaryComparison
+    ? `the declared ${primaryComparison.subject.series_role}-to-baseline comparison for ${primaryComparison.metric_label}`
+    : "the unresolved result contract";
   const sentencesByHeading: Record<string, string[][]> = {
     results: [
       [
-        `The main result is reported through ${conditionSurface} rather than through a single selected example.`,
+        `The main result is reported through ${comparisonSurface} rather than through a value-selected example.`,
         context.results.aggregate_summary[0] || "The aggregate summary anchors the central empirical story.",
         "This makes the result table the primary evidence object and keeps any interpretation tied to comparable rows."
       ],
       [
         context.results.dispersion_notes[0] || context.results.ci_notes[0] || "Uncertainty remains visible in the structured result artifacts.",
-        "The manuscript treats that uncertainty as part of the result rather than as a caveat to remove after choosing the strongest condition.",
-        "This wording is intentionally conservative because the current run is designed to identify a follow-up candidate, not to settle a universal ranking."
+        "The manuscript treats that uncertainty as part of the result rather than using it to choose between undeclared alternatives.",
+        "This wording is intentionally conservative because the current run evaluates one declared comparison rather than inferring a universal ranking."
       ],
       [
         context.results.runtime_notes[0] || context.results.memory_notes[0] || "Operational traces are retained as execution evidence.",
-        "They support the claim that the comparison was run under the declared budget, but they do not by themselves prove that the strongest accuracy setting is the most efficient setting.",
+        "They support execution accounting, but they do not by themselves establish a performance-efficiency ranking between series.",
         "That separation keeps resource observations from becoming unsupported optimization claims."
       ]
     ],
@@ -7583,8 +5126,8 @@ function buildBudgetFloorParagraph(
       ],
       [
         context.method.repeat_notes[0] || "Repeated execution is treated as the unit of empirical support.",
-        "Seed-level outcomes are not promoted into separate conclusions; they are used to expose variation around each condition.",
-        "The baseline remains the comparison anchor throughout the manuscript so that positive deltas are not detached from their reference point."
+        "Repeat-level outcomes are not promoted into separate conclusions; they are used only to expose variation around the linked observations.",
+        "The baseline role and subject-minus-reference sign remain explicit, while preference is determined by the metric direction."
       ],
       [
         context.method.hyperparameter_notes[0] || "The tested configuration space is described only to the extent visible in the artifacts.",
@@ -7621,7 +5164,9 @@ function buildBudgetFloorParagraph(
     limitations: [
       [
         context.discussion.limitations[0] || "The main limitation is the bounded scope of the current evidence.",
-        "The experiment can support a local candidate-selection claim, but it cannot establish broad transfer, mechanism, or deployment robustness.",
+        primaryComparison
+          ? "The experiment can support only the directional interpretation encoded by the declared comparison; it cannot establish broad transfer, mechanism, or deployment robustness."
+          : "Without a resolved primary comparison, the experiment cannot support a directional selection claim.",
         "Those limits are stated as part of the scientific result rather than hidden in a generic final paragraph."
       ],
       [
@@ -7640,7 +5185,9 @@ function buildBudgetFloorParagraph(
     conclusion: [
       [
         "The final takeaway is therefore deliberately narrow.",
-        "The current run can identify a defensible next configuration to test and can document the conditions under which that signal appeared.",
+        primaryComparison
+          ? "The current run documents the declared comparison and its direction-aware interpretation as a bounded follow-up signal."
+          : "The current artifacts do not select a follow-up series because no primary comparison is resolved.",
         "It should not be read as closing the broader research question without the larger follow-up study described in the limitations."
       ]
     ]
@@ -7688,9 +5235,7 @@ function buildSectionParagraphCandidates(
           ],
           expanded && expansionPass >= 4
             ? [
-                context.protocol_kind === "lm_benchmark"
-                  ? "The motivation is deliberately practical: local instruction-tuning screens often need to decide whether a configuration deserves a larger run before the project can afford broader model and task coverage."
-                  : "The motivation is deliberately practical: bounded empirical screens often need to decide whether a configuration deserves a larger run before the project can afford broader dataset and model coverage.",
+                "The motivation is deliberately practical: bounded empirical screens often need to decide whether a declared subject deserves a larger run before the project can afford broader series and evaluation coverage.",
                 "For that reason, the paper treats the executed comparison as a decision-quality preflight rather than as a final generalization claim, and it keeps the baseline, uncertainty, and failed-run visibility in the main narrative."
               ]
             : [],
@@ -7720,18 +5265,14 @@ function buildSectionParagraphCandidates(
           expanded
             ? [
                 "This positioning is intentionally narrower than a broad novelty claim: it clarifies where the current study overlaps with prior baselines and where evidence remains thin.",
-                context.protocol_kind === "lm_benchmark"
-                  ? "For this manuscript, the cited method-family literature supplies framing axes rather than direct numerical baselines. The condition-matched comparator remains the locked baseline inside the executed run, while prior work defines the resource, benchmark-design, and mechanism questions that make a condition-parameter screen scientifically interpretable."
-                  : "For this manuscript, the cited literature supplies positioning anchors rather than direct condition-matched baselines. The condition-matched comparator remains the executed baseline inside the run, while prior work defines the methodological and evaluation questions that make the scoped experiment scientifically interpretable.",
-                context.protocol_kind === "lm_benchmark"
-                  ? "This separation keeps the contribution modest but clearer. The paper can argue that a local condition-grid preflight is a useful evidence filter for tuning decisions, while avoiding claims that would require a broader model suite, a different task mix, or direct reproduction of the cited methods."
-                  : "This separation keeps the contribution modest but clearer. The paper can argue that the executed comparison is a useful evidence filter for the stated research question, while avoiding claims that would require a broader dataset suite, a different task mix, or direct reproduction of the cited methods."
+                "For this manuscript, the cited literature supplies positioning anchors rather than direct numerical baselines. The declared reference series remains the comparison of record inside the executed run, while prior work defines the methodological and evaluation questions that make the scoped experiment scientifically interpretable.",
+                "This separation keeps the contribution modest but clearer. The paper can argue that the executed comparison is a useful evidence filter for the stated research question, while avoiding claims that would require broader series coverage, a different evaluation scope, or direct reproduction of the cited methods."
               ]
             : [],
           expanded && expansionPass >= 4
             ? [
                 "The prior-work role is therefore twofold: it defines why the chosen axes matter, and it prevents the manuscript from using external citations as if they were direct evidence for the current numerical comparison.",
-                "That distinction is important for paper readiness because related work can justify the question and design, but only the executed artifacts can support condition-level claims about the present experiment."
+                "That distinction is important for paper readiness because related work can justify the question and design, but only the executed artifacts can support claims about the present comparison."
               ]
             : []
         ].filter((item) => item.length > 0),
@@ -7746,7 +5287,7 @@ function buildSectionParagraphCandidates(
               ? `The evaluation spans ${joinHumanList(context.method.dataset_names)}.`
               : "The evaluation dataset scope is not yet fully specified in upstream artifacts.",
             context.method.model_names.length > 0
-              ? `Models or conditions include ${joinHumanList(context.method.model_names.slice(0, 4))}.`
+              ? `Declared result series include ${joinHumanList(context.method.model_names.slice(0, 4))}.`
               : ""
           ],
           [
@@ -7754,8 +5295,8 @@ function buildSectionParagraphCandidates(
               ? `Preprocessing follows this order: ${joinHumanList(context.method.preprocessing_steps.slice(0, 4))}.`
               : "Preprocessing details remain limited in the current artifacts and should be read conservatively.",
             context.method.selection_metrics.length > 0
-              ? `Model selection and reporting focus on ${joinHumanList(context.method.selection_metrics.slice(0, 4))}.`
-              : "Model selection and reporting metrics remain partially specified in the current artifacts."
+              ? `Selection and reporting focus on ${joinHumanList(context.method.selection_metrics.slice(0, 4))}.`
+              : "Selection and reporting metrics remain partially specified in the current artifacts."
           ],
           [
             context.method.outer_fold_notes.length > 0 || context.method.inner_fold_notes.length > 0 || context.method.repeat_notes.length > 0
@@ -7764,7 +5305,7 @@ function buildSectionParagraphCandidates(
                   ...context.method.inner_fold_notes,
                   ...context.method.repeat_notes
                 ].slice(0, 4))}.`
-              : "Cross-validation and repetition details remain partially specified in the current artifacts.",
+              : "Repetition details remain partially specified in the current artifacts.",
             context.method.runtime_measurement || context.method.memory_measurement
               ? `Runtime${context.method.memory_measurement ? " and memory" : ""} are explicitly measured in the evaluation outputs.`
               : ""
@@ -7778,9 +5319,7 @@ function buildSectionParagraphCandidates(
             : [],
           expanded && expansionPass >= 2
             ? [
-                context.protocol_kind === "lm_benchmark"
-                  ? "The executed condition-level summaries are the comparison unit for this local preflight: means are compared against the locked baseline, while individual seed outcomes are used to expose variation rather than to select a favorable example."
-                  : "The repeated-evaluation design is treated as the experimental unit for paper-scale interpretation: aggregate condition summaries are compared against the baseline, while individual repeats expose variation rather than serving as cherry-picked examples.",
+                "The declared subject and reference observations are the comparison unit: their series roles, metric, scope, and signed difference are linked explicitly rather than selected from observed values.",
                 context.method.repeat_notes.length > 0
                   ? `The preserved protocol notes ${joinHumanList(context.method.repeat_notes.slice(0, 3))}, so the method description distinguishes the planned budget from the executed repeated comparison.`
                   : "The method description separates the planned budget from the executed comparison so readers can see which claims depend on completed runs."
@@ -7789,15 +5328,13 @@ function buildSectionParagraphCandidates(
           expanded && expansionPass >= 3
             ? [
                 context.method.runtime_measurement || context.method.memory_measurement
-                  ? "Resource instrumentation is included as a reproducibility and feasibility check, not as a primary efficiency claim; this keeps the manuscript from converting auxiliary logs into unsupported condition-level conclusions."
+                  ? "Resource instrumentation is included as a reproducibility and feasibility check, not as a primary efficiency claim; this keeps the manuscript from converting auxiliary logs into unsupported series-level conclusions."
                   : "Auxiliary protocol details are reported only when they are visible in the run artifacts, and omitted quantities are treated as limitations rather than inferred measurements."
               ]
             : [],
           expanded && expansionPass >= 4
             ? [
-                context.protocol_kind === "lm_benchmark"
-                  ? "The method also fixes the interpretation boundary around a repeated-seed, small-backbone screen: the same dataset subset, task set, and baseline accounting are used to make the condition-parameter comparison auditable."
-                  : "The method also fixes the interpretation boundary around the repeated comparison: the same dataset scope, task definition, and baseline accounting are used to make the condition comparison auditable.",
+                "The method also fixes the interpretation boundary around the repeated comparison: the same declared scope, metric definition, and reference accounting are used to make the primary comparison auditable.",
                 "This detail is retained in the main text because paper readiness depends on readers being able to distinguish the experimental unit, the comparison unit, and the downstream follow-up that remains unexecuted."
               ]
             : []
@@ -7826,17 +5363,17 @@ function buildSectionParagraphCandidates(
           ...(expanded && expansionPass >= 2
             ? [
                 [
-                  context.results.condition_summaries.length > 0
-                    ? `The condition table should be read as the main comparison surface because it preserves the comparator or baseline label and condition-mean rows; seed-count metadata and uncertainty width remain supporting-record details rather than visible table columns.`
-                    : "The main result should be read through the structured comparison table rather than through isolated headline numbers.",
+                  context.results.primary_comparison
+                    ? "The main table preserves the declared subject/reference observation links, series roles, metric direction, unit, and signed difference."
+                    : "No directional comparison table is generated while the primary comparison remains unresolved.",
                   context.results.aggregate_summary[0] || "",
-                  "This presentation prevents the strongest cell from being promoted into a universal recipe without the supporting spread and completion context."
+                  "This presentation prevents an undeclared or value-selected series from being promoted into a universal recipe."
                 ],
                 [
                   context.results.runtime_notes[0] || context.results.memory_notes[0]
                     ? `Operational measurements remain secondary: ${joinHumanList([context.results.runtime_notes[0] || "", context.results.memory_notes[0] || ""].filter(Boolean))}.`
                     : "Operational measurements are retained as execution checks rather than as evidence for an efficiency ranking.",
-                  "That distinction matters because a paper-ready result can report that the experiment executed cleanly without claiming that the best-performing setting is also the most resource-efficient."
+                  "That distinction matters because execution evidence does not determine a resource-efficiency ranking between the declared series."
                 ]
               ]
             : []),
@@ -7846,7 +5383,7 @@ function buildSectionParagraphCandidates(
                   context.results.effect_notes[0] ||
                     "The observed effect is interpreted as a baseline-relative screening signal.",
                   context.results.heterogeneity_notes[0] ||
-                    "The repeated-seed framing leaves room for heterogeneous seed behavior, so the result is not described as uniformly positive.",
+                    "The current contract does not expose linked heterogeneity evidence, so no uniformity claim is made.",
                   "The manuscript therefore separates the empirical selection signal from the stronger mechanistic claim that would require a broader interaction analysis."
                 ]
               ]
@@ -7854,9 +5391,9 @@ function buildSectionParagraphCandidates(
           ...(expanded && expansionPass >= 4
             ? [
                 [
-                  context.results.condition_summaries.length > 0
-                    ? `Across the condition summaries, the important unit is the repeated cell rather than a single best seed; this keeps the reader focused on the baseline-relative pattern and its uncertainty.`
-                    : "Across the result summaries, the important unit is the comparable condition rather than a single favorable observation.",
+                  context.results.primary_comparison
+                    ? "The important unit is the explicitly linked subject/reference pair rather than a favorable observation selected after execution."
+                    : "The available artifact does not define a primary subject/reference pair for directional interpretation.",
                   "The table and figure are therefore used as complementary checks: the table anchors the numeric values, while the figure is retained only when it shows a distinct pattern that is not already obvious from the rows."
                 ],
                 [
@@ -7884,20 +5421,20 @@ function buildSectionParagraphCandidates(
           ],
           expanded && expansionPass >= 2
             ? [
-                "For a bounded experiment, the strongest defensible use of the result is triage: it can identify a configuration worth carrying into a larger run, but it cannot establish a general method law.",
+                "For a bounded experiment, the strongest defensible use of the result is triage: it can identify a declared subject worth carrying into a larger run, but it cannot establish a general method law.",
                 context.results.effect_notes[0] || ""
               ]
             : [],
           expanded && expansionPass >= 2
             ? [
                 "The claim ceiling is therefore central to the interpretation.",
-                "Completion of the run, a positive mean difference, and a usable table jointly support a candidate-selection claim, while stronger statements about robustness, mechanism, or broad transfer remain outside the available evidence."
+                "A resolved primary link, its signed difference, and the declared metric direction jointly determine the bounded interpretation; stronger statements about robustness, mechanism, or broad transfer remain outside the available evidence."
               ]
             : [],
           expanded && expansionPass >= 3
             ? [
                 context.discussion.practical_implications[1] ||
-                  "A practical next step is to repeat the same locked comparison with a larger backbone, a broader task mix, and the same failed-run visibility requirements.",
+                  "A practical next step is to repeat the same declared comparison with broader series coverage, a broader evaluation scope, and the same failed-run visibility requirements.",
                 "That follow-up would test whether the present signal survives scale and task variation instead of merely reflecting this local preflight."
               ]
             : [],
@@ -7926,16 +5463,14 @@ function buildSectionParagraphCandidates(
       }
       if (expanded && expansionPass >= 2) {
         baseSentences.push([
-          context.protocol_kind === "lm_benchmark"
-            ? "The benchmark scope is narrow: one compact backbone, a bounded instruction-tuning budget, and a short task set cannot support claims about larger model families or open-ended instruction-following quality."
-            : "The benchmark scope is narrow, so conclusions should be limited to the evaluated datasets, models, and resource budget.",
+          "The evaluation scope is narrow, so conclusions should be limited to the declared series, scopes, metrics, and resource budget.",
           "This limitation is methodological rather than cosmetic because the same hyperparameter choice could behave differently under a larger training budget or a different evaluation suite."
         ]);
       }
       if (expanded && expansionPass >= 3) {
         baseSentences.push([
           context.results.ci_notes[0] || context.results.dispersion_notes[0] || "Uncertainty remains a material part of the result.",
-          "The paper therefore avoids significance language and treats the best condition as a follow-up candidate unless a later study reproduces the direction with tighter intervals."
+          "The paper therefore avoids significance language and treats the declared subject as a follow-up candidate unless a later study reproduces the direction with tighter intervals."
         ]);
       }
       if (expanded && expansionPass >= 4) {
@@ -7956,7 +5491,7 @@ function buildSectionParagraphCandidates(
         [
           [
             "The paper therefore keeps execution coverage and supplementary metrics secondary to the visible baseline-relative comparison.",
-            "The main text interprets only the comparison and task split that are visible in the presented table and figure."
+            "The main text interprets only the comparison and evaluation scope that are visible in the presented table and figure."
           ],
           expanded && expansionPass >= 2
             ? [
@@ -7966,14 +5501,14 @@ function buildSectionParagraphCandidates(
             : [],
           expanded && expansionPass >= 3
             ? [
-                "A paper-ready follow-up should preserve the same baseline accounting and add broader tasks, larger models, and explicit variance or interaction tests.",
+                "A paper-ready follow-up should preserve the same reference accounting and add broader scopes, more declared series, and explicit variance or interaction tests.",
                 "Those additions would determine whether the preflight signal remains stable when the budget and evaluation scope expand."
               ]
             : [],
           expanded && expansionPass >= 4
             ? [
                 "Until that follow-up exists, the manuscript's final claim is intentionally modest: the current run produces a useful, auditable candidate selection result under its stated constraints.",
-                "That is a scientific result when reported with its comparator, uncertainty, and limitations, but it remains a bounded preflight rather than a universal tuning prescription."
+                "That is a scientific result when reported with its reference, uncertainty, and limitations, but it remains a bounded preflight rather than a universal decision rule."
               ]
             : []
         ],
@@ -8045,288 +5580,200 @@ export function applyGateWarningsToLimitations(
 
 function buildPracticalImplications(
   bundle: PaperWritingBundle,
-  datasetSummaries: DatasetResultSummary[],
-  resultAnalysis?: ResultAnalysisArtifact
+  primaryComparison: PrimaryComparisonSummary | undefined,
+  canonicalResults: CanonicalResultsResolution
 ): string[] {
+  if (!primaryComparison) {
+    return [];
+  }
   const implications: string[] = [];
-  const hasPositiveDelta =
-    datasetSummaries.some((item) => typeof item.delta_value === "number" && item.delta_value > 0)
-    || (resultAnalysis?.metric_table || []).some(
-      (item) => /delta_vs_baseline|improvement_over_baseline/iu.test(item.key) && item.value > 0
-    )
-    || (resultAnalysis?.statistical_summary?.effect_estimates || []).some((item) => item.direction === "positive");
-  if (hasPositiveDelta) {
+  if (primaryComparison.directional_outcome === "favors_subject") {
     implications.push(
-      `The current evidence is most actionable as a cautious benchmark note for ${bundle.topic}, especially where small positive deltas repeat across datasets.`
+      `The declared primary comparison supports treating the subject series as a cautious follow-up candidate for ${bundle.topic}.`
+    );
+  } else if (primaryComparison.directional_outcome === "favors_reference") {
+    implications.push(
+      `The declared primary comparison does not support promoting the subject series for ${bundle.topic}; the reference series is preferred under the metric direction.`
+    );
+  } else {
+    implications.push(
+      `The declared primary comparison is neutral at the reported precision and does not select either series for ${bundle.topic}.`
     );
   }
-  const hasResourceMeasurement =
-    datasetSummaries.some((item) => typeof item.runtime_seconds_mean === "number")
-    || (resultAnalysis?.metric_table || []).some((item) => /runtime|latency|memory|vram|ram/iu.test(item.key));
+  const hasResourceMeasurement = collectCanonicalResourceNotes(canonicalResults, "runtime").length > 0
+    || collectCanonicalResourceNotes(canonicalResults, "memory").length > 0;
   if (hasResourceMeasurement) {
     implications.push(
-      "Practical adoption should weigh any observed quality gain against the accompanying runtime or memory footprint."
+      "Practical adoption should weigh the declared primary outcome against the separately reported runtime or memory observations."
     );
   }
   return uniqueStrings(implications).slice(0, 3);
 }
 
-function collectDatasetResultSummaries(input: {
-  latestResults: Record<string, unknown>;
-  resultAnalysis?: ResultAnalysisArtifact;
-  objectiveMetricProfile?: ObjectiveMetricProfile;
-}): DatasetResultSummary[] {
-  const datasetEntries = asArray(input.latestResults.dataset_summaries).map((item) => asRecord(item));
-  const repeatRecords = asArray(input.latestResults.repeat_records).map((item) => asRecord(item));
-  const summaries: DatasetResultSummary[] = [];
-
-  for (const datasetEntry of datasetEntries) {
-    const datasetName = asString(datasetEntry.dataset) || "dataset";
-    const workflowMap = asRecord(datasetEntry.workflows);
-    if (Object.keys(workflowMap).length > 0) {
-      const bestWorkflow = pickBestWorkflowEntry(workflowMap);
-      if (!bestWorkflow) {
-        continue;
-      }
-      const ci95 = computeDatasetWorkflowDeltaCi(repeatRecords, datasetName, bestWorkflow.name);
-      const heterogeneityNotes = uniqueStrings([
-        typeof asNumber(bestWorkflow.value.pairwise_ranking_agreement) === "number"
-          ? `ranking agreement=${formatNumber(asNumber(bestWorkflow.value.pairwise_ranking_agreement))}`
-          : "",
-        typeof asNumber(bestWorkflow.value.winner_consistency) === "number"
-          ? `winner consistency=${formatNumber(asNumber(bestWorkflow.value.winner_consistency))}`
-          : ""
-      ]).filter(Boolean);
-      const bestModel = pickBestModelEntry(asRecord(bestWorkflow.value.models));
-      const score = asNumber(bestModel?.value.mean_test_macro_f1) ?? asNumber(bestModel?.value.test_macro_f1);
-      const delta =
-        asNumber(bestModel?.value.mean_delta_vs_logreg) ??
-        asNumber(bestModel?.value.macro_f1_delta_vs_logreg) ??
-        difference(score, asNumber(asRecord(asRecord(bestWorkflow.value.models).logreg).mean_test_macro_f1));
-      const runtime = asNumber(bestWorkflow.value.runtime_seconds_mean);
-      const memory = asNumber(bestWorkflow.value.peak_memory_mb_mean);
-      const pairwiseRankingAgreement = asNumber(bestWorkflow.value.pairwise_ranking_agreement);
-      const winnerConsistency = asNumber(bestWorkflow.value.winner_consistency);
-      const mainMetricLabel = inferDatasetMainMetricLabel(input.objectiveMetricProfile, bestModel?.value);
-      summaries.push({
-        dataset: datasetName,
-        label: `${datasetName} (${bestWorkflow.name})`,
-        main_metric_label: mainMetricLabel,
-        main_metric_value: score,
-        delta_label: "delta vs logistic regression",
-        delta_value: delta,
-        ...(ci95 ? { ci95 } : {}),
-        ...(typeof runtime === "number" ? { runtime_seconds_mean: runtime } : {}),
-        ...(typeof memory === "number" ? { peak_memory_mb_mean: memory } : {}),
-        ...(typeof pairwiseRankingAgreement === "number" ? { pairwise_ranking_agreement: pairwiseRankingAgreement } : {}),
-        ...(typeof winnerConsistency === "number" ? { winner_consistency: winnerConsistency } : {}),
-        heterogeneity_notes: heterogeneityNotes,
-        summary: buildDatasetSummaryText({
-          dataset: datasetName,
-          workflow: bestWorkflow.name,
-          mainMetricLabel,
-          deltaLabel: "macro-F1 delta versus logistic regression",
-          mainScore: score,
-          delta,
-          ci95,
-          runtime,
-          memory,
-          heterogeneityNotes
-        })
-      });
-      continue;
-    }
-
-    const modelMap = asRecord(datasetEntry.models);
-    if (Object.keys(modelMap).length === 0) {
-      continue;
-    }
-    const bestModel = pickBestModelEntry(modelMap);
-    if (!bestModel) {
-      continue;
-    }
-    const score = asNumber(bestModel.value.macro_f1) ?? asNumber(bestModel.value.mean_test_macro_f1);
-    const delta = asNumber(bestModel.value.macro_f1_delta_vs_logreg);
-    const runtime = asNumber(bestModel.value.runtime_seconds) ?? asNumber(bestModel.value.runtime_seconds_mean);
-    const memory = asNumber(bestModel.value.peak_memory_mb) ?? asNumber(bestModel.value.peak_memory_mb_mean);
-    const mainMetricLabel = inferDatasetMainMetricLabel(input.objectiveMetricProfile, bestModel.value);
-    summaries.push({
-      dataset: datasetName,
-      label: `${datasetName} (${bestModel.name})`,
-      main_metric_label: mainMetricLabel,
-      main_metric_value: score,
-      delta_label: "delta vs logistic regression",
-      delta_value: delta,
-      ...(typeof runtime === "number" ? { runtime_seconds_mean: runtime } : {}),
-      ...(typeof memory === "number" ? { peak_memory_mb_mean: memory } : {}),
-      heterogeneity_notes: [],
-      summary: buildDatasetSummaryText({
-        dataset: datasetName,
-        workflow: bestModel.name,
-        mainMetricLabel,
-        deltaLabel: "macro-F1 delta versus logistic regression",
-        mainScore: score,
-        delta,
-        runtime,
-        memory,
-        heterogeneityNotes: []
-      })
-    });
-  }
-
-  if (summaries.length === 0) {
-    summaries.push(...collectBenchmarkTaskResultSummaries(input.resultAnalysis, input.objectiveMetricProfile));
-  }
-
-  return summaries.slice(0, 8);
-}
-
-function collectBenchmarkTaskResultSummaries(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  objectiveMetricProfile?: ObjectiveMetricProfile
+function collectCanonicalResultSummaries(
+  primaryComparison: PrimaryComparisonSummary | undefined
 ): DatasetResultSummary[] {
-  const metricTable = resultAnalysis?.metric_table || [];
-  const taskMetrics = metricTable.filter((item) =>
-    /(^|\.)(benchmark_task_a|benchmark_task_b|mmlu|gsm8k|truthfulqa|winogrande|boolq|benchmark|task).*accuracy$/iu.test(item.key)
-  );
-  const summaries = taskMetrics
-    .filter((item) => !/raw_result\./iu.test(item.key))
-    .map((item) => {
-      const dataset = humanizeToken(item.key.replace(/(_?accuracy|\.accuracy)$/iu, ""));
-      return {
-        dataset,
-        label: `${dataset} benchmark task`,
-        main_metric_label: inferDatasetMainMetricLabel(objectiveMetricProfile, { accuracy: item.value }),
-        main_metric_value: item.value,
-        heterogeneity_notes: [],
-        summary: `${dataset} reports ${formatNumber(item.value)} accuracy in the structured result analysis.`
-      };
-    });
-  if (summaries.length > 0) {
-    return summaries;
+  if (!primaryComparison) {
+    return [];
   }
-
-  const comparison = resultAnalysis?.condition_comparisons?.[0];
-  const deltaMetric = metricTable.find((item) => /delta_vs_baseline|improvement_over_baseline/iu.test(item.key));
-  if (comparison || deltaMetric) {
-    const delta = (comparison?.metrics || []).find((item) => /delta|improvement/iu.test(item.key))?.value ?? deltaMetric?.value;
-    return [
-      {
-        dataset: "primary comparison",
-        label: cleanString(comparison?.label) || "primary comparison",
-        main_metric_label: humanizeToken(deltaMetric?.key || objectiveMetricProfile?.primaryMetric || "primary metric"),
-        main_metric_value: delta,
-        delta_label: humanizeToken(deltaMetric?.key || "delta versus baseline"),
-        delta_value: delta,
-        heterogeneity_notes: [],
-        summary:
-          cleanString(comparison?.summary)
-          || `The primary comparison reports ${humanizeToken(deltaMetric?.key || "a baseline delta")} of ${formatNumber(delta)}.`
-      }
-    ];
-  }
-  return [];
+  const scopeLabel = formatCanonicalScope(primaryComparison.subject.scope);
+  return [
+    {
+      dataset: scopeLabel,
+      label: `${primaryComparison.subject.series_label} versus ${primaryComparison.reference.series_label}`,
+      main_metric_label: primaryComparison.metric_label,
+      main_metric_value: primaryComparison.subject.value,
+      delta_label: "subject-minus-reference difference",
+      delta_value: primaryComparison.delta,
+      heterogeneity_notes: [],
+      summary: primaryComparison.summary
+    }
+  ];
 }
 
-function collectAggregateResults(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  objectiveEvaluation: ObjectiveMetricEvaluation | undefined,
-  objectiveMetricProfile: ObjectiveMetricProfile | undefined
+function formatCanonicalScope(scope: Record<string, ResultsScalar>): string {
+  const entries = Object.entries(scope).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length === 0) {
+    return "declared evaluation scope";
+  }
+  return entries
+    .map(([key, value]) => `${humanizeToken(key)}=${String(value)}`)
+    .join(", ");
+}
+
+function collectCanonicalAggregateResults(
+  resolution: CanonicalResultsResolution
 ): string[] {
-  return uniqueStrings([
-    cleanString(objectiveEvaluation?.summary),
-    cleanString(resultAnalysis?.objective_metric?.evaluation?.summary),
-    typeof resultAnalysis?.mean_score === "number"
-      ? `The mean reported metric magnitude is ${formatNumber(resultAnalysis.mean_score)}.`
-      : "",
-    objectiveMetricProfile?.primaryMetric
-      ? `The main reported metric remains ${humanizeToken(objectiveMetricProfile.primaryMetric)}.`
-      : ""
-  ]).filter(Boolean).slice(0, 4);
+  return resolution.primaryComparison ? [resolution.primaryComparison.summary] : [];
 }
 
-function inferDatasetMainMetricLabel(
-  objectiveMetricProfile: ObjectiveMetricProfile | undefined,
-  modelEntry: Record<string, unknown> | undefined
-): string {
-  const entry = modelEntry || {};
-  if (typeof asNumber(entry.mean_test_macro_f1) === "number" || typeof asNumber(entry.test_macro_f1) === "number" || typeof asNumber(entry.macro_f1) === "number") {
-    return "macro-F1";
-  }
-  if (typeof asNumber(entry.top1_accuracy) === "number") {
-    return "top-1 accuracy";
-  }
-  if (typeof asNumber(entry.accuracy) === "number") {
-    return "accuracy";
-  }
-  return humanizeToken(objectiveMetricProfile?.primaryMetric || "main score");
-}
-
-function collectAggregateMetricFacts(
-  resultAnalysis: ResultAnalysisArtifact | undefined
+function collectCanonicalArtifactMetricFacts(
+  resolution: CanonicalResultsResolution
 ): NormalizedNumericFact[] {
-  return dedupeNumericFacts(
-    (resultAnalysis?.metric_table || [])
-      .map((entry) => {
-        const metricKey = normalizeMetricIdentifier(entry.key);
-        if (!metricKey || typeof entry.value !== "number" || !Number.isFinite(entry.value)) {
-          return undefined;
-        }
-        const value =
-          metricKey === "peak_memory_mb" && /\bbytes?\b/iu.test(normalizeMetricText(entry.key))
-            ? entry.value / 1_000_000
-            : entry.value;
-        return buildStructuredNumericFact({
-          factKind: "metric",
-          source: "artifact",
-          location: "artifact.result_analysis.metric_table",
-          rawText: `${entry.key}=${formatNumber(value)}`,
-          value,
-          metricKey,
-          metricLabel: entry.key,
-          datasetScope: "aggregate",
-          aggregationLevel: "aggregate",
-          unit: inferMetricUnit(entry.key, metricKey, 0, 1),
-          sourceRefs: buildArtifactSourceRefs(["result_analysis.metric_table"])
-        });
-      })
-      .filter((item): item is NormalizedNumericFact => Boolean(item))
+  const primaryComparison = resolution.primaryComparison;
+  if (!primaryComparison) {
+    return [];
+  }
+  const linkedObservationIds = new Set([
+    primaryComparison.subject.observation_id,
+    primaryComparison.reference.observation_id
+  ]);
+  const observationFacts = resolution.observations
+    .filter((observation) => linkedObservationIds.has(observation.observation_id))
+    .map((observation) =>
+    buildStructuredNumericFact({
+      factKind: "metric",
+      source: "artifact",
+      location: `artifact.results.observation.${observation.observation_id}`,
+      rawText: `${observation.series_label} ${observation.metric_label} ${formatCanonicalMeasurement(observation.value, observation.metric_unit)}`,
+      value: observation.value,
+      metricKey: observation.metric_id,
+      metricLabel: observation.metric_label,
+      comparisonTarget: primaryComparison.subject.observation_id === observation.observation_id
+        ? "subject"
+        : "reference",
+      datasetScope: formatCanonicalScope(observation.scope),
+      aggregationLevel: Object.keys(observation.scope).length > 0 ? "dataset" : "aggregate",
+      unit: canonicalNumericFactUnit(observation.metric_unit),
+      sourceRefs: buildArtifactSourceRefs([
+        `result_analysis.results_artifact.observation:${observation.observation_id}`
+      ])
+    })
   );
+  const comparisonFacts = [
+    buildStructuredNumericFact({
+      factKind: "metric",
+      source: "artifact",
+      location: `artifact.results.comparison.${primaryComparison.comparison_id}`,
+      rawText: `${primaryComparison.metric_label} subject-minus-reference difference ${formatCanonicalMeasurement(primaryComparison.delta, primaryComparison.metric_unit)}`,
+      value: primaryComparison.delta,
+      metricKey: primaryComparison.metric_id,
+      metricLabel: `${primaryComparison.metric_label} subject-minus-reference difference`,
+      comparisonTarget: "subject_minus_reference",
+      datasetScope: formatCanonicalScope(primaryComparison.subject.scope),
+      aggregationLevel: Object.keys(primaryComparison.subject.scope).length > 0 ? "dataset" : "aggregate",
+      unit: "delta",
+      sourceRefs: buildArtifactSourceRefs([
+        `result_analysis.results_artifact.comparison:${primaryComparison.comparison_id}`,
+        `result_analysis.results_plan.primary_comparison_id:${primaryComparison.comparison_id}`
+      ])
+    })
+  ];
+  return dedupeNumericFacts([...observationFacts, ...comparisonFacts]);
+}
+
+function canonicalNumericFactUnit(metricUnit: string | undefined): NumericFactUnit {
+  const unit = normalizeMetricText(metricUnit || "");
+  if (/\b(?:s|sec|secs|second|seconds)\b/iu.test(unit)) {
+    return "seconds";
+  }
+  if (/\b(?:mb|mib|megabyte|megabytes)\b/iu.test(unit)) {
+    return "mb";
+  }
+  return "score";
+}
+
+function canonicalUnitMatchesResource(
+  metricUnit: string | undefined,
+  resource: "runtime" | "memory"
+): boolean {
+  const unit = normalizeMetricText(metricUnit || "");
+  return resource === "runtime"
+    ? /\b(?:ms|millisecond|milliseconds|s|sec|secs|second|seconds|minute|minutes|hour|hours)\b/iu.test(unit)
+    : /\b(?:b|byte|bytes|kb|kib|kilobyte|kilobytes|mb|mib|megabyte|megabytes|gb|gib|gigabyte|gigabytes|tb|tib|terabyte|terabytes)\b/iu.test(unit);
+}
+
+function collectCanonicalResourceNotes(
+  resolution: CanonicalResultsResolution,
+  resource: "runtime" | "memory"
+): string[] {
+  const primaryComparison = resolution.primaryComparison;
+  if (!primaryComparison) {
+    return [];
+  }
+  const linkedObservationIds = new Set([
+    primaryComparison.subject.observation_id,
+    primaryComparison.reference.observation_id
+  ]);
+  return resolution.observations
+    .filter((observation) =>
+      linkedObservationIds.has(observation.observation_id)
+      && canonicalUnitMatchesResource(observation.metric_unit, resource)
+    )
+    .map((observation) =>
+      `${observation.series_label} ${observation.metric_label} is ${formatCanonicalMeasurement(observation.value, observation.metric_unit)}.`
+    )
+    .slice(0, 4);
+}
+
+function collectCanonicalEffectNotes(
+  primaryComparison: PrimaryComparisonSummary | undefined
+): string[] {
+  return primaryComparison ? [primaryComparison.summary] : [];
 }
 
 function collectCiNotes(
   resultAnalysis: ResultAnalysisArtifact | undefined,
-  datasetSummaries: DatasetResultSummary[]
+  primaryComparison: PrimaryComparisonSummary | undefined
 ): string[] {
-  const notes = uniqueStrings([
-    ...(resultAnalysis?.statistical_summary?.confidence_intervals || []).map((item) => cleanString(item.summary)),
-    ...datasetSummaries
-      .filter((item) => item.ci95)
-      .map((item) => `${item.dataset} 95% CI for the main delta spans ${formatNumber(item.ci95![0])} to ${formatNumber(item.ci95![1])}.`)
-  ]).filter(Boolean);
-  return notes.slice(0, 4);
-}
-
-function collectDispersionNotes(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  datasetSummaries: DatasetResultSummary[]
-): string[] {
-  const notes = uniqueStrings([
-    ...(resultAnalysis?.statistical_summary?.notes || []).filter((item) => /variance|stability|dispersion|heterogeneity|consistency/iu.test(item)),
-    ...(resultAnalysis?.statistical_summary?.confidence_intervals || [])
+  if (!primaryComparison) {
+    return [];
+  }
+  const notes = uniqueStrings(
+    (resultAnalysis?.statistical_summary?.confidence_intervals || [])
+      .filter((item) => item.metric_key === primaryComparison.metric_id)
       .map((item) => {
-        const lower = typeof item.lower === "number" ? item.lower : undefined;
-        const upper = typeof item.upper === "number" ? item.upper : undefined;
-        if (typeof lower !== "number" || typeof upper !== "number") {
+        const summary = cleanString(item.summary);
+        if (summary) {
+          return summary;
+        }
+        if (typeof item.lower !== "number" || typeof item.upper !== "number") {
           return "";
         }
-        return `The ${formatConfidenceLevel(item.level)} interval for ${humanizeToken(item.metric_key || "reported metric")} spans ${formatNumber(lower)} to ${formatNumber(upper)}.`;
-      }),
-    ...(resultAnalysis?.metric_table || [])
-      .filter((item) => /(_std|_sem|_variance|ci95|ci_?95|confidence)/iu.test(item.key))
-      .map((item) => `${humanizeToken(item.key)}=${formatNumber(item.value)}.`),
-    ...datasetSummaries.flatMap((item) => item.heterogeneity_notes)
-  ]).filter(Boolean);
+        return `The ${formatConfidenceLevel(item.level)} interval for ${primaryComparison.metric_label} spans ${formatNumber(item.lower)} to ${formatNumber(item.upper)}.`;
+      })
+      .filter(Boolean)
+  );
   return notes.slice(0, 4);
 }
 
@@ -8339,123 +5786,35 @@ function formatConfidenceLevel(value: unknown): string {
 }
 
 function buildCiUnavailableReason(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  latestResults: Record<string, unknown>
-): string | undefined {
-  if ((resultAnalysis?.statistical_summary?.confidence_intervals || []).length > 0) {
-    return undefined;
-  }
-  if (asArray(latestResults.repeat_records).length < 2) {
-    return "Confidence intervals are unavailable because the current artifacts do not expose enough repeated evaluations.";
-  }
-  return "Confidence intervals are unavailable because the repeated evaluation artifact could not be aligned to a single reported comparison.";
+  primaryComparison: PrimaryComparisonSummary
+): string {
+  return `Confidence intervals are unavailable because no interval is linked to primary metric "${primaryComparison.metric_id}".`;
 }
 
-function hasPairedArtifact(
-  latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact
-): boolean {
-  const repeatedRows = asArray(latestResults.repeat_records).length;
-  if (repeatedRows >= 2) {
-    return true;
+function collectCanonicalMetricLabels(artifact: ResultsArtifactV2 | undefined): string[] {
+  if (!artifact) {
+    return [];
   }
-  const trialCount = resultAnalysis?.statistical_summary?.executed_trials ?? resultAnalysis?.statistical_summary?.total_trials;
-  if (typeof trialCount === "number" && trialCount >= 2) {
-    return true;
-  }
-  return (resultAnalysis?.metric_table || []).some(
-    (item) => /run_.*_count|completed_run_count|executed_trial|total_trial/iu.test(item.key) && item.value >= 2
+  return artifact.metrics.map((metric) =>
+    `${metric.label} (${humanizeMetricDirection(metric.direction)}; unit: ${metric.unit})`
   );
 }
 
-function collectRuntimeNotes(
-  datasetSummaries: DatasetResultSummary[],
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  const fromDatasets = datasetSummaries
-    .filter((item) => typeof item.runtime_seconds_mean === "number")
-    .map((item) => `${item.dataset} mean runtime is ${formatNumber(item.runtime_seconds_mean)}s.`);
-  const fromAnalysis = (resultAnalysis?.metric_table || [])
-    .filter((item) => /runtime|latency/iu.test(item.key))
-    .map((item) => `${humanizeToken(item.key)}=${formatNumber(item.value)}.`);
-  return uniqueStrings([...fromDatasets, ...fromAnalysis]).slice(0, 4);
+function collectCanonicalSeriesLabels(artifact: ResultsArtifactV2 | undefined): string[] {
+  if (artifact) {
+    return artifact.series.map((series) =>
+      series.role ? `${series.label} (${series.role} role)` : series.label
+    );
+  }
+  return [];
 }
 
-function collectMemoryNotes(
-  datasetSummaries: DatasetResultSummary[],
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  const fromDatasets = datasetSummaries
-    .filter((item) => typeof item.peak_memory_mb_mean === "number")
-    .map((item) => `${item.dataset} mean peak memory is ${formatNumber(item.peak_memory_mb_mean)} MB.`);
-  const fromAnalysis = (resultAnalysis?.metric_table || [])
-    .filter((item) => /memory|ram/iu.test(item.key))
-    .map((item) => `${humanizeToken(item.key)}=${formatNumber(item.value)}.`);
-  return uniqueStrings([...fromDatasets, ...fromAnalysis]).slice(0, 4);
-}
-
-function collectFigureCaptions(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  datasetSummaries: DatasetResultSummary[]
-): string[] {
-  const captions = uniqueStrings([
-    ...(resultAnalysis?.figure_specs || []).map((item) => cleanString(item.summary)),
-    datasetSummaries.length > 0
-      ? "Dataset-level outcome deltas with runtime and memory context retained in the main paper."
-      : ""
-  ]).filter(Boolean);
-  return captions.slice(0, 3);
-}
-
-function collectEffectNotes(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  datasetSummaries: DatasetResultSummary[]
-): string[] {
-  const notes = uniqueStrings([
-    ...(resultAnalysis?.statistical_summary?.effect_estimates || []).map((item) => cleanString(item.summary)),
-    ...datasetSummaries
-      .filter((item) => typeof item.delta_value === "number")
-      .map((item) => `${item.dataset} shows ${item.delta_value! > 0 ? "a positive" : item.delta_value! < 0 ? "a negative" : "a near-zero"} delta of ${formatNumber(item.delta_value)}.`)
-  ]).filter(Boolean);
-  return notes.slice(0, 4);
-}
-
-function collectHeterogeneityNotes(
-  datasetSummaries: DatasetResultSummary[],
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  const notes = uniqueStrings([
-    ...datasetSummaries.flatMap((item) =>
-      item.heterogeneity_notes.map((note) => `${item.dataset} ${note}`)
-    ),
-    ...(resultAnalysis?.statistical_summary?.notes || []).filter((item) => /heterogeneity|across datasets|across runs|consistency/iu.test(item))
-  ]).filter(Boolean);
-  return notes.slice(0, 4);
-}
-
-function collectSelectionMetrics(
-  parsedPlan: Record<string, unknown>,
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  const selectedDesign = asRecord(parsedPlan.selected_design);
-  return uniqueStrings([
-    ...asStringArray(selectedDesign.metrics),
-    ...((resultAnalysis?.metric_table || []).map((item) => item.key) || [])
-  ])
-    .filter(isSafeMetricLabel)
-    .slice(0, 6);
-}
-
-function collectReportingMetrics(
-  parsedPlan: Record<string, unknown>,
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  return uniqueStrings([
-    ...collectSelectionMetrics(parsedPlan, resultAnalysis),
-    ...(resultAnalysis?.objective_metric?.profile?.preferred_metric_keys || [])
-  ])
-    .filter(isSafeMetricLabel)
-    .slice(0, 8);
+function hasCanonicalResourceMetric(
+  artifact: ResultsArtifactV2 | undefined,
+  resource: "runtime" | "memory"
+): boolean {
+  return Boolean(artifact?.metrics.some((metric) =>
+    canonicalUnitMatchesResource(metric.unit, resource)));
 }
 
 function collectSeeds(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): number[] {
@@ -8464,42 +5823,6 @@ function collectSeeds(parsedPlan: Record<string, unknown>, latestResults: Record
     ...asNumberArray(protocol.seed_schedule),
     ...collectNumbersFromText(JSON.stringify(parsedPlan), /\bseed(?:_schedule|s|)\D+(\d{1,9})/giu)
   ]);
-}
-
-function collectModelNames(
-  parsedPlan: Record<string, unknown>,
-  latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact
-): string[] {
-  const selectedDesign = asRecord(parsedPlan.selected_design);
-  const protocol = asRecord(latestResults.protocol);
-  const studySummary = asRecord(latestResults.study_summary);
-  const requestedModels = asRecord(latestResults.requested_models);
-  const modelSelection = asRecord(latestResults.model_selection);
-  const metrics = asRecord(resultAnalysis?.metrics);
-  const metricsModelSelection = asRecord(metrics.model_selection);
-  const datasetSummaries = asArray(latestResults.dataset_summaries).map((item) => asRecord(item));
-  return uniqueStrings([
-    asString(latestResults.selected_model_id) || "",
-    asString(latestResults.selected_model) || "",
-    asString(latestResults.model_id) || "",
-    asString(modelSelection.selected_model_id) || "",
-    asString(modelSelection.model_id) || "",
-    asString(studySummary.selected_model) || "",
-    asString(studySummary.model_id) || "",
-    asString(requestedModels.preferred_model) || "",
-    asString(metrics.selected_model_id) || "",
-    asString(metrics.model_id) || "",
-    asString(metricsModelSelection.selected_model_id) || "",
-    asString(metricsModelSelection.model_id) || "",
-    ...asStringArray(protocol.models),
-    ...asStringArray(selectedDesign.baselines),
-    ...asStringArray(selectedDesign.implementation_notes).filter((item) => /llm|language model|backbone|base model/iu.test(item)),
-    ...asStringArray(selectedDesign.baselines).filter((item) => /llm|language model|backbone|base model/iu.test(item)),
-    ...asStringArray(selectedDesign.metrics).filter((item) => /bert|tree|forest|regression|svm|xgboost|workflow|nested|llm/iu.test(item)),
-    ...datasetSummaries.flatMap((item) => Object.keys(asRecord(asRecord(item.workflows).nested).models || {})),
-    ...datasetSummaries.flatMap((item) => Object.keys(asRecord(item.models)))
-  ]).filter(Boolean).slice(0, 8);
 }
 
 function collectDatasetNames(
@@ -8526,40 +5849,33 @@ function collectDatasetNames(
 }
 
 function collectDatasetSourceHints(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
+  const selectedDesign = asRecord(parsedPlan.selected_design);
   const protocol = asRecord(latestResults.protocol);
   return uniqueStrings([
-    ...collectKeywordNotes(parsedPlan, [
-      "uci",
-      "hugging face",
-      "openml",
-      "public benchmark",
-      "benchmark suite",
-      "instruction dataset",
-      "benchmark task a",
-      "benchmark_task_b"
-    ]),
-    asString(protocol.dataset_source) || ""
+    ...asStringArray(selectedDesign.dataset_sources),
+    ...asStringArray(selectedDesign.data_sources),
+    asString(selectedDesign.dataset_source) || "",
+    asString(selectedDesign.data_source) || "",
+    asString(protocol.dataset_source) || "",
+    asString(protocol.data_source) || ""
   ]).filter(Boolean).slice(0, 4);
 }
-
 function collectSampleSizeHints(
   parsedPlan: Record<string, unknown>,
   latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact,
-  protocolKind?: ExperimentProtocolKind
+  resultAnalysis?: ResultAnalysisArtifact
 ): string[] {
-  const includeLmEvaluationSamples =
-    (protocolKind || inferExperimentProtocolKind(parsedPlan, latestResults, resultAnalysis)) === "lm_benchmark";
+  const selectedDesign = asRecord(parsedPlan.selected_design);
+  const protocol = asRecord(latestResults.protocol);
   return uniqueStrings([
-    ...collectKeywordNotes(parsedPlan, ["samples", "instances", "rows"]),
-    ...collectNumbersAsNotes(latestResults, ["n_samples", "samples", "row_count", "num_train_samples"]),
+    ...collectNumbersAsNotes(selectedDesign, ["n_samples", "sample_size", "row_count", "num_train_samples"]),
+    ...collectNumbersAsNotes(protocol, ["n_samples", "sample_size", "row_count", "num_train_samples"]),
+    ...collectNumbersAsNotes(latestResults, ["n_samples", "sample_size", "row_count", "num_train_samples"]),
     ...collectNumbersAsNotes(resultAnalysis, ["sample_size", "total_count", "num_train_samples", "row_count"]),
     ...collectResultAnalysisSampleNotes(resultAnalysis),
-    ...collectExecutedTrainingSampleNotes(latestResults),
-    ...(includeLmEvaluationSamples ? collectLmEvaluationSampleNotes(latestResults, resultAnalysis) : [])
+    ...collectExecutedTrainingSampleNotes(latestResults)
   ]).slice(0, 6);
 }
-
 function collectResultAnalysisSampleNotes(resultAnalysis?: ResultAnalysisArtifact): string[] {
   const metrics = asRecord(resultAnalysis?.metrics);
   const runConfig = asRecord(metrics.run_config);
@@ -8569,61 +5885,6 @@ function collectResultAnalysisSampleNotes(resultAnalysis?: ResultAnalysisArtifac
   return typeof count === "number" && count > 0
     ? [`Run metadata records ${formatNumber(count)} training examples for the inspected analysis record.`]
     : [];
-}
-
-function collectLmEvaluationSampleNotes(
-  latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact
-): string[] {
-  const notes: string[] = [];
-  const seen = new Set<string>();
-  const pushTotal = (label: string, total: unknown) => {
-    const count = asNumber(total);
-    if (typeof count !== "number" || count <= 0 || count > 100000) {
-      return;
-    }
-    const normalizedLabel = humanizeToken(label || "evaluation task");
-    const key = `${normalizedLabel}:${count}`;
-    if (seen.has(key)) {
-      return;
-    }
-    seen.add(key);
-    notes.push(`${normalizedLabel} reports ${formatNumber(count)} evaluation examples.`);
-  };
-  const visit = (value: unknown, label = "") => {
-    if (Array.isArray(value)) {
-      value.forEach((item) => visit(item, label));
-      return;
-    }
-    const record = asRecord(value);
-    if (Object.keys(record).length === 0) {
-      return;
-    }
-    if (
-      typeof asNumber(record.total) === "number"
-      && (typeof asNumber(record.correct) === "number" || typeof asNumber(record.accuracy) === "number")
-    ) {
-      pushTotal(label, record.total);
-    }
-    if (
-      typeof asNumber(record.total_count) === "number"
-      && (typeof asNumber(record.correct_count) === "number" || typeof asNumber(record.accuracy) === "number")
-    ) {
-      pushTotal(label, record.total_count);
-    }
-    if (
-      typeof asNumber(record.sample_size) === "number"
-      && (typeof asNumber(record.correct_count) === "number" || typeof asNumber(record.total_count) === "number")
-    ) {
-      pushTotal(label, record.sample_size);
-    }
-    for (const [key, child] of Object.entries(record)) {
-      visit(child, key);
-    }
-  };
-  visit(latestResults);
-  visit(resultAnalysis);
-  return notes.slice(0, 6);
 }
 
 function collectFeatureHints(parsedPlan: Record<string, unknown>, latestResults: Record<string, unknown>): string[] {
@@ -8672,19 +5933,15 @@ function collectRepeatNotes(parsedPlan: Record<string, unknown>, latestResults: 
   const protocol = asRecord(latestResults.protocol);
   const seedSchedule = asNumberArray(protocol.seed_schedule);
   const protocolRepeats = asNumber(protocol.repeats);
-  const conditionSeedCounts = uniqueNumbers(
-    asArray(latestResults.condition_summaries)
-      .map((item) => asNumber(asRecord(item).completed_seed_count))
-      .filter((value): value is number => typeof value === "number" && value > 1)
-  );
-  const conditionSeedCount = conditionSeedCounts.length === 1 ? conditionSeedCounts[0] : undefined;
-  const preferredRepeatCount = conditionSeedCount || (seedSchedule.length > 1 ? seedSchedule.length : undefined);
+  const scheduledRepeatCount = seedSchedule.length > 1 ? seedSchedule.length : undefined;
   const protocolRepeatNote =
-    typeof protocolRepeats === "number" && (!preferredRepeatCount || protocolRepeats === preferredRepeatCount)
+    typeof protocolRepeats === "number" && (!scheduledRepeatCount || protocolRepeats === scheduledRepeatCount)
       ? `${formatNumber(protocolRepeats)} repeated evaluations are available in the protocol.`
       : "";
   return uniqueStrings([
-    ...(conditionSeedCount ? [`${formatNumber(conditionSeedCount)} completed seed(s) are reported per condition.`] : []),
+    ...(scheduledRepeatCount
+      ? [`The protocol declares ${formatNumber(scheduledRepeatCount)} explicit seed(s).`]
+      : []),
     ...asStringArray(selectedDesign.evaluation_steps).filter((item) => /repeat|seeded runs|rerun|multiple random seeds/iu.test(item)),
     protocolRepeatNote
   ]).filter(Boolean).slice(0, 4);
@@ -8842,14 +6099,6 @@ function findFirstTrainMetadata(latestResults: Record<string, unknown>): Record<
   if (Object.keys(direct).length > 0) {
     return direct;
   }
-  for (const condition of asArray(latestResults.condition_summaries)) {
-    for (const seedResult of asArray(asRecord(condition).seed_results)) {
-      const trainMetadata = asRecord(asRecord(seedResult).train_metadata);
-      if (Object.keys(trainMetadata).length > 0) {
-        return trainMetadata;
-      }
-    }
-  }
   for (const seedResult of asArray(latestResults.seed_results)) {
     const trainMetadata = asRecord(asRecord(seedResult).train_metadata);
     if (Object.keys(trainMetadata).length > 0) {
@@ -8857,352 +6106,6 @@ function findFirstTrainMetadata(latestResults: Record<string, unknown>): Record<
     }
   }
   return undefined;
-}
-
-function collectConditionResultSummaries(
-  latestResults: Record<string, unknown>,
-  resultAnalysis?: ResultAnalysisArtifact
-): ConditionResultSummary[] {
-  const metrics = asRecord(resultAnalysis?.metrics);
-  const summary = {
-    ...asRecord(metrics.summary),
-    ...asRecord(latestResults.summary)
-  };
-  const baselineMarker = cleanString(
-    latestResults.baseline_marker
-      || latestResults.baseline_condition_marker
-      || metrics.baseline_marker
-      || metrics.baseline_condition_marker
-      || summary.baseline_condition_marker
-      || summary.baseline_marker
-  ).toLowerCase();
-  const registeredBaselineParameters = parseRegisteredBaselineParametersForConditionSummaries(resultAnalysis);
-  const latestConditionSummaries = asArray(latestResults.condition_summaries);
-  const latestConditionResults = asArray(latestResults.condition_results);
-  const latestConditions = asArray(latestResults.conditions);
-  const resultConditionSummaries = asArray(metrics.condition_summaries);
-  const resultConditionResults = asArray(metrics.condition_results);
-  const resultConditions = asArray(metrics.conditions);
-  const rawConditions = selectMostInformativeConditionRows([
-    latestConditionSummaries,
-    latestConditionResults,
-    latestConditions,
-    resultConditionSummaries,
-    resultConditionResults,
-    resultConditions
-  ]);
-  return rawConditions
-    .map((item) => asRecord(item))
-    .map((item) => {
-      const condition = cleanString(
-        item.condition_marker
-          || item.marker
-          || item.condition
-          || item.name
-          || item.label
-      );
-      const markerParameters = parseGenericConditionParameters(condition);
-      const conditionParameterX = asNumber(item.condition_parameter_x) ?? asNumber(item.parameter_x) ?? markerParameters?.x;
-      const conditionParameterY = asNumber(item.condition_parameter_y) ?? asNumber(item.parameter_y) ?? markerParameters?.y;
-      const label = buildConditionLabel({ condition, conditionParameterX, conditionParameterY });
-      const averageAccuracy = firstNumber(
-        item.average_accuracy_mean,
-        item.average_accuracy,
-        item.mean_zero_shot_accuracy_mean,
-        item.mean_zero_shot_accuracy,
-        item.accuracy_mean,
-        item.accuracy,
-        item.main_metric_mean
-      );
-      const averageAccuracyCi95 = firstNumber(
-        item.average_accuracy_ci95,
-        item.mean_zero_shot_accuracy_ci95,
-        item.accuracy_ci95,
-        item.main_metric_ci95
-      );
-      const delta = firstNumber(
-        item.accuracy_delta_vs_baseline_mean,
-        item.accuracy_delta_vs_baseline,
-        item.mean_zero_shot_accuracy_delta_vs_baseline_mean,
-        item.mean_zero_shot_accuracy_delta_vs_baseline,
-        item.delta_vs_baseline_mean,
-        item.delta_vs_baseline,
-        item.main_metric_delta_vs_baseline_mean
-      );
-      const isLockedComparator = Boolean(condition && baselineMarker && condition.toLowerCase() === baselineMarker);
-      const isRegisteredBaseline = parametersMatchForConditionSummaries(
-        { x: conditionParameterX, y: conditionParameterY },
-        registeredBaselineParameters
-      );
-      const isFallbackBaseline = Boolean(
-        /baseline/iu.test(label)
-        || (!baselineMarker && delta === 0 && /baseline|control|reference/iu.test(condition || label))
-      );
-      const deltaCi95 = firstNumber(
-        item.accuracy_delta_vs_baseline_ci95,
-        item.mean_zero_shot_accuracy_delta_vs_baseline_ci95,
-        item.delta_vs_baseline_ci95,
-        item.main_metric_delta_vs_baseline_ci95
-      );
-      const status = cleanString(item.status);
-      const perTaskMetrics = asRecord(item.per_task_metrics);
-      const evaluationMetrics = asRecord(item.evaluation);
-      const taskMetricRecords = [...Object.values(perTaskMetrics), ...Object.values(evaluationMetrics)]
-        .map((value) => asRecord(value))
-        .filter((record) => typeof asNumber(record.accuracy) === "number");
-      const benchmarkTaskA = asRecord(perTaskMetrics.benchmark_task_a);
-      const benchmarkTaskB = asRecord(perTaskMetrics.benchmark_task_b);
-      const peakMemoryBytes = firstNumber(item.peak_cuda_memory_bytes, item.peak_memory_bytes);
-      const peakMemoryMb = firstNumber(
-        item.peak_memory_mb,
-        item.peak_memory_mb_mean,
-        item.peak_cuda_memory_mb,
-        item.peak_cuda_memory_mb_mean,
-        typeof peakMemoryBytes === "number" ? peakMemoryBytes / 1_000_000 : undefined
-      );
-      return {
-        condition: condition || label,
-        label,
-        ...(status ? { status } : {}),
-        is_baseline: Boolean(isRegisteredBaseline || (isFallbackBaseline && !registeredBaselineParameters) || (isLockedComparator && !registeredBaselineParameters)),
-        ...(isLockedComparator ? { is_comparator: true } : {}),
-        ...(isRegisteredBaseline ? { is_registered_baseline: true } : {}),
-        ...(typeof asNumber(item.completed_seed_count) === "number"
-          ? { completed_seed_count: asNumber(item.completed_seed_count) }
-          : {}),
-        ...(typeof conditionParameterX === "number" ? { condition_parameter_x: conditionParameterX } : {}),
-        ...(typeof conditionParameterY === "number" ? { condition_parameter_y: conditionParameterY } : {}),
-        ...(typeof averageAccuracy === "number" ? { average_accuracy_mean: averageAccuracy } : {}),
-        ...(typeof averageAccuracyCi95 === "number" ? { average_accuracy_ci95: averageAccuracyCi95 } : {}),
-        ...(typeof delta === "number" ? { accuracy_delta_vs_baseline_mean: delta } : {}),
-        ...(typeof deltaCi95 === "number" ? { accuracy_delta_vs_baseline_ci95: deltaCi95 } : {}),
-        ...(typeof firstNumber(item.benchmark_task_a_accuracy, benchmarkTaskA.accuracy, taskMetricRecords[0]?.accuracy) === "number"
-          ? { benchmark_task_a_accuracy: firstNumber(item.benchmark_task_a_accuracy, benchmarkTaskA.accuracy, taskMetricRecords[0]?.accuracy) }
-          : {}),
-        ...(typeof firstNumber(item.benchmark_task_b_accuracy, benchmarkTaskB.accuracy, taskMetricRecords[1]?.accuracy) === "number"
-          ? { benchmark_task_b_accuracy: firstNumber(item.benchmark_task_b_accuracy, benchmarkTaskB.accuracy, taskMetricRecords[1]?.accuracy) }
-          : {}),
-        ...(typeof firstNumber(item.train_loss, item.train_loss_mean) === "number"
-          ? { train_loss: firstNumber(item.train_loss, item.train_loss_mean) }
-          : {}),
-        ...(typeof firstNumber(item.runtime_seconds, item.runtime_seconds_mean, item.runtime_sec, item.runtime_sec_mean) === "number"
-          ? { runtime_seconds: firstNumber(item.runtime_seconds, item.runtime_seconds_mean, item.runtime_sec, item.runtime_sec_mean) }
-          : {}),
-        ...(typeof peakMemoryMb === "number" ? { peak_memory_mb: peakMemoryMb } : {})
-      };
-    })
-    .filter((item) =>
-      Boolean(item.condition)
-      && (
-        typeof item.average_accuracy_mean === "number"
-        || typeof item.accuracy_delta_vs_baseline_mean === "number"
-      )
-    );
-}
-
-function selectMostInformativeConditionRows(candidates: unknown[][]): unknown[] {
-  return candidates
-    .filter((rows) => rows.length > 0)
-    .map((rows) => ({ rows, score: scoreConditionRows(rows) }))
-    .sort((left, right) => right.score - left.score)[0]?.rows || [];
-}
-
-function scoreConditionRows(rows: unknown[]): number {
-  return rows.reduce<number>((score, row) => {
-    const record = asRecord(row);
-    const markerParameters = parseGenericConditionParameters(
-      record.condition_marker || record.marker || record.condition || record.name || record.label
-    );
-    const evaluationRecords = Object.values(asRecord(record.evaluation)).map((value) => asRecord(value));
-    const perTaskRecords = Object.values(asRecord(record.per_task_metrics)).map((value) => asRecord(value));
-    const hasTaskAccuracy = [
-      record.benchmark_task_a_accuracy,
-      record.benchmark_task_b_accuracy,
-      ...evaluationRecords.map((item) => item.accuracy),
-      ...perTaskRecords.map((item) => item.accuracy)
-    ].some((value) => typeof asNumber(value) === "number");
-    return score
-      + 1
-      + (typeof firstNumber(record.average_accuracy_mean, record.average_accuracy, record.accuracy) === "number" ? 3 : 0)
-      + (hasTaskAccuracy ? 6 : 0)
-      + (typeof firstNumber(record.condition_parameter_x, markerParameters?.x) === "number" ? 2 : 0)
-      + (typeof firstNumber(record.condition_parameter_y, markerParameters?.y) === "number" ? 2 : 0)
-      + (typeof firstNumber(record.accuracy_delta_vs_baseline_mean, record.accuracy_delta_vs_baseline) === "number" ? 2 : 0);
-  }, 0);
-}
-
-function buildConditionLabel(input: {
-  condition: string;
-  conditionParameterX?: number;
-  conditionParameterY?: number;
-}): string {
-  if (typeof input.conditionParameterX === "number" || typeof input.conditionParameterY === "number") {
-    const parts = [
-      typeof input.conditionParameterX === "number" ? `parameter x ${formatNumber(input.conditionParameterX)}` : undefined,
-      typeof input.conditionParameterY === "number" ? `parameter y ${formatNumber(input.conditionParameterY)}` : undefined
-    ].filter(Boolean);
-    if (parts.length > 0) {
-      return parts.join(" / ");
-    }
-  }
-  const normalized = input.condition
-    .replace(/^condition[_:\s-]*/iu, "")
-    .replace(/_/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
-  return normalized || "condition";
-}
-
-function parseGenericConditionParameters(value: unknown): { x?: number; y?: number } | undefined {
-  const text = cleanString(value).toLowerCase();
-  const match = [
-    /\bcondition[_:\s-]*parameter[_:\s-]*x\s*=?\s*([0-9]+(?:[._][0-9]+)*)[^0-9]+condition[_:\s-]*parameter[_:\s-]*y\s*=?\s*([0-9]+(?:[._][0-9]+)*)/iu,
-    /\bfactor\s*x\s*=?\s*([0-9]+(?:[._][0-9]+)*)[^0-9]+factor\s*y\s*=?\s*([0-9]+(?:[._][0-9]+)*)/iu,
-  ]
-    .map((pattern) => text.match(pattern))
-    .find((candidate): candidate is RegExpMatchArray => Boolean(candidate));
-  if (!match) {
-    return undefined;
-  }
-  const x = parseMarkerNumber(match[1]);
-  const y = parseMarkerNumber(match[2]);
-  if (typeof x !== "number" && typeof y !== "number") {
-    return undefined;
-  }
-  return { ...(typeof x === "number" ? { x } : {}), ...(typeof y === "number" ? { y } : {}) };
-}
-
-function parseRegisteredBaselineParametersForConditionSummaries(
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): { x?: number; y?: number } | undefined {
-  const texts = collectRegisteredBaselineTextsForConditionSummaries(resultAnalysis);
-  for (const text of texts) {
-    const generic = parseGenericConditionParameters(text);
-    if (generic) {
-      return generic;
-    }
-  }
-  return undefined;
-}
-
-function collectRegisteredBaselineTextsForConditionSummaries(
-  resultAnalysis: ResultAnalysisArtifact | undefined
-): string[] {
-  const texts: string[] = [];
-  const visit = (value: unknown, keyHint = ""): void => {
-    if (/\bbaseline_(?:condition_)?marker\b/iu.test(keyHint)) {
-      return;
-    }
-    if (typeof value === "string") {
-      const cleaned = cleanString(value);
-      if (/\b(?:registered|primary trained|pre[-\s]?registered|baseline)\b/iu.test(`${keyHint} ${cleaned}`)) {
-        texts.push(cleaned);
-      }
-      return;
-    }
-    if (!value || typeof value !== "object") {
-      return;
-    }
-    if (Array.isArray(value)) {
-      value.forEach((item) => visit(item, keyHint));
-      return;
-    }
-    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-      if (/\bbaseline_(?:condition_)?marker\b/iu.test(key)) {
-        continue;
-      }
-      const nextHint = /\b(?:baseline|baselines|registered)\b/iu.test(key) ? key : keyHint;
-      visit(nested, nextHint);
-    }
-  };
-  visit(resultAnalysis?.plan_context);
-  visit(asRecord(resultAnalysis?.metrics).plan_context);
-  visit(resultAnalysis?.experiment_portfolio);
-  return uniqueStrings(texts);
-}
-
-function parametersMatchForConditionSummaries(
-  actual: { x?: number; y?: number },
-  expected: { x?: number; y?: number } | undefined
-): boolean {
-  if (!expected) {
-    return false;
-  }
-  const xMatches = typeof expected.x !== "number" || (typeof actual.x === "number" && Math.abs(actual.x - expected.x) < 0.000001);
-  const yMatches = typeof expected.y !== "number" || (typeof actual.y === "number" && Math.abs(actual.y - expected.y) < 0.000001);
-  return xMatches && yMatches;
-}
-
-function parseMarkerNumber(value: string | undefined): number | undefined {
-  const normalized = cleanString(value).replace(/_/gu, ".");
-  if (!normalized) {
-    return undefined;
-  }
-  const numberValue = Number(normalized);
-  return Number.isFinite(numberValue) ? numberValue : undefined;
-}
-
-function firstNumber(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    const numberValue = asNumber(value);
-    if (typeof numberValue === "number") {
-      return numberValue;
-    }
-  }
-  return undefined;
-}
-
-function hasRuntimeMeasurement(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  latestResults: Record<string, unknown>
-): boolean {
-  return (
-    (resultAnalysis?.metric_table || []).some((item) => /runtime|latency/iu.test(item.key))
-    || JSON.stringify(latestResults).includes("runtime_seconds_mean")
-  );
-}
-
-function hasMemoryMeasurement(
-  resultAnalysis: ResultAnalysisArtifact | undefined,
-  latestResults: Record<string, unknown>
-): boolean {
-  return (
-    (resultAnalysis?.metric_table || []).some((item) => /memory|ram/iu.test(item.key))
-    || JSON.stringify(latestResults).includes("peak_memory_mb")
-  );
-}
-
-function buildDatasetSummaryText(input: {
-  dataset: string;
-  workflow: string;
-  mainMetricLabel: string;
-  deltaLabel: string;
-  mainScore?: number;
-  delta?: number;
-  ci95?: [number, number];
-  runtime?: number;
-  memory?: number;
-  heterogeneityNotes: string[];
-}): string {
-  const parts = [`On ${input.dataset}, ${humanizeToken(input.workflow)} is the strongest reported condition.`];
-  if (typeof input.mainScore === "number") {
-    parts.push(`The reported ${cleanString(input.mainMetricLabel) || "main metric"} is ${formatNumber(input.mainScore)}.`);
-  }
-  if (typeof input.delta === "number") {
-    parts.push(`${cleanString(input.deltaLabel) || "The delta versus logistic regression"} is ${formatNumber(input.delta)}.`);
-  }
-  if (input.ci95) {
-    parts.push(`A normal-approximation 95% interval for ${cleanString(input.deltaLabel) || "the reported delta"} spans ${formatNumber(input.ci95[0])} to ${formatNumber(input.ci95[1])}.`);
-  }
-  if (typeof input.runtime === "number" || typeof input.memory === "number") {
-    parts.push(
-      `Resource use is ${typeof input.runtime === "number" ? `${formatNumber(input.runtime)}s runtime` : ""}${typeof input.runtime === "number" && typeof input.memory === "number" ? " and " : ""}${typeof input.memory === "number" ? `${formatNumber(input.memory)} MB peak memory` : ""}.`
-    );
-  }
-  if (input.heterogeneityNotes.length > 0) {
-    parts.push(`Heterogeneity cues include ${joinHumanList(input.heterogeneityNotes.slice(0, 2))}.`);
-  }
-  return parts.join(" ");
 }
 
 function rewriteTextForClaimStrength(
@@ -9432,68 +6335,6 @@ function getSectionText(sections: PaperManuscriptSection[], heading: string): st
   return findSection(sections, heading)?.paragraphs.join(" ") || "";
 }
 
-function pickBestWorkflowEntry(workflows: Record<string, unknown>): { name: string; value: Record<string, unknown> } | undefined {
-  return Object.entries(workflows)
-    .map(([name, value]) => ({ name, value: asRecord(value) }))
-    .sort((left, right) => {
-      const leftBest = bestModelScore(asRecord(left.value.models));
-      const rightBest = bestModelScore(asRecord(right.value.models));
-      return rightBest - leftBest;
-    })[0];
-}
-
-function pickBestModelEntry(models: Record<string, unknown>): { name: string; value: Record<string, unknown> } | undefined {
-  return Object.entries(models)
-    .map(([name, value]) => ({ name, value: asRecord(value) }))
-    .sort((left, right) => bestModelScore({ [right.name]: right.value }) - bestModelScore({ [left.name]: left.value }))[0];
-}
-
-function bestModelScore(models: Record<string, unknown>): number {
-  return Object.values(models)
-    .map((value) => {
-      const record = asRecord(value);
-      return asNumber(record.mean_test_macro_f1) ?? asNumber(record.test_macro_f1) ?? asNumber(record.macro_f1) ?? Number.NEGATIVE_INFINITY;
-    })
-    .filter((value) => Number.isFinite(value))
-    .sort((left, right) => right - left)[0] ?? Number.NEGATIVE_INFINITY;
-}
-
-function computeDatasetWorkflowDeltaCi(
-  repeatRecords: Array<Record<string, unknown>>,
-  dataset: string,
-  workflow: string
-): [number, number] | undefined {
-  const deltas = repeatRecords
-    .map((record) => {
-      const datasetEntry = asArray(record.datasets)
-        .map((item) => asRecord(item))
-        .find((item) => asString(item.dataset) === dataset);
-      if (!datasetEntry) {
-        return undefined;
-      }
-      const workflowEntry = asRecord(asRecord(datasetEntry.workflows)[workflow]);
-      const bestModel = pickBestModelEntry(asRecord(workflowEntry.models));
-      const score = asNumber(bestModel?.value.test_macro_f1) ?? asNumber(bestModel?.value.mean_test_macro_f1);
-      const baseline = asNumber(asRecord(asRecord(workflowEntry.models).logreg).test_macro_f1)
-        ?? asNumber(asRecord(asRecord(workflowEntry.models).logreg).mean_test_macro_f1);
-      return difference(score, baseline);
-    })
-    .filter((value): value is number => typeof value === "number");
-
-  return computeNormalApproxCi95(deltas);
-}
-
-function computeNormalApproxCi95(values: number[]): [number, number] | undefined {
-  if (values.length < 2) {
-    return undefined;
-  }
-  const avg = values.reduce((sum, value) => sum + value, 0) / values.length;
-  const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / Math.max(1, values.length - 1);
-  const sd = Math.sqrt(variance);
-  const halfWidth = 1.96 * (sd / Math.sqrt(values.length));
-  return [roundMetric(avg - halfWidth), roundMetric(avg + halfWidth)];
-}
-
 function difference(left: number | undefined, right: number | undefined): number | undefined {
   if (typeof left !== "number" || typeof right !== "number") {
     return undefined;
@@ -9508,10 +6349,10 @@ function roundMetric(value: number): number {
 function pushFieldStatus(
   present: string[],
   missing: string[],
-  condition: boolean,
+  satisfied: boolean,
   label: string
 ): void {
-  if (condition) {
+  if (satisfied) {
     present.push(label);
     return;
   }
@@ -9592,7 +6433,6 @@ function humanizeToken(value: string): string {
   return cleanString(value)
     .replace(/[_./]+/gu, " ")
     .replace(/\s+/gu, " ")
-    .replace(/\blogreg\b/giu, "logistic regression")
     .trim();
 }
 

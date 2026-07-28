@@ -114,6 +114,7 @@ function buildAnalysisSynthesisPrompt(
   report: AnalysisReport
 ): string {
   const evidenceAccounting = buildEvidenceAccountingSummary(report);
+  const promptComparisons = selectPromptComparisons(report, 3);
   const payload = {
     run: {
       topic: run.topic,
@@ -128,7 +129,14 @@ function buildAnalysisSynthesisPrompt(
       matched_metric_key: report.overview.matched_metric_key
     },
     primary_findings: report.primary_findings.slice(0, 4),
-    condition_comparisons: report.condition_comparisons.slice(0, 3).map((item) => ({
+    primary_comparison_id: report.primary_comparison_id,
+    condition_comparisons: promptComparisons.map((item) => ({
+      id: item.id,
+      is_primary: item.id === report.primary_comparison_id,
+      subject_series_id: item.subject_series_id,
+      reference_series_id: item.reference_series_id,
+      metric_id: item.metric_id,
+      metric_direction: item.metric_direction,
       label: item.label,
       summary: item.summary,
       hypothesis_supported: item.hypothesis_supported
@@ -195,10 +203,27 @@ function buildAnalysisSynthesisPrompt(
     "- If evidence_accounting.max_seed_count is greater than 1, do not describe the primary evidence as single-seed.",
     "- If evidence_accounting.max_ci_sample_size is greater than 6, do not cite n=6 as the overall CI/sample-size limitation.",
     "- If evidence_accounting.trial_count_difference_accounted_by_supplemental is true, do not call primary-vs-executed trial counts an ambiguity.",
+    "- Treat only a condition comparison with is_primary=true as primary. If none is marked, do not infer a primary comparison from array order, labels, or values.",
     "- Do not use markdown or add any keys beyond the required JSON shape.",
     "",
     JSON.stringify(payload, null, 2)
   ].join("\n");
+}
+
+function selectPromptComparisons(
+  report: AnalysisReport,
+  limit: number
+): AnalysisReport["condition_comparisons"] {
+  const explicitPrimary = report.primary_comparison_id
+    ? report.condition_comparisons.find((item) => item.id === report.primary_comparison_id)
+    : undefined;
+  const remaining = report.condition_comparisons.filter(
+    (item) => item.id !== explicitPrimary?.id
+  );
+  return [
+    ...(explicitPrimary ? [explicitPrimary] : []),
+    ...remaining
+  ].slice(0, limit);
 }
 
 function parseAnalysisSynthesisResponse(raw: string): Omit<AnalysisSynthesis, "source" | "fallback_reason"> {

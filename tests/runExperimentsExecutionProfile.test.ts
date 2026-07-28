@@ -1,5 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, readFile, utimes, writeFile } from "node:fs/promises";
 
@@ -12,6 +13,49 @@ import { buildPublicSectionDir } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { EXPERIMENT_GOVERNANCE_CONTRACT_KEY } from "../src/core/experimentGovernance.js";
 import { RunRecord } from "../src/types.js";
+import {
+  type ActiveTopicProbeContract
+} from "../src/core/activeTopicProbeContract.js";
+import {
+  TOPIC_PROBE_DECISION_RELATIVE_PATH,
+  TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
+} from "../src/core/topicProbeOutcomeArtifacts.js";
+import { buildTopicProbeLineageFixture } from "./support/topicProbePortfolioFixture.js";
+
+vi.mock("../src/core/runs/topicProbeExecutionAuthorizationGate.js", async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import("../src/core/runs/topicProbeExecutionAuthorizationGate.js")
+  >();
+  return {
+    ...original,
+    loadTopicProbeExecutionAuthorizationGate: vi.fn(async ({
+      runId,
+      expectedResearchCycle
+    }: {
+      runId: string;
+      expectedResearchCycle: number;
+    }) => ({
+      schema_version: 1 as const,
+      artifact_kind: "topic_probe_execution_authorization_gate" as const,
+      run_id: runId,
+      research_cycle: expectedResearchCycle,
+      status: "authorized" as const,
+      effective_execution_authorized: true,
+      authorization: {
+        status: "authorized" as const,
+        trusted: true,
+        authorized: true,
+        base_funnel_authorized: true,
+        candidate_prior_search_authorized: true,
+        estimator_authorized: true,
+        required_candidate_ids: ["candidate_reference_1"],
+        covered_candidate_ids: ["candidate_reference_1"],
+        reason_codes: []
+      },
+      content_sha256: "0".repeat(64)
+    }))
+  };
+});
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -42,6 +86,268 @@ function makeRun(runId: string): RunRecord {
       runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
       longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
       episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+    }
+  };
+}
+
+async function executeMeaningPreservationFixture(input: {
+  runId: string;
+  metrics: Record<string, unknown>;
+  objectiveMetric?: string;
+  portfolio?: Record<string, unknown>;
+  comparisonContract?: Record<string, unknown>;
+  experimentContract?: Record<string, unknown>;
+  rawConditionEvidenceRows?: Array<Record<string, unknown>>;
+  briefRaw?: string;
+  activeTopicProbeContract?: ActiveTopicProbeContract;
+  commandDurationMs?: number;
+  requestedGpuCount?: number | null;
+  testCommand?: string;
+  environmentGpuAvailable?: boolean;
+}): Promise<{
+  result: Awaited<ReturnType<ReturnType<typeof createRunExperimentsNode>["execute"]>>;
+  metrics: Record<string, any>;
+  runDir: string;
+  runCommandCalls: string[];
+  runTestCalls: string[];
+}> {
+  const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-meaning-preservation-"));
+  process.chdir(root);
+  const run = makeRun(input.runId);
+  run.objectiveMetric = input.objectiveMetric || "quality_index >= 0";
+  const runDir = path.join(root, ".autolabos", "runs", run.id);
+  await mkdir(path.join(runDir, "memory"), { recursive: true });
+  if (input.activeTopicProbeContract) {
+    const panelDir = path.join(runDir, "design_experiments_panel");
+    await mkdir(panelDir, { recursive: true });
+    const lineage = buildTopicProbeLineageFixture({
+      runId: input.runId,
+      researchCycle: input.activeTopicProbeContract.research_cycle,
+      generatedAt: input.activeTopicProbeContract.generated_at,
+      computeBudgetLimits: input.activeTopicProbeContract.compute_budget
+    });
+    if (
+      lineage.activeContract.content_sha256
+        !== input.activeTopicProbeContract.content_sha256
+    ) {
+      throw new Error("topic_probe_execution_fixture_contract_mismatch");
+    }
+    const portfolioPath = path.join(
+      runDir,
+      TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
+    );
+    await mkdir(path.dirname(portfolioPath), { recursive: true });
+    await writeFile(
+      portfolioPath,
+      `${JSON.stringify(lineage.portfolio, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, TOPIC_PROBE_DECISION_RELATIVE_PATH),
+      `${JSON.stringify(lineage.decision, null, 2)}\n`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(panelDir, "active_topic_probe_contract.json"),
+      `${JSON.stringify(input.activeTopicProbeContract, null, 2)}\n`,
+      "utf8"
+    );
+  }
+  if (input.portfolio) {
+    await writeFile(
+      path.join(runDir, "experiment_portfolio.json"),
+      JSON.stringify(input.portfolio, null, 2),
+      "utf8"
+    );
+  }
+  if (input.experimentContract) {
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(input.experimentContract, null, 2),
+      "utf8"
+    );
+  }
+
+  const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+  await runContext.put("implement_experiments.run_command", "python3 run_configured_experiment.py");
+  await runContext.put("implement_experiments.cwd", root);
+  await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
+  if (input.activeTopicProbeContract && input.requestedGpuCount !== null) {
+    await runContext.put(
+      "implement_experiments.requested_gpu_count",
+      input.requestedGpuCount ?? 1
+    );
+  }
+  if (input.testCommand) {
+    await runContext.put("implement_experiments.test_command", input.testCommand);
+  }
+  if (input.environmentGpuAvailable !== undefined) {
+    await runContext.put("implement_experiments.environment_snapshot", {
+      gpu_available: input.environmentGpuAvailable
+    });
+  }
+  if (input.comparisonContract) {
+    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, input.comparisonContract);
+  }
+  if (input.briefRaw) {
+    await runContext.put("run_brief.raw", input.briefRaw);
+  }
+  const runCommandCalls: string[] = [];
+  const runTestCalls: string[] = [];
+  const eventStream = new InMemoryEventStream();
+  const node = createRunExperimentsNode({
+    config: {} as any,
+    executionProfile: "local",
+    runStore: {} as any,
+    eventStream,
+    llm: new MockLLMClient(),
+    experimentLlm: new MockLLMClient(),
+    pdfTextLlm: new MockLLMClient(),
+    codex: {} as any,
+    aci: {
+      runCommand: async (command: string) => {
+        runCommandCalls.push(command);
+        if (input.rawConditionEvidenceRows) {
+          await writeFile(
+            path.join(runDir, "raw_condition_evidence.jsonl"),
+            `${input.rawConditionEvidenceRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+            "utf8"
+          );
+        }
+        await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(input.metrics, null, 2), "utf8");
+        return {
+          status: "ok" as const,
+          stdout: "metrics written",
+          stderr: "",
+          exit_code: 0,
+          duration_ms: input.commandDurationMs ?? 10
+        };
+      },
+      runTests: async (command: string) => {
+        runTestCalls.push(command);
+        return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 };
+      }
+    } as any,
+    semanticScholar: {} as any,
+    openAlex: {} as any,
+    crossref: {} as any,
+    arxiv: {} as any,
+    responsesPdfAnalysis: {} as any
+  });
+
+  const result = await node.execute({ run, graph: run.graph });
+  let persistedMetrics: Record<string, any> = {};
+  try {
+    persistedMetrics = JSON.parse(
+      await readFile(path.join(runDir, "metrics.json"), "utf8")
+    ) as Record<string, any>;
+  } catch {
+    // Preflight failures intentionally produce no metrics artifact.
+  }
+  return { result, metrics: persistedMetrics, runDir, runCommandCalls, runTestCalls };
+}
+
+function buildExplicitResultsV2Fixture(input: {
+  primaryValue: number;
+  metricId?: string;
+  direction?: "higher_better" | "lower_better";
+  referenceValue?: number;
+  comparisonDelta?: number;
+  primaryRole?: "primary" | "comparator";
+  scope?: Record<string, string | number | boolean | null>;
+}): Record<string, unknown> {
+  const metricId = input.metricId || "outcome_measure";
+  const scope = input.scope || { partition: "validation" };
+  const primaryObservationId = "observation-primary";
+  const referenceObservationId = "observation-reference";
+  const hasReference = input.referenceValue !== undefined;
+  const hasComparison = hasReference && input.comparisonDelta !== undefined;
+  return {
+    results_artifact: {
+      schema_version: "2.0",
+      metrics: [
+        {
+          id: metricId,
+          label: "Outcome measure",
+          direction: input.direction || "higher_better",
+          unit: "unitless"
+        }
+      ],
+      series: [
+        ...(hasReference
+          ? [{ id: "series-reference", label: "Reference series", role: "baseline", dimensions: {} }]
+          : []),
+        {
+          id: "series-primary",
+          label: "Primary series",
+          role: input.primaryRole || "primary",
+          dimensions: {}
+        }
+      ],
+      observations: [
+        ...(hasReference
+          ? [{
+              id: referenceObservationId,
+              series_id: "series-reference",
+              metric_id: metricId,
+              scope,
+              value: input.referenceValue
+            }]
+          : []),
+        {
+          id: primaryObservationId,
+          series_id: "series-primary",
+          metric_id: metricId,
+          scope,
+          value: input.primaryValue
+        }
+      ],
+      comparisons: hasComparison
+        ? [{
+            id: "comparison-primary-reference",
+            subject_observation_id: primaryObservationId,
+            reference_observation_id: referenceObservationId,
+            delta: input.comparisonDelta
+          }]
+        : []
+    },
+    results_selection: {
+      metric_id: metricId,
+      primary_observation_id: primaryObservationId,
+      ...(hasComparison ? { primary_comparison_id: "comparison-primary-reference" } : {})
+    }
+  };
+}
+
+function buildExperimentContractV2Fixture(input: {
+  runId: string;
+  metricId?: string;
+  direction?: "higher_better" | "lower_better";
+}): Record<string, unknown> {
+  const metricId = input.metricId || "outcome_measure";
+  return {
+    version: 2,
+    run_id: input.runId,
+    created_at: new Date().toISOString(),
+    hypothesis: "The declared intervention changes the recorded outcome.",
+    causal_mechanism: "The intervention changes only the measured execution path.",
+    single_change: "Enable the declared intervention.",
+    confounded: false,
+    expected_metric_effect: "A measurable change in the explicit outcome metric.",
+    abort_condition: "Abort when execution evidence is incomplete.",
+    keep_or_discard_rule: "Keep only complete observations that satisfy the explicit results plan.",
+    results_plan: {
+      schema_version: "2.0",
+      required_metrics: [
+        {
+          id: metricId,
+          label: "Outcome measure",
+          direction: input.direction || "higher_better",
+          unit: "unitless"
+        }
+      ],
+      minimum_series_count: 1,
+      minimum_comparison_count: 0
     }
   };
 }
@@ -424,7 +730,7 @@ describe("run_experiments execution profile behavior", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     expect(aci.runCommand).toHaveBeenCalledTimes(1);
     expect(aci.runTests).not.toHaveBeenCalled();
   });
@@ -446,7 +752,7 @@ describe("run_experiments execution profile behavior", () => {
         "import json",
         "",
         "REQUIRED_RUN_COUNT = 12",
-        "train_steps_per_run = 48",
+        "work_units_per_run = 48",
         "",
         "def run_condition():",
         "    parameter.requires_grad = True",
@@ -529,13 +835,10 @@ describe("run_experiments execution profile behavior", () => {
         "from pathlib import Path",
         "",
         "REQUIRED_RUN_COUNT = 12",
-        "train_steps_per_run = 48",
+        "work_units_per_run = 48",
         "progress_path = Path('progress.jsonl')",
         "",
-        "def load_model():",
-        "    return AutoModel.from_pretrained('model-under-test')",
-        "",
-        "def evaluate_completed_condition():",
+        "def execute_planned_work():",
         "    for _example in range(1000):",
         "        pass",
         "",
@@ -543,7 +846,7 @@ describe("run_experiments execution profile behavior", () => {
         "    parser = argparse.ArgumentParser()",
         "    parser.add_argument('--timeout-sec', type=int, default=1800)",
         "    parser.parse_args()",
-        "    optimizer.step()",
+        "    execute_planned_work()",
         "",
         "if __name__ == '__main__':",
         "    main()",
@@ -581,7 +884,7 @@ describe("run_experiments execution profile behavior", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(String(result.error)).toContain("no executable training or evaluation loop consumes a deadline");
+    expect(String(result.error)).toContain("no executable planned-work loop consumes a deadline");
     expect(aci.runCommand).not.toHaveBeenCalled();
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -593,8 +896,8 @@ describe("run_experiments execution profile behavior", () => {
     await writeFile(
       scriptPath,
       (await readFile(scriptPath, "utf8")).replace(
-        "    optimizer.step()",
-        "    runtime.assert_time_available('before_planned_run')\n    optimizer.step()"
+        "    execute_planned_work()",
+        "    runtime.assert_time_available('before_planned_run')\n    execute_planned_work()"
       ),
       "utf8"
     );
@@ -609,7 +912,7 @@ describe("run_experiments execution profile behavior", () => {
     const guardedResult = await node.execute({ run, graph: run.graph });
 
     expect(guardedResult.status).toBe("failure");
-    expect(String(guardedResult.error)).not.toContain("no executable training or evaluation loop consumes a deadline");
+    expect(String(guardedResult.error)).not.toContain("no executable planned-work loop consumes a deadline");
     expect(aci.runCommand).toHaveBeenCalled();
   });
 
@@ -691,11 +994,11 @@ describe("run_experiments execution profile behavior", () => {
     ).toBe(false);
   });
 
-  it("fails verification when a successful command writes incomplete comparator metrics", async () => {
+  it("fails verification when an aggregate explicitly reports incomplete execution", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-incomplete-comparator-"));
     process.chdir(root);
     const run = makeRun("run-incomplete-comparator");
-    run.objectiveMetric = "accuracy_delta_vs_baseline";
+    run.objectiveMetric = "outcome_measure";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -720,8 +1023,8 @@ describe("run_experiments execution profile behavior", () => {
       objective_profile: {
         source: "heuristic_fallback",
         raw: run.objectiveMetric,
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        primaryMetric: "outcome_measure",
+        preferredMetricKeys: ["outcome_measure"],
         direction: "maximize"
       },
       evaluator_contract_id: "eval-contract-incomplete-comparator",
@@ -744,24 +1047,16 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "completed",
-                summary: {
-                  primary_metric: {
-                    name: "mean_zero_shot_accuracy_benchmark_tasks",
-                    baseline_value: null,
-                    best_tuned_value: null,
-                    best_tuned_delta_vs_baseline: null,
-                    winner: "baseline"
-                  }
-                },
+                success: true,
+                ...buildExplicitResultsV2Fixture({
+                  metricId: "outcome_measure",
+                  primaryValue: 0.2
+                }),
                 study: {
                   aggregate: {
                     all_conditions_succeeded: false,
                     completed_condition_count: 1,
-                    failed_condition_count: 3,
-                    successful_tuned_condition_count: 0,
-                    baseline_mean_accuracy: null,
-                    best_tuned_mean_accuracy: null,
-                    best_tuned_delta_vs_baseline: null
+                    failed_condition_count: 3
                   }
                 }
               },
@@ -797,7 +1092,6 @@ describe("run_experiments execution profile behavior", () => {
 
     expect(result.status).toBe("failure");
     expect(result.error).toContain("Experiment metrics contract failed");
-    expect(result.error).toContain("No tuned comparator condition completed successfully");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -821,7 +1115,7 @@ describe("run_experiments execution profile behavior", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-training-aggregates-incomplete-"));
     process.chdir(root);
     const run = makeRun("run-training-aggregates-incomplete");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    run.objectiveMetric = "outcome_measure >= 0.01";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -850,9 +1144,12 @@ describe("run_experiments execution profile behavior", () => {
                 evaluation_ready: false,
                 training_aggregates: {
                   completed_run_count: 3,
+                  required_run_count: 4,
                   completed_training_run_count: 3,
                   completed_condition_count: 0,
+                  required_condition_count: 2,
                   failed_run_count: 1,
+                  timed_out_run_count: 1,
                   evaluation_ready: false,
                   condition_execution_aggregates: [
                     {
@@ -939,7 +1236,7 @@ describe("run_experiments execution profile behavior", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-state-failure-"));
     process.chdir(root);
     const run = makeRun("run-condition-state-failure");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    run.objectiveMetric = "outcome_measure >= 0.01";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -956,8 +1253,8 @@ describe("run_experiments execution profile behavior", () => {
       llm: {
         complete: async () => ({
           text: JSON.stringify({
-            primaryMetric: "accuracy_delta_vs_baseline",
-            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            primaryMetric: "outcome_measure",
+            preferredMetricKeys: ["outcome_measure"],
             direction: "maximize",
             comparator: ">=",
             targetValue: 0.01,
@@ -1028,7 +1325,7 @@ describe("run_experiments execution profile behavior", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain('Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json');
+    expect(result.error).toContain('Objective metric "outcome_measure" was not found in metrics.json');
     expect(result.error).toContain("condition_state_reasons=no usable normalized training texts:2");
     expect(result.error).toContain("condition_state_failure_stages=condition_execution:2");
 
@@ -1052,7 +1349,7 @@ describe("run_experiments execution profile behavior", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-nested-result-failure-"));
     process.chdir(root);
     const run = makeRun("run-nested-result-failure");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    run.objectiveMetric = "outcome_measure >= 0.01";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -1069,8 +1366,8 @@ describe("run_experiments execution profile behavior", () => {
       llm: {
         complete: async () => ({
           text: JSON.stringify({
-            primaryMetric: "accuracy_delta_vs_baseline",
-            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            primaryMetric: "outcome_measure",
+            preferredMetricKeys: ["outcome_measure"],
             direction: "maximize",
             comparator: ">=",
             targetValue: 0.01,
@@ -1139,7 +1436,7 @@ describe("run_experiments execution profile behavior", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain('Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json');
+    expect(result.error).toContain('Objective metric "outcome_measure" was not found in metrics.json');
     expect(result.error).toContain("nested_failures=dependency_preflight_failed");
     expect(result.error).toContain("missing 1 required positional argument");
 
@@ -1168,8 +1465,8 @@ describe("run_experiments execution profile behavior", () => {
       llm: {
         complete: async () => ({
           text: JSON.stringify({
-            primaryMetric: "accuracy_delta_vs_baseline",
-            preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+            primaryMetric: "outcome_measure",
+            preferredMetricKeys: ["outcome_measure"],
             direction: "maximize",
             comparator: ">=",
             targetValue: 0.01,
@@ -1406,8 +1703,8 @@ describe("run_experiments execution profile behavior", () => {
       objective_profile: {
         source: "heuristic_fallback",
         raw: run.objectiveMetric,
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        primaryMetric: "outcome_measure",
+        preferredMetricKeys: ["outcome_measure"],
         direction: "maximize",
         comparator: ">=",
         targetValue: 0.01
@@ -1433,7 +1730,7 @@ describe("run_experiments execution profile behavior", () => {
               {
                 status: "completed",
                 primary_metric: {
-                  name: "accuracy_delta_vs_baseline",
+                  name: "outcome_measure",
                   value: 0.012,
                   target: 0.01,
                   met: true
@@ -1691,7 +1988,7 @@ describe("run_experiments execution profile behavior", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-contradictory-row-counts-"));
     process.chdir(root);
     const run = makeRun("run-contradictory-row-counts");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
+    run.objectiveMetric = "outcome_measure >= 0.01";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -1716,8 +2013,8 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "completed",
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                accuracy_delta_vs_baseline: 0.02,
+                primary_metric_key: "outcome_measure",
+                outcome_measure: 0.02,
                 completed_run_count: 2,
                 required_run_count: 2,
                 failed_run_count: 0,
@@ -1853,386 +2150,219 @@ describe("run_experiments execution profile behavior", () => {
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
     ) as { suggested_next_action?: string };
     expect(verifierReport.suggested_next_action).toContain("Repair metrics aggregation");
-    expect(verifierReport.suggested_next_action).toContain("condition-level accuracy");
+    expect(verifierReport.suggested_next_action).toContain("condition-level objective");
     expect(verifierReport.suggested_next_action).toContain("model/tokenizer");
   });
 
-  it("rejects completed condition summaries whose counts contradict metric values", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-inconsistent-summary-metrics-"));
-    process.chdir(root);
-    const run = makeRun("run-inconsistent-summary-metrics");
-    run.objectiveMetric = "quality_delta >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(runDir, { recursive: true });
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
-
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                success: true,
-                primary_metric_key: "quality_delta",
-                primary_metric_value: 0.02,
-                quality_delta: 0.02,
-                completed_run_count: 4,
-                required_run_count: 4,
-                completed_condition_count: 2,
-                required_condition_count: 2,
-                raw_condition_results: [
-                  { condition_marker: "baseline_condition", status: "completed", seed: 1, accuracy: 0.5 },
-                  { condition_marker: "baseline_condition", status: "completed", seed: 2, accuracy: 0.5 },
-                  { condition_marker: "candidate_condition_a", status: "completed", seed: 1, accuracy: 0.52 },
-                  { condition_marker: "candidate_condition_a", status: "completed", seed: 2, accuracy: 0.52 },
-                  {
-                    condition_marker: "baseline_condition",
-                    status: "completed",
-                    example_id: "example_a",
-                    prediction: "option_a",
-                    gold_key: "option_b"
-                  },
-                  {
-                    condition_marker: "baseline_condition",
-                    status: "completed",
-                    example_id: "example_b",
-                    prediction: "option_b",
-                    gold_key: "option_b"
-                  },
-                  {
-                    condition_marker: "candidate_condition_a",
-                    status: "completed",
-                    example_id: "example_a",
-                    prediction: "option_b",
-                    gold_key: "option_b"
-                  },
-                  {
-                    condition_marker: "candidate_condition_a",
-                    status: "completed",
-                    example_id: "example_b",
-                    prediction: "option_b",
-                    gold_key: "option_b"
-                  }
-                ],
-                condition_summaries: [
-                  {
-                    condition_marker: "baseline_condition",
-                    status: "completed",
-                    average_accuracy: 0.5,
-                    correct_count: 0,
-                    total_count: 1,
-                    seeds: [],
-                    seed_count: 0,
-                    confidence_interval: { sample_size: 1 },
-                    evaluation: {
-                      overall: {
-                        accuracy: 0.4,
-                        correct_count: 0,
-                        total_count: 1,
-                        confidence_interval: { sample_size: 1 }
-                      }
-                    }
-                  },
-                  {
-                    condition_marker: "candidate_condition_a",
-                    status: "completed",
-                    average_accuracy: 0.52,
-                    correct_count: 0,
-                    total_count: 1,
-                    seeds: [],
-                    seed_count: 0,
-                    confidence_interval: { sample_size: 1 },
-                    evaluation: {
-                      overall: {
-                        accuracy: 0.42,
-                        correct_count: 0,
-                        total_count: 1,
-                        confidence_interval: { sample_size: 1 }
-                      }
-                    },
-                    quality_delta: 0.02
-                  }
-                ]
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
-        },
-        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
+  it("rejects a Results V2 artifact that contradicts the required metric direction", async () => {
+    const runId = "run-required-metric-direction-mismatch";
+    const { result } = await executeMeaningPreservationFixture({
+      runId,
+      objectiveMetric: "outcome_measure >= 0",
+      experimentContract: buildExperimentContractV2Fixture({
+        runId,
+        metricId: "outcome_measure",
+        direction: "higher_better"
+      }),
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "outcome_measure",
+          direction: "lower_better",
+          primaryValue: 0.7
+        })
+      }
     });
-
-    const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain("Condition summary accuracy is inconsistent with correct/total counts");
-    expect(result.error).toContain("Condition summary accuracy fields disagree");
-    expect(result.error).toContain("Condition summary total_count is smaller than raw per-example evidence");
-    expect(result.error).toContain("condition summaries report seed_count=0");
-    expect(result.error).toContain("confidence intervals with sample_size below the expected per-condition seed count");
-
-    const verifierReport = JSON.parse(
-      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
-    ) as { status: string; stage: string; summary: string };
-    expect(verifierReport).toMatchObject({
-      status: "fail",
-      stage: "metrics"
-    });
-    expect(verifierReport.summary).toContain("Condition summary accuracy is inconsistent");
+    expect(result.error).toContain("experiment_contract.results_plan");
+    expect(result.error).toContain(
+      'results_plan.required_metrics[0] requires direction "higher_better" for metric "outcome_measure"'
+    );
   });
 
-  it("projects seed-task metric rows into repeated-condition summaries with seed counts", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-seed-task-summary-metrics-"));
-    process.chdir(root);
-    const run = makeRun("run-seed-task-summary-metrics");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(runDir, { recursive: true });
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
-    await runContext.put(
-      "run_brief.raw",
-      [
-        "# Research Brief",
-        "## Constraints",
-        "- Seed: 7 for the primary condition sweep.",
-        "## Minimum Experiment Plan",
-        "- Two planned conditions with two governed runs per condition."
-      ].join("\n")
-    );
-
+  it("projects explicit binary counts into Results V2 observations with count provenance", async () => {
     const rows = [
-      ["baseline_condition", 1, "benchmark_task_a", 5, 10],
-      ["baseline_condition", 1, "benchmark_task_b", 4, 10],
-      ["baseline_condition", 2, "benchmark_task_a", 6, 10],
-      ["baseline_condition", 2, "benchmark_task_b", 5, 10],
-      ["candidate_condition_a", 1, "benchmark_task_a", 7, 10],
-      ["candidate_condition_a", 1, "benchmark_task_b", 6, 10],
-      ["candidate_condition_a", 2, "benchmark_task_a", 8, 10],
-      ["candidate_condition_a", 2, "benchmark_task_b", 7, 10]
-    ].map(([condition_marker, seed, task, correct_count, evaluated_count]) => ({
+      ["series-reference", "baseline", 1, "partition-alpha", 5, 10],
+      ["series-reference", "baseline", 1, "partition-beta", 4, 10],
+      ["series-reference", "baseline", 2, "partition-alpha", 6, 10],
+      ["series-reference", "baseline", 2, "partition-beta", 5, 10],
+      ["series-primary", "primary", 1, "partition-alpha", 7, 10],
+      ["series-primary", "primary", 1, "partition-beta", 6, 10],
+      ["series-primary", "primary", 2, "partition-alpha", 8, 10],
+      ["series-primary", "primary", 2, "partition-beta", 7, 10]
+    ].map(([condition_marker, role, seed, task, correct_count, total_count]) => ({
       condition_marker,
+      role,
       seed,
       task,
       status: "completed",
-      accuracy: Number(correct_count) / Number(evaluated_count),
+      metric_id: "outcome_rate",
+      metric_direction: "higher_better",
+      metric_unit: "unitless",
       raw_evidence: {
         task_metrics: {
           [String(task)]: {
             correct_count,
-            evaluated_count,
-            accuracy: Number(correct_count) / Number(evaluated_count)
+            total_count,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
           }
         }
       }
     }));
 
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                success: true,
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                completed_run_count: 4,
-                required_run_count: 4,
-                completed_condition_count: 2,
-                required_condition_count: 2,
-                baseline_condition_marker: "baseline_condition",
-                condition_results: [
-                  { condition_marker: "baseline_condition", status: "completed", accuracy: 0, seed_count: 0 },
-                  { condition_marker: "candidate_condition_a", status: "completed", accuracy: 0, seed_count: 0 }
-                ],
-                raw_condition_results: rows
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
-        },
-        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-explicit-binary-count-projection",
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        raw_condition_results: rows
+      }
     });
 
-    const result = await node.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      primary_metric_value: number;
-      condition_summaries: Array<Record<string, any>>;
-    };
-    const candidate = metrics.condition_summaries.find((row) => row.condition_marker === "candidate_condition_a");
-    expect(candidate).toMatchObject({
-      seed_count: 2,
-      correct_count: 28,
-      total_count: 40,
-      average_accuracy: 0.7
-    });
-    expect(candidate?.confidence_interval.sample_size).toBe(40);
-    expect(metrics.primary_metric_value).toBeCloseTo(0.2, 6);
+    expect(result.status, JSON.stringify(result)).toBe("success");
+    expect(metrics.outcome_rate).toBeCloseTo(0.7, 6);
+    expect(metrics.primary_metric_value).toBeCloseTo(0.7, 6);
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    const primaryObservation = metrics.results_artifact.observations.find(
+      (item: Record<string, any>) =>
+        item.series_id === "series-primary" && item.scope?.aggregation === "pooled_binary_count"
+    );
+    expect(primaryObservation?.value).toBeCloseTo(0.7, 6);
+    expect(metrics.binary_count_evidence).toContainEqual(
+      expect.objectContaining({
+        observation_id: primaryObservation?.id,
+        correct_count: 28,
+        total_count: 40,
+        seed_count: 2
+      })
+    );
+    expect(metrics.confidence_intervals).toContainEqual(
+      expect.objectContaining({ observation_id: primaryObservation?.id, sample_size: 40 })
+    );
+    expect(metrics.condition_summaries).toBeUndefined();
   });
 
-  it("projects wrapped task-summary rows with numeric correct counts and nested baseline flags", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-wrapped-task-summary-metrics-"));
-    process.chdir(root);
-    const run = makeRun("run-wrapped-task-summary-metrics");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(runDir, { recursive: true });
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", ".autolabos/runs/" + run.id + "/metrics.json");
-    await runContext.put(
-      "run_brief.raw",
-      [
-        "# Research Brief",
-        "## Constraints",
-        "- Seed schedule: 1 and 2.",
-        "## Minimum Experiment Plan",
-        "- One control condition and one candidate condition with two benchmark tasks."
-      ].join("\n")
-    );
-
+  it("preserves nested explicit roles and binary counts in Results V2 series", async () => {
     const rows = [
-      ["z_control_condition", true, 1, "benchmark_task_a", 5, 10],
-      ["z_control_condition", true, 1, "benchmark_task_b", 4, 10],
-      ["z_control_condition", true, 2, "benchmark_task_a", 5, 10],
-      ["z_control_condition", true, 2, "benchmark_task_b", 4, 10],
-      ["a_candidate_condition", false, 1, "benchmark_task_a", 8, 10],
-      ["a_candidate_condition", false, 1, "benchmark_task_b", 7, 10],
-      ["a_candidate_condition", false, 2, "benchmark_task_a", 8, 10],
-      ["a_candidate_condition", false, 2, "benchmark_task_b", 7, 10]
-    ].map(([condition_marker, is_baseline, seed, task, correct, evaluated_count]) => ({
+      ["series-reference", "baseline", 1, "partition-alpha", 4, 10],
+      ["series-reference", "baseline", 2, "partition-alpha", 6, 10],
+      ["series-primary", "primary", 1, "partition-alpha", 7, 10],
+      ["series-primary", "primary", 2, "partition-alpha", 9, 10]
+    ].map(([condition_marker, role, seed, task, correct_count, total_count]) => ({
       condition_marker,
-      seed,
-      seed_id: seed,
       task,
       status: "completed",
-      accuracy: Number(correct) / Number(evaluated_count),
-      correct,
       raw_evidence: {
-        condition_marker,
         seed,
-        seed_id: seed,
-        task,
-        total: null,
         raw_evidence: {
-          is_baseline,
+          role,
+          metric_id: "outcome_rate",
+          metric_direction: "higher_better",
+          metric_unit: "unitless",
           task_metrics: {
             [String(task)]: {
-              correct,
-              evaluated_count,
-              accuracy: Number(correct) / Number(evaluated_count)
+              correct_count,
+              total_count
             }
           }
         }
       }
     }));
 
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                success: true,
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                baseline_condition_marker: "a_candidate_condition",
-                condition_results: [
-                  { condition_marker: "z_control_condition", status: "completed", accuracy: 0, seed_count: 0 },
-                  { condition_marker: "a_candidate_condition", status: "completed", accuracy: 0, seed_count: 0 }
-                ],
-                raw_condition_results: rows
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
-        },
-        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-nested-explicit-binary-contract",
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        raw_condition_results: rows
+      }
     });
 
-    const result = await node.execute({ run, graph: run.graph });
-
     expect(result.status).toBe("success");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      baseline_condition_marker: string;
-      primary_metric_value: number;
-      condition_summaries: Array<Record<string, any>>;
-    };
-    const control = metrics.condition_summaries.find((row) => row.condition_marker === "z_control_condition");
-    const candidate = metrics.condition_summaries.find((row) => row.condition_marker === "a_candidate_condition");
-    expect(metrics.baseline_condition_marker).toBe("z_control_condition");
-    expect(control).toMatchObject({ correct_count: 18, total_count: 40, average_accuracy: 0.45, seed_count: 2 });
-    expect(candidate).toMatchObject({ correct_count: 30, total_count: 40, average_accuracy: 0.75, seed_count: 2 });
-    expect(candidate?.accuracy_delta_vs_baseline).toBeCloseTo(0.3, 6);
-    expect(metrics.primary_metric_value).toBeCloseTo(0.3, 6);
+    expect(metrics.results_artifact.series).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "series-reference", role: "baseline" }),
+        expect.objectContaining({ id: "series-primary", role: "primary" })
+      ])
+    );
+    const pooled = metrics.results_artifact.observations.filter(
+      (item: Record<string, any>) => item.scope?.aggregation === "pooled_binary_count"
+    );
+    expect(pooled).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ series_id: "series-reference", value: 0.5 }),
+        expect.objectContaining({ series_id: "series-primary", value: 0.8 })
+      ])
+    );
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    expect(metrics.outcome_rate).toBeCloseTo(0.8, 6);
+  });
+
+  it.each([
+    {
+      name: "one row omits its unit",
+      secondUnit: undefined,
+      expectedDiagnostic: "omitted an explicit metric_id, metric_direction, or metric_unit"
+    },
+    {
+      name: "rows declare conflicting units",
+      secondUnit: "percentage_point",
+      expectedDiagnostic: "distinct metric contracts"
+    }
+  ])("rejects binary projection when $name", async ({ secondUnit, expectedDiagnostic }) => {
+    const rows = [
+      {
+        condition_marker: "series-reference",
+        role: "baseline",
+        status: "completed",
+        correct: false,
+        metric_id: "outcome_rate",
+        metric_direction: "higher_better",
+        metric_unit: "unitless"
+      },
+      {
+        condition_marker: "series-primary",
+        role: "primary",
+        status: "completed",
+        correct: true,
+        metric_id: "outcome_rate",
+        metric_direction: "higher_better",
+        ...(secondUnit ? { metric_unit: secondUnit } : {})
+      }
+    ];
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: `run-binary-unit-${secondUnit ?? "missing"}`,
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        condition_results: rows
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(metrics.results_artifact).toBeUndefined();
+    expect(metrics.run_experiments_diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "binary_projection_skipped_missing_metric_contract",
+        message: expect.stringContaining(expectedDiagnostic)
+      })
+    );
   });
 
   it("uses failed metrics payload as feedback when the command exits unsuccessfully", async () => {
@@ -4593,13 +4723,15 @@ describe("run_experiments execution profile behavior", () => {
 
     const previousMetrics = {
       status: "completed",
-      accuracy_delta_vs_baseline: 0.04,
+      success: true,
+      ...buildExplicitResultsV2Fixture({
+        metricId: "outcome_measure",
+        primaryValue: 0.54,
+        referenceValue: 0.5,
+        comparisonDelta: 0.04
+      }),
       completed_condition_count: 2,
-      required_condition_count: 2,
-      condition_results: [
-        { condition_marker: "baseline_condition", status: "completed", average_accuracy: 0.5 },
-        { condition_marker: "candidate_condition_a", status: "completed", average_accuracy: 0.54 }
-      ]
+      required_condition_count: 2
     };
     await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(previousMetrics, null, 2), "utf8");
 
@@ -4669,14 +4801,15 @@ describe("run_experiments execution profile behavior", () => {
 
     const previousMetrics = {
       status: "completed",
-      primary_metric_key: "quality_delta",
-      quality_delta: 0.04,
+      success: true,
+      ...buildExplicitResultsV2Fixture({
+        metricId: "outcome_measure",
+        primaryValue: 0.54,
+        referenceValue: 0.5,
+        comparisonDelta: 0.04
+      }),
       completed_condition_count: 2,
-      required_condition_count: 2,
-      condition_results: [
-        { condition_marker: "baseline_condition", status: "completed", average_accuracy: 0.5 },
-        { condition_marker: "candidate_condition_a", status: "completed", average_accuracy: 0.54 }
-      ]
+      required_condition_count: 2
     };
     await writeFile(path.join(runDir, "metrics.json"), JSON.stringify(previousMetrics, null, 2), "utf8");
     await writeFile(
@@ -4684,14 +4817,15 @@ describe("run_experiments execution profile behavior", () => {
       JSON.stringify(
         {
           status: "completed",
-          primary_metric_key: "quality_delta",
-          quality_delta: 0,
+          success: true,
+          ...buildExplicitResultsV2Fixture({
+            metricId: "outcome_measure",
+            primaryValue: 0.5,
+            referenceValue: 0.5,
+            comparisonDelta: 0
+          }),
           completed_condition_count: 2,
-          required_condition_count: 2,
-          condition_results: [
-            { condition_marker: "baseline_condition", status: "completed", average_accuracy: 0.5 },
-            { condition_marker: "candidate_condition_a", status: "completed", average_accuracy: 0.5 }
-          ]
+          required_condition_count: 2
         },
         null,
         2
@@ -4896,10 +5030,11 @@ describe("run_experiments execution profile behavior", () => {
     expect(backedUpEvidence.join("\n")).toContain("old public stale diagnostic");
   });
 
-  it("recovers completed public bundle metrics over failed run metrics", async () => {
+  it("recovers only explicitly selected Results V2 metrics from a completed public bundle", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-recover-public-completed-metrics-"));
     process.chdir(root);
     const run = makeRun("run-recover-public-completed-metrics");
+    run.objectiveMetric = "outcome_measure >= 0.9";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     const publicDir = path.join(root, "public");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -4929,8 +5064,6 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "failed",
-                primary_metric_key: "accuracy",
-                accuracy: 0.4,
                 error: "stale failed run metrics"
               },
               null,
@@ -4943,10 +5076,13 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "completed",
-                primary_metric_key: "accuracy",
-                accuracy: 0.95,
-                completed_condition_count: 2,
-                required_condition_count: 2
+                success: true,
+                ...buildExplicitResultsV2Fixture({
+                  metricId: "outcome_measure",
+                  primaryValue: 0.95
+                }),
+                completed_condition_count: 1,
+                required_condition_count: 1
               },
               null,
               2
@@ -4967,10 +5103,19 @@ describe("run_experiments execution profile behavior", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("success");
-    const recoveredMetrics = JSON.parse(await readFile(metricsPath, "utf8")) as { status?: string; accuracy?: number };
-    expect(recoveredMetrics.status).toBe("completed");
-    expect(recoveredMetrics.accuracy).toBe(0.95);
-    await expect(runContext.get("run_experiments.recovered_public_metrics_path")).resolves.toBe(path.join(publicDir, "metrics.json"));
+    const recoveredMetrics = JSON.parse(await readFile(metricsPath, "utf8")) as {
+      status?: string;
+      outcome_measure?: number;
+      primary_observation_id?: string;
+    };
+    expect(recoveredMetrics).toMatchObject({
+      status: "completed",
+      outcome_measure: 0.95,
+      primary_observation_id: "observation-primary"
+    });
+    await expect(runContext.get("run_experiments.recovered_public_metrics_path")).resolves.toBe(
+      path.join(publicDir, "metrics.json")
+    );
   });
 
   it("forwards timeout flags through shell wrappers that pass through argv", async () => {
@@ -5037,7 +5182,7 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify({
               status: "completed",
               success: true,
-              primary_metric: { name: "accuracy_delta_vs_baseline", value: 0.02, target: 0.01, met: true },
+              primary_metric: { name: "outcome_measure", value: 0.02, target: 0.01, met: true },
               condition_results: [{ condition_id: "baseline_condition", status: "completed", accuracy: 0.4 }],
               completed_condition_count: 1
             }),
@@ -5112,7 +5257,7 @@ describe("run_experiments execution profile behavior", () => {
                   status: "completed",
                   success: true,
                   primary_metric: {
-                    name: "accuracy_delta_vs_baseline",
+                    name: "outcome_measure",
                     value: 0.02,
                     target: 0.01,
                     met: true
@@ -5218,7 +5363,7 @@ describe("run_experiments execution profile behavior", () => {
                 status: "completed",
                 success: true,
                 primary_metric: {
-                  name: "accuracy_delta_vs_baseline",
+                  name: "outcome_measure",
                   value: 0.02,
                   target: 0.01,
                   met: true
@@ -5317,7 +5462,7 @@ describe("run_experiments execution profile behavior", () => {
                 status: "completed",
                 success: true,
                 primary_metric: {
-                  name: "accuracy_delta_vs_baseline",
+                  name: "outcome_measure",
                   value: 0.02,
                   target: 0.01,
                   met: true
@@ -5421,7 +5566,7 @@ describe("run_experiments execution profile behavior", () => {
                 status: "completed",
                 success: true,
                 primary_metric: {
-                  name: "accuracy_delta_vs_baseline",
+                  name: "outcome_measure",
                   value: 0.02,
                   target: 0.01,
                   met: true
@@ -5466,552 +5611,164 @@ describe("run_experiments execution profile behavior", () => {
     expect(observedCommand).not.toContain("--budget-timeout-sec 14400");
   });
 
-  it("promotes top-level primary_metric_key and primary_metric before objective contract validation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-primary-metric-key-projection-"));
-    process.chdir(root);
-    const run = makeRun("run-primary-metric-key-projection");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
-    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
-      version: 1,
-      run_id: run.id,
-      plan_id: "plan-primary-metric-key-projection",
-      selected_hypothesis_ids: ["hypothesis-1"],
-      objective_metric_name: run.objectiveMetric,
-      baseline_first_required: true,
-      baseline_candidate_ids: ["baseline"],
-      comparison_mode: "baseline_first_locked",
-      budget_profile: {
-        mode: "single_run_locked",
-        locked: true,
-        timeout_sec: 1800
-      },
-      objective_profile: {
-        source: "test",
-        raw: run.objectiveMetric,
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        threshold: 0.01,
-        thresholdOperator: ">="
-      },
-      created_at: new Date().toISOString()
-    });
-
-    const eventStream = new InMemoryEventStream();
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream,
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                success: true,
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                primary_metric: -0.03125,
-                completed_condition_count: 3,
-                required_condition_count: 3,
-                conditions: [
-                  {
-                    marker: "baseline_condition",
-                    status: "completed",
-                    average_accuracy: 0.28125,
-                    accuracy_delta_vs_baseline: 0
-                  },
-                  {
-                    marker: "candidate_condition_d",
-                    status: "completed",
-                    average_accuracy: 0.25,
-                    accuracy_delta_vs_baseline: -0.03125
-                  },
-                  {
-                    marker: "candidate_condition_f",
-                    status: "completed",
-                    average_accuracy: 0.21875,
-                    accuracy_delta_vs_baseline: -0.0625
-                  }
-                ]
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return {
-            status: "ok" as const,
-            stdout: "runner completed",
-            stderr: "",
-            exit_code: 0,
-            duration_ms: 10
-          };
-        },
-        runTests: async () => ({
-          status: "ok" as const,
-          stdout: "",
-          stderr: "",
-          exit_code: 0,
-          duration_ms: 1
+  it("promotes only an explicitly selected Results V2 observation", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-explicit-observation-promotion",
+      objectiveMetric: "outcome_measure >= -1",
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "outcome_measure",
+          direction: "higher_better",
+          primaryValue: -0.03125
         })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
+      }
     });
 
-    const result = await node.execute({ run, graph: run.graph });
-
-    expect(result.status).not.toBe("failure");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      accuracy_delta_vs_baseline?: number;
-    };
-    expect(metrics.accuracy_delta_vs_baseline).toBe(-0.03125);
-    const verifierReport = JSON.parse(
-      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
-    ) as { status: string; summary: string };
-    expect(verifierReport.status).toBe("pass");
-    expect(
-      eventStream.history().some((event) =>
-        String(event.payload.text || "").includes("Promoted primary metric accuracy_delta_vs_baseline=-0.03125")
-      )
-    ).toBe(true);
+    expect(result.status).toBe("success");
+    expect(metrics.outcome_measure).toBe(-0.03125);
+    expect(metrics.primary_metric_key).toBe("outcome_measure");
+    expect(metrics.primary_metric_value).toBe(-0.03125);
+    expect(metrics.primary_metric_direction).toBe("higher_better");
+    expect(metrics.primary_observation_id).toBe("observation-primary");
   });
 
-  it("promotes aggregate metrics projection before objective contract validation", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-aggregate-metric-projection-"));
-    process.chdir(root);
-    const run = makeRun("run-aggregate-metric-projection");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
-    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
-      version: 1,
-      run_id: run.id,
-      plan_id: "plan-aggregate-metric-projection",
-      selected_hypothesis_ids: ["hypothesis-1"],
-      objective_metric_name: run.objectiveMetric,
-      baseline_first_required: true,
-      baseline_candidate_ids: ["baseline_condition"],
-      comparison_mode: "baseline_first_locked",
-      budget_profile: {
-        mode: "single_run_locked",
-        locked: true,
-        timeout_sec: 1800
-      },
-      objective_profile: {
-        source: "test",
-        raw: run.objectiveMetric,
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        threshold: 0.01,
-        thresholdOperator: ">="
-      },
-      created_at: new Date().toISOString()
+  it("preserves an explicit Results V2 comparison without selecting an aggregate winner", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-explicit-comparison-promotion",
+      objectiveMetric: "outcome_measure >= 0.6",
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "outcome_measure",
+          primaryValue: 0.62,
+          referenceValue: 0.6,
+          comparisonDelta: 0.02
+        }),
+        aggregate: {
+          completed_run_count: 6,
+          required_run_count: 6,
+          completed_condition_count: 2,
+          required_condition_count: 2,
+          failed_run_count: 0
+        }
+      }
     });
 
-    const eventStream = new InMemoryEventStream();
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream,
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "success",
-                config: {
-                  primary_metric_key: "accuracy_delta_vs_baseline",
-                  required_condition_markers: [
-                    "baseline_condition",
-                    "candidate_condition_a",
-                    "candidate_condition_b"
-                  ],
-                  seed_schedule: [11, 12]
-                },
-                per_seed_rows: ["baseline_condition", "candidate_condition_a", "candidate_condition_b"].flatMap((marker) =>
-                  [11, 12].map((seed) => ({ condition_marker: marker, seed, status: "completed" }))
-                ),
-                aggregate: {
-                  baseline_marker: "baseline_condition",
-                  completed_run_count: 6,
-                  completed_condition_count: 3,
-                  failed_run_count: 0,
-                  best_condition: {
-                    marker: "candidate_condition_b",
-                    mean_accuracy: 0.62,
-                    accuracy_delta_vs_baseline: 0.02
-                  },
-                  condition_aggregates: [
-                    {
-                      marker: "baseline_condition",
-                      mean_accuracy: 0.6,
-                      accuracy_delta_vs_baseline: 0,
-                      fully_completed: true
-                    },
-                    {
-                      marker: "candidate_condition_a",
-                      mean_accuracy: 0.61,
-                      accuracy_delta_vs_baseline: 0.01,
-                      fully_completed: true
-                    },
-                    {
-                      marker: "candidate_condition_b",
-                      mean_accuracy: 0.62,
-                      accuracy_delta_vs_baseline: 0.02,
-                      fully_completed: true
-                    }
-                  ]
-                }
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return {
-            status: "ok" as const,
-            stdout: "runner completed",
-            stderr: "",
-            exit_code: 0,
-            duration_ms: 10
-          };
-        },
-        runTests: async () => ({
-          status: "ok" as const,
-          stdout: "",
-          stderr: "",
-          exit_code: 0,
-          duration_ms: 1
-        })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
-    });
-
-    const result = await node.execute({ run, graph: run.graph });
-
-    expect(result.status).not.toBe("failure");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      accuracy_delta_vs_baseline?: number;
-      primary_metric_key?: string;
-      primary_metric_value?: number;
-      completed_run_count?: number;
-      completed_condition_count?: number;
-      required_run_count?: number;
-      required_condition_count?: number;
-      best_condition?: { marker?: string };
-    };
-    expect(metrics.accuracy_delta_vs_baseline).toBe(0.02);
-    expect(metrics.primary_metric_key).toBe("accuracy_delta_vs_baseline");
-    expect(metrics.primary_metric_value).toBe(0.02);
+    expect(result.status).toBe("success");
+    expect(metrics.outcome_measure).toBeCloseTo(0.62, 8);
+    expect(metrics.primary_observation_id).toBe("observation-primary");
+    expect(metrics.primary_comparison_id).toBe("comparison-primary-reference");
+    expect(metrics.results_artifact.comparisons).toEqual([
+      expect.objectContaining({
+        id: "comparison-primary-reference",
+        subject_observation_id: "observation-primary",
+        reference_observation_id: "observation-reference",
+        delta: 0.02
+      })
+    ]);
     expect(metrics.completed_run_count).toBe(6);
-    expect(metrics.completed_condition_count).toBe(3);
     expect(metrics.required_run_count).toBe(6);
-    expect(metrics.required_condition_count).toBe(3);
-    expect(metrics.best_condition?.marker).toBe("candidate_condition_b");
-    const verifierReport = JSON.parse(
-      await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
-    ) as { status: string; summary: string };
-    expect(verifierReport.status).toBe("pass");
-    expect(
-      eventStream.history().some((event) =>
-        String(event.payload.text || "").includes("Promoted aggregate metrics projection")
-      )
-    ).toBe(true);
+    expect(metrics.completed_condition_count).toBe(2);
+    expect(metrics.required_condition_count).toBe(2);
   });
-  it("rebuilds lossy condition summaries from richer per-example evidence without seed identifiers", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-raw-evidence-summary-repair-"));
-    process.chdir(root);
-    const run = makeRun("run-raw-evidence-summary-repair");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.1";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
 
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
-
-    const perExampleRows = [
-      ["baseline_condition", "benchmark_task_a", "example_a", true],
-      ["baseline_condition", "benchmark_task_a", "example_b", false],
-      ["baseline_condition", "benchmark_task_b", "example_c", true],
-      ["baseline_condition", "benchmark_task_b", "example_d", false],
-      ["candidate_condition", "benchmark_task_a", "example_a", true],
-      ["candidate_condition", "benchmark_task_a", "example_b", true],
-      ["candidate_condition", "benchmark_task_b", "example_c", true],
-      ["candidate_condition", "benchmark_task_b", "example_d", false]
-    ].map(([conditionMarker, task, exampleId, correct]) => ({
-      condition_marker: conditionMarker,
+  it("projects explicit boolean outcomes with Wilson evidence and no comparison", async () => {
+    const rows = [
+      ["series-reference", "baseline", "partition-alpha", "item-1", true],
+      ["series-reference", "baseline", "partition-alpha", "item-2", false],
+      ["series-reference", "baseline", "partition-beta", "item-3", true],
+      ["series-reference", "baseline", "partition-beta", "item-4", false],
+      ["series-primary", "primary", "partition-alpha", "item-1", true],
+      ["series-primary", "primary", "partition-alpha", "item-2", true],
+      ["series-primary", "primary", "partition-beta", "item-3", true],
+      ["series-primary", "primary", "partition-beta", "item-4", false]
+    ].map(([condition_marker, role, task, example_id, correct]) => ({
+      condition_marker,
+      role,
       task,
-      example_id: exampleId,
-      seed: null,
+      example_id,
       correct,
-      accuracy: correct ? 1 : 0,
-      prediction: correct ? "option_a" : "option_b",
-      gold_key: "option_a",
+      metric_id: "binary_outcome_rate",
+      metric_direction: "higher_better",
+      metric_unit: "unitless",
       status: "completed"
     }));
 
-    const eventStream = new InMemoryEventStream();
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream,
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                success: true,
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                primary_metric_value: 0,
-                accuracy_delta_vs_baseline: 0,
-                completed_run_count: 2,
-                required_run_count: 2,
-                completed_condition_count: 2,
-                required_condition_count: 2,
-                baseline_condition_marker: "baseline_condition",
-                condition_results: [
-                  { condition_marker: "baseline_condition", status: "completed", accuracy: 1, correct: true },
-                  { condition_marker: "candidate_condition", status: "completed", accuracy: 1, correct: true }
-                ],
-                condition_summaries: [
-                  {
-                    condition_marker: "baseline_condition",
-                    status: "completed",
-                    accuracy: 1,
-                    average_accuracy: 1,
-                    correct_count: 1,
-                    total_count: 1,
-                    evaluation: { overall: { accuracy: 0.5, correct_count: 2, total_count: 4 } }
-                  },
-                  {
-                    condition_marker: "candidate_condition",
-                    status: "completed",
-                    accuracy: 1,
-                    average_accuracy: 1,
-                    correct_count: 1,
-                    total_count: 1,
-                    evaluation: { overall: { accuracy: 0.75, correct_count: 3, total_count: 4 } }
-                  }
-                ],
-                raw_condition_results: perExampleRows
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return { status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 10 };
-        },
-        runTests: async () => ({ status: "ok" as const, stdout: "", stderr: "", exit_code: 0, duration_ms: 1 })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-explicit-boolean-outcomes",
+      objectiveMetric: "binary_outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "binary_outcome_rate", label: "Binary outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        raw_condition_results: rows
+      }
     });
 
-    const result = await node.execute({ run, graph: run.graph });
-
-    expect(result.status).not.toBe("failure");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      accuracy_delta_vs_baseline?: number;
-      primary_metric_value?: number;
-      condition_summaries?: Array<{
-        condition_marker?: string;
-        average_accuracy?: number;
-        total_count?: number;
-        evaluation?: Record<string, unknown>;
-      }>;
-    };
-    const baseline = metrics.condition_summaries?.find((row) => row.condition_marker === "baseline_condition");
-    const candidate = metrics.condition_summaries?.find((row) => row.condition_marker === "candidate_condition");
-    expect(baseline).toMatchObject({ average_accuracy: 0.5, total_count: 4 });
-    expect(candidate).toMatchObject({ average_accuracy: 0.75, total_count: 4 });
-    expect(Object.keys(baseline?.evaluation ?? {})).toEqual(["benchmark_task_a", "benchmark_task_b"]);
-    expect(metrics.accuracy_delta_vs_baseline).toBe(0.25);
-    expect(metrics.primary_metric_value).toBe(0.25);
-    expect(
-      eventStream.history().some((event) =>
-        String(event.payload.text || "").includes("Projected 8 per-example metric row(s) into 2 condition summary row(s)")
-      )
-    ).toBe(true);
+    expect(result.status).toBe("success");
+    expect(metrics.binary_outcome_rate).toBeCloseTo(0.75, 8);
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    const referenceObservation = metrics.results_artifact.observations.find(
+      (item: Record<string, any>) =>
+        item.series_id === "series-reference" && item.scope?.aggregation === "pooled_binary_count"
+    );
+    const primaryObservation = metrics.results_artifact.observations.find(
+      (item: Record<string, any>) =>
+        item.series_id === "series-primary" && item.scope?.aggregation === "pooled_binary_count"
+    );
+    expect(referenceObservation?.value).toBeCloseTo(0.5, 8);
+    expect(primaryObservation?.value).toBeCloseTo(0.75, 8);
+    expect(metrics.confidence_intervals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ observation_id: referenceObservation?.id, sample_size: 4 }),
+        expect.objectContaining({ observation_id: primaryObservation?.id, sample_size: 4 })
+      ])
+    );
   });
 
-  it("promotes condition summary primary metric when the top-level objective metric is null", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-condition-summary-metric-projection-"));
-    process.chdir(root);
-    const run = makeRun("run-condition-summary-metric-projection");
-    run.objectiveMetric = "accuracy_delta_vs_baseline >= 0.01";
-    const runDir = path.join(root, ".autolabos", "runs", run.id);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-
-    const runContext = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
-    await runContext.put("implement_experiments.run_command", "python3 experiment.py");
-    await runContext.put("implement_experiments.cwd", root);
-    await runContext.put("implement_experiments.metrics_path", `.autolabos/runs/${run.id}/metrics.json`);
-    await runContext.put(EXPERIMENT_GOVERNANCE_CONTRACT_KEY, {
-      version: 1,
-      run_id: run.id,
-      plan_id: "plan-condition-summary-metric-projection",
-      selected_hypothesis_ids: ["hypothesis-1"],
-      objective_metric_name: run.objectiveMetric,
-      baseline_first_required: true,
-      baseline_candidate_ids: ["baseline"],
-      comparison_mode: "baseline_first_locked",
-      budget_profile: {
-        mode: "single_run_locked",
-        locked: true,
-        timeout_sec: 1800
-      },
-      objective_profile: {
-        source: "test",
-        raw: run.objectiveMetric,
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        threshold: 0.01,
-        thresholdOperator: ">="
-      },
-      created_at: new Date().toISOString()
+  it("does not promote named condition rows without an explicit Results V2 selection", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-name-only-condition-payload",
+      objectiveMetric: "outcome_measure >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "outcome_measure",
+        primary_metric_value: null,
+        outcome_measure: null,
+        primary_condition_marker: "series-primary",
+        condition_summaries: [
+          {
+            condition_marker: "series-reference",
+            role: "baseline",
+            outcome_measure: 0.2
+          },
+          {
+            condition_marker: "series-primary",
+            role: "primary",
+            outcome_measure: 0.8
+          }
+        ]
+      }
     });
 
-    const eventStream = new InMemoryEventStream();
-    const node = createRunExperimentsNode({
-      config: {} as any,
-      executionProfile: "local",
-      runStore: {} as any,
-      eventStream,
-      llm: new MockLLMClient(),
-      experimentLlm: new MockLLMClient(),
-      pdfTextLlm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {
-        runCommand: async () => {
-          await writeFile(
-            path.join(runDir, "metrics.json"),
-            JSON.stringify(
-              {
-                status: "completed",
-                primary_metric_key: "accuracy_delta_vs_baseline",
-                primary_metric_value: null,
-                accuracy_delta_vs_baseline: null,
-                completed_run_count: 22,
-                completed_condition_count: 4,
-                baseline_condition_marker: "baseline_condition",
-                condition_summaries: [
-                  {
-                    condition_marker: "baseline_condition",
-                    completed_runs: 7,
-                    accuracy_delta_vs_baseline: 0
-                  },
-                  {
-                    condition_marker: "candidate_condition_a",
-                    completed_runs: 5,
-                    accuracy_delta_vs_baseline: 0
-                  },
-                  {
-                    condition_marker: "candidate_condition_d",
-                    completed_runs: 5,
-                    accuracy_delta_vs_baseline: -0.0375
-                  },
-                  {
-                    condition_marker: "candidate_condition_f",
-                    completed_runs: 5,
-                    accuracy_delta_vs_baseline: -0.0375
-                  }
-                ]
-              },
-              null,
-              2
-            ),
-            "utf8"
-          );
-          return {
-            status: "ok" as const,
-            stdout: "runner completed",
-            stderr: "",
-            exit_code: 0,
-            duration_ms: 10
-          };
-        },
-        runTests: async () => ({
-          status: "ok" as const,
-          stdout: "",
-          stderr: "",
-          exit_code: 0,
-          duration_ms: 1
-        })
-      } as any,
-      semanticScholar: {} as any,
-      openAlex: {} as any,
-      crossref: {} as any,
-      arxiv: {} as any,
-      responsesPdfAnalysis: {} as any
-    });
-
-    const result = await node.execute({ run, graph: run.graph });
-
-    expect(result.status).not.toBe("failure");
-    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
-      accuracy_delta_vs_baseline?: number;
-      primary_metric_value?: number;
-    };
-    expect(metrics.accuracy_delta_vs_baseline).toBe(0);
-    expect(metrics.primary_metric_value).toBe(0);
-    expect(
-      eventStream.history().some((event) =>
-        String(event.payload.text || "").includes("Promoted condition-summary primary metric accuracy_delta_vs_baseline=0")
-      )
-    ).toBe(true);
+    expect(result.status).toBe("failure");
+    expect(metrics.outcome_measure).toBeNull();
+    expect(metrics.primary_metric_value).toBeNull();
+    expect(metrics.primary_observation_id).toBeUndefined();
+    expect(metrics.results_artifact).toBeUndefined();
   });
 
   it("publishes canonical public summaries from accepted run metrics instead of stale runner summaries", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-summary-sync-"));
     process.chdir(root);
     const run = makeRun("run-public-summary-sync");
+    run.objectiveMetric = "quality_index >= 0";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     const publicExperimentDir = buildPublicSectionDir(root, run, "experiment");
     await mkdir(path.join(runDir, "memory"), { recursive: true });
@@ -6048,24 +5805,16 @@ describe("run_experiments execution profile behavior", () => {
             JSON.stringify(
               {
                 status: "completed",
-                accuracy: 0.95,
+                quality_index: 0.95,
                 completed_run_count: 24,
                 required_run_count: 24,
                 attempted_run_count: 24,
                 failed_run_count: 0,
                 completed_condition_count: 8,
                 required_condition_count: 8,
-                accuracy_delta_vs_baseline: 0,
-                per_seed_rows: Array.from({ length: 8 }, (_unused, index) => `condition_${index + 1}`).flatMap((marker) =>
+                per_seed_rows: Array.from({ length: 8 }, (_unused, index) => `series-${index + 1}`).flatMap((marker) =>
                   [101, 202, 303].map((seed) => ({ condition_marker: marker, seed, status: "completed" }))
-                ),
-                condition_summaries: [
-                  {
-                    condition_marker: "baseline_condition",
-                    completed_runs: 3,
-                    accuracy_delta_vs_baseline: 0
-                  }
-                ]
+                )
               },
               null,
               2
@@ -6103,6 +5852,9 @@ describe("run_experiments execution profile behavior", () => {
       completed_run_count?: number;
       required_run_count?: number;
       failed_run_count?: number;
+      primary_metric_key?: string | null;
+      primary_observation?: Record<string, unknown> | null;
+      results_artifact?: Record<string, unknown> | null;
     };
     const publicStudySummary = JSON.parse(
       await readFile(path.join(publicExperimentDir, "study_summary.json"), "utf8")
@@ -6116,7 +5868,10 @@ describe("run_experiments execution profile behavior", () => {
       source: "run_experiments",
       completed_run_count: 24,
       required_run_count: 24,
-      failed_run_count: 0
+      failed_run_count: 0,
+      primary_metric_key: null,
+      primary_observation: null,
+      results_artifact: null
     });
     expect(publicStudySummary).toMatchObject({
       source: "run_experiments",
@@ -6130,7 +5885,7 @@ describe("run_experiments execution profile behavior", () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-model-dependency-blocker-"));
     process.chdir(root);
     const run = makeRun("run-model-dependency-blocker");
-    run.objectiveMetric = "accuracy_delta_vs_baseline";
+    run.objectiveMetric = "outcome_measure";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
 
@@ -6434,7 +6189,7 @@ describe("run_experiments execution profile behavior", () => {
               {
                 status: "failed",
                 primary_metric: {
-                  key: "accuracy_delta_vs_baseline",
+                  key: "outcome_measure",
                   value: null
                 },
                 aggregates: {
@@ -6533,19 +6288,18 @@ describe("run_experiments execution profile behavior", () => {
           execution_model: "single_run",
           comparison_axes: ["condition_parameter_x"],
           primary_trial_group_id: "primary",
+          total_expected_trials: 22,
           trial_groups: [
             {
               id: "primary",
-              label: "Primary repeated-seed condition_parameter_x sweep",
+              label: "Primary repeated execution group",
               role: "primary",
               group_kind: "aggregate",
-              dataset_scope: ["Benchmark Task A", "Benchmark Task B"],
-              metrics: ["accuracy_delta_vs_baseline"],
-              baselines: ["Locked baseline condition"],
-              notes: [
-                "Paper-scale evidence floor: 4 parameter values x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns.",
-                "Training budget is 22 runs total including exact baseline repeats."
-              ]
+              dataset_scope: ["partition-alpha", "partition-beta"],
+              metrics: ["outcome_measure"],
+              baselines: ["series-reference"],
+              expected_trials: 22,
+              notes: ["The governed execution schedule explicitly requires 22 trials."]
             }
           ]
         },
@@ -6577,7 +6331,7 @@ describe("run_experiments execution profile behavior", () => {
               {
                 status: "success",
                 accuracy: 0.95,
-                accuracy_delta_vs_baseline: 0,
+                outcome_measure: 0,
                 completed_run_count: 4,
                 completed_condition_count: 4,
                 condition_summaries: [
@@ -6659,13 +6413,14 @@ describe("run_experiments execution profile behavior", () => {
               {
                 status: "success",
                 success: true,
-                accuracy_delta_vs_baseline: 0.12,
-                primary_metric_key: "accuracy_delta_vs_baseline",
+                outcome_measure: 0.12,
+                primary_metric_key: "outcome_measure",
                 primary_metric_value: 0.12,
                 completed_run_count: 6,
                 required_run_count: 6,
                 completed_condition_count: 2,
                 required_condition_count: 2,
+                run_config: { seeds: [101, 202, 303] },
                 condition_results: [
                   { condition_marker: "baseline_condition", status: "completed", seed_count: 0, seeds: [] },
                   { condition_marker: "candidate_condition_a", status: "completed", seed_count: 0, seeds: [] }
@@ -6690,8 +6445,7 @@ describe("run_experiments execution profile behavior", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain("Repeated-run evidence incomplete");
-    expect(result.error).toContain("observed_condition_seed_count=0/6");
+    expect(result.error).toContain("Explicit seed schedule (3 seeds) requires seed provenance");
 
     const verifierReport = JSON.parse(
       await readFile(path.join(runDir, "run_experiments_verify_report.json"), "utf8")
@@ -6700,6 +6454,860 @@ describe("run_experiments execution profile behavior", () => {
       status: "fail",
       stage: "metrics"
     });
-    expect(verifierReport.summary).toContain("observed_condition_seed_count=0/6");
+    expect(verifierReport.summary).toContain("Explicit seed schedule (3 seeds) requires seed provenance");
+  });
+  it("preserves arbitrary per-example scores without projecting binary outcomes", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-generic-score-observation",
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7,
+        condition_results: [
+          {
+            condition_marker: "reference_condition",
+            task: "validation_partition",
+            example_id: "example_reference",
+            status: "completed",
+            score: 0.2
+          },
+          {
+            condition_marker: "selected_condition",
+            task: "validation_partition",
+            example_id: "example_selected",
+            status: "completed",
+            score: 0.9
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.condition_results.map((row: Record<string, unknown>) => row.score)).toEqual([0.2, 0.9]);
+    expect(metrics.condition_summaries).toBeUndefined();
+    expect(metrics.confidence_intervals).toBeUndefined();
+    expect(metrics.outcome_measure).toBeUndefined();
+    expect(metrics.results_artifact).toBeUndefined();
+    expect(metrics.run_experiments_diagnostics).toContainEqual(
+      expect.objectContaining({ code: "per_example_projection_skipped_ambiguous_metric_semantics" })
+    );
+  });
+
+  it("does not assign series roles from labels or observed values", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-label-role-spoof",
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        condition_results: [
+          {
+            condition_marker: "series-alpha",
+            label: "baseline",
+            task: "validation-partition",
+            example_id: "item-alpha",
+            status: "completed",
+            correct: false,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          },
+          {
+            condition_marker: "series-beta",
+            label: "primary",
+            task: "validation-partition",
+            example_id: "item-beta",
+            status: "completed",
+            correct: true,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(metrics.results_artifact.series.every((item: Record<string, unknown>) => item.role === undefined)).toBe(true);
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    expect(metrics.results_selection).toBeUndefined();
+    expect(metrics.run_experiments_diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "comparison_projection_skipped_ambiguous_series_roles" }),
+        expect.objectContaining({ code: "results_v2_selection_missing" })
+      ])
+    );
+  });
+
+  it("rejects multiple series that declare the primary role", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-ambiguous-primary-role",
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        results_selection: { metric_id: "outcome_rate" },
+        condition_results: [
+          {
+            condition_marker: "series-reference",
+            role: "baseline",
+            status: "completed",
+            correct: false,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          },
+          {
+            condition_marker: "series-primary-a",
+            role: "primary",
+            status: "completed",
+            correct: true,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          },
+          {
+            condition_marker: "series-primary-b",
+            role: "primary",
+            status: "completed",
+            correct: true,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(metrics.results_artifact.series.filter(
+      (item: Record<string, unknown>) => item.role === "primary"
+    )).toHaveLength(2);
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    expect(metrics.run_experiments_diagnostics).toContainEqual(
+      expect.objectContaining({ code: "results_v2_selection_rejected_ambiguous_primary_series" })
+    );
+  });
+
+  it("preserves a unique explicit baseline and primary role pair", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-explicit-role-pair",
+      objectiveMetric: "outcome_rate >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        metric_definitions: [
+          { id: "outcome_rate", label: "Outcome rate", direction: "higher_better", unit: "unitless" }
+        ],
+        condition_results: [
+          {
+            condition_marker: "series-reference",
+            role: "baseline",
+            status: "completed",
+            correct: false,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          },
+          {
+            condition_marker: "series-primary",
+            role: "primary",
+            status: "completed",
+            correct: true,
+            metric_id: "outcome_rate",
+            metric_direction: "higher_better",
+            metric_unit: "unitless"
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.results_artifact.series).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "series-reference", role: "baseline" }),
+        expect.objectContaining({ id: "series-primary", role: "primary" })
+      ])
+    );
+    expect(metrics.results_artifact.comparisons).toEqual([]);
+    expect(metrics.results_selection).toMatchObject({
+      metric_id: "outcome_rate",
+      primary_observation_id: "series-primary::outcome_rate::pooled"
+    });
+    expect(metrics.outcome_rate).toBe(1);
+  });
+
+  it("fails closed when a managed artifact comparison omits explicit series roles", async () => {
+    const runId = "run-matrix-ambiguous-roles";
+    const fixture = buildExplicitResultsV2Fixture({
+      metricId: "quality_index",
+      primaryValue: 0.7,
+      referenceValue: 0.4,
+      comparisonDelta: 0.3,
+      scope: { dataset: "validation_partition" }
+    }) as any;
+    const roleAmbiguousArtifact = {
+      ...fixture.results_artifact,
+      series: fixture.results_artifact.series.map(({ role: _role, ...series }: Record<string, unknown>) => series)
+    };
+    const { result } = await executeMeaningPreservationFixture({
+      runId,
+      portfolio: buildManagedMeaningPreservationPortfolio(runId),
+      metrics: {
+        status: "completed",
+        success: true,
+        quality_index: 0.7,
+        results_artifact: roleAmbiguousArtifact
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("requires subject series role primary or comparator");
+    expect(result.error).toContain("requires reference series role baseline");
+  });
+
+  it("does not divide aggregate trial counts across explicit Results V2 matrix slices", async () => {
+    const runId = "run-matrix-explicit-sampling-only";
+    const { result, runDir } = await executeMeaningPreservationFixture({
+      runId,
+      portfolio: buildManagedMeaningPreservationPortfolio(runId),
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7,
+          referenceValue: 0.4,
+          comparisonDelta: 0.3,
+          scope: { dataset: "validation_partition" }
+        }),
+        sampling_profile: {
+          name: "aggregate_execution",
+          total_trials: 12,
+          executed_trials: 12
+        }
+      }
+    });
+
+    expect(result.status).toBe("success");
+    const matrixRecords = JSON.parse(
+      await readFile(path.join(runDir, "run_experiments_matrix_trial_groups.json"), "utf8")
+    ) as Array<{ status: string; metrics_path?: string; sampling_profile?: Record<string, unknown> }>;
+    expect(matrixRecords[0].status).toBe("pass");
+    expect(matrixRecords[0].sampling_profile).toBeUndefined();
+    const sliceMetrics = JSON.parse(await readFile(String(matrixRecords[0].metrics_path), "utf8")) as {
+      sampling_profile?: Record<string, unknown>;
+      comparison?: Record<string, unknown>;
+    };
+    expect(sliceMetrics.sampling_profile).toBeUndefined();
+    expect(sliceMetrics.comparison).toMatchObject({
+      id: "comparison-primary-reference",
+      metric_id: "quality_index",
+      metric_direction: "higher_better",
+      delta: 0.3
+    });
+  });
+
+  it("rejects an ambiguous portfolio instead of falling back to the first trial group", async () => {
+    const runId = "run-portfolio-primary-ambiguity";
+    const portfolio = buildManagedMeaningPreservationPortfolio(runId);
+    delete portfolio.primary_trial_group_id;
+    portfolio.trial_groups = portfolio.trial_groups
+      .filter((group: Record<string, unknown>) => group.group_kind !== "matrix_slice")
+      .map((group: Record<string, unknown>) => ({ ...group, role: "supplemental" }));
+    portfolio.trial_groups.push({
+      id: "alternate_group",
+      label: "Alternate aggregate group",
+      role: "supplemental",
+      group_kind: "aggregate",
+      dataset_scope: ["held_out_partition"],
+      metrics: ["quality_index"],
+      baselines: [],
+      notes: []
+    });
+
+    const { result } = await executeMeaningPreservationFixture({
+      runId,
+      portfolio,
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Experiment portfolio primary trial group is ambiguous");
+    expect(result.error).toContain("no aggregate trial group declared role=primary");
+  });
+
+  it("does not infer a Cartesian seed schedule from required run and condition counts", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-no-cartesian-seed-inference",
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7,
+        completed_run_count: 6,
+        required_run_count: 6,
+        completed_condition_count: 2,
+        required_condition_count: 2,
+        condition_results: [
+          { condition_marker: "reference_condition", status: "completed", seeds: [], seed_count: 0 },
+          { condition_marker: "selected_condition", status: "completed", seeds: [], seed_count: 0 }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.run_experiments_diagnostics).toBeUndefined();
+  });
+
+  it("preserves distinct failure codes and reasons in a bounded summary", async () => {
+    const { result } = await executeMeaningPreservationFixture({
+      runId: "run-distinct-failure-summary",
+      metrics: {
+        status: "failed",
+        success: false,
+        failures: [
+          { failure_code: "reference_unavailable", failure_reason: "Reference execution was unavailable." },
+          { failure_code: "evaluation_timeout", failure_reason: "Evaluation exceeded its declared timeout." }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("failure_codes=reference_unavailable,evaluation_timeout");
+    expect(result.error).toContain("reason=Reference execution was unavailable.");
+    expect(result.error).toContain("reason=Evaluation exceeded its declared timeout.");
+  });
+
+  it("does not copy unmatched raw failure evidence into another condition summary", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-unmatched-raw-condition-evidence",
+      rawConditionEvidenceRows: [
+        {
+          condition_id: "reference_condition",
+          status: "failed",
+          failure_reason: "Reference condition stopped before evaluation.",
+          failure_stage: "evaluation"
+        }
+      ],
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7,
+        raw_condition_results_path: "raw_condition_evidence.jsonl",
+        condition_results: [
+          { condition_id: "selected_condition", role: "primary", status: "completed" }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.condition_results[0].failure_reason).toBeUndefined();
+    expect(metrics.condition_results[0].failure_stage).toBeUndefined();
+    expect(metrics.run_experiments_diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: "raw_condition_evidence_enrichment_skipped_unmatched_condition"
+      })
+    );
+  });
+
+  it("does not select the first failure when one condition has distinct raw failures", async () => {
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId: "run-distinct-raw-condition-failures",
+      rawConditionEvidenceRows: [
+        {
+          condition_id: "selected_condition",
+          status: "failed",
+          failure_code: "input_unavailable",
+          failure_reason: "The configured input was unavailable."
+        },
+        {
+          condition_id: "selected_condition",
+          status: "failed",
+          failure_code: "evaluation_timeout",
+          failure_reason: "Evaluation exceeded its declared timeout."
+        }
+      ],
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7,
+        raw_condition_results_path: "raw_condition_evidence.jsonl",
+        condition_results: [
+          { condition_id: "selected_condition", role: "primary", status: "completed" }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.condition_results[0].failure_reason).toBeUndefined();
+    const diagnostic = metrics.run_experiments_diagnostics.find(
+      (item: Record<string, unknown>) =>
+        item.code === "raw_condition_evidence_enrichment_skipped_ambiguous_failures"
+    );
+    expect(diagnostic?.message).toContain("code=input_unavailable");
+    expect(diagnostic?.message).toContain("reason=The configured input was unavailable.");
+    expect(diagnostic?.message).toContain("code=evaluation_timeout");
+    expect(diagnostic?.message).toContain("reason=Evaluation exceeded its declared timeout.");
+  });
+
+  it("accepts a generic explicit comparison without undeclared aggregate aliases", async () => {
+    const runId = "run-generic-comparison-contract";
+    const objectiveMetric = "quality_index >= 0";
+    const { result, metrics } = await executeMeaningPreservationFixture({
+      runId,
+      objectiveMetric,
+      comparisonContract: {
+        version: 1,
+        run_id: runId,
+        plan_id: "plan-generic-comparison",
+        selected_hypothesis_ids: ["hypothesis-generic-comparison"],
+        objective_metric_name: objectiveMetric,
+        baseline_first_required: true,
+        baseline_candidate_ids: ["series-reference"],
+        comparison_mode: "baseline_first_locked",
+        budget_profile: {
+          mode: "single_run_locked",
+          locked: true,
+          timeout_sec: 7200
+        },
+        objective_profile: {
+          source: "heuristic_fallback",
+          raw: objectiveMetric,
+          primaryMetric: "quality_index",
+          preferredMetricKeys: ["quality_index"],
+          direction: "maximize",
+          threshold: 0,
+          thresholdOperator: ">="
+        },
+        evaluator_contract_id: "evaluator-generic-comparison",
+        created_at: new Date().toISOString()
+      },
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7,
+          referenceValue: 0.4,
+          comparisonDelta: 0.3
+        }),
+        study: {
+          aggregate: {
+            all_conditions_succeeded: true
+          }
+        }
+      }
+    });
+
+    expect(result.status).toBe("success");
+    expect(metrics.quality_index).toBe(0.7);
+    expect(metrics.primary_comparison_id).toBe("comparison-primary-reference");
+  });
+
+  it("rejects an explicit comparison whose recorded delta contradicts its observations", async () => {
+    const { result } = await executeMeaningPreservationFixture({
+      runId: "run-invalid-explicit-comparison",
+      objectiveMetric: "quality_index >= 0",
+      metrics: {
+        status: "completed",
+        success: true,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7,
+          referenceValue: 0.5,
+          comparisonDelta: 0.3
+        })
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "delta must equal subject value minus reference value"
+    );
+  });
+
+  it("does not infer a seed repeat allowance from a strongest-condition label", async () => {
+    const { result } = await executeMeaningPreservationFixture({
+      runId: "run-no-label-seed-repeat-inference",
+      briefRaw: [
+        "# Research Brief",
+        "## Allowed Budgeted Passes",
+        "- Repeat runs for the baseline and strongest condition when runtime allows."
+      ].join("\n"),
+      metrics: {
+        status: "completed",
+        success: true,
+        primary_metric_key: "quality_index",
+        primary_metric_value: 0.7,
+        quality_index: 0.7,
+        run_config: { seeds: [7] },
+        condition_results: [
+          {
+            condition_id: "reference_condition",
+            status: "completed",
+            planned_seed_count: 2
+          },
+          {
+            condition_id: "selected_condition",
+            status: "completed",
+            planned_seed_count: 2
+          }
+        ]
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("Primary seed contract expanded");
+  });
+
+function buildManagedMeaningPreservationPortfolio(runId: string): Record<string, any> {
+  return {
+    version: 1,
+    run_id: runId,
+    created_at: new Date().toISOString(),
+    execution_model: "managed_bundle",
+    comparison_axes: ["dataset"],
+    primary_trial_group_id: "aggregate_group",
+    trial_groups: [
+      {
+        id: "aggregate_group",
+        label: "Configured aggregate group",
+        role: "primary",
+        group_kind: "aggregate",
+        dataset_scope: ["validation_partition", "held_out_partition"],
+        metrics: ["quality_index"],
+        baselines: [],
+        notes: []
+      },
+      {
+        id: "validation_slice",
+        label: "Validation partition slice",
+        role: "supplemental",
+        group_kind: "matrix_slice",
+        source_trial_group_id: "aggregate_group",
+        matrix_axes: { dataset: "validation_partition" },
+        dataset_scope: ["validation_partition"],
+        metrics: ["quality_index"],
+        baselines: [],
+        notes: []
+      }
+    ]
+  };
+}
+
+});
+
+
+function buildTopicProbeExecutionContract(
+  runId: string
+): ActiveTopicProbeContract {
+  return buildTopicProbeLineageFixture({
+    runId,
+    researchCycle: 0,
+    computeBudgetLimits: {
+      bounded_probe: {
+        max_gpu_hours: 2,
+        max_concurrent_gpus: 1,
+        max_trials: 10
+      },
+      confirmatory: {
+        max_gpu_hours: 9,
+        max_concurrent_gpus: 1,
+        max_trials: 20
+      }
+    }
+  }).activeContract;
+}
+
+function buildTopicProbeComparisonContract(
+  runId: string
+): Record<string, unknown> {
+  return {
+    version: 1,
+    run_id: runId,
+    plan_id: "plan_compute_fixture",
+    selected_hypothesis_ids: ["hypothesis_compute_fixture"],
+    objective_metric_name: "quality_index >= 0",
+    baseline_first_required: false,
+    baseline_candidate_ids: [],
+    comparison_mode: "objective_only",
+    budget_profile: {
+      mode: "single_run_locked",
+      locked: true,
+      timeout_sec: 1,
+      total_trials: 1
+    },
+    objective_profile: {
+      source: "heuristic_fallback",
+      raw: "quality_index >= 0",
+      primaryMetric: "quality_index",
+      preferredMetricKeys: ["quality_index"],
+      direction: "maximize",
+      threshold: 0,
+      thresholdOperator: ">="
+    },
+    evaluator_contract_id: "evaluator_compute_fixture",
+    created_at: "2026-01-01T00:00:00.000Z"
+  };
+}
+
+const TOPIC_DISCOVERY_COMPUTE_BRIEF = [
+  "# Research Brief",
+  "",
+  "## Research Mode",
+  "topic_discovery",
+  "",
+  "## Topic",
+  "A bounded comparison with auditable compute usage.",
+  "",
+  "## Allowed Budgeted Passes",
+  '- Machine-readable compute ceiling: `{"bounded_probe":{"max_gpu_hours":2,"max_concurrent_gpus":1,"max_trials":10},"confirmatory":{"max_gpu_hours":9,"max_concurrent_gpus":1,"max_trials":20}}`'
+].join("\n");
+
+describe("run_experiments topic-probe compute governance", () => {
+  it("writes a hash-chained usage ledger for a bounded GPU execution", async () => {
+    const runId = "run-topic-compute-success";
+    const { result, runDir } = await executeMeaningPreservationFixture({
+      runId,
+      briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+      activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+      comparisonContract: buildTopicProbeComparisonContract(runId),
+      metrics: {
+        status: "completed",
+        success: true,
+        quality_index: 0.7,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7
+        }),
+        compute_usage: {
+          schema_version: 1,
+          execution_kind: "gpu_execution",
+          actual_gpu_count: 1,
+          fresh_executed_trials: 1,
+          cached_trials: 0
+        }
+      }
+    });
+
+    expect(result.status).toBe("success");
+    const ledgerLines = (
+      await readFile(
+        path.join(
+          runDir,
+          "governance",
+          "topic_probe_compute_usage_ledger.jsonl"
+        ),
+        "utf8"
+      )
+    ).trim().split("\n").map((line) => JSON.parse(line));
+    expect(ledgerLines).toHaveLength(2);
+    expect(ledgerLines[0]).toMatchObject({
+      event_kind: "preflight_estimate",
+      decision: "allowed",
+      previous_entry_sha256: null
+    });
+    expect(ledgerLines[1]).toMatchObject({
+      event_kind: "actual_usage",
+      execution_kind: "gpu_execution",
+      actual_gpu_count: 1,
+      fresh_executed_trials: 1,
+      within_budget: true,
+      previous_entry_sha256: ledgerLines[0].content_sha256
+    });
+    const storedEvidenceBytes = await readFile(
+      path.join(
+        runDir,
+        "governance",
+        "topic_probe_compute_usage_evidence",
+        "attempt_1.json"
+      ),
+      "utf8"
+    );
+    expect(storedEvidenceBytes.endsWith("\n")).toBe(true);
+    expect(ledgerLines[1].usage_evidence_sha256).toBe(
+      createHash("sha256").update(storedEvidenceBytes).digest("hex")
+    );
+  });
+
+  it("fails before ACI when topic discovery reaches execution without active probe lineage", async () => {
+    const { result, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId: "run-topic-lineage-missing",
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_discovery_active_bounded_probe_lineage_missing"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+  });
+
+  it("blocks a topic-probe pre-execution test command before any ACI call", async () => {
+    const runId = "run-topic-pre-execution-command-blocked";
+    const { result, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId,
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+        activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+        comparisonContract: buildTopicProbeComparisonContract(runId),
+        testCommand: "python3 -m py_compile run_configured_experiment.py",
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_pre_execution_test_command_forbidden"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+  });
+
+  it("fails before ACI when the requested GPU count is not explicitly declared", async () => {
+    const runId = "run-topic-gpu-request-missing";
+    const { result, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId,
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+        activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+        comparisonContract: buildTopicProbeComparisonContract(runId),
+        requestedGpuCount: null,
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_compute_preflight_requested_gpu_count_missing"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+  });
+
+  it("fails before ACI when the active contract ceiling differs from the raw brief", async () => {
+    const runId = "run-topic-brief-ceiling-mismatch";
+    const { result, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId,
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF.replace(
+          '"max_gpu_hours":2',
+          '"max_gpu_hours":3'
+        ),
+        activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+        comparisonContract: buildTopicProbeComparisonContract(runId),
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_compute_active_contract_brief_ceiling_mismatch"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+  });
+
+  it("rejects a requested GPU count above the active cap without calling ACI", async () => {
+    const runId = "run-topic-gpu-cap-exceeded";
+    const { result, runDir, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId,
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+        activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+        comparisonContract: buildTopicProbeComparisonContract(runId),
+        requestedGpuCount: 2,
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_compute_preflight_max_concurrent_gpus_exceeded"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+    const ledgerRaw = await readFile(
+      path.join(
+        runDir,
+        "governance",
+        "topic_probe_compute_usage_ledger.jsonl"
+      ),
+      "utf8"
+    );
+    expect(ledgerRaw).toContain('"decision":"rejected"');
+  });
+
+  it("applies a known local environment GPU limit before ACI", async () => {
+    const runId = "run-topic-environment-gpu-limit";
+    const { result, runCommandCalls, runTestCalls } =
+      await executeMeaningPreservationFixture({
+        runId,
+        briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+        activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+        comparisonContract: buildTopicProbeComparisonContract(runId),
+        requestedGpuCount: 1,
+        environmentGpuAvailable: false,
+        metrics: {}
+      });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_compute_preflight_environment_gpu_limit_exceeded"
+    );
+    expect(runCommandCalls).toHaveLength(0);
+    expect(runTestCalls).toHaveLength(0);
+  });
+
+  it("fails closed when bounded execution omits actual compute usage evidence", async () => {
+    const runId = "run-topic-compute-missing-usage";
+    const { result, runDir } = await executeMeaningPreservationFixture({
+      runId,
+      briefRaw: TOPIC_DISCOVERY_COMPUTE_BRIEF,
+      activeTopicProbeContract: buildTopicProbeExecutionContract(runId),
+      comparisonContract: buildTopicProbeComparisonContract(runId),
+      metrics: {
+        status: "completed",
+        success: true,
+        quality_index: 0.7,
+        ...buildExplicitResultsV2Fixture({
+          metricId: "quality_index",
+          primaryValue: 0.7
+        })
+      }
+    });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "topic_probe_compute_usage_evidence_schema_invalid"
+    );
+    const ledgerRaw = await readFile(
+      path.join(
+        runDir,
+        "governance",
+        "topic_probe_compute_usage_ledger.jsonl"
+      ),
+      "utf8"
+    );
+    expect(ledgerRaw).toContain('"event_kind":"usage_unverifiable"');
   });
 });

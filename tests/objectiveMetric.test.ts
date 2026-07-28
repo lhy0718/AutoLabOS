@@ -4,673 +4,466 @@ import {
   buildHeuristicObjectiveMetricProfile,
   evaluateObjectiveMetric,
   normalizeObjectiveMetricProfile,
-  synthesizeRelativeMetrics
+  synthesizeRelativeMetrics,
+  type ObjectiveMetricProfile
 } from "../src/core/objectiveMetric.js";
+import {
+  buildCandidateObjectiveProfileBinding,
+  candidateRawDeltaMetricKey,
+  objectiveComparatorForEffectCriterion,
+  signedRawDeltaTargetForEffectCriterion,
+  type EffectCriterion
+} from "../src/core/effectCriterion.js";
+
+function structuredProfile(
+  overrides: Partial<ObjectiveMetricProfile> = {}
+): ObjectiveMetricProfile {
+  return {
+    source: "llm",
+    raw: "",
+    primaryMetric: "primary_score",
+    preferredMetricKeys: ["primary_score"],
+    direction: "maximize",
+    comparator: ">=",
+    targetValue: 0,
+    analysisFocus: [],
+    paperEmphasis: [],
+    assumptions: [],
+    ...overrides
+  };
+}
+
+function candidateOwnedProfile(input: {
+  direction: "maximize" | "minimize";
+  criterion: EffectCriterion;
+  metricScale?: "raw" | "proportion";
+}): ObjectiveMetricProfile {
+  const binding = buildCandidateObjectiveProfileBinding({
+    candidateId: "declared_subject",
+    primaryMetric: "primary_score",
+    metricUnit: "unitless",
+    metricScale: input.metricScale ?? "raw",
+    metricDirection: input.direction,
+    comparator: "declared_reference",
+    effectCriterion: input.criterion
+  });
+  const outputMetricKey = candidateRawDeltaMetricKey(binding.primary_metric);
+  const comparator = objectiveComparatorForEffectCriterion(
+    binding.metric_direction,
+    binding.effect_criterion
+  );
+  const signedTarget = signedRawDeltaTargetForEffectCriterion(
+    binding.metric_direction,
+    binding.effect_criterion
+  );
+  return normalizeObjectiveMetricProfile(
+    {
+      source: "heuristic_fallback",
+      primaryMetric: outputMetricKey,
+      preferredMetricKeys: [outputMetricKey],
+      analysisFocus: [],
+      paperEmphasis: [],
+      assumptions: [],
+      candidate_contract: binding,
+      delta_contract: {
+        output_metric_key: outputMetricKey,
+        source_metric_key: binding.primary_metric,
+        raw_delta_definition: "subject_minus_reference",
+        comparator,
+        signed_target: signedTarget
+      }
+    },
+    binding.objective_raw
+  );
+}
 
 describe("objectiveMetric", () => {
-  it("derives thresholded accuracy objectives heuristically", () => {
-    const profile = buildHeuristicObjectiveMetricProfile("accuracy at least 0.9");
-
-    expect(profile.primaryMetric).toBe("accuracy");
-    expect(profile.preferredMetricKeys).toContain("accuracy");
-    expect(profile.direction).toBe("maximize");
-    expect(profile.comparator).toBe(">=");
-    expect(profile.targetValue).toBe(0.9);
-  });
-
-  it("evaluates observed metrics against the resolved profile", () => {
-    const profile = buildHeuristicObjectiveMetricProfile("latency under 200");
-    const evaluation = evaluateObjectiveMetric(
-      {
-        latency_ms: 180,
-        accuracy: 0.92
-      },
-      profile,
-      "latency under 200"
-    );
-
-    expect(evaluation.status).toBe("met");
-    expect(evaluation.matchedMetricKey).toBe("latency_ms");
-    expect(evaluation.summary).toContain("latency_ms=180");
-    expect(evaluation.summary).toContain("< 200");
-  });
-
-  it("treats an explicit zero-valued top-level preferred metric as not met rather than missing", () => {
-    const evaluation = evaluateObjectiveMetric(
-      {
-        accuracy_delta_vs_baseline: 0,
-        primary_metric_key: "accuracy_delta_vs_baseline",
-        primary_metric_value: 0,
-        average_accuracy: 0.56
-      },
-      {
-        source: "llm",
-        raw: "Average accuracy gain over baseline should be at least one point.",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: [
-          "accuracy_delta_vs_baseline",
-          "accuracy_improvement_over_baseline",
-          "average_accuracy",
-          "train_loss"
-        ],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
-      },
-      "Average accuracy gain over baseline should be at least one point."
-    );
-
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBe(0);
-  });
-
-  it("reports missing metrics when the preferred key is absent", () => {
-    const profile = buildHeuristicObjectiveMetricProfile("f1 at least 0.8");
-    const evaluation = evaluateObjectiveMetric(
-      {
-        accuracy: 0.91
-      },
-      profile,
-      "f1 at least 0.8"
-    );
-
-    expect(evaluation.status).toBe("missing");
-    expect(evaluation.summary).toContain("was not found");
-  });
-
-  it("infers the sole numeric metric when the objective is otherwise generic", () => {
-    const profile = buildHeuristicObjectiveMetricProfile("overall improvement");
-    const evaluation = evaluateObjectiveMetric(
-      {
-        accuracy: 0.91
-      },
-      profile,
-      "overall improvement"
-    );
-
-    expect(evaluation.status).toBe("observed");
-    expect(evaluation.matchedMetricKey).toBe("accuracy");
-    expect(evaluation.summary).toContain('sole numeric metric "accuracy"');
-  });
-
-  it("treats baseline-improvement objectives as met when the delta is positive", () => {
-    const profile = buildHeuristicObjectiveMetricProfile(
-      "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
-    );
-    const evaluation = evaluateObjectiveMetric(
-      {
-        macro_f1_delta_vs_logreg: 0.0123,
-        best_mean_test_macro_f1: 0.94,
-        reproducible: true,
-        cpu_only: true
-      },
-      profile,
-      "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
-    );
-
-    expect(profile.preferredMetricKeys).toContain("macro_f1_delta_vs_logreg");
-    expect(profile.comparator).toBe(">");
-    expect(profile.targetValue).toBe(0);
-    expect(evaluation.status).toBe("met");
-    expect(evaluation.matchedMetricKey).toBe("macro_f1_delta_vs_logreg");
-    expect(evaluation.summary).toContain("macro_f1_delta_vs_logreg=0.0123");
-    expect(evaluation.summary).toContain("> 0");
-    expect(evaluation.summary).toContain("CPU-only requirement satisfied");
-    expect(evaluation.summary).toContain("Reproducibility requirement satisfied");
-  });
-
-  it("keeps baseline-delta semantics even when an llm profile proposes the raw metric first", () => {
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "macro_f1",
-        preferredMetricKeys: ["macro_f1", "test_macro_f1"],
-        direction: "maximize",
-        comparator: ">",
-        targetValue: 0,
-        targetDescription: "> 0"
-      },
-      "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
-    );
-
-    expect(profile.primaryMetric).toBe("macro_f1_delta_vs_logreg");
-    expect(profile.preferredMetricKeys[0]).toBe("macro_f1_delta_vs_logreg");
-    expect(profile.comparator).toBe(">");
-    expect(profile.targetValue).toBe(0);
-    expect(profile.targetDescription).toContain("logistic regression baseline");
-  });
-
-  // ---------- LV-014 regression tests ----------
-
-  it("parses accuracy-points-over-baseline as a relative delta target (LV-014)", () => {
-    const objective =
-      "Primary metric: accuracy (pass@1). Meaningful improvement: at least +1.5 accuracy points over single-pass baseline.";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
-
-    expect(profile.primaryMetric).toBe("accuracy_delta_vs_baseline");
-    expect(profile.preferredMetricKeys).toContain("accuracy_delta_vs_baseline");
-    expect(profile.preferredMetricKeys).toContain("accuracy_pass_at_1_delta_vs_baseline");
-    expect(profile.direction).toBe("maximize");
-    expect(profile.comparator).toBe(">=");
-    expect(profile.targetValue).toBe(0.015);
-  });
-
-  it("evaluates relative accuracy delta from conditions array (LV-014)", () => {
-    const objective =
-      "at least +1.5 accuracy points over single-pass baseline";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
-    const evaluation = evaluateObjectiveMetric(
-      {
-        primary_metric: "accuracy_pass_at_1",
-        conditions: [
-          { name: "single_pass_baseline", accuracy_pass_at_1: 0.22 },
-          { name: "always_two_pass_baseline", accuracy_pass_at_1: 0.01 },
-          { name: "uncertainty_gated@0.10", accuracy_pass_at_1: 0.25 }
-        ],
-        best_condition: { accuracy_pass_at_1: 0.25 }
-      },
-      profile,
-      objective
-    );
-
-    expect(evaluation.status).toBe("met");
-    expect(evaluation.matchedMetricKey).toBe("accuracy_pass_at_1_delta_vs_baseline");
-    expect(evaluation.observedValue).toBe(0.03);
-    expect(evaluation.targetValue).toBe(0.015);
-    expect(evaluation.summary).toContain("met");
-  });
-
-  it("reports not_met when delta is below threshold (LV-014)", () => {
-    const objective =
-      "at least +5 accuracy points over single-pass baseline";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
+  it("rejects a positive candidate delta that misses the declared effect floor after scale conversion", () => {
+    const profile = candidateOwnedProfile({
+      direction: "maximize",
+      metricScale: "proportion",
+      criterion: {
+        basis: "delta_vs_reference",
+        magnitude: 5,
+        scale: "percentage_point",
+        inclusive: true
+      }
+    });
     const evaluation = evaluateObjectiveMetric(
       {
         conditions: [
-          { name: "single_pass_baseline", accuracy_pass_at_1: 0.22 },
-          { name: "adaptive", accuracy_pass_at_1: 0.24 }
+          { id: "declared_reference", role: "baseline", primary_score: 0.5 },
+          { id: "declared_subject", role: "candidate", primary_score: 0.54 }
         ]
       },
       profile,
-      objective
+      profile.raw
     );
 
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.observedValue).toBeCloseTo(0.02, 10);
-    expect(evaluation.targetValue).toBe(0.05);
-  });
-
-  it("synthesizes delta metrics from conditions array", () => {
-    const enriched = synthesizeRelativeMetrics({
-      conditions: [
-        { name: "single_pass_baseline", accuracy_pass_at_1: 0.22, f1: 0.30 },
-        { name: "adaptive", accuracy_pass_at_1: 0.25, f1: 0.35 }
-      ]
-    });
-
-    expect(enriched.accuracy_pass_at_1_delta_vs_baseline).toBe(0.03);
-    expect(enriched.accuracy_pass_at_1_improvement_over_baseline).toBe(0.03);
-    expect(enriched.f1_delta_vs_baseline).toBeCloseTo(0.05, 10);
-  });
-
-  it("does not use plausibility rescaling to satisfy a relative target from raw accuracy alone", () => {
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_pass_at_1",
-        preferredMetricKeys: ["accuracy_pass_at_1"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 1.5
-      },
-      "accuracy at least 1.5 over baseline"
-    );
-    const evaluation = evaluateObjectiveMetric(
-      { accuracy_pass_at_1: 0.22 },
-      profile,
-      "accuracy at least 1.5 over baseline"
-    );
-
-    expect(evaluation.targetValue).toBe(1.5);
-    expect(evaluation.status).toBe("missing");
-    expect(evaluation.matchedMetricKey).toBeUndefined();
-  });
-
-  it("handles general accuracy + baseline without logistic regression", () => {
-    const objective = "Improve accuracy over baseline by a significant margin";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
-
-    expect(profile.primaryMetric).toBe("accuracy_delta_vs_baseline");
-    expect(profile.direction).toBe("maximize");
-    expect(profile.comparator).toBe(">");
-    expect(profile.targetValue).toBe(0);
-  });
-
-  it("overrides LLM profile with relative-baseline semantics when applicable (LV-014)", () => {
-    const objective =
-      "at least +1.5 accuracy points over single-pass baseline";
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_pass_at_1",
-        preferredMetricKeys: ["accuracy_pass_at_1", "acc"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 1.5
-      },
-      objective
-    );
-
-    expect(profile.primaryMetric).toBe("accuracy_delta_vs_baseline");
-    expect(profile.comparator).toBe(">=");
-    expect(profile.targetValue).toBe(0.015);
-    expect(profile.preferredMetricKeys).toContain("accuracy_delta_vs_baseline");
-  });
-
-  // ---------- LV-018 regression tests ----------
-
-  it("matches primary_metric nested object instead of unrelated secondary metric (LV-018)", () => {
-    const objective =
-      "Primary metric: accuracy (or pass@1) on reasoning benchmarks. Meaningful improvement: at least +2 accuracy points over the strongest fixed-budget baseline.";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
-
-    // Simulate the real metrics.json structure from the experiment
-    const evaluation = evaluateObjectiveMetric(
-      {
-        primary_metric: {
-          met: false,
-          name: "accuracy_delta_vs_baseline",
-          target: 0.02,
-          value: -0.24305555555555555
-        },
-        baseline_metrics: { accuracy: 0.4375, mean_generated_tokens: 221.0, mean_latency_ms: 2296 },
-        routed_metrics: { accuracy: 0.1944, mean_generated_tokens: 339.0, mean_latency_ms: 3518 },
-        secondary_metrics: {
-          budget_normalized_accuracy_delta: -0.0014,
-          latency_delta_ms: 1222.23,
-          mean_generated_tokens_delta_vs_baseline: 117.53
-        }
-      },
-      profile,
-      objective
-    );
-
-    // Must match accuracy_delta_vs_baseline (from primary_metric.value), NOT the token delta
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(-0.243, 2);
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.summary).toContain("not met");
-  });
-
-  it("promotes string primary_metric + primary_value before falling back to secondary metrics", () => {
-    const objective =
-      "Primary metric: exact-match accuracy on held-out reasoning benchmarks. What counts as meaningful improvement: at least +2 exact-match points over a greedy baseline.";
-    const profile = buildHeuristicObjectiveMetricProfile(objective);
-
-    const evaluation = evaluateObjectiveMetric(
-      {
-        primary_metric: "accuracy_delta_vs_baseline",
-        primary_value: 0,
-        methods: {
-          greedy_baseline: {
-            accuracy: 0.1,
-            avg_generated_tokens_per_example: 96
-          },
-          adaptive_verify_and_vote: {
-            accuracy: 0.1,
-            avg_generated_tokens_per_example: 98
-          }
-        }
-      },
-      profile,
-      objective
-    );
-
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBe(0);
+    expect(evaluation.observedValue).toBeCloseTo(0.04, 10);
+    expect(evaluation.targetValue).toBeCloseTo(0.05, 10);
     expect(evaluation.status).toBe("not_met");
   });
 
-  it("synthesizes delta from baseline_metrics + routed_metrics structure", () => {
-    const enriched = synthesizeRelativeMetrics({
-      baseline_metrics: { accuracy: 0.4375, f1: 0.50 },
-      routed_metrics: { accuracy: 0.1944, f1: 0.30 }
-    });
-
-    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.1944 - 0.4375, 10);
-    expect(enriched.f1_delta_vs_baseline).toBeCloseTo(0.30 - 0.50, 10);
-  });
-
-  it("synthesizes delta from baseline_method + methods structure", () => {
-    const enriched = synthesizeRelativeMetrics({
-      baseline_method: "greedy_baseline",
-      methods: {
-        greedy_baseline: { accuracy: 0.1, exact_match: 0.1 },
-        adaptive_verify_and_vote: { accuracy: 0.25, exact_match: 0.25 }
+  it("applies the signed effect floor correctly for a minimize objective", () => {
+    const profile = candidateOwnedProfile({
+      direction: "minimize",
+      criterion: {
+        basis: "delta_vs_reference",
+        magnitude: 0.1,
+        scale: "raw",
+        inclusive: true
       }
     });
-
-    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.15, 10);
-    expect(enriched.exact_match_delta_vs_baseline).toBeCloseTo(0.15, 10);
-  });
-
-  it("synthesizes accuracy delta from candidate configuration result rows", () => {
-    const enriched = synthesizeRelativeMetrics({
-      comparison_mode: "baseline_first_locked",
-      results: [
-        { recipe: "baseline_condition", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-        { recipe: "candidate_condition_a", kind: "candidate", mean_zero_shot_accuracy: 0.34375 },
-        { recipe: "candidate_condition_b", kind: "candidate", mean_zero_shot_accuracy: 0.34375 }
-      ]
-    });
-
-    expect(enriched.mean_zero_shot_accuracy_delta_vs_baseline).toBeCloseTo(-0.02083333333333337, 10);
-    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(-0.02083333333333337, 10);
-  });
-
-  it("synthesizes accuracy delta from condition arrays with explicit baseline flags and average accuracy", () => {
-    const objective = "accuracy_delta_vs_baseline >= 0.01";
-    const profile = normalizeObjectiveMetricProfile(
+    const belowFloor = evaluateObjectiveMetric(
       {
-        source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
+        conditions: [
+          { id: "declared_reference", role: "baseline", primary_score: 1 },
+          { id: "declared_subject", role: "candidate", primary_score: 0.95 }
+        ]
       },
-      objective
+      profile,
+      profile.raw
     );
-    const metrics = {
-      conditions: [
-        {
-          baseline: true,
-          condition_marker: "baseline_condition",
-          average_accuracy: 0.27083333333333337,
-          status: "completed"
-        },
-        {
-          baseline: false,
-          condition_marker: "condition_grid_family_a",
-          average_accuracy: 0.29166666666666663,
-          status: "completed"
+    const worsening = evaluateObjectiveMetric(
+      {
+        conditions: [
+          { id: "declared_reference", role: "baseline", primary_score: 1 },
+          { id: "declared_subject", role: "candidate", primary_score: 1.01 }
+        ]
+      },
+      profile,
+      profile.raw
+    );
+
+    expect(profile.targetValue).toBe(-0.1);
+    expect(belowFloor.status).toBe("not_met");
+    expect(worsening.status).toBe("not_met");
+  });
+
+  it("honors inclusive and exclusive zero-effect boundaries in both directions", () => {
+    const evaluateBoundary = (
+      direction: "maximize" | "minimize",
+      inclusive: boolean
+    ) => {
+      const profile = candidateOwnedProfile({
+        direction,
+        criterion: {
+          basis: "delta_vs_reference",
+          magnitude: 0,
+          scale: "raw",
+          inclusive
         }
-      ]
+      });
+      return evaluateObjectiveMetric(
+        {
+          conditions: [
+            { id: "declared_reference", role: "baseline", primary_score: 1 },
+            { id: "declared_subject", role: "candidate", primary_score: 1 }
+          ]
+        },
+        profile,
+        profile.raw
+      ).status;
     };
 
-    const enriched = synthesizeRelativeMetrics(metrics);
-    const evaluation = evaluateObjectiveMetric(metrics, profile, objective);
-
-    expect(enriched.average_accuracy_delta_vs_baseline).toBeCloseTo(0.02083333333333326, 10);
-    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(0.02083333333333326, 10);
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(0.02083333333333326, 10);
-    expect(evaluation.status).toBe("met");
+    expect(evaluateBoundary("maximize", true)).toBe("met");
+    expect(evaluateBoundary("maximize", false)).toBe("not_met");
+    expect(evaluateBoundary("minimize", true)).toBe("met");
+    expect(evaluateBoundary("minimize", false)).toBe("not_met");
   });
 
-  it("synthesizes accuracy delta from top-level condition object maps with nested evaluation metrics", () => {
-    const enriched = synthesizeRelativeMetrics({
-      comparison_mode: "baseline_first_locked",
-      conditions: {
-        base: {
-          type: "locked_untuned_baseline",
-          evaluation: { primary_mean_accuracy: 0.525 }
-        },
-        candidate_condition_b: {
-          type: "parameterized_method",
-          evaluation: { primary_mean_accuracy: 0.4875 },
-          train: { trainable_params: 2252800 }
-        },
-        candidate_condition_a: {
-          type: "parameterized_method",
-          evaluation: { primary_mean_accuracy: 0.5125 },
-          train: { trainable_params: 1126400 }
-        }
+  it("fails closed when the delta contract drifts from the hash-bound candidate objective", () => {
+    const profile = candidateOwnedProfile({
+      direction: "maximize",
+      criterion: {
+        basis: "delta_vs_reference",
+        magnitude: 0.1,
+        scale: "raw",
+        inclusive: true
       }
     });
 
-    expect(enriched.primary_mean_accuracy_delta_vs_baseline).toBeCloseTo(-0.0125, 10);
-    expect(enriched.accuracy_delta_vs_baseline).toBeCloseTo(-0.0125, 10);
+    expect(() => normalizeObjectiveMetricProfile(
+      {
+        ...profile,
+        delta_contract: {
+          ...profile.delta_contract!,
+          signed_target: 0
+        }
+      },
+      profile.raw
+    )).toThrow("candidate_objective_delta_contract_invalid");
   });
 
-  it("evaluates a negative delta from top-level condition object maps without treating raw accuracy as success", () => {
-    const objective = "at least +1.0 percentage point over the named tuned baseline";
+  it("reads an adjacent metric identifier without inventing aliases", () => {
+    const profile = buildHeuristicObjectiveMetricProfile("primary_score below 12");
+
+    expect(profile.primaryMetric).toBe("primary_score");
+    expect(profile.preferredMetricKeys).toEqual(["primary_score"]);
+    expect(profile.direction).toBe("minimize");
+    expect(profile.comparator).toBe("<");
+    expect(profile.targetValue).toBe(12);
+  });
+
+  it("uses a metric key explicitly declared beside its comparator", () => {
+    const profile = buildHeuristicObjectiveMetricProfile(
+      "primary_score_delta_vs_baseline >= 0.1"
+    );
+    const evaluation = evaluateObjectiveMetric(
+      { primary_score_delta_vs_baseline: 0.12, secondary_score: 0.99 },
+      profile,
+      profile.raw
+    );
+
+    expect(profile.preferredMetricKeys).toEqual(["primary_score_delta_vs_baseline"]);
+    expect(evaluation.matchedMetricKey).toBe("primary_score_delta_vs_baseline");
+    expect(evaluation.status).toBe("met");
+  });
+
+  it("does not prioritize either metric or the first threshold when text is ambiguous", () => {
+    const vocabularyProfile = buildHeuristicObjectiveMetricProfile(
+      "primary_score and secondary_score at least 0.8"
+    );
+    const declaredKeyProfile = buildHeuristicObjectiveMetricProfile(
+      "metric_alpha >= 0.5 and metric_beta >= 0.6"
+    );
+
+    expect(vocabularyProfile.primaryMetric).toBeUndefined();
+    expect(vocabularyProfile.preferredMetricKeys).toEqual([]);
+    expect(declaredKeyProfile.primaryMetric).toBeUndefined();
+    expect(declaredKeyProfile.preferredMetricKeys).toEqual([]);
+    expect(declaredKeyProfile.targetValue).toBeUndefined();
+  });
+
+  it("keeps every supplied structured profile field authoritative over text fallback", () => {
     const profile = normalizeObjectiveMetricProfile(
       {
         source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "primary_mean_accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
+        primaryMetric: "secondary_score",
+        preferredMetricKeys: ["secondary_score"],
+        direction: "minimize",
+        comparator: "<=",
+        targetValue: -0.25,
+        targetDescription: "declared signed target",
+        unit: "score",
+        scale: "raw",
+        targetUnit: "score",
+        targetScale: "raw",
+        analysisFocus: [],
+        paperEmphasis: [],
+        assumptions: []
       },
-      objective
+      "Improve primary_score over a reference by at least 5 percentage points."
     );
 
+    expect(profile.primaryMetric).toBe("secondary_score");
+    expect(profile.preferredMetricKeys).toEqual(["secondary_score"]);
+    expect(profile.direction).toBe("minimize");
+    expect(profile.comparator).toBe("<=");
+    expect(profile.targetValue).toBe(-0.25);
+    expect(profile.unit).toBe("score");
+    expect(profile.scale).toBe("raw");
+    expect(profile.analysisFocus).toEqual([]);
+    expect(profile.preferredMetricKeys).not.toContain("primary_score_delta_vs_baseline");
+  });
+
+  it("does not synthesize a best delta from ambiguous multiple candidates", () => {
+    const metrics = {
+      conditions: [
+        { id: "reference", baseline: true, primary_score: 0.4 },
+        { id: "candidate_a", role: "candidate", primary_score: 0.5 },
+        { id: "candidate_b", role: "candidate", primary_score: 0.8 }
+      ]
+    };
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"],
+      targetValue: 0.05
+    });
+
+    const enriched = synthesizeRelativeMetrics(metrics, profile);
+    const evaluation = evaluateObjectiveMetric(metrics, profile, "primary score improvement over baseline");
+
+    expect(enriched).not.toHaveProperty("primary_score_delta_vs_baseline");
+    expect(evaluation.status).toBe("missing");
+    expect(evaluation.observedValue).toBeUndefined();
+  });
+
+  it("does not assign baseline roles from spoofed labels or names", () => {
+    const metrics = {
+      conditions: [
+        { id: "reference_named_only", primary_score: 0.4 },
+        { id: "candidate_named_only", primary_score: 0.7 }
+      ]
+    };
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"]
+    });
+
+    expect(synthesizeRelativeMetrics(metrics, profile)).not.toHaveProperty(
+      "primary_score_delta_vs_baseline"
+    );
+    expect(evaluateObjectiveMetric(metrics, profile, "primary score improvement").status).toBe("missing");
+  });
+
+  it("preserves an explicitly keyed percentage-point target without unit conversion", () => {
+    const profile = buildHeuristicObjectiveMetricProfile(
+      "primary_score_delta_vs_baseline >= -2 percentage points"
+    );
+
+    expect(profile.primaryMetric).toBe("primary_score_delta_vs_baseline");
+    expect(profile.targetValue).toBe(-2);
+    expect(profile.comparator).toBe(">=");
+    expect(profile.targetScale).toBe("percentage_point");
+    expect(profile.assumptions).toEqual([]);
+  });
+
+  it("preserves a negative observed delta from one explicit pair", () => {
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"],
+      targetValue: -0.04
+    });
     const evaluation = evaluateObjectiveMetric(
       {
-        conditions: {
-          base: {
-            type: "locked_untuned_baseline",
-            evaluation: { primary_mean_accuracy: 0.525 }
-          },
-          candidate_condition_b: {
-            type: "parameterized_method",
-            evaluation: { primary_mean_accuracy: 0.4875 },
-            train: { trainable_params: 2252800 }
-          },
-          candidate_condition_a: {
-            type: "parameterized_method",
-            evaluation: { primary_mean_accuracy: 0.5125 },
-            train: { trainable_params: 1126400 }
-          }
-        }
+        conditions: [
+          { id: "reference", role: "reference", primary_score: 0.5 },
+          { id: "candidate_a", role: "candidate", primary_score: 0.45 }
+        ]
       },
       profile,
-      objective
+      "declared relative primary score target"
     );
 
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(-0.0125, 10);
+    expect(evaluation.observedValue).toBeCloseTo(-0.05, 10);
+    expect(evaluation.targetValue).toBe(-0.04);
     expect(evaluation.status).toBe("not_met");
   });
 
-  it("excludes unmodified reference conditions when evaluating alternatives over a named tuned baseline", () => {
-    const objective = "at least +1.0 percentage point over the named tuned baseline";
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
-      },
-      objective
-    );
-
+  it("does not divide a unitless target by 100 to fit an observed proportion", () => {
+    const profile = structuredProfile({ targetValue: 5 });
     const evaluation = evaluateObjectiveMetric(
-      {
-        conditions: {
-          candidate_condition_b: {
-            name: "candidate_condition_b",
-            status: "completed",
-            accuracy_delta_vs_baseline: -0.03125,
-            evaluation: { mean_zero_shot_accuracy: 0.4765625 }
-          },
-          configured_baseline: {
-            name: "configured_baseline",
-            status: "completed",
-            accuracy_delta_vs_baseline: -0.015625,
-            evaluation: { mean_zero_shot_accuracy: 0.4921875 }
-          },
-          stronger_candidate: {
-            name: "stronger_candidate",
-            status: "completed",
-            accuracy_delta_vs_baseline: -0.0078125,
-            evaluation: { mean_zero_shot_accuracy: 0.5 }
-          },
-          unmodified_base: {
-            name: "unmodified_base",
-            status: "completed",
-            accuracy_delta_vs_baseline: 0,
-            evaluation: { mean_zero_shot_accuracy: 0.5078125 }
-          }
-        }
-      },
+      { primary_score: 0.08 },
       profile,
-      objective
+      "declared primary score target"
     );
 
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(0.0078125, 10);
+    expect(evaluation.targetValue).toBe(5);
+    expect(evaluation.observedValue).toBe(0.08);
     expect(evaluation.status).toBe("not_met");
-    expect(evaluation.summary).toContain("not met");
   });
 
-  it("downgrades a met accuracy delta when the winning treatment has a large resource regression", () => {
-    const objective =
-      "Primary metric: mean zero-shot accuracy across Benchmark Task A and Benchmark Task B. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline on the primary metric without an unacceptable runtime or memory regression.";
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
-      },
-      objective
-    );
-
+  it("converts percent targets only when both scales are explicit", () => {
+    const profile = structuredProfile({
+      targetValue: 5,
+      scale: "proportion",
+      targetScale: "percent"
+    });
     const evaluation = evaluateObjectiveMetric(
-      {
-        conditions: {
-          candidate_condition_b: {
-            name: "candidate_condition_b",
-            status: "completed",
-            evaluation: { mean_zero_shot_accuracy: 0.4765625 },
-            wall_clock_sec: 128.40490746498108,
-            device_info_end: { cuda_max_memory_allocated_bytes: 9772951552 }
-          },
-          configured_baseline: {
-            name: "configured_baseline",
-            status: "completed",
-            evaluation: { mean_zero_shot_accuracy: 0.4921875 },
-            wall_clock_sec: 28.637099504470825,
-            device_info_end: { cuda_max_memory_allocated_bytes: 3031420928 }
-          },
-          stronger_candidate: {
-            name: "stronger_candidate",
-            status: "completed",
-            evaluation: { mean_zero_shot_accuracy: 0.5078125 },
-            wall_clock_sec: 81.93073916435242,
-            device_info_end: { cuda_max_memory_allocated_bytes: 9751863296 }
-          },
-          unmodified_base: {
-            name: "unmodified_base",
-            status: "completed",
-            evaluation: { mean_zero_shot_accuracy: 0.5078125 },
-            wall_clock_sec: 7.428321599960327,
-            device_info_end: { cuda_max_memory_allocated_bytes: 1606646272 }
-          }
-        }
-      },
+      { primary_score: 0.08 },
       profile,
-      objective
+      "declared scaled primary score target"
     );
 
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(0.015625, 10);
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.summary).toContain("Resource regression requirement not satisfied");
-    expect(evaluation.summary).toContain("stronger candidate vs configured baseline");
-    expect(evaluation.summary).toContain("runtime 2.86x");
-    expect(evaluation.summary).toContain("memory 3.22x");
+    expect(evaluation.targetValue).toBe(0.05);
+    expect(evaluation.status).toBe("met");
   });
 
-  it("uses synthesized deltas instead of raw accuracy when the objective requires improvement over baseline", () => {
-    const objective =
-      "Primary metric: mean zero-shot accuracy. What counts as meaningful improvement: at least +1.0 percentage point over the named tuned baseline.";
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: [
-          "accuracy_delta_vs_baseline",
-          "mean_zero_shot_accuracy",
-          "benchmark_task_a_accuracy"
-        ],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
-      },
-      objective
-    );
-
+  it("does not infer reproducibility from trial counts or stability metrics", () => {
+    const profile = structuredProfile({ targetValue: 0.5 });
     const evaluation = evaluateObjectiveMetric(
       {
-        best_condition: {
-          name: "base_unmodified",
-          benchmark_task_a_accuracy: 0.296875,
-          mean_zero_shot_accuracy: 0.40234375
-        },
+        primary_score: 0.7,
+        sampling_profile: { executed_trials: 8 },
+        run_to_run_variance: 0.001,
+        ordering_stability: 0.99
+      },
+      profile,
+      "primary score at least 0.5 with reproducible execution"
+    );
+
+    expect(evaluation.status).toBe("missing");
+    expect(evaluation.summary).toContain("Reproducibility requirement could not be verified");
+  });
+
+  it("requires an explicit resource threshold instead of a fixed regression limit", () => {
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"],
+      targetValue: 0.05
+    });
+    const evaluation = evaluateObjectiveMetric(
+      {
         conditions: [
           {
-            name: "base_unmodified",
-            condition_type: "baseline_unmodified_checkpoint",
-            evaluation: { mean_zero_shot_accuracy: 0.40234375 }
+            id: "reference",
+            role: "reference",
+            primary_score: 0.5,
+            runtime_sec: 10
           },
           {
-            name: "candidate_condition_a",
-            condition_type: "parameterized_method",
-            evaluation: { mean_zero_shot_accuracy: 0.3984375 }
+            id: "candidate_a",
+            role: "candidate",
+            primary_score: 0.6,
+            runtime_sec: 11
           }
         ]
       },
       profile,
-      objective
+      "primary score improvement without an unacceptable runtime regression"
     );
 
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(-0.00390625, 10);
-    expect(evaluation.summary).toContain("not met");
+    expect(evaluation.status).toBe("missing");
+    expect(evaluation.summary).toContain("explicit ratio thresholds");
   });
 
-  it("does not satisfy a delta objective with absolute baseline accuracy from configuration metrics", () => {
-    const objective = "at least +1.0 percentage point over the named tuned baseline";
-    const profile = normalizeObjectiveMetricProfile(
-      {
-        source: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_delta_vs_baseline"],
-        direction: "maximize",
-        comparator: ">=",
-        targetValue: 0.01
-      },
-      objective
-    );
-
+  it("evaluates one explicit baseline and candidate pair without metric aliases", () => {
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"],
+      targetValue: 0.1
+    });
     const evaluation = evaluateObjectiveMetric(
       {
-        baseline_mean_zero_shot_accuracy: 0.36458333333333337,
-        best_mean_zero_shot_accuracy: 0.36458333333333337,
-        best_vs_baseline_bootstrap_delta_ci: { delta_mean: 0, ci_low: 0, ci_high: 0 },
-        results: [
-          { recipe: "baseline_no_tuning", kind: "baseline", mean_zero_shot_accuracy: 0.36458333333333337 },
-          { recipe: "candidate_condition_a", kind: "configuration", mean_zero_shot_accuracy: 0.34375 },
-          { recipe: "candidate_condition_b", kind: "configuration", mean_zero_shot_accuracy: 0.34375 }
+        conditions: [
+          { id: "reference", is_baseline: true, primary_score: 0.4 },
+          { id: "candidate_a", is_candidate: true, primary_score: 0.55 }
         ]
       },
       profile,
-      objective
+      "declared relative primary score target"
     );
 
-    expect(evaluation.matchedMetricKey).toBe("accuracy_delta_vs_baseline");
-    expect(evaluation.observedValue).toBeCloseTo(-0.02083333333333337, 10);
-    expect(evaluation.status).toBe("not_met");
-    expect(evaluation.summary).toContain("not met");
+    expect(evaluation.matchedMetricKey).toBe("primary_score_delta_vs_baseline");
+    expect(evaluation.observedValue).toBeCloseTo(0.15, 10);
+    expect(evaluation.status).toBe("met");
+  });
+
+  it("uses a single explicit comparison artifact when row roles are absent", () => {
+    const profile = structuredProfile({
+      primaryMetric: "primary_score_delta_vs_baseline",
+      preferredMetricKeys: ["primary_score_delta_vs_baseline"],
+      targetValue: 0.1
+    });
+    const evaluation = evaluateObjectiveMetric(
+      {
+        objective_comparison: {
+          baseline_id: "reference",
+          candidate_id: "candidate_a",
+          metric_key: "primary_score"
+        },
+        conditions: [
+          { id: "reference", primary_score: 0.3 },
+          { id: "candidate_a", primary_score: 0.45 }
+        ]
+      },
+      profile,
+      "declared relative primary score target"
+    );
+
+    expect(evaluation.observedValue).toBeCloseTo(0.15, 10);
+    expect(evaluation.status).toBe("met");
   });
 });

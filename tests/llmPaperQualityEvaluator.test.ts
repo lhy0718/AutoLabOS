@@ -2,8 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   enforceMinimumGateOverride,
   buildFallbackEvaluation,
+  runLLMPaperQualityEvaluation,
   type LLMEvaluatorInput
 } from "../src/core/analysis/llmPaperQualityEvaluator.js";
+import type { LLMClient } from "../src/core/llm/client.js";
 import type { MinimumGateResult } from "../src/core/analysis/paperMinimumGate.js";
 import type { ReviewArtifactPresence } from "../src/core/reviewSystem.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
@@ -254,5 +256,89 @@ describe("buildFallbackEvaluation", () => {
 
     const result = buildFallbackEvaluation(input);
     expect(result.paper_worthiness).toBe("research_memo");
+  });
+});
+
+describe("runLLMPaperQualityEvaluation", () => {
+  it("marks only the explicitly bound comparison as primary regardless of array order", async () => {
+    let capturedPrompt = "";
+    const llm: LLMClient = {
+      async complete(prompt) {
+        capturedPrompt = prompt;
+        return {
+          text: JSON.stringify({
+            branch_hypothesis: "A bounded comparison is evaluated.",
+            branch_trajectory: "improving",
+            paper_worthiness: "paper_scale_candidate",
+            overall_score_1_to_10: 6,
+            dimensions: [
+              "result_significance",
+              "methodology_rigor",
+              "evidence_strength",
+              "writing_structure",
+              "claim_support",
+              "citation_coverage",
+              "limitations_honesty"
+            ].map((dimension) => ({ dimension, score_1_to_5: 3, assessment: "Bounded evidence." })),
+            evidence_gaps: [],
+            upgrade_actions: [],
+            strengths: ["The comparison is explicit."],
+            weaknesses: [],
+            critique_summary: "The evidence is bounded.",
+            recommended_action: "consolidate_evidence",
+            action_rationale: "More evidence is needed.",
+            negative_result_detected: false,
+            negative_result_framing: ""
+          })
+        };
+      }
+    };
+    const report = {
+      overview: {
+        objective_status: "met",
+        objective_summary: "The target was met.",
+        execution_runs: 2
+      },
+      primary_findings: [],
+      limitations: [],
+      warnings: [],
+      primary_comparison_id: "comparison_primary",
+      condition_comparisons: [
+        {
+          id: "comparison_secondary",
+          label: "Replication vs reference",
+          subject_series_id: "series_replication",
+          reference_series_id: "series_reference",
+          metric_id: "outcome_measure",
+          metric_direction: "lower_better",
+          summary: "Secondary comparison.",
+          hypothesis_supported: true
+        },
+        {
+          id: "comparison_primary",
+          label: "Subject vs reference",
+          subject_series_id: "series_subject",
+          reference_series_id: "series_reference",
+          metric_id: "outcome_measure",
+          metric_direction: "lower_better",
+          summary: "Primary comparison.",
+          hypothesis_supported: true
+        }
+      ],
+      paper_claims: [],
+      statistical_summary: { total_trials: 2, effect_estimates: [] }
+    } as unknown as AnalysisReport;
+
+    const result = await runLLMPaperQualityEvaluation(
+      makeFallbackInput({ report }),
+      llm
+    );
+
+    expect(result.llmUsed).toBe(true);
+    expect(capturedPrompt).toContain('"primary_comparison_id": "comparison_primary"');
+    expect(capturedPrompt).toContain('"is_primary": true');
+    expect(capturedPrompt.indexOf('"id": "comparison_primary"')).toBeLessThan(
+      capturedPrompt.indexOf('"id": "comparison_secondary"')
+    );
   });
 });

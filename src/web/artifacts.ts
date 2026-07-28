@@ -63,9 +63,20 @@ async function walkArtifacts(root: string, relativeDir: string, out: ArtifactEnt
   }
 
   for (const item of items) {
+    if (isAtomicWriteTempFile(item.name)) {
+      continue;
+    }
     const relativePath = relativeDir ? path.posix.join(relativeDir, item.name) : item.name;
     const absolutePath = path.join(root, relativePath);
-    const stat = await fs.stat(absolutePath);
+    let stat;
+    try {
+      stat = await fs.stat(absolutePath);
+    } catch (error) {
+      if (isMissingPathError(error)) {
+        continue;
+      }
+      throw error;
+    }
     if (item.isDirectory()) {
       out.push({
         path: relativePath,
@@ -79,6 +90,14 @@ async function walkArtifacts(root: string, relativeDir: string, out: ArtifactEnt
     }
     out.push(buildArtifactEntry(relativePath, stat));
   }
+}
+
+function isAtomicWriteTempFile(name: string): boolean {
+  return name.startsWith(".") && name.endsWith(".tmp");
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOENT");
 }
 
 function buildArtifactEntry(relativePath: string, stat: { size: number; mtime: Date }): ArtifactEntry {

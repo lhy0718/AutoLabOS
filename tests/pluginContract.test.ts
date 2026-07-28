@@ -9,6 +9,51 @@ import { RESEARCH_GOVERNANCE_COMMANDS } from "../src/core/researchGovernanceCont
 
 const ROOT = process.cwd();
 const PLUGIN_ROOT = path.join(ROOT, "plugins", "autolabos-research-governor");
+const WORKFLOW_ARTIFACTS = [
+  "ResearchGapMap",
+  "TopicPortfolio",
+  "TopicProbeDecision",
+  "ActiveTopicProbeContract"
+];
+const DISCOVERY_NODES = [
+  "collect_papers",
+  "analyze_papers",
+  "generate_hypotheses",
+  "design_experiments"
+];
+const DISCOVERY_BRIEF_OWNS = [
+  "broad_search_scope",
+  "resource_limits",
+  "evidence_floor",
+  "disallowed_shortcuts"
+];
+const DISCOVERY_PRESELECTION_EXCLUSIONS = [
+  "final_topic",
+  "primary_metric",
+  "metric_unit",
+  "metric_scale",
+  "metric_direction",
+  "effect_criterion",
+  "meaningful_effect",
+  "comparator",
+  "dataset_or_task"
+];
+const DISCOVERY_CANDIDATE_CONTRACT = [
+  "closest_prior_non_overlap",
+  "strongest_baseline_absorption_objection",
+  "primary_metric",
+  "metric_unit",
+  "metric_scale",
+  "metric_direction",
+  "effect_criterion",
+  "comparator",
+  "dataset_or_task",
+  "local_budget",
+  "falsifier",
+  "kill_signal",
+  "minimum_publishable_evidence"
+];
+const normalizeContractText = (text: string): string => text.replace(/\s+/gu, " ").trim();
 
 describe("AutoLabOS Codex plugin contract", () => {
   it("ships a valid repo-local plugin manifest with skills enabled", () => {
@@ -19,7 +64,10 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(manifest.version).toMatch(/^\d+\.\d+\.\d+(?:\+codex\.[a-z0-9._-]+)?$/u);
     expect(manifest.skills).toBe("./skills/");
     expect(manifest.interface.displayName).toBe("AutoLabOS Research Governor");
-    expect(manifest.interface.defaultPrompt).toHaveLength(3);
+    expect(manifest.interface.defaultPrompt).toHaveLength(4);
+    expect(manifest.interface.defaultPrompt).toContain(
+      "Discover paper topics from a broad governed discovery brief."
+    );
     expect(manifest.interface.longDescription).toContain("evidence gates");
   });
 
@@ -56,7 +104,17 @@ describe("AutoLabOS Codex plugin contract", () => {
       expect.arrayContaining([
         "plugin_readme_documents_first_run",
         "plugin_readme_documents_clean_install",
-        "plugin_readme_documents_all_command_intents",
+        "plugin_readme_documents_all_executable_cli_intents",
+        "plugin_readme_documents_intent_separation",
+        "plugin_readme_documents_discovery_ceiling",
+        "plugin_readme_documents_discovery_handoff",
+        "skill_documents_workflow_native_discovery",
+        "skill_documents_candidate_owned_measurement_contract",
+        "skill_documents_single_active_probe_handoff",
+        "skill_keeps_discovery_off_cli_bridge",
+        "governance_doc_documents_intent_separation",
+        "governance_doc_documents_discovery_contract",
+        "architecture_doc_preserves_workflow_native_discovery",
         "ci_workflow_runs_operations_preflight",
         "operations_preflight_blocks_partial_promotion",
         "plugin_discovery_checks_local_codex_and_strict_cache",
@@ -64,7 +122,10 @@ describe("AutoLabOS Codex plugin contract", () => {
         "plugin_doctor_supports_strict_mode",
         "plugin_release_check_reports_release_gate",
         "plugin_sync_cache_supports_dry_run_and_write",
-        "plugin_bridge_executes_all_research_intents",
+        "plugin_bridge_executes_all_cli_intents",
+        "plugin_bridge_excludes_workflow_native_discovery",
+        "print_contract_separates_cli_and_workflow_intents",
+        "print_contract_defines_discovery_closed_chain",
         "package_exposes_research_bridge_script",
         "ci_workflow_runs_plugin_release_check",
         "print_contract_outputs_expected_contract",
@@ -77,15 +138,58 @@ describe("AutoLabOS Codex plugin contract", () => {
     );
   });
 
-  it("documents every plugin command intent in the skill", () => {
+  it("documents executable and workflow-native intents in the short public skill", () => {
     const skillPath = path.join(PLUGIN_ROOT, "skills", "autolabos", "SKILL.md");
     const text = fs.readFileSync(skillPath, "utf8");
+    const normalized = normalizeContractText(text);
 
     expect(text).toContain("name: autolabos");
     expect(text).toContain("plugin:dogfood");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);
+    }
+
+    expect(normalized).toContain("`research:discover` is a workflow-native intent");
+    expect(normalized).toContain("not an `autolabos research discover` command");
+    expect(normalized).toContain("complete discovery-scoped `ResearchBrief`");
+    expect(normalized).toContain("`Research Mode` to `topic_discovery`");
+    expect(normalized).toContain("does not require the user to preselect a final topic");
+    expect(normalized).toContain("5-7 candidates");
+    expect(normalized).toContain("at least 3 distinct nonempty evidence-axis clusters");
+    expect(normalized).toContain("strongest-baseline absorption objection");
+    expect(normalized).toContain("local budget");
+    expect(normalized).toContain("falsifier");
+    expect(normalized).toContain("kill signal");
+    expect(normalized).toContain("minimum publishable evidence");
+    expect(normalized).toContain("closed-chain probe authorization");
+    expect(normalized).toContain("not final topic selection");
+    for (const field of [
+      "`primary_metric`",
+      "`metric_unit`",
+      "`metric_scale`",
+      "`metric_direction`",
+      "`effect_criterion`",
+      "comparator",
+      "dataset/task",
+      "falsifier",
+      "kill signal",
+      "local budget"
+    ]) {
+      expect(normalized).toContain(field);
+    }
+    expect(normalized).toContain("exactly one candidate");
+    expect(normalized).toContain("`active_topic_probe_contract.json`");
+    expect(normalized).toContain("`ActiveTopicProbeContract`");
+    expect(normalized).toContain("SHA-256");
+    expect(normalized).toContain("explicitly `deferred`");
+    expect(normalized).toContain("`bounded_probe`");
+    expect(normalized).toContain("not paper claim evidence");
+    for (const node of DISCOVERY_NODES) {
+      expect(text).toContain(node);
+    }
+    for (const artifact of WORKFLOW_ARTIFACTS) {
+      expect(text).toContain(artifact);
     }
 
     for (const section of [
@@ -100,9 +204,72 @@ describe("AutoLabOS Codex plugin contract", () => {
     }
   });
 
+  it("prints separate executable CLI and workflow-native discovery contracts", () => {
+    const output = execFileSync("node", [
+      path.join(PLUGIN_ROOT, "scripts", "print-contract.mjs")
+    ], { cwd: ROOT, encoding: "utf8" });
+    const contract = JSON.parse(output);
+    const executableIds = RESEARCH_GOVERNANCE_COMMANDS.map((command) => command.id);
+    const discovery = contract.workflowIntents.find(
+      (intent: { id?: string }) => intent.id === "research:discover"
+    );
+
+    expect(contract.executableCliIntents).toEqual(executableIds);
+    expect(contract.schemaVersion).toBe("3.0");
+    expect(contract.commandIntents).toBeUndefined();
+    expect(contract.compatibility).toBeUndefined();
+    expect(contract.executableCliIntents).not.toContain("research:discover");
+    expect(contract.workflowArtifacts).toEqual(WORKFLOW_ARTIFACTS);
+    expect(discovery).toMatchObject({
+      executionMode: "workflow_native",
+      referenceWorkflowNodes: DISCOVERY_NODES,
+      addsTopLevelNode: false,
+      closedChain: {
+        startArtifact: "ResearchBrief",
+        requiresCompleteStartArtifact: true,
+        requiredResearchMode: "topic_discovery",
+        startArtifactOwns: DISCOVERY_BRIEF_OWNS,
+        doesNotRequirePreselection: DISCOVERY_PRESELECTION_EXCLUSIONS,
+        workflowArtifacts: WORKFLOW_ARTIFACTS,
+        terminalAuthority: "closed_chain_probe_authorization",
+        doesNotAuthorize: ["topic_selection", "paper_readiness"]
+      },
+      portfolioPolicy: {
+        candidateMinimum: 5,
+        candidateMaximum: 7,
+        minimumDistinctClusters: 3
+      }
+    });
+    expect(discovery.candidateContract).toEqual(DISCOVERY_CANDIDATE_CONTRACT);
+    expect(discovery.candidateOptionalFields).toEqual(["meaningful_effect"]);
+    expect(discovery.designHandoff).toEqual({
+      artifactClass: "ActiveTopicProbeContract",
+      artifactFilename: "active_topic_probe_contract.json",
+      activeCandidateCount: 1,
+      hashBindings: ["portfolio_content_sha256", "candidate_content_sha256"],
+      inactiveCandidateDisposition: "deferred",
+      evidenceStage: "bounded_probe",
+      paperClaimEvidence: false,
+      downstreamResultsPlanBinding: {
+        artifactClass: "ResultsPlanV2",
+        primaryComparisonField: "primary_comparison_id",
+        primaryEffectField: "primary_effect_criterion",
+        comparisonMetric: "raw_candidate_metric",
+        preserves: [
+          "metric_unit",
+          "metric_scale",
+          "metric_direction",
+          "effect_criterion"
+        ],
+        favorableSubthresholdOutcome: "not_success"
+      }
+    });
+  });
+
   it("ships first-run plugin onboarding for contract inspection and self-dogfood", () => {
     const readmePath = path.join(PLUGIN_ROOT, "README.md");
     const text = fs.readFileSync(readmePath, "utf8");
+    const normalized = normalizeContractText(text);
 
     expect(text).toContain("## First Run");
     expect(text).toContain("## Installation");
@@ -119,11 +286,84 @@ describe("AutoLabOS Codex plugin contract", () => {
     expect(text).toContain("docs/codex-plugin-governance.md");
     expect(text).toContain("External outputs remain untrusted evidence");
     expect(text).toContain("PluginDependencyReport");
+    expect(text).toContain("## Executable CLI Intents");
+    expect(text).toContain("## Workflow-Native Topic Discovery");
+    expect(normalized).toContain("`research:discover` is a workflow-native intent");
+    expect(normalized).toContain("not a CLI-backed command");
+    expect(normalized).toContain("complete discovery-scoped `ResearchBrief`");
+    expect(normalized).toContain("`Research Mode` is `topic_discovery`");
+    expect(normalized).toContain("does not require the user to preselect the final topic");
+    expect(normalized).toContain("5-7 candidates");
+    expect(normalized).toContain("at least 3 distinct nonempty evidence-axis clusters");
+    expect(normalized).toContain("strongest-baseline absorption objection");
+    expect(normalized).toContain("local budget");
+    expect(normalized).toContain("falsifier");
+    expect(normalized).toContain("kill signal");
+    expect(normalized).toContain("minimum publishable evidence");
+    expect(normalized).toContain("closed-chain probe authorization");
+    expect(normalized).toContain("not topic selection");
+    expect(normalized).toContain("`primary_metric`");
+    expect(normalized).toContain("`metric_unit`");
+    expect(normalized).toContain("`metric_scale`");
+    expect(normalized).toContain("`metric_direction`");
+    expect(normalized).toContain("`effect_criterion`");
+    expect(normalized).toContain("`meaningful_effect`");
+    expect(normalized).toContain("exactly one candidate");
+    expect(normalized).toContain("`active_topic_probe_contract.json`");
+    expect(normalized).toContain("`ActiveTopicProbeContract`");
+    expect(normalized).toContain("SHA-256");
+    expect(normalized).toContain("explicitly `deferred`");
+    expect(normalized).toContain("`bounded_probe`");
+    expect(normalized).toContain("not paper claim evidence");
 
     for (const command of RESEARCH_GOVERNANCE_COMMANDS) {
       expect(text).toContain(command.id);
       expect(text).toContain(command.outputArtifact);
     }
+    for (const node of DISCOVERY_NODES) {
+      expect(text).toContain(node);
+    }
+    for (const artifact of WORKFLOW_ARTIFACTS) {
+      expect(text).toContain(artifact);
+    }
+  });
+
+  it("documents discovery as a fixed-workflow artifact chain in public governance docs", () => {
+    const governance = fs.readFileSync(
+      path.join(ROOT, "docs", "codex-plugin-governance.md"),
+      "utf8"
+    );
+    const architecture = fs.readFileSync(
+      path.join(ROOT, "docs", "architecture.md"),
+      "utf8"
+    );
+
+    for (const text of [governance, architecture]) {
+      const normalized = normalizeContractText(text);
+      expect(normalized).toContain("research:discover");
+      expect(normalized).toContain("complete `ResearchBrief`");
+      expect(normalized).toContain("5-7 candidates");
+      expect(normalized).toContain("at least 3 distinct nonempty evidence-axis clusters");
+      expect(normalized).toContain("strongest-baseline absorption objection");
+      expect(normalized).toContain("local budget");
+      expect(normalized).toContain("falsifier");
+      expect(normalized).toContain("kill signal");
+      expect(normalized).toContain("minimum publishable evidence");
+      expect(normalized).toContain("closed-chain probe authorization");
+      expect(normalized).toContain("not final topic selection");
+      expect(normalized).toContain("paper readiness");
+      for (const node of DISCOVERY_NODES) {
+        expect(text).toContain(node);
+      }
+      for (const artifact of WORKFLOW_ARTIFACTS) {
+        expect(text).toContain(artifact);
+      }
+    }
+
+    expect(governance).toContain("### Executable CLI Intents");
+    expect(governance).toContain("### Workflow-Native Intent");
+    expect(governance).toContain("The bridge does not expose `research:discover`");
+    expect(architecture).toContain("not as a CLI-backed command or a new top-level node");
   });
 
   it("wires plugin release readiness into CI after syncing the ephemeral cache", () => {
@@ -177,6 +417,31 @@ if (args[0] === "--version") {
       expect(compatibleReport.verdict).toBe("pass");
       expect(mismatchReport.artifact_id).not.toBe(compatibleReport.artifact_id);
       expect(JSON.stringify([mismatchReport, compatibleReport])).not.toContain(tempRoot);
+    } finally {
+      fs.rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps research:discover off the executable CLI bridge", () => {
+    const bridge = path.join(PLUGIN_ROOT, "scripts", "run-research-intent.mjs");
+    const help = execFileSync(process.execPath, [bridge, "--help"], {
+      cwd: ROOT,
+      encoding: "utf8"
+    });
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "autolabos-plugin-workflow-intent-"));
+    const fakeCli = path.join(tempRoot, "autolabos-fixture");
+
+    try {
+      fs.writeFileSync(fakeCli, "#!/usr/bin/env node\nprocess.exit(0);\n", { mode: 0o755 });
+      const result = spawnSync(process.execPath, [bridge, "discover"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        env: { ...process.env, AUTOLABOS_BIN: fakeCli }
+      });
+
+      expect(help).not.toContain("discover");
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("Unsupported research intent: discover");
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true });
     }

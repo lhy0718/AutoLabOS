@@ -467,6 +467,40 @@ describe("runDoctorReport", () => {
       })
     );
   });
+
+  it("fails readiness when a complete brief declares an invalid research mode", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-brief-mode-invalid-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+    await writeFile(path.join(workspace, "ISSUES.md"), VALID_ISSUE_MARKDOWN, "utf8");
+    const briefPath = path.join(workspace, "Brief.md");
+    const invalidBrief = buildCompleteBriefMarkdown().replace(
+      /## Research Mode\n[^\n]+/u,
+      "## Research Mode\nautomatic_selection"
+    );
+    await writeFile(briefPath, invalidBrief, "utf8");
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        includeHarnessValidation: false,
+        researchBriefPath: briefPath
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(true);
+    expect(report.readiness.researchBriefContractReady).toBe(false);
+    expect(report.readiness.researchBriefMissingSections).toContain(
+      'Set "## Research Mode" to either "hypothesis_test" or "topic_discovery".'
+    );
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "research-brief-contract",
+        ok: false,
+        detail: expect.stringContaining("contract is invalid")
+      })
+    );
+  });
 });
 
 function createCodexStub(): CodexNativeClient {

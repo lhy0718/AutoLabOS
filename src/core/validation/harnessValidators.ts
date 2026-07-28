@@ -1609,9 +1609,7 @@ function validateRunStatusConsistency(input: {
 
 function looksLikeResultNarrative(tex: string): boolean {
   const normalized = tex.toLowerCase();
-  const metricWord = /\b(accuracy|f1|auc|precision|recall|objective|metric|improv(ed|ement)|outperform)\b/u.test(
-    normalized
-  );
+  const metricWord = /\b(result|outcome|measure|metric|estimate|effect|comparison|baseline|comparator|improv(?:ed|ement)|outperform)\b/u.test(normalized);
   const numericSignal = /\b\d+(?:\.\d+)?%?\b/u.test(normalized);
   return metricWord && numericSignal;
 }

@@ -1,0 +1,81 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "grader_conform_v2_preflight_gate_decision",
+  "study_id": "grader_conform_v2",
+  "decided_at": "2026-07-28T12:59:38+09:00",
+  "decision": "KILL_PRE_EXECUTION",
+  "topic_selected": false,
+  "execution_allowed": false,
+  "model_calls_completed": 0,
+  "study_arm_outcomes_available": false,
+  "binding_artifacts": [
+    {
+      "artifact_id": "preflight_contract",
+      "path": "studies/grader-conform/v2/method/preflight-contract.v2.json",
+      "sha256": "ae63cc72da595b3347acde6af104e921aa803578056e781dea0cbd74a4ced691"
+    },
+    {
+      "artifact_id": "reviewer_frame",
+      "path": "studies/grader-conform/v2/corpus/eligibility-adjudication-frame.v2/reviewer-frame.json",
+      "sha256": "cefca0c1bd3b1ab7e91dea02e9d4d15ad811c8a2c6425ee11c79326e5faadd9b"
+    },
+    {
+      "artifact_id": "source_freeze",
+      "path": "studies/grader-conform/v2/corpus/retained-source-freeze.v2.json",
+      "sha256": "34be3285f8748780b93f640b03edc993e3ae737b06682c41a6de66f65d3806b5"
+    },
+    {
+      "artifact_id": "bound_residual_claim_matrix",
+      "path": "studies/grader-conform/v2/literature/residual-claim-matrix.v2.json",
+      "sha256": "4555332efb7a3169a7d158ff6973224865ec35205cf2f14a5e2253a62beddf98"
+    }
+  ],
+  "decision_evidence": [
+    {
+      "artifact_id": "final_absorption_audit",
+      "path": "studies/grader-conform/v2/literature/final-absorption-audit.v2.json",
+      "sha256": "75f9c813c4c3afa6985588313ec9b742c598f2b8c44ddc9470ca53ac832bfa33"
+    },
+    {
+      "artifact_id": "structural_preflight_audit",
+      "path": "studies/grader-conform/v2/preflight/structural-audit.v2.json",
+      "sha256": "4d7f38e05c23d6bd835ceef1007bbb3c252f8a492f7479a62f4de3cc536c7447"
+    }
+  ],
+  "triggered_kill_conditions": [
+    {
+      "condition": "The historical frame cannot support source- and root-cause-independent deterministic parent/fixed replay within the bounded preflight.",
+      "evidence": "Reviewer packets are linkable, five listed parent paths are fix-introduced, 23 candidates have neither evidence paths nor parent tests, and global duplicate adjudication is absent."
+    },
+    {
+      "condition": "The control corpus cannot estimate false alarms for all arms.",
+      "evidence": "No closed control universe, revision-pair registry, independent oracle, or class adjudication exists for any of the required 36 controls."
+    },
+    {
+      "condition": "The bounded structural preflight cannot close within 12 hours.",
+      "evidence": "The missing work includes 356 isolated eligibility judgments, disagreement resolution, global deduplication, 36 dual-oracle controls, isolation receipts, frozen samples, runners, budget locks, and external timestamping."
+    },
+    {
+      "condition": "The residual scientific claim is compositionally absorbed.",
+      "evidence": "Direct priors separately cover update-derived benchmark-defect ground truth, structured benchmark audit, evaluator perturbation tests, contract-derived metamorphic tests, real-bug reproduction, and post-fix leakage controls."
+    }
+  ],
+  "forbidden_recovery_actions": [
+    "execute any v2 study arm on the current frame",
+    "reuse the old v1 109 admissions as the v2 denominator",
+    "silently remove candidates with missing parent paths",
+    "treat declared validator passes as evidence of reviewer isolation or control validity",
+    "reduce the required control classes or independent review count after observing feasibility failures",
+    "draft a GraderConform paper from bounded development results",
+    "revive the same scientific question under a new wording without a closed semantic adjudication against this decision"
+  ],
+  "reopen_requirements": [
+    "a new study identifier",
+    "a materially distinct unselected historical-fault frame",
+    "pre-fix isolated packets with direct-parent and blob evidence",
+    "separate eligibility and global root-cause adjudication",
+    "a closed and independently validated negative-control universe",
+    "a new primary-source audit and external preregistration before any arm execution"
+  ],
+  "next_allowed_state": "Return to the multi-candidate portfolio and instantiate the artifact-grounded atomic-obligation-alignment route as an unselected candidate. Re-audit its closest priors and licensed data before selection or model execution."
+}

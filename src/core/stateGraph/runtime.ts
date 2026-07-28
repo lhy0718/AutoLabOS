@@ -7,6 +7,7 @@ import { EpisodeMemory } from "../memory/episodeMemory.js";
 import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { RunStore } from "../runs/runStore.js";
+import { assertRunHasNoDelegatedSuccessor } from "../runs/runPromotionStore.js";
 import {
   ApprovalSignal,
   GRAPH_NODE_ORDER,
@@ -67,6 +68,7 @@ export class StateGraphRuntime {
 
   async start(runId: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "start");
     if (!run.currentNode) {
       run.currentNode = GRAPH_NODE_ORDER[0];
       run.graph.currentNode = run.currentNode;
@@ -84,6 +86,7 @@ export class StateGraphRuntime {
 
   async resume(runId: string, checkpointSeq?: number): Promise<RunRecord> {
     const current = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(current, "resume");
     const checkpoint = await this.checkpointStore.load(runId, checkpointSeq);
     if (checkpoint) {
       const restored = structuredClone(checkpoint.runSnapshot);
@@ -107,6 +110,22 @@ export class StateGraphRuntime {
       }
 
       if (checkpointSeq != null) {
+        const isHistoricalRewind = checkpoint.seq < (current.graph.checkpointSeq ?? 0)
+          || this.isCheckpointSnapshotStale(current, restored);
+        if (isHistoricalRewind) {
+          const nextCycle = Math.max(
+            current.graph.researchCycle ?? 0,
+            restored.graph.researchCycle ?? 0
+          ) + 1;
+          this.resetNodeAndDownstream(
+            restored,
+            restored.currentNode,
+            nextCycle,
+            `checkpoint rewind to seq ${checkpoint.seq}`
+          );
+          restored.graph.pendingTransition = undefined;
+          restored.status = "paused";
+        }
         restored.graph.checkpointSeq = Math.max(
           restored.graph.checkpointSeq ?? 0,
           current.graph.checkpointSeq ?? 0
@@ -130,6 +149,7 @@ export class StateGraphRuntime {
   async step(runId: string, abortSignal?: AbortSignal): Promise<RunRecord> {
     this.throwIfAborted(abortSignal);
     let run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "step");
     run.graph.currentNode = run.currentNode;
     const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
     if (budgetPaused) {
@@ -149,7 +169,9 @@ export class StateGraphRuntime {
     run.graph.nodeStates[node] = {
       ...run.graph.nodeStates[node],
       status: "running",
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      note: undefined,
+      lastError: undefined
     };
     run.status = "running";
     await this.runStore.updateRun(run);
@@ -195,7 +217,13 @@ export class StateGraphRuntime {
       const usageDelta = this.buildUsageDeltaFromResult(result, started);
 
       if (result.status === "failure") {
-        return this.handleFailure(run, node, result.error || "Node execution failed", usageDelta);
+        return this.handleFailure(
+          run,
+          node,
+          result.error || "Node execution failed",
+          usageDelta,
+          result.failureKind
+        );
       }
 
       this.applyUsageDelta(run, node, usageDelta);
@@ -234,10 +262,10 @@ export class StateGraphRuntime {
         payload: { checkpoint: after.seq, phase: after.phase }
       });
       this.eventStream.emit({
-        type: "NODE_COMPLETED",
+        type: result.needsApproval ? "NODE_AWAITING_APPROVAL" : "NODE_COMPLETED",
         runId: run.id,
         node,
-        payload: { summary: result.summary || "completed" }
+        payload: { summary: result.summary || (result.needsApproval ? "awaiting approval" : "completed") }
       });
       if (result.transitionRecommendation) {
         this.eventStream.emit({
@@ -294,6 +322,7 @@ export class StateGraphRuntime {
     }
   ): Promise<RunRecord> {
     let run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "run_until_pause");
     const budgetPaused = await this.pauseForBudgetGuardIfNeeded(run);
     if (budgetPaused) {
       return budgetPaused;
@@ -404,11 +433,15 @@ export class StateGraphRuntime {
   }
 
   private selectApprovalResolution(run: RunRecord): "pause" | "approve" | "apply_transition" {
+    const recommendation = run.graph.pendingTransition;
+    if (isSuccessorDelegation(recommendation)) {
+      return "pause";
+    }
+
     if (this.options.approvalMode === "manual") {
       return "pause";
     }
 
-    const recommendation = run.graph.pendingTransition;
     if (this.options.approvalMode === "hybrid") {
       return this.selectHybridApprovalResolution(run, recommendation);
     }
@@ -468,10 +501,16 @@ export class StateGraphRuntime {
     opts?: { continueAfterApprove?: boolean; abortSignal?: AbortSignal; allowPauseForHuman?: boolean }
   ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "approve");
     const node = run.currentNode;
     const state = run.graph.nodeStates[node];
 
     if (state.status !== "needs_approval") {
+      return run;
+    }
+
+    const recommendation = run.graph.pendingTransition;
+    if (isSuccessorDelegation(recommendation)) {
       return run;
     }
 
@@ -495,8 +534,7 @@ export class StateGraphRuntime {
       });
     }
 
-    if (run.graph.pendingTransition) {
-      const recommendation = run.graph.pendingTransition;
+    if (recommendation) {
       if (recommendation.action === "pause_for_human" && !opts?.allowPauseForHuman) {
         return run;
       }
@@ -527,6 +565,12 @@ export class StateGraphRuntime {
       budgetPauseMessage && run.currentNode !== node ? run.currentNode : node
     );
     await this.saveCheckpointAndPersist(run, "after", "approved", node);
+    this.eventStream.emit({
+      type: "NODE_COMPLETED",
+      runId: run.id,
+      node,
+      payload: { summary: state.note || "approved" }
+    });
     if (budgetPauseMessage) {
       this.emitBudgetGuardObservation(run, budgetPauseMessage);
     }
@@ -545,18 +589,23 @@ export class StateGraphRuntime {
 
   async applyPendingTransition(runId: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "apply_transition");
     const recommendation = run.graph.pendingTransition;
     if (!recommendation) {
       return run;
     }
+    if (isSuccessorDelegation(recommendation)) {
+      return run;
+    }
 
+    const fromNode = run.currentNode;
     run.graph.pendingTransition = undefined;
     run.graph.transitionHistory = [
       ...(run.graph.transitionHistory || []),
       {
         action: recommendation.action,
         sourceNode: recommendation.sourceNode,
-        fromNode: run.currentNode,
+        fromNode,
         toNode: recommendation.targetNode,
         reason: recommendation.reason,
         confidence: recommendation.confidence,
@@ -564,21 +613,54 @@ export class StateGraphRuntime {
         appliedAt: new Date().toISOString()
       }
     ];
-    this.syncLatestSummary(run);
-    await this.runStore.updateRun(run);
+
+    const targetNode = recommendation.targetNode;
+    let appliedJump: { targetNode: GraphNodeId; checkpoint: CheckpointRecord } | undefined;
+    if (
+      recommendation.action !== "advance" &&
+      recommendation.action !== "pause_for_human" &&
+      targetNode &&
+      targetNode !== fromNode
+    ) {
+      this.applyJumpState(run, targetNode, "safe", recommendation.reason);
+      this.syncLatestSummary(run, targetNode);
+      const checkpoint = await this.saveCheckpointAndPersist(
+        run,
+        "jump",
+        recommendation.reason
+      );
+      appliedJump = { targetNode, checkpoint };
+    } else {
+      this.syncLatestSummary(run);
+      await this.runStore.updateRun(run);
+    }
 
     this.eventStream.emit({
       type: "TRANSITION_APPLIED",
       runId: run.id,
-      node: recommendation.targetNode || run.currentNode,
+      node: targetNode || run.currentNode,
       payload: {
         action: recommendation.action,
-        fromNode: run.currentNode,
-        targetNode: recommendation.targetNode,
+        fromNode,
+        targetNode,
         reason: recommendation.reason,
         confidence: recommendation.confidence
       }
     });
+
+    if (appliedJump) {
+      this.eventStream.emit({
+        type: "NODE_JUMP",
+        runId: run.id,
+        node: appliedJump.targetNode,
+        payload: {
+          mode: "safe",
+          reason: recommendation.reason,
+          checkpoint: appliedJump.checkpoint.seq
+        }
+      });
+      return this.getRunOrThrow(run.id);
+    }
 
     if (recommendation.action === "advance") {
       return this.approveCurrent(run.id, { continueAfterApprove: false });
@@ -597,6 +679,7 @@ export class StateGraphRuntime {
 
   async retryNode(runId: string, node?: GraphNodeId): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "retry");
     const target = node || run.currentNode;
     const maxAttempts = Math.max(1, run.graph.retryPolicy.maxAttemptsPerNode);
     const nextAttempt = Math.min((run.graph.retryCounters[target] ?? 0) + 1, maxAttempts);
@@ -658,6 +741,31 @@ export class StateGraphRuntime {
 
   async jumpToNode(runId: string, targetNode: GraphNodeId, mode: JumpMode, reason: string): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
+    assertRunHasNoDelegatedSuccessor(run, "jump");
+    this.applyJumpState(run, targetNode, mode, reason);
+
+    this.syncLatestSummary(run, targetNode);
+    const checkpoint = await this.saveCheckpointAndPersist(run, "jump", reason);
+    this.eventStream.emit({
+      type: "NODE_JUMP",
+      runId: run.id,
+      node: targetNode,
+      payload: {
+        mode,
+        reason,
+        checkpoint: checkpoint.seq
+      }
+    });
+
+    return this.getRunOrThrow(runId);
+  }
+
+  private applyJumpState(
+    run: RunRecord,
+    targetNode: GraphNodeId,
+    mode: JumpMode,
+    reason: string
+  ): void {
     const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
     const targetIdx = GRAPH_NODE_ORDER.indexOf(targetNode);
 
@@ -682,41 +790,37 @@ export class StateGraphRuntime {
     }
 
     if (targetIdx < currentIdx) {
-      run.graph.researchCycle = (run.graph.researchCycle || 0) + 1;
-      // Reset the target node itself so it can be re-executed (LV-019 fix)
-      for (let idx = targetIdx; idx < GRAPH_NODE_ORDER.length; idx += 1) {
-        const node = GRAPH_NODE_ORDER[idx];
-        delete run.graph.retryCounters[node];
-        delete run.graph.rollbackCounters[node];
-        run.graph.nodeStates[node] = {
-          ...run.graph.nodeStates[node],
-          status: "pending",
-          updatedAt: new Date().toISOString(),
-          note: `Reset by backward jump (cycle ${run.graph.researchCycle})`,
-          lastError: undefined
-        };
-      }
+      const nextCycle = (run.graph.researchCycle || 0) + 1;
+      this.resetNodeAndDownstream(run, targetNode, nextCycle, "backward jump");
     }
 
     run.graph.pendingTransition = undefined;
     run.currentNode = targetNode;
     run.graph.currentNode = targetNode;
     run.status = "paused";
+  }
 
-    this.syncLatestSummary(run, targetNode);
-    const checkpoint = await this.saveCheckpointAndPersist(run, "jump", reason);
-    this.eventStream.emit({
-      type: "NODE_JUMP",
-      runId: run.id,
-      node: targetNode,
-      payload: {
-        mode,
-        reason,
-        checkpoint: checkpoint.seq
-      }
-    });
-
-    return this.getRunOrThrow(runId);
+  private resetNodeAndDownstream(
+    run: RunRecord,
+    targetNode: GraphNodeId,
+    researchCycle: number,
+    reason: string
+  ): void {
+    const targetIdx = GRAPH_NODE_ORDER.indexOf(targetNode);
+    run.graph.researchCycle = researchCycle;
+    for (let idx = targetIdx; idx < GRAPH_NODE_ORDER.length; idx += 1) {
+      const node = GRAPH_NODE_ORDER[idx];
+      delete run.graph.retryCounters[node];
+      delete run.graph.rollbackCounters[node];
+      run.graph.nodeStates[node] = {
+        ...run.graph.nodeStates[node],
+        status: "pending",
+        updatedAt: new Date().toISOString(),
+        note: `Reset by ${reason} (cycle ${researchCycle})`,
+        lastError: undefined,
+        approvalSignal: undefined
+      };
+    }
   }
 
   async getGraph(runId: string): Promise<RunGraphState> {
@@ -734,7 +838,8 @@ export class StateGraphRuntime {
     run: RunRecord,
     node: GraphNodeId,
     errorMessage: string,
-    usageDelta?: RunUsageDelta
+    usageDelta?: RunUsageDelta,
+    failureKind?: GraphNodeResult["failureKind"]
   ): Promise<RunRecord> {
     const latest = await this.getRunOrThrow(run.id);
     if (
@@ -805,7 +910,13 @@ export class StateGraphRuntime {
       });
     }
 
-    const autoRetrySkipObservation = getAutoRetrySkipObservation(node, errorMessage);
+    const typedRetrySkipObservation = failureKind === "gate_blocked"
+      ? `Skipping auto retries for ${node}: the node returned a typed gate block that requires upstream evidence strengthening.`
+      : failureKind === "environment"
+        ? `Skipping auto retries for ${node}: the node returned a typed environment block that requires configuration or dependency repair.`
+        : undefined;
+    const autoRetrySkipObservation =
+      typedRetrySkipObservation || getAutoRetrySkipObservation(node, errorMessage);
     if (autoRetrySkipObservation && nextRetry < maxAttempts) {
       nextRetry = maxAttempts;
       run.graph.retryCounters[node] = nextRetry;
@@ -876,7 +987,8 @@ export class StateGraphRuntime {
         ...run.graph.nodeStates[node],
         status: "running",
         updatedAt: new Date().toISOString(),
-          note: `Auto retry scheduled after failed attempt ${nextRetry}/${maxAttempts}.`
+        note: `Auto retry scheduled after failed attempt ${nextRetry}/${maxAttempts}.`,
+        lastError: undefined
       };
       const budgetPauseMessage = this.applyBudgetGuard(run, node);
       this.syncLatestSummary(run, node);
@@ -893,7 +1005,7 @@ export class StateGraphRuntime {
       return this.getRunOrThrow(run.id);
     }
 
-    if (shouldFailWithoutAutoRollback(node, errorMessage)) {
+    if (failureKind === "environment" || shouldFailWithoutAutoRollback(node, errorMessage)) {
       run.status = "failed";
       this.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -942,7 +1054,8 @@ export class StateGraphRuntime {
       ...run.graph.nodeStates[prev],
       status: "running",
       updatedAt: new Date().toISOString(),
-      note: rollbackNote
+      note: rollbackNote,
+      lastError: undefined
     };
 
     const budgetPauseMessage = this.applyBudgetGuard(run, prev);
@@ -1569,6 +1682,9 @@ function normalizeGraphNodeId(value: unknown): GraphNodeId | undefined {
 }
 
 function backtrackActionForTarget(targetNode: GraphNodeId): TransitionRecommendation["action"] | undefined {
+  if (targetNode === "collect_papers") {
+    return "backtrack_to_collection";
+  }
   if (targetNode === "implement_experiments") {
     return "backtrack_to_implement";
   }
@@ -1611,6 +1727,10 @@ function shouldSkipAutoRetryForFailure(node: GraphNodeId, errorMessage: string):
     return isAnalyzePapersResponsesApiPdfConfigFailure(normalized);
   }
 
+  if (node === "collect_papers") {
+    return isTopicDiscoverySemanticReviewRecoveryExhausted(normalized);
+  }
+
   if (node === "write_paper") {
     return isWritePaperUpstreamEvidenceFailure(normalized);
   }
@@ -1631,6 +1751,10 @@ function getAutoRetrySkipObservation(node: GraphNodeId, errorMessage: string): s
     return `Skipping auto retries for ${node}: the failure requires environment or configuration changes rather than another identical attempt.`;
   }
 
+  if (node === "collect_papers") {
+    return `Skipping auto retries for ${node}: the frozen semantic-review recovery budget is exhausted and retrieval must remain unchanged.`;
+  }
+
   return `Skipping auto retries for ${node}: the failure requires upstream evidence strengthening rather than another identical attempt.`;
 }
 
@@ -1647,7 +1771,18 @@ function shouldFailWithoutAutoRollback(node: GraphNodeId, errorMessage: string):
   if (node === "implement_experiments") {
     return isImplementProviderEnvironmentFailure(normalized);
   }
+  if (node === "collect_papers") {
+    return isTopicDiscoverySemanticReviewRecoveryExhausted(normalized);
+  }
   return false;
+}
+
+function isTopicDiscoverySemanticReviewRecoveryExhausted(
+  normalizedErrorMessage: string
+): boolean {
+  return normalizedErrorMessage.includes(
+    "topic_discovery_semantic_review_recovery_exhausted:"
+  );
 }
 
 function isWritePaperUpstreamEvidenceFailure(normalizedErrorMessage: string): boolean {
@@ -1698,6 +1833,12 @@ function isHybridAutoApproved(signal: ApprovalSignal | undefined): boolean {
     return false;
   }
   return signal.specialist_scores.every((score) => Number.isFinite(score) && score >= 4);
+}
+
+function isSuccessorDelegation(
+  recommendation: TransitionRecommendation | undefined
+): boolean {
+  return recommendation?.action === "delegate_successor";
 }
 
 function labelApprovalMode(mode: WorkflowApprovalMode | undefined): string {

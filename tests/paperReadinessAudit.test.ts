@@ -254,6 +254,79 @@ describe("paper-readiness audit", () => {
     });
   });
 
+  it("binds a canonical comparison to the validated experiment results plan", async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-canonical-comparison-"));
+    tempDirs.push(workspace);
+    const comparisonId = "comparison-primary-reference";
+    const runRoot = await writeMinimalAuditRun(workspace, {
+      resultTable: {
+        schema_version: "2.0",
+        metrics: [
+          { id: "primary_score", label: "Primary score", direction: "higher_better", unit: "unitless" }
+        ],
+        series: [
+          { id: "series-reference", label: "Reference", role: "baseline", dimensions: {} },
+          { id: "series-primary", label: "Primary", role: "primary", dimensions: {} }
+        ],
+        observations: [
+          { id: "observation-reference", series_id: "series-reference", metric_id: "primary_score", scope: {}, value: 0.6 },
+          { id: "observation-primary", series_id: "series-primary", metric_id: "primary_score", scope: {}, value: 0.7 }
+        ],
+        comparisons: [
+          {
+            id: comparisonId,
+            subject_observation_id: "observation-primary",
+            reference_observation_id: "observation-reference",
+            delta: 0.1
+          }
+        ]
+      }
+    });
+    await writeJson(path.join(runRoot, "design_contracts.json"), {
+      comparative_claim_authorized: true,
+      superiority_claim_authorized: false
+    });
+    await writeJson(path.join(runRoot, "experiment_contract.json"), {
+      version: 2,
+      results_plan: {
+        schema_version: "2.0",
+        required_metrics: [
+          { id: "primary_score", label: "Primary score", direction: "higher_better", unit: "unitless" }
+        ],
+        minimum_series_count: 2,
+        minimum_comparison_count: 1,
+        required_series: [
+          { id: "series-reference", role: "baseline" },
+          { id: "series-primary", role: "primary" }
+        ],
+        required_comparisons: [
+          {
+            id: comparisonId,
+            subject_series_id: "series-primary",
+            reference_series_id: "series-reference",
+            metric_id: "primary_score"
+          }
+        ],
+        primary_comparison_id: comparisonId
+      }
+    });
+
+    const summary = await runPaperReadinessAudit({
+      cwd: workspace,
+      runRoot,
+      outDir: "outputs/canonical-comparison-audit"
+    });
+
+    expect(summary.scorer_outputs.result_table).toMatchObject({
+      valid_schema: true,
+      comparative_claim_supported: true,
+      superiority_claim_supported: false
+    });
+    expect(summary.scorer_outputs.result_table.issues).not.toContainEqual(
+      expect.objectContaining({ code: "result_table_primary_comparison_missing" })
+    );
+  });
+
   it("blocks a claim whose evidence ID does not resolve to a frozen artifact", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-dangling-evidence-"));
     tempDirs.push(workspace);
@@ -393,29 +466,20 @@ describe("paper-readiness audit", () => {
     expect(summary.figure_result_caption_mismatch.manuscript_promotion_allowed).toBe(false);
   });
 
-  it("audits runtime comparison-summary result tables without treating them as missing", async () => {
+  it("does not repair runtime comparison-summary objects into measured result tables", async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), "autolabos-audit-live-result-table-"));
     tempDirs.push(workspace);
     const runRoot = await writeMinimalAuditRun(workspace, {
       resultTable: {
-        conditions: [
-          {
-            name: "candidate_condition_f5_vs_baseline_condition",
-            metrics: {
-              accuracy_delta_vs_baseline_mean: 0.066667
-            }
-          }
-        ],
         comparisons: [
           {
-            primary: "candidate_condition_f5_vs_baseline_condition",
-            baseline: "metrics.condition_summaries",
-            metric: "accuracy_delta_vs_baseline_mean",
-            delta: 0.066667,
-            hypothesis_supported: true
+            metric: "metric-outcome",
+            baseline: 0.7,
+            comparator: 0.75,
+            delta: 0.05,
+            direction: "higher_better"
           }
-        ],
-        primary_metric: "accuracy_delta_vs_baseline"
+        ]
       }
     });
 
@@ -425,13 +489,13 @@ describe("paper-readiness audit", () => {
       outDir: "outputs/live-result-table-audit"
     });
 
-    expect(summary.result_table_completeness.measured).toBe(true);
-    expect(summary.result_table_completeness.row_count).toBe(1);
-    expect(summary.top_blockers.map((blocker) => blocker.code)).not.toContain("result_table_missing");
-    expect(summary.top_blockers.map((blocker) => blocker.code)).toEqual(
-      expect.arrayContaining(["result_table_incomplete", "baseline_or_comparator_missing"])
-    );
-    expect(summary.claim_ceiling.allowed_level).toBe("descriptive_only_no_comparative_claims");
+    const blockerCodes = summary.top_blockers.map((blocker) => blocker.code);
+    expect(summary.result_table_completeness.measured).toBe(false);
+    expect(summary.result_table_completeness.row_count).toBe(0);
+    expect(blockerCodes).toContain("result_table_missing");
+    expect(blockerCodes).not.toContain("result_table_incomplete");
+    expect(blockerCodes).not.toContain("baseline_or_comparator_missing");
+    expect(summary.claim_ceiling.allowed_level).toBe("research_memo_without_quantitative_claims");
   });
 
   it("does not treat failed write_paper artifacts as completed manuscript acceptance", async () => {

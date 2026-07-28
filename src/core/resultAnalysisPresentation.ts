@@ -1,5 +1,10 @@
 import { RunInsightCard } from "../types.js";
-import { AnalysisReport } from "./resultAnalysis.js";
+import {
+  resolvePrimaryResultsArtifactComparison,
+  resolveResultsArtifactComparisons,
+  type AnalysisReport,
+  type AnalysisResultsArtifactComparison
+} from "./resultAnalysis.js";
 
 type InsightReference = NonNullable<RunInsightCard["references"]>[number];
 type InsightFacts = NonNullable<InsightReference["facts"]>;
@@ -56,7 +61,7 @@ export function formatAnalyzeResultsArtifactLines(input: {
     );
   }
 
-  const discussion = input.report?.synthesis?.discussion_points?.[0] || input.report?.primary_findings?.[0];
+  const discussion = input.report?.synthesis?.discussion_points?.[0] || input.report?.overview?.objective_summary;
   if (discussion) {
     lines.push(`- Discussion: ${truncateOneLine(discussion, 180)}`);
   }
@@ -168,14 +173,18 @@ function buildInsightReferences(report: AnalysisReport): RunInsightCard["referen
   const references: NonNullable<RunInsightCard["references"]> = [];
   const primaryFigure = report.figure_specs?.[0];
   const { objectiveSummary } = resolveOverview(report);
-  const primaryComparison = report.condition_comparisons?.[0];
-  const statisticalSummary = resolveStatisticalEvidence(report);
+  const resolvedComparisons = resolveResultsArtifactComparisons(report.results_artifact);
+  const primaryComparison = resolvePrimaryResultsArtifactComparison(
+    report.results_artifact,
+    report.primary_comparison_id
+  );
+  const statisticalSummary = resolveStatisticalEvidence(report, primaryComparison, resolvedComparisons.length);
 
-  if (primaryComparison?.summary) {
+  if (primaryComparison) {
     references.push({
       kind: "comparison",
-      label: `Comparison: ${primaryComparison.label || primaryComparison.id || "Primary comparison"}`,
-      path: "result_analysis.json",
+      label: `Comparison: ${primaryComparison.subject_series.label} vs ${primaryComparison.reference_series.label}`,
+      path: primaryComparison.comparison.link,
       summary: truncateOneLine(primaryComparison.summary, 180),
       facts: buildComparisonFacts(primaryComparison),
       details: buildComparisonDetails(primaryComparison)
@@ -186,7 +195,7 @@ function buildInsightReferences(report: AnalysisReport): RunInsightCard["referen
     references.push({
       kind: "statistics",
       label: statisticalSummary.label,
-      path: "result_analysis.json",
+      path: primaryComparison?.comparison.link || "result_analysis.json",
       summary: truncateOneLine(statisticalSummary.summary, 180),
       facts: statisticalSummary.facts,
       details: statisticalSummary.details
@@ -201,8 +210,7 @@ function buildInsightReferences(report: AnalysisReport): RunInsightCard["referen
       summary: truncateOneLine(
         primaryFigure.summary ||
           primaryComparison?.summary ||
-          report.primary_findings?.[0] ||
-          "Primary visualization for the result analysis.",
+          objectiveSummary,
         180
       ),
       facts: buildFigureFacts(report, primaryFigure),
@@ -230,8 +238,7 @@ function buildInsightReferences(report: AnalysisReport): RunInsightCard["referen
     path: "result_analysis.json",
     summary: truncateOneLine(
       report.synthesis?.confidence_statement ||
-        report.primary_findings?.[0] ||
-        "Full structured report with the statistical summary, failure taxonomy, and grounded synthesis.",
+        objectiveSummary,
       180
     ),
     facts: buildReportFacts(report),
@@ -265,53 +272,66 @@ function buildInsightReferences(report: AnalysisReport): RunInsightCard["referen
   return deduped.slice(0, 5);
 }
 
-function resolveStatisticalEvidence(report: AnalysisReport): {
+function resolveStatisticalEvidence(
+  report: AnalysisReport,
+  primaryComparison: AnalysisResultsArtifactComparison | undefined,
+  comparisonCount: number
+): {
   label: string;
   summary: string;
   facts?: InsightFacts;
   details?: InsightDetails;
 } | undefined {
-  const firstEffect = report.statistical_summary?.effect_estimates?.[0];
-  const firstInterval = report.statistical_summary?.confidence_intervals?.[0];
-  if (firstEffect?.summary) {
+  const confidenceIntervals = report.statistical_summary?.confidence_intervals || [];
+  if (primaryComparison) {
+    const matchingIntervals = confidenceIntervals.filter(
+      (item) => item.metric_key === primaryComparison.metric.id
+    );
+    const matchingInterval = matchingIntervals.length === 1 ? matchingIntervals.at(0) : undefined;
+    const effectDirection = classifyComparisonEffectDirection(primaryComparison);
     return {
-      label: `Statistics: ${firstEffect.metric_key || firstEffect.comparison_id || "effect estimate"}`,
-      summary: firstEffect.summary,
+      label: `Statistics: ${primaryComparison.metric.id}`,
+      summary: primaryComparison.summary,
       facts: compactFacts([
-        fact("Metric", firstEffect.metric_key),
-        fact("Delta", formatSignedNumber(firstEffect.delta)),
-        fact("Confidence", firstInterval ? formatConfidenceLevel(firstInterval.level) : undefined)
+        fact("Comparison ID", primaryComparison.comparison.id),
+        fact("Metric", primaryComparison.metric.id),
+        fact("Delta", formatSignedNumber(primaryComparison.delta))
       ]),
       details: compactDetails([
-        `Effect direction: ${firstEffect.direction} for ${firstEffect.metric_key || firstEffect.comparison_id || "the tracked metric"}.`,
-        firstInterval?.summary,
+        `Comparison link: ${primaryComparison.comparison.link}.`,
+        `Effect direction: ${effectDirection} for ${primaryComparison.metric.id}.`,
+        matchingInterval?.summary || buildTrialSummary(report)
+      ])
+    };
+  }
+
+  if (comparisonCount > 1) {
+    return undefined;
+  }
+
+  const soleInterval = confidenceIntervals.length === 1 ? confidenceIntervals.at(0) : undefined;
+  if (soleInterval?.summary) {
+    return {
+      label: `Statistics: ${soleInterval.metric_key || soleInterval.label || "confidence interval"}`,
+      summary: soleInterval.summary,
+      facts: compactFacts([
+        fact("Metric", soleInterval.metric_key || soleInterval.label),
+        fact("Confidence", formatConfidenceLevel(soleInterval.level)),
+        fact("Sample", soleInterval.sample_size ? String(soleInterval.sample_size) : undefined)
+      ]),
+      details: compactDetails([
+        `Interval bounds: ${formatMaybeNumber(soleInterval.lower) || "unknown"} to ${formatMaybeNumber(soleInterval.upper) || "unknown"}.`,
         buildTrialSummary(report)
       ])
     };
   }
 
-  if (firstInterval?.summary) {
-    return {
-      label: `Statistics: ${firstInterval.metric_key || firstInterval.label || "confidence interval"}`,
-      summary: firstInterval.summary,
-      facts: compactFacts([
-        fact("Metric", firstInterval.metric_key || firstInterval.label),
-        fact("Confidence", formatConfidenceLevel(firstInterval.level)),
-        fact("Sample", firstInterval.sample_size ? String(firstInterval.sample_size) : undefined)
-      ]),
-      details: compactDetails([
-        `Interval bounds: ${formatMaybeNumber(firstInterval.lower) || "unknown"} to ${formatMaybeNumber(firstInterval.upper) || "unknown"}.`,
-        buildTrialSummary(report),
-        report.statistical_summary?.notes?.[0]
-      ])
-    };
-  }
-
-  const firstNote = report.statistical_summary?.notes?.[0];
-  if (firstNote) {
+  const notes = report.statistical_summary?.notes || [];
+  const soleNote = notes.length === 1 ? notes.at(0) : undefined;
+  if (soleNote) {
     return {
       label: "Statistics: summary",
-      summary: firstNote,
+      summary: soleNote,
       facts: compactFacts([
         fact("Trials", report.statistical_summary?.total_trials ? String(report.statistical_summary.total_trials) : undefined),
         fact(
@@ -322,7 +342,6 @@ function resolveStatisticalEvidence(report: AnalysisReport): {
       ]),
       details: compactDetails([
         buildTrialSummary(report),
-        report.primary_findings?.[0],
         report.limitations?.[0]
       ])
     };
@@ -332,34 +351,43 @@ function resolveStatisticalEvidence(report: AnalysisReport): {
 }
 
 function buildComparisonFacts(
-  comparison: NonNullable<AnalysisReport["condition_comparisons"]>[number]
+  comparison: AnalysisResultsArtifactComparison
 ): InsightFacts | undefined {
-  const metric = comparison.metrics?.[0];
   return compactFacts([
-    fact("Metric", metric?.key),
-    fact("Delta", typeof metric?.value === "number" ? formatSignedNumber(metric.value) : undefined),
-    fact(
-      "Support",
-      typeof comparison.hypothesis_supported === "boolean"
-        ? comparison.hypothesis_supported
-          ? "yes"
-          : "no"
-        : undefined
-    )
+    fact("Comparison ID", comparison.comparison.id),
+    fact("Metric", comparison.metric.id),
+    fact("Delta", formatSignedNumber(comparison.delta))
   ]);
 }
 
 function buildComparisonDetails(
-  comparison: NonNullable<AnalysisReport["condition_comparisons"]>[number]
+  comparison: AnalysisResultsArtifactComparison
 ): InsightDetails | undefined {
-  const metrics = comparison.metrics?.slice(0, 3) || [];
   return compactDetails([
-    typeof comparison.hypothesis_supported === "boolean"
-      ? `Hypothesis support: ${comparison.hypothesis_supported ? "supported by this comparison." : "not supported by this comparison."}`
-      : undefined,
-    ...metrics.map((metric) => formatComparisonMetricDetail(metric)),
-    comparison.source ? `Source: ${comparison.source}.` : undefined
+    `Comparison link: ${comparison.comparison.link}.`,
+    `${comparison.metric.id}: ${comparison.subject_series.label} ${formatMaybeNumber(comparison.subject_observation.value)} (${comparison.subject_observation.link}) vs ${comparison.reference_series.label} ${formatMaybeNumber(comparison.reference_observation.value)} (${comparison.reference_observation.link}); delta ${formatSignedNumber(comparison.delta)}.`,
+    comparison.comparison.judgement
+      ? `Judgement: ${comparison.comparison.judgement}${
+        typeof comparison.hypothesis_supported === "boolean"
+          ? ` (hypothesis support: ${comparison.hypothesis_supported ? "yes" : "no"})`
+          : ""
+      }.`
+      : typeof comparison.hypothesis_supported === "boolean"
+        ? `Hypothesis support: ${comparison.hypothesis_supported ? "yes" : "no"}.`
+        : undefined
   ]);
+}
+
+function classifyComparisonEffectDirection(
+  comparison: AnalysisResultsArtifactComparison
+): "positive" | "negative" | "neutral" {
+  if (comparison.delta === 0) {
+    return "neutral";
+  }
+  if (comparison.metric.direction === "lower_better") {
+    return comparison.delta < 0 ? "positive" : "negative";
+  }
+  return comparison.delta > 0 ? "positive" : "negative";
 }
 
 function buildFigureFacts(
@@ -431,7 +459,7 @@ function buildReportFacts(
 
 function buildReportDetails(report: AnalysisReport): InsightDetails | undefined {
   return compactDetails([
-    report.primary_findings?.[0],
+    report.overview?.objective_summary,
     report.limitations?.[0] ? `Limitation: ${report.limitations[0]}` : undefined,
     report.synthesis?.confidence_statement
   ]);
@@ -479,18 +507,6 @@ function compactDetails(details: Array<string | undefined>): InsightDetails | un
     .map((detail) => truncateOneLine(detail, 220))
     .filter((detail): detail is string => Boolean(detail));
   return filtered.length > 0 ? filtered.slice(0, 3) : undefined;
-}
-
-function formatComparisonMetricDetail(
-  metric: NonNullable<AnalysisReport["condition_comparisons"]>[number]["metrics"][number]
-): string | undefined {
-  const delta = formatSignedNumber(metric.value);
-  const primaryValue = formatMaybeNumber(metric.primary_value);
-  const baselineValue = formatMaybeNumber(metric.baseline_value);
-  if (primaryValue && baselineValue) {
-    return `${metric.key}: primary ${primaryValue} vs baseline ${baselineValue} (${delta}).`;
-  }
-  return delta ? `${metric.key}: delta ${delta}.` : undefined;
 }
 
 function buildTrialSummary(report: AnalysisReport): string | undefined {
@@ -558,7 +574,6 @@ function resolveOverview(report: AnalysisReport): {
   const objectiveSummary =
     report.overview?.objective_summary ||
     report.objective_metric?.evaluation?.summary ||
-    report.primary_findings?.[0] ||
     report.warnings?.[0] ||
     "Objective evaluation unavailable.";
   return {

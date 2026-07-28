@@ -1,5 +1,6 @@
 import { ExperimentDesignCandidate } from "./analysis/researchPlanning.js";
 import { ObjectiveMetricProfile } from "./objectiveMetric.js";
+import { normalizeEstimatorProtocolDeclaration } from "./estimatorProtocol.js";
 
 export type DesignExperimentsPanelReviewerId =
   | "designer"
@@ -36,6 +37,7 @@ export interface DesignExperimentsPanelSelection {
 }
 
 export interface DesignExperimentsPanelResult {
+  evidence_stage: "bounded_probe" | "confirmatory";
   reviews: DesignExperimentsPanelReview[];
   selection: DesignExperimentsPanelSelection;
   selected: ExperimentDesignCandidate;
@@ -44,15 +46,22 @@ export interface DesignExperimentsPanelResult {
 export function runDesignExperimentsPanel(input: {
   candidates: ExperimentDesignCandidate[];
   objectiveProfile: ObjectiveMetricProfile;
-  managedBundleSupported: boolean;
+  evidenceStage?: "bounded_probe" | "confirmatory";
+  requireExecutableEstimator?: boolean;
 }): DesignExperimentsPanelResult {
+  const evidenceStage = input.evidenceStage || "confirmatory";
   const reviews: DesignExperimentsPanelReview[] = [];
 
   for (const candidate of input.candidates) {
     reviews.push(buildDesignerReview(candidate));
     reviews.push(buildFeasibilityReview(candidate));
-    reviews.push(buildStatisticalReview(candidate, input.objectiveProfile));
-    reviews.push(buildOpsCapacityReview(candidate, input.managedBundleSupported));
+    reviews.push(buildStatisticalReview(
+      candidate,
+      input.objectiveProfile,
+      evidenceStage,
+      input.requireExecutableEstimator === true
+    ));
+    reviews.push(buildOpsCapacityReview(candidate));
   }
 
   const scores = input.candidates.map((candidate) =>
@@ -65,6 +74,7 @@ export function runDesignExperimentsPanel(input: {
   const mode = nonBlocked.length > 0 ? "best_non_blocked" : "all_blocked_fallback";
 
   return {
+    evidence_stage: evidenceStage,
     reviews,
     selection: {
       selected_candidate_id: selected.id,
@@ -80,12 +90,25 @@ export function runDesignExperimentsPanel(input: {
 }
 
 function buildDesignerReview(candidate: ExperimentDesignCandidate): DesignExperimentsPanelReview {
+  const datasetsDeclared = isCandidateFieldDeclared(candidate, "datasets", candidate.datasets.length > 0);
+  const metricsDeclared = isCandidateFieldDeclared(candidate, "metrics", candidate.metrics.length > 0);
+  const baselinesDeclared = isCandidateFieldDeclared(candidate, "baselines", candidate.baselines.length > 0);
+  const implementationDeclared = isCandidateFieldDeclared(
+    candidate,
+    "implementation_notes",
+    candidate.implementation_notes.length > 0
+  );
+  const evaluationDeclared = isCandidateFieldDeclared(
+    candidate,
+    "evaluation_steps",
+    candidate.evaluation_steps.length > 0
+  );
   const completeness =
-    (candidate.datasets.length > 0 ? 1 : 0) +
-    (candidate.metrics.length > 0 ? 1 : 0) +
-    (candidate.baselines.length > 0 ? 1 : 0) +
-    (candidate.implementation_notes.length > 0 ? 1 : 0) +
-    (candidate.evaluation_steps.length > 0 ? 1 : 0);
+    (datasetsDeclared ? 1 : 0) +
+    (metricsDeclared ? 1 : 0) +
+    (baselinesDeclared ? 1 : 0) +
+    (implementationDeclared ? 1 : 0) +
+    (evaluationDeclared ? 1 : 0);
   return {
     reviewer_id: "designer",
     reviewer_label: "Designer",
@@ -98,10 +121,10 @@ function buildDesignerReview(candidate: ExperimentDesignCandidate): DesignExperi
         : "The plan is underspecified and will likely need reviewer corrections.",
     findings: uniqueStrings([
       candidate.plan_summary,
-      candidate.datasets.length > 0
+      datasetsDeclared
         ? `${candidate.datasets.length} dataset(s) were specified.`
         : "No datasets were specified.",
-      candidate.metrics.length > 0
+      metricsDeclared
         ? `${candidate.metrics.length} metric(s) were specified.`
         : "No metrics were specified."
     ]).slice(0, 3)
@@ -109,9 +132,17 @@ function buildDesignerReview(candidate: ExperimentDesignCandidate): DesignExperi
 }
 
 function buildFeasibilityReview(candidate: ExperimentDesignCandidate): DesignExperimentsPanelReview {
-  const missingDatasets = candidate.datasets.length === 0;
-  const missingImplementation = candidate.implementation_notes.length === 0;
-  const missingEvaluation = candidate.evaluation_steps.length === 0;
+  const missingDatasets = !isCandidateFieldDeclared(candidate, "datasets", candidate.datasets.length > 0);
+  const missingImplementation = !isCandidateFieldDeclared(
+    candidate,
+    "implementation_notes",
+    candidate.implementation_notes.length > 0
+  );
+  const missingEvaluation = !isCandidateFieldDeclared(
+    candidate,
+    "evaluation_steps",
+    candidate.evaluation_steps.length > 0
+  );
   const hardBlock = missingDatasets || missingImplementation || missingEvaluation;
   const rawScore =
     5 -
@@ -139,30 +170,54 @@ function buildFeasibilityReview(candidate: ExperimentDesignCandidate): DesignExp
 
 function buildStatisticalReview(
   candidate: ExperimentDesignCandidate,
-  objectiveProfile: ObjectiveMetricProfile
+  objectiveProfile: ObjectiveMetricProfile,
+  evidenceStage: "bounded_probe" | "confirmatory",
+  requireExecutableEstimator: boolean
 ): DesignExperimentsPanelReview {
   const preferredMetrics = uniqueStrings([
     objectiveProfile.primaryMetric || "",
     ...(objectiveProfile.preferredMetricKeys || [])
-  ]).map((item) => item.toLowerCase());
-  const metricMatch = candidate.metrics.some((metric) => preferredMetrics.includes(metric.toLowerCase()));
-  const primaryMetricMatch = candidate.metrics
-    .slice(0, 2)
-    .some((metric) => preferredMetrics.includes(metric.toLowerCase()));
-  const objectiveDrift = isLikelyObjectiveDrift(candidate, objectiveProfile, preferredMetrics, primaryMetricMatch);
-  const insufficientPaperScaleEvidence = isInsufficientPaperScaleEvidence(candidate, objectiveProfile);
+  ]).map(normalizeMetricIdentifier);
+  const declaredPrimaryMetric = normalizeMetricIdentifier(candidate.primary_metric);
+  const declaredMetrics = candidate.metrics.map(normalizeMetricIdentifier).filter(Boolean);
+  const primaryMetricDeclared = isCandidateFieldDeclared(
+    candidate,
+    "primary_metric",
+    declaredPrimaryMetric.length > 0
+  ) && declaredPrimaryMetric.length > 0;
+  const metricsDeclared = isCandidateFieldDeclared(candidate, "metrics", declaredMetrics.length > 0);
+  const baselinesDeclared = isCandidateFieldDeclared(candidate, "baselines", candidate.baselines.length > 0);
+  const evaluationDeclared = isCandidateFieldDeclared(
+    candidate,
+    "evaluation_steps",
+    candidate.evaluation_steps.length > 0
+  );
+  const primaryMetricIncluded = primaryMetricDeclared && metricsDeclared && declaredMetrics.includes(declaredPrimaryMetric);
+  const objectiveDeclaresMetric = preferredMetrics.length > 0;
+  const primaryMetricMatch = !objectiveDeclaresMetric || preferredMetrics.includes(declaredPrimaryMetric);
+  const metricMatch = !objectiveDeclaresMetric || declaredMetrics.some((metric) => preferredMetrics.includes(metric));
+  const objectiveDrift = objectiveDeclaresMetric && !primaryMetricMatch;
+  const insufficientPaperScaleEvidence = isInsufficientPaperScaleEvidence(candidate);
+  const estimatorProtocolValidation = normalizeEstimatorProtocolDeclaration(
+    candidate.estimator_protocol
+  );
+  const executableEstimatorReady = estimatorProtocolValidation.valid;
   const hardBlock =
-    candidate.metrics.length === 0 ||
-    candidate.baselines.length === 0 ||
-    candidate.evaluation_steps.length === 0 ||
+    !metricsDeclared ||
+    !baselinesDeclared ||
+    !evaluationDeclared ||
+    !primaryMetricDeclared ||
+    !primaryMetricIncluded ||
     objectiveDrift ||
-    insufficientPaperScaleEvidence;
+    (requireExecutableEstimator && !executableEstimatorReady) ||
+    (evidenceStage === "confirmatory" && insufficientPaperScaleEvidence);
   const rawScore =
     2 +
-    (candidate.metrics.length > 0 ? 1 : 0) +
-    (candidate.baselines.length > 0 ? 1 : 0) +
-    (candidate.evaluation_steps.length > 0 ? 1 : 0) +
+    (metricsDeclared ? 1 : 0) +
+    (baselinesDeclared ? 1 : 0) +
+    (evaluationDeclared ? 1 : 0) +
     (metricMatch ? 1 : 0) -
+    (requireExecutableEstimator && !executableEstimatorReady ? 3 : 0) -
     (objectiveDrift ? 2 : 0) -
     (insufficientPaperScaleEvidence ? 3 : 0);
   return {
@@ -172,25 +227,38 @@ function buildStatisticalReview(
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? insufficientPaperScaleEvidence
-        ? "The plan is explicitly limited to pilot or preflight evidence and cannot support the requested paper-scale model-quality claim."
+      ? insufficientPaperScaleEvidence && evidenceStage === "confirmatory"
+        ? "The plan is explicitly limited to screening evidence and cannot support the requested paper-scale claim."
+        : requireExecutableEstimator && !executableEstimatorReady
+        ? "The plan has no valid executable estimator protocol, so its comparison cannot be identified before implementation."
         : objectiveDrift
-        ? "The plan drifts from the objective into a reporting-integrity audit and cannot support the requested model-quality comparison."
-        : "The plan cannot support a reliable comparison because metrics, baselines, or evaluation steps are incomplete."
+        ? "The declared primary metric does not match the governed objective metric."
+        : "The plan cannot support a reliable comparison because its primary metric, metric set, baseline, or evaluation steps are incomplete."
       : metricMatch
         ? "The plan is statistically aligned with the objective metric and comparison requirements."
         : "The plan is viable, but the metric set is only loosely aligned with the objective profile.",
     findings: uniqueStrings([
       insufficientPaperScaleEvidence
-        ? "The candidate states a pilot/preflight ceiling or one-seed limitation, so it may validate infrastructure but not serve as paper-scale evidence."
+        ? evidenceStage === "bounded_probe"
+          ? "The candidate is explicitly screening-only; it may run as a bounded probe but cannot support paper-scale claims."
+          : "The candidate states a screening-only ceiling or a single-execution limitation, so it cannot serve as paper-scale evidence."
         : "",
+      requireExecutableEstimator && !executableEstimatorReady
+        ? `Executable estimator protocol is invalid: ${estimatorProtocolValidation.reasons.join(", ")}.`
+        : executableEstimatorReady
+          ? "Executable estimator protocol passed structural validation."
+          : "",
       objectiveDrift
-        ? "The primary metric surface is report-gating or claim-integrity focused while the objective is a model-quality metric."
+        ? `Declared primary metric ${candidate.primary_metric || "<missing>"} does not match the governed objective metric.`
+        : "",
+      !primaryMetricDeclared ? "No explicit primary metric was declared." : "",
+      primaryMetricDeclared && !primaryMetricIncluded
+        ? "The declared primary metric is absent from the metric set."
         : "",
       metricMatch
-        ? `Objective-aligned metric found: ${candidate.metrics.find((metric) => preferredMetrics.includes(metric.toLowerCase()))}.`
+        ? `Objective-aligned metric found: ${candidate.metrics.find((metric) => preferredMetrics.includes(normalizeMetricIdentifier(metric))) || candidate.primary_metric}.`
         : "No explicit objective-aligned metric was found.",
-      candidate.baselines.length > 0
+      baselinesDeclared
         ? `${candidate.baselines.length} baseline(s) were specified.`
         : "No baselines were specified.",
       candidate.evaluation_steps[0] || ""
@@ -199,79 +267,26 @@ function buildStatisticalReview(
 }
 
 function isInsufficientPaperScaleEvidence(
-  candidate: ExperimentDesignCandidate,
-  objectiveProfile: ObjectiveMetricProfile
+  candidate: ExperimentDesignCandidate
 ): boolean {
-  if (!isModelQualityObjective(objectiveProfile)) {
-    return false;
-  }
   const text = buildCandidateText(candidate);
   const explicitPilotOnly =
-    /\b(?:pilot|preflight|audit)\s+ceiling\b/u.test(text) ||
+    /\b(?:pilot|preflight|screening)\s+ceiling\b/u.test(text) ||
     /\b(?:pilot|preflight)\s+(?:only|stage|record|evidence)\b/u.test(text) ||
-    /\b(?:cannot|can\s+not)\s+support\s+(?:paper[- ]ready|paper[- ]scale|interaction|model[- ]quality|directional|parameter[- ]selection)\s+(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
-    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?(?:condition[- ]parameter\s+interaction|factor\s+interaction|interaction)\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
-    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?[^.!?]{0,48}\binteraction\s+(?:claim|claims|evidence|conclusion)s?\b/u.test(text) ||
-    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|statistical significance|parameter recommendation|interaction claim)\b/u.test(text);
-  const oneSeedOnly =
-    /\bone[- ]seed\b/u.test(text) ||
-    /\bonly\s+one\s+(?:training\s+)?seed\b/u.test(text) ||
-    /\bone\s+seed\s+cannot\b/u.test(text) ||
-    /\b1\s+seed\s+per\s+(?:cell|condition|run)\b/u.test(text);
-  const repeatedSeedRepair =
-    /\b(?:repeated|multiple|multi[- ]seed|replicated)\s+seeds?\b/u.test(text) ||
-    /\bat\s+least\s+(?:[3-9]|three|four|five)\s+seeds?\b/u.test(text);
+    /\b(?:cannot|can\s+not)\s+support\s+(?:the\s+)?[^.!?]{0,72}(?:claim|claims|evidence|conclusion|recommendation)s?\b/u.test(text) ||
+    /\b(?:no|not)\s+(?:paper[- ]ready|paper[- ]scale|confirmatory|statistically supported)\b/u.test(text);
+  const singleExecutionOnly =
+    /\b(?:single|one)[- ](?:run|repeat|replicate|seed|trial)\b/u.test(text) ||
+    /\bonly\s+(?:a\s+)?single\s+(?:run|repeat|replicate|seed|trial)\b/u.test(text) ||
+    /\b1\s+(?:run|repeat|replicate|seed|trial)\s+per\s+(?:cell|condition|arm|group)\b/u.test(text);
+  const repeatedExecution =
+    /\b(?:repeated|multiple|replicated|independent)\s+(?:runs?|repeats?|replicates?|seeds?|trials?)\b/u.test(text) ||
+    /\bat\s+least\s+(?:[2-9]|two|three|four|five)\s+(?:runs?|repeats?|replicates?|seeds?|trials?)\b/u.test(text);
 
-  return explicitPilotOnly || (oneSeedOnly && !repeatedSeedRepair);
+  return explicitPilotOnly || (singleExecutionOnly && !repeatedExecution);
 }
 
-function isLikelyObjectiveDrift(
-  candidate: ExperimentDesignCandidate,
-  objectiveProfile: ObjectiveMetricProfile,
-  preferredMetrics: string[],
-  primaryMetricMatch: boolean
-): boolean {
-  const objectiveText = uniqueStrings([
-    objectiveProfile.primaryMetric || "",
-    objectiveProfile.raw || "",
-    ...preferredMetrics
-  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
-  const candidateText = [
-    candidate.title,
-    candidate.plan_summary,
-    candidate.metrics.slice(0, 3).join(" "),
-    candidate.evaluation_steps.slice(0, 2).join(" ")
-  ].join(" ").toLowerCase();
-  const titleSummaryText = [candidate.title, candidate.plan_summary].join(" ").toLowerCase();
-  const modelQualityObjective =
-    /\b(accuracy|pass@?1|f1|auc|rouge|bleu|benchmark|task|dataset|eval(?:uation)?|score|quality)\b/u.test(objectiveText);
-  const reportingAuditSurface =
-    /\b(report|reporting|renderer|rendering|claim|claims|gating|gate|integrity|mismatch|downgrade|visibility|audit)\b/u.test(candidateText);
-  const explicitlyNotModelQuality =
-    /\bnot\s+a\s+model[- ]quality\s+experiment\b/u.test(candidateText) ||
-    /\bdoes\s+not\s+answer\s+the\s+model[- ]quality\s+hypothesis\b/u.test(candidateText);
-  const modelExperimentSurface =
-    /\b(factorial|benchmark|task|dataset|training condition|train\/eval|condition sweep|parameter sweep)\b/u.test(candidateText);
-  const primaryQualityMetric = candidate.metrics
-    .slice(0, 2)
-    .some((metric) => /\b(avg accuracy|mean accuracy|accuracy|f1|auc|rouge|bleu|pass@?1|delta.*baseline)\b/u.test(metric.toLowerCase().replace(/[_-]+/g, " ")));
-  const primaryAuditFraming =
-    /\b(report|reporting|claim|gating|gate|integrity|mismatch|downgrade|audit)\b/u.test(titleSummaryText) &&
-    !primaryQualityMetric;
-
-  return (
-    modelQualityObjective &&
-    reportingAuditSurface &&
-    (explicitlyNotModelQuality ||
-      primaryAuditFraming ||
-      (!modelExperimentSurface && !primaryQualityMetric && !primaryMetricMatch))
-  );
-}
-
-function buildOpsCapacityReview(
-  candidate: ExperimentDesignCandidate,
-  managedBundleSupported: boolean
-): DesignExperimentsPanelReview {
+function buildOpsCapacityReview(candidate: ExperimentDesignCandidate): DesignExperimentsPanelReview {
   const datasetLoad = candidate.datasets.length;
   const implementationLoad = candidate.implementation_notes.length;
   const resourceNotesPresent = candidate.resource_notes.length > 0;
@@ -281,8 +296,7 @@ function buildOpsCapacityReview(
     (datasetLoad > 4 ? 1 : 0) -
     (datasetLoad > 6 ? 2 : 0) -
     (implementationLoad > 6 ? 1 : 0) -
-    (!resourceNotesPresent ? 1 : 0) +
-    (managedBundleSupported ? 1 : 0);
+    (!resourceNotesPresent ? 1 : 0);
   return {
     reviewer_id: "ops_capacity_planner",
     reviewer_label: "Ops-capacity planner",
@@ -290,13 +304,11 @@ function buildOpsCapacityReview(
     score_1_to_5: clampScore(rawScore),
     hard_block: hardBlock,
     summary: hardBlock
-      ? "The plan is oversized for the current execution capacity."
-      : managedBundleSupported
-        ? "The plan fits the current execution model and can be scheduled within the managed execution envelope."
-        : "The plan is operationally acceptable, but it will rely on plain execution rather than the managed bundle.",
+      ? "The plan is oversized for the declared execution capacity."
+      : "The plan is operationally bounded by its declared datasets, implementation steps, and resource notes.",
     findings: uniqueStrings([
       resourceNotesPresent ? candidate.resource_notes[0] || "" : "No resource notes were specified.",
-      managedBundleSupported ? "Managed real_execution bundle support is available." : "Managed real_execution bundle support is unavailable.",
+      "Implementation steps are explicitly declared.",
       datasetLoad > 0 ? `${datasetLoad} dataset(s) are in scope.` : "No datasets are in scope."
     ]).slice(0, 3)
   };
@@ -314,7 +326,7 @@ function buildCandidateScore(
   const blockedBy = candidateReviews
     .filter((review) => review.hard_block)
     .map((review) => review.reviewer_id);
-  const evidenceStrengthScore = buildEvidenceStrengthScore(candidate, objectiveProfile);
+  const evidenceStrengthScore = buildEvidenceStrengthScore(candidate);
 
   return {
     candidate_id: candidate.id,
@@ -328,15 +340,9 @@ function buildCandidateScore(
 }
 
 function buildEvidenceStrengthScore(
-  candidate: ExperimentDesignCandidate,
-  objectiveProfile: ObjectiveMetricProfile
+  candidate: ExperimentDesignCandidate
 ): number {
   const candidateText = buildCandidateText(candidate);
-  const titleSummaryText = [candidate.title, candidate.plan_summary]
-    .join(" ")
-    .toLowerCase()
-    .replace(/[_-]+/g, " ");
-  const modelQualityObjective = isModelQualityObjective(objectiveProfile);
   let score = 3;
 
   if (/\b(repeat(?:ed)?|replication|replicate|multi[- ]seed|multiple\s+seeds?|at\s+least\s+(?:[3-9]|three|four|five)\s+seeds?|confidence|interval|bootstrap|paired|stability)\b/u.test(candidateText)) {
@@ -345,27 +351,11 @@ function buildEvidenceStrengthScore(
   if (/\b(full\s+(?:validation|test|split|grid)|all\s+cells?|complete\s+(?:table|grid)|raw\s+n|sample\s+size|per\s+condition|condition\s+table)\b/u.test(candidateText)) {
     score += 1;
   }
-  if (
-    modelQualityObjective &&
-    /\b(resource|budget|memory|runtime|throughput|efficiency|cost|lower\s+memory)\b/u.test(titleSummaryText) &&
-      /\b(without\s+losing|not\s+lose|non\s+inferior|lower\s+memory|efficiency|resource|budget)\b/u.test(titleSummaryText)
-  ) {
-    score -= 1;
-  }
-  if (modelQualityObjective && isInsufficientPaperScaleEvidence(candidate, objectiveProfile)) {
+  if (isInsufficientPaperScaleEvidence(candidate)) {
     score -= 2;
   }
 
   return clampScore(score);
-}
-
-function isModelQualityObjective(objectiveProfile: ObjectiveMetricProfile): boolean {
-  const objectiveText = uniqueStrings([
-    objectiveProfile.primaryMetric || "",
-    objectiveProfile.raw || "",
-    ...(objectiveProfile.preferredMetricKeys || [])
-  ]).join(" ").toLowerCase().replace(/[_-]+/g, " ");
-  return /\b(accuracy|pass@?1|f1|auc|rouge|bleu|perplexity|benchmark|score|quality|delta)\b/u.test(objectiveText);
 }
 
 function buildCandidateText(candidate: ExperimentDesignCandidate): string {
@@ -379,6 +369,22 @@ function buildCandidateText(candidate: ExperimentDesignCandidate): string {
     candidate.risks.join(" "),
     candidate.resource_notes.join(" ")
   ].join(" ").toLowerCase().replace(/[_-]+/g, " ");
+}
+
+function normalizeMetricIdentifier(value: string | undefined): string {
+  return (value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+}
+
+function isCandidateFieldDeclared(
+  candidate: ExperimentDesignCandidate,
+  field: keyof NonNullable<ExperimentDesignCandidate["declared_contract"]>,
+  fallback: boolean
+): boolean {
+  return candidate.declared_contract?.[field] ?? fallback;
 }
 
 function buildSelectionRationale(

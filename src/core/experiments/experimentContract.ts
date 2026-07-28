@@ -9,9 +9,11 @@
 import { RunRecord } from "../../types.js";
 import { writeRunArtifact, safeRead } from "../nodes/helpers.js";
 import {
-  buildResultsTableSchema,
-  type ResultsTableDirection,
+  RESULTS_ARTIFACT_SCHEMA_VERSION,
+  type ResultsMetricDefinitionV2,
+  type ResultsPlanV2,
   type ResultsTableSchema,
+  validateResultsPlanV2,
   validateResultsTableSchema
 } from "../analysis/resultsTableSchema.js";
 
@@ -20,7 +22,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export interface ExperimentContract {
-  version: 1;
+  version: 2;
   run_id: string;
   created_at: string;
 
@@ -57,9 +59,6 @@ export interface ExperimentContract {
   /** Explicit baselines/comparators expected in the design. */
   baselines?: string[];
 
-  /** Metrics the design intends to analyze. */
-  metrics?: string[];
-
   /** Selected design context preserved for downstream review and claim calibration. */
   selected_design?: {
     id?: string;
@@ -73,8 +72,11 @@ export interface ExperimentContract {
   /** Paper-readiness ceiling that downstream writing and review must preserve. */
   paper_ceiling?: string;
 
-  /** Minimum results-table structure that downstream analysis must materialize. */
-  results_table_schema?: ResultsTableSchema;
+  /** Explicit semantic requirements that downstream result artifacts must preserve. */
+  results_plan: ResultsPlanV2;
+
+  /** Present only when an old contract was adapted at the read boundary. */
+  adapted_from_version?: 1;
 
   /** Minimum baseline count implied by the brief contract. */
   brief_required_baseline_count?: number;
@@ -94,7 +96,6 @@ export interface BuildExperimentContractInput {
   abortCondition: string;
   keepOrDiscardRule: string;
   baselines?: string[];
-  metrics?: string[];
   selectedDesign?: {
     id?: string;
     title?: string;
@@ -102,25 +103,20 @@ export interface BuildExperimentContractInput {
   };
   evidenceCeiling?: string;
   paperCeiling?: string;
-  resultsTableDirection?: ResultsTableDirection;
+  resultsPlan: ResultsPlanV2;
   briefRequiredBaselineCount?: number;
 }
 
 export function buildExperimentContract(input: BuildExperimentContractInput): ExperimentContract {
   const additionalChanges = (input.additionalChanges ?? []).filter(Boolean);
   const baselines = (input.baselines ?? []).map((value) => value.trim()).filter(Boolean);
-  const metrics = (input.metrics ?? []).map((value) => value.trim()).filter(Boolean);
   const selectedDesignTitle = input.selectedDesign?.title?.trim();
   const selectedDesignSummary = input.selectedDesign?.summary?.trim();
   const evidenceCeiling = input.evidenceCeiling?.trim();
   const paperCeiling = input.paperCeiling?.trim();
-  const resultsTableSchema = buildResultsTableSchema(
-    metrics,
-    input.resultsTableDirection ?? "higher_better"
-  );
   const confounded = additionalChanges.length > 0;
   return {
-    version: 1,
+    version: 2,
     run_id: input.run.id,
     created_at: new Date().toISOString(),
     hypothesis: input.hypothesis || "(not specified)",
@@ -132,7 +128,6 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
     abort_condition: input.abortCondition || "No explicit abort condition defined.",
     keep_or_discard_rule: input.keepOrDiscardRule || "Keep if objective metric improves; discard otherwise.",
     baselines: baselines.length > 0 ? baselines : undefined,
-    metrics: metrics.length > 0 ? metrics : undefined,
     selected_design: selectedDesignTitle
       ? {
           id: input.selectedDesign?.id?.trim() || undefined,
@@ -142,7 +137,7 @@ export function buildExperimentContract(input: BuildExperimentContractInput): Ex
       : undefined,
     evidence_ceiling: evidenceCeiling || undefined,
     paper_ceiling: paperCeiling || undefined,
-    results_table_schema: resultsTableSchema.length > 0 ? resultsTableSchema : undefined,
+    results_plan: copyResultsPlan(input.resultsPlan),
     brief_required_baseline_count:
       typeof input.briefRequiredBaselineCount === "number" && input.briefRequiredBaselineCount > 0
         ? input.briefRequiredBaselineCount
@@ -169,8 +164,9 @@ export async function loadExperimentContract(
   const raw = await safeRead(`.autolabos/runs/${runId}/${ARTIFACT_PATH}`);
   if (!raw.trim()) return undefined;
   try {
-    const parsed = JSON.parse(raw) as ExperimentContract;
-    if (parsed.version === 1 && parsed.hypothesis) return parsed;
+    const parsed = JSON.parse(raw) as ExperimentContract | HistoricalExperimentContractV1;
+    if (parsed.version === 2 && parsed.hypothesis) return parsed;
+    if (parsed.version === 1 && parsed.hypothesis) return adaptHistoricalExperimentContract(parsed);
     return undefined;
   } catch {
     return undefined;
@@ -209,13 +205,24 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
   if (!contract.baselines || contract.baselines.length === 0) {
     issues.push("Missing explicit baseline/comparator declaration.");
   }
-  const resultsTableValidation = validateResultsTableSchema(contract.results_table_schema);
-  if (!resultsTableValidation.valid || resultsTableValidation.rows.length === 0) {
+  const resultsPlanValidation = validateResultsPlanV2(contract.results_plan);
+  if (!resultsPlanValidation.valid) {
     issues.push(
-      resultsTableValidation.valid
-        ? "Missing results_table_schema with at least one metric/direction row."
-        : `Invalid results_table_schema: ${resultsTableValidation.issues.join(" ")}`
+      `Invalid results_plan: ${resultsPlanValidation.issues.join(" ")}`
     );
+  }
+  if (!contract.adapted_from_version && (contract.baselines?.length ?? 0) > 0) {
+    const requiredSeries = contract.results_plan?.required_series ?? [];
+    const roles = new Set(requiredSeries.map((series) => series.role));
+    if (!roles.has("baseline")) {
+      issues.push("Results plan must bind at least one required series to the baseline role.");
+    }
+    if (!roles.has("primary") && !roles.has("comparator")) {
+      issues.push("Results plan must bind a subject series to the primary or comparator role.");
+    }
+    if ((contract.results_plan?.required_comparisons?.length ?? 0) === 0) {
+      issues.push("Results plan must declare at least one explicit subject/reference comparison.");
+    }
   }
   if (
     typeof contract.brief_required_baseline_count === "number" &&
@@ -233,6 +240,74 @@ export function validateExperimentContract(contract: ExperimentContract): Experi
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+interface HistoricalExperimentContractV1
+  extends Omit<ExperimentContract, "version" | "results_plan" | "adapted_from_version"> {
+  version: 1;
+  metrics?: string[];
+  results_table_schema?: ResultsTableSchema;
+}
+
+function adaptHistoricalExperimentContract(
+  historical: HistoricalExperimentContractV1
+): ExperimentContract {
+  const rows = validateResultsTableSchema(historical.results_table_schema).rows;
+  const requiredMetrics = uniqueMetricDefinitions(rows.map((row) => ({
+    id: row.metric.trim(),
+    label: row.metric.trim(),
+    direction: row.direction
+  })).filter((metric) => metric.id.length > 0));
+  const {
+    version: _version,
+    metrics: _metrics,
+    results_table_schema: _resultsTableSchema,
+    ...shared
+  } = historical;
+  return {
+    ...shared,
+    version: 2,
+    adapted_from_version: 1,
+    results_plan: {
+      schema_version: RESULTS_ARTIFACT_SCHEMA_VERSION,
+      required_metrics: requiredMetrics,
+      minimum_series_count: (historical.baselines?.length ?? 0) > 0 ? 2 : 1,
+      minimum_comparison_count:
+        (historical.baselines?.length ?? 0) > 0 && requiredMetrics.length > 0 ? 1 : 0
+    }
+  };
+}
+
+function copyResultsPlan(plan: ResultsPlanV2): ResultsPlanV2 {
+  return {
+    schema_version: plan?.schema_version ?? RESULTS_ARTIFACT_SCHEMA_VERSION,
+    required_metrics: (plan?.required_metrics ?? []).map((metric) => ({ ...metric })),
+    minimum_series_count: plan?.minimum_series_count ?? 0,
+    minimum_comparison_count: plan?.minimum_comparison_count ?? 0,
+    required_series: plan?.required_series?.map((series) => ({ ...series })),
+    required_comparisons: plan?.required_comparisons?.map((comparison) => ({
+      ...comparison,
+      scope: comparison.scope ? { ...comparison.scope } : undefined
+    })),
+    primary_comparison_id: plan?.primary_comparison_id,
+    primary_effect_criterion: plan?.primary_effect_criterion
+      ? {
+          ...plan.primary_effect_criterion,
+          effect_criterion: { ...plan.primary_effect_criterion.effect_criterion }
+        }
+      : undefined
+  };
+}
+
+function uniqueMetricDefinitions(
+  metrics: ResultsMetricDefinitionV2[]
+): ResultsMetricDefinitionV2[] {
+  const seen = new Set<string>();
+  return metrics.filter((metric) => {
+    if (seen.has(metric.id)) return false;
+    seen.add(metric.id);
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------

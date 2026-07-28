@@ -22,6 +22,16 @@ export interface SearchQueryPlan {
   excludedTerms: string[];
 }
 
+export function toPhrasePreservingSearchQuery(clause: SearchQueryClause): string {
+  return [
+    ...clause.phrases.map((phrase) => `"${phrase}"`),
+    ...clause.terms
+  ]
+    .join(" ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 interface QueryToken {
   type: "term" | "and" | "or" | "lparen" | "rparen";
   value?: string;
@@ -152,6 +162,10 @@ export function filterPaperSearchCandidates(
   const filtered = candidates.filter((candidate) =>
     matchesCandidateFilters(candidate, request.filters, yearRange.startYear, yearRange.endYear)
   );
+
+  if (request.sort?.field === "relevance") {
+    return filtered.slice(0, Math.max(1, request.limit));
+  }
 
   filtered.sort((a, b) => {
     const citationCmp = (b.citationCount ?? -1) - (a.citationCount ?? -1);

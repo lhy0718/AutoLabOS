@@ -2,24 +2,23 @@ import { LLMClient, LLMProgressEvent } from "../llm/client.js";
 import { parseStructuredModelJsonObject } from "./modelJson.js";
 import { AnalysisCorpusRow, ResolvedPaperSource, buildAbstractFallbackText } from "./paperText.js";
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
+import { hashCanonical } from "../canonicalHash.js";
 
-const FALLBACK_METRIC_TOKEN_SOURCES = [
-  "accuracy",
-  "f1",
-  "bleu",
-  "rouge",
-  "perplexity",
-  "pass@\\d+",
-  "runtime",
-  "latency",
-  "memory",
-  "throughput"
-];
-const FALLBACK_METRIC_TOKEN_SOURCE = `(?:${FALLBACK_METRIC_TOKEN_SOURCES.join("|")})`;
+export const PAPER_ANALYSIS_EVIDENCE_SEMANTICS_VERSION = 4;
 
-function fallbackMetricTokenRegex(flags: string): RegExp {
-  return new RegExp(`\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b`, flags);
-}
+export type EvidenceLimitationKind =
+  | "scientific"
+  | "reporting"
+  | "claim_caveat"
+  | "source_visibility"
+  | "operational_failure"
+  | "unknown";
+
+export type PaperSourceScope = "abstract" | "full_text_excerpt" | "full_document";
+export type EvidenceGroundingStatus = "grounded_span" | "ungrounded_span" | "fallback";
+
+const FALLBACK_METRIC_CUE_SOURCE =
+  "(?:primary\\s+|secondary\\s+|evaluation\\s+|reported\\s+)?(?:metric|measure|outcome|endpoint)s?";
 
 export interface PaperSummaryRow {
   paper_id: string;
@@ -37,14 +36,18 @@ export interface PaperSummaryRow {
 export interface PaperEvidenceRow {
   evidence_id: string;
   paper_id: string;
+  canonical_work_id: string;
   claim: string;
   method_slot: string;
   result_slot: string;
   limitation_slot: string;
+  limitation_kind: EvidenceLimitationKind;
   dataset_slot: string;
   metric_slot: string;
   evidence_span: string;
   source_type: "full_text" | "abstract";
+  source_scope: PaperSourceScope;
+  grounding_status: EvidenceGroundingStatus;
   confidence: number;
   confidence_reason?: string;
 }
@@ -54,6 +57,7 @@ interface RawEvidenceItem {
   method_slot?: unknown;
   result_slot?: unknown;
   limitation_slot?: unknown;
+  limitation_kind?: unknown;
   dataset_slot?: unknown;
   metric_slot?: unknown;
   evidence_span?: unknown;
@@ -128,6 +132,8 @@ export const ANALYSIS_SYSTEM_PROMPT = [
   "Return one JSON object only.",
   "No markdown, no prose before or after the JSON.",
   "Be faithful to the provided source. Do not invent claims.",
+  "Classify every limitation_kind as scientific, reporting, claim_caveat, source_visibility, operational_failure, or unknown.",
+  "Missing information in the supplied excerpt is source_visibility, never a scientific limitation.",
   "If the source is weak, keep fields concise and conservative.",
   "When an evidence item is tentative, use a lower confidence and explain it briefly in confidence_reason."
 ].join(" ");
@@ -240,6 +246,7 @@ export async function analyzePaperWithLlm(args: {
 export async function analyzePaperWithResponsesPdf(args: {
   client: ResponsesPdfAnalysisClient;
   paper: AnalysisCorpusRow;
+  source?: ResolvedPaperSource;
   pdfUrl: string;
   model: string;
   reasoningEffort?: string;
@@ -249,11 +256,22 @@ export async function analyzePaperWithResponsesPdf(args: {
 }): Promise<PaperAnalysisResult> {
   const maxAttempts = Math.max(1, args.maxAttempts ?? 2);
   let lastError: Error | undefined;
-  const sourceHint: ResolvedPaperSource = {
+  const sourceHint: ResolvedPaperSource = args.source ?? {
     sourceType: "full_text",
     text: buildAbstractFallbackText(args.paper),
+    analysisScope: "abstract",
     fullTextAvailable: true,
-    pdfUrl: args.pdfUrl
+    pdfUrl: args.pdfUrl,
+    fallbackReason: "responses_pdf_local_verification_abstract_only"
+  };
+  const responsesSourceHint: ResolvedPaperSource = {
+    ...sourceHint,
+    analysisScope:
+      sourceHint.fallbackReason === "responses_pdf_local_verification_abstract_only"
+        ? "abstract"
+        : sourceHint.groundingText?.trim()
+          ? "full_document"
+          : inferPaperSourceScope(sourceHint)
   };
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -295,7 +313,7 @@ export async function analyzePaperWithResponsesPdf(args: {
             onProgress: args.onProgress
           });
       return {
-        ...normalizePaperAnalysis(args.paper, sourceHint, reviewed),
+        ...normalizePaperAnalysis(args.paper, responsesSourceHint, reviewed),
         attempts: attempt,
         rawJson: reviewed
       };
@@ -727,6 +745,7 @@ function buildDeterministicAbstractTimeoutFallback(
         method_slot: "Not specified from abstract-only fallback.",
         result_slot: fallbackSummary,
         limitation_slot: "Full-text extraction or extraction review did not complete before timeout.",
+        limitation_kind: "operational_failure",
         dataset_slot: "Not specified.",
         metric_slot: "Not specified.",
         evidence_span: evidenceSpan,
@@ -773,6 +792,7 @@ function buildDeterministicPlannerTimeoutFallback(
         method_slot: structured.method || "Not yet structured; planner timed out before extraction planning completed.",
         result_slot: summary,
         limitation_slot: "Structured extraction and review did not complete before timeout.",
+        limitation_kind: "operational_failure",
         dataset_slot: structured.datasets.join("; ") || "Not yet structured.",
         metric_slot: structured.metrics.join("; ") || "Not yet structured.",
         evidence_span: evidenceSpan,
@@ -801,12 +821,12 @@ function extractPlannerTimeoutFallbackSlots(sourceText: string): {
       /\b(?:dataset|datasets|benchmark|benchmarks|task|tasks)\s*(?:included|include|were|was|:|=)\s+([^.;\n]{3,120})/giu
     ]).map(cleanDatasetHint)
   ]).filter(Boolean).slice(0, 4);
-  const metrics = uniqueStrings([
-    ...extractHints(sourceText, [
-      new RegExp(`\\b(?:metric|metrics|measured by|reported|reports|reporting|with)\\s+([^.;\\n]{0,120}\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b[^.;\\n]{0,80})`, "giu"),
-      fallbackMetricTokenRegex("giu")
-    ]).map(cleanMetricHint)
-  ]).filter(Boolean).slice(0, 4);
+  const metrics = uniqueStrings(
+    extractHints(sourceText, [
+      new RegExp(`\\b${FALLBACK_METRIC_CUE_SOURCE}\\s*(?:include(?:d|s)?|were|was|are|is|:|=)\\s*([^.;\\n]{2,120})`, "giu"),
+      /\b(?:measured by|evaluated (?:with|using)|scored (?:by|with)|reported (?:with|using|as))\s+([^.;\n]{2,120})/giu
+    ]).flatMap(splitMetricHint)
+  ).filter(Boolean).slice(0, 4);
   const method = supportSentence ? trimToLength(supportSentence, 180) : undefined;
   return { datasets, metrics, method, supportSentence };
 }
@@ -829,7 +849,8 @@ function hasDatasetCue(sentence: string): boolean {
 }
 
 function hasMetricCue(sentence: string): boolean {
-  return new RegExp(`\\b(?:metric|${FALLBACK_METRIC_TOKEN_SOURCE})\\b`, "iu").test(sentence);
+  return new RegExp(`\\b${FALLBACK_METRIC_CUE_SOURCE}\\b|\\b(?:measured by|scored by)\\b`, "iu")
+    .test(sentence);
 }
 
 function extractHints(text: string, patterns: RegExp[]): string[] {
@@ -845,14 +866,15 @@ function extractHints(text: string, patterns: RegExp[]): string[] {
 function cleanDatasetHint(value: string): string {
   return cleanHint(value)
     .replace(/\s+\b(?:with|using|measured by|reporting|reports?)\b.*$/iu, "")
-    .replace(new RegExp(`\\b${FALLBACK_METRIC_TOKEN_SOURCE}\\b.*$`, "iu"), "")
+    .replace(new RegExp(`\\b${FALLBACK_METRIC_CUE_SOURCE}\\b.*$`, "iu"), "")
     .trim();
 }
 
-function cleanMetricHint(value: string): string {
-  const cleaned = cleanHint(value);
-  const metricMatch = fallbackMetricTokenRegex("iu").exec(cleaned);
-  return metricMatch ? metricMatch[0] : cleaned;
+function splitMetricHint(value: string): string[] {
+  return cleanHint(value)
+    .split(/\s*(?:,|;|\band\b)\s*/iu)
+    .map((item) => item.replace(/\s+\b(?:under|on|for)\b.*$/iu, "").trim())
+    .filter(Boolean);
 }
 
 function cleanHint(value: string): string {
@@ -913,8 +935,11 @@ export function buildPaperAnalysisPrompt(
   return [
     "Analyze the following paper and extract structured evidence.",
     "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
+    "Classify limitation_kind as scientific only for a source-grounded unresolved methodological, measurement, or empirical limitation of the study itself.",
+    "Use source_visibility for facts missing only from the supplied excerpt, reporting for paper-specific reporting omissions, claim_caveat for qualifications of a claim, and operational_failure for extraction or tool failures.",
     "Keep the JSON compact: summary <= 4 short sentences; key_findings/limitations/datasets/metrics/reproducibility_notes <= 4 short strings each.",
-    "Return at most 4 evidence_items, and keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
+    "Return at most 4 evidence_items. Each evidence_span must be one contiguous verbatim excerpt copied exactly from the supplied source text (<= 240 characters).",
+    "Never paraphrase evidence_span, join nonadjacent clauses, or insert ellipses. Drop an evidence item when no exact supporting span is available.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -962,7 +987,8 @@ export function buildPaperAnalysisFilePrompt(paper: AnalysisCorpusRow, plan?: Pa
     "The attached PDF is the primary source. Use the metadata and abstract below only as supplemental context.",
     "If an evidence item is tentative or indirect, lower confidence and explain why in confidence_reason.",
     "Keep the JSON compact: summary <= 4 short sentences; key_findings/limitations/datasets/metrics/reproducibility_notes <= 4 short strings each.",
-    "Return at most 4 evidence_items, and keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
+    "Return at most 4 evidence_items. Each evidence_span must be one contiguous verbatim excerpt copied exactly from the attached PDF (<= 240 characters).",
+    "Never paraphrase evidence_span, join nonadjacent clauses, or insert ellipses. Drop an evidence item when no exact supporting span is available.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -1042,9 +1068,11 @@ export function buildPaperAnalysisReviewPrompt(
   return [
     "Audit the draft paper analysis against the supplied source and correct it.",
     "Prefer dropping unsupported items over guessing.",
+    "Correct limitation_kind and never relabel source visibility, reporting omissions, claim caveats, or operational failures as scientific limitations.",
     "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
     "Keep the corrected JSON compact, and if the draft contains more than 4 evidence_items, keep only the 4 strongest supported items.",
-    "Keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
+    "For every retained item, copy evidence_span exactly as one contiguous verbatim excerpt from the supplied source text (<= 240 characters).",
+    "Never paraphrase evidence_span, join nonadjacent clauses, or insert ellipses. Drop any item whose exact supporting span cannot be located.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -1066,9 +1094,11 @@ export function buildPaperAnalysisFileReviewPrompt(
   return [
     "Audit the draft PDF-paper analysis against the attached PDF and correct it.",
     "The attached PDF is the primary source. Prefer dropping unsupported items over guessing.",
+    "Correct limitation_kind and never relabel source visibility, reporting omissions, claim caveats, or operational failures as scientific limitations.",
     "Whenever you keep a caveat or lower confidence, explain it in confidence_reason for that evidence item.",
     "Keep the corrected JSON compact, and if the draft contains more than 4 evidence_items, keep only the 4 strongest supported items.",
-    "Keep each evidence_span to one short quoted or paraphrased sentence (<= 240 characters).",
+    "For every retained item, copy evidence_span exactly as one contiguous verbatim excerpt from the attached PDF (<= 240 characters).",
+    "Never paraphrase evidence_span, join nonadjacent clauses, or insert ellipses. Drop any item whose exact supporting span cannot be located.",
     "Return JSON with this exact top-level shape:",
     ...buildPaperAnalysisSchemaLines(),
     "",
@@ -1098,6 +1128,7 @@ function buildPaperAnalysisSchemaLines(): string[] {
     '      "method_slot": "string",',
     '      "result_slot": "string",',
     '      "limitation_slot": "string",',
+    '      "limitation_kind": "scientific | reporting | claim_caveat | source_visibility | operational_failure | unknown",',
     '      "dataset_slot": "string",',
     '      "metric_slot": "string",',
     '      "evidence_span": "string",',
@@ -1217,18 +1248,22 @@ export function normalizePaperAnalysis(
     evidenceItems.map((item, index) => ({
       evidence_id: buildEvidenceId(paper.paper_id, index),
       paper_id: paper.paper_id,
+      canonical_work_id: buildCanonicalWorkId(paper),
       claim: fallbackString(item.claim, summary),
       method_slot: fallbackString(item.method_slot, "Not specified."),
       result_slot: fallbackString(item.result_slot, keyFindings[0] || summary),
       limitation_slot: fallbackString(item.limitation_slot, limitations[0] || "Not specified."),
+      limitation_kind: normalizeLimitationKind(item.limitation_kind),
       dataset_slot: fallbackString(item.dataset_slot, datasets[0] || "Not specified."),
       metric_slot: fallbackString(item.metric_slot, metrics[0] || "Not specified."),
       evidence_span: fallbackString(item.evidence_span, summary),
       source_type: source.sourceType,
+      source_scope: inferPaperSourceScope(source),
+      grounding_status: "grounded_span" as const,
       confidence: normalizeConfidence(item.confidence),
       confidence_reason: cleanConfidenceReason(item.confidence_reason)
     })),
-    source.text,
+    source.groundingText ?? source.text,
     source.sourceType
   );
 
@@ -1262,6 +1297,7 @@ function normalizeEvidenceItems(
         method_slot: "Not specified.",
         result_slot: summary,
         limitation_slot: "Not specified.",
+        limitation_kind: "unknown",
         dataset_slot: "Not specified.",
         metric_slot: "Not specified.",
         evidence_span: source.text.slice(0, 240) || paper.abstract || paper.title,
@@ -1282,15 +1318,26 @@ function calibrateEvidenceRows(
 ): PaperEvidenceRow[] {
   const normalizedSource = normalizeForMatch(sourceText);
   if (!normalizedSource) {
-    return rows;
+    return rows.map((row) => ({
+      ...row,
+      grounding_status: row.grounding_status === "fallback" ? "fallback" : "ungrounded_span",
+      confidence: Math.min(row.confidence, sourceType === "full_text" ? 0.35 : 0.45),
+      confidence_reason:
+        row.confidence_reason
+        || "Confidence reduced because no source text was available to ground the cited evidence span."
+    }));
   }
   return rows.map((row) => {
     const normalizedSpan = normalizeForMatch(row.evidence_span);
-    if (!normalizedSpan || normalizedSpan.length < 12 || normalizedSource.includes(normalizedSpan)) {
-      return row;
+    if (normalizedSpan.length >= 12 && normalizedSource.includes(normalizedSpan)) {
+      return {
+        ...row,
+        grounding_status: "grounded_span"
+      };
     }
     return {
       ...row,
+      grounding_status: row.grounding_status === "fallback" ? "fallback" : "ungrounded_span",
       confidence: Math.min(row.confidence, sourceType === "full_text" ? 0.35 : 0.45),
       confidence_reason:
         row.confidence_reason
@@ -1300,7 +1347,49 @@ function calibrateEvidenceRows(
 }
 
 function normalizeForMatch(text: string): string {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\u2010-\u2015]/gu, "-")
+    .replace(/[\u2018\u2019\u201c\u201d"'`]/gu, "")
+    .replace(/[^\p{L}\p{N}%+\-.]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function normalizeLimitationKind(value: unknown): EvidenceLimitationKind {
+  return value === "scientific" ||
+    value === "reporting" ||
+    value === "claim_caveat" ||
+    value === "source_visibility" ||
+    value === "operational_failure"
+    ? value
+    : "unknown";
+}
+
+function inferPaperSourceScope(source: ResolvedPaperSource): PaperSourceScope {
+  if (source.fallbackReason === "responses_pdf_local_verification_abstract_only") {
+    return "abstract";
+  }
+  if (source.sourceType === "abstract") {
+    return "abstract";
+  }
+  if (source.analysisScope) {
+    return source.analysisScope;
+  }
+  return source.text.includes("[TRUNCATED]") || source.text.includes("[SECTION-AWARE EXCERPT:")
+    ? "full_text_excerpt"
+    : "full_document";
+}
+
+function buildCanonicalWorkId(paper: AnalysisCorpusRow): string {
+  const normalizedTitle = paper.title
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return `work_${hashCanonical({ title: normalizedTitle || paper.paper_id }).slice(0, 16)}`;
 }
 
 function normalizeStringArray(value: unknown): string[] {

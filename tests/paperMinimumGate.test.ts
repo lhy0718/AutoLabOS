@@ -5,6 +5,10 @@ import {
 } from "../src/core/analysis/paperMinimumGate.js";
 import type { ReviewArtifactPresence } from "../src/core/reviewSystem.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
+import type {
+  ResultsArtifactV2,
+  ResultsSeriesRole
+} from "../src/core/analysis/resultsTableSchema.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -27,6 +31,61 @@ function fullPresence(): ReviewArtifactPresence {
   };
 }
 
+function minimalResultsArtifact(): ResultsArtifactV2 {
+  return {
+    schema_version: "2.0",
+    metrics: [
+      {
+        id: "metric-quality",
+        label: "Outcome quality",
+        direction: "higher_better",
+        unit: "unitless"
+      }
+    ],
+    series: [
+      {
+        id: "series-reference",
+        label: "Observed series north",
+        role: "baseline",
+        dimensions: { partition: "evaluation", repetition_set: "confirmed" }
+      },
+      {
+        id: "series-subject",
+        label: "Observed series south",
+        role: "primary",
+        dimensions: { partition: "evaluation", repetition_set: "confirmed" }
+      }
+    ],
+    observations: [
+      {
+        id: "observation-quality-reference",
+        series_id: "series-reference",
+        metric_id: "metric-quality",
+        scope: { partition: "evaluation" },
+        value: 0.82,
+        evidence_refs: ["artifacts/reference-quality.json"]
+      },
+      {
+        id: "observation-quality-subject",
+        series_id: "series-subject",
+        metric_id: "metric-quality",
+        scope: { partition: "evaluation" },
+        value: 0.87,
+        evidence_refs: ["artifacts/subject-quality.json"]
+      }
+    ],
+    comparisons: [
+      {
+        id: "comparison-quality",
+        subject_observation_id: "observation-quality-subject",
+        reference_observation_id: "observation-quality-reference",
+        delta: 0.05,
+        evidence_refs: ["artifacts/quality-comparison.json"]
+      }
+    ]
+  };
+}
+
 function minimalReport(): AnalysisReport {
   return {
     overview: {
@@ -41,49 +100,25 @@ function minimalReport(): AnalysisReport {
       },
       condition_results: [
         {
-          condition_marker: "baseline_condition",
+          condition_marker: "reference_condition",
           seeds: [11, 12, 13],
           seed_count: 3
         },
         {
-          condition_marker: "candidate_condition_a",
+          condition_marker: "candidate_condition",
           seeds: [11, 12, 13],
           seed_count: 3
         }
       ]
     },
-    condition_comparisons: [
-      {
-        id: "c1",
-        label: "baseline vs proposed",
-        source: "metrics.comparison",
-        metrics: [],
-        hypothesis_supported: true,
-        summary: "Proposed outperformed baseline"
-      }
-    ],
-    primary_findings: [
-      {
-        id: "f1",
-        title: "Main finding",
-        finding: "Proposed method is better",
-        confidence: 0.9,
-        source: "analysis"
-      }
-    ],
+    results_artifact: minimalResultsArtifact(),
+    primary_comparison_id: "comparison-quality",
+    condition_comparisons: [],
+    primary_findings: ["The explicit subject observation exceeds the reference observation."],
     paper_claims: [
       {
-        claim: "Our method improves accuracy",
-        evidence: [{ type: "metric", reference: "accuracy", detail: "+5%" }]
-      }
-    ],
-    results_table: [
-      {
-        metric: "accuracy",
-        baseline: 0.82,
-        comparator: 0.87,
-        delta: 0.05,
-        direction: "higher_better"
+        claim: "The tested subject condition improves the measured outcome.",
+        evidence: [{ type: "metric", reference: "metric-quality", detail: "delta=0.05" }]
       }
     ],
     limitations: [],
@@ -106,8 +141,8 @@ function fullInput(): MinimumGateInput {
   return {
     presence: fullPresence(),
     report: minimalReport(),
-    topic: "Test topic",
-    objectiveMetric: "accuracy"
+    topic: "Neutral comparison study",
+    objectiveMetric: "outcome quality"
   };
 }
 
@@ -153,7 +188,7 @@ describe("paperMinimumGate", () => {
     expect(checkIds).toContain("result_artifacts");
     expect(checkIds).toContain("claim_evidence_linkage");
     expect(checkIds).toContain("claim_evidence_missing");
-    expect(checkIds).toContain("results_table_schema");
+    expect(checkIds).toContain("results_artifact_comparison");
     expect(checkIds).toContain("not_smoke_only");
   });
 
@@ -177,14 +212,110 @@ describe("paperMinimumGate", () => {
     expect(result.blockers).toContain("Experiment plan exists (task/dataset grounding)");
   });
 
-  it("blocks when no baseline/comparator exists", () => {
+  it("fails closed when role-like labels, order, and scores have no explicit V2 comparison", () => {
     const input = fullInput();
-    input.presence.baselineSummaryPresent = false;
-    (input.report as AnalysisReport).condition_comparisons = [];
+    input.report.results_artifact.comparisons = [];
+    input.report.results_artifact.series[0].label = "Baseline-labelled series";
+    input.report.results_artifact.series[1].label = "Comparator-labelled series";
     const result = evaluateMinimumGate(input);
 
     expect(result.passed).toBe(false);
     expect(result.blockers).toContain("Baseline or comparator is explicit");
+    expect(result.failed_checks).toEqual(
+      expect.arrayContaining([
+        "baseline_or_comparator",
+        "executed_result",
+        "results_artifact_comparison"
+      ])
+    );
+  });
+
+  it("accepts a negative lower-is-better result when the explicit delta is consistent", () => {
+    const input = fullInput();
+    input.report.results_artifact.metrics[0].direction = "lower_better";
+    input.report.results_artifact.observations[0].value = 120;
+    input.report.results_artifact.observations[1].value = 95;
+    input.report.results_artifact.comparisons[0].delta = -25;
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(true);
+    expect(result.checks.find((check) => check.id === "results_artifact_comparison")?.passed).toBe(true);
+  });
+
+  it.each([
+    { name: "primary versus baseline", subjectRole: "primary", referenceRole: "baseline", passed: true },
+    { name: "comparator versus baseline", subjectRole: "comparator", referenceRole: "baseline", passed: true },
+    { name: "missing subject role", subjectRole: undefined, referenceRole: "baseline", passed: false },
+    { name: "missing reference role", subjectRole: "primary", referenceRole: undefined, passed: false },
+    { name: "reversed roles", subjectRole: "baseline", referenceRole: "primary", passed: false },
+    { name: "baseline versus baseline", subjectRole: "baseline", referenceRole: "baseline", passed: false },
+    { name: "primary versus primary", subjectRole: "primary", referenceRole: "primary", passed: false },
+    { name: "control subject", subjectRole: "control", referenceRole: "baseline", passed: false },
+    { name: "other subject", subjectRole: "other", referenceRole: "baseline", passed: false },
+    { name: "control reference", subjectRole: "primary", referenceRole: "control", passed: false },
+    { name: "other reference", subjectRole: "primary", referenceRole: "other", passed: false }
+  ] as Array<{
+    name: string;
+    subjectRole: ResultsSeriesRole | undefined;
+    referenceRole: ResultsSeriesRole | undefined;
+    passed: boolean;
+  }>)("enforces comparison role semantics in the minimum gate: $name", ({ subjectRole, referenceRole, passed }) => {
+    const input = fullInput();
+    setSeriesRole(input.report.results_artifact.series[1], subjectRole);
+    setSeriesRole(input.report.results_artifact.series[0], referenceRole);
+
+    const result = evaluateMinimumGate(input);
+    const comparisonCheck = result.checks.find(
+      (check) => check.id === "results_artifact_comparison"
+    );
+
+    expect(comparisonCheck?.passed).toBe(passed);
+    if (!passed) {
+      expect(comparisonCheck?.detail).toMatch(/requires (subject|reference) series role/u);
+    }
+  });
+
+  it.each([
+    { name: "missing", unit: undefined },
+    { name: "blank", unit: "   " }
+  ])("fails closed when the paper-facing metric unit is $name", ({ unit }) => {
+    const input = fullInput();
+    setMetricUnit(input.report.results_artifact.metrics[0], unit);
+
+    const result = evaluateMinimumGate(input);
+    const comparisonCheck = result.checks.find(
+      (check) => check.id === "results_artifact_comparison"
+    );
+
+    expect(comparisonCheck?.passed).toBe(false);
+    expect(comparisonCheck?.detail).toContain(
+      "results_artifact.metrics[0].unit must be a non-empty string"
+    );
+    expect(input.report.results_artifact.metrics[0].unit).toBe(unit);
+  });
+
+  it.each([
+    { name: "omitted", primaryComparisonId: undefined, issue: "is required" },
+    { name: "unknown", primaryComparisonId: "comparison-absent", issue: "references unknown comparison id" }
+  ])("does not fall back to the sole comparison when primary_comparison_id is $name", ({
+    primaryComparisonId,
+    issue
+  }) => {
+    const input = fullInput();
+    if (primaryComparisonId === undefined) {
+      delete input.report.primary_comparison_id;
+    } else {
+      input.report.primary_comparison_id = primaryComparisonId;
+    }
+
+    const result = evaluateMinimumGate(input);
+    const comparisonCheck = result.checks.find(
+      (check) => check.id === "results_artifact_comparison"
+    );
+
+    expect(comparisonCheck?.passed).toBe(false);
+    expect(comparisonCheck?.detail).toContain(issue);
   });
 
   it("blocks when no executed result (metrics) exists", () => {
@@ -272,14 +403,15 @@ describe("paperMinimumGate", () => {
     expect(result.checks.find((check) => check.id === "claim_evidence_missing")?.passed).toBe(false);
   });
 
-  it("fails when no results_table row includes both baseline and comparator values", () => {
+  it("does not use historical V1 rows when the V2 artifact has no explicit comparison", () => {
     const input = fullInput();
+    input.report.results_artifact.comparisons = [];
     input.report.results_table = [
       {
-        metric: "accuracy",
-        baseline: null,
+        metric: "outcome_quality",
+        baseline: 0.82,
         comparator: 0.87,
-        delta: null,
+        delta: 0.05,
         direction: "higher_better"
       }
     ];
@@ -287,7 +419,48 @@ describe("paperMinimumGate", () => {
     const result = evaluateMinimumGate(input);
 
     expect(result.passed).toBe(false);
-    expect(result.failed_checks).toContain("results_table_schema");
+    expect(result.failed_checks).toContain("results_artifact_comparison");
+  });
+
+  it("fails closed when a V2 comparison has a dangling observation reference", () => {
+    const input = fullInput();
+    input.report.results_artifact.comparisons[0].subject_observation_id = "observation-missing";
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.failed_checks).toContain("results_artifact_comparison");
+    expect(result.checks.find((check) => check.id === "results_artifact_comparison")?.detail)
+      .toContain("references unknown observation id");
+  });
+
+  it("fails closed when a V2 metric direction is invalid", () => {
+    const input = fullInput();
+    (input.report.results_artifact.metrics[0] as { direction: string }).direction = "sideways";
+
+    const result = evaluateMinimumGate(input);
+
+    expect(result.passed).toBe(false);
+    expect(result.failed_checks).toContain("results_artifact_comparison");
+    expect(result.checks.find((check) => check.id === "results_artifact_comparison")?.detail)
+      .toContain("direction must be higher_better or lower_better");
+  });
+
+  it("fails closed when a V2 delta is nonfinite or inconsistent", () => {
+    const nonfiniteInput = fullInput();
+    nonfiniteInput.report.results_artifact.comparisons[0].delta = Number.NaN;
+    const nonfiniteResult = evaluateMinimumGate(nonfiniteInput);
+
+    const inconsistentInput = fullInput();
+    inconsistentInput.report.results_artifact.comparisons[0].delta = 0.5;
+    const inconsistentResult = evaluateMinimumGate(inconsistentInput);
+
+    expect(nonfiniteResult.failed_checks).toContain("results_artifact_comparison");
+    expect(nonfiniteResult.checks.find((check) => check.id === "results_artifact_comparison")?.detail)
+      .toContain("delta must be a finite number");
+    expect(inconsistentResult.failed_checks).toContain("results_artifact_comparison");
+    expect(inconsistentResult.checks.find((check) => check.id === "results_artifact_comparison")?.detail)
+      .toContain("delta must equal subject value minus reference value");
   });
 
   it("assigns blocked_for_paper_scale when many checks fail", () => {
@@ -358,49 +531,42 @@ describe("paperMinimumGate", () => {
 
   it("blocks paper-scale promotion for tiny one-example gains without repeated seeds", () => {
     const input = fullInput();
-    input.topic = "condition-parameter tuning";
+    input.topic = "bounded configuration tuning";
+    input.report.results_artifact.metrics[0].unit = "ratio";
+    input.report.results_artifact.observations[0].value = 4 / 12;
+    input.report.results_artifact.observations[1].value = 5 / 12;
+    input.report.results_artifact.comparisons[0].delta = 1 / 12;
     input.report.metrics = {
-      accuracy_delta_vs_baseline: 0.083332,
-      summary: {
-        baseline_condition_marker: "baseline_condition",
-        best_condition_marker: "candidate_condition_f5",
-        best_accuracy_delta_vs_baseline: 0.083332
-      },
       run_config: {
-        seed: 17,
         max_steps: 4
       },
-      data: {
-        eval: {
-          benchmark_task_a: { count: 6 },
-          benchmark_task_b: { count: 6 }
-        }
-      },
-      conditions: [
+      condition_results: [
         {
-          marker: "baseline_condition",
-          condition_parameter_x: 8,
-          parameter_y: 0,
-          steps_completed: 4,
-          per_task_metrics: {
-            benchmark_task_a: { correct: 3, total: 6 },
-            benchmark_task_b: { correct: 1, total: 6 }
-          },
-          accuracy_delta_vs_baseline: 0
+          condition_marker: "reference_condition",
+          seeds: [],
+          seed_count: 0,
+          steps_completed: 4
         },
         {
-          marker: "candidate_condition_f5",
-          condition_parameter_x: 32,
-          parameter_y: 0.05,
-          steps_completed: 4,
-          per_task_metrics: {
-            benchmark_task_a: { correct: 3, total: 6 },
-            benchmark_task_b: { correct: 2, total: 6 }
-          },
-          accuracy_delta_vs_baseline: 0.083332
+          condition_marker: "candidate_condition",
+          seeds: [],
+          seed_count: 0,
+          steps_completed: 4
         }
       ]
     };
+    input.report.statistical_summary.confidence_intervals = [
+      {
+        metric_key: "metric-quality",
+        label: "Structured interval",
+        lower: 0.1,
+        upper: 0.7,
+        level: 0.95,
+        sample_size: 12,
+        source: "condition_metrics",
+        summary: "Small-sample interval evidence."
+      }
+    ];
 
     const result = evaluateMinimumGate(input);
 
@@ -427,61 +593,30 @@ describe("paperMinimumGate", () => {
       observed_value: 0.004,
       execution_runs: 2
     };
-    input.report.condition_comparisons = [
-      {
-        id: "candidate_vs_baseline",
-        label: "candidate vs baseline",
-        source: "metrics.condition_results",
-        metrics: [
-          {
-            key: "accuracy_delta_vs_baseline",
-            value: 0.004,
-            primary_value: 0.704,
-            baseline_value: 0.7
-          }
-        ],
-        hypothesis_supported: true,
-        summary: "The candidate has a small positive delta."
-      }
-    ];
+    input.report.results_artifact.metrics[0].unit = "ratio";
+    input.report.results_artifact.observations[0].value = 0.7;
+    input.report.results_artifact.observations[1].value = 0.704;
+    input.report.results_artifact.comparisons[0].delta = 0.004;
     input.report.metrics = {
       run_config: {
         max_steps: 30,
         optimizer_steps: 30,
-        max_train_samples: 60
+        max_train_samples: 60,
+        planned_max_train_samples: 600
       },
       condition_results: [
-        { condition_marker: "baseline_condition", seeds: [], seed_count: 0 },
-        { condition_marker: "candidate_condition_a", seeds: [], seed_count: 0 }
+        { condition_marker: "reference_condition", seeds: [], seed_count: 0 },
+        { condition_marker: "candidate_condition", seeds: [], seed_count: 0 }
       ]
     };
-    input.report.plan_context = {
-      selected_design: {
-        id: "design_a",
-        title: "Paired condition comparison",
-        summary: "Use 600 training examples for each run.",
-        selected_hypothesis_ids: ["hypothesis_a"],
-        metrics: ["accuracy_delta_vs_baseline"],
-        baselines: ["baseline_condition"],
-        implementation_notes: ["Keep the 600 training examples fixed across conditions."],
-        evaluation_steps: ["Execute all 6 planned training runs with planned seeds: 11, 12, 13."],
-        risks: [],
-        resource_notes: ["Expected planned training runs: 2 conditions x 3 seeds = 6 completed runs."]
-      },
-      shortlisted_designs: [],
-      design_notes: [],
-      implementation_notes: [],
-      evaluation_notes: [],
-      assumptions: []
-    };
     input.report.statistical_summary = {
-      total_trials: 2,
+      total_trials: 6,
       executed_trials: 2,
       cached_trials: 0,
       confidence_intervals: [
         {
-          metric_key: "candidate_condition_a.accuracy",
-          label: "candidate accuracy",
+          metric_key: "metric-quality",
+          label: "Candidate outcome interval",
           lower: 0.68,
           upper: 0.73,
           level: 0.95,
@@ -493,8 +628,8 @@ describe("paperMinimumGate", () => {
       stability_metrics: [],
       effect_estimates: [
         {
-          comparison_id: "candidate_vs_baseline",
-          metric_key: "accuracy_delta_vs_baseline",
+          comparison_id: "comparison-quality",
+          metric_key: "metric-quality",
           delta: 0.004,
           direction: "positive",
           summary: "Small positive delta."
@@ -524,13 +659,14 @@ describe("paperMinimumGate", () => {
     expect(result.evaluated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
-  it("accepts condition comparisons as baseline substitute", () => {
+  it("uses the explicit V2 comparison when summary and analysis comparisons are absent", () => {
     const input = fullInput();
     input.presence.baselineSummaryPresent = false;
-    // Still has condition_comparisons from report
+    input.report.condition_comparisons = [];
     const result = evaluateMinimumGate(input);
     const baselineCheck = result.checks.find(c => c.id === "baseline_or_comparator");
     expect(baselineCheck?.passed).toBe(true);
+    expect(baselineCheck?.detail).toContain("comparison-quality");
   });
 
   it("uses condition result seed arrays as repeated-seed evidence", () => {
@@ -539,25 +675,25 @@ describe("paperMinimumGate", () => {
       run_config: { seed: 36 },
       condition_results: [
         {
-          condition_marker: "baseline_condition",
+          condition_marker: "reference_condition",
           seeds: [42, 43, 44],
           seed_count: 3,
           correct_count: 132,
           total_count: 288,
           evaluation: {
-            benchmark_task_a: { correct_count: 69, total_count: 144 },
-            benchmark_task_b: { correct_count: 63, total_count: 144 }
+            validation_partition: { correct_count: 69, total_count: 144 },
+            held_out_partition: { correct_count: 63, total_count: 144 }
           }
         },
         {
-          condition_marker: "candidate_condition_a",
+          condition_marker: "candidate_condition",
           seeds: [42, 43, 44],
           seed_count: 3,
           correct_count: 138,
           total_count: 288,
           evaluation: {
-            benchmark_task_a: { correct_count: 69, total_count: 144 },
-            benchmark_task_b: { correct_count: 69, total_count: 144 }
+            validation_partition: { correct_count: 69, total_count: 144 },
+            held_out_partition: { correct_count: 69, total_count: 144 }
           }
         }
       ]
@@ -571,3 +707,22 @@ describe("paperMinimumGate", () => {
     expect(result.checks.find((check) => check.id === "seed_replication")?.passed).toBe(true);
   });
 });
+
+function setSeriesRole(
+  series: { role?: ResultsSeriesRole },
+  role: ResultsSeriesRole | undefined
+): void {
+  if (role === undefined) {
+    delete series.role;
+    return;
+  }
+  series.role = role;
+}
+
+function setMetricUnit(metric: { unit?: string }, unit: string | undefined): void {
+  if (unit === undefined) {
+    delete metric.unit;
+    return;
+  }
+  metric.unit = unit;
+}

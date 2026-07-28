@@ -412,8 +412,8 @@ describe("diagnostic command transient logs", () => {
       currentNode: "write_paper",
       status: "paused"
     });
-    app.setActiveRunId = vi.fn().mockImplementation(async () => {
-      app.activeRunInsight = {
+    app.activeRunId = "run-1";
+    app.activeRunInsight = {
         title: "Manuscript quality",
         lines: [],
         manuscriptQuality: {
@@ -451,11 +451,12 @@ describe("diagnostic command transient logs", () => {
           ]
         }
       };
-    });
+    app.setActiveRunId = vi.fn();
 
     const result = await app.handleArtifact([]);
 
     expect(result.ok).toBe(true);
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
     expect(app.logs).toContain("Artifact shortcuts for run-1:");
     expect(app.logs).toContain("- Manuscript quality gate: /artifact paper/manuscript_quality_gate.json");
   });
@@ -468,8 +469,8 @@ describe("diagnostic command transient logs", () => {
       currentNode: "review",
       status: "paused"
     });
-    app.setActiveRunId = vi.fn().mockImplementation(async () => {
-      app.activeRunInsight = {
+    app.activeRunId = "run-1";
+    app.activeRunInsight = {
         title: "Review packet",
         lines: [],
         readinessRisks: {
@@ -498,13 +499,66 @@ describe("diagnostic command transient logs", () => {
           ]
         }
       };
-    });
+    app.setActiveRunId = vi.fn();
 
     const result = await app.handleArtifact([]);
 
     expect(result.ok).toBe(true);
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
     expect(app.logs).toContain("Artifact shortcuts for run-1:");
     expect(app.logs).toContain("- Review readiness risks: /artifact review/readiness_risks.json");
+  });
+
+  it("keeps the active mutation target unchanged across explicit read-only run queries", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-read-only-target-"));
+    process.chdir(root);
+    const now = new Date().toISOString();
+    const graph = createDefaultGraphState();
+    graph.currentNode = "analyze_results";
+    const inspectedRun = {
+      version: 3,
+      workflowVersion: 3,
+      id: "run-2",
+      title: "Inspected Run",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric",
+      status: "paused",
+      currentNode: "analyze_results",
+      nodeThreads: {},
+      createdAt: now,
+      updatedAt: now,
+      graph,
+      memoryRefs: {
+        runContextPath: ".autolabos/runs/run-2/memory/run_context.json",
+        longTermPath: ".autolabos/runs/run-2/memory/long_term.jsonl",
+        episodePath: ".autolabos/runs/run-2/memory/episodes.jsonl"
+      }
+    };
+    const app = makeApp();
+    app.activeRunId = "run-1";
+    app.resolveTargetRun = vi.fn().mockResolvedValue(inspectedRun);
+    app.loadRunInsight = vi.fn().mockResolvedValue({
+      title: "Inspected insight",
+      lines: [],
+      readinessRisks: {
+        artifactRefs: [{ label: "Review evidence", path: "review/evidence.json" }]
+      }
+    });
+    app.setActiveRunId = vi.fn();
+
+    const artifactResult = await app.handleArtifact(["--run", "run-2"]);
+    expect(artifactResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+
+    const analysisResult = await app.handleAnalyzeResults(["run-2"]);
+    expect(analysisResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+
+    const statusResult = await app.handleAgent(["status", "run-2"]);
+    expect(statusResult.ok).toBe(true);
+    expect(app.activeRunId).toBe("run-1");
+    expect(app.setActiveRunId).not.toHaveBeenCalled();
   });
 
   it("starts /watch and updates rows when a mock event arrives", async () => {

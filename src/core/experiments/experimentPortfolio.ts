@@ -91,12 +91,6 @@ export interface BuildExperimentRunManifestTrialGroupExecution {
   sampling_profile?: ExperimentPortfolioSamplingProfile;
 }
 
-const DEFAULT_MANAGED_BUNDLE_DATASETS = [
-  "hotpotqa_mini",
-  "gsm8k_mini",
-  "humaneval_mini"
-] as const;
-
 export function buildExperimentPortfolioFromDesign(input: {
   runId: string;
   selectedDesign: ExperimentDesignCandidate;
@@ -168,7 +162,6 @@ export function buildFallbackExperimentPortfolio(input: {
     profile: string;
   }>;
 }): ExperimentPortfolio {
-  const primaryExpectedTrials = input.executionModel === "managed_bundle" ? 48 : undefined;
   const comparisonAxes =
     input.executionModel === "single_run"
       ? ["metric"]
@@ -178,9 +171,8 @@ export function buildFallbackExperimentPortfolio(input: {
     label: input.executionModel === "single_run" ? "Primary experiment run" : "Primary standard run",
     role: "primary",
     profile: input.executionModel === "single_run" ? undefined : "standard",
-    expected_trials: primaryExpectedTrials,
-    dataset_scope:
-      input.executionModel === "managed_bundle" ? [...DEFAULT_MANAGED_BUNDLE_DATASETS] : [],
+    expected_trials: undefined,
+    dataset_scope: [],
     metrics: [],
     baselines: [],
     notes: [
@@ -193,20 +185,12 @@ export function buildFallbackExperimentPortfolio(input: {
       label: humanizeProfileLabel(profile.profile),
       role: "supplemental",
       profile: profile.profile,
-      expected_trials:
-        input.executionModel === "managed_bundle"
-          ? profile.profile === "quick_check"
-            ? 6
-            : profile.profile === "confirmatory"
-              ? 72
-              : undefined
-          : undefined,
-       dataset_scope:
-         input.executionModel === "managed_bundle" ? [...DEFAULT_MANAGED_BUNDLE_DATASETS] : [],
-       metrics: [],
-       baselines: [],
-       notes: [
-         "Auto-generated fallback supplemental group because experiment_portfolio.json was unavailable at execution time."
+      expected_trials: undefined,
+      dataset_scope: [],
+    metrics: [],
+    baselines: [],
+    notes: [
+      "Auto-generated fallback supplemental group because experiment_portfolio.json was unavailable at execution time."
        ]
      })
   );
@@ -223,10 +207,7 @@ export function buildFallbackExperimentPortfolio(input: {
     execution_model: input.executionModel,
     comparison_axes: comparisonAxes,
     primary_trial_group_id: primaryGroup.id,
-    total_expected_trials:
-      input.executionModel === "managed_bundle"
-        ? sumNumbers([primaryExpectedTrials, ...supplementalGroups.map((group) => group.expected_trials)])
-        : undefined,
+    total_expected_trials: undefined,
     trial_groups: trialGroups
   };
 }

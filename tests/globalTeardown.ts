@@ -15,7 +15,16 @@ const validationRoot = process.env.AUTOLABOS_VALIDATION_WORKSPACE_ROOT || getDef
 // Directories and files that must be preserved inside the validation root
 // .autolabos / outputs / output are kept so live TUI validation
 // workspaces survive vitest runs (see LV-027).
-const KEEP = new Set(["smoke", ".env", ".autolabos", "outputs", "output", ".tmp", "live-validation"]);
+const KEEP = new Set([
+  "smoke",
+  ".env",
+  ".autolabos",
+  "outputs",
+  "output",
+  ".tmp",
+  ".live",
+  "live-validation"
+]);
 
 export function shouldPreserveValidationRootEntry(entry: string): boolean {
   return KEEP.has(entry);

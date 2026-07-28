@@ -2,10 +2,11 @@ import path from "node:path";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InMemoryEventStream } from "../src/core/events.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
 import { buildPublicReviewDir, buildPublicRunManifestPath, buildPublicRunOutputDir } from "../src/core/publicArtifacts.js";
@@ -13,10 +14,70 @@ import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
 
+const topicProbeReviewMocks = vi.hoisted(() => ({
+  source: undefined as any,
+  handoff: undefined as any,
+  gate: undefined as any
+}));
+
+vi.mock("../src/core/topicProbeOutcomeArtifacts.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/topicProbeOutcomeArtifacts.js")>();
+  return {
+    ...actual,
+    loadTopicProbeOutcomeArtifacts: (
+      ...args: Parameters<typeof actual.loadTopicProbeOutcomeArtifacts>
+    ) =>
+      topicProbeReviewMocks.source === undefined
+        ? actual.loadTopicProbeOutcomeArtifacts(...args)
+        : Promise.resolve(topicProbeReviewMocks.source)
+  };
+});
+
+vi.mock("../src/core/topicProbeFollowup.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/topicProbeFollowup.js")>();
+  return {
+    ...actual,
+    buildTopicProbeFollowupHandoff: (
+      ...args: Parameters<typeof actual.buildTopicProbeFollowupHandoff>
+    ) =>
+      topicProbeReviewMocks.handoff === undefined
+        ? actual.buildTopicProbeFollowupHandoff(...args)
+        : topicProbeReviewMocks.handoff,
+    validateTopicProbeFollowupHandoff: (
+      ...args: Parameters<typeof actual.validateTopicProbeFollowupHandoff>
+    ) =>
+      topicProbeReviewMocks.handoff === undefined
+        ? actual.validateTopicProbeFollowupHandoff(...args)
+        : { measured: true, valid: true, reasons: [] }
+  };
+});
+
+vi.mock("../src/core/topicProbeReviewGate.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/core/topicProbeReviewGate.js")>();
+  return {
+    ...actual,
+    buildTopicProbeReviewGate: (
+      ...args: Parameters<typeof actual.buildTopicProbeReviewGate>
+    ) =>
+      topicProbeReviewMocks.gate === undefined
+        ? actual.buildTopicProbeReviewGate(...args)
+        : topicProbeReviewMocks.gate,
+    validateTopicProbeReviewGate: (
+      ...args: Parameters<typeof actual.validateTopicProbeReviewGate>
+    ) =>
+      topicProbeReviewMocks.gate === undefined
+        ? actual.validateTopicProbeReviewGate(...args)
+        : { measured: true, valid: true, reasons: [] }
+  };
+});
+
 const ORIGINAL_CWD = process.cwd();
 
 afterEach(() => {
   delete process.env.AUTOLABOS_REVIEW_REFINEMENT_TIMEOUT_MS;
+  topicProbeReviewMocks.source = undefined;
+  topicProbeReviewMocks.handoff = undefined;
+  topicProbeReviewMocks.gate = undefined;
   process.chdir(ORIGINAL_CWD);
 });
 
@@ -69,7 +130,7 @@ function makeRun(runId: string): RunRecord {
     title: "Reviewable run",
     topic: "AI agent automation",
     constraints: [],
-    objectiveMetric: "accuracy at least 0.9",
+    objectiveMetric: "primary_measure at least 0.9",
     status: "running",
     currentNode: "review",
     latestSummary: undefined,
@@ -85,7 +146,437 @@ function makeRun(runId: string): RunRecord {
   };
 }
 
+interface CanonicalResultsFixtureOptions {
+  metricId?: string;
+  metricLabel?: string;
+  subjectSeriesId?: string;
+  subjectLabel?: string;
+  referenceSeriesId?: string;
+  referenceLabel?: string;
+  referenceRole?: ResultsArtifactV2["series"][number]["role"];
+  subjectValue?: number;
+  referenceValue?: number;
+  comparisonId?: string;
+  judgement?: string;
+  includeComparison?: boolean;
+  includePrimaryComparisonId?: boolean;
+  additionalSeries?: ResultsArtifactV2["series"];
+}
+
+function canonicalResultsFixture(
+  options: CanonicalResultsFixtureOptions = {}
+): { results_artifact: ResultsArtifactV2; primary_comparison_id?: string } {
+  const metricId = options.metricId ?? "primary_measure";
+  const subjectSeriesId = options.subjectSeriesId ?? "candidate_series";
+  const referenceSeriesId = options.referenceSeriesId ?? "reference_series";
+  const subjectValue = options.subjectValue ?? 0.91;
+  const referenceValue = options.referenceValue ?? 0.87;
+  const comparisonId = options.comparisonId ?? "declared_primary_comparison";
+  const includeComparison = options.includeComparison ?? true;
+  const artifact: ResultsArtifactV2 = {
+    schema_version: "2.0",
+    metrics: [
+      { id: metricId, label: options.metricLabel ?? "Primary measure", direction: "higher_better", unit: "points" }
+    ],
+    series: [
+      {
+        id: subjectSeriesId,
+        label: options.subjectLabel ?? "Candidate series",
+        role: "primary",
+        dimensions: { arm: "candidate" }
+      },
+      {
+        id: referenceSeriesId,
+        label: options.referenceLabel ?? "Reference series",
+        role: options.referenceRole ?? "baseline",
+        dimensions: { arm: "reference" }
+      },
+      ...(options.additionalSeries ?? [])
+    ],
+    observations: [
+      {
+        id: "candidate_observation",
+        series_id: subjectSeriesId,
+        metric_id: metricId,
+        scope: { partition: "evaluation" },
+        value: subjectValue,
+        evidence_refs: ["metrics.json#/candidate"]
+      },
+      {
+        id: "reference_observation",
+        series_id: referenceSeriesId,
+        metric_id: metricId,
+        scope: { partition: "evaluation" },
+        value: referenceValue,
+        evidence_refs: ["metrics.json#/reference"]
+      }
+    ],
+    comparisons: includeComparison
+      ? [
+          {
+            id: comparisonId,
+            subject_observation_id: "candidate_observation",
+            reference_observation_id: "reference_observation",
+            delta: subjectValue - referenceValue,
+            ...(options.judgement ? { judgement: options.judgement } : {}),
+            evidence_refs: ["metrics.json#/declared_comparison"]
+          }
+        ]
+      : []
+  };
+
+  return {
+    results_artifact: artifact,
+    ...(includeComparison && (options.includePrimaryComparisonId ?? true)
+      ? { primary_comparison_id: comparisonId }
+      : {})
+  };
+}
+
+function reviewAnalysisReportFixture() {
+  return {
+    analysis_version: 1,
+    generated_at: new Date().toISOString(),
+    mean_score: 0.91,
+    metrics: { primary_measure: 0.91 },
+    objective_metric: {
+      raw: "primary_measure at least 0.9",
+      evaluation: { status: "met", summary: "Objective metric met: primary_measure=0.91." },
+      profile: {
+        source: "default",
+        preferred_metric_keys: ["primary_measure"],
+        analysis_focus: [],
+        paper_emphasis: [],
+        assumptions: []
+      }
+    },
+    overview: {
+      objective_status: "met",
+      objective_summary: "Objective metric met: primary_measure=0.91.",
+      execution_runs: 3
+    },
+    plan_context: {
+      selected_design: {
+        id: "declared_design",
+        title: "Declared comparison design",
+        summary: "Evaluate one declared primary comparison.",
+        selected_hypothesis_ids: ["hypothesis_1"],
+        metrics: ["primary_measure"],
+        baselines: ["Reference series"],
+        implementation_notes: [],
+        evaluation_steps: ["run repeated evaluations"],
+        risks: [],
+        resource_notes: []
+      },
+      shortlisted_designs: [],
+      design_notes: [],
+      implementation_notes: [],
+      evaluation_notes: [],
+      assumptions: []
+    },
+    metric_table: [{ key: "primary_measure", value: 0.91 }],
+    ...canonicalResultsFixture({
+      subjectValue: 0.91,
+      referenceValue: 0.87,
+      judgement: "supported"
+    }),
+    execution_summary: { observation_count: 3, commands: [], sources: [], stderr_excerpts: [] },
+    primary_findings: ["The declared primary comparison was executed."],
+    limitations: [],
+    warnings: [],
+    paper_claims: [],
+    figure_specs: [],
+    supplemental_runs: [],
+    external_comparisons: [],
+    statistical_summary: {
+      total_trials: 3,
+      executed_trials: 3,
+      cached_trials: 0,
+      confidence_intervals: [],
+      stability_metrics: [],
+      effect_estimates: [],
+      notes: []
+    },
+    failure_taxonomy: []
+  };
+}
+
 describe("review node", () => {
+  it.each([
+    { caseName: "missing", report: { analysis_version: 1 } },
+    {
+      caseName: "malformed",
+      report: {
+        analysis_version: 1,
+        results_artifact: { schema_version: "2.0", metrics: [], series: [] }
+      }
+    }
+  ])("fails cleanly when canonical results are $caseName", async ({ caseName, report }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-invalid-results-"));
+    process.chdir(root);
+
+    const run = makeRun(`run-review-${caseName}-results`);
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify(report), "utf8");
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("canonical ResultsArtifactV2");
+  });
+
+  it.each([
+    { caseName: "missing", primaryComparisonId: undefined },
+    { caseName: "unknown", primaryComparisonId: "unknown_comparison" }
+  ])("rejects a $caseName explicit primary comparison binding", async ({ caseName, primaryComparisonId }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-primary-binding-"));
+    process.chdir(root);
+
+    const run = makeRun(`run-review-${caseName}-primary-binding`);
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    const report = reviewAnalysisReportFixture();
+    if (primaryComparisonId === undefined) {
+      delete report.primary_comparison_id;
+    } else {
+      report.primary_comparison_id = primaryComparisonId;
+    }
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(report, null, 2),
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("primary_comparison_id");
+    expect(result.error).toContain(
+      primaryComparisonId === undefined ? "is required" : "references unknown comparison id"
+    );
+  });
+
+  it("falls back from a malformed cached report to the parsed disk artifact", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-cache-fallback-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-cache-fallback");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put("analyze_results.last_summary", {
+      results_artifact: { schema_version: "2.0", metrics: [], series: [] }
+    });
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(reviewAnalysisReportFixture(), null, 2),
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation?.targetNode).not.toBe("write_paper");
+  });
+
+  it("fails closed when a topic-discovery run reaches review without its bound probe chain", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-topic-probe-chain-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-topic-probe-chain");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      ["# Research Brief", "", "## Research Mode", "topic_discovery"].join("\n")
+    );
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(reviewAnalysisReportFixture(), null, 2),
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_hypotheses",
+      targetNode: "generate_hypotheses",
+      autoExecutable: true
+    });
+    expect(result.transitionRecommendation?.action).not.toBe("delegate_successor");
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "review", "topic_probe_gate.json"), "utf8")
+    ) as {
+      status: string;
+      paper_drafting_allowed: boolean;
+      reason_codes: string[];
+    };
+    expect(gate.status).toBe("blocked_invalid_artifact_chain");
+    expect(gate.paper_drafting_allowed).toBe(false);
+    expect(gate.reason_codes.length).toBeGreaterThan(0);
+
+    const decision = JSON.parse(
+      await readFile(path.join(runDir, "review", "decision.json"), "utf8")
+    ) as { outcome: string; recommended_transition?: string };
+    expect(decision).toMatchObject({
+      outcome: "backtrack_to_hypotheses",
+      recommended_transition: "backtrack_to_hypotheses"
+    });
+    const findings = await readFile(
+      path.join(runDir, "review", "findings.jsonl"),
+      "utf8"
+    );
+    expect(findings).toContain('"id":"topic_probe:artifact_chain_invalid"');
+    expect(findings).not.toContain('"recommended_transition":"advance"');
+  });
+
+  it("delegates a hash-bound topic-probe successor without a graph target or human pause", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-topic-probe-delegation-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-topic-probe-delegation");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    await memory.put(
+      "run_brief.raw",
+      ["# Research Brief", "", "## Research Mode", "topic_discovery"].join("\n")
+    );
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(reviewAnalysisReportFixture(), null, 2),
+      "utf8"
+    );
+
+    const outcomeHash = "1".repeat(64);
+    const handoffHash = "2".repeat(64);
+    const gateHash = "3".repeat(64);
+    const candidateId = "candidate_controlled_comparison";
+    const topicId = "topic_controlled_comparison";
+    topicProbeReviewMocks.source = {
+      valid: true,
+      reasons: [],
+      portfolio: {
+        candidates: [{
+          source_candidate_id: candidateId,
+          topic_id: topicId
+        }]
+      },
+      contract: {
+        candidate_id: candidateId,
+        topic_id: topicId
+      },
+      decision: {
+        disposition: "promote_to_confirmatory",
+        next_action: "start_confirmatory_run",
+        content_sha256: outcomeHash
+      }
+    };
+    topicProbeReviewMocks.handoff = {
+      evidence_stage: "confirmatory",
+      content_sha256: handoffHash
+    };
+    topicProbeReviewMocks.gate = {
+      status: "followup_required",
+      paper_drafting_allowed: false,
+      reason_codes: [],
+      content_sha256: gateHash
+    };
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "delegate_successor",
+      sourceNode: "review",
+      autoExecutable: true,
+      evidence: [
+        `Outcome SHA-256: ${outcomeHash}`,
+        `Handoff SHA-256: ${handoffHash}`,
+        `Gate SHA-256: ${gateHash}`,
+        "Paper drafting allowed: false"
+      ]
+    });
+    expect(result.transitionRecommendation).not.toHaveProperty("targetNode");
+    expect(result.transitionRecommendation?.action).not.toBe("pause_for_human");
+    expect(result.transitionRecommendation?.suggestedCommands).toEqual([]);
+
+    const decision = await readFile(
+      path.join(runDir, "review", "decision.json"),
+      "utf8"
+    );
+    const findings = await readFile(
+      path.join(runDir, "review", "findings.jsonl"),
+      "utf8"
+    );
+    expect(decision).toContain("machine-governed successor");
+    expect(findings).toContain("machine-governed successor");
+    expect(decision).toContain("parent run remains blocked from paper drafting");
+  });
+
   it("builds a manual review packet from analyze_results artifacts", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-"));
     process.chdir(root);
@@ -95,7 +586,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(
       path.join(runDir, "corpus.jsonl"),
@@ -141,12 +632,12 @@ describe("review node", () => {
     );
     await writeFile(
       path.join(runDir, "baseline_summary.json"),
-      JSON.stringify({ baseline: "baseline_model", accuracy: 0.87 }),
+      JSON.stringify({ baseline: "reference_series", primary_measure: 0.87 }),
       "utf8"
     );
     await writeFile(
       path.join(runDir, "result_table.json"),
-      JSON.stringify({ rows: [{ method: "treatment", accuracy: 0.91 }, { method: "baseline", accuracy: 0.87 }] }),
+      JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }),
       "utf8"
     );
     await writeFile(
@@ -161,16 +652,16 @@ describe("review node", () => {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
           mean_score: 0.91,
-          metrics: { accuracy: 0.91, seeds: [101, 102, 103] },
+          metrics: { primary_measure: 0.91, seeds: [101, 102, 103] },
           objective_metric: {
-            raw: "accuracy at least 0.9",
+            raw: "primary_measure at least 0.9",
             evaluation: {
               status: "met",
-              summary: "Objective metric met: accuracy=0.91 >= 0.9."
+              summary: "Objective metric met: primary_measure=0.91 >= 0.9."
             },
             profile: {
               source: "default",
-              preferred_metric_keys: ["accuracy"],
+              preferred_metric_keys: ["primary_measure"],
               analysis_focus: [],
               paper_emphasis: [],
               assumptions: []
@@ -178,7 +669,7 @@ describe("review node", () => {
           },
           overview: {
             objective_status: "met",
-            objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+            objective_summary: "Objective metric met: primary_measure=0.91 >= 0.9.",
             execution_runs: 1
           },
           plan_context: {
@@ -187,8 +678,8 @@ describe("review node", () => {
               title: "Reviewable plan",
               summary: "Validate the manual review packet flow.",
               selected_hypothesis_ids: ["h_1"],
-              metrics: ["accuracy"],
-              baselines: ["baseline_model"],
+              metrics: ["primary_measure"],
+              baselines: ["reference_series"],
               evaluation_steps: ["run three confirmatory trials", "compare against the baseline"],
               risks: ["limited scope"],
               resource_notes: ["single-machine execution"]
@@ -200,40 +691,24 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
-          results_table: [
-            {
-              metric: "accuracy",
-              baseline: 0.87,
-              comparator: 0.91,
-              delta: 0.04,
-              direction: "higher_better"
-            }
-          ],
-          condition_comparisons: [
-            {
-              id: "treatment_vs_baseline",
-              label: "Treatment vs baseline",
-              metric_key: "accuracy",
-              baseline_value: 0.87,
-              candidate_value: 0.91,
-              delta: 0.04,
-              direction: "higher_is_better",
-              summary: "The treatment outperformed the baseline."
-            }
-          ],
+          ...canonicalResultsFixture({
+            subjectValue: 0.91,
+            referenceValue: 0.87,
+            judgement: "supported"
+          }),
           execution_summary: {
             observation_count: 3,
             commands: [],
             sources: [],
             stderr_excerpts: []
           },
-          primary_findings: ["Accuracy cleared the target threshold."],
+          primary_findings: ["Primary measure cleared the target threshold."],
           limitations: [],
           warnings: [],
           paper_claims: [
             {
-              claim: "The treatment improved the primary metric.",
-              evidence: ["accuracy=0.91"]
+              claim: "The candidate improved the primary metric.",
+              evidence: ["primary_measure=0.91"]
             }
           ],
           figure_specs: [
@@ -241,8 +716,8 @@ describe("review node", () => {
               id: "perf",
               title: "Performance overview",
               path: "figures/performance.svg",
-              metric_keys: ["accuracy"],
-              summary: "Accuracy stayed above target."
+              metric_keys: ["primary_measure"],
+              summary: "Primary measure stayed above target."
             }
           ],
           supplemental_runs: [],
@@ -253,24 +728,24 @@ describe("review node", () => {
             cached_trials: 0,
             confidence_intervals: [
               {
-                metric_key: "accuracy",
-                label: "Accuracy 95% CI",
+                metric_key: "primary_measure",
+                label: "Primary measure 95% CI",
                 lower: 0.89,
                 upper: 0.93,
                 level: 0.95,
-                sample_size: 3,
+                sample_size: 100,
                 source: "metrics",
-                summary: "Accuracy stayed above target across the observed trials."
+                summary: "Primary measure stayed above target across the observed trials."
               }
             ],
-            stability_metrics: [],
+            stability_metrics: [{ key: "evidence.distinct_seed_count", value: 3 }],
             effect_estimates: [
               {
-                comparison_id: "treatment_vs_baseline",
-                metric_key: "accuracy",
+                comparison_id: "declared_primary_comparison",
+                metric_key: "primary_measure",
                 delta: 0.04,
                 direction: "positive",
-                summary: "The treatment outperformed the baseline by +0.04 accuracy."
+                summary: "The candidate outperformed the baseline by +0.04 primary_measure."
               }
             ],
             notes: []
@@ -278,7 +753,7 @@ describe("review node", () => {
           failure_taxonomy: [],
           synthesis: {
             source: "fallback",
-            discussion_points: ["The treatment cleared the target threshold."],
+            discussion_points: ["The candidate cleared the target threshold."],
             failure_analysis: ["No blocking runtime issue remained."],
             follow_up_actions: ["Proceed to paper drafting after review."],
             confidence_statement: "Confidence is high because the objective was met with a grounded result bundle."
@@ -290,7 +765,7 @@ describe("review node", () => {
             reason: "Ready for review before paper writing.",
             confidence: 0.88,
             autoExecutable: true,
-            evidence: ["accuracy reached the configured target."],
+            evidence: ["primary_measure reached the configured target."],
             suggestedCommands: ["/approve"],
             generatedAt: new Date().toISOString()
           }
@@ -438,12 +913,12 @@ describe("review node", () => {
     );
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
-    expect(await memory.get("review.last_summary")).toContain("accuracy=0.91");
+    expect(await memory.get("review.last_summary")).toContain("primary_measure=0.91");
     expect(await memory.get("review.last_decision")).toMatchObject({ outcome: "advance" });
     expect(await memory.get("review.readiness_risks")).toMatchObject({ readiness_state: "paper_ready" });
   });
 
-  it("includes analysis risk signals and current or year-specific ACL surface issues in the review panel prompt context", async () => {
+  it("includes analysis risk signals and current ACL surface issues in the review panel prompt context", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-risk-signals-"));
     process.chdir(root);
 
@@ -453,7 +928,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "analysis"), { recursive: true });
     await mkdir(path.join(runDir, "paper"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(
       path.join(runDir, "result_analysis.json"),
       JSON.stringify(
@@ -461,22 +936,25 @@ describe("review node", () => {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
           mean_score: 0.91,
-          metrics: { accuracy: 0.91 },
+          metrics: { primary_measure: 0.91 },
           objective_metric: {
-            raw: "accuracy at least 0.9",
+            raw: "primary_measure at least 0.9",
             evaluation: { status: "met", summary: "Objective metric met." },
-            profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+            profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
           },
           overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
           plan_context: { shortlisted_designs: [], design_notes: [], implementation_notes: [], evaluation_notes: [], assumptions: [] },
-          metric_table: [{ key: "accuracy", value: 0.91 }],
-          results_table: [{ metric: "accuracy", baseline: 0.87, comparator: 0.91, delta: 0.04, direction: "higher_better" }],
-          condition_comparisons: [],
+          metric_table: [{ key: "primary_measure", value: 0.91 }],
+          ...canonicalResultsFixture({
+            subjectValue: 0.91,
+            referenceValue: 0.87,
+            judgement: "supported"
+          }),
           execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
-          primary_findings: ["Accuracy improved."],
+          primary_findings: ["Primary measure improved."],
           limitations: [],
           warnings: [],
-          paper_claims: [{ claim: "Accuracy improved.", evidence: ["accuracy=0.91"] }],
+          paper_claims: [{ claim: "Primary measure improved.", evidence: ["primary_measure=0.91"] }],
           figure_specs: [],
           supplemental_runs: [],
           external_comparisons: [],
@@ -559,7 +1037,7 @@ describe("review node", () => {
       path.join(runDir, "paper", "main.tex"),
       [
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\noindent\\textbf{Keywords:} method, regularization",
         "\\section{Related Work}",
@@ -573,14 +1051,14 @@ describe("review node", () => {
     );
     llm.prompts = [];
 
-    const yearSpecificResult = await node.execute({ run, graph: run.graph });
+    const explicitStyleResult = await node.execute({ run, graph: run.graph });
 
-    expect(yearSpecificResult.status).toBe("success");
+    expect(explicitStyleResult.status).toBe("success");
     expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_bibliography_style_mismatch"))).toBe(true);
     expect(llm.prompts.some((prompt) => prompt.includes("paper_acl_template_absent_keywords"))).toBe(true);
-    const yearSpecificAclFindings = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
-    expect(yearSpecificAclFindings).toContain("ACL bibliography style mismatch");
-    expect(yearSpecificAclFindings).toContain("Repeated citation bundle");
+    const explicitStyleFindings = await readFile(path.join(runDir, "review", "findings.jsonl"), "utf8");
+    expect(explicitStyleFindings).toContain("ACL bibliography style mismatch");
+    expect(explicitStyleFindings).toContain("Repeated citation bundle");
   });
 
   it("marks missing evidence inputs as blocking", async () => {
@@ -591,7 +1069,7 @@ describe("review node", () => {
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(
       path.join(runDir, "result_analysis.json"),
       `${JSON.stringify(
@@ -599,16 +1077,16 @@ describe("review node", () => {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
           mean_score: 0.91,
-          metrics: { accuracy: 0.91 },
+          metrics: { primary_measure: 0.91 },
           objective_metric: {
-            raw: "accuracy at least 0.9",
+            raw: "primary_measure at least 0.9",
             evaluation: {
               status: "met",
-              summary: "Objective metric met: accuracy=0.91 >= 0.9."
+              summary: "Objective metric met: primary_measure=0.91 >= 0.9."
             },
             profile: {
               source: "default",
-              preferred_metric_keys: ["accuracy"],
+              preferred_metric_keys: ["primary_measure"],
               analysis_focus: [],
               paper_emphasis: [],
               assumptions: []
@@ -616,7 +1094,7 @@ describe("review node", () => {
           },
           overview: {
             objective_status: "met",
-            objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+            objective_summary: "Objective metric met: primary_measure=0.91 >= 0.9.",
             execution_runs: 1
           },
           plan_context: {
@@ -627,14 +1105,14 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
-          condition_comparisons: [],
+          ...canonicalResultsFixture(),
           execution_summary: {
             observation_count: 1,
-            commands: ["python experiment.py"],
+            commands: ["node run_declared_comparison.js"],
             sources: ["local_python"],
             stderr_excerpts: []
           },
-          primary_findings: ["Accuracy cleared the target threshold."],
+          primary_findings: ["Primary measure cleared the target threshold."],
           limitations: [],
           warnings: [],
           paper_claims: [],
@@ -658,7 +1136,7 @@ describe("review node", () => {
             reason: "Ready for review before paper writing.",
             confidence: 0.88,
             autoExecutable: true,
-            evidence: ["accuracy reached the configured target."],
+            evidence: ["primary_measure reached the configured target."],
             suggestedCommands: ["/approve"],
             generatedAt: new Date().toISOString()
           }
@@ -732,23 +1210,23 @@ describe("review node", () => {
 
     const run = makeRun("run-review-scientific-gate");
     run.graph.nodeStates.write_paper.lastError =
-      "write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in strict-paper mode: Abstract, Results, and Conclusion report conflicting aggregate accuracy values. Evidence insufficiency remains in core sections; missing categories: resource measurement.";
+      "write_paper generated manuscript artifacts but stopped before PDF build because the scientific quality gate failed in strict-paper mode: Abstract, Results, and Conclusion report conflicting aggregate primary outcome values. Evidence insufficiency remains in core sections; missing categories: resource measurement.";
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await mkdir(path.join(runDir, "paper"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1", title: "Reviewable Benchmark" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1", summary: "Evidence summary." })}\n`, "utf8");
     await writeFile(path.join(runDir, "evidence_store.jsonl"), `${JSON.stringify({ evidence_id: "ev_1", claim: "Evidence claim." })}\n`, "utf8");
     await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ hypothesis_id: "h_1", text: "Hypothesis.", evidence_links: ["ev_1"] })}\n`, "utf8");
     await writeFile(path.join(runDir, "experiment_plan.yaml"), "selected_design:\n  title: Reviewable plan\n", "utf8");
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition", accuracy: 0.87 }), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "reference_series", primary_measure: 0.87 }), "utf8");
     await writeFile(
       path.join(runDir, "result_table.json"),
-      JSON.stringify({ rows: [{ method: "candidate_condition", accuracy: 0.91 }, { method: "baseline_condition", accuracy: 0.87 }] }),
+      JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }),
       "utf8"
     );
     await writeFile(path.join(runDir, "analyze_papers_richness_summary.json"), JSON.stringify({ readiness: "adequate", paper_count: 5 }), "utf8");
@@ -768,17 +1246,21 @@ describe("review node", () => {
         analysis_version: 1,
         generated_at: new Date().toISOString(),
         mean_score: 0.91,
-        metrics: { accuracy: 0.91 },
+        metrics: { primary_measure: 0.91 },
         objective_metric: {
-          raw: "accuracy at least 0.9",
-          evaluation: { status: "met", summary: "Objective metric met: accuracy=0.91 >= 0.9." },
-          profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+          raw: "primary_measure at least 0.9",
+          evaluation: { status: "met", summary: "Objective metric met: primary_measure=0.91 >= 0.9." },
+          profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
         },
         overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 3 },
         plan_context: { shortlisted_designs: [], design_notes: [], implementation_notes: [], evaluation_notes: [], assumptions: [] },
         metric_table: [],
-        condition_comparisons: [],
-        execution_summary: { observation_count: 3, commands: ["node run_condition_sweep_experiment.js"], sources: ["local_node"], stderr_excerpts: [] },
+        ...canonicalResultsFixture({
+          subjectValue: 0.91,
+          referenceValue: 0.87,
+          judgement: "supported"
+        }),
+        execution_summary: { observation_count: 3, commands: ["node run_declared_comparison.js"], sources: ["local_node"], stderr_excerpts: [] },
         primary_findings: ["Candidate condition exceeded baseline."],
         limitations: ["Resource measurements were not persisted."],
         warnings: [],
@@ -795,7 +1277,7 @@ describe("review node", () => {
           reason: "Ready for review before paper writing.",
           confidence: 0.88,
           autoExecutable: true,
-          evidence: ["accuracy reached the configured target."],
+          evidence: ["primary_measure reached the configured target."],
           suggestedCommands: ["/approve"],
           generatedAt: new Date().toISOString()
         }
@@ -833,7 +1315,7 @@ describe("review node", () => {
     expect(decision.blocking_finding_ids).toEqual(
       expect.arrayContaining([
         "scientific_validation:blocked_by_evidence_insufficiency",
-        "scientific_validation:aggregate_accuracy_conflict"
+        "scientific_validation:aggregate_metric_conflict"
       ])
     );
     expect((decision.required_actions ?? []).join(" ")).toContain("resource measurement");
@@ -851,13 +1333,13 @@ describe("review node", () => {
         expect.objectContaining({
           node: "write_paper",
           priority: "high",
-          diagnostic_ids: expect.arrayContaining(["scientific_validation:aggregate_accuracy_conflict"])
+          diagnostic_ids: expect.arrayContaining(["scientific_validation:aggregate_metric_conflict"])
         })
       ])
     );
   });
 
-  it("keeps explicit baseline names in pre_review_summary when they come from analysis metrics instead of comparison labels", async () => {
+  it("collects baseline labels only from explicit V2 roles, the primary reference, and selected design", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-node-pre-summary-"));
     process.chdir(root);
 
@@ -866,7 +1348,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.08 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.08 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -874,11 +1356,11 @@ describe("review node", () => {
     await writeFile(path.join(runDir, "hypotheses.jsonl"), `${JSON.stringify({ hypothesis_id: "h_1" })}\n`, "utf8");
     await writeFile(
       path.join(runDir, "experiment_plan.yaml"),
-      ['selected_design:', '  title: "Baseline-aware retry"', '  summary: "Retry with the locked baseline comparison."', '  baselines:', '    - "current_best_baseline"'].join("\n"),
+      ['selected_design:', '  title: "Baseline-aware retry"', '  summary: "Retry with the locked baseline comparison."', '  baselines:', '    - "Design reference"'].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "current_best_baseline" }, null, 2), "utf8");
-    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ summary: "baseline vs treatment" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ reference_series_id: "primary_reference_series" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }, null, 2), "utf8");
     await mkdir(path.join(runDir, "paper"), { recursive: true });
     await writeFile(
       path.join(runDir, "paper", "compiled_page_validation.json"),
@@ -901,27 +1383,27 @@ describe("review node", () => {
           generated_at: new Date().toISOString(),
           mean_score: 3.1,
           metrics: {
-            accuracy_delta_vs_baseline: -0.25,
+            primary_measure: -0.25,
             comparison_contract: {
               baseline_binding: {
-                source_arm_name: "fixed_cot_256"
+                source_arm_name: "ad_hoc_metric_reference"
               }
             },
-            current_best_baseline: {
-              arm_name: "current_best_baseline",
-              accuracy: 0.333333
+            declared_metric_decoy: {
+              arm_name: "ad_hoc_metric_reference",
+              primary_measure: 0.333333
             }
           },
           objective_metric: {
-            raw: "accuracy_delta_vs_baseline",
+            raw: "primary_measure",
             evaluation: {
               status: "not_met",
-              summary: "Objective metric not met: accuracy_delta_vs_baseline=-0.25 does not satisfy > 0."
+              summary: "Objective metric not met: primary_measure=-0.25 does not satisfy > 0."
             },
             profile: {
               source: "llm",
-              primary_metric: "accuracy_delta_vs_baseline",
-              preferred_metric_keys: ["accuracy_delta_vs_baseline"],
+              primary_metric: "primary_measure",
+              preferred_metric_keys: ["primary_measure"],
               analysis_focus: [],
               paper_emphasis: [],
               assumptions: []
@@ -929,7 +1411,7 @@ describe("review node", () => {
           },
           overview: {
             objective_status: "not_met",
-            objective_summary: "Objective metric not met: accuracy_delta_vs_baseline=-0.25 does not satisfy > 0.",
+            objective_summary: "Objective metric not met: primary_measure=-0.25 does not satisfy > 0.",
             execution_runs: 1
           },
           plan_context: {
@@ -938,8 +1420,8 @@ describe("review node", () => {
               title: "Baseline-aware retry",
               summary: "Retry with the locked baseline comparison.",
               selected_hypothesis_ids: ["h_1"],
-              metrics: ["accuracy_delta_vs_baseline"],
-              baselines: ["current_best_baseline"],
+              metrics: ["primary_measure"],
+              baselines: ["Design reference"],
               evaluation_steps: ["rerun against the locked baseline"],
               risks: ["still only one repeat"],
               resource_notes: ["bounded local run"]
@@ -951,14 +1433,29 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
-          condition_comparisons: [],
+          ...canonicalResultsFixture({
+            subjectValue: 0.08,
+            referenceValue: 0.333333,
+            judgement: "not_supported",
+            referenceSeriesId: "primary_reference_series",
+            referenceLabel: "Primary reference",
+            referenceRole: "baseline",
+            additionalSeries: [
+              {
+                id: "declared_baseline_series",
+                label: "Declared baseline series",
+                role: "baseline",
+                dimensions: { source: "declared_role" }
+              }
+            ]
+          }),
           execution_summary: {
             observation_count: 1,
-            commands: ["python run.py"],
+            commands: ["node run_declared_comparison.js"],
             sources: ["local_python"],
             stderr_excerpts: []
           },
-          primary_findings: ["The treatment underperformed the baseline."],
+          primary_findings: ["The candidate underperformed the baseline."],
           limitations: [],
           warnings: [],
           paper_claims: [],
@@ -967,8 +1464,8 @@ describe("review node", () => {
               id: "perf",
               title: "Performance overview",
               path: "figures/performance.svg",
-              metric_keys: ["accuracy_delta_vs_baseline"],
-              summary: "The treatment underperformed the baseline."
+              metric_keys: ["primary_measure"],
+              summary: "The candidate underperformed the baseline."
             }
           ],
           supplemental_runs: [],
@@ -985,7 +1482,7 @@ describe("review node", () => {
           failure_taxonomy: [],
           synthesis: {
             source: "fallback",
-            discussion_points: ["The treatment underperformed the baseline."],
+            discussion_points: ["The candidate underperformed the baseline."],
             failure_analysis: ["Revise the design before another run."],
             follow_up_actions: ["Backtrack to design."],
             confidence_statement: "Confidence is limited because only one bounded run exists."
@@ -997,7 +1494,7 @@ describe("review node", () => {
             reason: "Review the bounded negative result before the next retry.",
             confidence: 0.8,
             autoExecutable: true,
-            evidence: ["accuracy_delta_vs_baseline=-0.25"],
+            evidence: ["primary_measure=-0.25"],
             suggestedCommands: ["/approve"],
             generatedAt: new Date().toISOString()
           }
@@ -1034,8 +1531,12 @@ describe("review node", () => {
         main_page_limit: number;
       };
     };
-    expect(preReview.baseline).toContain("current_best_baseline");
-    expect(preReview.baseline).toContain("fixed_cot_256");
+    expect(preReview.baseline).toContain("Design reference");
+    expect(preReview.baseline).toContain("Primary reference");
+    expect(preReview.baseline).toContain("primary_reference_series");
+    expect(preReview.baseline).toContain("Declared baseline series");
+    expect(preReview.baseline).toContain("declared_baseline_series");
+    expect(preReview.baseline).not.toContain("ad_hoc_metric_reference");
     expect(preReview.prior_compiled_page_validation).toMatchObject({
       status: "warn",
       compiled_pdf_page_count: 3,
@@ -1057,7 +1558,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.62 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.62 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -1075,16 +1576,16 @@ describe("review node", () => {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
           mean_score: 0.62,
-          metrics: { accuracy: 0.62 },
+          metrics: { primary_measure: 0.62 },
           objective_metric: {
-            raw: "accuracy at least 0.9",
+            raw: "primary_measure at least 0.9",
             evaluation: {
               status: "not_met",
-              summary: "Objective metric not met: accuracy=0.62 < 0.9."
+              summary: "Objective metric not met: primary_measure=0.62 < 0.9."
             },
             profile: {
               source: "default",
-              preferred_metric_keys: ["accuracy"],
+              preferred_metric_keys: ["primary_measure"],
               analysis_focus: [],
               paper_emphasis: [],
               assumptions: []
@@ -1092,7 +1593,7 @@ describe("review node", () => {
           },
           overview: {
             objective_status: "not_met",
-            objective_summary: "Objective metric not met: accuracy=0.62 < 0.9.",
+            objective_summary: "Objective metric not met: primary_measure=0.62 < 0.9.",
             execution_runs: 1
           },
           plan_context: {
@@ -1101,8 +1602,8 @@ describe("review node", () => {
               title: "Unsupported hypothesis plan",
               summary: "Validate a brittle claim.",
               selected_hypothesis_ids: ["h_1"],
-              metrics: ["accuracy"],
-              baselines: ["baseline_model"],
+              metrics: ["primary_measure"],
+              baselines: ["reference_series"],
               evaluation_steps: ["run three confirmatory trials", "compare against the baseline"],
               risks: [],
               resource_notes: []
@@ -1114,26 +1615,14 @@ describe("review node", () => {
             assumptions: []
           },
           metric_table: [],
-          condition_comparisons: [
-            {
-              id: "treatment_vs_baseline",
-              label: "Treatment vs baseline",
-              source: "metrics.comparison",
-              metrics: [
-                {
-                  key: "accuracy",
-                  primary_value: 0.62,
-                  baseline_value: 0.71,
-                  value: -0.09
-                }
-              ],
-              hypothesis_supported: false,
-              summary: "The treatment underperformed the baseline and did not support the hypothesis."
-            }
-          ],
+          ...canonicalResultsFixture({
+            subjectValue: 0.62,
+            referenceValue: 0.71,
+            judgement: "not_supported"
+          }),
           execution_summary: {
             observation_count: 3,
-            commands: ["python experiment.py"],
+            commands: ["node run_declared_comparison.js"],
             sources: ["local_python"],
             stderr_excerpts: []
           },
@@ -1142,8 +1631,8 @@ describe("review node", () => {
           warnings: [],
           paper_claims: [
             {
-              claim: "The treatment improved the primary metric.",
-              evidence: ["accuracy=0.62"]
+              claim: "The candidate improved the primary metric.",
+              evidence: ["primary_measure=0.62"]
             }
           ],
           figure_specs: [
@@ -1151,8 +1640,8 @@ describe("review node", () => {
               id: "perf",
               title: "Performance overview",
               path: "figures/performance.svg",
-              metric_keys: ["accuracy"],
-              summary: "Accuracy fell below the target."
+              metric_keys: ["primary_measure"],
+              summary: "Primary measure fell below the target."
             }
           ],
           supplemental_runs: [],
@@ -1163,24 +1652,24 @@ describe("review node", () => {
             cached_trials: 0,
             confidence_intervals: [
               {
-                metric_key: "accuracy",
-                label: "Accuracy 95% CI",
+                metric_key: "primary_measure",
+                label: "Primary measure 95% CI",
                 lower: 0.58,
                 upper: 0.66,
                 level: 0.95,
                 sample_size: 3,
                 source: "metrics",
-                summary: "Accuracy remained below the objective range across confirmatory trials."
+                summary: "Primary measure remained below the objective range across confirmatory trials."
               }
             ],
             stability_metrics: [],
             effect_estimates: [
               {
-                comparison_id: "treatment_vs_baseline",
-                metric_key: "accuracy",
+                comparison_id: "declared_primary_comparison",
+                metric_key: "primary_measure",
                 delta: -0.09,
                 direction: "negative",
-                summary: "The treatment underperformed the baseline by -0.09 accuracy."
+                summary: "The candidate underperformed the baseline by -0.09 primary_measure."
               }
             ],
             notes: []
@@ -1189,7 +1678,7 @@ describe("review node", () => {
           synthesis: {
             source: "fallback",
             discussion_points: ["The current hypothesis is not supported."],
-            failure_analysis: ["The treatment underperformed the baseline."],
+            failure_analysis: ["The candidate underperformed the baseline."],
             follow_up_actions: ["Revisit the hypothesis set before drafting any paper claims."],
             confidence_statement: "Confidence is moderate because the unsupported comparison is consistent across confirmatory trials."
           },
@@ -1200,7 +1689,7 @@ describe("review node", () => {
             reason: "Current experiment outcomes do not support the shortlisted hypothesis, so the idea set should be revisited.",
             confidence: 0.93,
             autoExecutable: true,
-            evidence: ["The treatment did not support the shortlisted hypothesis."],
+            evidence: ["The candidate did not support the shortlisted hypothesis."],
             suggestedCommands: ["/agent jump generate_hypotheses", "/agent run generate_hypotheses"],
             generatedAt: new Date().toISOString()
           }
@@ -1244,21 +1733,25 @@ describe("review node", () => {
     const runDir = path.join(root, ".autolabos", "runs", run.id);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({
       analysis_version: 1,
       generated_at: new Date().toISOString(),
       mean_score: 0.91,
-      metrics: { accuracy: 0.91 },
+      metrics: { primary_measure: 0.91 },
       objective_metric: {
-        raw: "accuracy at least 0.9",
+        raw: "primary_measure at least 0.9",
         evaluation: { status: "met", summary: "Objective metric met." },
-        profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
       },
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
       plan_context: { shortlisted_designs: [], design_notes: [], implementation_notes: [], evaluation_notes: [], assumptions: [] },
       metric_table: [],
-      condition_comparisons: [],
+      ...canonicalResultsFixture({
+        subjectValue: 0.91,
+        referenceValue: 0.87,
+        judgement: "supported"
+      }),
       execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
       primary_findings: [],
       limitations: [],
@@ -1276,7 +1769,7 @@ describe("review node", () => {
         reason: "Ready for review.",
         confidence: 0.8,
         autoExecutable: true,
-        evidence: ["accuracy reached the configured target."],
+        evidence: ["primary_measure reached the configured target."],
         suggestedCommands: ["/approve"],
         generatedAt: new Date().toISOString()
       }
@@ -1297,7 +1790,10 @@ describe("review node", () => {
 
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
-    expect(result.transitionRecommendation).toBeDefined();
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_design",
+      targetNode: "design_experiments"
+    });
     expect(eventStream.history()).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -1319,7 +1815,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.91 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -1334,11 +1830,11 @@ describe("review node", () => {
       analysis_version: 1,
       generated_at: new Date().toISOString(),
       mean_score: 0.91,
-      metrics: { accuracy: 0.91 },
+      metrics: { primary_measure: 0.91 },
       objective_metric: {
-        raw: "accuracy at least 0.9",
+        raw: "primary_measure at least 0.9",
         evaluation: { status: "met", summary: "Objective metric met." },
-        profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
       },
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 3 },
       plan_context: {
@@ -1347,8 +1843,8 @@ describe("review node", () => {
           title: "Review repair plan",
           summary: "Validate truncated review JSON repair.",
           selected_hypothesis_ids: ["h_1"],
-          metrics: ["accuracy"],
-          baselines: ["baseline_model"],
+          metrics: ["primary_measure"],
+          baselines: ["reference_series"],
           evaluation_steps: ["run and verify"],
           risks: [],
           resource_notes: []
@@ -1360,13 +1856,17 @@ describe("review node", () => {
         assumptions: []
       },
       metric_table: [],
-      condition_comparisons: [],
+      ...canonicalResultsFixture({
+        subjectValue: 0.91,
+        referenceValue: 0.87,
+        judgement: "supported"
+      }),
       execution_summary: { observation_count: 3, commands: [], sources: [], stderr_excerpts: [] },
-      primary_findings: ["Accuracy cleared the target threshold."],
+      primary_findings: ["Primary measure cleared the target threshold."],
       limitations: [],
       warnings: [],
-      paper_claims: [{ claim: "The treatment improved the primary metric.", evidence: ["accuracy=0.91"] }],
-      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["accuracy"], summary: "Accuracy stayed above target." }],
+      paper_claims: [{ claim: "The candidate improved the primary metric.", evidence: ["primary_measure=0.91"] }],
+      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["primary_measure"], summary: "Primary measure stayed above target." }],
       supplemental_runs: [],
       external_comparisons: [],
       statistical_summary: {
@@ -1386,7 +1886,7 @@ describe("review node", () => {
         reason: "Ready for review.",
         confidence: 0.8,
         autoExecutable: true,
-        evidence: ["accuracy reached the configured target."],
+        evidence: ["primary_measure reached the configured target."],
         suggestedCommands: ["/approve"],
         generatedAt: new Date().toISOString()
       }
@@ -1429,7 +1929,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy_delta_vs_baseline: 0.0448 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.0448 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -1441,26 +1941,23 @@ describe("review node", () => {
         "selected_design:",
         "  title: Full-grid repeated-seed condition validation",
         "  baselines:",
-        "    - baseline_condition",
+        "    - reference_series",
         "  evaluation_steps:",
         "    - run five seeds per condition"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition" }, null, 2), "utf8");
-    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({
-      conditions: [{ name: "candidate_condition_f5_vs_baseline_condition", metrics: { accuracy_delta_vs_baseline_mean: 0.0667 } }],
-      comparisons: [{ primary: "candidate_condition_f5", baseline: "baseline_condition", metric: "accuracy_delta_vs_baseline_mean", delta: 0.0667 }]
-    }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "reference_series" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({
       analysis_version: 1,
       generated_at: new Date().toISOString(),
       mean_score: 25,
-      metrics: { accuracy_delta_vs_baseline: 0.0448, seeds: [101, 102, 103, 104, 105] },
+      metrics: { primary_measure: 0.0448, seeds: [101, 102, 103, 104, 105] },
       objective_metric: {
-        raw: "accuracy_delta_vs_baseline >= 0.01",
+        raw: "primary_measure >= 0.01",
         evaluation: { status: "met", summary: "Objective metric met." },
-        profile: { source: "default", preferred_metric_keys: ["accuracy_delta_vs_baseline"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
       },
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 25 },
       plan_context: {
@@ -1469,8 +1966,8 @@ describe("review node", () => {
           title: "Full-grid repeated-seed condition validation",
           summary: "Validate repeated-seed configuration comparison.",
           selected_hypothesis_ids: ["h_1"],
-          metrics: ["accuracy_delta_vs_baseline"],
-          baselines: ["baseline_condition"],
+          metrics: ["primary_measure"],
+          baselines: ["reference_series"],
           evaluation_steps: ["run five seeds per condition"],
           risks: ["The small backbone may make the effect unstable."],
           resource_notes: []
@@ -1481,33 +1978,27 @@ describe("review node", () => {
         evaluation_notes: [],
         assumptions: []
       },
-      metric_table: [{ key: "accuracy_delta_vs_baseline", value: 0.0448 }],
-      results_table: [
-        { metric: "accuracy_delta_vs_baseline_mean", baseline: 0, comparator: 0.0667, delta: 0.0667, direction: "higher_better" }
-      ],
-      condition_comparisons: [{
-        id: "candidate_condition_f5_vs_baseline_condition",
-        label: "candidate condition b vs baseline condition",
-        source: "metrics.condition_summaries",
-        metrics: [{ key: "accuracy_delta_vs_baseline_mean", value: 0.0667, primary_value: 0.0667, baseline_value: 0 }],
-        hypothesis_supported: true,
-        summary: "candidate condition improves mean delta by 0.0667."
-      }],
+      metric_table: [{ key: "primary_measure", value: 0.0448 }],
+      ...canonicalResultsFixture({
+        subjectValue: 0.0667,
+        referenceValue: 0,
+        judgement: "supported"
+      }),
       execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
       primary_findings: ["Selected design was analyzed with 25 executed trial(s)."],
       limitations: ["The small backbone may make the effect unstable."],
       warnings: [],
-      paper_claims: [{ claim: "The strongest condition improved mean accuracy over baseline.", evidence: ["result_table.json"] }],
-      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["accuracy_delta_vs_baseline"], summary: "Mean delta." }],
+      paper_claims: [{ claim: "The strongest condition improved mean primary_measure over baseline.", evidence: ["result_analysis.json#/results_artifact/comparisons/0"] }],
+      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["primary_measure"], summary: "Mean delta." }],
       supplemental_runs: [],
       external_comparisons: [],
       statistical_summary: {
         total_trials: 25,
         executed_trials: 25,
         cached_trials: 0,
-        confidence_intervals: [{ metric_key: "accuracy_delta_vs_baseline", label: "delta", lower: 0.002, upper: 0.13, level: 0.95, source: "metrics", summary: "95% CI." }],
-        stability_metrics: [],
-        effect_estimates: [{ comparison_id: "candidate_condition_f5_vs_baseline_condition", metric_key: "accuracy_delta_vs_baseline_mean", delta: 0.0667, direction: "positive", summary: "mean delta 0.0667." }],
+        confidence_intervals: [{ metric_key: "primary_measure", label: "delta", lower: 0.002, upper: 0.13, level: 0.95, sample_size: 100, source: "metrics", summary: "95% CI." }],
+        stability_metrics: [{ key: "evidence.distinct_seed_count", value: 5 }],
+        effect_estimates: [{ comparison_id: "declared_primary_comparison", metric_key: "primary_measure", delta: 0.0667, direction: "positive", summary: "mean delta 0.0667." }],
         notes: []
       },
       failure_taxonomy: [{
@@ -1569,7 +2060,7 @@ describe("review node", () => {
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(path.join(runDir, "figures"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy_delta_vs_baseline: 0.0625 }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_measure: 0.0625 }, null, 2), "utf8");
     await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>\n", "utf8");
     await writeFile(path.join(runDir, "corpus.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
     await writeFile(path.join(runDir, "paper_summaries.jsonl"), `${JSON.stringify({ paper_id: "paper_1" })}\n`, "utf8");
@@ -1581,25 +2072,23 @@ describe("review node", () => {
         "selected_design:",
         "  title: Single-run configuration validation",
         "  baselines:",
-        "    - baseline_condition",
+        "    - reference_series",
         "  evaluation_steps:",
         "    - run one bounded local trial"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "baseline_condition" }, null, 2), "utf8");
-    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify([
-      { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
-    ], null, 2), "utf8");
+    await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "reference_series" }, null, 2), "utf8");
+    await writeFile(path.join(runDir, "result_table.json"), JSON.stringify({ artifact_ref: "result_analysis.json#/results_artifact" }, null, 2), "utf8");
     await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({
       analysis_version: 1,
       generated_at: new Date().toISOString(),
       mean_score: 25,
-      metrics: { accuracy_delta_vs_baseline: 0.0625, completed_condition_count: 8 },
+      metrics: { primary_measure: 0.0625, completed_condition_count: 8 },
       objective_metric: {
-        raw: "accuracy_delta_vs_baseline >= 0.01",
+        raw: "primary_measure >= 0.01",
         evaluation: { status: "met", summary: "Objective metric met." },
-        profile: { source: "default", preferred_metric_keys: ["accuracy_delta_vs_baseline"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+        profile: { source: "default", preferred_metric_keys: ["primary_measure"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
       },
       overview: { objective_status: "met", objective_summary: "Objective metric met.", execution_runs: 1 },
       plan_context: {
@@ -1608,8 +2097,8 @@ describe("review node", () => {
           title: "Single-run configuration validation",
           summary: "Validate a bounded local configuration comparison.",
           selected_hypothesis_ids: ["h_1"],
-          metrics: ["accuracy_delta_vs_baseline"],
-          baselines: ["baseline_condition"],
+          metrics: ["primary_measure"],
+          baselines: ["reference_series"],
           evaluation_steps: ["run one bounded local trial"],
           risks: ["Specification may be underspecified and require narrower scope."],
           resource_notes: []
@@ -1620,33 +2109,27 @@ describe("review node", () => {
         evaluation_notes: [],
         assumptions: []
       },
-      metric_table: [{ key: "accuracy_delta_vs_baseline", value: 0.0625 }],
-      results_table: [
-        { metric: "accuracy_delta_vs_baseline", baseline: 0, comparator: 0.0625, delta: 0.0625, direction: "higher_better" }
-      ],
-      condition_comparisons: [{
-        id: "candidate_condition_a_vs_baseline_condition",
-        label: "candidate condition c vs baseline condition",
-        source: "metrics.condition_results",
-        metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.0625, primary_value: 0.0625, baseline_value: 0 }],
-        hypothesis_supported: true,
-        summary: "alternate candidate improves delta by 0.0625."
-      }],
+      metric_table: [{ key: "primary_measure", value: 0.0625 }],
+      ...canonicalResultsFixture({
+        subjectValue: 0.0625,
+        referenceValue: 0,
+        judgement: "supported"
+      }),
       execution_summary: { observation_count: 1, commands: [], sources: [], stderr_excerpts: [] },
       primary_findings: ["Selected design was analyzed with 1 executed trial."],
       limitations: ["Only one observed execution was recorded."],
       warnings: [],
-      paper_claims: [{ claim: "The strongest condition improved mean accuracy over baseline.", evidence: ["result_table.json"] }],
-      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["accuracy_delta_vs_baseline"], summary: "Delta." }],
+      paper_claims: [{ claim: "The strongest condition improved mean primary_measure over baseline.", evidence: ["result_analysis.json#/results_artifact/comparisons/0"] }],
+      figure_specs: [{ id: "perf", title: "Performance overview", path: "figures/performance.svg", metric_keys: ["primary_measure"], summary: "Delta." }],
       supplemental_runs: [],
       external_comparisons: [],
       statistical_summary: {
         total_trials: 1,
         executed_trials: 1,
         cached_trials: 0,
-        confidence_intervals: [{ metric_key: "condition_results.candidate_condition_a.average_accuracy", label: "delta", lower: 0.28, upper: 0.72, level: 0.95, sample_size: 16, source: "condition_metrics", summary: "95% CI." }],
+        confidence_intervals: [{ metric_key: "condition_results.candidate_series.average_primary_measure", label: "delta", lower: 0.28, upper: 0.72, level: 0.95, sample_size: 16, source: "condition_metrics", summary: "95% CI." }],
         stability_metrics: [],
-        effect_estimates: [{ comparison_id: "candidate_condition_a_vs_baseline_condition", metric_key: "accuracy_delta_vs_baseline", delta: 0.0625, direction: "positive", summary: "delta 0.0625." }],
+        effect_estimates: [{ comparison_id: "declared_primary_comparison", metric_key: "primary_measure", delta: 0.0625, direction: "positive", summary: "delta 0.0625." }],
         notes: []
       },
       failure_taxonomy: [{

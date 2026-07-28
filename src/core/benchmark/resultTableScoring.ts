@@ -1,5 +1,8 @@
 import {
+  validateResultsArtifactV2,
   validateResultsTableSchema,
+  type ResultsArtifactV2,
+  type ResultsTableDirection,
   type ResultsTableSchema
 } from "../analysis/resultsTableSchema.js";
 
@@ -25,50 +28,183 @@ export interface ResultTableScore {
   issues: ResultTableScoringIssue[];
 }
 
-export function scoreResultTableArtifact(value: unknown, authorization: {
+interface ResultTableClaimAuthorization {
   comparativeClaimAuthorized?: boolean;
   superiorityClaimAuthorized?: boolean;
   superiorityPrimaryMetrics?: readonly string[];
-} = {}): ResultTableScore {
-  const normalized = normalizeResultTableArtifact(value);
-  const validation = validateResultsTableSchema(normalized.value);
-  const rows = validation.rows;
-  const issues: ResultTableScoringIssue[] = [
-    ...normalized.issues,
-    ...validation.issues.map((message) => ({
-      code: "result_table_schema_invalid",
-      row_index: extractRowIndex(message),
-      message
-    }))
-  ];
+  primaryComparisonId?: string;
+}
 
-  if (!Array.isArray(normalized.value)) {
-    return {
-      measured: false,
-      valid_schema: false,
-      row_count: 0,
-      complete_row_count: 0,
-      missing_metric_count: 0,
-      missing_baseline_count: 0,
-      missing_comparator_count: 0,
-      missing_delta_count: 0,
-      comparator_coverage: null,
-      comparative_claim_supported: false,
-      superiority_claim_supported: false,
-      issues
-    };
+interface CanonicalComparisonRow {
+  comparisonId: string;
+  metricId: string;
+  direction: ResultsTableDirection;
+  observedDelta: number;
+}
+
+export function scoreResultTableArtifact(
+  value: unknown,
+  authorization: ResultTableClaimAuthorization = {}
+): ResultTableScore {
+  if (Array.isArray(value)) {
+    return scoreHistoricalV1Rows(value, authorization);
   }
+  return scoreCanonicalV2Artifact(value, authorization);
+}
+
+function scoreCanonicalV2Artifact(
+  value: unknown,
+  authorization: ResultTableClaimAuthorization
+): ResultTableScore {
+  const validation = validateResultsArtifactV2(value);
+  const validationIssues = validation.issues.map((message) => ({
+    code: "result_table_schema_invalid",
+    row_index: extractRowIndex(message),
+    message
+  }));
+
+  if (!validation.valid) {
+    return unmeasuredScore(false, validationIssues);
+  }
+
+  const artifact = value as ResultsArtifactV2;
+  const resolved = resolveCanonicalComparisonRows(artifact);
+  if (resolved.issues.length > 0) {
+    return unmeasuredScore(false, resolved.issues);
+  }
+
+  const rows = resolved.rows;
+  const primaryMetricIds = new Set(
+    (authorization.superiorityPrimaryMetrics ?? [])
+      .map((metricId) => metricId.trim())
+      .filter(Boolean)
+  );
+  const primaryComparisonId = authorization.primaryComparisonId?.trim();
+  const primaryComparison = primaryComparisonId
+    ? rows.find((row) => row.comparisonId === primaryComparisonId)
+    : undefined;
+  const claimSelectionIssues: ResultTableScoringIssue[] = [];
+  if (authorization.comparativeClaimAuthorized === true && !primaryComparisonId) {
+    claimSelectionIssues.push({
+      code: "result_table_primary_comparison_missing",
+      row_index: null,
+      message: "Canonical V2 comparative claims require an explicit primaryComparisonId bound from ResultsPlanV2.primary_comparison_id."
+    });
+  } else if (primaryComparisonId && !primaryComparison) {
+    claimSelectionIssues.push({
+      code: "result_table_primary_comparison_invalid",
+      row_index: null,
+      message: `The explicit primaryComparisonId "${primaryComparisonId}" does not resolve to a ResultsArtifactV2 comparison.`
+    });
+  }
+  const favorablePrimaryComparisonPresent = Boolean(
+    primaryComparison
+    && primaryMetricIds.has(primaryComparison.metricId)
+    && (primaryComparison.direction === "higher_better"
+      ? primaryComparison.observedDelta > 0
+      : primaryComparison.observedDelta < 0)
+  );
+  const comparativeClaimSupported =
+    rows.length > 0
+    && authorization.comparativeClaimAuthorized === true
+    && primaryComparison !== undefined;
+
+  return {
+    measured: rows.length > 0,
+    valid_schema: true,
+    row_count: rows.length,
+    complete_row_count: rows.length,
+    missing_metric_count: 0,
+    missing_baseline_count: 0,
+    missing_comparator_count: 0,
+    missing_delta_count: 0,
+    comparator_coverage: rows.length > 0 ? 1 : null,
+    comparative_claim_supported: comparativeClaimSupported,
+    superiority_claim_supported:
+      comparativeClaimSupported
+      && authorization.superiorityClaimAuthorized === true
+      && primaryMetricIds.size > 0
+      && favorablePrimaryComparisonPresent,
+    issues: claimSelectionIssues
+  };
+}
+
+function resolveCanonicalComparisonRows(artifact: ResultsArtifactV2): {
+  rows: CanonicalComparisonRow[];
+  issues: ResultTableScoringIssue[];
+} {
+  const metricsById = new Map(artifact.metrics.map((metric) => [metric.id, metric]));
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation])
+  );
+  const rows: CanonicalComparisonRow[] = [];
+  const issues: ResultTableScoringIssue[] = [];
+
+  artifact.comparisons.forEach((comparison, index) => {
+    const subject = observationsById.get(comparison.subject_observation_id);
+    const reference = observationsById.get(comparison.reference_observation_id);
+    if (!subject || !reference) {
+      issues.push({
+        code: "result_table_comparison_reference_invalid",
+        row_index: index,
+        message: `results_artifact.comparisons[${index}] must reference one explicit subject observation and one explicit reference observation.`
+      });
+      return;
+    }
+    if (subject.metric_id !== reference.metric_id) {
+      issues.push({
+        code: "result_table_comparison_reference_invalid",
+        row_index: index,
+        message: `results_artifact.comparisons[${index}] must reference observations for one explicit metric id.`
+      });
+      return;
+    }
+
+    const metric = metricsById.get(subject.metric_id);
+    if (!metric) {
+      issues.push({
+        code: "result_table_comparison_reference_invalid",
+        row_index: index,
+        metric: subject.metric_id,
+        message: `results_artifact.comparisons[${index}] references undefined metric id "${subject.metric_id}".`
+      });
+      return;
+    }
+
+    rows.push({
+      comparisonId: comparison.id,
+      metricId: metric.id,
+      direction: metric.direction,
+      observedDelta: subject.value - reference.value
+    });
+  });
+
+  return { rows, issues };
+}
+
+function scoreHistoricalV1Rows(
+  value: unknown[],
+  authorization: ResultTableClaimAuthorization
+): ResultTableScore {
+  const validation = validateResultsTableSchema(value);
+  const rows = validation.rows;
+  const schemaIssues: ResultTableScoringIssue[] = validation.issues.map((message) => ({
+    code: "result_table_schema_invalid",
+    row_index: extractRowIndex(message),
+    message
+  }));
+  const completenessIssues: ResultTableScoringIssue[] = [];
 
   rows.forEach((row, index) => {
     if (!row.metric.trim()) {
-      issues.push({
+      completenessIssues.push({
         code: "result_table_metric_missing",
         row_index: index,
         message: `results_table[${index}] must name the metric.`
       });
     }
     if (row.baseline === null) {
-      issues.push({
+      completenessIssues.push({
         code: "result_table_baseline_missing",
         row_index: index,
         metric: row.metric,
@@ -76,7 +212,7 @@ export function scoreResultTableArtifact(value: unknown, authorization: {
       });
     }
     if (row.comparator === null) {
-      issues.push({
+      completenessIssues.push({
         code: "result_table_comparator_missing",
         row_index: index,
         metric: row.metric,
@@ -84,7 +220,7 @@ export function scoreResultTableArtifact(value: unknown, authorization: {
       });
     }
     if (row.delta === null) {
-      issues.push({
+      completenessIssues.push({
         code: "result_table_delta_missing",
         row_index: index,
         metric: row.metric,
@@ -94,39 +230,69 @@ export function scoreResultTableArtifact(value: unknown, authorization: {
   });
 
   const completeRows = rows.filter(isCompleteRow);
-  const missingMetricCount = rows.filter((row) => !row.metric.trim()).length;
-  const missingBaselineCount = rows.filter((row) => row.baseline === null).length;
-  const missingComparatorCount = rows.filter((row) => row.comparator === null).length;
-  const missingDeltaCount = rows.filter((row) => row.delta === null).length;
-  const validSchema = normalized.valid_schema && validation.valid && issues.length === 0;
   const primaryMetrics = new Set(
-    (authorization.superiorityPrimaryMetrics ?? []).map((metric) => metric.trim()).filter(Boolean)
+    (authorization.superiorityPrimaryMetrics ?? [])
+      .map((metric) => metric.trim())
+      .filter(Boolean)
   );
   const favorablePrimaryRows = completeRows.filter((row) =>
     primaryMetrics.has(row.metric)
     && deltaMatchesObservedEffect(row)
     && (row.direction === "higher_better" ? row.delta! > 0 : row.delta! < 0)
   );
+  const validSchema =
+    validation.valid
+    && schemaIssues.length === 0
+    && completenessIssues.length === 0;
+  const comparativeClaimSupported =
+    validSchema
+    && completeRows.length > 0
+    && authorization.comparativeClaimAuthorized === true;
 
   return {
     measured: true,
     valid_schema: validSchema,
     row_count: rows.length,
     complete_row_count: completeRows.length,
-    missing_metric_count: missingMetricCount,
-    missing_baseline_count: missingBaselineCount,
-    missing_comparator_count: missingComparatorCount,
-    missing_delta_count: missingDeltaCount,
+    missing_metric_count: rows.filter((row) => !row.metric.trim()).length,
+    missing_baseline_count: rows.filter((row) => row.baseline === null).length,
+    missing_comparator_count: rows.filter((row) => row.comparator === null).length,
+    missing_delta_count: rows.filter((row) => row.delta === null).length,
     comparator_coverage: rows.length > 0 ? round2(completeRows.length / rows.length) : null,
-    comparative_claim_supported: validSchema
-      && completeRows.length > 0
-      && authorization.comparativeClaimAuthorized === true,
-    superiority_claim_supported: validSchema
-      && completeRows.length > 0
-      && authorization.comparativeClaimAuthorized === true
+    comparative_claim_supported: comparativeClaimSupported,
+    superiority_claim_supported:
+      comparativeClaimSupported
       && authorization.superiorityClaimAuthorized === true
       && primaryMetrics.size > 0
       && favorablePrimaryRows.length > 0,
+    issues: [
+      {
+        code: "result_table_schema_v1_historical_reader",
+        row_index: null,
+        message: "Historical V1 array reader compatibility was used; new result artifacts must use ResultsArtifactV2."
+      },
+      ...schemaIssues,
+      ...completenessIssues
+    ]
+  };
+}
+
+function unmeasuredScore(
+  validSchema: boolean,
+  issues: ResultTableScoringIssue[]
+): ResultTableScore {
+  return {
+    measured: false,
+    valid_schema: validSchema,
+    row_count: 0,
+    complete_row_count: 0,
+    missing_metric_count: 0,
+    missing_baseline_count: 0,
+    missing_comparator_count: 0,
+    missing_delta_count: 0,
+    comparator_coverage: null,
+    comparative_claim_supported: false,
+    superiority_claim_supported: false,
     issues
   };
 }
@@ -134,61 +300,6 @@ export function scoreResultTableArtifact(value: unknown, authorization: {
 function deltaMatchesObservedEffect(row: ResultsTableSchema[number]): boolean {
   if (row.baseline === null || row.comparator === null || row.delta === null) return false;
   return Math.abs(row.delta - (row.comparator - row.baseline)) <= 1e-9;
-}
-
-function normalizeResultTableArtifact(value: unknown): {
-  value: unknown;
-  valid_schema: boolean;
-  issues: ResultTableScoringIssue[];
-} {
-  if (Array.isArray(value)) {
-    return { value, valid_schema: true, issues: [] };
-  }
-  if (!value || typeof value !== "object") {
-    return { value, valid_schema: false, issues: [] };
-  }
-
-  const artifact = value as Record<string, unknown>;
-  const comparisons = Array.isArray(artifact.comparisons)
-    ? artifact.comparisons.filter((item): item is Record<string, unknown> =>
-      Boolean(item) && typeof item === "object" && !Array.isArray(item)
-    )
-    : [];
-  if (comparisons.length === 0) {
-    return { value, valid_schema: false, issues: [] };
-  }
-
-  const rows = comparisons.map((comparison) => ({
-    metric: stringValue(comparison.metric) || stringValue(comparison.primary) || "comparison",
-    baseline: finiteNumberOrNull(comparison.baseline),
-    comparator: finiteNumberOrNull(comparison.comparator),
-    delta: finiteNumberOrNull(comparison.delta),
-    direction: parseDirection(comparison.direction)
-  }));
-
-  return {
-    value: rows,
-    valid_schema: false,
-    issues: [
-      {
-        code: "result_table_schema_noncanonical",
-        row_index: null,
-        message: "result_table.json uses a conditions/comparisons summary format; audit normalized it for completeness scoring, but canonical array rows are still recommended."
-      }
-    ]
-  };
-}
-
-function finiteNumberOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function parseDirection(value: unknown): "higher_better" | "lower_better" {
-  return value === "lower_better" ? "lower_better" : "higher_better";
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function isCompleteRow(row: ResultsTableSchema[number]): boolean {
@@ -199,7 +310,9 @@ function isCompleteRow(row: ResultsTableSchema[number]): boolean {
 }
 
 function extractRowIndex(message: string): number | null {
-  const match = message.match(/results_table\[(\d+)\]/u);
+  const match = message.match(
+    /(?:results_table|results_artifact\.comparisons)\[(\d+)\]/u
+  );
   return match ? Number(match[1]) : null;
 }
 

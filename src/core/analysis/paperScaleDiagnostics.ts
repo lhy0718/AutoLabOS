@@ -1,4 +1,16 @@
-import type { AnalysisReport } from "../resultAnalysis.js";
+import type {
+  AnalysisReport,
+  AnalysisStatisticalSummary
+} from "../resultAnalysis.js";
+import {
+  RESULTS_COMPARISON_DELTA_TOLERANCE,
+  validateResultsArtifactV2,
+  type ResultsArtifactV2,
+  type ResultsComparisonV2,
+  type ResultsMetricDefinitionV2,
+  type ResultsObservationV2,
+  type ResultsSeriesV2
+} from "./resultsTableSchema.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
 
 export type PaperScaleDiagnosticSeverity = "blocking" | "warning";
@@ -30,17 +42,77 @@ export interface PaperScaleDiagnosticSummary {
   warning_count: number;
 }
 
+interface ResolvedComparison {
+  comparison: ResultsComparisonV2;
+  subjectObservation: ResultsObservationV2;
+  referenceObservation: ResultsObservationV2;
+  metric: ResultsMetricDefinitionV2;
+  subjectSeries: ResultsSeriesV2;
+  referenceSeries: ResultsSeriesV2;
+}
+
+type PrimaryComparisonSelection =
+  | { status: "none" }
+  | { status: "selected"; value: ResolvedComparison }
+  | {
+    status: "ambiguous";
+    comparisonCount: number;
+    primaryComparisonId?: string;
+  };
+
 export function evaluatePaperScaleDiagnostics(input: {
   report: AnalysisReport;
   topic: string;
   bibliographyText?: string;
 }): PaperScaleDiagnosticSummary {
   const diagnostics: PaperScaleDiagnostic[] = [];
+  const statisticalSummary = input.report.statistical_summary;
+  const artifactValue: unknown = input.report.results_artifact;
+  const artifactValidation = validateResultsArtifactV2(artifactValue);
 
-  const evalSample = extractEvalSampleSummary(input.report);
+  let artifact: ResultsArtifactV2 | undefined;
+  let primarySelection: PrimaryComparisonSelection = { status: "none" };
+
+  if (!artifactValidation.valid) {
+    diagnostics.push({
+      id: "invalid_results_artifact",
+      severity: "blocking",
+      category: "statistical_adequacy",
+      source_node: "analyze_results",
+      target_node: "analyze_results",
+      summary: "The explicit results artifact is invalid, so comparative claims are blocked.",
+      evidence: `ResultsArtifactV2 validation failed: ${artifactValidation.issues.slice(0, 4).join(" ")}`,
+      recommended_action: "Repair the explicit metric, series, observation, and subject/reference links, then regenerate the statistical summary.",
+      recheck_condition: "ResultsArtifactV2 validation passes with finite observations and deltas that equal subject value minus reference value."
+    });
+  } else {
+    artifact = artifactValue as ResultsArtifactV2;
+    primarySelection = selectPrimaryComparison(
+      resolveComparisons(artifact),
+      input.report.primary_comparison_id
+    );
+    if (primarySelection.status === "ambiguous") {
+      const primaryIdEvidence = primarySelection.primaryComparisonId
+        ? `AnalysisReport.primary_comparison_id="${primarySelection.primaryComparisonId}" does not match a validated comparison.`
+        : "AnalysisReport.primary_comparison_id is missing.";
+      diagnostics.push({
+        id: "ambiguous_primary_comparison",
+        severity: "blocking",
+        category: "statistical_adequacy",
+        source_node: "analyze_results",
+        target_node: "analyze_results",
+        summary: "The validated results do not declare one exact primary comparison.",
+        evidence: `The validated artifact contains ${primarySelection.comparisonCount} comparison(s). ${primaryIdEvidence}`,
+        recommended_action: "Set AnalysisReport.primary_comparison_id to the exact ID of the declared primary comparison.",
+        recheck_condition: "AnalysisReport.primary_comparison_id exactly matches one validated ResultsArtifactV2 comparison."
+      });
+    }
+  }
+
+  const sampleSummary = extractSampleSummary(statisticalSummary, artifact);
   if (
-    evalSample.minimumCount !== undefined
-    && evalSample.minimumCount < GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale
+    sampleSummary.minimumCount !== undefined
+    && sampleSummary.minimumCount < GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale
   ) {
     diagnostics.push({
       id: "tiny_eval_sample",
@@ -48,18 +120,23 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "evaluation_sample_size",
       source_node: "run_experiments",
       target_node: "run_experiments",
-      summary: "Evaluation sample size is too small for paper-scale claims.",
-      evidence: `Minimum observed per-task evaluation count is ${evalSample.minimumCount}; task counts: ${formatTaskCounts(evalSample.taskCounts)}.`,
-      recommended_action: "Expand each benchmark/task evaluation split before claiming a stable model or hyperparameter effect.",
-      recheck_condition: `Every primary task reports at least ${GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale} evaluation examples, or the manuscript is explicitly capped as a pilot note.`
+      summary: "An explicitly reported evaluation sample is too small for paper-scale claims.",
+      evidence: `Minimum structured confidence-interval sample size is n=${sampleSummary.minimumCount} across ${sampleSummary.reportedCount} matched metric interval(s).`,
+      recommended_action: "Increase the evaluated sample or restrict the claim ceiling to a small-sample screening result.",
+      recheck_condition: `Every explicitly linked interval reports at least ${GATE_THRESHOLDS.minEvaluationExamplesPerTaskForPaperScale} evaluated observations, or the claim ceiling is downgraded.`
     });
   }
 
-  const positiveComparisonSignal = detectPositiveComparisonSignal(input.report);
+  const selectedComparison =
+    primarySelection.status === "selected" ? primarySelection.value : undefined;
+  const improvementSignal =
+    selectedComparison && comparisonImproves(selectedComparison)
+      ? formatImprovementSignal(selectedComparison)
+      : undefined;
   const seedSummary = extractSeedSummary(input.report);
   if (
-    positiveComparisonSignal
-    && seedSummary.distinctSeeds < GATE_THRESHOLDS.minDistinctSeedsForPaperScale
+    improvementSignal
+    && seedSummary.minimumCount < GATE_THRESHOLDS.minDistinctSeedsForPaperScale
   ) {
     diagnostics.push({
       id: "missing_seed_replication",
@@ -67,18 +144,22 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "statistical_adequacy",
       source_node: "run_experiments",
       target_node: "run_experiments",
-      summary: "Positive comparative signal has no repeated-seed support.",
-      evidence: `${positiveComparisonSignal} Observed distinct seed count is ${seedSummary.distinctSeeds || 0}; ${seedSummary.seedEvidencePresent ? `seeds: ${seedSummary.seeds.join(", ") || "none"}` : "seed fields are absent or empty"}.`,
-      recommended_action: "Run repeated seeds for the baseline and leading condition, then report seed-level variance or paired uncertainty.",
-      recheck_condition: `At least ${GATE_THRESHOLDS.minDistinctSeedsForPaperScale} distinct seeds are present for the comparison or the claim is downgraded.`
+      summary: "The primary comparative improvement lacks explicit repeated-seed support.",
+      evidence: `${improvementSignal} ${
+        seedSummary.evidencePresent
+          ? `Minimum structured seed count is ${seedSummary.minimumCount} across ${seedSummary.reportedCount} seed-coverage entr${seedSummary.reportedCount === 1 ? "y" : "ies"}.`
+          : "No structured seed count is present in statistical_summary.stability_metrics or metrics.condition_results."
+      }`,
+      recommended_action: "Repeat the explicit subject/reference comparison across seeds and report the structured seed count and uncertainty.",
+      recheck_condition: `Structured seed coverage reaches at least ${GATE_THRESHOLDS.minDistinctSeedsForPaperScale}, or the comparative improvement claim is downgraded.`
     });
   }
 
   const executionCoverage = extractExecutionCoverage(input.report);
   if (
-    executionCoverage.expectedRuns !== undefined
-    && executionCoverage.executedRuns !== undefined
-    && executionCoverage.executedRuns < executionCoverage.expectedRuns
+    executionCoverage.totalTrials !== undefined
+    && executionCoverage.executedTrials !== undefined
+    && executionCoverage.executedTrials < executionCoverage.totalTrials
   ) {
     diagnostics.push({
       id: "incomplete_planned_runs",
@@ -86,14 +167,16 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "execution_coverage",
       source_node: "run_experiments",
       target_node: "run_experiments",
-      summary: "Executed runs do not cover the approved experiment plan.",
-      evidence: `Executed ${executionCoverage.executedRuns} of ${executionCoverage.expectedRuns} planned run(s) (${formatRatio(executionCoverage.executedRuns, executionCoverage.expectedRuns)} coverage).`,
-      recommended_action: "Execute the missing conditions or repetitions, or explicitly downgrade the design and all dependent claims before review.",
-      recheck_condition: "Executed run coverage reaches the approved plan, or the plan and claim ceiling are governed down to the completed scope."
+      summary: "Executed trials do not cover the structured trial total.",
+      evidence: `Executed ${executionCoverage.executedTrials} of ${executionCoverage.totalTrials} declared trial(s) (${formatRatio(executionCoverage.executedTrials, executionCoverage.totalTrials)} coverage).`,
+      recommended_action: "Execute the missing trials or explicitly lower the governed evidence scope.",
+      recheck_condition: "statistical_summary.executed_trials reaches statistical_summary.total_trials, or both the scope and claim ceiling are revised."
     });
   }
 
-  const oneItemGain = detectOneItemGain(input.report);
+  const oneItemGain = selectedComparison
+    ? detectOneItemGain(selectedComparison, statisticalSummary)
+    : undefined;
   if (oneItemGain) {
     diagnostics.push({
       id: "single_item_gain",
@@ -101,16 +184,17 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "statistical_adequacy",
       source_node: "analyze_results",
       target_node: "analyze_results",
-      summary: "Headline improvement is consistent with a one-example accuracy change.",
+      summary: "The primary improvement is consistent with a one-observation change.",
       evidence: oneItemGain,
-      recommended_action: "Report the result as a pilot screening signal and require a larger paired evaluation before claiming a condition-parameter effect.",
-      recheck_condition: "The leading-vs-baseline delta is supported by more than a one-example change or by robust paired statistics."
+      recommended_action: "Treat the result as a screening signal until a larger paired evaluation or robust repeated-trial analysis supports it.",
+      recheck_condition: "The explicit subject/reference effect exceeds one-observation granularity or is supported by robust paired statistics."
     });
   }
 
   const stepSummary = extractOptimizerStepSummary(input.report);
   if (
-    stepSummary.maximumSteps !== undefined
+    improvementSignal
+    && stepSummary.maximumSteps !== undefined
     && stepSummary.maximumSteps < GATE_THRESHOLDS.minOptimizerStepsForTuningClaim
   ) {
     diagnostics.push({
@@ -119,16 +203,17 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "training_budget",
       source_node: "implement_experiments",
       target_node: "implement_experiments",
-      summary: "Training budget is closer to a smoke test than a tuning experiment.",
-      evidence: `Maximum observed optimizer steps is ${stepSummary.maximumSteps}; condition steps: ${stepSummary.stepValues.join(", ") || "none"}.`,
-      recommended_action: "Increase the train budget or restrict claims to pipeline/preflight validation.",
-      recheck_condition: `Optimizer steps are at least ${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim} for paper-scale tuning claims, or the manuscript genre is downgraded.`
+      summary: "The explicit comparative improvement was produced with a smoke-scale optimizer budget.",
+      evidence: `Maximum structured optimizer step count is ${stepSummary.maximumSteps}; reported step counts: ${stepSummary.stepValues.join(", ")}.`,
+      recommended_action: "Increase the training budget or restrict the comparative result to pipeline/preflight evidence.",
+      recheck_condition: `Optimizer steps reach at least ${GATE_THRESHOLDS.minOptimizerStepsForTuningClaim}, or the tuning-effect claim is downgraded.`
     });
   }
 
   const trainingSampleBudget = extractTrainingSampleBudget(input.report);
   if (
-    trainingSampleBudget.plannedSamples !== undefined
+    improvementSignal
+    && trainingSampleBudget.plannedSamples !== undefined
     && trainingSampleBudget.actualSamples !== undefined
     && trainingSampleBudget.actualSamples < trainingSampleBudget.plannedSamples
   ) {
@@ -138,44 +223,31 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "training_budget",
       source_node: "implement_experiments",
       target_node: "implement_experiments",
-      summary: "Executed training sample budget is below the approved design budget.",
-      evidence: `Run configuration used at most ${trainingSampleBudget.actualSamples} training sample(s), while the selected design specifies ${trainingSampleBudget.plannedSamples} (${formatRatio(trainingSampleBudget.actualSamples, trainingSampleBudget.plannedSamples)} coverage).`,
-      recommended_action: "Regenerate and rerun the implementation with the approved training budget, or govern the result down to a preflight/system-validation claim.",
-      recheck_condition: "The executed training sample budget matches the selected design, or the design and claim ceiling explicitly adopt the smaller budget."
+      summary: "The executed training sample budget is below the explicitly recorded plan.",
+      evidence: `Run configuration used at most ${trainingSampleBudget.actualSamples} training sample(s), while its structured planned budget is ${trainingSampleBudget.plannedSamples} (${formatRatio(trainingSampleBudget.actualSamples, trainingSampleBudget.plannedSamples)} coverage).`,
+      recommended_action: "Rerun with the recorded training budget, or govern the experiment and claim ceiling down to the executed budget.",
+      recheck_condition: "The actual training sample budget reaches the explicit planned budget, or both the plan and claim ceiling adopt the smaller budget."
     });
   }
 
-  const interactionRisk = detectWeakInteractionClaim(input.report);
-  if (interactionRisk) {
+  const smokeRisk = detectSmokeOnlyEvidence(statisticalSummary);
+  if (smokeRisk) {
     diagnostics.push({
-      id: "weak_interaction_evidence",
-      severity: "warning",
+      id: "smoke_only_evidence",
+      severity: "blocking",
       category: "statistical_adequacy",
-      source_node: "generate_hypotheses",
-      target_node: "design_experiments",
-      summary: "Interaction framing is stronger than the observed grid evidence.",
-      evidence: interactionRisk,
-      recommended_action: "Reframe as candidate screening or redesign the grid with enough samples and seeds to test interaction effects.",
-      recheck_condition: "Interaction claims are supported by repeated cells, adequate samples, and multiple non-baseline deltas rather than one isolated condition."
+      source_node: "run_experiments",
+      target_node: "run_experiments",
+      summary: "The structured evidence supports only a smoke-level execution claim.",
+      evidence: smokeRisk,
+      recommended_action: "Run repeated trials and emit structured uncertainty or stability evidence before making paper-scale claims.",
+      recheck_condition: `At least ${GATE_THRESHOLDS.minRobustnessTotalTrials} trials are executed, or structured repeated-measure uncertainty or stability evidence is present.`
     });
   }
 
-  const canonicalReferenceGap = detectCanonicalReferenceGap(input.topic, input.report, input.bibliographyText);
-  if (canonicalReferenceGap) {
-    diagnostics.push({
-      id: "canonical_method_references_missing",
-      severity: "warning",
-      category: "related_work_depth",
-      source_node: "collect_papers",
-      target_node: "collect_papers",
-      summary: "Related work appears to miss canonical sources for a named method-family topic.",
-      evidence: canonicalReferenceGap,
-      recommended_action: "Collect and cite the original method-family papers before paper-scale review.",
-      recheck_condition: "The bibliography includes canonical references when the topic or metrics center on a named method family."
-    });
-  }
-
-  const resourceRisk = detectResourceClaimRisk(input.report);
+  const resourceRisk = artifact
+    ? detectResourceClaimRisk(artifact, statisticalSummary)
+    : undefined;
   if (resourceRisk) {
     diagnostics.push({
       id: "resource_claim_unsupported",
@@ -183,10 +255,10 @@ export function evaluatePaperScaleDiagnostics(input: {
       category: "resource_claim",
       source_node: "analyze_results",
       target_node: "analyze_results",
-      summary: "Resource measurements are present but not strong enough for efficiency claims.",
+      summary: "Explicit resource measurements are not backed by repeated-measure evidence.",
       evidence: resourceRisk,
-      recommended_action: "Keep runtime/VRAM as diagnostics unless condition-level aggregates and repeated measurements are available.",
-      recheck_condition: "Resource claims are backed by repeated condition-level runtime/memory summaries or removed from claim-level prose."
+      recommended_action: "Keep resource values descriptive until matching intervals or stability estimates are reported across repeated trials.",
+      recheck_condition: "Resource-unit metrics have matching structured uncertainty or stability evidence from repeated trials, or claim-level efficiency language is removed."
     });
   }
 
@@ -198,368 +270,425 @@ export function evaluatePaperScaleDiagnostics(input: {
   };
 }
 
-function extractEvalSampleSummary(report: AnalysisReport): {
-  taskCounts: Array<{ task: string; count: number }>;
-  minimumCount?: number;
-} {
-  const taskCounts: Array<{ task: string; count: number }> = [];
-  const metrics = asRecord(report.metrics);
-  const data = asRecord(metrics.data);
-  const evalData = asRecord(data.eval);
-  for (const [task, value] of Object.entries(evalData)) {
-    const count = asNumber(asRecord(value).count);
-    if (count !== undefined) {
-      taskCounts.push({ task, count });
+function resolveComparisons(artifact: ResultsArtifactV2): ResolvedComparison[] {
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  const metricsById = new Map(
+    artifact.metrics.map((metric) => [metric.id, metric] as const)
+  );
+  const seriesById = new Map(
+    artifact.series.map((series) => [series.id, series] as const)
+  );
+
+  return artifact.comparisons.flatMap((comparison) => {
+    const subjectObservation = observationsById.get(comparison.subject_observation_id);
+    const referenceObservation = observationsById.get(comparison.reference_observation_id);
+    if (!subjectObservation || !referenceObservation) {
+      return [];
+    }
+    const metric = metricsById.get(subjectObservation.metric_id);
+    const subjectSeries = seriesById.get(subjectObservation.series_id);
+    const referenceSeries = seriesById.get(referenceObservation.series_id);
+    if (
+      !metric
+      || !subjectSeries
+      || !referenceSeries
+      || subjectObservation.metric_id !== referenceObservation.metric_id
+    ) {
+      return [];
+    }
+    return [{
+      comparison,
+      subjectObservation,
+      referenceObservation,
+      metric,
+      subjectSeries,
+      referenceSeries
+    }];
+  });
+}
+
+function selectPrimaryComparison(
+  comparisons: ResolvedComparison[],
+  primaryComparisonId: unknown
+): PrimaryComparisonSelection {
+  if (comparisons.length === 0) {
+    return { status: "none" };
+  }
+  const normalizedPrimaryId = typeof primaryComparisonId === "string"
+    ? primaryComparisonId.trim()
+    : "";
+  if (normalizedPrimaryId) {
+    const selected = comparisons.find(
+      (comparison) => comparison.comparison.id === normalizedPrimaryId
+    );
+    if (selected) {
+      return { status: "selected", value: selected };
     }
   }
-
-  for (const condition of asArray(metrics.conditions)) {
-    const marker = asString(asRecord(condition).marker) || "condition";
-    const perTask = asRecord(asRecord(condition).per_task_metrics);
-    for (const [task, value] of Object.entries(perTask)) {
-      const total = asNumber(asRecord(value).total);
-      if (total !== undefined) {
-        taskCounts.push({ task: `${marker}:${task}`, count: total });
-      }
-    }
-  }
-
-  const counts = taskCounts.map((entry) => entry.count).filter((count) => Number.isFinite(count));
   return {
-    taskCounts,
-    minimumCount: counts.length > 0 ? Math.min(...counts) : undefined
+    status: "ambiguous",
+    comparisonCount: comparisons.length,
+    ...(normalizedPrimaryId ? { primaryComparisonId: normalizedPrimaryId } : {})
   };
 }
 
-function extractSeedSummary(report: AnalysisReport): { seeds: string[]; distinctSeeds: number; seedEvidencePresent: boolean } {
-  const seeds = new Set<string>();
-  let seedEvidencePresent = false;
-  let reportedSeedCount = 0;
-  const metrics = asRecord(report.metrics);
-  seedEvidencePresent = addSeed(seeds, asRecord(metrics.run_config).seed) || seedEvidencePresent;
-  seedEvidencePresent = addSeeds(seeds, asArray(metrics.seeds)) || seedEvidencePresent;
-  for (const condition of [
-    ...asArray(metrics.conditions),
-    ...asArray(metrics.condition_results),
-    ...asArray(metrics.raw_condition_results)
-  ]) {
-    const record = asRecord(condition);
-    seedEvidencePresent = addSeed(seeds, record.seed) || seedEvidencePresent;
-    seedEvidencePresent = addSeed(seeds, record.random_seed) || seedEvidencePresent;
-    seedEvidencePresent = addSeeds(seeds, asArray(record.seeds)) || seedEvidencePresent;
-    const seedCount = asNumber(record.seed_count);
-    if (seedCount !== undefined && seedCount > 0) {
-      seedEvidencePresent = true;
-      reportedSeedCount = Math.max(reportedSeedCount, seedCount);
-    }
+function comparisonImproves(comparison: ResolvedComparison): boolean {
+  const delta = comparison.comparison.delta;
+  if (Math.abs(delta) <= RESULTS_COMPARISON_DELTA_TOLERANCE) {
+    return false;
   }
-  const distinctSeeds = Math.max(seeds.size, reportedSeedCount);
-  const seedLabels = Array.from(seeds);
-  if (seedLabels.length === 0 && reportedSeedCount > 0) {
-    seedLabels.push(`reported_seed_count=${reportedSeedCount}`);
-  }
-  return { seeds: seedLabels, distinctSeeds, seedEvidencePresent };
+  return comparison.metric.direction === "lower_better" ? delta < 0 : delta > 0;
 }
 
-function detectPositiveComparisonSignal(report: AnalysisReport): string | undefined {
-  if (report.overview?.objective_status === "met") {
-    return "The objective status is met.";
-  }
+function formatImprovementSignal(comparison: ResolvedComparison): string {
+  const unit = comparison.metric.unit ? `, unit=${comparison.metric.unit}` : "";
+  return `The selected explicit subject/reference comparison improves according to direction=${comparison.metric.direction}${unit}: subject=${formatNumber(comparison.subjectObservation.value)}, reference=${formatNumber(comparison.referenceObservation.value)}, delta=${formatNumber(comparison.comparison.delta)}.`;
+}
 
-  const positiveComparison = (report.condition_comparisons ?? []).find((comparison) =>
-    comparison.metrics.some((metric) => Number.isFinite(metric.value) && metric.value > 0)
-  );
-  if (positiveComparison) {
-    return `Condition comparison ${positiveComparison.id || "unknown"} contains a positive delta.`;
+function extractSampleSummary(
+  summary: AnalysisStatisticalSummary | undefined,
+  artifact: ResultsArtifactV2 | undefined
+): { minimumCount?: number; reportedCount: number } {
+  if (!artifact) {
+    return { reportedCount: 0 };
   }
+  const metricIds = new Set(artifact.metrics.map((metric) => metric.id));
+  const sampleCounts = safeArray(summary?.confidence_intervals)
+    .filter((interval) => metricIds.has(interval.metric_key))
+    .map((interval) => asPositiveInteger(interval.sample_size))
+    .filter((value): value is number => value !== undefined);
+  return {
+    minimumCount: minimumDefined(sampleCounts),
+    reportedCount: sampleCounts.length
+  };
+}
 
+function extractSeedSummary(
+  report: AnalysisReport
+): { minimumCount: number; reportedCount: number; evidencePresent: boolean } {
+  const summarySeedCounts = safeArray(report.statistical_summary?.stability_metrics)
+    .filter((entry) => isSeedCoverageKey(entry.key))
+    .map((entry) => asNonNegativeInteger(entry.value))
+    .filter((value): value is number => value !== undefined);
   const metrics = asRecord(report.metrics);
-  const summary = asRecord(metrics.summary);
-  const observedDelta =
-    asNumber(summary.best_accuracy_delta_vs_baseline)
-    ?? asNumber(metrics.accuracy_delta_vs_baseline)
-    ?? report.overview?.observed_value;
-  if (observedDelta !== undefined && observedDelta > 0 && (report.condition_comparisons?.length ?? 0) > 0) {
-    return `A baseline-relative comparative delta of ${observedDelta} is reported.`;
+  const reportedConditionSeedCounts = asRecordArray(metrics.condition_results)
+    .map(readConditionSeedCount);
+  const conditionSeedCounts = reportedConditionSeedCounts.some((value) => value !== undefined)
+    ? reportedConditionSeedCounts.map((value) => value ?? 0)
+    : [];
+  const seedCounts = [
+    ...summarySeedCounts,
+    ...conditionSeedCounts
+  ];
+  return {
+    minimumCount: minimumDefined(seedCounts) ?? 0,
+    reportedCount: seedCounts.length,
+    evidencePresent: seedCounts.length > 0
+  };
+}
+
+function isSeedCoverageKey(value: string): boolean {
+  const normalized = normalizeEvidenceKey(value);
+  return /(?:^|_)(?:distinct_seed_count|distinct_seeds|completed_seed_count|completed_seeds|executed_seed_count|executed_seeds|seed_count|seeds|num_seeds|number_of_seeds|n_seeds|seed_repetitions|seed_replication_count)$/u.test(
+    normalized
+  );
+}
+
+function extractExecutionCoverage(
+  report: AnalysisReport
+): { totalTrials?: number; executedTrials?: number } {
+  const summary = report.statistical_summary;
+  const portfolio = report.experiment_portfolio;
+  const groupExpectedTrials = safeArray(portfolio?.trial_groups)
+    .map((group) => asNonNegativeInteger(group.expected_trials))
+    .filter((value): value is number => value !== undefined);
+  const groupExecutedTrials = safeArray(portfolio?.trial_groups)
+    .map((group) => asNonNegativeInteger(group.executed_trials))
+    .filter((value): value is number => value !== undefined);
+  const expectedCandidates = [
+    asNonNegativeInteger(summary?.total_trials),
+    asNonNegativeInteger(portfolio?.total_expected_trials),
+    sumDefined(groupExpectedTrials)
+  ].filter((value): value is number => value !== undefined);
+  const executedCandidates = [
+    asNonNegativeInteger(summary?.executed_trials),
+    asNonNegativeInteger(portfolio?.executed_trials),
+    sumDefined(groupExecutedTrials)
+  ].filter((value): value is number => value !== undefined);
+
+  return {
+    totalTrials: maximumDefined(expectedCandidates),
+    executedTrials:
+      minimumDefined(executedCandidates)
+      ?? asNonNegativeInteger(report.overview?.execution_runs)
+  };
+}
+
+function readConditionSeedCount(condition: Record<string, unknown>): number | undefined {
+  const declaredCount = asNonNegativeInteger(condition.seed_count);
+  if (!Array.isArray(condition.seeds)) {
+    return declaredCount;
+  }
+
+  const distinctSeeds = new Set(
+    condition.seeds
+      .map(normalizeSeedValue)
+      .filter((value): value is string => value !== undefined)
+  ).size;
+  return declaredCount === undefined
+    ? distinctSeeds
+    : Math.min(distinctSeeds, declaredCount);
+}
+
+function normalizeSeedValue(value: unknown): string | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
   }
   return undefined;
 }
 
-function extractExecutionCoverage(report: AnalysisReport): { expectedRuns?: number; executedRuns?: number } {
-  const portfolio = report.experiment_portfolio;
-  const structuredExpected = [
-    portfolio?.total_expected_trials,
-    ...(portfolio?.trial_groups ?? []).map((group) => group.expected_trials)
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
-  const structuredExecuted = [
-    portfolio?.executed_trials,
-    report.statistical_summary?.executed_trials,
-    report.overview?.execution_runs,
-    ...(portfolio?.trial_groups ?? []).map((group) => group.executed_trials)
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
-
-  const planTexts = [
-    report.plan_context?.selected_design?.summary,
-    ...(report.plan_context?.selected_design?.evaluation_steps ?? []),
-    ...(report.plan_context?.selected_design?.resource_notes ?? []),
-    ...(portfolio?.trial_groups ?? []).flatMap((group) => group.notes ?? [])
-  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-  const textualExpected = planTexts.flatMap(extractExpectedRunCounts);
-
-  return {
-    expectedRuns: maximumDefined([...structuredExpected, ...textualExpected]),
-    executedRuns: maximumDefined(structuredExecuted)
-  };
-}
-
-function extractExpectedRunCounts(value: string): number[] {
-  const counts: number[] = [];
-  for (const match of value.matchAll(/\b(\d[\d,]*)\s+(?:(?:planned|completed|training|full|total|expected)\s+){0,4}runs?\b/giu)) {
-    const count = parseCount(match[1]);
-    if (count !== undefined) {
-      counts.push(count);
-    }
-  }
-  for (const match of value.matchAll(/\b(\d[\d,]*)\s*(?:conditions?|cells?)\s*[x×]\s*(\d[\d,]*)\s*seeds?\s*=\s*(\d[\d,]*)\s*(?:completed\s+)?runs?\b/giu)) {
-    const statedTotal = parseCount(match[3]);
-    if (statedTotal !== undefined) {
-      counts.push(statedTotal);
-    }
-  }
-  return counts;
-}
-
-function detectOneItemGain(report: AnalysisReport): string | undefined {
+function extractOptimizerStepSummary(
+  report: AnalysisReport
+): { stepValues: number[]; maximumSteps?: number } {
   const metrics = asRecord(report.metrics);
-  const summary = asRecord(metrics.summary);
-  const baselineMarker = asString(summary.baseline_condition_marker);
-  const bestMarker = asString(summary.best_condition_marker);
-  const conditions = asArray(metrics.conditions).map(asRecord);
-  const baseline = conditions.find((condition) => asString(condition.marker) === baselineMarker);
-  const best = conditions.find((condition) => asString(condition.marker) === bestMarker);
-  if (!baseline || !best) {
-    return undefined;
-  }
-
-  const deltas: string[] = [];
-  let totalCorrectDelta = 0;
-  let comparedTasks = 0;
-  const baselineTasks = asRecord(baseline.per_task_metrics);
-  const bestTasks = asRecord(best.per_task_metrics);
-  for (const [task, baselineValue] of Object.entries(baselineTasks)) {
-    const baselineCorrect = asNumber(asRecord(baselineValue).correct);
-    const baselineTotal = asNumber(asRecord(baselineValue).total);
-    const bestTask = asRecord(bestTasks[task]);
-    const bestCorrect = asNumber(bestTask.correct);
-    const bestTotal = asNumber(bestTask.total);
-    if (
-      baselineCorrect === undefined ||
-      bestCorrect === undefined ||
-      baselineTotal === undefined ||
-      bestTotal === undefined ||
-      baselineTotal !== bestTotal
-    ) {
-      continue;
-    }
-    const delta = bestCorrect - baselineCorrect;
-    totalCorrectDelta += Math.abs(delta);
-    comparedTasks += 1;
-    deltas.push(`${task}: ${baselineCorrect}/${baselineTotal} -> ${bestCorrect}/${bestTotal} (delta ${delta})`);
-  }
-
-  if (comparedTasks === 0 || totalCorrectDelta > 1) {
-    return undefined;
-  }
-
-  const headlineDelta =
-    asNumber(summary.best_accuracy_delta_vs_baseline) ??
-    asNumber(metrics.accuracy_delta_vs_baseline) ??
-    report.overview?.observed_value;
-  if (headlineDelta === undefined || headlineDelta <= 0) {
-    return undefined;
-  }
-
-  return `Best condition ${bestMarker || "unknown"} differs from baseline ${baselineMarker || "unknown"} by ${totalCorrectDelta} total correct answer(s): ${deltas.join("; ")}. Headline delta=${headlineDelta}.`;
-}
-
-function extractOptimizerStepSummary(report: AnalysisReport): { stepValues: number[]; maximumSteps?: number } {
-  const metrics = asRecord(report.metrics);
-  const stepValues: number[] = [];
   const runConfig = asRecord(metrics.run_config);
-  for (const value of [runConfig.max_steps, runConfig.optimizer_steps, runConfig.steps_completed]) {
-    const steps = asNumber(value);
-    if (steps !== undefined) {
-      stepValues.push(steps);
-    }
-  }
-  for (const condition of [
-    ...asArray(metrics.conditions),
-    ...asArray(metrics.condition_results),
-    ...asArray(metrics.condition_summaries)
-  ]) {
-    const steps = asNumber(asRecord(condition).steps_completed);
-    if (steps !== undefined) {
-      stepValues.push(steps);
-    }
-  }
+  const stepValues = [
+    runConfig.max_steps,
+    runConfig.optimizer_steps,
+    runConfig.steps_completed,
+    ...asRecordArray(metrics.condition_results).map((condition) => condition.steps_completed)
+  ]
+    .map(asNonNegativeInteger)
+    .filter((value): value is number => value !== undefined);
   return {
     stepValues,
-    maximumSteps: stepValues.length > 0 ? Math.max(...stepValues) : undefined
+    maximumSteps: maximumDefined(stepValues)
   };
 }
 
-function extractTrainingSampleBudget(report: AnalysisReport): { plannedSamples?: number; actualSamples?: number } {
+function extractTrainingSampleBudget(
+  report: AnalysisReport
+): { plannedSamples?: number; actualSamples?: number } {
   const runConfig = asRecord(asRecord(report.metrics).run_config);
   const actualSamples = maximumDefined([
-    asNumber(runConfig.max_train_samples),
-    asNumber(runConfig.train_samples),
-    asNumber(runConfig.training_examples),
-    asNumber(runConfig.max_training_examples)
-  ].filter((value): value is number => value !== undefined));
-  const planTexts = [
-    report.plan_context?.selected_design?.summary,
-    ...(report.plan_context?.selected_design?.implementation_notes ?? [])
-  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-  const plannedSamples = maximumDefined(planTexts.flatMap((value) => {
-    const counts: number[] = [];
-    for (const match of value.matchAll(/\b(\d[\d,]*)\s+(?:training\s+)?examples?\b/giu)) {
-      const count = parseCount(match[1]);
-      if (count !== undefined) {
-        counts.push(count);
-      }
-    }
-    return counts;
-  }));
+    runConfig.max_train_samples,
+    runConfig.train_samples,
+    runConfig.training_examples,
+    runConfig.max_training_examples
+  ]
+    .map(asNonNegativeInteger)
+    .filter((value): value is number => value !== undefined));
+  const plannedSamples = maximumDefined([
+    runConfig.planned_max_train_samples,
+    runConfig.planned_train_samples,
+    runConfig.planned_training_examples,
+    runConfig.expected_train_samples,
+    runConfig.expected_training_examples
+  ]
+    .map(asNonNegativeInteger)
+    .filter((value): value is number => value !== undefined));
   return { plannedSamples, actualSamples };
 }
 
-function detectWeakInteractionClaim(report: AnalysisReport): string | undefined {
-  const metrics = asRecord(report.metrics);
-  const conditions = asArray(metrics.conditions).map(asRecord);
-  const parameterXValues = new Set<string>();
-  const parameterYValues = new Set<string>();
-  let positiveDeltaCount = 0;
-  for (const condition of conditions) {
-    const parameterX = asNumber(condition.condition_parameter_x ?? condition.parameter_x);
-    const parameterY = asNumber(condition.condition_parameter_y ?? condition.parameter_y);
-    if (parameterX !== undefined) {
-      parameterXValues.add(String(parameterX));
-    }
-    if (parameterY !== undefined) {
-      parameterYValues.add(String(parameterY));
-    }
-    const delta = asNumber(condition.accuracy_delta_vs_baseline);
-    if (delta !== undefined && delta > 0) {
-      positiveDeltaCount += 1;
-    }
-  }
-  const text = [
-    report.overview?.objective_summary,
-    ...(report.primary_findings ?? []),
-    ...(report.paper_claims ?? []).map((claim) => claim.claim)
-  ].join(" ");
-  if (parameterXValues.size < 2 || parameterYValues.size < 2 || positiveDeltaCount !== 1 || !/\binteraction|factor|parameter\b/iu.test(text)) {
+function detectOneItemGain(
+  comparison: ResolvedComparison,
+  summary: AnalysisStatisticalSummary | undefined
+): string | undefined {
+  if (!comparisonImproves(comparison)) {
     return undefined;
   }
-  return `Grid has ${parameterXValues.size} factor-x value(s), ${parameterYValues.size} factor-y value(s), and only ${positiveDeltaCount} positive-delta condition(s).`;
-}
-
-function detectCanonicalReferenceGap(topic: string, report: AnalysisReport, bibliographyText?: string): string | undefined {
-  const text = [
-    topic,
-    report.overview?.objective_summary,
-    ...(report.primary_findings ?? []),
-    ...(report.paper_claims ?? []).map((claim) => claim.claim)
-  ].join(" ");
-  const methodMatch =
-    text.match(/\b(?:canonical|original|seminal)\s+([A-Z][A-Za-z0-9-]{2,40})\b/u)
-    || text.match(/\b([A-Z][A-Za-z0-9-]{2,40})\s+(?:method|model|algorithm|framework|family)\b/u);
-  const methodName = (methodMatch?.[1] || "").replace(/[^A-Za-z0-9-]+/gu, "").trim();
-  if (!methodName || /^(?:The|This|That|Prior|Original|Canonical|Related|Benchmark)$/u.test(methodName)) {
+  const unitScale = oneItemUnitScale(comparison.metric.unit);
+  if (unitScale === undefined) {
     return undefined;
   }
-  const bibliography = (bibliographyText || "").toLowerCase();
-  if (!bibliography) {
-    return `No bibliography text was available for canonical-reference audit of ${methodName}.`;
-  }
-  if (bibliography.includes(methodName.toLowerCase())) {
-    return undefined;
-  }
-  return `Canonical coverage may be missing for named method family: ${methodName}.`;
-}
-
-function detectResourceClaimRisk(report: AnalysisReport): string | undefined {
-  const metrics = asRecord(report.metrics);
-  const conditions = asArray(metrics.conditions).map(asRecord);
-  const hasResourceValues = conditions.some(
-    (condition) => asNumber(condition.runtime_sec) !== undefined || asNumber(condition.peak_cuda_memory_bytes) !== undefined
+  const sampleSizes = new Set(
+    safeArray(summary?.confidence_intervals)
+      .filter((interval) => interval.metric_key === comparison.metric.id)
+      .map((interval) => asPositiveInteger(interval.sample_size))
+      .filter((value): value is number => value !== undefined)
   );
-  if (!hasResourceValues) {
+  if (sampleSizes.size !== 1) {
     return undefined;
   }
-  const stabilityMetricCount = report.statistical_summary?.stability_metrics?.length ?? 0;
-  const totalTrials = report.statistical_summary?.total_trials ?? report.statistical_summary?.executed_trials ?? report.overview?.execution_runs;
-  if (stabilityMetricCount > 0 && typeof totalTrials === "number" && totalTrials >= 3) {
+  const sampleSize = [...sampleSizes][0];
+  const itemEquivalent = Math.abs(comparison.comparison.delta) * sampleSize * unitScale;
+  if (Math.abs(itemEquivalent - 1) > 0.05) {
     return undefined;
   }
-  return `Runtime/VRAM values are present, but stability_metrics=${stabilityMetricCount} and total_trials=${totalTrials ?? "unknown"}.`;
+  return `The explicit ${comparison.metric.direction} delta ${formatNumber(comparison.comparison.delta)} at unit=${comparison.metric.unit} and n=${sampleSize} corresponds to approximately ${formatNumber(itemEquivalent)} observation.`;
 }
 
-function formatTaskCounts(taskCounts: Array<{ task: string; count: number }>): string {
-  return taskCounts.slice(0, 8).map((entry) => `${entry.task}=${entry.count}`).join(", ") || "none";
+function oneItemUnitScale(unit: string | undefined): number | undefined {
+  const normalized = normalizeUnit(unit);
+  if (["ratio", "proportion", "fraction", "rate"].includes(normalized)) {
+    return 1;
+  }
+  if (["%", "percent", "percentage", "percentagepoint", "percentagepoints", "pp"].includes(normalized)) {
+    return 0.01;
+  }
+  return undefined;
+}
+
+function detectSmokeOnlyEvidence(
+  summary: AnalysisStatisticalSummary | undefined
+): string | undefined {
+  const executedTrials = asNonNegativeInteger(summary?.executed_trials);
+  const totalTrials = asNonNegativeInteger(summary?.total_trials);
+  const observedTrials = executedTrials ?? totalTrials;
+  if (
+    observedTrials === undefined
+    || observedTrials <= 0
+    || observedTrials >= GATE_THRESHOLDS.minRobustnessTotalTrials
+  ) {
+    return undefined;
+  }
+
+  const confidenceIntervalCount = safeArray(summary?.confidence_intervals).length;
+  const stabilityMetricCount = safeArray(summary?.stability_metrics).length;
+  if (confidenceIntervalCount > 0 || stabilityMetricCount > 0) {
+    return undefined;
+  }
+  const effectEstimateCount = safeArray(summary?.effect_estimates).length;
+  return `Structured evidence reports total_trials=${totalTrials ?? "unknown"}, executed_trials=${executedTrials ?? "unknown"}, confidence_intervals=${confidenceIntervalCount}, stability_metrics=${stabilityMetricCount}, and effect_estimates=${effectEstimateCount}.`;
+}
+
+function detectResourceClaimRisk(
+  artifact: ResultsArtifactV2,
+  summary: AnalysisStatisticalSummary | undefined
+): string | undefined {
+  const resourceMetricIds = new Set(
+    artifact.metrics
+      .filter((metric) => isResourceUnit(metric.unit))
+      .map((metric) => metric.id)
+  );
+  const observedResourceMetricIds = new Set(
+    artifact.observations
+      .filter((observation) => resourceMetricIds.has(observation.metric_id))
+      .map((observation) => observation.metric_id)
+  );
+  if (observedResourceMetricIds.size === 0) {
+    return undefined;
+  }
+
+  const matchingIntervalCount = safeArray(summary?.confidence_intervals)
+    .filter((interval) => observedResourceMetricIds.has(interval.metric_key))
+    .length;
+  const matchingStabilityCount = safeArray(summary?.stability_metrics)
+    .filter((entry) => observedResourceMetricIds.has(entry.key))
+    .length;
+  const executedTrials = asNonNegativeInteger(summary?.executed_trials);
+  if (
+    executedTrials !== undefined
+    && executedTrials >= 3
+    && (matchingIntervalCount > 0 || matchingStabilityCount > 0)
+  ) {
+    return undefined;
+  }
+  return `${observedResourceMetricIds.size} explicit resource-unit metric(s) have observations; executed_trials=${executedTrials ?? "unknown"}, matching_confidence_intervals=${matchingIntervalCount}, matching_stability_metrics=${matchingStabilityCount}.`;
+}
+
+function isResourceUnit(unit: string | undefined): boolean {
+  const normalized = normalizeUnit(unit);
+  return [
+    "s",
+    "sec",
+    "secs",
+    "second",
+    "seconds",
+    "ms",
+    "millisecond",
+    "milliseconds",
+    "minute",
+    "minutes",
+    "hour",
+    "hours",
+    "byte",
+    "bytes",
+    "kb",
+    "kib",
+    "mb",
+    "mib",
+    "gb",
+    "gib",
+    "tb",
+    "tib",
+    "joule",
+    "joules",
+    "wh",
+    "kwh"
+  ].includes(normalized);
+}
+
+function normalizeUnit(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase().replace(/[\s_-]+/gu, "");
+}
+
+function normalizeEvidenceKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "_")
+    .replace(/^_+|_+$/gu, "");
+}
+
+function safeArray<T>(value: T[] | undefined): T[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter(
+      (item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === "object" && !Array.isArray(item)
+    )
+    : [];
+}
+
+function asPositiveInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
+function asNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
+function minimumDefined(values: number[]): number | undefined {
+  return values.length > 0
+    ? values.reduce((minimum, value) => value < minimum ? value : minimum)
+    : undefined;
+}
+
+function maximumDefined(values: number[]): number | undefined {
+  return values.length > 0
+    ? values.reduce((maximum, value) => value > maximum ? value : maximum)
+    : undefined;
+}
+
+function sumDefined(values: number[]): number | undefined {
+  return values.length > 0
+    ? values.reduce((sum, value) => sum + value, 0)
+    : undefined;
 }
 
 function formatRatio(numerator: number, denominator: number): string {
   return denominator > 0 ? `${((numerator / denominator) * 100).toFixed(1)}%` : "unknown";
 }
 
-function parseCount(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = Number(value.replace(/,/gu, ""));
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function maximumDefined(values: number[]): number | undefined {
-  return values.length > 0 ? Math.max(...values) : undefined;
-}
-
-function addSeed(target: Set<string>, value: unknown): boolean {
-  const seed = asString(value);
-  if (seed) {
-    target.add(seed);
-    return true;
-  }
-  return false;
-}
-
-function addSeeds(target: Set<string>, values: unknown[]): boolean {
-  let added = false;
-  for (const value of values) {
-    added = addSeed(target, value) || added;
-  }
-  return added;
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function asArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim()) {
-    return value.trim();
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function formatNumber(value: number): string {
+  return Number(value.toPrecision(6)).toString();
 }

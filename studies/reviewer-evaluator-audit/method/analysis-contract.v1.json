@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "evaluator_sensitivity_analysis_contract",
+  "frozen_at": "2026-07-28T16:14:05+09:00",
+  "freeze_boundary": "Condition formulas and source-field mappings were fixed before any independent-judge artifact was inspected.",
+  "protocol": {
+    "path": "protocol.v1.json",
+    "file_sha256": "6518abf22f8bf4ed34de5c73b1606185aeac5a4ea15fe73bb616bb64811c191d"
+  },
+  "config": {
+    "path": "preflight-contract.v1.json",
+    "file_sha256": "c49eb988f5ed9b0651d45fce0d02d3721acf52717326952fced530223204dad4"
+  },
+  "public_rescore": {
+    "path": "../results/public-rescore.v2.json",
+    "file_sha256": "2521658cb9659284866aca4c4195d0cb88e4b4abd8e7caa8234d1f9c3a6c558e",
+    "content_sha256": "30d51ee1cdf34bbeb88e9bf5e2fe0bc10ba07775d15817fc4344f0ec9e4bd988"
+  },
+  "judge_sources": [
+    {
+      "id": "judge_lineage_qwen",
+      "artifact_kind": "independent_blinded_excerpt_judgments",
+      "expected_instance_count": 115
+    },
+    {
+      "id": "judge_lineage_mistral",
+      "artifact_kind": "independent_blinded_excerpt_judgments",
+      "expected_instance_count": 115
+    }
+  ],
+  "row_contract": {
+    "key_fields": [
+      "bundle_id",
+      "paper_id",
+      "claim_index",
+      "identification_model"
+    ],
+    "insertion_model_source": "config.bundles[bundle_id].insertion_model",
+    "expected_row_count": 575,
+    "retrieval_depths": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ]
+  },
+  "condition_formulas": [
+    {
+      "id": "published_combined",
+      "operator": "source",
+      "source": "public:published_combined"
+    },
+    {
+      "id": "focal_lexical_or_qwen",
+      "operator": "any",
+      "sources": [
+        "public:paper_specified_focal_truth_lexical",
+        "judge:judge_lineage_qwen"
+      ]
+    },
+    {
+      "id": "focal_lexical_or_mistral",
+      "operator": "any",
+      "sources": [
+        "public:paper_specified_focal_truth_lexical",
+        "judge:judge_lineage_mistral"
+      ]
+    },
+    {
+      "id": "independent_majority",
+      "operator": "at_least",
+      "minimum_positive": 2,
+      "sources": [
+        "public:paper_specified_focal_truth_lexical",
+        "judge:judge_lineage_qwen",
+        "judge:judge_lineage_mistral"
+      ]
+    },
+    {
+      "id": "paper_specified_focal_lexical",
+      "operator": "source",
+      "source": "public:paper_specified_focal_truth_lexical"
+    },
+    {
+      "id": "final_judge_lineage_qwen",
+      "operator": "source",
+      "source": "judge:judge_lineage_qwen"
+    },
+    {
+      "id": "final_judge_lineage_mistral",
+      "operator": "source",
+      "source": "judge:judge_lineage_mistral"
+    },
+    {
+      "id": "independent_any",
+      "operator": "any",
+      "sources": [
+        "judge:judge_lineage_qwen",
+        "judge:judge_lineage_mistral"
+      ]
+    },
+    {
+      "id": "independent_unanimous",
+      "operator": "all",
+      "sources": [
+        "judge:judge_lineage_qwen",
+        "judge:judge_lineage_mistral"
+      ]
+    },
+    {
+      "id": "stored_published_lexical",
+      "operator": "source",
+      "source": "public:stored_published_lexical"
+    },
+    {
+      "id": "replayed_published_code_lexical",
+      "operator": "source",
+      "source": "public:replayed_published_code_lexical"
+    },
+    {
+      "id": "paper_specified_broad_lexical",
+      "operator": "source",
+      "source": "public:paper_specified_broad_truth_lexical"
+    },
+    {
+      "id": "published_insertion_judge",
+      "operator": "source",
+      "source": "public:insertion_model_judge"
+    }
+  ],
+  "fail_closed_requirements": [
+    "Every declared source artifact must pass its content hash and eligibility checks.",
+    "Every public row must join to exactly one final cell from each independent judge.",
+    "Every generated curve must be boolean, cumulative, and have exactly ten values.",
+    "The generated condition ID set must exactly equal the protocol condition ID set."
+  ]
+}

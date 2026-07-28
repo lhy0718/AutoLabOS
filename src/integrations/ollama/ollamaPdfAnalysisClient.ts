@@ -1,9 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { OllamaClient, type OllamaMessage } from "./ollamaClient.js";
-import {
-  DEFAULT_OLLAMA_VISION_MODEL
-} from "./modelCatalog.js";
+import { requireOllamaModel } from "./modelCatalog.js";
 
 export interface OllamaPdfAnalysisResult {
   text: string;
@@ -16,8 +14,8 @@ const MAX_TOTAL_PAGES = 12;
 
 export class OllamaPdfAnalysisClient {
   constructor(
-    private readonly ollama: OllamaClient,
-    private readonly defaultModel: string = DEFAULT_OLLAMA_VISION_MODEL
+    private readonly ollama: OllamaClient | (() => OllamaClient),
+    private readonly defaultModel: string | (() => string | undefined) = ""
   ) {}
 
   async analyzePdfPages(opts: {
@@ -27,7 +25,11 @@ export class OllamaPdfAnalysisClient {
     model?: string;
     abortSignal?: AbortSignal;
   }): Promise<OllamaPdfAnalysisResult> {
-    const model = opts.model || this.defaultModel;
+    const configuredDefault = typeof this.defaultModel === "function"
+      ? this.defaultModel()
+      : this.defaultModel;
+    const model = requireOllamaModel(opts.model || configuredDefault, "vision");
+    const ollama = typeof this.ollama === "function" ? this.ollama() : this.ollama;
     const imagePaths = opts.imagePaths.slice(0, MAX_TOTAL_PAGES);
     const parts: string[] = [];
     let pagesAnalyzed = 0;
@@ -63,7 +65,7 @@ export class OllamaPdfAnalysisClient {
         images
       });
 
-      const result = await this.ollama.chat({
+      const result = await ollama.chat({
         model,
         messages,
         abortSignal: opts.abortSignal,

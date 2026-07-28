@@ -117,6 +117,13 @@ function makeBundle(): PaperWritingBundle {
   };
 }
 
+function parsePromptContext(prompt: string): Record<string, unknown> {
+  const marker = "Context JSON:\n";
+  const markerIndex = prompt.indexOf(marker);
+  expect(markerIndex).toBeGreaterThanOrEqual(0);
+  return JSON.parse(prompt.slice(markerIndex + marker.length)) as Record<string, unknown>;
+}
+
 describe("paperWriting related-work support", () => {
   it("keeps paper-writer prompts compact when result analysis carries large raw metrics", () => {
     const bundle = makeBundle();
@@ -126,83 +133,117 @@ describe("paperWriting related-work support", () => {
       mean_score: 0.51,
       metrics: {
         huge_raw_condition_blob: "x".repeat(1_200_000),
-        accuracy_delta_vs_baseline_mean: 0.0667
+        quality_delta_vs_reference_mean: 0.0667
       },
       objective_metric: {
-        raw: "average accuracy",
+        raw: "mean outcome quality",
         evaluation: {
           status: "met",
-          summary: "accuracy_delta_vs_baseline_mean improved by 0.0667.",
+          summary: "Mean outcome quality changed by 0.0667.",
           observedValue: 0.0667,
           targetValue: 0.01,
-          matchedMetricKey: "accuracy_delta_vs_baseline_mean"
+          matchedMetricKey: "quality_delta_vs_reference_mean"
         },
         profile: {
           source: "brief",
-          primary_metric: "accuracy_delta_vs_baseline_mean",
-          preferred_metric_keys: ["accuracy_delta_vs_baseline_mean"],
-          analysis_focus: ["baseline comparison"],
+          primary_metric: "quality_delta_vs_reference_mean",
+          preferred_metric_keys: ["quality_delta_vs_reference_mean"],
+          analysis_focus: ["explicit reference comparison"],
           paper_emphasis: ["bounded claim"],
           assumptions: []
         }
       },
       overview: {
         objective_status: "met",
-        objective_summary: "25/25 repeated-seed runs completed.",
-        matched_metric_key: "accuracy_delta_vs_baseline_mean",
+        objective_summary: "All declared repeated runs completed.",
+        matched_metric_key: "quality_delta_vs_reference_mean",
         observed_value: 0.0667,
         target_description: ">= 0.01",
-        selected_design_title: "5-seed condition-parameter stability against locked baseline",
+        selected_design_title: "Repeated comparison under a fixed protocol",
         execution_runs: 25
       },
       plan_context: {
         selected_design: {
-          title: "5-seed condition-parameter stability against locked baseline",
-          summary: "Compare condition-parameter conditions against the locked baseline."
+          title: "Repeated comparison under a fixed protocol",
+          summary: "Compare two declared series through explicit observation references."
         }
       },
       metric_table: [
         {
-          key: "accuracy_delta_vs_baseline_mean",
+          key: "quality_delta_vs_reference_mean",
           value: 0.0667,
-          label: "accuracy_delta_vs_baseline_mean"
+          label: "quality_delta_vs_reference_mean"
         }
       ],
-      results_table: [
-        {
-          metric: "accuracy_delta_vs_baseline_mean",
-          baseline: 0,
-          comparator: 0.0667,
-          delta: 0.0667,
-          direction: "higher_better"
-        }
-      ],
-      condition_comparisons: [
-        {
-          baseline_condition: "baseline_condition",
-          comparator_condition: "candidate_condition_f5",
-          metric_key: "accuracy_delta_vs_baseline_mean",
-          baseline_value: 0,
-          comparator_value: 0.0667,
-          delta: 0.0667,
-          direction: "higher_better",
-          summary: "candidate_condition_f5 exceeded the locked baseline."
-        }
-      ],
+      results_artifact: {
+        schema_version: "2.0",
+        metrics: [
+          {
+            id: "metric-quality",
+            label: "Mean outcome quality",
+            direction: "higher_better",
+            unit: "ratio"
+          }
+        ],
+        series: [
+          {
+            id: "series-zeta",
+            label: "Zeta-labelled series",
+            role: "baseline",
+            dimensions: { partition: "evaluation", repetitions: 5 }
+          },
+          {
+            id: "series-alpha",
+            label: "Alpha-labelled series",
+            role: "primary",
+            dimensions: { partition: "evaluation", repetitions: 5 }
+          }
+        ],
+        observations: [
+          {
+            id: "observation-zeta-quality",
+            series_id: "series-zeta",
+            metric_id: "metric-quality",
+            scope: { partition: "evaluation" },
+            value: 0.51,
+            evidence_refs: ["artifacts/observations/zeta.json"]
+          },
+          {
+            id: "observation-alpha-quality",
+            series_id: "series-alpha",
+            metric_id: "metric-quality",
+            scope: { partition: "evaluation" },
+            value: 0.5767,
+            evidence_refs: ["artifacts/observations/alpha.json"]
+          }
+        ],
+        comparisons: [
+          {
+            id: "comparison-explicit-quality",
+            subject_observation_id: "observation-alpha-quality",
+            reference_observation_id: "observation-zeta-quality",
+            delta: 0.0667,
+            judgement: "higher observed value",
+            evidence_refs: ["artifacts/comparisons/quality.json"]
+          }
+        ]
+      },
+      primary_comparison_id: "comparison-explicit-quality",
+      condition_comparisons: [],
       execution_summary: {
         observations: [],
         observation_count: 25,
         success_count: 25,
         failure_count: 0
       },
-      primary_findings: ["candidate_condition_f5 had the best mean average accuracy."],
-      limitations: ["The study is scoped to one small model and bounded evaluation slices."],
+      primary_findings: ["The explicitly referenced subject observation is higher than its reference."],
+      limitations: ["The study is scoped to a bounded evaluation slice."],
       warnings: [],
       paper_claims: [
         {
           claim_id: "claim_1",
-          statement: "The strongest tested comparator improved over the locked baseline in this bounded run.",
-          evidence: ["accuracy_delta_vs_baseline_mean"],
+          statement: "The declared subject-reference comparison has a positive delta in this bounded run.",
+          evidence: ["artifacts/comparisons/quality.json"],
           strength: "moderate"
         }
       ],
@@ -217,7 +258,7 @@ describe("paperWriting related-work support", () => {
       },
       failure_taxonomy: [],
       synthesis: {
-        discussion_points: ["The claim remains scoped to this model/task budget."],
+        discussion_points: ["The claim remains scoped to the declared evaluation budget."],
         failure_analysis: [],
         confidence_statement: "Moderate confidence under the bounded run scope."
       }
@@ -238,17 +279,51 @@ describe("paperWriting related-work support", () => {
       } as any,
       objectiveMetricProfile: {
         source: "brief",
-        primaryMetric: "accuracy_delta_vs_baseline_mean",
+        primaryMetric: "quality_delta_vs_reference_mean",
         targetDescription: ">= 0.01",
-        analysisFocus: ["baseline comparison"],
+        analysisFocus: ["explicit reference comparison"],
         paperEmphasis: ["bounded claim"],
         assumptions: []
       } as any
     });
 
+    const context = parsePromptContext(prompt);
+    const resultAnalysis = context.result_analysis as Record<string, unknown>;
+    expect(resultAnalysis).not.toHaveProperty("condition_comparisons");
+    const resultsArtifact = resultAnalysis.results_artifact as {
+      metrics: Array<Record<string, unknown>>;
+      series: Array<Record<string, unknown>>;
+      observations: Array<Record<string, unknown>>;
+      comparisons: Array<Record<string, unknown>>;
+    };
+
     expect(prompt.length).toBeLessThan(60_000);
-    expect(prompt).toContain("accuracy_delta_vs_baseline_mean");
-    expect(prompt).toContain("candidate_condition_f5");
+    expect(resultAnalysis).not.toHaveProperty("results_table");
+    expect(resultsArtifact.metrics).toEqual([
+      {
+        id: "metric-quality",
+        label: "Mean outcome quality",
+        direction: "higher_better",
+        unit: "ratio"
+      }
+    ]);
+    expect(resultsArtifact.series.map((item) => item.role)).toEqual([
+      "baseline",
+      "primary"
+    ]);
+    expect(resultsArtifact.observations.map((item) => item.evidence_refs)).toEqual([
+      ["artifacts/observations/zeta.json"],
+      ["artifacts/observations/alpha.json"]
+    ]);
+    expect(resultsArtifact.comparisons).toEqual([
+      expect.objectContaining({
+        id: "comparison-explicit-quality",
+        subject_observation_id: "observation-alpha-quality",
+        reference_observation_id: "observation-zeta-quality",
+        delta: 0.0667,
+        evidence_refs: ["artifacts/comparisons/quality.json"]
+      })
+    ]);
     expect(prompt).toContain("raw_metrics_omitted");
     expect(prompt).not.toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
   });

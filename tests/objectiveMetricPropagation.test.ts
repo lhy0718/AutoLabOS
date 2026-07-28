@@ -7,7 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { InMemoryEventStream } from "../src/core/events.js";
 import { LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
-import { createAnalyzeResultsNode } from "../src/core/nodes/analyzeResults.js";
+import {
+  createAnalyzeResultsNode,
+  hydrateDetailedExperimentMetrics
+} from "../src/core/nodes/analyzeResults.js";
 import { createReviewNode } from "../src/core/nodes/review.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
@@ -24,6 +27,12 @@ import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { RunRecord } from "../src/types.js";
 import { addNode, initResearchTree, saveResearchTree } from "../src/core/exploration/researchTree.js";
 import type { ResearchTreeNode } from "../src/core/exploration/types.js";
+import type {
+  ResultsArtifactV2,
+  ResultsPlanV2,
+  ResultsSeriesRole
+} from "../src/core/analysis/resultsTableSchema.js";
+import type { ExperimentContract } from "../src/core/experiments/experimentContract.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -37,7 +46,7 @@ class StructuredResultAnalysisLLM extends MockLLMClient {
       return {
         text: JSON.stringify({
           discussion_points: [
-            "The shared-state schema condition met the accuracy target and outperformed the baseline on the reported comparisons.",
+            "The declared candidate met the primary_score target and outperformed the reference on the reported comparisons.",
             "Supplemental confirmatory and quick-check runs remained above the objective threshold, which supports stability across smaller and larger trial scales.",
             "The recent paper comparison suggests the current run exceeds the strongest recent reference score in the provided window."
           ],
@@ -46,7 +55,7 @@ class StructuredResultAnalysisLLM extends MockLLMClient {
           ],
           follow_up_actions: [
             "Expand confirmatory repeats to tighten confidence intervals for the primary metrics.",
-            "Inspect the schema ablation gap to isolate which structured-state components drive the gain."
+            "Inspect the candidate comparison to isolate which declared component drives the gain."
           ],
           confidence_statement:
             "Confidence is moderate because the objective was met, repeated-trial summaries are available, and the verifier reported a clean execution."
@@ -62,10 +71,10 @@ function makeRun(runId: string): RunRecord {
     version: 3,
     workflowVersion: 3,
     id: runId,
-    title: "Multi-Agent Collaboration",
-    topic: "AI agent automation",
+    title: "Configured Comparison",
+    topic: "Configured research question",
     constraints: [],
-    objectiveMetric: "accuracy at least 0.9",
+    objectiveMetric: "primary_score at least 0.9",
     status: "running",
     currentNode: "run_experiments",
     latestSummary: undefined,
@@ -81,6 +90,149 @@ function makeRun(runId: string): RunRecord {
   };
 }
 
+interface ResultsSubjectFixture {
+  id: string;
+  label: string;
+  role: Extract<ResultsSeriesRole, "primary" | "comparator" | "control">;
+  value: number;
+  judgement?: string;
+}
+
+interface ResultsFixtureOptions {
+  referenceId?: string;
+  referenceLabel?: string;
+  referenceValue?: number;
+  subjects?: ResultsSubjectFixture[];
+  metricId?: string;
+  metricLabel?: string;
+  metricUnit?: string;
+  scope?: Record<string, string | number | boolean | null>;
+}
+
+function buildResultsArtifactFixture(options: ResultsFixtureOptions = {}): ResultsArtifactV2 {
+  const referenceId = options.referenceId ?? "reference";
+  const referenceLabel = options.referenceLabel ?? "Reference";
+  const referenceValue = options.referenceValue ?? 0.5;
+  const metricId = options.metricId ?? "primary_score";
+  const metricLabel = options.metricLabel ?? "Primary score";
+  const metricUnit = options.metricUnit ?? "score";
+  const scope = options.scope ?? { partition: "validation_partition" };
+  const subjects = options.subjects ?? [
+    {
+      id: "candidate_a",
+      label: "Candidate A",
+      role: "primary" as const,
+      value: 0.55,
+      judgement: "supported"
+    }
+  ];
+
+  return {
+    schema_version: "2.0",
+    metrics: [{ id: metricId, label: metricLabel, direction: "higher_better", unit: metricUnit }],
+    series: [
+      {
+        id: referenceId,
+        label: referenceLabel,
+        role: "baseline",
+        dimensions: { protocol: "declared_reference" }
+      },
+      ...subjects.map((subject) => ({
+        id: subject.id,
+        label: subject.label,
+        role: subject.role,
+        dimensions: { protocol: "declared_candidate" }
+      }))
+    ],
+    observations: [
+      {
+        id: `${referenceId}_${metricId}_observation`,
+        series_id: referenceId,
+        metric_id: metricId,
+        scope,
+        value: referenceValue
+      },
+      ...subjects.map((subject) => ({
+        id: `${subject.id}_${metricId}_observation`,
+        series_id: subject.id,
+        metric_id: metricId,
+        scope,
+        value: subject.value
+      }))
+    ],
+    comparisons: subjects.map((subject) => ({
+      id: `${subject.id}_vs_${referenceId}`,
+      subject_observation_id: `${subject.id}_${metricId}_observation`,
+      reference_observation_id: `${referenceId}_${metricId}_observation`,
+      delta: Number((subject.value - referenceValue).toFixed(12)),
+      ...(subject.judgement ? { judgement: subject.judgement } : {})
+    }))
+  };
+}
+
+function buildResultsPlanFixture(options: ResultsFixtureOptions = {}): ResultsPlanV2 {
+  const artifact = buildResultsArtifactFixture(options);
+  const reference = artifact.series.find((series) => series.role === "baseline");
+  const primary = artifact.series.find((series) => series.role === "primary");
+  if (!reference || !primary) {
+    throw new Error("fixture requires explicit baseline and primary series");
+  }
+  const metric = artifact.metrics[0];
+  if (!metric) {
+    throw new Error("fixture requires an explicit metric");
+  }
+  const requiredComparisons = artifact.comparisons.map((comparison) => {
+    const subjectObservation = artifact.observations.find(
+      (observation) => observation.id === comparison.subject_observation_id
+    );
+    if (!subjectObservation) {
+      throw new Error("fixture comparison requires a subject observation");
+    }
+    return {
+      id: comparison.id,
+      subject_series_id: subjectObservation.series_id,
+      reference_series_id: reference.id,
+      metric_id: metric.id,
+      scope: { ...subjectObservation.scope }
+    };
+  });
+
+  return {
+    schema_version: "2.0",
+    required_metrics: artifact.metrics.map((definition) => ({ ...definition })),
+    minimum_series_count: artifact.series.length,
+    minimum_comparison_count: artifact.comparisons.length,
+    required_series: artifact.series.map((series) => ({
+      id: series.id,
+      role: series.role ?? "other"
+    })),
+    required_comparisons: requiredComparisons,
+    primary_comparison_id: `${primary.id}_vs_${reference.id}`
+  };
+}
+
+function buildExperimentContractFixture(
+  runId: string,
+  options: ResultsFixtureOptions = {}
+): ExperimentContract {
+  const plan = buildResultsPlanFixture(options);
+  const referenceId = plan.required_series?.find((series) => series.role === "baseline")?.id;
+  return {
+    version: 2,
+    run_id: runId,
+    created_at: new Date().toISOString(),
+    hypothesis: "Candidate A changes the declared primary score.",
+    causal_mechanism: "The declared intervention changes only Candidate A.",
+    single_change: "Apply the declared candidate configuration.",
+    confounded: false,
+    expected_metric_effect: "Increase primary_score over the declared reference.",
+    abort_condition: "Abort when required comparative evidence is missing.",
+    keep_or_discard_rule: "Keep only when the declared comparison is populated.",
+    baselines: referenceId ? [referenceId] : undefined,
+    results_plan: plan
+  };
+}
+
 function makeExpadaptertionNode(patch: Partial<ResearchTreeNode> = {}): ResearchTreeNode {
   const now = new Date().toISOString();
   return {
@@ -91,11 +243,11 @@ function makeExpadaptertionNode(patch: Partial<ResearchTreeNode> = {}): Research
     depth: patch.depth ?? 0,
     debug_depth: patch.debug_depth ?? 0,
     branch_kind: patch.branch_kind ?? "main",
-    change_set: patch.change_set ?? { model: "schema-v1" },
+    change_set: patch.change_set ?? { method: "candidate_a" },
     hypothesis_link: patch.hypothesis_link ?? null,
     expected_effect: patch.expected_effect ?? "Improve objective.",
     actual_result_summary: patch.actual_result_summary ?? null,
-    objective_metrics: patch.objective_metrics ?? { baseline: 0.9, treatment: 0.91 },
+    objective_metrics: patch.objective_metrics ?? { reference: 0.9, candidate_a: 0.91 },
     budget_cost: patch.budget_cost ?? 100,
     reproducibility_status: patch.reproducibility_status ?? "reproduced",
     failure_fingerprint: patch.failure_fingerprint ?? null,
@@ -121,14 +273,14 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
     path.join(runDir, "paper_summaries.jsonl"),
     `${JSON.stringify({
       paper_id: "paper_1",
-      title: "Coordination Benchmark",
+      title: "Configured Method Evaluation",
       source_type: "full_text",
-      summary: "Structured coordination improves reproducibility.",
-      key_findings: ["Structured coordination improves reproducibility."],
-      limitations: ["Benchmark coverage is limited."],
-      datasets: ["AgentBench-mini"],
-      metrics: ["accuracy", "reproducibility_score"],
-      novelty: "Constraint-aware coordination",
+      summary: "The declared candidate improves reproducibility over the reference.",
+      key_findings: ["The declared candidate improves reproducibility over the reference."],
+      limitations: ["Evaluation coverage is limited."],
+      datasets: ["validation_partition"],
+      metrics: ["primary_score", "reproducibility_score"],
+      novelty: "Declared comparison protocol",
       reproducibility_notes: ["Repeated runs are included."]
     })}\n`,
     "utf8"
@@ -138,11 +290,11 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
     `${JSON.stringify({
       evidence_id: "ev_1",
       paper_id: "paper_1",
-      claim: "Structured coordination improves reproducibility.",
-      method_slot: "shared state schema",
+      claim: "The declared candidate improves reproducibility over the reference.",
+      method_slot: "candidate_a",
       result_slot: "higher reproducibility_score",
-      limitation_slot: "limited benchmark coverage",
-      dataset_slot: "AgentBench-mini",
+      limitation_slot: "limited evaluation coverage",
+      dataset_slot: "validation_partition",
       metric_slot: "reproducibility_score",
       evidence_span: "Repeated runs improved reproducibility_score.",
       source_type: "full_text",
@@ -154,7 +306,7 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
     path.join(runDir, "hypotheses.jsonl"),
     `${JSON.stringify({
       hypothesis_id: "h_1",
-      text: "Structured coordination improves reproducibility.",
+      text: "The declared candidate improves reproducibility over the reference.",
       evidence_links: ["ev_1"]
     })}\n`,
     "utf8"
@@ -163,14 +315,236 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
     path.join(runDir, "corpus.jsonl"),
     `${JSON.stringify({
       paper_id: "paper_1",
-      title: "Coordination Benchmark",
-      abstract: "Structured coordination improves reproducibility.",
-      authors: ["Alice Doe"],
+      title: "Configured Method Evaluation",
+      abstract: "The declared candidate improves reproducibility over the reference.",
+      authors: ["Example Author"],
       year: 2025,
-      venue: "ACL"
+      venue: "Example Workshop"
     })}\n`,
     "utf8"
   );
+}
+
+async function seedGenericDetailedAnalysisArtifacts(args: {
+  root: string;
+  run: RunRecord;
+  seeds: number[];
+  baselineScore?: number;
+  primaryScore?: number;
+}): Promise<{ runDir: string; publicDir: string; latestResultsPath: string }> {
+  const baselineScore = args.baselineScore ?? 0.62;
+  const primaryScore = args.primaryScore ?? 0.66;
+  const delta = Number((primaryScore - baselineScore).toFixed(4));
+  const runDir = path.join(args.root, ".autolabos", "runs", args.run.id);
+  const memoryDir = path.join(runDir, "memory");
+  const publicDir = path.join(args.root, "public-experiment");
+  const latestResultsPath = path.join(publicDir, "latest_results.json");
+  const resultsArtifact = buildResultsArtifactFixture({
+    referenceValue: baselineScore,
+    subjects: [
+      {
+        id: "candidate_a",
+        label: "Candidate A",
+        role: "primary",
+        value: primaryScore,
+        judgement: delta > 0 ? "supported" : "not_supported"
+      }
+    ]
+  });
+  const baselineRepeats = args.seeds.map((seed, index) => ({
+    repeat_index: index + 1,
+    seed,
+    primary_score: Number((baselineScore + (index - 1) * 0.001).toFixed(4))
+  }));
+  const primaryRepeats = args.seeds.map((seed, index) => ({
+    repeat_index: index + 1,
+    seed,
+    primary_score: Number((primaryScore + (index - 1) * 0.001).toFixed(4))
+  }));
+
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(publicDir, { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "run_context.json"),
+    JSON.stringify({
+      version: 1,
+      items: [
+        {
+          key: "implement_experiments.public_dir",
+          value: publicDir,
+          updatedAt: new Date().toISOString()
+        },
+        {
+          key: "implement_experiments.metrics_path",
+          value: `.autolabos/runs/${args.run.id}/metrics.json`,
+          updatedAt: new Date().toISOString()
+        }
+      ]
+    }),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "experiment_plan.yaml"),
+    [
+      "selected_hypothesis_ids:",
+      '  - "h_1"',
+      "selected_design:",
+      '  id: "plan_repeated_conditions"',
+      '  title: "Repeated condition comparison"',
+      '  summary: "Compare explicit condition IDs under a paired repeated protocol."',
+      "  metrics:",
+      '    - "primary_score_delta_vs_baseline"',
+      "  baselines:",
+      '    - "reference"',
+      "  evaluation_steps:",
+      '    - "Run every declared condition under the same seed schedule."',
+      '    - "Report the preregistered confidence interval and baseline delta."',
+      "  risks:",
+      '    - "The bounded evaluation scope limits external generalization."'
+    ].join("\n"),
+    "utf8"
+  );
+  await seedWritePaperInputs(runDir);
+  await writeFile(
+    path.join(runDir, "experiment_contract.json"),
+    JSON.stringify(
+      buildExperimentContractFixture(args.run.id, {
+        referenceValue: baselineScore,
+        subjects: [
+          {
+            id: "candidate_a",
+            label: "Candidate A",
+            role: "primary",
+            value: primaryScore,
+            judgement: delta > 0 ? "supported" : "not_supported"
+          }
+        ]
+      }),
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await writeFile(
+    latestResultsPath,
+    JSON.stringify(
+      {
+        schema_version: "1.0",
+        run_id: args.run.id,
+        protocol: {
+          design: "paired_repeated_conditions",
+          repeats: args.seeds.length
+        },
+        seeds: args.seeds,
+        repeat_records: args.seeds.map((seed, index) => ({
+          repeat_index: index + 1,
+          seed,
+          condition_metrics: {
+            reference: { primary_score: baselineRepeats[index]?.primary_score },
+            candidate_a: { primary_score: primaryRepeats[index]?.primary_score }
+          }
+        })),
+        sampling_profile: {
+          name: "standard",
+          total_trials: args.seeds.length,
+          executed_trials: args.seeds.length,
+          cached_trials: 0
+        },
+        primary_condition: "candidate_a",
+        baseline_condition: "reference",
+        global_metrics: {
+          primary_score_delta_vs_baseline: delta,
+          replication_success_rate: 1
+        },
+        results_artifact: resultsArtifact,
+        conditions: [
+          {
+            condition_id: "reference",
+            role: "baseline",
+            status: "completed",
+            seed_count: args.seeds.length,
+            seeds: args.seeds,
+            repeat_records: baselineRepeats,
+            metrics: {
+              primary_score: baselineScore,
+              primary_score_delta_vs_baseline: 0,
+              ci95_primary_score: [
+                Number((baselineScore - 0.01).toFixed(4)),
+                Number((baselineScore + 0.01).toFixed(4))
+              ]
+            }
+          },
+          {
+            condition_id: "candidate_a",
+            role: "primary",
+            status: "completed",
+            seed_count: args.seeds.length,
+            seeds: args.seeds,
+            repeat_records: primaryRepeats,
+            metrics: {
+              primary_score: primaryScore,
+              primary_score_delta_vs_baseline: delta,
+              ci95_primary_score: [
+                Number((primaryScore - 0.01).toFixed(4)),
+                Number((primaryScore + 0.01).toFixed(4))
+              ]
+            }
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "metrics.json"),
+    JSON.stringify(
+      {
+        status: "completed",
+        experiment_mode: "real_execution",
+        metric: "primary_score_delta_vs_baseline",
+        value: delta,
+        primary_score_delta_vs_baseline: delta,
+        stability_metrics: {
+          distinct_seed_count: args.seeds.length,
+          replication_success_rate: 1
+        },
+        results_artifact: resultsArtifact,
+        results_path: latestResultsPath,
+        primary_condition: "candidate_a",
+        baseline_condition: "reference",
+        required_condition_count: 2,
+        completed_condition_count: 2
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+  await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
+  await writeFile(
+    path.join(runDir, "run_experiments_panel", "execution_plan.json"),
+    JSON.stringify({ managed_supplemental_profiles: [] }, null, 2),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "run_experiments_verify_report.json"),
+    JSON.stringify(
+      {
+        status: "pass",
+        trigger: "auto_handoff",
+        stage: "success",
+        summary: "Objective metric met from explicit repeated condition evidence.",
+        metrics_path: path.join(runDir, "metrics.json")
+      },
+      null,
+      2
+    ),
+    "utf8"
+  );
+
+  return { runDir, publicDir, latestResultsPath };
 }
 
 describe("objective metric propagation", () => {
@@ -182,7 +556,7 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+      objectiveMetric: "primary_score_delta_vs_baseline >= 0.01"
     };
     run.graph.currentNode = "analyze_results";
     const runDir = path.join(root, ".autolabos", "runs", runId);
@@ -207,16 +581,48 @@ describe("objective metric propagation", () => {
       "utf8"
     );
     await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(
+        buildExperimentContractFixture(runId, {
+          referenceValue: 0.5,
+          subjects: [
+            {
+              id: "candidate_a",
+              label: "Candidate A",
+              role: "primary",
+              value: 0.54,
+              judgement: "supported"
+            }
+          ]
+        }),
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
       path.join(publicDir, "metrics.json"),
       JSON.stringify(
         {
           status: "completed",
-          accuracy_delta_vs_baseline: 0.04,
+          primary_score_delta_vs_baseline: 0.04,
           completed_condition_count: 2,
           required_condition_count: 2,
+          results_artifact: buildResultsArtifactFixture({
+            referenceValue: 0.5,
+            subjects: [
+              {
+                id: "candidate_a",
+                label: "Candidate A",
+                role: "primary",
+                value: 0.54,
+                judgement: "supported"
+              }
+            ]
+          }),
           conditions: [
-            { marker: "baseline_condition", status: "completed", average_accuracy: 0.5, accuracy_delta_vs_baseline: 0 },
-            { marker: "candidate_condition_a", status: "completed", average_accuracy: 0.54, accuracy_delta_vs_baseline: 0.04 }
+            { marker: "reference", status: "completed", average_primary_score: 0.5, primary_score_delta_vs_baseline: 0 },
+            { marker: "candidate_a", status: "completed", average_primary_score: 0.54, primary_score_delta_vs_baseline: 0.04 }
           ]
         },
         null,
@@ -246,7 +652,7 @@ describe("objective metric propagation", () => {
     expect(analysisRaw.overview.objective_status).toBe("met");
     expect(analysisRaw.warnings.some((warning) => warning.includes("Using completed public experiment metrics"))).toBe(true);
     expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      label: "candidate condition a vs baseline condition",
+      label: "Candidate A vs Reference",
       hypothesis_supported: true
     });
   });
@@ -259,7 +665,7 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+      objectiveMetric: "primary_score_delta_vs_baseline >= 0.01"
     };
     run.graph.currentNode = "analyze_results";
     const runDir = path.join(root, ".autolabos", "runs", runId);
@@ -288,29 +694,29 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           status: "completed",
-          accuracy_delta_vs_baseline: 0,
+          primary_score_delta_vs_baseline: 0,
           completed_run_count: 2,
           required_run_count: 2,
           completed_condition_count: 2,
           required_condition_count: 2,
           condition_summaries: [
             {
-              marker: "baseline_condition",
+              marker: "reference",
               status: "completed",
-              accuracy: 0.5,
-              average_accuracy: 0.5,
+              primary_score: 0.5,
+              average_primary_score: 0.5,
               correct_count: 5,
               total_count: 10,
-              accuracy_delta_vs_baseline: 0
+              primary_score_delta_vs_baseline: 0
             },
             {
-              marker: "candidate_condition_a",
+              marker: "candidate_a",
               status: "completed",
-              accuracy: 0.5,
-              average_accuracy: 0.5,
+              primary_score: 0.5,
+              average_primary_score: 0.5,
               correct_count: 5,
               total_count: 10,
-              accuracy_delta_vs_baseline: 0
+              primary_score_delta_vs_baseline: 0
             }
           ]
         },
@@ -344,7 +750,7 @@ describe("objective metric propagation", () => {
           status: "pass",
           trigger: "manual",
           stage: "success",
-          summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01.",
+          summary: "Objective metric not met: primary_score_delta_vs_baseline=0 does not satisfy >= 0.01.",
           command: "node run_condition_sweep_experiment.js",
           metrics_path: path.join(runDir, "metrics.json"),
           log_file: path.join(execLogsDir, "run_experiments.txt")
@@ -382,7 +788,7 @@ describe("objective metric propagation", () => {
     expect(analysis.warnings.some((warning) => warning.includes("Execution stderr was recorded"))).toBe(false);
   });
 
-  it("evaluates objective metrics during run, analysis, and paper writing", async () => {
+  it("propagates objective metrics into paper artifacts while preserving strict write gating", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-objective-propagation-"));
     process.chdir(root);
 
@@ -439,43 +845,66 @@ describe("objective metric propagation", () => {
         '  - "h_1"',
         "constraints:",
         "  implementation_notes:",
-        '    - "Record accuracy and f1 for each run."',
+        '    - "Record primary_score and secondary_score for each run."',
         "  evaluation_notes:",
-        '    - "Highlight treatment-baseline deltas."',
+        '    - "Highlight candidate-reference deltas."',
         "selected_design:",
-        '  id: "design_accuracy"',
-        '  title: "Accuracy benchmark"',
-        '  summary: "Compare treatment and baseline runners on shared tasks."',
+        '  id: "design_primary_score"',
+        '  title: "Primary score evaluation"',
+        '  summary: "Compare candidate and reference runners under a shared evaluation protocol."',
         "  metrics:",
-        '    - "accuracy"',
-        '    - "f1"',
+        '    - "primary_score"',
+        '    - "secondary_score"',
         "  baselines:",
-        '    - "baseline_runner"',
+        '    - "reference"',
         "  evaluation_steps:",
-        '    - "Measure treatment vs baseline deltas."',
+        '    - "Measure candidate vs reference deltas."',
         "  risks:",
         '    - "Small sample size may exaggerate gains."',
         "  resource_notes:",
         '    - "Quick-check scale execution only."',
         "shortlisted_designs:",
-        '  - id: "design_accuracy"',
-        '    title: "Accuracy benchmark"',
-        '    summary: "Compare treatment and baseline runners on shared tasks."'
+        '  - id: "design_primary_score"',
+        '    title: "Primary score evaluation"',
+        '    summary: "Compare candidate and reference runners under a shared evaluation protocol."'
       ].join("\n"),
+      "utf8"
+    );
+    const endToEndResultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.84,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.91,
+          judgement: "supported"
+        },
+        {
+          id: "candidate_b",
+          label: "Candidate B",
+          role: "comparator",
+          value: 0.87
+        }
+      ]
+    };
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, endToEndResultsOptions), null, 2),
       "utf8"
     );
     await writeFile(
       path.join(publicDir, "confirmatory_metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.905,
-          f1: 0.872,
+          primary_score: 0.905,
+          secondary_score: 0.872,
           reproducibility_score: 0.884,
-          ci95_accuracy: [0.881, 0.929],
+          ci95_primary_score: [0.881, 0.929],
           sampling_profile: {
             name: "confirmatory",
-            total_trials: 12,
-            executed_trials: 12,
+            total_trials: 36,
+            executed_trials: 36,
             cached_trials: 0
           }
         },
@@ -488,14 +917,14 @@ describe("objective metric propagation", () => {
       path.join(publicDir, "quick_check_metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.89,
-          f1: 0.85,
+          primary_score: 0.89,
+          secondary_score: 0.85,
           reproducibility_score: 0.86,
-          ci95_accuracy: [0.85, 0.93],
+          ci95_primary_score: [0.85, 0.93],
           sampling_profile: {
             name: "quick_check",
-            total_trials: 4,
-            executed_trials: 4,
+            total_trials: 36,
+            executed_trials: 36,
             cached_trials: 0
           }
         },
@@ -525,8 +954,8 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.12,
-          f1: 0.08,
+          primary_score: 0.12,
+          secondary_score: 0.08,
           stale: true
         },
         null,
@@ -542,45 +971,50 @@ describe("objective metric propagation", () => {
           path.join(runDir, "metrics.json"),
           JSON.stringify(
             {
-              accuracy: 0.91,
-              f1: 0.88,
+              primary_score: 0.91,
+              secondary_score: 0.88,
               cross_run_variance: 0.012,
               prompt_paraphrase_sensitivity: 0.018,
               replication_success_rate: 0.94,
-              ci95_accuracy: [0.88, 0.94],
+              stability_metrics: {
+                distinct_seed_count: 3,
+                replication_success_rate: 0.94
+              },
+              ci95_primary_score: [0.88, 0.94],
               sampling_profile: {
                 name: "standard",
-                total_trials: 12,
-                executed_trials: 12,
+                total_trials: 36,
+                executed_trials: 36,
                 cached_trials: 0
               },
               seeds: [101, 102, 103],
-              primary_condition: "shared_state_schema",
-              baseline_condition: "free_form_chat",
+              results_artifact: buildResultsArtifactFixture(endToEndResultsOptions),
+              primary_condition: "candidate_a",
+              baseline_condition: "reference",
               condition_metrics: {
-                free_form_chat: {
-                  accuracy: 0.84,
-                  f1: 0.79,
+                reference: {
+                  primary_score: 0.84,
+                  secondary_score: 0.79,
                   reproducibility_score: 0.73,
-                  ci95_accuracy: [0.8, 0.88]
+                  ci95_primary_score: [0.8, 0.88]
                 },
-                shared_state_schema: {
-                  accuracy: 0.91,
-                  f1: 0.88,
+                candidate_a: {
+                  primary_score: 0.91,
+                  secondary_score: 0.88,
                   reproducibility_score: 0.89,
-                  ci95_accuracy: [0.88, 0.94]
+                  ci95_primary_score: [0.88, 0.94]
                 },
-                schema_ablation: {
-                  accuracy: 0.87,
-                  f1: 0.84,
+                candidate_b: {
+                  primary_score: 0.87,
+                  secondary_score: 0.84,
                   reproducibility_score: 0.81,
-                  ci95_accuracy: [0.83, 0.9]
+                  ci95_primary_score: [0.83, 0.9]
                 }
               },
               comparison: {
-                shared_state_vs_free_form: {
-                  accuracy_delta: 0.07,
-                  f1_delta: 0.09,
+                candidate_a_vs_reference: {
+                  primary_score_delta: 0.07,
+                  secondary_score_delta: 0.09,
                   reproducibility_delta: 0.16,
                   hypothesis_supported: true
                 }
@@ -685,11 +1119,11 @@ describe("objective metric propagation", () => {
 
     const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
     expect(evaluationRaw).toContain('"status": "met"');
-    expect(evaluationRaw).toContain('"matchedMetricKey": "accuracy"');
+    expect(evaluationRaw).toContain('"matchedMetricKey": "primary_score"');
     const backupRaw = await readFile(path.join(root, previousMetricsBackup as string), "utf8");
     expect(backupRaw).toContain('"stale": true');
     const publicExperimentDir = buildPublicExperimentDir(root, run);
-    expect(await readFile(path.join(publicExperimentDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.91');
+    expect(await readFile(path.join(publicExperimentDir, "metrics.json"), "utf8")).toContain('"primary_score": 0.91');
     expect(await readFile(path.join(publicExperimentDir, "objective_evaluation.json"), "utf8")).toContain('"status": "met"');
     expect(await readFile(path.join(publicExperimentDir, "run_experiments_verify_report.json"), "utf8")).toContain(
       '"status": "pass"'
@@ -733,6 +1167,11 @@ describe("objective metric propagation", () => {
         source: string;
         id: string;
       }>;
+      results_plan?: {
+        primary_comparison_id?: string;
+        required_metrics: Array<{ id: string; unit?: string }>;
+        required_series?: Array<{ id: string; role?: string }>;
+      };
       statistical_summary: {
         total_trials?: number;
         confidence_intervals: Array<{
@@ -760,7 +1199,15 @@ describe("objective metric propagation", () => {
       };
     };
     expect(analysis.overview.objective_status).toBe("met");
-    expect(analysis.overview.selected_design_title).toBe("Accuracy benchmark");
+    expect(analysis.overview.selected_design_title).toBe("Primary score evaluation");
+    expect(analysis.results_plan).toMatchObject({
+      primary_comparison_id: "candidate_a_vs_reference",
+      required_metrics: [expect.objectContaining({ id: "primary_score", unit: "score" })],
+      required_series: expect.arrayContaining([
+        expect.objectContaining({ id: "reference", role: "baseline" }),
+        expect.objectContaining({ id: "candidate_a", role: "primary" })
+      ])
+    });
     expect(analysis.execution_summary.observation_count).toBe(1);
     expect(analysis.verifier_feedback).toMatchObject({
       status: "pass",
@@ -771,16 +1218,16 @@ describe("objective metric propagation", () => {
     expect(analysis.external_comparisons[0]?.id).toBe("recent_paper_reproducibility");
     expect(
       analysis.condition_comparisons
-        .filter((item) => item.source === "metrics.condition_metrics")
+        .filter((item) => item.source === "results_artifact")
         .map((item) => item.id)
     ).toEqual([
-      "shared_state_schema_vs_free_form_chat",
-      "shared_state_schema_vs_schema_ablation"
+      "candidate_a_vs_reference",
+      "candidate_b_vs_reference"
     ]);
-    expect(analysis.statistical_summary.total_trials).toBe(12);
+    expect(analysis.statistical_summary.total_trials).toBe(36);
     expect(
       analysis.statistical_summary.confidence_intervals.some(
-        (item) => item.metric_key === "accuracy" && item.source === "metrics"
+        (item) => item.metric_key === "primary_score" && item.source === "metrics"
       )
     ).toBe(true);
     expect(
@@ -797,7 +1244,7 @@ describe("objective metric propagation", () => {
       targetNode: "figure_audit"
     });
     expect(analysis.synthesis?.source).toBe("llm");
-    expect(analysis.synthesis?.discussion_points.some((point) => point.includes("shared-state schema"))).toBe(true);
+    expect(analysis.synthesis?.discussion_points.some((point) => point.includes("declared candidate"))).toBe(true);
     expect(analysis.synthesis?.confidence_statement).toContain("Confidence is moderate");
 
     const synthesisRaw = await readFile(path.join(runDir, "result_analysis_synthesis.json"), "utf8");
@@ -823,7 +1270,7 @@ describe("objective metric propagation", () => {
       '"validation_scope": "full_run"'
     );
     expect(await readFile(path.join(publicRunDir, "results", "run_status.json"), "utf8")).toContain(
-      '"recommended_next_action": "resume_review"'
+      '"recommended_next_action": "waiting_for_input"'
     );
     expect(await readFile(path.join(publicRunDir, "results", "run_completeness_checklist.json"), "utf8")).toContain(
       '"run_id": "run-objective-propagation"'
@@ -859,23 +1306,31 @@ describe("objective metric propagation", () => {
     expect(await readFile(path.join(publicAnalysisDir, "figures", "performance.svg"), "utf8")).toContain("<svg");
 
     const writeResult = await writeNode.execute({ run, graph: run.graph });
-    expect(writeResult.status).toBe("success");
+    expect(writeResult.status).toBe("failure");
+    expect(writeResult.error).toContain("scientific quality gate failed");
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("Primary objective: accuracy at least 0.9.");
+    expect(tex).toContain("Primary objective: primary\\_score at least 0.9.");
     expect(tex).not.toContain("Objective metric met:");
-    expect(tex).toContain("Accuracy & 0.91");
-    expect(tex).toContain("The selected experimental design is Accuracy benchmark");
+    expect(tex).toContain("Candidate A (primary role, subject) & 0.91");
+    expect(tex).toContain("The selected experimental design is Primary score evaluation");
     expect(tex).toContain("\\begin{table}[t]");
-    expect(tex).toContain("Selected reported metrics from the structured results analysis.");
+    expect(tex).toContain("Declared primary comparison for Primary score");
     expect(tex).toContain("\\begin{figure}[t]");
     expect(tex).not.toContain("Artifact: Performance overview figures/performance.svg.");
     expect(tex).not.toContain("Statistical summary:");
     expect(tex).not.toContain("Failure taxonomy:");
     expect(tex).toContain("\\section{Discussion}");
     const publicTex = await readFile(path.join(buildPublicPaperDir(root, run), "main.tex"), "utf8");
-    expect(publicTex).toContain("Primary objective: accuracy at least 0.9.");
-    expect(publicTex).toContain("The selected experimental design is Accuracy benchmark");
+    expect(publicTex).toContain("Primary objective: primary\\_score at least 0.9.");
+    expect(publicTex).toContain("The selected experimental design is Primary score evaluation");
+    const paperReadiness = JSON.parse(
+      await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
+    ) as { paper_ready: boolean; scientific_validation_status: string };
+    expect(paperReadiness).toMatchObject({
+      paper_ready: false,
+      scientific_validation_status: "fail"
+    });
     const manuscriptRaw = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
     expect(manuscriptRaw).not.toContain("Results Overview");
     const traceabilityRaw = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");
@@ -897,10 +1352,10 @@ describe("objective metric propagation", () => {
         "analysis/result_analysis.json",
         "analysis/transition_recommendation.json",
         "review/review_packet.json",
-        "paper/main.tex",
         "results/run_completeness_checklist.json"
       ])
     );
+    expect(publicManifest.generated_files).not.toContain("paper/main.tex");
     expect(publicManifest.sections?.experiment?.generated_files).toEqual(
       expect.arrayContaining([
         "experiment/metrics.json",
@@ -924,9 +1379,7 @@ describe("objective metric propagation", () => {
         "review/findings.jsonl"
       ])
     );
-    expect(publicManifest.sections?.paper?.generated_files).toEqual(
-      expect.arrayContaining(["paper/main.tex", "paper/references.bib", "paper/evidence_links.json"])
-    );
+    expect(publicManifest.sections?.paper).toBeUndefined();
   });
 
   it("fails structured result analysis when metrics.json is missing", async () => {
@@ -938,6 +1391,11 @@ describe("objective metric propagation", () => {
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId), null, 2),
+      "utf8"
+    );
 
     const analyzeNode = createAnalyzeResultsNode({
       config: {} as any,
@@ -998,7 +1456,7 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.33,
+          primary_score: 0.33,
           stale: true
         },
         null,
@@ -1088,8 +1546,8 @@ describe("objective metric propagation", () => {
       customMetricsPath,
       JSON.stringify(
         {
-          accuracy: 0.91,
-          f1: 0.88
+          primary_score: 0.91,
+          secondary_score: 0.88
         },
         null,
         2
@@ -1112,12 +1570,12 @@ describe("objective metric propagation", () => {
 
     const analysisRaw = await readFile(path.join(runDir, "result_analysis.json"), "utf8");
     expect(analysisRaw).toContain('"objective_status": "met"');
-    expect(analysisRaw).toContain('"matched_metric_key": "accuracy"');
+    expect(analysisRaw).toContain('"matched_metric_key": "primary_score"');
     const decisionRaw = await readFile(path.join(runDir, "analyze_results_panel", "decision.json"), "utf8");
     expect(decisionRaw).toContain('"panel_calibrated": true');
     expect(decisionRaw).toContain('"action": "advance"');
     expect(await readFile(path.join(buildPublicAnalysisDir(root, run), "result_analysis.json"), "utf8")).toContain(
-      '"matched_metric_key": "accuracy"'
+      '"matched_metric_key": "primary_score"'
     );
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await memory.get("analyze_results.panel_decision")).toMatchObject({
@@ -1126,7 +1584,7 @@ describe("objective metric propagation", () => {
     });
   });
 
-  it("hydrates repeated latest_results detail into analyze_results and clears review blockers for baseline-improvement runs", async () => {
+  it("hydrates explicit repeated condition detail and clears review blockers for a baseline improvement", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-detailed-"));
     process.chdir(root);
 
@@ -1134,436 +1592,15 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric:
-        "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
+      objectiveMetric: "primary_score_delta_vs_baseline >= 0.02"
     };
     run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    const memoryDir = path.join(runDir, "memory");
-    const publicDir = path.join(root, "public-bundle");
-    await mkdir(memoryDir, { recursive: true });
-    await mkdir(publicDir, { recursive: true });
-    await writeFile(
-      path.join(memoryDir, "run_context.json"),
-      JSON.stringify({
-        version: 1,
-        items: [
-          {
-            key: "implement_experiments.public_dir",
-            value: publicDir,
-            updatedAt: new Date().toISOString()
-          },
-          {
-            key: "implement_experiments.metrics_path",
-            value: `.autolabos/runs/${runId}/metrics.json`,
-            updatedAt: new Date().toISOString()
-          }
-        ]
-      }),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_plan.yaml"),
-      [
-        "selected_hypothesis_ids:",
-        '  - "h_1"',
-        "selected_design:",
-        '  id: "plan_tabular"',
-        '  title: "Repeated tabular baseline comparison"',
-        '  summary: "Compare nested and non-nested CPU-only workflows over repeated reruns on small tabular datasets while tracking macro-F1 deltas against logistic regression."',
-        "  metrics:",
-        '    - "macro_f1_delta_vs_logreg"',
-        '    - "best_mean_test_macro_f1"',
-        '    - "pairwise_ranking_agreement"',
-        '    - "winner_consistency"',
-        "  baselines:",
-        '    - "logistic regression"',
-        "  evaluation_steps:",
-        '    - "Repeat both workflows with fixed CPU-only seeds."',
-        '    - "Compare macro-F1 deltas against logistic regression."',
-        '    - "Summarize repeat-level variability and ranking stability."',
-        "constraints:",
-        "  implementation_notes:",
-        '    - "CPU-only local execution only."',
-        "  evaluation_notes:",
-        '    - "Keep claims scoped to the observed repeated-run evidence."'
-      ].join("\n"),
-      "utf8"
-    );
-    await seedWritePaperInputs(runDir);
-
-    const latestResultsPath = path.join(publicDir, "latest_results.json");
-    const latestResults = {
-      run_id: runId,
-      topic: "Classical ML baselines on small tabular datasets",
-      experiment_mode: "real_execution",
-      protocol: {
-        cpu_only: true,
-        datasets: ["breast_cancer", "iris"],
-        models: ["logreg", "extra_trees"],
-        repeats: 5,
-        seed_schedule: [100, 101, 102, 103, 104],
-        split_seed: 20260313,
-        workflows: ["nested", "non_nested"]
-      },
-      global_metrics: {
-        best_dataset: "breast_cancer",
-        best_mean_test_macro_f1: 0.945,
-        best_model: "extra_trees",
-        best_workflow: "non_nested",
-        mean_logreg_nested_test_macro_f1: 0.91,
-        mean_macro_f1_improvement_over_logreg: 0.021,
-        mean_nested_rank_stability: 0.87
-      },
-      dataset_summaries: [
-        {
-          dataset: "breast_cancer",
-          workflows: {
-            nested: {
-              models: {
-                logreg: {
-                  mean_test_macro_f1: 0.91,
-                  mean_selection_optimism: 0.01,
-                  sign_consistency_vs_logreg: 1
-                },
-                extra_trees: {
-                  mean_test_macro_f1: 0.92,
-                  mean_delta_vs_logreg: 0.01,
-                  mean_selection_optimism: 0.013,
-                  sign_consistency_vs_logreg: 0.8
-                }
-              },
-              pairwise_ranking_agreement: 0.86,
-              winner_consistency: 0.8,
-              runtime_seconds_mean: 1.3,
-              peak_memory_mb_mean: 148
-            },
-            non_nested: {
-              models: {
-                logreg: {
-                  mean_test_macro_f1: 0.91,
-                  mean_selection_optimism: 0.011,
-                  sign_consistency_vs_logreg: 1
-                },
-                extra_trees: {
-                  mean_test_macro_f1: 0.945,
-                  mean_delta_vs_logreg: 0.035,
-                  mean_selection_optimism: 0.018,
-                  sign_consistency_vs_logreg: 1
-                }
-              },
-              pairwise_ranking_agreement: 0.9,
-              winner_consistency: 1,
-              runtime_seconds_mean: 0.9,
-              peak_memory_mb_mean: 152
-            }
-          }
-        },
-        {
-          dataset: "iris",
-          workflows: {
-            nested: {
-              models: {
-                logreg: {
-                  mean_test_macro_f1: 0.89,
-                  mean_selection_optimism: 0.009,
-                  sign_consistency_vs_logreg: 1
-                },
-                extra_trees: {
-                  mean_test_macro_f1: 0.905,
-                  mean_delta_vs_logreg: 0.015,
-                  mean_selection_optimism: 0.012,
-                  sign_consistency_vs_logreg: 0.8
-                }
-              },
-              pairwise_ranking_agreement: 0.84,
-              winner_consistency: 0.8,
-              runtime_seconds_mean: 1.1,
-              peak_memory_mb_mean: 146
-            },
-            non_nested: {
-              models: {
-                logreg: {
-                  mean_test_macro_f1: 0.89,
-                  mean_selection_optimism: 0.01,
-                  sign_consistency_vs_logreg: 1
-                },
-                extra_trees: {
-                  mean_test_macro_f1: 0.92,
-                  mean_delta_vs_logreg: 0.03,
-                  mean_selection_optimism: 0.014,
-                  sign_consistency_vs_logreg: 1
-                }
-              },
-              pairwise_ranking_agreement: 0.89,
-              winner_consistency: 1,
-              runtime_seconds_mean: 0.8,
-              peak_memory_mb_mean: 150
-            }
-          }
-        }
-      ],
-      repeat_records: [
-        {
-          repeat_index: 0,
-          seed: 100,
-          datasets: [
-            {
-              dataset: "breast_cancer",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.92, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
-                    extra_trees: { test_macro_f1: 0.946, selection_optimism: 0.018 }
-                  }
-                }
-              }
-            },
-            {
-              dataset: "iris",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
-                    extra_trees: { test_macro_f1: 0.904, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.919, selection_optimism: 0.014 }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          repeat_index: 1,
-          seed: 101,
-          datasets: [
-            {
-              dataset: "breast_cancer",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
-                    extra_trees: { test_macro_f1: 0.921, selection_optimism: 0.013 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.012 },
-                    extra_trees: { test_macro_f1: 0.944, selection_optimism: 0.017 }
-                  }
-                }
-              }
-            },
-            {
-              dataset: "iris",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
-                    extra_trees: { test_macro_f1: 0.906, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.921, selection_optimism: 0.014 }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          repeat_index: 2,
-          seed: 102,
-          datasets: [
-            {
-              dataset: "breast_cancer",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.919, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
-                    extra_trees: { test_macro_f1: 0.947, selection_optimism: 0.018 }
-                  }
-                }
-              }
-            },
-            {
-              dataset: "iris",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
-                    extra_trees: { test_macro_f1: 0.907, selection_optimism: 0.011 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.922, selection_optimism: 0.015 }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          repeat_index: 3,
-          seed: 103,
-          datasets: [
-            {
-              dataset: "breast_cancer",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.918, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
-                    extra_trees: { test_macro_f1: 0.943, selection_optimism: 0.017 }
-                  }
-                }
-              }
-            },
-            {
-              dataset: "iris",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
-                    extra_trees: { test_macro_f1: 0.905, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.918, selection_optimism: 0.014 }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          repeat_index: 4,
-          seed: 104,
-          datasets: [
-            {
-              dataset: "breast_cancer",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.922, selection_optimism: 0.013 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.91, selection_optimism: 0.011 },
-                    extra_trees: { test_macro_f1: 0.945, selection_optimism: 0.018 }
-                  }
-                }
-              }
-            },
-            {
-              dataset: "iris",
-              workflows: {
-                nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.009 },
-                    extra_trees: { test_macro_f1: 0.906, selection_optimism: 0.012 }
-                  }
-                },
-                non_nested: {
-                  models: {
-                    logreg: { test_macro_f1: 0.89, selection_optimism: 0.01 },
-                    extra_trees: { test_macro_f1: 0.92, selection_optimism: 0.014 }
-                  }
-                }
-              }
-            }
-          ]
-        }
-      ]
-    };
-    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          best_dataset: "breast_cancer",
-          best_mean_test_macro_f1: 0.945,
-          best_model: "extra_trees",
-          best_workflow: "non_nested",
-          experiment_mode: "real_execution",
-          mean_logreg_nested_test_macro_f1: 0.91,
-          mean_nested_rank_stability: 0.87,
-          metric: "macro_f1_improvement_over_logreg",
-          results_path: latestResultsPath,
-          run_id: runId,
-          value: 0.021
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
-    await writeFile(
-      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
-      JSON.stringify(
-        {
-          trigger: "auto_handoff",
-          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
-          cwd: publicDir,
-          metrics_path: path.join(runDir, "metrics.json"),
-          source: "run_context.run_command",
-          managed_supplemental_profiles: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "run_experiments_verify_report.json"),
-      JSON.stringify(
-        {
-          status: "pass",
-          trigger: "auto_handoff",
-          stage: "success",
-          summary:
-            "Best-effort objective match inferred from overlapping metric terms (gpu). Objective metric met: device.gpu_count=2 >= 0.015.",
-          command: "python experiment.py --mode preflight",
-          metrics_path: path.join(runDir, "metrics.json"),
-          log_file: path.join(runDir, "exec_logs", "run_experiments.txt")
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
+    const repeatedSeeds = Array.from({ length: 30 }, (_value, index) => 301 + index);
+    const { runDir } = await seedGenericDetailedAnalysisArtifacts({
+      root,
+      run,
+      seeds: repeatedSeeds
+    });
 
     const analyzeNode = createAnalyzeResultsNode({
       config: {} as any,
@@ -1575,71 +1612,99 @@ describe("objective metric propagation", () => {
       semanticScholar: {} as any
     });
     const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
+
     expect(analyzeResult.status).toBe("success");
     expect(analyzeResult.transitionRecommendation).toMatchObject({
       action: "advance",
       targetNode: "figure_audit"
     });
-    const hydratedAnalysis = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as { metrics: { seeds?: Array<string | number> } };
-    expect(hydratedAnalysis.metrics.seeds).toEqual([100, 101, 102, 103, 104]);
-
     const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
+      metrics: {
+        seeds?: Array<string | number>;
+        protocol?: { design?: string; repeats?: number };
+        repeat_records?: Array<{ seed?: number }>;
+        primary_condition?: string;
+        baseline_condition?: string;
+      };
       overview: { objective_status: string; execution_runs: number };
       objective_metric: { evaluation: { matchedMetricKey?: string } };
       warnings: string[];
-      supplemental_expectation?: { applicable: boolean; reason?: string };
+      supplemental_expectation?: { applicable: boolean };
       failure_taxonomy: Array<{ id: string }>;
-      condition_comparisons: Array<{ id: string }>;
+      condition_comparisons: Array<{
+        id: string;
+        source: string;
+        metrics: Array<{ key: string; primary_value?: number; baseline_value?: number }>;
+      }>;
       statistical_summary: {
         notes: string[];
-        confidence_intervals: Array<{ metric_key: string }>;
+        confidence_intervals: Array<{ metric_key: string; sample_size?: number }>;
         stability_metrics: Array<{ key: string }>;
       };
     };
-    expect(analysis.overview.objective_status).toBe("met");
-    expect(analysis.overview.execution_runs).toBe(5);
-    expect(analysis.objective_metric.evaluation.matchedMetricKey).toBe("macro_f1_delta_vs_logreg");
-    expect(analysis.condition_comparisons.length).toBeGreaterThan(0);
-    expect(
-      analysis.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key.includes("macro_f1_delta_vs_logreg")
-      )
-    ).toBe(true);
-    expect(
-      analysis.statistical_summary.stability_metrics.some((item) =>
-        ["rank_stability", "mean_nested_rank_stability", "pairwise_ranking_agreement"].includes(item.key)
-      )
-    ).toBe(true);
-    expect(analysis.supplemental_expectation).toMatchObject({
-      applicable: false
+    expect(analysis.metrics).toMatchObject({
+      seeds: repeatedSeeds.slice(0, 24),
+      protocol: { design: "paired_repeated_conditions", repeats: 30 },
+      primary_condition: "candidate_a",
+      baseline_condition: "reference"
     });
+    expect(analysis.metrics.repeat_records).toHaveLength(24);
+    expect(analysis.overview).toMatchObject({ objective_status: "met", execution_runs: 30 });
+    expect(analysis.objective_metric.evaluation.matchedMetricKey).toBe("primary_score_delta_vs_baseline");
+    expect(analysis.condition_comparisons[0]).toMatchObject({
+      id: "candidate_a_vs_reference",
+      source: "results_artifact"
+    });
+    expect(analysis.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "primary_score",
+          primary_value: 0.66,
+          baseline_value: 0.62
+        })
+      ])
+    );
     expect(
-      analysis.statistical_summary.notes.some((item) =>
-        item.includes("Managed quick_check and confirmatory profiles were not configured")
+      analysis.statistical_summary.confidence_intervals.some(
+        (item) =>
+          item.metric_key === "condition_metrics.candidate_a.primary_score" &&
+          item.sample_size === 30
       )
     ).toBe(true);
+    expect(analysis.statistical_summary.stability_metrics).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "replication_success_rate" })])
+    );
+    expect(analysis.supplemental_expectation).toMatchObject({ applicable: false });
     expect(
       analysis.warnings.some((item) => item.includes("No supplemental quick_check or confirmatory metrics"))
     ).toBe(false);
+    expect(analysis.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
     expect(analysis.failure_taxonomy.some((item) => item.id === "supplemental_coverage_gap")).toBe(false);
-    const baselineComparison = JSON.parse(await readFile(path.join(runDir, "baseline_comparison.json"), "utf8")) as {
+
+    const baselineComparison = JSON.parse(
+      await readFile(path.join(runDir, "baseline_comparison.json"), "utf8")
+    ) as {
       status: string;
-      enforcement: { baseline_lock_present: boolean; single_change_dimension_limit: number };
-      primary_comparison: { metrics: Array<{ metric: string; baseline_value: number; comparator_value: number }> } | null;
+      primary_comparison: {
+        id: string;
+        metrics: Array<{ metric: string; baseline_value: number; comparator_value: number }>;
+      } | null;
     };
-    expect(baselineComparison.status).toBe("available");
-    expect(baselineComparison.enforcement).toMatchObject({
-      baseline_lock_present: false,
-      single_change_dimension_limit: 1
+    expect(baselineComparison).toMatchObject({
+      status: "available",
+      primary_comparison: {
+        id: "candidate_a_vs_reference"
+      }
     });
-    expect(
-      baselineComparison.primary_comparison?.metrics.some((item) =>
-        item.metric.includes("macro_f1_delta_vs_logreg") ||
-        (typeof item.baseline_value === "number" && typeof item.comparator_value === "number")
-      )
-    ).toBe(true);
+    expect(baselineComparison.primary_comparison?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric: "primary_score",
+          baseline_value: 0.62,
+          comparator_value: 0.66
+        })
+      ])
+    );
     await expect(
       readFile(path.join(buildPublicAnalysisDir(root, run), "baseline_comparison.json"), "utf8")
     ).resolves.toContain('"status": "available"');
@@ -1660,14 +1725,12 @@ describe("objective metric propagation", () => {
       outcome: string;
     };
     expect(decision.outcome).toBe("advance");
-
     const packet = JSON.parse(await readFile(path.join(runDir, "review", "review_packet.json"), "utf8")) as {
       readiness: { blocking_checks: number };
     };
     expect(packet.readiness.blocking_checks).toBe(0);
   });
-
-  it("does not promote stale single-seed design limits when repeated condition evidence exists", async () => {
+  it("preserves declared scope caveats alongside explicit repeated condition evidence", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-evidence-scope-"));
     process.chdir(root);
 
@@ -1675,7 +1738,7 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
+      objectiveMetric: "primary_score_delta_vs_baseline >= 0.01"
     };
     run.graph.currentNode = "analyze_results";
 
@@ -1710,23 +1773,23 @@ describe("objective metric propagation", () => {
         '  - "h_1"',
         "shortlisted_designs:",
         '  - id: "plan_old_scope"',
-        '    title: "Seed-101 old scope note"',
-        '    summary: "The full grid runs only at seed 101 and should be downgraded unless later repeated-seed evidence is added."',
+        '    title: "Earlier scope note"',
+        '    summary: "A prior narrow run remains limited unless later repeated evidence is added."',
         "selected_design:",
         '  id: "plan_repeated_condition_grid"',
-        '  title: "Seed-101 repeated condition comparison"',
+        '  title: "Repeated condition comparison"',
         '  summary: "Compare neutral condition variants under a fixed evaluator."',
         "  metrics:",
-        '    - "accuracy_delta_vs_baseline"',
+        '    - "primary_score_delta_vs_baseline"',
         "  baselines:",
-        '    - "baseline_condition"',
+        '    - "reference"',
         "  evaluation_steps:",
         '    - "Run each condition with the same seed schedule."',
-        '    - "Train two additional baseline-replicate runs at seeds 102 and 103 for limited repeated-run stability measurement only."',
+        '    - "Run additional reference repetitions for limited stability measurement."',
         "  risks:",
-        '    - "Single-seed factorial patterns can be one-seed artifacts and cannot support paper-ready interaction claims."',
+        '    - "Narrow factorial evidence can be unstable and cannot support broad interaction claims."',
         "  resource_notes:",
-        '    - "Paper-scale floor not met: a paper-ready factorial claim requires at least 3 completed seeds per cell."',
+        '    - "Paper-scale evidence requires at least 3 completed seeds per cell."',
         "constraints:",
         "  assumptions:",
         '    - "Keep claims bounded to observed local evidence."'
@@ -1734,6 +1797,23 @@ describe("objective metric propagation", () => {
       "utf8"
     );
     await seedWritePaperInputs(runDir);
+    const evidenceScopeResultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.5,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.54,
+          judgement: "supported"
+        }
+      ]
+    };
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, evidenceScopeResultsOptions), null, 2),
+      "utf8"
+    );
 
     await writeFile(
       path.join(runDir, "metrics.json"),
@@ -1741,58 +1821,48 @@ describe("objective metric propagation", () => {
         {
           status: "completed",
           success: true,
-          accuracy_delta_vs_baseline: 0.04,
+          primary_score_delta_vs_baseline: 0.04,
           baseline_metric: 0.5,
-          baseline_condition_marker: "baseline_condition",
+          baseline_condition_marker: "reference",
           required_condition_count: 2,
           required_run_count: 6,
-          condition_results: {
-            baseline_condition: {
-              condition_marker: "baseline_condition",
+          results_artifact: buildResultsArtifactFixture(evidenceScopeResultsOptions),
+          conditions: [
+            {
+              condition_id: "reference",
+              role: "baseline",
               status: "completed",
-              average_accuracy: 0.5,
-              correct: 72,
-              total: 144,
-              correct_count: 72,
-              total_count: 144,
               seed_count: 3,
               seeds: [101, 102, 103],
-              confidence_interval: { sample_size: 144, correct_count: 72, total_count: 144 },
-              evaluation: {
-                task_alpha: { correct_count: 36, total_count: 72 },
-                task_beta: { correct_count: 36, total_count: 72 }
+              repeat_records: [
+                { repeat_index: 1, seed: 101, primary_score: 0.49 },
+                { repeat_index: 2, seed: 102, primary_score: 0.5 },
+                { repeat_index: 3, seed: 103, primary_score: 0.51 }
+              ],
+              metrics: {
+                primary_score: 0.5,
+                primary_score_delta_vs_baseline: 0,
+                ci95_primary_score: [0.49, 0.51]
               }
             },
-            candidate_condition_a: {
-              condition_marker: "candidate_condition_a",
+            {
+              condition_id: "candidate_a",
+              role: "primary",
               status: "completed",
-              average_accuracy: 0.54,
-              correct: 78,
-              total: 144,
-              correct_count: 78,
-              total_count: 144,
               seed_count: 3,
               seeds: [101, 102, 103],
-              confidence_interval: { sample_size: 144, correct_count: 78, total_count: 144 },
-              evaluation: {
-                task_alpha: { correct_count: 39, total_count: 72 },
-                task_beta: { correct_count: 39, total_count: 72 }
+              repeat_records: [
+                { repeat_index: 1, seed: 101, primary_score: 0.53 },
+                { repeat_index: 2, seed: 102, primary_score: 0.54 },
+                { repeat_index: 3, seed: 103, primary_score: 0.55 }
+              ],
+              metrics: {
+                primary_score: 0.54,
+                primary_score_delta_vs_baseline: 0.04,
+                ci95_primary_score: [0.53, 0.55]
               }
             }
-          },
-          statistical_summary: {
-            confidence_intervals: [
-              {
-                metric_key: "condition_results.candidate_condition_a.average_accuracy",
-                confidence_level: 0.95,
-                lower: 0.45,
-                upper: 0.62,
-                sample_size: 144,
-                correct_count: 78,
-                total_count: 144
-              }
-            ]
-          },
+          ],
           sampling_profile: {
             total_trials: 6,
             executed_trials: 6,
@@ -1835,6 +1905,9 @@ describe("objective metric propagation", () => {
       };
       failure_taxonomy: Array<{ id: string; summary: string }>;
       transition_recommendation?: { evidence?: string[] };
+      metrics: {
+        condition_metrics?: Record<string, { seed_count?: number }>;
+      };
       statistical_summary: { confidence_intervals: Array<{ sample_size?: number }> };
     };
     const combined = JSON.stringify({
@@ -1845,181 +1918,116 @@ describe("objective metric propagation", () => {
       failure_taxonomy: analysis.failure_taxonomy,
       transition: analysis.transition_recommendation
     });
-    expect(analysis.statistical_summary.confidence_intervals.some((item) => item.sample_size === 144)).toBe(true);
-    expect(combined).not.toMatch(/single[- ]seed|one[- ]seed|full grid[\s\S]{0,80}only[\s\S]{0,40}seed/iu);
-    expect(combined).not.toMatch(/seed[- ]?101/iu);
-    expect(combined).not.toMatch(/paper[- ]scale floor not met[\s\S]{0,120}3 completed seeds/iu);
-    expect(combined).not.toMatch(/expected training workload[\s\S]{0,160}at seed\s*\d+/iu);
-    expect(combined).not.toMatch(/baseline[- ]replicate[\s\S]{0,100}\bseeds?/iu);
+    expect(analysis.metrics.condition_metrics?.candidate_a?.seed_count).toBe(3);
+    expect(analysis.statistical_summary.confidence_intervals.some((item) => item.sample_size === 6)).toBe(true);
+    expect(combined).toContain("Narrow factorial evidence can be unstable");
+    expect(combined).toContain("Paper-scale evidence requires at least 3 completed seeds per cell.");
   });
 
-  it("hydrates model-centric latest_results detail into analyze_results for repeated tabular runs", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-model-centric-"));
+  it("hydrates generic detailed rows without inferring primary or baseline from scores", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-hydrate-generic-detail-"));
+    const publicDir = path.join(root, "public-experiment");
+    const latestResultsPath = path.join(publicDir, "latest_results.json");
+    await mkdir(publicDir, { recursive: true });
+    await writeFile(
+      latestResultsPath,
+      JSON.stringify(
+        {
+          protocol: { design: "repeated_conditions", repeats: 3 },
+          seeds: [401, 402, 403],
+          repeat_records: [
+            { repeat_index: 1, seed: 401 },
+            { repeat_index: 2, seed: 402 },
+            { repeat_index: 3, seed: 403 }
+          ],
+          sampling_profile: {
+            name: "standard",
+            total_trials: 3,
+            executed_trials: 3,
+            cached_trials: 0
+          },
+          global_metrics: { primary_score_delta_vs_baseline: -0.06 },
+          conditions: [
+            {
+              condition_id: "candidate_a",
+              metrics: {
+                primary_score: 0.61,
+                primary_score_delta_vs_baseline: -0.06,
+                ci95_primary_score: [0.59, 0.63]
+              }
+            },
+            {
+              condition_id: "candidate_b",
+              metrics: {
+                primary_score: 0.67,
+                primary_score_delta_vs_baseline: 0,
+                ci95_primary_score: [0.65, 0.69]
+              }
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const unselected = await hydrateDetailedExperimentMetrics(
+      { status: "completed", results_path: latestResultsPath },
+      publicDir
+    );
+    expect(unselected).toMatchObject({
+      protocol: { design: "repeated_conditions", repeats: 3 },
+      seeds: [401, 402, 403],
+      sampling_profile: { total_trials: 3, executed_trials: 3, cached_trials: 0 },
+      condition_metrics: {
+        candidate_a: { primary_score: 0.61, primary_score_delta_vs_baseline: -0.06 },
+        candidate_b: { primary_score: 0.67, primary_score_delta_vs_baseline: 0 }
+      }
+    });
+    expect(unselected.repeat_records).toHaveLength(3);
+    expect(unselected).not.toHaveProperty("primary_condition");
+    expect(unselected).not.toHaveProperty("reference");
+
+    const explicitlySelected = await hydrateDetailedExperimentMetrics(
+      {
+        status: "completed",
+        results_path: latestResultsPath,
+        primary_condition: "candidate_a",
+        baseline_condition: "candidate_b"
+      },
+      publicDir
+    );
+    expect(explicitlySelected).toMatchObject({
+      primary_condition: "candidate_a",
+      baseline_condition: "candidate_b"
+    });
+    expect(
+      (explicitlySelected.condition_metrics as Record<string, { primary_score: number }>)
+        .candidate_a?.primary_score
+    ).toBeLessThan(
+      (explicitlySelected.condition_metrics as Record<string, { primary_score: number }>)
+        .candidate_b?.primary_score ?? Number.NEGATIVE_INFINITY
+    );
+  });
+  it("preserves explicit confidence intervals and repeat evidence from generic condition rows", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-explicit-ci-"));
     process.chdir(root);
 
-    const runId = "run-analyze-results-model-centric";
+    const runId = "run-analyze-results-explicit-ci";
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric:
-        "Improve macro-F1 over a logistic regression baseline while preserving reproducible CPU-only local execution."
+      objectiveMetric: "primary_score_delta_vs_baseline >= 0.02"
     };
     run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    const memoryDir = path.join(runDir, "memory");
-    const publicDir = path.join(root, "public-model-centric");
-    const latestResultsPath = path.join(publicDir, "latest_results.json");
-    await mkdir(memoryDir, { recursive: true });
-    await mkdir(publicDir, { recursive: true });
-    await writeFile(
-      path.join(memoryDir, "run_context.json"),
-      JSON.stringify({
-        version: 1,
-        items: [
-          {
-            key: "implement_experiments.public_dir",
-            value: publicDir,
-            updatedAt: new Date().toISOString()
-          },
-          {
-            key: "implement_experiments.metrics_path",
-            value: `.autolabos/runs/${runId}/metrics.json`,
-            updatedAt: new Date().toISOString()
-          }
-        ]
-      }),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_plan.yaml"),
-      [
-        "selected_hypothesis_ids:",
-        '  - "h_1"',
-        "selected_design:",
-        '  id: "plan_tabular_models"',
-        '  title: "Repeated model-centric tabular comparison"',
-        '  summary: "Compare CPU-only classical baselines over repeated seeds while tracking macro-F1 deltas against logistic regression."',
-        "  metrics:",
-        '    - "macro_f1_delta_vs_logreg"',
-        '    - "best_mean_test_macro_f1"',
-        "  baselines:",
-        '    - "logreg"',
-        "  evaluation_steps:",
-        '    - "Repeat the benchmark with fixed seeds."',
-        '    - "Compare macro-F1 deltas against logistic regression."'
-      ].join("\n"),
-      "utf8"
-    );
-    await seedWritePaperInputs(runDir);
-
-    const latestResults = {
-      run_id: runId,
-      topic: "Classical ML baselines on small tabular datasets",
-      experiment_mode: "real_execution",
-      protocol: {
-        cpu_only: true,
-        repeats: 3
-      },
-      global_metrics: {
-        best_model: "svc_rbf",
-        mean_macro_f1_improvement_over_logreg: 0.019,
-        mean_delta_vs_logreg: 0.019
-      },
-      dataset_summaries: [
-        {
-          dataset: "breast_cancer",
-          models: {
-            logreg: {
-              macro_f1: 0.972,
-              macro_f1_delta_vs_logreg: 0,
-              runtime_seconds: 3.9,
-              peak_memory_mb: 123.4,
-              run_to_run_variance: 0,
-              fold_to_fold_stability: 0.015,
-              seed_sensitivity: 0
-            },
-            svc_rbf: {
-              macro_f1: 0.978,
-              macro_f1_delta_vs_logreg: 0.006,
-              runtime_seconds: 4.2,
-              peak_memory_mb: 124.1,
-              run_to_run_variance: 0.00001,
-              fold_to_fold_stability: 0.013,
-              seed_sensitivity: 0.003
-            }
-          },
-          seed_records: [
-            { models: { logreg: { macro_f1: 0.971, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.9 }, svc_rbf: { macro_f1: 0.977, macro_f1_delta_vs_logreg: 0.006, runtime_seconds: 4.1 } } },
-            { models: { logreg: { macro_f1: 0.972, macro_f1_delta_vs_logreg: 0, runtime_seconds: 4.0 }, svc_rbf: { macro_f1: 0.979, macro_f1_delta_vs_logreg: 0.007, runtime_seconds: 4.2 } } },
-            { models: { logreg: { macro_f1: 0.973, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.8 }, svc_rbf: { macro_f1: 0.978, macro_f1_delta_vs_logreg: 0.005, runtime_seconds: 4.0 } } }
-          ]
-        },
-        {
-          dataset: "wine",
-          models: {
-            logreg: {
-              macro_f1: 0.968,
-              macro_f1_delta_vs_logreg: 0,
-              runtime_seconds: 3.6,
-              peak_memory_mb: 121.8,
-              run_to_run_variance: 0,
-              fold_to_fold_stability: 0.014,
-              seed_sensitivity: 0
-            },
-            svc_rbf: {
-              macro_f1: 0.999,
-              macro_f1_delta_vs_logreg: 0.032,
-              runtime_seconds: 4.0,
-              peak_memory_mb: 122.5,
-              run_to_run_variance: 0.00002,
-              fold_to_fold_stability: 0.012,
-              seed_sensitivity: 0.004
-            }
-          },
-          seed_records: [
-            { models: { logreg: { macro_f1: 0.967, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.5 }, svc_rbf: { macro_f1: 0.998, macro_f1_delta_vs_logreg: 0.031, runtime_seconds: 4.0 } } },
-            { models: { logreg: { macro_f1: 0.968, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.6 }, svc_rbf: { macro_f1: 0.999, macro_f1_delta_vs_logreg: 0.032, runtime_seconds: 4.1 } } },
-            { models: { logreg: { macro_f1: 0.969, macro_f1_delta_vs_logreg: 0, runtime_seconds: 3.7 }, svc_rbf: { macro_f1: 1, macro_f1_delta_vs_logreg: 0.033, runtime_seconds: 4.0 } } }
-          ]
-        }
-      ]
-    };
-    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          experiment_mode: "real_execution",
-          macro_f1: 0.9885,
-          macro_f1_delta_vs_logreg: 0.019,
-          mean_macro_f1_improvement_over_logreg: 0.019,
-          reproducible: true,
-          cpu_only: true,
-          results_path: latestResultsPath
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
-    await writeFile(
-      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
-      JSON.stringify(
-        {
-          trigger: "auto_handoff",
-          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
-          cwd: publicDir,
-          metrics_path: path.join(runDir, "metrics.json"),
-          source: "run_context.run_command",
-          managed_supplemental_profiles: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
+    const { runDir } = await seedGenericDetailedAnalysisArtifacts({
+      root,
+      run,
+      seeds: [501, 502, 503],
+      baselineScore: 0.48,
+      primaryScore: 0.53
+    });
 
     const analyzeNode = createAnalyzeResultsNode({
       config: {} as any,
@@ -2030,216 +2038,77 @@ describe("objective metric propagation", () => {
       aci: {} as any,
       semanticScholar: {} as any
     });
-    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
-    expect(analyzeResult.status).toBe("success");
+    const result = await analyzeNode.execute({ run, graph: run.graph });
+    expect(result.status).toBe("success");
 
     const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
       overview: { execution_runs: number };
-      objective_metric: { evaluation: { matchedMetricKey?: string; summary: string } };
-      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
+      metrics: {
+        seeds?: number[];
+        repeat_records?: Array<{ seed: number }>;
+        conditions?: Array<{
+          condition_id: string;
+          role: string;
+          repeat_records?: Array<{ seed: number; primary_score: number }>;
+        }>;
+      };
+      condition_comparisons: Array<{
+        id: string;
+        metrics: Array<{ key: string; primary_value?: number; baseline_value?: number }>;
+      }>;
+      statistical_summary: {
+        confidence_intervals: Array<{
+          metric_key: string;
+          lower: number;
+          upper: number;
+          sample_size?: number;
+          source: string;
+        }>;
+      };
       failure_taxonomy: Array<{ id: string }>;
     };
     expect(analysis.overview.execution_runs).toBe(3);
-    expect(analysis.objective_metric.evaluation.matchedMetricKey).toBe("macro_f1_delta_vs_logreg");
-    expect(analysis.objective_metric.evaluation.summary).toContain("CPU-only requirement satisfied");
-    expect(analysis.objective_metric.evaluation.summary).toContain("Reproducibility requirement satisfied");
-    expect(
-      analysis.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key.includes("macro_f1_delta_vs_logreg")
-      )
-    ).toBe(true);
-    expect(analysis.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
-  });
-
-  it("derives confidence intervals when real-execution seed records use model_summaries", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-model-summaries-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-model-summaries";
-    const run = makeRun(runId);
-    run.currentNode = "analyze_results";
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    const memoryDir = path.join(runDir, "memory");
-    const publicDir = path.join(root, "outputs", "model-summaries-analysis", "experiment");
-    const latestResultsPath = path.join(publicDir, "latest_results.json");
-    await mkdir(memoryDir, { recursive: true });
-    await mkdir(publicDir, { recursive: true });
-    await writeFile(
-      path.join(memoryDir, "run_context.json"),
-      JSON.stringify({
-        version: 1,
-        items: [
-          {
-            key: "implement_experiments.public_dir",
-            value: publicDir,
-            updatedAt: new Date().toISOString()
-          },
-          {
-            key: "implement_experiments.metrics_path",
-            value: `.autolabos/runs/${runId}/metrics.json`,
-            updatedAt: new Date().toISOString()
-          }
-        ]
-      }),
-      "utf8"
+    expect(analysis.metrics.seeds).toEqual([501, 502, 503]);
+    expect(analysis.metrics.repeat_records).toHaveLength(3);
+    expect(analysis.metrics.conditions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          condition_id: "reference",
+          role: "baseline",
+          repeat_records: expect.any(Array)
+        }),
+        expect.objectContaining({
+          condition_id: "candidate_a",
+          role: "primary",
+          repeat_records: expect.any(Array)
+        })
+      ])
     );
-    await writeFile(
-      path.join(runDir, "experiment_plan.yaml"),
-      [
-        "selected_hypothesis_ids:",
-        '  - "h_1"',
-        "selected_design:",
-        '  id: "plan_tabular_models"',
-        '  title: "Repeated model-centric tabular comparison"',
-        '  summary: "Compare CPU-only classical baselines over repeated seeds while tracking macro-F1 deltas against logistic regression."',
-        "  metrics:",
-        '    - "macro_f1_delta_vs_logreg"',
-        '    - "best_mean_test_macro_f1"',
-        "  baselines:",
-        '    - "logreg"',
-        "  evaluation_steps:",
-        '    - "Repeat the benchmark with fixed seeds."',
-        '    - "Compare macro-F1 deltas against logistic regression."'
-      ].join("\n"),
-      "utf8"
-    );
-    await seedWritePaperInputs(runDir);
-
-    const latestResults = {
-      run_id: runId,
-      topic: "Classical ML baselines on small tabular datasets",
-      experiment_mode: "real_execution",
-      protocol: {
-        cpu_only: true,
-        repeats: 3
-      },
-      global_metrics: {
-        best_model: "svc_rbf",
-        mean_macro_f1_improvement_over_logreg: 0.019,
-        mean_delta_vs_logreg: 0.019
-      },
-      dataset_summaries: [
-        {
-          dataset: "breast_cancer",
-          models: {
-            logreg: {
-              macro_f1: 0.972,
-              macro_f1_delta_vs_logreg: 0,
-              runtime_seconds: 3.9,
-              peak_memory_mb: 123.4,
-              run_to_run_variance: 0,
-              fold_to_fold_stability: 0.015,
-              seed_sensitivity: 0
-            },
-            svc_rbf: {
-              macro_f1: 0.978,
-              macro_f1_delta_vs_logreg: 0.006,
-              runtime_seconds: 4.2,
-              peak_memory_mb: 124.1,
-              run_to_run_variance: 0.00001,
-              fold_to_fold_stability: 0.013,
-              seed_sensitivity: 0.003
-            }
-          },
-          seed_records: [
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.971, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.9 }, svc_rbf: { mean_test_macro_f1: 0.977, mean_delta_vs_logreg: 0.006, mean_runtime_seconds: 4.1 } } },
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.972, mean_delta_vs_logreg: 0, mean_runtime_seconds: 4.0 }, svc_rbf: { mean_test_macro_f1: 0.979, mean_delta_vs_logreg: 0.007, mean_runtime_seconds: 4.2 } } },
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.973, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.8 }, svc_rbf: { mean_test_macro_f1: 0.978, mean_delta_vs_logreg: 0.005, mean_runtime_seconds: 4.0 } } }
-          ]
-        },
-        {
-          dataset: "wine",
-          models: {
-            logreg: {
-              macro_f1: 0.968,
-              macro_f1_delta_vs_logreg: 0,
-              runtime_seconds: 3.6,
-              peak_memory_mb: 121.8,
-              run_to_run_variance: 0,
-              fold_to_fold_stability: 0.014,
-              seed_sensitivity: 0
-            },
-            svc_rbf: {
-              macro_f1: 0.999,
-              macro_f1_delta_vs_logreg: 0.032,
-              runtime_seconds: 4.0,
-              peak_memory_mb: 122.5,
-              run_to_run_variance: 0.00002,
-              fold_to_fold_stability: 0.012,
-              seed_sensitivity: 0.004
-            }
-          },
-          seed_records: [
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.967, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.5 }, svc_rbf: { mean_test_macro_f1: 0.998, mean_delta_vs_logreg: 0.031, mean_runtime_seconds: 4.0 } } },
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.968, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.6 }, svc_rbf: { mean_test_macro_f1: 0.999, mean_delta_vs_logreg: 0.032, mean_runtime_seconds: 4.1 } } },
-            { model_summaries: { logreg: { mean_test_macro_f1: 0.969, mean_delta_vs_logreg: 0, mean_runtime_seconds: 3.7 }, svc_rbf: { mean_test_macro_f1: 1, mean_delta_vs_logreg: 0.033, mean_runtime_seconds: 4.0 } } }
-          ]
-        }
-      ]
-    };
-    await writeFile(latestResultsPath, JSON.stringify(latestResults, null, 2), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          experiment_mode: "real_execution",
-          macro_f1: 0.9885,
-          macro_f1_delta_vs_logreg: 0.019,
-          mean_macro_f1_improvement_over_logreg: 0.019,
-          reproducible: true,
-          cpu_only: true,
-          results_path: latestResultsPath
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await mkdir(path.join(runDir, "run_experiments_panel"), { recursive: true });
-    await writeFile(
-      path.join(runDir, "run_experiments_panel", "execution_plan.json"),
-      JSON.stringify(
-        {
-          trigger: "auto_handoff",
-          command: `python3 ${JSON.stringify(path.join(publicDir, "run_experiment.py"))} --metrics-path ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
-          cwd: publicDir,
-          metrics_path: path.join(runDir, "metrics.json"),
-          source: "run_context.run_command",
-          managed_supplemental_profiles: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new StructuredResultAnalysisLLM(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
+    expect(analysis.condition_comparisons[0]).toMatchObject({
+      id: "candidate_a_vs_reference"
     });
-
-    const analyzeResult = await analyzeNode.execute({ run, graph: run.graph });
-    expect(analyzeResult.status).toBe("success");
-
-    const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
-      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
-      failure_taxonomy: Array<{ id: string }>;
-    };
-    expect(
-      analysis.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key.includes("macro_f1_delta_vs_logreg")
-      )
-    ).toBe(true);
+    expect(analysis.condition_comparisons[0]?.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "primary_score",
+          primary_value: 0.53,
+          baseline_value: 0.48
+        })
+      ])
+    );
+    expect(analysis.statistical_summary.confidence_intervals).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metric_key: "condition_metrics.candidate_a.primary_score",
+          lower: 0.52,
+          upper: 0.54,
+          sample_size: 3,
+          source: "metrics"
+        })
+      ])
+    );
     expect(analysis.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
   });
-
   it("recommends an implementation backtrack when the objective metric is missing from metrics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-objective-"));
     process.chdir(root);
@@ -2250,14 +2119,34 @@ describe("objective metric propagation", () => {
     run.graph.currentNode = "analyze_results";
 
     const runDir = path.join(root, ".autolabos", "runs", runId);
+    const secondaryResultsOptions: ResultsFixtureOptions = {
+      metricId: "secondary_score",
+      metricLabel: "Secondary score",
+      referenceValue: 0.4,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.45,
+          judgement: "supported"
+        }
+      ]
+    };
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, secondaryResultsOptions), null, 2),
+      "utf8"
+    );
     await writeFile(
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
           latency_ms: 123,
-          throughput: 42
+          throughput: 42,
+          results_artifact: buildResultsArtifactFixture(secondaryResultsOptions)
         },
         null,
         2
@@ -2286,7 +2175,7 @@ describe("objective metric propagation", () => {
     expect(transitionRaw).toContain('"action": "backtrack_to_implement"');
   });
 
-  it("backtracks when required resource metrics are absent despite a met primary metric", async () => {
+  it("fails closed when ResultsPlanV2 resource metrics are absent despite a met primary metric", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-missing-resource-metrics-"));
     process.chdir(root);
 
@@ -2295,57 +2184,47 @@ describe("objective metric propagation", () => {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
       objectiveMetric:
-        "Primary metric: accuracy_delta_vs_baseline >= 0.01. Secondary metrics: runtime_seconds and peak_memory_mb."
+        "Primary metric: primary_score_delta_vs_baseline >= 0.01. Secondary metrics: runtime_seconds and peak_memory_mb."
     };
     run.graph.currentNode = "analyze_results";
 
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    const resourceResultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.5,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.54,
+          judgement: "supported"
+        }
+      ]
+    };
+    const resourceContract = buildExperimentContractFixture(runId, resourceResultsOptions);
+    resourceContract.expected_metric_effect =
+      "Increase primary_score while reporting runtime_seconds and peak_memory_mb.";
+    resourceContract.abort_condition =
+      "Abort if runtime_seconds or peak_memory_mb is missing from completed results.";
+    resourceContract.results_plan.required_metrics.push(
+      {
+        id: "runtime_seconds",
+        label: "Runtime",
+        direction: "lower_better",
+        unit: "seconds"
+      },
+      {
+        id: "peak_memory_mb",
+        label: "Peak memory",
+        direction: "lower_better",
+        unit: "megabytes"
+      }
+    );
     await writeFile(
       path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "A candidate condition should improve the primary metric while preserving resource visibility.",
-          causal_mechanism: "The candidate condition changes one controlled setting.",
-          single_change: "condition_parameter",
-          confounded: false,
-          expected_metric_effect:
-            "Compare accuracy_delta_vs_baseline while reporting runtime_seconds and peak_memory_mb.",
-          abort_condition: "Abort if runtime_seconds or peak_memory_mb is missing from completed results.",
-          keep_or_discard_rule: "Keep only if the primary metric improves and resource metrics are present.",
-          baselines: ["baseline_condition"],
-          metrics: ["accuracy_delta_vs_baseline", "runtime_seconds", "peak_memory_mb"],
-          results_table_schema: [
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "runtime_seconds",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "lower_better"
-            },
-            {
-              metric: "peak_memory_mb",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "lower_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
+      JSON.stringify(resourceContract, null, 2),
       "utf8"
     );
     await writeFile(
@@ -2353,25 +2232,26 @@ describe("objective metric propagation", () => {
       JSON.stringify(
         {
           status: "completed",
-          accuracy_delta_vs_baseline: 0.04,
-          baseline_condition_marker: "baseline_condition",
-          best_condition_marker: "candidate_condition_a",
+          primary_score_delta_vs_baseline: 0.04,
+          baseline_condition_marker: "reference",
+          best_condition_marker: "candidate_a",
           completed_condition_count: 2,
           required_condition_count: 2,
+          results_artifact: buildResultsArtifactFixture(resourceResultsOptions),
           condition_results: [
             {
-              marker: "baseline_condition",
-              task: "benchmark_task_a",
+              marker: "reference",
+              evaluation_scope: "evaluation_slice_alpha",
               status: "completed",
-              average_accuracy: 0.5,
-              accuracy_delta_vs_baseline: 0
+              average_primary_score: 0.5,
+              primary_score_delta_vs_baseline: 0
             },
             {
-              marker: "candidate_condition_a",
-              task: "benchmark_task_a",
+              marker: "candidate_a",
+              evaluation_scope: "evaluation_slice_alpha",
               status: "completed",
-              average_accuracy: 0.54,
-              accuracy_delta_vs_baseline: 0.04
+              average_primary_score: 0.54,
+              primary_score_delta_vs_baseline: 0.04
             }
           ]
         },
@@ -2394,10 +2274,9 @@ describe("objective metric propagation", () => {
     const result = await analyzeNode.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation).toMatchObject({
-      action: "backtrack_to_implement",
-      targetNode: "implement_experiments"
+      action: "pause_for_human",
+      reason: "incomplete_results_table"
     });
-    expect(result.transitionRecommendation?.reason).toContain("Required resource metrics are missing");
 
     const analysis = JSON.parse(await readFile(path.join(runDir, "result_analysis.json"), "utf8")) as {
       failure_taxonomy: Array<{ id: string; category: string }>;
@@ -2429,7 +2308,7 @@ describe("objective metric propagation", () => {
     expect(latestAttemptDecision?.design_revision_note).toContain("evidence_gap");
   });
 
-  it("infers a sole numeric metric for generic objectives before deciding the next step", async () => {
+  it("does not infer a metric from a sole numeric value for an ambiguous objective", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-generic-objective-"));
     process.chdir(root);
 
@@ -2448,7 +2327,7 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.91
+          primary_score: 0.91
         },
         null,
         2
@@ -2469,15 +2348,15 @@ describe("objective metric propagation", () => {
     const result = await analyzeNode.execute({ run, graph: run.graph });
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation).toMatchObject({
-      action: "advance",
-      targetNode: "figure_audit"
+      action: "pause_for_human"
     });
 
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
-    expect(await memory.get("objective_metric.last_evaluation")).toMatchObject({
-      matchedMetricKey: "accuracy",
-      status: "observed"
+    const evaluation = await memory.get<{ status: string; matchedMetricKey?: string }>("objective_metric.last_evaluation");
+    expect(evaluation).toMatchObject({
+      status: "unknown"
     });
+    expect(evaluation?.matchedMetricKey).toBeUndefined();
   });
 
   it("pauses for human review and writes fallback synthesis when a generic objective remains ambiguous", async () => {
@@ -2499,8 +2378,8 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.91,
-          f1: 0.88
+          primary_score: 0.91,
+          secondary_score: 0.88
         },
         null,
         2
@@ -2535,2270 +2414,125 @@ describe("objective metric propagation", () => {
     });
   });
 
-  it("pauses for human review when the structured results table is missing a baseline value", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-incomplete-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-incomplete-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          accuracy: 0.91
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "Accuracy should improve",
-          causal_mechanism: "A stronger prompt should improve accuracy",
-          single_change: "Prompt strategy",
-          confounded: false,
-          expected_metric_effect: "Higher accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline"],
-          metrics: ["accuracy"],
-          results_table_schema: [
-            {
-              metric: "accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation).toMatchObject({
-      action: "pause_for_human",
-      reason: "incomplete_results_table"
-    });
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as { results_table: Array<{ metric: string; baseline: number | null }> };
-    expect(analysisRaw.results_table).toEqual([
-      expect.objectContaining({
-        metric: "accuracy",
-        baseline: null
-      })
-    ]);
-  });
-
-  it("does not pause for an incomplete table when metrics.results has baseline and best comparator rows", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-results-array-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-results-array-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          accuracy_delta_vs_baseline: 0,
-          baseline_mean_accuracy: 0.546875,
-          best_mean_accuracy: 0.546875,
-          best_recipe: "candidate_condition_a",
+  it("fails closed for unbound scalar and condition-map projections without ResultsArtifactV2", async () => {
+    const projections: Array<{ name: string; metrics: Record<string, unknown> }> = [
+      {
+        name: "results_array",
+        metrics: {
+          status: "completed",
+          primary_score_delta_vs_baseline: 0.05,
+          primary_condition: "candidate_a",
+          baseline_condition: "reference",
           results: [
-            {
-              recipe: "baseline",
-              method_type: "none",
-              status: "completed",
-              mean_accuracy: 0.546875,
-              benchmark_task_a_accuracy: 0.53125,
-              benchmark_task_b_accuracy: 0.5625,
-              accuracy_delta_vs_baseline: 0
-            },
-            {
-              recipe: "candidate_condition_a",
-              method_type: "configuration",
-              status: "completed",
-              mean_accuracy: 0.546875,
-              benchmark_task_a_accuracy: 0.53125,
-              benchmark_task_b_accuracy: 0.5625,
-              accuracy_delta_vs_baseline: 0
-            }
+            { condition_id: "reference", role: "baseline", primary_score: 0.5 },
+            { condition_id: "candidate_a", role: "primary", primary_score: 0.55 }
           ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration should improve zero-shot accuracy",
-          causal_mechanism: "A tuned configuration should improve task accuracy",
-          single_change: "configuration target module scope",
-          confounded: false,
-          expected_metric_effect: "Higher mean accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline"],
-          metrics: ["mean_accuracy", "accuracy_delta_vs_baseline"],
-          results_table_schema: [
-            {
-              metric: "mean_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.results");
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "mean_accuracy",
-          baseline: 0.546875,
-          comparator: 0.546875
-        })
-      ])
-    );
-  });
-
-  it("does not pause for an incomplete table when metrics.results is keyed by recipe with nested evaluation metrics", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-keyed-results-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-keyed-results-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "mean zero-shot accuracy improvement over tuned baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          best_recipe: "unmodified_baseline",
-          primary_metric: "mean_zero_shot_accuracy_benchmark_tasks",
-          baseline_comparisons_bootstrap: {
-            candidate_condition_extended: {
-              mean_delta: -0.015625,
-              bootstrap_ci95_low: -0.057291666666666664,
-              bootstrap_ci95_high: 0.026041666666666668
-            }
-          },
-          results: {
-            unmodified_baseline: {
-              status: "completed",
-              training: { trained: false, trainable_parameters: 0 },
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.23958333333333334, correct: 23, total: 96 },
-                benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
-              }
-            },
-            baseline_condition_locked: {
-              status: "completed",
-              training: { trained: true, trainable_parameters: 2252800 },
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.16666666666666666, correct: 16, total: 96 },
-                benchmark_task_b: { accuracy: 0.5, correct: 48, total: 96 }
-              }
-            },
-            candidate_condition_extended: {
-              status: "completed",
-              training: { trained: true, trainable_parameters: 12615680 },
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.22916666666666666, correct: 22, total: 96 },
-                benchmark_task_b: { accuracy: 0.4791666666666667, correct: 46, total: 96 }
-              }
-            }
-          }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "A broader candidate configuration should improve zero-shot accuracy",
-          causal_mechanism: "Changing the configured components should improve adaptation",
-          single_change: "candidate component scope",
-          confounded: false,
-          expected_metric_effect: "Higher mean accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["unmodified_baseline"],
-          metrics: ["mean_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-          results_table_schema: [
-            {
-              metric: "mean_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.results");
-    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_accuracy",
-          baseline_value: 0.3698,
-          primary_value: 0.3542
-        })
-      ])
-    );
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "mean_accuracy",
-          baseline: 0.3698,
-          comparator: 0.3542,
-          delta: -0.0156
-        })
-      ])
-    );
-  });
-
-  it("does not pause for an incomplete table when metrics.result_rows has a locked baseline and best tuned row", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-result-rows-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-result-rows-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "mean_zero_shot_accuracy_benchmark_tasks >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
-          best_tuned_condition_id: "candidate_condition_b",
+        }
+      },
+      {
+        name: "result_rows",
+        metrics: {
+          status: "completed",
+          primary_score_delta_vs_baseline: 0.05,
           result_rows: [
-            {
-              condition_id: "reference_base_model",
-              recipe_type: "reference",
-              is_baseline_reference: true,
-              mean_zero_shot_accuracy_benchmark_tasks: 0.27919
-            },
-            {
-              condition_id: "locked_tuned_baseline_r8",
-              recipe_type: "locked_baseline",
-              is_locked_tuned_baseline: true,
-              mean_zero_shot_accuracy_benchmark_tasks: 0.304353
-            },
-            {
-              condition_id: "candidate_condition_b",
-              recipe_type: "candidate",
-              mean_zero_shot_accuracy_benchmark_tasks: 0.313533
-            }
+            { condition_id: "reference", role: "baseline", primary_score: 0.5 },
+            { condition_id: "candidate_a", role: "primary", primary_score: 0.55 }
           ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration should improve zero-shot accuracy",
-          causal_mechanism: "A tuned configuration should improve task accuracy",
-          single_change: "configuration target module scope",
-          confounded: false,
-          expected_metric_effect: "Higher mean accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["locked_tuned_baseline_r8"],
-          metrics: ["mean_zero_shot_accuracy_benchmark_tasks"],
-          results_table_schema: [
-            {
-              metric: "mean_zero_shot_accuracy_benchmark_tasks",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.result_rows");
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "mean_zero_shot_accuracy_benchmark_tasks",
-          baseline: 0.304353,
-          comparator: 0.313533
-        })
-      ])
-    );
-  });
-
-  it("does not pause for an incomplete table when metrics.recipes has baseline and tuned recipe results", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-recipes-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-recipes-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          best_recipe: "baseline",
-          best_improvement_over_baseline: 0,
-          recipes: {
-            baseline: {
-              recipe: "baseline",
-              evaluation: {
-                mean_zero_shot_accuracy: 0.53125,
-                per_benchmark_accuracy: {
-                  benchmark_task_a: 0.375,
-                  benchmark_task_b: 0.6875
-                }
-              }
-            },
-            condition_parameter_x4: {
-              recipe: "condition_parameter_x4",
-              evaluation: {
-                mean_zero_shot_accuracy: 0.53125,
-                per_benchmark_accuracy: {
-                  benchmark_task_a: 0.375,
-                  benchmark_task_b: 0.6875
-                }
-              }
-            },
-            candidate_condition_a: {
-              recipe: "candidate_condition_a",
-              evaluation: {
-                mean_zero_shot_accuracy: 0.5,
-                per_benchmark_accuracy: {
-                  benchmark_task_a: 0.3125,
-                  benchmark_task_b: 0.6875
-                }
-              }
-            }
-          }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration should improve zero-shot accuracy",
-          causal_mechanism: "A tuned configuration should improve task accuracy",
-          single_change: "condition parameter x",
-          confounded: false,
-          expected_metric_effect: "Higher mean accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline"],
-          metrics: ["evaluation.mean_zero_shot_accuracy"],
-          results_table_schema: [
-            {
-              metric: "evaluation.mean_zero_shot_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.recipes");
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "evaluation.mean_zero_shot_accuracy",
-          baseline: 0.53125,
-          comparator: 0.53125
-        })
-      ])
-    );
-  });
-
-  it("does not pause for an incomplete table when metrics.conditions has completed baseline and comparator rows", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-conditions-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-conditions-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "mean accuracy improves over baseline by at least 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
+        }
+      },
+      {
+        name: "conditions_map",
+        metrics: {
           status: "completed",
-          primary_metric: {
-            name: "mean_accuracy",
-            baseline: 0.390625,
-            best_condition: "baseline_pretrained_zero_shot",
-            best_value: 0.390625,
-            absolute_improvement_vs_baseline: 0
-          },
-          conditions: [
-            {
-              name: "baseline_pretrained_zero_shot",
-              status: "completed",
-              is_baseline: true,
-              eval_metrics: {
-                mean_accuracy: 0.390625,
-                benchmarks: {
-                  benchmark_task_a: { accuracy: 0.3125 },
-                  benchmark_task_b: { accuracy: 0.46875 }
-                }
-              }
-            },
-            {
-              name: "candidate_condition_a",
-              status: "completed",
-              is_baseline: false,
-              eval_metrics: {
-                mean_accuracy: 0.359375,
-                benchmarks: {
-                  benchmark_task_a: { accuracy: 0.265625 },
-                  benchmark_task_b: { accuracy: 0.453125 }
-                }
-              },
-              train_metrics: { train_loss: 1.9787727832794189 }
-            },
-            {
-              name: "candidate_condition_b",
-              status: "completed",
-              is_baseline: false,
-              eval_metrics: {
-                mean_accuracy: 0.375,
-                benchmarks: {
-                  benchmark_task_a: { accuracy: 0.28125 },
-                  benchmark_task_b: { accuracy: 0.46875 }
-                }
-              },
-              train_metrics: { train_loss: 1.9052058219909669 }
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration method should improve mean accuracy",
-          causal_mechanism: "Configuration training should improve downstream accuracy",
-          single_change: "configuration method",
-          confounded: false,
-          expected_metric_effect: "Higher mean accuracy than baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline_pretrained_zero_shot"],
-          metrics: ["eval_metrics.mean_accuracy"],
-          results_table_schema: [
-            {
-              metric: "eval_metrics.mean_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; hypothesis_supported?: boolean }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.conditions");
-    expect(analysisRaw.condition_comparisons[0]?.hypothesis_supported).toBe(false);
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "eval_metrics.mean_accuracy",
-          baseline: 0.390625,
-          comparator: 0.375,
-          delta: -0.0156
-        })
-      ])
-    );
-  });
-
-  it("does not pause when condition-array rows use baseline flags, average accuracy, and task accuracies", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-flagged-condition-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-flagged-condition-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "success",
-          baseline_first_ok: true,
-          completed_condition_count: 2,
-          conditions: [
-            {
-              baseline: true,
-              condition_marker: "baseline_condition",
-              status: "completed",
-              average_accuracy: 0.6458333333333333,
-              accuracy_delta_vs_baseline: 0,
-              task_accuracies: {
-                benchmark_task_a: 0.7916666666666666,
-                benchmark_task_b: 0.5
-              }
-            },
-            {
-              baseline: false,
-              condition_marker: "condition_grid_family_a",
-              status: "completed",
-              average_accuracy: 0.6666666666666667,
-              accuracy_delta_vs_baseline: 0.02083333333333348,
-              task_accuracies: {
-                benchmark_task_a: 0.8333333333333334,
-                benchmark_task_b: 0.5
-              }
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "The candidate condition should improve average accuracy over the locked baseline",
-          causal_mechanism: "The controlled condition parameter affects benchmark generalization",
-          single_change: "condition-parameter condition",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than baseline",
-          abort_condition: "Abort on missing baseline/comparator rows",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline_condition"],
-          metrics: ["average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-          results_table_schema: [
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "benchmark_task_a_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "benchmark_task_b_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; label: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      source: "metrics.conditions",
-      label: "condition grid family a vs baseline condition"
-    });
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.645833,
-          comparator: 0.666667,
-          delta: 0.0208
-        }),
-        expect.objectContaining({
-          metric: "accuracy_delta_vs_baseline",
-          baseline: 0,
-          comparator: 0.020833,
-          delta: 0.0208
-        })
-      ])
-    );
-  });
-
-  it("does not pause when condition-array rows identify conditions with marker fields", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-marker-condition-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-marker-condition-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "success",
-          baseline_condition_marker: "baseline_condition",
-          completed_condition_count: 3,
-          failed_condition_count: 0,
-          best_condition_marker: "baseline_condition5",
-          accuracy_delta_vs_baseline: 0,
-          conditions: [
-            {
-              marker: "baseline_condition",
-              condition_parameter_x: 8,
-              parameter_y: 0,
-              status: "success",
-              average_accuracy: 0.5,
-              accuracy_delta_vs_baseline: 0,
-              train_loss: 0.502391
-            },
-            {
-              marker: "baseline_condition5",
-              condition_parameter_x: 8,
-              parameter_y: 0.05,
-              status: "success",
-              average_accuracy: 0.5,
-              accuracy_delta_vs_baseline: 0,
-              train_loss: 0.494569
-            },
-            {
-              marker: "candidate_condition_f",
-              condition_parameter_x: 32,
-              parameter_y: 0,
-              status: "success",
-              average_accuracy: 0.3125,
-              accuracy_delta_vs_baseline: -0.1875,
-              train_loss: 0.425154
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "The candidate condition should improve average accuracy over the locked baseline",
-          causal_mechanism: "The controlled condition parameter affects benchmark generalization",
-          single_change: "condition-parameter condition",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than baseline",
-          abort_condition: "Abort on missing baseline/comparator rows",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline_condition"],
-          metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "train_loss"],
-          results_table_schema: [
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; label: string; hypothesis_supported?: boolean }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      source: "metrics.conditions",
-      label: "candidate condition f vs baseline condition",
-      hypothesis_supported: false
-    });
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "accuracy_delta_vs_baseline",
-          baseline: 0,
-          comparator: -0.1875,
-          delta: -0.1875
-        }),
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.5,
-          comparator: 0.3125,
-          delta: -0.1875
-        })
-      ])
-    );
-  });
-
-  it("does not pause when condition-array baseline and best markers live under summary", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-summary-marker-condition-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-summary-marker-condition-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "ok",
-          accuracy_delta_vs_baseline: 0.083332,
-          summary: {
-            baseline_condition_marker: "baseline_condition",
-            best_condition_marker: "candidate_condition_f5",
-            baseline_average_accuracy: 0.333334,
-            best_average_accuracy: 0.416666,
-            best_accuracy_delta_vs_baseline: 0.083332,
-            completed_condition_count: 8,
-            failed_condition_count: 0
-          },
-          conditions: [
-            {
-              marker: "baseline_condition",
-              condition_parameter_x: 8,
-              parameter_y: 0,
-              status: "ok",
-              average_accuracy: 0.333334,
-              benchmark_task_a_accuracy: 0.5,
-              benchmark_task_b_accuracy: 0.166667,
-              per_task_metrics: {
-                benchmark_task_a: { accuracy: 0.5, correct: 3, total: 6 },
-                benchmark_task_b: { accuracy: 0.166667, correct: 1, total: 6 }
-              },
-              accuracy_delta_vs_baseline: 0
-            },
-            {
-              marker: "candidate_condition_f5",
-              condition_parameter_x: 32,
-              parameter_y: 0.05,
-              status: "ok",
-              average_accuracy: 0.416666,
-              benchmark_task_a_accuracy: 0.5,
-              benchmark_task_b_accuracy: 0.333333,
-              per_task_metrics: {
-                benchmark_task_a: { accuracy: 0.5, correct: 3, total: 6 },
-                benchmark_task_b: { accuracy: 0.333333, correct: 2, total: 6 }
-              },
-              accuracy_delta_vs_baseline: 0.083332
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "The candidate condition should improve average accuracy over the locked baseline",
-          causal_mechanism: "The controlled condition parameter affects benchmark generalization",
-          single_change: "condition-parameter condition",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than baseline",
-          abort_condition: "Abort on missing baseline/comparator rows",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline_condition"],
-          metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-          results_table_schema: [
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; label: string; hypothesis_supported?: boolean }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-      statistical_summary: {
-        confidence_intervals: Array<{ metric_key: string; sample_size?: number; lower: number; upper: number }>;
-      };
-    };
-    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      source: "metrics.conditions",
-      label: "candidate condition f5 vs baseline condition",
-      hypothesis_supported: true
-    });
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "accuracy_delta_vs_baseline",
-          baseline: 0,
-          comparator: 0.083332,
-          delta: 0.0833
-        }),
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.333334,
-          comparator: 0.416666,
-          delta: 0.0833
-        })
-      ])
-    );
-    expect(
-      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "conditions.candidate_condition_f5.average_accuracy" &&
-        item.sample_size === 12 &&
-        item.lower < item.upper
-      )
-    ).toBe(true);
-  });
-
-  it("derives confidence intervals from condition prediction correctness records", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-prediction-ci-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-prediction-ci";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01 with confidence intervals"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "success",
-          baseline_condition_marker: "baseline_condition",
-          completed_condition_count: 2,
-          best_condition: {
-            marker: "candidate_condition_a",
-            average_accuracy: 0.75,
-            accuracy_delta_vs_baseline: 0.25
-          },
-          condition_results: [
-            {
-              marker: "baseline_condition",
-              status: "completed",
-              average_accuracy: 0.5,
-              accuracy_delta_vs_baseline: 0,
-              evaluation: {
-                benchmark_task_a: {
-                  accuracy: 0.5,
-                  predictions: [
-                    { correct: true },
-                    { correct: false }
-                  ]
-                },
-                benchmark_task_b: {
-                  accuracy: 0.5,
-                  predictions: [
-                    { correct: true },
-                    { correct: false }
-                  ]
-                }
-              }
-            },
-            {
-              marker: "candidate_condition_a",
-              status: "completed",
-              average_accuracy: 0.75,
-              accuracy_delta_vs_baseline: 0.25,
-              evaluation: {
-                benchmark_task_a: {
-                  accuracy: 1,
-                  predictions: [
-                    { correct: true },
-                    { correct: true }
-                  ]
-                },
-                benchmark_task_b: {
-                  accuracy: 0.5,
-                  predictions: [
-                    { correct: true },
-                    { correct: false }
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "Lower parameter x should improve average accuracy over the locked baseline",
-          causal_mechanism: "Parameter x affects configuration generalization",
-          single_change: "parameter x",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than baseline",
-          abort_condition: "Abort on missing confidence intervals",
-          keep_or_discard_rule: "Keep if improved with visible uncertainty",
-          baselines: ["baseline_condition"],
-          metrics: ["accuracy_delta_vs_baseline", "average_accuracy"],
-          results_table_schema: [
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      statistical_summary: {
-        confidence_intervals: Array<{ metric_key: string; sample_size?: number; lower: number; upper: number }>;
-      };
-      failure_taxonomy: Array<{ id: string; severity: string }>;
-    };
-    expect(
-      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "condition_results.candidate_condition_a.average_accuracy" &&
-        item.sample_size === 4 &&
-        item.lower < item.upper
-      )
-    ).toBe(true);
-    expect(analysisRaw.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
-    expect(analysisRaw.failure_taxonomy.find((item) => item.id === "supplemental_coverage_gap")).toMatchObject({
-      severity: "low"
-    });
-  });
-
-  it("does not pause when baseline is in metrics.baseline and tuned rows are in metrics.conditions", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-explicit-baseline-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-explicit-baseline-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "success",
-          accuracy_delta_vs_baseline: 0.0625,
-          baseline_average_accuracy: 0.5625,
-          completed_condition_count: 2,
-          baseline: {
-            condition_name: "unmodified_base",
-            status: "success",
-            average_accuracy: 0.5625,
-            tasks: {
-              benchmark_task_a: { accuracy: 1.0 },
-              benchmark_task_b: { accuracy: 0.125 }
-            }
-          },
-          best_tuned_condition: {
-            condition_name: "baseline_condition_seed_42",
-            status: "success",
-            average_accuracy: 0.625,
-            accuracy_delta_vs_baseline: 0.0625,
-            condition_parameter_x: 8,
-            parameter_y: 0,
-            tasks: {
-              benchmark_task_a: { accuracy: 0.875 },
-              benchmark_task_b: { accuracy: 0.375 }
-            }
-          },
-          conditions: [
-            {
-              condition_name: "candidate_condition_a_seed_42",
-              status: "success",
-              average_accuracy: 0.5625,
-              accuracy_delta_vs_baseline: 0,
-              condition_parameter_x: 4,
-              parameter_y: 0,
-              tasks: {
-                benchmark_task_a: { accuracy: 0.75 },
-                benchmark_task_b: { accuracy: 0.375 }
-              }
-            },
-            {
-              condition_name: "baseline_condition_seed_42",
-              status: "success",
-              average_accuracy: 0.625,
-              accuracy_delta_vs_baseline: 0.0625,
-              condition_parameter_x: 8,
-              parameter_y: 0,
-              tasks: {
-                benchmark_task_a: { accuracy: 0.875 },
-                benchmark_task_b: { accuracy: 0.375 }
-              }
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "A tuned configured condition should improve over the unmodified baseline",
-          causal_mechanism: "configuration training changes downstream accuracy",
-          single_change: "condition-parameter condition",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than baseline",
-          abort_condition: "Abort on missing condition evidence",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["unmodified_base"],
-          metrics: ["average_accuracy"],
-          results_table_schema: [
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; label: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      source: "metrics.conditions",
-      label: "candidate condition a seed 42 vs unmodified base"
-    });
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.5625,
-          comparator: 0.5625,
-          delta: 0
-        }),
-        expect.objectContaining({
-          metric: "tasks.benchmark_task_b.accuracy",
-          baseline: 0.125,
-          comparator: 0.375,
-          delta: 0.25
-        })
-      ])
-    );
-
-    const resultTableRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_table.json"), "utf8")
-    ) as Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    expect(resultTableRaw).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.5625,
-          comparator: 0.5625,
-          delta: 0
-        }),
-        expect.objectContaining({
-          metric: "tasks.benchmark_task_b.accuracy",
-          baseline: 0.125,
-          comparator: 0.375,
-          delta: 0.25
-        })
-      ])
-    );
-  });
-
-  it("does not pause for an incomplete table when metrics.conditions is keyed by condition name", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-conditions-map-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-conditions-map-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "completed",
-          primary_metric: {
-            key: "accuracy_delta_vs_baseline",
-            baseline_condition: "unmodified_base",
-            best_condition: "unmodified_base",
-            best_value: 0
-          },
+          primary_score_delta_vs_baseline: 0.05,
+          primary_condition: "candidate_a",
+          baseline_condition: "reference",
           conditions: {
-            candidate_condition_b: {
-              name: "candidate_condition_b",
-              status: "completed",
-              accuracy_delta_vs_baseline: -0.03125,
-              evaluation: {
-                mean_zero_shot_accuracy: 0.4765625,
-                pooled_bootstrap: {
-                  ci95_low: 0.3904296875,
-                  ci95_high: 0.5703125,
-                  mean: 0.4765625
-                },
-                tasks: {
-                  benchmark_task_a: { accuracy: 0.453125 },
-                  benchmark_task_b: { accuracy: 0.5 }
-                }
-              }
-            },
-            configured_baseline: {
-              name: "configured_baseline",
-              status: "completed",
-              accuracy_delta_vs_baseline: -0.015625,
-              evaluation: {
-                mean_zero_shot_accuracy: 0.4921875,
-                pooled_bootstrap: {
-                  ci95_low: 0.3984375,
-                  ci95_high: 0.5859375,
-                  mean: 0.4921875
-                },
-                tasks: {
-                  benchmark_task_a: { accuracy: 0.46875 },
-                  benchmark_task_b: { accuracy: 0.515625 }
-                }
-              }
-            },
-            stronger_candidate: {
-              name: "stronger_candidate",
-              status: "completed",
-              accuracy_delta_vs_baseline: -0.0078125,
-              evaluation: {
-                mean_zero_shot_accuracy: 0.5,
-                pooled_bootstrap: {
-                  ci95_low: 0.40625,
-                  ci95_high: 0.59375,
-                  mean: 0.5
-                },
-                tasks: {
-                  benchmark_task_a: { accuracy: 0.484375 },
-                  benchmark_task_b: { accuracy: 0.515625 }
-                }
-              }
-            },
-            unmodified_base: {
-              name: "unmodified_base",
-              status: "completed",
-              accuracy_delta_vs_baseline: 0,
-              evaluation: {
-                mean_zero_shot_accuracy: 0.5078125,
-                pooled_bootstrap: {
-                  ci95_low: 0.4140625,
-                  ci95_high: 0.6015625,
-                  mean: 0.5078125
-                },
-                tasks: {
-                  benchmark_task_a: { accuracy: 0.484375 },
-                  benchmark_task_b: { accuracy: 0.53125 }
-                }
-              }
-            }
+            reference: { role: "baseline", metrics: { primary_score: 0.5 } },
+            candidate_a: { role: "primary", metrics: { primary_score: 0.55 } }
           }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "A non-baseline candidate condition should improve accuracy",
-          causal_mechanism: "Candidate choice changes zero-shot accuracy",
-          single_change: "candidate configuration",
-          confounded: false,
-          expected_metric_effect: "Higher accuracy than the named tuned baseline",
-          abort_condition: "Abort on missing condition evidence",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["baseline_condition"],
-          metrics: ["accuracy_delta_vs_baseline"],
-          results_table_schema: [
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; label: string }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
-      failure_taxonomy: Array<{ id: string }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]).toMatchObject({
-      source: "metrics.conditions",
-      label: "stronger candidate vs configured baseline"
-    });
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "accuracy_delta_vs_baseline",
-          baseline: -0.015625,
-          comparator: -0.007813,
-          delta: 0.0078
-        })
-      ])
-    );
-    expect(
-      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "conditions.unmodified_base.evaluation.mean_zero_shot_accuracy"
-      )
-    ).toBe(true);
-    expect(analysisRaw.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
-  });
-
-  it("does not pause when metrics.conditions uses base_unmodified and nested evaluation metrics", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-current-conditions-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-current-conditions-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "mean zero-shot accuracy improves over the unmodified baseline by at least 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
+        }
+      },
+      {
+        name: "condition_results",
+        metrics: {
           status: "completed",
-          best_condition: {
-            name: "base_unmodified",
-            benchmark_task_a_accuracy: 0.296875,
-            benchmark_task_b_accuracy: 0.5078125,
-            mean_zero_shot_accuracy: 0.40234375,
-            bootstrap_mean_ci: {
-              ci_low: 0.296875,
-              ci_high: 0.5078125,
-              mean: 0.40234375
-            }
-          },
-          best_vs_baseline_delta: 0,
-          condition_summaries: [
-            {
-              name: "base_unmodified",
-              benchmark_task_a_accuracy: 0.296875,
-              benchmark_task_b_accuracy: 0.5078125,
-              mean_zero_shot_accuracy: 0.40234375,
-              bootstrap_mean_ci: {
-                ci_low: 0.296875,
-                ci_high: 0.5078125,
-                mean: 0.40234375
-              },
-              trainable_params: 0,
-              training_wall_time_sec: 0
-            },
-            {
-              name: "candidate_condition_a",
-              benchmark_task_a_accuracy: 0.2734375,
-              benchmark_task_b_accuracy: 0.5234375,
-              mean_zero_shot_accuracy: 0.3984375,
-              trainable_params: 6307840,
-              training_wall_time_sec: 431.3
-            },
-            {
-              name: "candidate_condition_b",
-              benchmark_task_a_accuracy: 0.265625,
-              benchmark_task_b_accuracy: 0.53125,
-              mean_zero_shot_accuracy: 0.3984375,
-              trainable_params: 12615680,
-              training_wall_time_sec: 433.3
-            }
-          ],
-          conditions: [
-            {
-              name: "base_unmodified",
-              condition_type: "baseline_unmodified_checkpoint",
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.296875 },
-                benchmark_task_b: { accuracy: 0.5078125 }
-              },
-              training: { trainable_params: 0, wall_time_sec: 0 }
-            },
-            {
-              name: "candidate_condition_a",
-              condition_type: "parameterized_method",
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.2734375 },
-                benchmark_task_b: { accuracy: 0.5234375 }
-              },
-              training: { trainable_params: 6307840, wall_time_sec: 431.3 }
-            },
-            {
-              name: "candidate_condition_b",
-              condition_type: "parameterized_method",
-              evaluation: {
-                benchmark_task_a: { accuracy: 0.265625 },
-                benchmark_task_b: { accuracy: 0.53125 }
-              },
-              training: { trainable_params: 12615680, wall_time_sec: 433.3 }
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration tuning should improve zero-shot accuracy",
-          causal_mechanism: "Configuration training should improve downstream benchmark accuracy",
-          single_change: "condition parameter x",
-          confounded: false,
-          expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["base_unmodified"],
-          metrics: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-          results_table_schema: [
-            {
-              metric: "primary_mean_zero_shot_accuracy=(benchmark_task_a_accuracy+benchmark_task_b_accuracy)/2",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "accuracy_delta_vs_locked_tuned_baseline=primary_mean_zero_shot_accuracy-condition - primary_mean_zero_shot_accuracy-baseline_condition_locked",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-      statistical_summary: { confidence_intervals: Array<{ metric_key: string }> };
-      failure_taxonomy: Array<{ id: string }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.conditions");
-    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_zero_shot_accuracy",
-          baseline_value: 0.402344,
-          primary_value: 0.398438
-        })
-      ])
-    );
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "mean_zero_shot_accuracy",
-          baseline: 0.402344,
-          comparator: 0.398438,
-          delta: -0.0039
-        })
-      ])
-    );
-    expect(
-      analysisRaw.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "best_condition.mean_zero_shot_accuracy"
-      )
-    ).toBe(true);
-    expect(analysisRaw.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
-  });
-
-  it("does not pause when generated metrics store completed rows under condition_results", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-condition-results-table-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-condition-results-table";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "mean zero-shot accuracy improves over the unmodified baseline by at least 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "completed",
+          primary_score_delta_vs_baseline: 0.05,
           condition_results: [
-            {
-              condition_name: "unmodified_base",
-              condition_marker: "unmodified_base",
-              status: "completed",
-              benchmark_task_a_accuracy: 0.3125,
-              benchmark_task_b_accuracy: 0.4375,
-              mean_zero_shot_accuracy: 0.375
-            },
-            {
-              condition_name: "reference_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "reference_candidate|max_seq_length_1024_epochs_1_effective_batch_siz",
-              status: "completed",
-              benchmark_task_a_accuracy: 0.3125,
-              benchmark_task_b_accuracy: 0.4375,
-              mean_zero_shot_accuracy: 0.375,
-              accuracy_delta_vs_baseline: 0
-            },
-            {
-              condition_name: "stronger_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
-              condition_marker: "stronger_candidate|max_seq_length_1024_epochs_1_effective_batch_siz",
-              status: "completed",
-              benchmark_task_a_accuracy: 0.296875,
-              benchmark_task_b_accuracy: 0.453125,
-              mean_zero_shot_accuracy: 0.375,
-              accuracy_delta_vs_baseline: 0
-            }
-          ],
-          summary: {
-            best_tuned_accuracy_delta_vs_baseline: 0,
-            best_tuned_condition: "reference_candidate_max_seq_length_1024_epochs_1_effective_batch_size_8",
-            completed_condition_count: 3,
-            failed_condition_count: 0
-          }
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "configuration tuning should improve zero-shot accuracy",
-          causal_mechanism: "Configuration training should improve downstream benchmark accuracy",
-          single_change: "configuration method",
-          confounded: false,
-          expected_metric_effect: "Higher mean zero-shot accuracy than the unmodified baseline",
-          abort_condition: "Abort if accuracy regresses",
-          keep_or_discard_rule: "Keep if improved",
-          baselines: ["unmodified_base"],
-          metrics: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-          results_table_schema: [
-            {
-              metric: "primary_mean_zero_shot_accuracy = (benchmark_task_a_accuracy + benchmark_task_b_accuracy) / 2",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
+            { label: "Variant A", metrics: { primary_score: 0.5 } },
+            { label: "Variant B", metrics: { primary_score: 0.55 } }
           ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.condition_results");
-    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_zero_shot_accuracy",
-          baseline_value: 0.375,
-          primary_value: 0.375
-        })
-      ])
-    );
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "mean_zero_shot_accuracy",
-          baseline: 0.375,
-          comparator: 0.375,
-          delta: 0
-        })
-      ])
-    );
-  });
-
-  it("does not pause when live metrics store completed rows as per-condition averages", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-per-condition-averages-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-per-condition-averages";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline improves by at least 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
+        }
+      },
+      {
+        name: "per_condition",
+        metrics: {
           status: "completed",
-          primary_metric_key: "accuracy_delta_vs_baseline",
-          baseline_condition_marker: "baseline_condition",
-          best_condition_marker: "candidate_condition_f",
-          baseline_average_accuracy: 0.48125,
-          best_condition_average_accuracy: 0.49375,
-          accuracy_delta_vs_baseline: 0.0125,
-          condition_order: [
-            "baseline_condition",
-            "candidate_condition_d",
-            "candidate_condition_f"
-          ],
-          condition_statuses: {
-            baseline_condition: "success",
-            candidate_condition_d: "success",
-            candidate_condition_f: "success"
-          },
-          per_condition_average_accuracy: {
-            baseline_condition: 0.48125,
-            candidate_condition_d: 0.4875,
-            candidate_condition_f: 0.49375
-          },
-          per_condition_train_loss: {
-            baseline_condition: null,
-            candidate_condition_d: null,
-            candidate_condition_f: null
-          },
-          failure_reasons: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "Higher condition parameter x should improve average zero-shot accuracy under fixed compute.",
-          causal_mechanism: "More configuration capacity can fit the small instruction-tuning signal.",
-          single_change: "condition parameter x",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than the locked baseline condition",
-          abort_condition: "Abort if required conditions do not complete.",
-          keep_or_discard_rule: "Keep if the best tuned condition improves by at least one point.",
-          baselines: ["baseline_condition"],
-          metrics: ["average_accuracy", "accuracy_delta_vs_baseline"],
-          results_table_schema: [
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
-          ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
-
-    const result = await analyzeNode.execute({ run, graph: run.graph });
-
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.per_condition_average_accuracy");
-    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "accuracy_delta_vs_baseline",
-          baseline_value: 0,
-          primary_value: 0.0125
-        }),
-        expect.objectContaining({
-          key: "average_accuracy",
-          baseline_value: 0.4813,
-          primary_value: 0.4938
-        })
-      ])
-    );
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.4813,
-          comparator: 0.4938,
-          delta: 0.0125
-        })
-      ])
-    );
-
-    const baselineComparison = JSON.parse(
-      await readFile(path.join(runDir, "baseline_comparison.json"), "utf8")
-    ) as { status: string };
-    expect(baselineComparison.status).not.toBe("missing");
-  });
-
-  it("does not pause when live metrics store completed rows in a per_condition array", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-results-per-condition-array-"));
-    process.chdir(root);
-
-    const runId = "run-analyze-results-per-condition-array";
-    const run = {
-      ...makeRun(runId),
-      currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy_delta_vs_baseline improves by at least 0.01"
-    };
-    run.graph.currentNode = "analyze_results";
-
-    const runDir = path.join(root, ".autolabos", "runs", runId);
-    await mkdir(path.join(runDir, "memory"), { recursive: true });
-    await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-    await writeFile(
-      path.join(runDir, "metrics.json"),
-      JSON.stringify(
-        {
-          status: "completed",
-          primary_metric_key: "accuracy_delta_vs_baseline",
-          selected_condition_marker: "candidate_condition_d5",
-          study_contract: {
-            baseline_condition_marker: "baseline_condition"
-          },
-          baseline_mean_accuracy: 0.8307,
-          accuracy_delta_vs_baseline: 0.0166,
+          primary_score_delta_vs_baseline: 0.05,
           per_condition: [
-            {
-              condition_marker: "baseline_condition",
-              status: "completed",
-              average_accuracy: 0.8307,
-              mean_accuracy: 0.8307,
-              accuracy_delta_vs_baseline: 0,
-              benchmark_task_a_accuracy_mean: 0.6676,
-              benchmark_task_b_accuracy_mean: 0.9937
-            },
-            {
-              condition_marker: "candidate_condition_d5",
-              status: "completed",
-              average_accuracy: 0.8473,
-              mean_accuracy: 0.8473,
-              accuracy_delta_vs_baseline: 0.0166,
-              benchmark_task_a_accuracy_mean: 0.6945,
-              benchmark_task_b_accuracy_mean: 1
-            }
-          ],
-          failure_reasons: []
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
-    await writeFile(
-      path.join(runDir, "experiment_contract.json"),
-      JSON.stringify(
-        {
-          version: 1,
-          run_id: runId,
-          created_at: new Date().toISOString(),
-          hypothesis: "A configured condition should improve average accuracy over the locked baseline.",
-          causal_mechanism: "Configuration configuration affects instruction-tuning transfer.",
-          single_change: "condition-parameter grid",
-          confounded: false,
-          expected_metric_effect: "Higher average accuracy than the locked baseline condition",
-          abort_condition: "Abort if required baseline or comparator rows are missing.",
-          keep_or_discard_rule: "Keep only with populated baseline/comparator evidence.",
-          baselines: ["baseline_condition"],
-          metrics: ["average_accuracy", "accuracy_delta_vs_baseline"],
-          results_table_schema: [
-            {
-              metric: "average_accuracy",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            },
-            {
-              metric: "accuracy_delta_vs_baseline",
-              baseline: null,
-              comparator: null,
-              delta: null,
-              direction: "higher_better"
-            }
+            { label: "Variant A", primary_score: 0.5 },
+            { label: "Variant B", primary_score: 0.55 }
           ]
-        },
-        null,
-        2
-      ),
-      "utf8"
-    );
+        }
+      }
+    ];
 
-    const analyzeNode = createAnalyzeResultsNode({
-      config: {} as any,
-      runStore: {} as any,
-      eventStream: new InMemoryEventStream(),
-      llm: new MockLLMClient(),
-      codex: {} as any,
-      aci: {} as any,
-      semanticScholar: {} as any
-    });
+    for (const [index, projection] of projections.entries()) {
+      const root = await mkdtemp(path.join(tmpdir(), "autolabos-unbound-projection-"));
+      process.chdir(root);
+      const runId = "run-unbound-projection-" + index;
+      const run = {
+        ...makeRun(runId),
+        currentNode: "analyze_results" as const,
+        objectiveMetric: "primary_score_delta_vs_baseline >= 0.01"
+      };
+      run.graph.currentNode = "analyze_results";
+      const runDir = path.join(root, ".autolabos", "runs", runId);
+      await mkdir(path.join(runDir, "memory"), { recursive: true });
+      await writeFile(
+        path.join(runDir, "memory", "run_context.json"),
+        JSON.stringify({ version: 1, items: [] }),
+        "utf8"
+      );
+      await writeFile(
+        path.join(runDir, "metrics.json"),
+        JSON.stringify(projection.metrics, null, 2),
+        "utf8"
+      );
 
-    const result = await analyzeNode.execute({ run, graph: run.graph });
+      const analyzeNode = createAnalyzeResultsNode({
+        config: {} as any,
+        runStore: {} as any,
+        eventStream: new InMemoryEventStream(),
+        llm: new MockLLMClient(),
+        codex: {} as any,
+        aci: {} as any,
+        semanticScholar: {} as any
+      });
+      const result = await analyzeNode.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
-    expect(result.transitionRecommendation?.reason).not.toBe("incomplete_results_table");
-
-    const analysisRaw = JSON.parse(
-      await readFile(path.join(runDir, "result_analysis.json"), "utf8")
-    ) as {
-      condition_comparisons: Array<{ source: string; metrics: Array<{ key: string; baseline_value: number; primary_value: number }> }>;
-      results_table: Array<{ metric: string; baseline: number | null; comparator: number | null; delta: number | null }>;
-    };
-    expect(analysisRaw.condition_comparisons[0]?.source).toBe("metrics.per_condition");
-    expect(analysisRaw.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "accuracy_delta_vs_baseline",
-          baseline_value: 0,
-          primary_value: 0.0166
-        }),
-        expect.objectContaining({
-          key: "average_accuracy",
-          baseline_value: 0.8307,
-          primary_value: 0.8473
-        })
-      ])
-    );
-    expect(analysisRaw.results_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          baseline: 0.8307,
-          comparator: 0.8473,
-          delta: 0.0166
-        })
-      ])
-    );
+      expect(result.status, projection.name).toBe("success");
+      expect(result.transitionRecommendation, projection.name).toMatchObject({
+        action: "pause_for_human",
+        reason: "incomplete_results_table"
+      });
+      const analysis = JSON.parse(
+        await readFile(path.join(runDir, "result_analysis.json"), "utf8")
+      ) as {
+        results_artifact: ResultsArtifactV2;
+        condition_comparisons: unknown[];
+        results_table?: unknown;
+      };
+      expect(analysis.results_artifact, projection.name).toEqual({
+        schema_version: "2.0",
+        metrics: [],
+        series: [],
+        observations: [],
+        comparisons: []
+      });
+      expect(analysis.condition_comparisons, projection.name).toEqual([]);
+      expect(analysis.results_table, projection.name).toBeUndefined();
+    }
   });
 
   it("records critical risk signals and pauses for human review when metrics are statistically inconsistent", async () => {
@@ -4809,7 +2543,7 @@ describe("objective metric propagation", () => {
     const run = {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     };
     run.graph.currentNode = "analyze_results";
 
@@ -4820,7 +2554,7 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.91,
+          primary_score: 0.91,
           significance: {
             p_value: 1.4
           }
@@ -4889,19 +2623,32 @@ describe("objective metric propagation", () => {
     run.graph.currentNode = "analyze_results";
 
     const runDir = path.join(root, ".autolabos", "runs", runId);
+    const resultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.9,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.82,
+          judgement: "not_supported"
+        }
+      ]
+    };
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, resultsOptions), null, 2),
+      "utf8"
+    );
     await writeFile(
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.82,
-          comparison: {
-            shared_state_vs_free_form: {
-              accuracy_delta: -0.08,
-              hypothesis_supported: false
-            }
-          }
+          primary_score: 0.82,
+          primary_score_delta_vs_baseline: -0.08,
+          results_artifact: buildResultsArtifactFixture(resultsOptions)
         },
         null,
         2
@@ -4940,6 +2687,18 @@ describe("objective metric propagation", () => {
 
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const publicDir = path.join(root, "public-bundle");
+    const resultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.8,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.82,
+          judgement: "supported"
+        }
+      ]
+    };
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await mkdir(publicDir, { recursive: true });
     await writeFile(
@@ -4960,18 +2719,24 @@ describe("objective metric propagation", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        '  title: "Accuracy benchmark"',
+        '  title: "Primary score evaluation"',
         "  risks:",
         '    - "Small sample size may exaggerate gains."'
       ].join("\n"),
       "utf8"
     );
     await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, resultsOptions), null, 2),
+      "utf8"
+    );
+    await writeFile(
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.82,
-          ci95_accuracy: [0.79, 0.85]
+          primary_score: 0.82,
+          ci95_primary_score: [0.79, 0.85],
+          results_artifact: buildResultsArtifactFixture(resultsOptions)
         },
         null,
         2
@@ -4982,7 +2747,7 @@ describe("objective metric propagation", () => {
       path.join(publicDir, "confirmatory_metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.83
+          primary_score: 0.83
         },
         null,
         2
@@ -4993,7 +2758,7 @@ describe("objective metric propagation", () => {
       path.join(publicDir, "quick_check_metrics.json"),
       JSON.stringify(
         {
-          accuracy: 0.81
+          primary_score: 0.81
         },
         null,
         2
@@ -5162,8 +2927,8 @@ describe("objective metric propagation", () => {
             path.join(runDir, "metrics.json"),
             JSON.stringify(
               {
-                accuracy: 0.91,
-                f1: 0.88
+                primary_score: 0.91,
+                secondary_score: 0.88
               },
               null,
               2
@@ -5206,7 +2971,7 @@ describe("objective metric propagation", () => {
     expect(await memory.get("run_experiments.last_error")).toBeUndefined();
   });
 
-  it("promotes summary primary metric before run_experiments contract evaluation", async () => {
+  it("fails closed when the objective metric exists only in a summary projection", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-summary-primary-"));
     process.chdir(root);
 
@@ -5214,7 +2979,24 @@ describe("objective metric propagation", () => {
     const run = makeRun(runId);
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
+    const resultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.8,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.91,
+          judgement: "supported"
+        }
+      ]
+    };
     await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, resultsOptions), null, 2),
+      "utf8"
+    );
     await writeFile(
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
@@ -5258,9 +3040,10 @@ describe("objective metric propagation", () => {
             JSON.stringify(
               {
                 summary: {
-                  primary_metric_key: "accuracy",
+                  primary_metric_key: "primary_score",
                   primary_metric: 0.91
-                }
+                },
+                results_artifact: buildResultsArtifactFixture(resultsOptions)
               },
               null,
               2
@@ -5287,13 +3070,20 @@ describe("objective metric propagation", () => {
     } as any);
 
     const result = await runNode.execute({ run, graph: run.graph });
-    expect(result.status).toBe("success");
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain('Objective metric "primary_score" was not found');
 
-    const metricsRaw = await readFile(path.join(runDir, "metrics.json"), "utf8");
-    expect(metricsRaw).toContain('"accuracy": 0.91');
-
-    const evaluationRaw = await readFile(path.join(runDir, "objective_evaluation.json"), "utf8");
-    expect(evaluationRaw).toContain('"status": "met"');
+    const metrics = JSON.parse(await readFile(path.join(runDir, "metrics.json"), "utf8")) as {
+      primary_score?: number;
+      summary?: { primary_metric_key?: string; primary_metric?: number };
+      results_artifact?: ResultsArtifactV2;
+    };
+    expect(metrics).not.toHaveProperty("primary_score");
+    expect(metrics.summary).toEqual({
+      primary_metric_key: "primary_score",
+      primary_metric: 0.91
+    });
+    expect(metrics.results_artifact).toMatchObject({ schema_version: "2.0" });
   });
 
   it("retries a transient primary-command failure once and records triage artifacts", async () => {
@@ -5353,8 +3143,8 @@ describe("objective metric propagation", () => {
             path.join(runDir, "metrics.json"),
             JSON.stringify(
               {
-                accuracy: 0.9,
-                f1: 0.87
+                primary_score: 0.9,
+                secondary_score: 0.87
               },
               null,
               2
@@ -5406,7 +3196,7 @@ describe("objective metric propagation", () => {
     });
   });
 
-  it("recovers required metrics from a public bundle when a successful command leaves the run metrics path empty", async () => {
+  it("fails closed when a successful command leaves only a public-bundle metrics file", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-public-metrics-recovery-"));
     process.chdir(root);
 
@@ -5417,10 +3207,39 @@ describe("objective metric propagation", () => {
     const publicDir = path.join(root, "public-bundle");
     const publicMetricsPath = path.join(publicDir, "metrics.json");
     const scriptPath = path.join(publicDir, "run_experiment.py");
+    const resultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.8,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.91,
+          judgement: "supported"
+        }
+      ]
+    };
     await mkdir(memoryDir, { recursive: true });
     await mkdir(publicDir, { recursive: true });
     await writeFile(scriptPath, "print(\"does not rewrite metrics\")\n", "utf8");
-    await writeFile(publicMetricsPath, JSON.stringify({ accuracy: 0.73, recovered: true }, null, 2), "utf8");
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, resultsOptions), null, 2),
+      "utf8"
+    );
+    await writeFile(
+      publicMetricsPath,
+      JSON.stringify(
+        {
+          primary_score: 0.91,
+          recovered: true,
+          results_artifact: buildResultsArtifactFixture(resultsOptions)
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
     await writeFile(
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
@@ -5458,10 +3277,13 @@ describe("objective metric propagation", () => {
 
     const result = await runNode.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
-    expect(await readFile(path.join(runDir, "metrics.json"), "utf8")).toContain("\"recovered\": true");
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("finished without metrics output");
+    await expect(readFile(path.join(runDir, "metrics.json"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT"
+    });
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
-    expect(await memory.get("run_experiments.recovered_public_metrics_path")).toBe(publicMetricsPath);
+    expect(await memory.get("run_experiments.recovered_public_metrics_path")).toBeUndefined();
   });
 
   it("auto-runs managed quick_check and confirmatory profiles after a successful standard run", async () => {
@@ -5538,10 +3360,10 @@ describe("objective metric propagation", () => {
               : publicMetricsPath;
           const metrics =
             targetPath === publicMetricsPath
-              ? { accuracy: 0.91, f1: 0.88 }
+              ? { primary_score: 0.91, secondary_score: 0.88 }
               : targetPath.includes("quick_check")
-                ? { accuracy: 0.9, f1: 0.86, sampling_profile: { name: "quick_check", total_trials: 4 } }
-                : { accuracy: 0.92, f1: 0.89, sampling_profile: { name: "confirmatory", total_trials: 12 } };
+                ? { primary_score: 0.9, secondary_score: 0.86, sampling_profile: { name: "quick_check", total_trials: 4 } }
+                : { primary_score: 0.92, secondary_score: 0.89, sampling_profile: { name: "confirmatory", total_trials: 12 } };
           await writeFile(targetPath, JSON.stringify(metrics, null, 2), "utf8");
           return {
             status: "ok" as const,
@@ -5581,7 +3403,7 @@ describe("objective metric propagation", () => {
       { profile: "confirmatory", status: "pass" }
     ]);
 
-    expect(await readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.91');
+    expect(await readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"primary_score": 0.91');
     const quickCheckRaw = await readFile(path.join(publicDir, "quick_check_metrics.json"), "utf8");
     const confirmatoryRaw = await readFile(path.join(publicDir, "confirmatory_metrics.json"), "utf8");
     expect(quickCheckRaw).toContain('"name": "quick_check"');
@@ -5609,21 +3431,23 @@ describe("objective metric propagation", () => {
         };
       };
     };
-    expect(manifest.sections?.experiment?.generated_files).toEqual(
+    const generatedFiles = manifest.sections?.experiment?.generated_files ?? [];
+    expect(generatedFiles).toEqual(
       expect.arrayContaining([
         "experiment/metrics.json",
         "experiment/objective_evaluation.json",
         "experiment/run_experiments_verify_report.json",
         "experiment/run_manifest.json",
         "experiment/experiment_portfolio.json",
-        "experiment/trial_group_matrix.json",
         "experiment/quick_check_metrics.json",
         "experiment/confirmatory_metrics.json",
-        "experiment/trial_group_metrics/primary_standard__hotpotqa_mini.json",
-        "experiment/trial_group_metrics/quick_check__gsm8k_mini.json",
-        "experiment/trial_group_metrics/confirmatory__humaneval_mini.json"
+        "experiment/summary.json",
+        "experiment/study_summary.json"
       ])
     );
+    expect(generatedFiles.some((file) => file.includes("trial_group_matrix"))).toBe(false);
+    expect(generatedFiles.some((file) => file.includes("trial_group_metrics/"))).toBe(false);
+
     const runManifest = JSON.parse(await readFile(path.join(runDir, "run_manifest.json"), "utf8")) as {
       execution_model: string;
       total_expected_trials?: number;
@@ -5636,41 +3460,40 @@ describe("objective metric propagation", () => {
       }>;
     };
     expect(runManifest.execution_model).toBe("managed_bundle");
-    expect(runManifest.total_expected_trials).toBe(126);
-    expect(runManifest.trial_groups).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        id: "primary_standard",
-        status: "pass",
-        objective_evaluation: expect.objectContaining({ status: "met" })
-      }),
-      expect.objectContaining({ id: "quick_check", profile: "quick_check", status: "pass" }),
-      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", status: "pass" }),
-      expect.objectContaining({
-        id: "primary_standard__hotpotqa_mini",
-        group_kind: "matrix_slice",
-        status: "pass"
-      }),
-      expect.objectContaining({
-        id: "quick_check__gsm8k_mini",
-        group_kind: "matrix_slice",
-        status: "pass"
-      }),
-      expect.objectContaining({
-        id: "confirmatory__humaneval_mini",
-        group_kind: "matrix_slice",
-        status: "pass"
-      })
-    ]));
-    expect(await memory.get("run_experiments.run_manifest")).toMatchObject({
-      execution_model: "managed_bundle",
-      total_expected_trials: 126
-    });
-    expect(await memory.get("run_experiments.matrix_trial_groups")).toEqual(
+    expect(runManifest.total_expected_trials).toBeUndefined();
+    expect(runManifest.trial_groups).toHaveLength(3);
+    expect(runManifest.trial_groups).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: "primary_standard__hotpotqa_mini", status: "pass" }),
-        expect.objectContaining({ id: "quick_check__gsm8k_mini", status: "pass" })
+        expect.objectContaining({
+          id: "primary_standard",
+          group_kind: "aggregate",
+          status: "pass",
+          objective_evaluation: expect.objectContaining({ status: "met" })
+        }),
+        expect.objectContaining({
+          id: "quick_check",
+          profile: "quick_check",
+          group_kind: "aggregate",
+          status: "pass"
+        }),
+        expect.objectContaining({
+          id: "confirmatory",
+          profile: "confirmatory",
+          group_kind: "aggregate",
+          status: "pass"
+        })
       ])
     );
+    expect(runManifest.trial_groups.some((group) => group.group_kind === "matrix_slice")).toBe(false);
+    expect(await memory.get("run_experiments.run_manifest")).toMatchObject({
+      execution_model: "managed_bundle",
+      trial_groups: expect.arrayContaining([
+        expect.objectContaining({ id: "primary_standard", status: "pass" }),
+        expect.objectContaining({ id: "quick_check", status: "pass" }),
+        expect.objectContaining({ id: "confirmatory", status: "pass" })
+      ])
+    });
+    expect(await memory.get("run_experiments.matrix_trial_groups")).toEqual([]);
     expect(await memory.get("run_experiments.triage")).toMatchObject({
       watchdog: {
         metrics_state: "valid"
@@ -5748,18 +3571,18 @@ describe("objective metric propagation", () => {
               : path.join(runDir, "metrics.json");
           const metrics =
             targetPath === path.join(runDir, "metrics.json")
-              ? { accuracy: 0.91, value: 0.02, macro_f1_delta_vs_logreg: 0.02 }
+              ? { primary_score: 0.91, value: 0.02, primary_score_delta_vs_baseline: 0.02 }
               : targetPath.includes("quick_check")
                 ? {
-                    accuracy: 0.905,
+                    primary_score: 0.905,
                     value: 0.018,
-                    macro_f1_delta_vs_logreg: 0.018,
+                    primary_score_delta_vs_baseline: 0.018,
                     sampling_profile: { name: "quick_check", total_trials: 2 }
                   }
                 : {
-                    accuracy: 0.915,
+                    primary_score: 0.915,
                     value: 0.021,
-                    macro_f1_delta_vs_logreg: 0.021,
+                    primary_score_delta_vs_baseline: 0.021,
                     sampling_profile: { name: "confirmatory", total_trials: 8 }
                   };
           await writeFile(targetPath, JSON.stringify(metrics, null, 2), "utf8");
@@ -5891,7 +3714,7 @@ describe("objective metric propagation", () => {
           if (invocation === 1) {
             await writeFile(
               path.join(runDir, "metrics.json"),
-              JSON.stringify({ accuracy: 0.91, value: 0.02, macro_f1_delta_vs_logreg: 0.02 }, null, 2),
+              JSON.stringify({ primary_score: 0.91, value: 0.02, primary_score_delta_vs_baseline: 0.02 }, null, 2),
               "utf8"
             );
             return {
@@ -6096,8 +3919,8 @@ describe("objective metric propagation", () => {
             path.join(runDir, "metrics.json"),
             JSON.stringify(
               {
-                accuracy: "NaN",
-                f1: 0.71
+                primary_score: "NaN",
+                secondary_score: 0.71
               },
               null,
               2
@@ -6152,7 +3975,7 @@ describe("objective metric propagation", () => {
     expect(await memory.get("run_experiments.last_error")).toMatch(/Sentinel watchdog blocked the run/u);
   });
 
-  it("records warning-only sentinel findings when metrics stay parseable but suspicious", async () => {
+  it("records warning-only sentinel findings for explicitly bounded diagnostics", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-sentinel-warning-"));
     process.chdir(root);
 
@@ -6198,7 +4021,7 @@ describe("objective metric propagation", () => {
             path.join(runDir, "metrics.json"),
             JSON.stringify(
               {
-                accuracy: 1.4,
+                primary_score: 1.4,
                 citation_reliability: 0.21
               },
               null,
@@ -6239,10 +4062,6 @@ describe("objective metric propagation", () => {
     };
     expect(triage.watchdog.sentinel_findings).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          code: "statistical_anomaly",
-          severity: "warning"
-        }),
         expect.objectContaining({
           code: "citation_reliability_anomaly",
           severity: "warning",
@@ -6543,7 +4362,7 @@ describe("objective metric propagation", () => {
       ...makeRun(runId),
       currentNode: "analyze_results" as const,
       objectiveMetric:
-        "Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B; meaningful improvement >= 0.015."
+        "Improve evaluation primary_score over the declared baseline by at least 0.015."
     };
     run.graph.currentNode = "analyze_results";
 
@@ -6586,7 +4405,7 @@ describe("objective metric propagation", () => {
     ) as {
       overview: { objective_status: string; objective_summary: string; matched_metric_key?: string };
       metric_table: Array<{ key: string }>;
-      results_table: Array<unknown>;
+      results_table?: Array<unknown>;
       warnings: string[];
       verifier_feedback?: { summary: string };
     };
@@ -6594,16 +4413,20 @@ describe("objective metric propagation", () => {
     expect(analysis.overview.objective_summary).toContain("preflight metrics");
     expect(analysis.overview.matched_metric_key ?? "").toBe("");
     expect(analysis.metric_table).toEqual([]);
-    expect(analysis.results_table).toEqual([]);
+    expect(analysis.results_table).toBeUndefined();
     expect(analysis.warnings.some((warning) => warning.includes("preflight metrics"))).toBe(true);
     expect(analysis.verifier_feedback).toBeUndefined();
 
     const resultTable = JSON.parse(
       await readFile(path.join(runDir, "result_table.json"), "utf8")
-    ) as { primary_metric: string; conditions: Array<unknown>; summary: string };
-    expect(resultTable.primary_metric).toBe("");
-    expect(resultTable.conditions).toEqual([]);
-    expect(resultTable.summary).toContain("preflight metrics");
+    ) as ResultsArtifactV2;
+    expect(resultTable).toEqual({
+      schema_version: "2.0",
+      metrics: [],
+      series: [],
+      observations: [],
+      comparisons: []
+    });
   });
 
   it("forces a fresh rerun for managed real_execution bundles when previous metrics exist", async () => {
@@ -6663,7 +4486,7 @@ describe("objective metric propagation", () => {
             metricsPath,
             JSON.stringify(
               {
-                accuracy: 0.91,
+                primary_score: 0.91,
                 sampling_profile: {
                   total_trials: 4,
                   executed_trials: 4,
@@ -6709,11 +4532,28 @@ describe("objective metric propagation", () => {
     const runId = "run-cached-only-analysis";
     const run = makeRun(runId);
     run.currentNode = "analyze_results";
-    run.objectiveMetric = "replication success rate at least 0.9";
+    run.objectiveMetric = "primary_score at least 0.9";
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const memoryDir = path.join(runDir, "memory");
+    const resultsOptions: ResultsFixtureOptions = {
+      referenceValue: 0.8,
+      subjects: [
+        {
+          id: "candidate_a",
+          label: "Candidate A",
+          role: "primary",
+          value: 0.97,
+          judgement: "supported"
+        }
+      ]
+    };
     await mkdir(path.join(runDir, "exec_logs"), { recursive: true });
     await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(runDir, "experiment_contract.json"),
+      JSON.stringify(buildExperimentContractFixture(runId, resultsOptions), null, 2),
+      "utf8"
+    );
     await writeFile(
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
@@ -6732,8 +4572,9 @@ describe("objective metric propagation", () => {
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
-          replication_success_rate: 1,
-          reproducibility_score: 0.97,
+          primary_score: 0.97,
+          secondary_score: 0.96,
+          results_artifact: buildResultsArtifactFixture(resultsOptions),
           sampling_profile: {
             total_trials: 48,
             executed_trials: 0,

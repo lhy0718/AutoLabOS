@@ -26,7 +26,6 @@ import {
   validateVerificationCommandSurface
 } from "../experiments/designImplementationValidator.js";
 import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
-import { supportsRealExecutionBundle, writeRealExecutionBundle } from "../experiments/realExecutionBundle.js";
 import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { detectLongRunningPythonBudgetGuardFailure } from "../experiments/pythonRunnerBudgetGuard.js";
 import { detectPrimaryEvidenceIntegrityViolation } from "../experiments/primaryEvidenceIntegrity.js";
@@ -55,6 +54,27 @@ import {
   DynamicDecompositionUnit,
   parseDynamicDecompositionPlan
 } from "../decompositionPlan.js";
+import {
+  validateActiveTopicProbeContract
+} from "../activeTopicProbeContract.js";
+import {
+  buildTopicProbeComputeBudgetContract,
+  type TopicProbeComputeStage,
+  type TopicProbeComputeStageLimit
+} from "../topicProbeComputeBudget.js";
+import {
+  loadResearchBriefSnapshot,
+  resolveResearchRunModeGuard
+} from "../runs/researchRunModeGuard.js";
+import { resolveTopicProbeComputeContractSource } from "../topicProbeComputeContractSource.js";
+import {
+  validatePersistedEstimatorFeasibilityGate,
+  type PersistedEstimatorFeasibilityGate
+} from "../estimatorFeasibilityGate.js";
+import {
+  loadTopicProbeExecutionAuthorizationGate,
+  type TopicProbeExecutionAuthorizationGateArtifact
+} from "../runs/topicProbeExecutionAuthorizationGate.js";
 
 export interface ImplementSessionSummary {
   summary: string;
@@ -73,10 +93,15 @@ export interface ImplementSessionSummary {
   verifyReport: VerifyReport;
   autoHandoffToRunExperiments: boolean;
   handoffReason?: string;
+  requestedGpuCount?: number;
 }
 
 export class ImplementSessionStopError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly failureKind?: "retryable" | "gate_blocked" | "environment",
+    readonly toolCallsUsed = 1
+  ) {
     super(message);
     this.name = "ImplementSessionStopError";
   }
@@ -90,6 +115,51 @@ const MAX_PROVIDER_PYTHON_RUNNER_CHUNKS = 6;
 const IMPLEMENT_STAGED_LLM_CHUNK_MAX_STREAMED_CHARS = 12_000;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_MAX_ATTEMPTS = 12;
 const IMPLEMENT_STAGED_LLM_TRANSIENT_RETRY_DELAY_MS = 5_000;
+
+const TOPIC_PROBE_COMPUTE_USAGE_SCHEMA: ImplementTopicProbeComputeContract["compute_usage_schema"] = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema_version",
+    "execution_kind",
+    "actual_gpu_count",
+    "fresh_executed_trials",
+    "cached_trials"
+  ],
+  properties: {
+    schema_version: { const: 1 },
+    execution_kind: {
+      enum: ["gpu_execution", "cpu_execution", "cache_hit"]
+    },
+    actual_gpu_count: { type: "integer", minimum: 0 },
+    fresh_executed_trials: { type: "integer", minimum: 0 },
+    cached_trials: { type: "integer", minimum: 0 }
+  },
+  oneOf: [
+    {
+      properties: {
+        execution_kind: { const: "gpu_execution" },
+        actual_gpu_count: { type: "integer", minimum: 1 },
+        fresh_executed_trials: { type: "integer", minimum: 1 }
+      }
+    },
+    {
+      properties: {
+        execution_kind: { const: "cpu_execution" },
+        actual_gpu_count: { const: 0 },
+        fresh_executed_trials: { type: "integer", minimum: 1 }
+      }
+    },
+    {
+      properties: {
+        execution_kind: { const: "cache_hit" },
+        actual_gpu_count: { const: 0 },
+        fresh_executed_trials: { const: 0 },
+        cached_trials: { type: "integer", minimum: 1 }
+      }
+    }
+  ]
+};
 
 interface ImplementSessionDeps {
   config: AppConfig;
@@ -159,6 +229,7 @@ interface StructuredImplementResponse {
   public_artifacts?: string[];
   script_path?: string;
   metrics_path?: string;
+  requested_gpu_count?: number;
   localization?: unknown;
   assumptions?: string[];
   decomposition_plan?: DynamicDecompositionPlan;
@@ -335,6 +406,15 @@ interface ImplementTaskSpec {
       };
       evaluator_contract_id: string;
     };
+    estimator_feasibility?: ReturnType<
+      typeof compactEstimatorFeasibilityForImplementation
+    >;
+    topic_probe_execution_authorization?: {
+      status: TopicProbeExecutionAuthorizationGateArtifact["status"];
+      effective_execution_authorized: boolean;
+      content_sha256: string;
+    };
+    topic_probe_compute_contract?: ImplementTopicProbeComputeContract;
     planned_condition_contract?: PlannedConditionContract;
     plan_changed: boolean;
     plan_hash: string;
@@ -347,12 +427,29 @@ interface PlannedConditionContract {
   seed_schedule?: number[];
   minimum_seeds_per_condition?: number;
   baseline_condition_marker?: string;
-  tuned_only: boolean;
   required_condition_markers: string[];
   primary_metric_key?: string;
   full_evaluation_required?: boolean;
   minimum_eval_examples_per_task?: Record<string, number>;
   notes: string[];
+}
+
+interface ImplementTopicProbeComputeContract {
+  stage: TopicProbeComputeStage;
+  active_contract_content_sha256: string;
+  active_limit: TopicProbeComputeStageLimit;
+  requested_gpu_count: {
+    type: "integer";
+    minimum: 0;
+    maximum: number;
+  };
+  compute_usage_schema: {
+    type: "object";
+    additionalProperties: false;
+    required: readonly string[];
+    properties: Record<string, unknown>;
+    oneOf: readonly unknown[];
+  };
 }
 
 interface VerifyReport {
@@ -446,6 +543,7 @@ interface PreparedImplementAttempt {
   publicArtifacts: string[];
   localization: LocalizationResult;
   assumptions: string[];
+  requestedGpuCount?: number;
   verifyReport: VerifyReport;
 }
 
@@ -511,6 +609,63 @@ export class ImplementSessionManager {
     const runContext = new RunContextMemory(
       resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.runContextPath)
     );
+    const memoryRawBrief = await runContext.get<string>("run_brief.raw");
+    const snapshotBrief = await loadResearchBriefSnapshot(
+      this.deps.workspaceRoot,
+      run.id
+    );
+    const researchModeGuard = await resolveResearchRunModeGuard({
+      workspaceRoot: this.deps.workspaceRoot,
+      runId: run.id,
+      rawBrief: memoryRawBrief || snapshotBrief,
+      run,
+      expectedResearchCycle: run.graph.researchCycle,
+      requireActiveBoundedProbeLineage: true
+    });
+    if (!researchModeGuard.valid) {
+      throw new ImplementSessionStopError(
+        "implement_experiments_research_mode_preflight_blocked:"
+          + researchModeGuard.reasons.join(","),
+        "gate_blocked",
+        0
+      );
+    }
+    if (researchModeGuard.effectiveMode === "topic_discovery") {
+      const executionAuthorizationGate = await loadTopicProbeExecutionAuthorizationGate({
+        workspaceRoot: this.deps.workspaceRoot,
+        runId: run.id,
+        expectedResearchCycle: run.graph.researchCycle
+      });
+      await runContext.put(
+        "research_governance.topic_probe_execution_authorization",
+        executionAuthorizationGate
+      );
+      if (!executionAuthorizationGate.effective_execution_authorized) {
+        throw new ImplementSessionStopError(
+          "topic_probe_execution_preflight_blocked:"
+            + executionAuthorizationGate.authorization.reason_codes.join(","),
+          "gate_blocked",
+          0
+        );
+      }
+      const estimatorGate = await validatePersistedEstimatorFeasibilityGate({
+        workspaceRoot: this.deps.workspaceRoot,
+        runId: run.id,
+        expectedResearchCycle: run.graph.researchCycle
+      });
+      await runContext.put(
+        "research_governance.estimator_feasibility_gate",
+        estimatorGate
+      );
+      if (!estimatorGate.valid) {
+        throw new ImplementSessionStopError(
+          "topic_probe_execution_preflight_projection_divergence:"
+            + estimatorGate.reasons.join(","),
+          "gate_blocked",
+          0
+        );
+      }
+    }
     const episodeMemory = new EpisodeMemory(
       resolveWorkspaceMemoryPath(this.deps.workspaceRoot, run.memoryRefs.episodePath)
     );
@@ -838,7 +993,8 @@ export class ImplementSessionManager {
         isolation.metricsPath,
         experimentLlmProfile,
         useCodexSession ? "codex_native" : "staged_llm",
-        taskSpec.context.environment_snapshot
+        taskSpec.context.environment_snapshot,
+        taskSpec.context.topic_probe_compute_contract
       );
 
       let result: RunTurnResult;
@@ -1560,11 +1716,13 @@ export class ImplementSessionManager {
       finalAttempt.originalScriptPath,
       publishedScriptPath
     );
-    const rewrittenTestCommand = rewriteCommandScriptPath(
-      finalAttempt.testCommand || "",
-      finalAttempt.originalScriptPath,
-      publishedScriptPath
-    ) || undefined;
+    const rewrittenTestCommand = taskSpec.context.topic_probe_compute_contract
+      ? undefined
+      : rewriteCommandScriptPath(
+          finalAttempt.testCommand || "",
+          finalAttempt.originalScriptPath,
+          publishedScriptPath
+        ) || undefined;
     const workspaceChangedFiles = collectWorkspaceChangedFiles({
       changedFiles: [...changedFiles],
       workspaceRoot: this.deps.workspaceRoot,
@@ -1658,6 +1816,10 @@ export class ImplementSessionManager {
     await runContext.put("implement_experiments.failure_type", finalVerifyReport.failure_type);
     await runContext.put("implement_experiments.run_command", rewrittenRunCommand);
     await runContext.put("implement_experiments.test_command", rewrittenTestCommand);
+    await runContext.put(
+      "implement_experiments.requested_gpu_count",
+      finalAttempt.requestedGpuCount ?? null
+    );
     await runContext.put("implement_experiments.changed_files", [...changedFiles]);
     await runContext.put("implement_experiments.artifacts", [...artifacts]);
     await runContext.put("implement_experiments.public_dir", finalAttempt.publicDir);
@@ -1758,6 +1920,7 @@ export class ImplementSessionManager {
       experiment_mode: finalAttempt.experimentMode,
       run_command: rewrittenRunCommand,
       test_command: rewrittenTestCommand,
+      requested_gpu_count: finalAttempt.requestedGpuCount,
       working_dir: finalAttempt.workingDir,
       public_dir: finalAttempt.publicDir,
       public_artifacts: [...publicArtifacts],
@@ -1915,7 +2078,8 @@ export class ImplementSessionManager {
       rawResponse: finalAttempt.rawResponse,
       verifyReport: finalVerifyReport,
       autoHandoffToRunExperiments,
-      handoffReason
+      handoffReason,
+      requestedGpuCount: finalAttempt.requestedGpuCount
     };
   }
 
@@ -1925,14 +2089,17 @@ export class ImplementSessionManager {
     metricsPath: string,
     experimentLlmProfile: ReturnType<typeof resolveExperimentLlmProfile>,
     sessionMode: "codex_native" | "staged_llm",
-    environmentSnapshot?: EnvironmentSnapshot
+    environmentSnapshot?: EnvironmentSnapshot,
+    topicProbeComputeContract?: ImplementTopicProbeComputeContract
   ): string {
     const sandboxRunDir = rewriteWorkspacePathsForSandbox(runDir, this.deps.workspaceRoot);
     const sandboxPublicDir = rewriteWorkspacePathsForSandbox(publicDir, this.deps.workspaceRoot);
     const sandboxMetricsPath = rewriteWorkspacePathsForSandbox(metricsPath, this.deps.workspaceRoot);
     const environmentBlock = formatEnvironmentSnapshotBlock(environmentSnapshot);
+    const topicProbeComputeBlock = formatTopicProbeComputePromptBlock(topicProbeComputeContract);
     return [
       ...environmentBlock,
+      ...topicProbeComputeBlock,
       "You are the AutoLabOS implementer role.",
       sessionMode === "codex_native"
         ? "Work directly in the workspace using Codex tools."
@@ -1964,8 +2131,8 @@ export class ImplementSessionManager {
       "Treat train-complete states such as completed_training, training_completed, trained, success, succeeded, and ok as eligible for evaluation; do not let an evaluator skip them as not completed before objective metrics are computed.",
       "Do not write train-only completed_training rows as final condition evidence: every successful condition_result must include populated objective task_metrics or an explicit evaluation failure before metrics.json is finalized.",
       "Training-example normalizers must preserve usable instruction/training text from mapping/object/dataclass records with common fields such as instruction, input, output, prompt, response, text, question, answer, messages, and conversations; if loaded records normalize to zero usable texts, fail at data_access with schema diagnostics instead of entering condition execution.",
-      "Evaluation normalizers must preserve objective labels from common fields such as gold, label, answer, answer_index, correct_index, and answerKey; if requested evaluation examples exist but evaluated_count is zero or accuracy is null, emit schema diagnostics and repair normalization instead of reporting completed evidence.",
-      "Metrics JSON must contain evaluation metric summaries, not raw training-only rows: promote task_metrics or average_accuracy into condition-level accuracy/objective fields, compute the baseline-relative objective, and omit runtime-only objects such as model/tokenizer from serialized condition_results.",
+      "Evaluation normalizers must preserve objective targets from the dataset schema; if requested evaluation examples exist but the governed objective observations are absent, emit schema diagnostics and repair normalization instead of reporting completed evidence.",
+      "Metrics JSON must contain a ResultsArtifactV2 that matches ExperimentContract.results_plan exactly: preserve declared metric ids, directions, units, series roles, observation links, and comparison ids without inferring them from labels, order, or values; omit runtime-only objects such as model/tokenizer from serialized results.",
       "Before calling save_pretrained on generated model artifacts, normalize non-JSON-safe dtype/config fields to primitive strings so artifact saving cannot fail during JSON serialization.",
       "For long-running repeated-run real_execution, create node-owned observability artifacts before the main loop: write progress or heartbeat JSONL plus partial metrics at data-load, model-load, each condition/seed start, each condition/seed finish, and failure boundaries, flushing writes so run_experiments can distinguish progress from a hang.",
       "Prefer real executable experiments against actual repo code, benchmarks, and model calls when the workspace supports them.",
@@ -1973,7 +2140,7 @@ export class ImplementSessionManager {
       "For real_execution handoff, do not make deterministic, simulated, smoke, or fallback metrics satisfy the primary experiment. If real execution cannot run, emit explicit failure diagnostics or mark the bundle synthetic_validation; never present fallback output as training or benchmark evidence.",
       "Do not plan deterministic, simulated, smoke, cached, or fallback corpora as success-producing primary evidence; such paths must not populate completed_run_count, completed_condition_count, baseline deltas, or primary metric fields as if real execution occurred.",
       "Before editing, identify the smallest viable set of files to inspect or change.",
-      "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
+      "Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, requested_gpu_count, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "Use experiment_mode = real_execution | hybrid_validation | synthetic_validation.",
       "changed_files, artifacts, and public_artifacts must be arrays of workspace paths.",
       "List only artifacts materialized during implement_experiments in changed_files, artifacts, and public_artifacts; do not list deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log unless you actually write them now.",
@@ -2045,6 +2212,21 @@ export class ImplementSessionManager {
         : undefined;
     const cachedConstraintProfile = await runContext.get<CachedConstraintProfile>("constraints.profile");
     const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+    const topicProbeComputeContract = await loadImplementTopicProbeComputeContract({
+      workspaceRoot: this.deps.workspaceRoot,
+      run,
+      runDir,
+      rawBrief: frozenRunBrief
+    });
+    const estimatorGate = await runContext.get<PersistedEstimatorFeasibilityGate>(
+      "research_governance.estimator_feasibility_gate"
+    );
+    const executionAuthorizationGate = await runContext.get<
+      TopicProbeExecutionAuthorizationGateArtifact
+    >("research_governance.topic_probe_execution_authorization");
+    const estimatorFeasibility = estimatorGate
+      ? compactEstimatorFeasibilityForImplementation(estimatorGate)
+      : undefined;
     const plannedConditionContract = derivePlannedConditionContract({
       plan,
       brief,
@@ -2067,7 +2249,20 @@ export class ImplementSessionManager {
         "Return a runnable command for the experiment.",
         `Ensure the workflow can write metrics JSON to ${sandboxMetricsPath}.`,
         "Keep reusable scripts, configs, and documentation in the public experiment directory.",
-        "Prefer a real execution path over synthetic validation whenever the workspace supports it. For real_execution, deterministic or simulated fallback output must be diagnostic-only and must not be the default success path."
+        "Prefer a real execution path over synthetic validation whenever the workspace supports it. For real_execution, deterministic or simulated fallback output must be diagnostic-only and must not be the default success path.",
+        ...(topicProbeComputeContract
+          ? [
+              "Write metrics.compute_usage exactly according to context.topic_probe_compute_contract.compute_usage_schema, including no additional fields.",
+              "Return requested_gpu_count as the non-negative integer GPU count that the run command will actually request; do not copy the active cap unless the command truly requests that count.",
+              `Keep requested_gpu_count at or below the active ${topicProbeComputeContract.stage} limit of ${topicProbeComputeContract.active_limit.max_concurrent_gpus}.`
+            ]
+          : []),
+        ...(estimatorFeasibility
+          ? [
+              "Implement the exact estimator units, arms, primary contrast, pairing, and analysis family declared in context.estimator_feasibility; do not substitute a prose-inferred analysis.",
+              "Preserve the estimator contract bindings and write raw outputs at the declared outcome and analysis units so downstream verification can recompute the primary comparison."
+            ]
+          : [])
       ],
       non_goals: [
         "Do not rewrite git history or perform destructive cleanup.",
@@ -2090,6 +2285,14 @@ export class ImplementSessionManager {
       },
       context: {
         topic: run.topic,
+        topic_probe_execution_authorization: executionAuthorizationGate
+          ? {
+              status: executionAuthorizationGate.status,
+              effective_execution_authorized:
+                executionAuthorizationGate.effective_execution_authorized,
+              content_sha256: executionAuthorizationGate.content_sha256
+            }
+          : undefined,
         objective_metric: run.objectiveMetric,
         plan_excerpt: rewriteWorkspacePathsForSandbox(plan || "(missing)", this.deps.workspaceRoot),
         hypotheses_excerpt: rewriteWorkspacePathsForSandbox(hypotheses || "(missing)", this.deps.workspaceRoot),
@@ -2131,6 +2334,8 @@ export class ImplementSessionManager {
               this.deps.workspaceRoot
             )
           : undefined,
+        estimator_feasibility: estimatorFeasibility,
+        topic_probe_compute_contract: topicProbeComputeContract,
         planned_condition_contract: plannedConditionContract,
         plan_changed: planChanged,
         plan_hash: planHash
@@ -2373,6 +2578,15 @@ export class ImplementSessionManager {
         "Do not silently change the comparison metric, baseline binding, or locked budget profile."
       );
     }
+    if (sandboxTaskSpec.context.estimator_feasibility) {
+      lines.push(
+        "",
+        "Locked estimator feasibility contract:",
+        JSON.stringify(sandboxTaskSpec.context.estimator_feasibility, null, 2),
+        "",
+        "Implement these units, arms, contrast, pairing, estimator, and multiplicity choices exactly. Emit raw evidence at the declared analysis unit; do not replace this contract with an inferred alternative."
+      );
+    }
     if (sandboxTaskSpec.context.planned_condition_contract) {
       lines.push(
         "",
@@ -2381,7 +2595,7 @@ export class ImplementSessionManager {
         "",
         "Preserve every planned condition marker in the implementation and metrics; do not collapse named condition families into generic variants.",
         "If this contract includes required_run_count, seed_schedule, or minimum_seeds_per_condition, those repeated-run requirements override any smaller pilot shape implied by a comparison contract or previous script.",
-        "Do not compress repeated cells into one condition-parameter grid marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
+        "Do not compress repeated cells into one aggregate condition marker; materialize per-cell/per-seed execution and aggregate only after raw rows are written.",
         "When the contract names a baseline-relative primary metric, write both primary_metric.name/value and the same top-level metric key in metrics.json, computed from executed baseline/comparator outputs only."
       );
     }
@@ -2466,7 +2680,7 @@ export class ImplementSessionManager {
       JSON.stringify(promptBranchPlan, null, 2),
       "",
       "Output contract reminder:",
-      "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
+      "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, requested_gpu_count, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, file_edits.",
       "- file_edits must contain full UTF-8 contents for each referenced file.",
       "- changed_files, artifacts, and public_artifacts must list only files materialized during implement_experiments, not deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log.",
       "- Responses that only describe the blocker or omit file_edits are invalid."
@@ -4848,45 +5062,6 @@ export class ImplementSessionManager {
       parsed.run_command?.trim() ||
       (normalizedScriptPath ? inferRunCommand(normalizedScriptPath, params.workspaceRoot, params.run.id) : "");
     let testCommand = parsed.test_command?.trim() || deriveFallbackTestCommand(normalizedScriptPath);
-    const bundleSupported = supportsRealExecutionBundle({
-      topic: params.run.topic,
-      objectiveMetric: params.run.objectiveMetric,
-      constraints: params.run.constraints
-    });
-    const needsManagedRealExecutionBundle =
-      bundleSupported &&
-      (experimentMode !== "real_execution" ||
-        /\s--metadata-dir(?:\s|=)/u.test(runCommand) ||
-        /\s--metadata-dir(?:\s|=)/u.test(testCommand || ""));
-
-    if (needsManagedRealExecutionBundle) {
-      const promoted = await writeRealExecutionBundle({
-        run: {
-          id: params.run.id,
-          title: params.run.title,
-          topic: params.run.topic,
-          objectiveMetric: params.run.objectiveMetric,
-          constraints: params.run.constraints
-        },
-        runDir: params.runDir,
-        publicDir: normalizedPublicDir,
-        metricsPath: normalizedMetricsPath,
-        experimentLlmProfile: params.experimentLlmProfile,
-        timeoutSec: this.deps.config.experiments.timeout_sec
-      });
-      experimentMode = promoted.experimentMode;
-      baseSummary = promoted.summary;
-      runCommand = promoted.runCommand;
-      testCommand = promoted.testCommand;
-      normalizedScriptPath = promoted.scriptPath;
-      normalizedWorkingDir = promoted.workingDir;
-      for (const filePath of promoted.publicArtifacts) {
-        params.changedFiles.add(filePath);
-        params.artifacts.add(filePath);
-        params.publicArtifacts.add(filePath);
-      }
-    }
-
     const materialized = await materializeDeclaredArtifacts({
       changedFiles: [...params.changedFiles],
       artifacts: [...params.artifacts],
@@ -4966,6 +5141,7 @@ export class ImplementSessionManager {
       publicArtifacts: [...params.publicArtifacts],
       localization,
       assumptions: parsed.assumptions || [],
+      requestedGpuCount: parsed.requested_gpu_count,
       verifyReport
     };
   }
@@ -5434,6 +5610,7 @@ function parseStructuredResponse(text: string): ParsedStructuredImplementRespons
       public_artifacts: asStringArray(record.public_artifacts),
       script_path: asString(record.script_path),
       metrics_path: asString(record.metrics_path),
+      requested_gpu_count: asNonNegativeInteger(record.requested_gpu_count),
       localization: record.localization,
       assumptions: asStringArray(record.assumptions),
       decomposition_plan: parseDynamicDecompositionPlan(record.decomposition_plan),
@@ -6818,7 +6995,7 @@ function isOptionalBootstrapPythonModuleCheck(
     .toLowerCase();
   if (
     ["sklearn", "scikit_learn", "scikit-learn"].includes(target) &&
-    /\b(?:accuracy|metric|metrics|scoring|score|evaluation_metrics)\b/u.test(text)
+    /\b(?:metric|metrics|scoring|score|evaluation_metrics)\b/u.test(text)
   ) {
     return true;
   }
@@ -7224,22 +7401,23 @@ export function derivePlannedConditionContract(input: {
   objectiveMetric: string;
 }): PlannedConditionContract | undefined {
   const planContractText = extractSelectedDesignContractText(input.plan) || input.plan;
-  const fullContractText = [input.plan, input.brief, input.objectiveMetric].filter(Boolean).join("\n");
-  const briefContractText = [input.brief, input.objectiveMetric].filter(Boolean).join("\n");
+  const briefContractText = input.brief || "";
+  const briefConditionSet = extractPlannedConditionSet(briefContractText);
   const briefHasSpecificContract = Boolean(
     input.brief?.trim() &&
-      (extractConditionParameterConditionMarkers(briefContractText).length > 0 ||
+      (briefConditionSet.markers.length > 0 ||
         parseRepeatedSeedRunContract(briefContractText) ||
         extractSeedSchedule(briefContractText).length > 0 ||
-        parsePlannedConditionContractCount(briefContractText))
+        parsePlannedConditionContractCount(briefContractText, briefConditionSet.markers.length))
   );
-  const planText = [planContractText, input.objectiveMetric].filter(Boolean).join("\n");
+  const planContractSource = planContractText || "";
+  const planConditionSet = extractPlannedConditionSet(planContractSource);
   const planHasSpecificContract = Boolean(
     input.plan?.trim() &&
-      (extractConditionParameterConditionMarkers(planText).length > 0 ||
-        parseRepeatedSeedRunContract(planText) ||
-        extractSeedSchedule(planText).length > 1 ||
-        parsePlannedConditionContractCount(planText))
+      (planConditionSet.markers.length > 0 ||
+        parseRepeatedSeedRunContract(planContractSource) ||
+        extractSeedSchedule(planContractSource).length > 1 ||
+        parsePlannedConditionContractCount(planContractSource, planConditionSet.markers.length))
   );
   const redesignedPlanContractOverridesFrozenBrief = Boolean(
     planHasSpecificContract &&
@@ -7247,76 +7425,41 @@ export function derivePlannedConditionContract(input: {
         input.plan || ""
       )
   );
-  const text = input.preferBriefContract && briefHasSpecificContract && !redesignedPlanContractOverridesFrozenBrief
+  const selectedContractText = input.preferBriefContract && briefHasSpecificContract && !redesignedPlanContractOverridesFrozenBrief
     ? briefContractText
     : planHasSpecificContract
-      ? planText
-      : [input.plan, input.brief, input.objectiveMetric].filter(Boolean).join("\n");
+      ? planContractSource
+      : [input.plan, input.brief].filter(Boolean).join("\n");
+  const text = [selectedContractText, input.objectiveMetric].filter(Boolean).join("\n");
   if (!text.trim()) {
     return undefined;
   }
-  const markers = new Set<string>();
-  for (const segment of extractPlannedConditionSegments(text)) {
-    const marker = canonicalPlannedConditionMarker(segment);
-    if (marker) {
-      markers.add(marker);
-    }
-  }
-  const outOfScopeParameterYValues = extractOutOfScopeConditionParameterYValues(text);
-  const conditionParameterMarkers = filterOutOfScopeConditionParameterMarkers(
-    extractConditionParameterConditionMarkers(text),
-    outOfScopeParameterYValues
-  );
-  for (const marker of conditionParameterMarkers) {
-    markers.add(marker);
-  }
-  const fallbackConditionParameterMarkers = planHasSpecificContract
-    ? filterOutOfScopeConditionParameterMarkers(
-        extractConditionParameterConditionMarkers(fullContractText),
-        outOfScopeParameterYValues
-      )
-    : [];
-  addMarkerIf(text, markers, "unmodified_base", /\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu);
-  addMarkerIf(text, markers, "standard_tuned_baseline", /\bstandard\s+tuned\s+baseline\b|\bnamed\s+tuned\s+baseline\b/iu);
-  addMarkerIf(text, markers, "candidate_condition_b", /\bcandidate_condition_b\b/iu);
-
+  const conditionSet = extractPlannedConditionSet(selectedContractText);
+  const conditionMarkers = conditionSet.markers;
   const repeatedRunContract = parseRepeatedSeedRunContract(text);
   const explicitTrainingRunCount = parseExplicitTrainingRunCount(text);
   const seedSchedule = extractSeedSchedule(text);
   const evaluationContract = mergeFullEvaluationContracts(
     parseFullEvaluationContract(text),
-    planHasSpecificContract ? parseFullEvaluationContract(planText) : undefined
+    planHasSpecificContract ? parseFullEvaluationContract(planContractSource) : undefined
   );
-  const baselineConditionMarker =
-    extractBaselineConditionParameterMarker(text) ||
-    (planHasSpecificContract ? extractBaselineConditionParameterMarker(fullContractText) : undefined);
+  const baselineConditionMarker = conditionSet.baselineMarker;
   const requiredCountFromText =
     repeatedRunContract?.cellCount ||
-    parsePlannedConditionContractCount(text);
-  const exactConditionParameterMarkers =
-    conditionParameterMarkers.length >= 2 && (!requiredCountFromText || conditionParameterMarkers.length === requiredCountFromText)
-      ? conditionParameterMarkers
-      : fallbackConditionParameterMarkers.length >= 2 &&
-          (!requiredCountFromText || fallbackConditionParameterMarkers.length === requiredCountFromText)
-        ? fallbackConditionParameterMarkers
-        : conditionParameterMarkers.length > 0
-          ? conditionParameterMarkers
-          : undefined;
-  const conditionParameterMarkerCount =
-    exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2
-      ? exactConditionParameterMarkers.length
-      : undefined;
+    parsePlannedConditionContractCount(text, conditionMarkers.length);
+  const conditionMarkerCount = conditionMarkers.length >= 2
+    ? conditionMarkers.length
+    : undefined;
   const explicitRunTotalMatchesMarkerSeedProduct = Boolean(
     explicitTrainingRunCount !== undefined &&
-      conditionParameterMarkerCount !== undefined &&
+      conditionMarkerCount !== undefined &&
       seedSchedule.length > 1 &&
-      explicitTrainingRunCount === conditionParameterMarkerCount * seedSchedule.length
+      explicitTrainingRunCount === conditionMarkerCount * seedSchedule.length
   );
   const requiredCount =
     explicitRunTotalMatchesMarkerSeedProduct
-      ? conditionParameterMarkerCount
-      : requiredCountFromText ||
-        (exactConditionParameterMarkers && exactConditionParameterMarkers.length >= 2 ? exactConditionParameterMarkers.length : undefined);
+      ? conditionMarkerCount
+      : requiredCountFromText || conditionMarkerCount;
   const inferredRepeatedRunCount =
     repeatedRunContract?.runCount ||
     (explicitRunTotalMatchesMarkerSeedProduct ? explicitTrainingRunCount : undefined) ||
@@ -7324,10 +7467,10 @@ export function derivePlannedConditionContract(input: {
   const inferredMinimumSeedsPerCondition =
     repeatedRunContract?.seedsPerCell || (seedSchedule.length > 1 ? seedSchedule.length : undefined);
   const primaryMetricKey = extractPrimaryMetricKey(input.objectiveMetric) || extractPrimaryMetricKey(text);
-  if (markers.size === 0 && requiredCount === undefined && !primaryMetricKey) {
+  if (conditionMarkers.length === 0 && requiredCount === undefined && !primaryMetricKey) {
     return undefined;
   }
-  let markerList = exactConditionParameterMarkers || [...markers].slice(0, 8);
+  let markerList = [...conditionMarkers];
   if (baselineConditionMarker && markerList.includes(baselineConditionMarker)) {
     markerList = [
       baselineConditionMarker,
@@ -7340,7 +7483,7 @@ export function derivePlannedConditionContract(input: {
   ];
   if (repeatedRunContract || seedSchedule.length > 0) {
     notes.push(
-      "This is a repeated-seed evidence-scale contract. Do not compress repeated cells or seed schedules into a single pilot condition or a single condition-parameter grid marker.",
+      "This is a repeated-seed evidence-scale contract. Do not compress repeated cells or seed schedules into a single pilot condition or aggregate condition marker.",
       "The runner must emit per-seed/per-condition rows plus aggregate variance or confidence-interval fields when the plan asks for repeated-run evidence."
     );
   }
@@ -7350,7 +7493,6 @@ export function derivePlannedConditionContract(input: {
     seed_schedule: seedSchedule.length > 0 ? seedSchedule : undefined,
     minimum_seeds_per_condition: inferredMinimumSeedsPerCondition,
     baseline_condition_marker: baselineConditionMarker,
-    tuned_only: markerList.some((marker) => marker !== "unmodified_base"),
     required_condition_markers: markerList,
     primary_metric_key: primaryMetricKey,
     full_evaluation_required: evaluationContract.fullEvaluationRequired || undefined,
@@ -7361,7 +7503,6 @@ export function derivePlannedConditionContract(input: {
     notes
   };
 }
-
 function extractSelectedDesignContractText(plan?: string): string | undefined {
   if (!plan?.trim()) {
     return undefined;
@@ -7377,42 +7518,347 @@ function extractSelectedDesignContractText(plan?: string): string | undefined {
   return selectedBlock.trim() || undefined;
 }
 
-function extractPlannedConditionSegments(text: string): string[] {
-  const segments: string[] = [];
-  for (const match of text.matchAll(/\bconditions?\s*:\s*([^\n]+)/giu)) {
-    segments.push(
-      ...(match[1] || "")
-        .split(";")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    );
-  }
-  return segments;
+interface ExtractedPlannedConditionSet {
+  markers: string[];
+  baselineMarker?: string;
 }
 
-function canonicalPlannedConditionMarker(segment: string): string | undefined {
-  if (/\bunmodified\s+base\b|\bno[-\s]?tune\b|\buntuned\b/iu.test(segment)) {
-    return "unmodified_base";
+interface PlannedConditionBaselineCandidate {
+  marker: string;
+  priority: number;
+}
+
+function extractPlannedConditionSet(text: string): ExtractedPlannedConditionSet {
+  if (!text.trim()) {
+    return { markers: [] };
   }
-  if (/\bstandard\s+tuned\s+baseline\b|\bnamed\s+tuned\s+baseline\b/iu.test(segment)) {
-    return "standard_tuned_baseline";
+  const structured = extractStructuredPlannedConditionSet(text);
+  const fallback = extractTextFallbackPlannedConditionSet(text);
+  let markers = dedupeStrings(
+    structured && structured.markers.length > 0
+      ? structured.markers
+      : fallback.markers
+  ).slice(0, 128);
+  const explicitBaselineMarker = structured?.baselineMarker || fallback.baselineMarker;
+  const baselineMarker = explicitBaselineMarker || markers.find(isBaselineMeaningConditionMarker);
+  if (baselineMarker && !markers.includes(baselineMarker)) {
+    markers = [baselineMarker, ...markers].slice(0, 128);
   }
-  const slug = segment
-    .replace(/^[Cc]\d+\s*/u, "")
+  if (baselineMarker && markers.includes(baselineMarker)) {
+    markers = [baselineMarker, ...markers.filter((marker) => marker !== baselineMarker)];
+  }
+  return {
+    markers,
+    baselineMarker
+  };
+}
+
+function extractStructuredPlannedConditionSet(text: string): ExtractedPlannedConditionSet | undefined {
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(text, {
+      logLevel: "silent",
+      maxAliasCount: 20,
+      uniqueKeys: true
+    }) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed) && !isPlannedConditionRecord(parsed)) {
+    return undefined;
+  }
+
+  const markers: string[] = [];
+  let baselineCandidate: PlannedConditionBaselineCandidate | undefined;
+  const visited = new Set<object>();
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 12 || (!Array.isArray(value) && !isPlannedConditionRecord(value))) {
+      return;
+    }
+    if (visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+      return;
+    }
+
+    for (const [rawKey, nested] of Object.entries(value)) {
+      const key = normalizePlannedConditionKey(rawKey);
+      if (isConditionCollectionKey(key)) {
+        markers.push(...extractConditionMarkersFromValue(nested));
+        continue;
+      }
+      const priority = baselineConditionKeyPriority(key);
+      if (priority !== undefined) {
+        const marker = canonicalPlannedConditionMarkerFromScalar(nested);
+        if (marker && (!baselineCandidate || priority < baselineCandidate.priority)) {
+          baselineCandidate = { marker, priority };
+        }
+      }
+    }
+    for (const [rawKey, nested] of Object.entries(value)) {
+      if (!isConditionCollectionKey(normalizePlannedConditionKey(rawKey))) {
+        visit(nested, depth + 1);
+      }
+    }
+  };
+
+  visit(parsed, 0);
+  if (markers.length === 0 && !baselineCandidate) {
+    return undefined;
+  }
+  return {
+    markers: dedupeStrings(markers),
+    baselineMarker: baselineCandidate?.marker
+  };
+}
+
+function extractTextFallbackPlannedConditionSet(text: string): ExtractedPlannedConditionSet {
+  const markers: string[] = [];
+  let baselineCandidate: PlannedConditionBaselineCandidate | undefined;
+  const lines = text.split(/\r?\n/u);
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] || "";
+    const conditionMatch = /^\s*(?:[-*]\s*)?conditions?\s*:\s*(.*?)\s*$/iu.exec(line);
+    if (conditionMatch) {
+      const inlineValue = (conditionMatch[1] || "").trim();
+      if (inlineValue) {
+        markers.push(...extractConditionMarkersFromValue(inlineValue));
+      } else {
+        const keyIndent = leadingWhitespaceLength(line);
+        const blockLines: string[] = [];
+        let nextIndex = index + 1;
+        for (; nextIndex < lines.length; nextIndex += 1) {
+          const nextLine = lines[nextIndex] || "";
+          if (!nextLine.trim()) {
+            blockLines.push(nextLine);
+            continue;
+          }
+          const nextIndent = leadingWhitespaceLength(nextLine);
+          const sameIndentListItem = nextIndent === keyIndent && /^\s*[-*]\s+/u.test(nextLine);
+          if (nextIndent < keyIndent || (nextIndent === keyIndent && !sameIndentListItem)) {
+            break;
+          }
+          blockLines.push(nextLine);
+        }
+        if (blockLines.some((blockLine) => blockLine.trim())) {
+          const nonEmptyIndents = blockLines
+            .filter((blockLine) => blockLine.trim())
+            .map(leadingWhitespaceLength);
+          const minimumIndent = Math.min(...nonEmptyIndents);
+          const normalizedBlock = blockLines
+            .map((blockLine) => blockLine.trim()
+              ? "  " + blockLine.slice(minimumIndent)
+              : "")
+            .join("\n");
+          const parsedBlock = extractStructuredPlannedConditionSet("conditions:\n" + normalizedBlock);
+          if (parsedBlock) {
+            markers.push(...parsedBlock.markers);
+          } else {
+            for (const blockLine of blockLines) {
+              const itemMatch = /^\s*[-*]\s*(.+)$/u.exec(blockLine);
+              if (itemMatch) {
+                markers.push(...extractConditionMarkersFromValue(itemMatch[1] || ""));
+              }
+            }
+          }
+        }
+        index = nextIndex - 1;
+      }
+    }
+
+    const baselineMatch = /^\s*(?:[-*]\s*)?(baseline_condition_marker|baseline_condition_id|baseline)\s*:\s*(.*?)\s*$/iu.exec(line);
+    if (baselineMatch) {
+      const priority = baselineConditionKeyPriority(normalizePlannedConditionKey(baselineMatch[1] || ""));
+      const marker = canonicalPlannedConditionMarkerFromScalar(baselineMatch[2]);
+      if (priority !== undefined && marker && (!baselineCandidate || priority < baselineCandidate.priority)) {
+        baselineCandidate = { marker, priority };
+      }
+    }
+  }
+
+  return {
+    markers: dedupeStrings(markers),
+    baselineMarker: baselineCandidate?.marker
+  };
+}
+
+function extractConditionMarkersFromValue(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(extractConditionMarkersFromValue);
+  }
+  if (isPlannedConditionRecord(value)) {
+    const entries = Object.entries(value);
+    const idEntry = entries.find(([key]) => normalizePlannedConditionKey(key) === "condition_id") ||
+      entries.find(([key]) => normalizePlannedConditionKey(key) === "id");
+    const marker = idEntry ? canonicalPlannedConditionMarkerFromScalar(idEntry[1]) : undefined;
+    if (marker) {
+      return [marker];
+    }
+    if (entries.length > 0 && entries.every(([, nested]) => nested === null)) {
+      return entries
+        .map(([key]) => canonicalPlannedConditionMarker(key))
+        .filter((candidate): candidate is string => Boolean(candidate));
+    }
+    return [];
+  }
+  if (typeof value === "number") {
+    const marker = canonicalPlannedConditionMarker(String(value));
+    return marker ? [marker] : [];
+  }
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  let raw = value.trim();
+  if (!raw) {
+    return [];
+  }
+  if ((raw.startsWith("[") && raw.endsWith("]")) || (raw.startsWith("{") && raw.endsWith("}"))) {
+    try {
+      const parsed = YAML.parse(raw, {
+        logLevel: "silent",
+        maxAliasCount: 20,
+        uniqueKeys: true
+      }) as unknown;
+      if (parsed !== raw && (Array.isArray(parsed) || isPlannedConditionRecord(parsed))) {
+        const parsedMarkers = extractConditionMarkersFromValue(parsed);
+        if (parsedMarkers.length > 0) {
+          return parsedMarkers;
+        }
+      }
+    } catch {
+      // The conservative delimiter parser below handles simple JSON-like lists.
+    }
+    raw = raw.slice(1, -1).trim();
+  }
+
+  const objectIdMatch = /^(?:condition_id|id)\s*:\s*(.+)$/iu.exec(raw);
+  if (objectIdMatch) {
+    const marker = canonicalPlannedConditionMarker(objectIdMatch[1] || "");
+    return marker ? [marker] : [];
+  }
+  return splitTopLevelConditionList(raw)
+    .map(canonicalPlannedConditionMarker)
+    .filter((candidate): candidate is string => Boolean(candidate));
+}
+
+function splitTopLevelConditionList(value: string): string[] {
+  const items: string[] = [];
+  let current = "";
+  let quote = "";
+  let escaped = false;
+  let depth = 0;
+  for (const character of value) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\" && quote) {
+      current += character;
+      escaped = true;
+      continue;
+    }
+    if (quote) {
+      current += character;
+      if (character === quote) {
+        quote = "";
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "[" || character === "{" || character === "(") {
+      depth += 1;
+      current += character;
+      continue;
+    }
+    if (character === "]" || character === "}" || character === ")") {
+      depth = Math.max(0, depth - 1);
+      current += character;
+      continue;
+    }
+    if (depth === 0 && (character === ";" || character === ",")) {
+      if (current.trim()) {
+        items.push(current.trim());
+      }
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  if (current.trim()) {
+    items.push(current.trim());
+  }
+  return items;
+}
+
+function canonicalPlannedConditionMarker(value: string): string | undefined {
+  const unquoted = value
+    .trim()
+    .replace(/^[-*]\s*/u, "")
+    .replace(/\s+#.*$/u, "")
+    .replace(/^["']+|["']+$/gu, "")
+    .trim();
+  if (!unquoted || /^(?:true|false|null|undefined|conditions?)$/iu.test(unquoted)) {
+    return undefined;
+  }
+  const slug = unquoted
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, "_")
     .replace(/^_+|_+$/gu, "")
-    .slice(0, 48);
+    .slice(0, 64);
   return slug || undefined;
 }
 
-function addMarkerIf(text: string, markers: Set<string>, marker: string, pattern: RegExp): void {
-  if (pattern.test(text)) {
-    markers.add(marker);
+function canonicalPlannedConditionMarkerFromScalar(value: unknown): string | undefined {
+  if (typeof value !== "string" && typeof value !== "number") {
+    return undefined;
   }
+  const raw = String(value).trim();
+  if (!raw || /[;,]/u.test(raw) || /^[\[{]/u.test(raw)) {
+    return undefined;
+  }
+  return canonicalPlannedConditionMarker(raw);
 }
 
-function parsePlannedConditionContractCount(text: string): number | undefined {
+function isBaselineMeaningConditionMarker(marker: string): boolean {
+  return /(?:^|_)(?:baseline|control|reference)(?:_|$)/u.test(marker);
+}
+
+function isPlannedConditionRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizePlannedConditionKey(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+}
+
+function isConditionCollectionKey(key: string): boolean {
+  return key === "conditions" || key === "condition_list" || key === "condition_ids" || key === "condition_labels";
+}
+
+function baselineConditionKeyPriority(key: string): number | undefined {
+  if (key === "baseline_condition_marker") return 0;
+  if (key === "baseline_condition_id") return 1;
+  if (key === "baseline") return 2;
+  return undefined;
+}
+
+function leadingWhitespaceLength(value: string): number {
+  return /^\s*/u.exec(value)?.[0].length || 0;
+}
+
+function parsePlannedConditionContractCount(text: string, listedConditionCount = 0): number | undefined {
   const numericMatch =
     text.match(/\b(\d+)\s+conditions?\s+x\b/iu) ||
     text.match(/\b(?:exactly\s+)?(\d+)\s+(?:planned\s+)?(?:experimental\s+)?conditions\b/iu) ||
@@ -7423,13 +7869,8 @@ function parsePlannedConditionContractCount(text: string): number | undefined {
       return parsed;
     }
   }
-  if (/\bfour[-\s]?condition\b|\bbaseline\s+plus\s+three\s+alternatives\b|\bone\s+tuned\s+baseline\s+and\s+three\s+alternative\b/iu.test(text)) {
-    return 4;
-  }
-  const conditionSegments = extractPlannedConditionSegments(text);
-  return conditionSegments.length >= 2 ? conditionSegments.length : undefined;
+  return listedConditionCount >= 2 ? listedConditionCount : undefined;
 }
-
 function parseRepeatedSeedRunContract(
   text: string
 ): { cellCount?: number; seedsPerCell?: number; runCount?: number } | undefined {
@@ -7634,162 +8075,6 @@ function parseGroupedPositiveInteger(value: string): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function extractConditionParameterConditionMarkers(
-  text: string
-): string[] {
-  const markers = new Set<string>();
-  const repeatedCellsText = extractRepeatedCellsText(text);
-  const explicitSearchText = repeatedCellsText || text;
-  if (!repeatedCellsText) {
-    for (const marker of extractConditionParameterGridMarkers(text)) markers.add(marker);
-  }
-  for (const match of explicitSearchText.matchAll(
-    /\b(?:parameter_x|condition_x|factor\s*x)[\s_=-]*(\d+)[\s,;/:=-]*(?:parameter_ys?|condition_ys?|factor\s*y)[\s_=-]*([0-9]+(?:[._][0-9]+)?)/giu
-  )) {
-    const parameterX = Number.parseInt(match[1] || "", 10);
-    const parameterY = parseParameterYNumber(match[2] || "");
-    if (Number.isFinite(parameterX) && parameterX > 0 && parameterY !== undefined) {
-      markers.add(conditionParameterMarker(parameterX, parameterY));
-    }
-  }
-  return [...markers].sort(conditionParameterMarkerSort);
-}
-
-function extractConditionParameterGridMarkers(
-  text: string
-): string[] {
-  const markers = new Set<string>();
-  for (const match of text.matchAll(
-    /\b(?:parameter_x|condition_x|factor\s*x)(?:\s+values?)?(?:\s+in)?\s+`?\{([^}]+)\}`?\s*(?:[x×]|and|crossed\s+with|by)\s*(?:parameter_ys?|condition_ys?|factor\s*y)(?:\s+values?)?(?:\s+in)?\s+`?\{([^}]+)\}`?/giu
-  )) {
-    const xValues = parseNumericList(match[1] || "").map((value) => Math.trunc(value));
-    const yValues = parseNumericList(match[2] || "");
-    for (const parameterX of xValues) {
-      if (!Number.isFinite(parameterX) || parameterX <= 0) continue;
-      for (const parameterY of yValues) markers.add(conditionParameterMarker(parameterX, parameterY));
-    }
-  }
-  const fixedPatterns = [
-    /\b(?:parameter_x|condition_x|factor\s*x)\s+(?:values?\s+)?([0-9,\sand]+?)\s+with\s+(?:parameter_ys?|condition_ys?|factor\s*y)\s+(?:fixed\s+)?(?:at|=|to)?\s*([0-9]+(?:[._][0-9]+)?)/giu,
-    /\b(?:parameter_x|condition_x|factor\s*x)(?:\s+values?)?(?:\s+in)?\s+`?\{([^}]+)\}`?\s+(?:across|at|with)\s+(?:all\s+[^\n;]{0,48}\s+with\s+)?(?:parameter_ys?|condition_ys?|factor\s*y)\s*(?:fixed\s+)?(?:at|=|to)?\s*([0-9]+(?:[._][0-9]+)?)/giu
-  ];
-  for (const fixedPattern of fixedPatterns) {
-    for (const match of text.matchAll(fixedPattern)) {
-      const xValues = parseLooseNumericList(match[1] || "").map((value) => Math.trunc(value));
-      const parameterY = parseParameterYNumber(match[2] || "");
-      if (parameterY === undefined) continue;
-      for (const parameterX of xValues) {
-        if (Number.isFinite(parameterX) && parameterX > 0) {
-          markers.add(conditionParameterMarker(parameterX, parameterY));
-        }
-      }
-    }
-  }
-  return [...markers].sort(conditionParameterMarkerSort);
-}
-
-function parseNumericList(value: string): number[] {
-  return value
-    .split(/[,;]|\band\b/giu)
-    .map((token) => Number.parseFloat(token.trim().replace(/_/gu, ".")))
-    .filter((parsed) => Number.isFinite(parsed));
-}
-
-function parseLooseNumericList(value: string): number[] {
-  return [...value.matchAll(/\b\d+(?:[._]\d+)?\b/gu)]
-    .map((match) => Number.parseFloat((match[0] || "").replace(/_/gu, ".")))
-    .filter((parsed) => Number.isFinite(parsed));
-}
-
-function extractRepeatedCellsText(text: string): string | undefined {
-  const match = text.match(/\brepeated\s+cells?\s+(?:are|:)\s+([^\n.]+)/iu);
-  return match?.[1];
-}
-
-function extractBaselineConditionParameterMarker(
-  text: string
-): string | undefined {
-  const match = text.match(
-    /\b(?:baseline(?:\s+(?:condition|cell|marker))?|(?:locked\s+)?primary\s+comparator|locked\s+comparator)\s*(?:is|=|:)?[^\n;]{0,48}?\b(?:parameter_x|condition_x|factor\s*x)\s*[=:_-]?\s*(\d+)[^\n;]{0,80}?\b(?:parameter_ys?|condition_ys?|factor\s*y)\s*[=:_-]?\s*([0-9]+(?:[._][0-9]+)?)/iu
-  );
-  if (!match) return undefined;
-  const parameterX = Number.parseInt(match[1] || "", 10);
-  const parameterY = parseParameterYNumber(match[2] || "");
-  if (!Number.isFinite(parameterX) || parameterX <= 0 || parameterY === undefined) return undefined;
-  return conditionParameterMarker(parameterX, parameterY);
-}
-
-function parseParameterYNumber(value: string): number | undefined {
-  const parsed = Number.parseFloat(value.replace(/_/gu, "."));
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function extractOutOfScopeConditionParameterYValues(
-  text: string
-): Set<number> {
-  const values = new Set<number>();
-  const patterns = [
-    /\b(?:parameter_y|condition_y|factor\s*y)\s+([0-9]+(?:[._][0-9]+)?)[^\n.]{0,120}\bout\s+of\s+scope\b/giu,
-    /\b(?:statements?|claims?)\s+about\s+(?:parameter_y|condition_y|factor\s*y)\s+([0-9]+(?:[._][0-9]+)?)[^\n.]{0,120}\bout\s+of\s+scope\b/giu
-  ];
-  for (const pattern of patterns) {
-    for (const match of text.matchAll(pattern)) {
-      const parsed = parseParameterYNumber(match[1] || "");
-      if (parsed !== undefined) values.add(parsed);
-    }
-  }
-  return values;
-}
-
-function filterOutOfScopeConditionParameterMarkers(markers: string[], outOfScopeParameterYValues: Set<number>): string[] {
-  if (outOfScopeParameterYValues.size === 0) {
-    return markers;
-  }
-  return markers.filter((marker) => {
-    const parsed = parseConditionParameterMarkerForSort(marker);
-    for (const excluded of outOfScopeParameterYValues) {
-      if (Math.abs(parsed.parameter_y - excluded) < 1e-9) {
-        return false;
-      }
-    }
-    return true;
-  });
-}
-
-function conditionParameterMarker(
-  parameterX: number,
-  parameterY: number
-): string {
-  return "condition_" + parameterX + "_parameter_" + formatParameterYMarkerToken(parameterY);
-}
-
-function formatParameterYMarkerToken(value: number): string {
-  const trimmed = value.toFixed(4).replace(/0+$/u, "");
-  return (trimmed.endsWith(".") ? `${trimmed}0` : trimmed).replace(/\./gu, "_");
-}
-
-function conditionParameterMarkerSort(
-  left: string,
-  right: string
-): number {
-  const leftParsed = parseConditionParameterMarkerForSort(left);
-  const rightParsed = parseConditionParameterMarkerForSort(right);
-  if (leftParsed.parameter_x !== rightParsed.parameter_x) {
-    return leftParsed.parameter_x - rightParsed.parameter_x;
-  }
-  return leftParsed.parameter_y - rightParsed.parameter_y;
-}
-
-function parseConditionParameterMarkerForSort(
-  marker: string
-): { parameter_x: number; parameter_y: number } {
-  const match = marker.match(/^condition_(\d+)_parameter_([0-9_]+)$/u);
-  return {
-    parameter_x: match ? Number.parseInt(match[1] || "0", 10) : 0,
-    parameter_y: match ? parseParameterYNumber(match[2] || "0") || 0 : 0
-  };
-}
-
 function extractPrimaryMetricKey(text: string): string | undefined {
   const match = text.match(/\b[a-z][a-z0-9_]*(?:delta_vs_baseline|improvement_over_baseline)\b/iu);
   return match?.[0];
@@ -7841,6 +8126,33 @@ async function loadPriorRunFailureConstraints(
   return constraints;
 }
 
+function compactEstimatorFeasibilityForImplementation(
+  gate: PersistedEstimatorFeasibilityGate
+) {
+  const contract = gate.estimator_contract;
+  const report = gate.estimator_report;
+  if (!gate.valid || !contract || !report || report.status !== "pass") {
+    return undefined;
+  }
+  return {
+    bindings: contract.bindings,
+    units: contract.units,
+    outcome: contract.outcome,
+    estimand: contract.estimand,
+    estimator: contract.estimator,
+    design_matrix: {
+      columns: contract.design_matrix.columns,
+      cells: contract.design_matrix.cells
+    },
+    power: contract.power,
+    resampling: contract.resampling,
+    multiplicity: contract.multiplicity,
+    feasibility_metrics: report.metrics,
+    contract_content_sha256: contract.content_sha256,
+    report_content_sha256: report.content_sha256
+  };
+}
+
 function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<string, unknown> {
   return {
     goal: trimBlock(taskSpec.goal, 160),
@@ -7883,8 +8195,10 @@ function compactTaskSpecForStagedLlmPrompt(taskSpec: ImplementTaskSpec): Record<
             baseline_candidate_ids: taskSpec.context.comparison_contract.baseline_candidate_ids.slice(0, 2),
             budget_profile: taskSpec.context.comparison_contract.budget_profile,
             evaluator_contract_id: taskSpec.context.comparison_contract.evaluator_contract_id
-          }
+        }
         : undefined,
+      estimator_feasibility: taskSpec.context.estimator_feasibility,
+      topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
       planned_condition_contract: taskSpec.context.planned_condition_contract,
       plan_changed: taskSpec.context.plan_changed,
       plan_hash: taskSpec.context.plan_hash
@@ -7922,9 +8236,11 @@ function compactTaskSpecForBootstrapPrompt(taskSpec: ImplementTaskSpec): Record<
             comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
             baseline_first_required: taskSpec.context.comparison_contract.baseline_first_required,
             budget_profile: taskSpec.context.comparison_contract.budget_profile
-          }
+        }
         : undefined,
-      planned_condition_contract: taskSpec.context.planned_condition_contract
+      estimator_feasibility: taskSpec.context.estimator_feasibility,
+      planned_condition_contract: taskSpec.context.planned_condition_contract,
+      topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
     }
   };
 }
@@ -7962,9 +8278,11 @@ function compactTaskSpecForChunkPrompt(taskSpec: ImplementTaskSpec): Record<stri
             comparison_mode: taskSpec.context.comparison_contract.comparison_mode,
             baseline_first_required: taskSpec.context.comparison_contract.baseline_first_required,
             budget_profile: taskSpec.context.comparison_contract.budget_profile
-          }
+        }
         : undefined,
-      planned_condition_contract: taskSpec.context.planned_condition_contract
+      estimator_feasibility: taskSpec.context.estimator_feasibility,
+      planned_condition_contract: taskSpec.context.planned_condition_contract,
+      topic_probe_compute_contract: taskSpec.context.topic_probe_compute_contract,
     }
   };
 }
@@ -9229,7 +9547,7 @@ function appendStagedImplementScaffoldOverrideToPrompt(prompt: string): string {
     "",
     "Staged implement scaffold mode:",
     "- Return scaffold metadata first. Do NOT include file_edits or file contents in this response.",
-    "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, decomposition_plan.",
+    "- Return ONLY one JSON object with keys: summary, experiment_mode, run_command, test_command, requested_gpu_count, working_dir, changed_files, artifacts, public_dir, public_artifacts, script_path, metrics_path, localization, assumptions, decomposition_plan.",
     "- For experiment_mode=real_execution, the scaffold must route primary metrics only through executed train/evaluate work. Do not plan deterministic, simulated, smoke, cached, or fallback corpora as success-producing primary evidence.",
     "- If a fallback or smoke path is needed, keep it diagnostic-only: it must emit success=false or a failed/blocked status, and it must not populate completed_run_count, completed_condition_count, baseline deltas, or primary metric fields as if real execution occurred.",
     "- changed_files, artifacts, and public_artifacts must list only files materialized during implement_experiments, not deferred runtime outputs such as metrics_path, results*.json, *_results.json, study_results.json, latest_results.json, or run.log.",
@@ -10211,6 +10529,12 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function asNonNegativeInteger(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : undefined;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -10809,7 +11133,6 @@ function sanitizeReusableImplementationMemoryText(text: string): string {
     )
     .replace(/\b[A-Za-z][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*\b/gu, "configured_model")
     .replace(/\b[a-z][a-z0-9_]*(?:experiment|study|backend|runner)[a-z0-9_]*\.(?:py|sh)\b/giu, "generated_script")
-    .replace(/\brank[\s_-]*\d+[\s_-]*parameter_y[\s_-]*[0-9]+(?:[._][0-9]+)?\b/giu, "condition_marker")
     .replace(/\b[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\b/giu, "run_id")
     .replace(/\b[a-z][a-z0-9-]*-[0-9a-f]{8,}\b/giu, "run_output_slug");
 }
@@ -11923,6 +12246,85 @@ function buildVerificationFailureSummary(
 
 function extractPolicyRuleId(text: string): string | undefined {
   return text.match(/rule=([a-z0-9_]+)/i)?.[1];
+}
+
+async function loadImplementTopicProbeComputeContract(input: {
+  workspaceRoot: string;
+  run: RunRecord;
+  runDir: string;
+  rawBrief?: string;
+}): Promise<ImplementTopicProbeComputeContract | undefined> {
+  const modeGuard = await resolveResearchRunModeGuard({
+    workspaceRoot: input.workspaceRoot,
+    runId: input.run.id,
+    rawBrief: input.rawBrief,
+    run: input.run
+  });
+  if (!modeGuard.valid || modeGuard.evidenceStage === "standard") {
+    return undefined;
+  }
+  const contractSource = resolveTopicProbeComputeContractSource(
+    modeGuard.evidenceStage
+  );
+  if (!contractSource) {
+    return undefined;
+  }
+  const stage: TopicProbeComputeStage = contractSource.stage;
+  const relativePath = contractSource.relativePath;
+  let activeContractRaw: string;
+  try {
+    activeContractRaw = await fs.readFile(path.join(input.runDir, relativePath), "utf8");
+  } catch {
+    return undefined;
+  }
+  const activeValidation = validateActiveTopicProbeContract(
+    activeContractRaw,
+    contractSource.requireCurrentRunId ? { expectedRunId: input.run.id } : {}
+  );
+  if (!activeValidation.valid || !activeValidation.contract) {
+    return undefined;
+  }
+  const activeContract = activeValidation.contract;
+  const budgetContract = buildTopicProbeComputeBudgetContract({
+    runId: input.run.id,
+    stage,
+    activeTopicProbeContractSha256: activeContract.content_sha256,
+    localBudget: activeContract.local_budget,
+    briefComputeBudgetCeiling:
+      activeContract.brief_compute_budget_ceiling,
+    limits: activeContract.compute_budget,
+    generatedAt: activeContract.generated_at
+  });
+  return {
+    stage,
+    active_contract_content_sha256: activeContract.content_sha256,
+    active_limit: budgetContract.active_limit,
+    requested_gpu_count: {
+      type: "integer",
+      minimum: 0,
+      maximum: budgetContract.active_limit.max_concurrent_gpus
+    },
+    compute_usage_schema: TOPIC_PROBE_COMPUTE_USAGE_SCHEMA
+  };
+}
+
+function formatTopicProbeComputePromptBlock(
+  contract?: ImplementTopicProbeComputeContract
+): string[] {
+  if (!contract) {
+    return [];
+  }
+  return [
+    "## Topic-Probe Compute Contract",
+    `- Active stage: ${contract.stage}`,
+    `- Active stage limit: ${JSON.stringify(contract.active_limit)}`,
+    `- Exact metrics.compute_usage JSON Schema: ${JSON.stringify(contract.compute_usage_schema)}`,
+    "- metrics.compute_usage must contain every required field and no additional fields.",
+    "- gpu_execution requires actual_gpu_count > 0 and fresh_executed_trials > 0; cpu_execution requires actual_gpu_count = 0 and fresh_executed_trials > 0; cache_hit requires actual_gpu_count = 0, fresh_executed_trials = 0, and cached_trials > 0.",
+    "- Return requested_gpu_count as the actual non-negative GPU count requested by run_command. It is a request declaration, not a copy of max_concurrent_gpus.",
+    "- Do not hand off test_command for topic-probe execution; run_experiments performs no unledgered pre-execution command.",
+    ""
+  ];
 }
 
 function formatEnvironmentSnapshotBlock(snapshot?: EnvironmentSnapshot): string[] {

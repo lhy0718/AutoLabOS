@@ -1,0 +1,51 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "local_research_resource_envelope",
+  "observed_at": "2026-07-28T12:23:30+09:00",
+  "observation_commands": [
+    "lscpu",
+    "free -h",
+    "nvidia-smi --query-gpu=index,name,memory.total,memory.free --format=csv,noheader",
+    "df -h ."
+  ],
+  "cpu": {
+    "model": "Intel(R) Core(TM) i9-14900K",
+    "logical_cpus": 32,
+    "physical_cores": 24
+  },
+  "memory": {
+    "total_gib": 125,
+    "available_gib_at_observation": 109,
+    "swap_gib": 2
+  },
+  "gpus": [
+    {
+      "index": 0,
+      "model": "NVIDIA GeForce RTX 4090",
+      "memory_mib": 24564,
+      "free_memory_mib_at_observation": 24051
+    },
+    {
+      "index": 1,
+      "model": "NVIDIA GeForce RTX 4090",
+      "memory_mib": 24564,
+      "free_memory_mib_at_observation": 24077
+    }
+  ],
+  "storage": {
+    "scope": "workspace_filesystem",
+    "available_gib_at_observation": 249,
+    "use_percent_at_observation": 86
+  },
+  "v2_budget_fit": {
+    "maximum_wall_hours": 72,
+    "maximum_gpu_hours": 48,
+    "maximum_cpu_core_hours": 192,
+    "maximum_ram_gib": 96,
+    "maximum_additional_storage_gib": 120,
+    "minimum_remaining_storage_gib": 80,
+    "fits_observed_hardware": true,
+    "storage_margin_requires_live_recheck": true
+  },
+  "outcomes_observed": false
+}

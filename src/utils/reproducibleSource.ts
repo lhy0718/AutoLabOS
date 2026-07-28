@@ -2,6 +2,8 @@ const TRANSIENT_SOURCE_SUFFIXES = [
   ".orig",
   ".bak",
   ".backup",
+  ".pyc",
+  ".pyo",
   ".rej",
   ".swp",
   ".swo"
@@ -9,6 +11,10 @@ const TRANSIENT_SOURCE_SUFFIXES = [
 
 const TRANSIENT_SOURCE_FILENAMES = new Set([
   ".ds_store",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "__pycache__",
   "thumbs.db",
   "desktop.ini"
 ]);

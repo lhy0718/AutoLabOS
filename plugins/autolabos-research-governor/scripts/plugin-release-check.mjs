@@ -22,8 +22,37 @@ const requiredPackFiles = [
   "plugins/autolabos-research-governor/skills/autolabos/SKILL.md"
 ];
 
+const workflowArtifacts = [
+  "ResearchGapMap",
+  "TopicPortfolio",
+  "TopicProbeDecision",
+  "ActiveTopicProbeContract"
+];
+const workflowNodes = [
+  "collect_papers",
+  "analyze_papers",
+  "generate_hypotheses",
+  "design_experiments"
+];
+const discoveryCandidateContract = [
+  "closest_prior_non_overlap",
+  "strongest_baseline_absorption_objection",
+  "primary_metric",
+  "metric_unit",
+  "metric_scale",
+  "metric_direction",
+  "effect_criterion",
+  "comparator",
+  "dataset_or_task",
+  "local_budget",
+  "falsifier",
+  "kill_signal",
+  "minimum_publishable_evidence"
+];
+
 const publicSurfaceFiles = [
   "README.md",
+  "docs/architecture.md",
   "docs/codex-plugin-governance.md",
   "docs/reproducibility.md",
   "docs/plugin-production-pilot-acceptance.md",
@@ -209,9 +238,41 @@ function main() {
   const contract = contractResult.status === 0 ? parseJsonObject(contractResult.stdout) : undefined;
   checks.push(check("contract_command_passes", contractResult.status === 0, { exitCode: contractResult.status }));
   checks.push(check("contract_names_plugin", contract?.pluginName === manifest.name, { observed: contract?.pluginName }));
-  checks.push(check("contract_lists_artifacts_and_intents", Array.isArray(contract?.artifacts) && Array.isArray(contract?.commandIntents), {
+  checks.push(check("contract_schema_version", contract?.schemaVersion === "3.0", { observed: contract?.schemaVersion }));
+  checks.push(check("contract_lists_artifacts_and_intents", Array.isArray(contract?.artifacts)
+    && Array.isArray(contract?.workflowArtifacts)
+    && workflowArtifacts.every((artifact) => contract.workflowArtifacts.includes(artifact))
+    && Array.isArray(contract?.executableCliIntents)
+    && Array.isArray(contract?.workflowIntents), {
     artifacts: contract?.artifacts,
-    commandIntents: contract?.commandIntents
+    workflowArtifacts: contract?.workflowArtifacts,
+    executableCliIntents: contract?.executableCliIntents,
+    workflowIntents: contract?.workflowIntents
+  }));
+  const discoveryIntent = contract?.workflowIntents?.find((intent) => intent?.id === "research:discover");
+  checks.push(check("contract_keeps_discovery_workflow_native", discoveryIntent?.executionMode === "workflow_native"
+    && discoveryIntent?.addsTopLevelNode === false
+    && JSON.stringify(discoveryIntent?.referenceWorkflowNodes) === JSON.stringify(workflowNodes)
+    && discoveryIntent?.closedChain?.startArtifact === "ResearchBrief"
+    && discoveryIntent?.closedChain?.requiresCompleteStartArtifact === true
+    && discoveryIntent?.closedChain?.requiredResearchMode === "topic_discovery"
+    && discoveryIntent?.closedChain?.doesNotRequirePreselection?.includes("final_topic")
+    && discoveryIntent?.closedChain?.doesNotRequirePreselection?.includes("primary_metric")
+    && discoveryIntent?.closedChain?.terminalAuthority === "closed_chain_probe_authorization"
+    && discoveryIntent?.closedChain?.doesNotAuthorize?.includes("topic_selection")
+    && discoveryIntent?.closedChain?.doesNotAuthorize?.includes("paper_readiness")
+    && JSON.stringify(discoveryIntent?.candidateContract) === JSON.stringify(discoveryCandidateContract)
+    && JSON.stringify(discoveryIntent?.candidateOptionalFields) === JSON.stringify(["meaningful_effect"])
+    && discoveryIntent?.designHandoff?.artifactFilename === "active_topic_probe_contract.json"
+    && discoveryIntent?.designHandoff?.activeCandidateCount === 1
+    && discoveryIntent?.designHandoff?.hashBindings?.includes("portfolio_content_sha256")
+    && discoveryIntent?.designHandoff?.hashBindings?.includes("candidate_content_sha256")
+    && discoveryIntent?.designHandoff?.inactiveCandidateDisposition === "deferred"
+    && discoveryIntent?.designHandoff?.evidenceStage === "bounded_probe"
+    && discoveryIntent?.designHandoff?.paperClaimEvidence === false
+    && !contract?.executableCliIntents?.includes("research:discover"), {
+    discoveryIntent,
+    executableCliIntents: contract?.executableCliIntents
   }));
   checks.push(check(
     "contract_lists_model_review_sidecar",

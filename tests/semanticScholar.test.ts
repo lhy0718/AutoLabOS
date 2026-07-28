@@ -147,10 +147,21 @@ describe("SemanticScholarClient", () => {
         json: async () => ({
           data: [{ paperId: "p1", title: "Paper 1", authors: [] }]
         })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ paperId: "p2", title: "Paper 2", authors: [] }]
+        })
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = new SemanticScholarClient({ perSecondLimit: 1000, maxRetries: 2 });
+    const client = new SemanticScholarClient({
+      apiKey: "test-key",
+      perSecondLimit: 1000,
+      maxRetries: 2
+    });
     const promise = client.searchPapers({
       query: "agent",
       limit: 1,
@@ -169,6 +180,75 @@ describe("SemanticScholarClient", () => {
       lastStatus: 200
     });
     expect(client.getLastSearchDiagnostics().attempts.map((attempt) => attempt.status)).toEqual([429, 200]);
+
+    const followUpPromise = client.searchPapers({
+      query: "agent evaluation",
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+    await vi.advanceTimersByTimeAsync(1);
+    const followUpPapers = await followUpPromise;
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(followUpPapers[0]?.paperId).toBe("p2");
+  });
+
+  it("short-circuits later searches after terminal 429 exhaustion per client instance", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "retry-after": "5" })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ paperId: "p2", title: "Paper 2", authors: [] }]
+        })
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 1000, maxRetries: 1 });
+    const firstSearch = client.searchPapers({
+      query: "first family",
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+    await expect(firstSearch).rejects.toThrow(
+      "Semantic Scholar request failed: 429 (rate limited; retry after 5s)"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.getLastSearchDiagnostics()).toMatchObject({
+      attemptCount: 1,
+      lastStatus: 429,
+      retryAfterMs: 5000
+    });
+
+    const followUpSearch = client.searchPapers({
+      query: "second family",
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+    await expect(followUpSearch).rejects.toThrow(
+      "Semantic Scholar request failed: 429 (rate limited; retry after 5s)"
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(client.getLastSearchDiagnostics()).toEqual({
+      attemptCount: 0,
+      lastStatus: 429,
+      retryAfterMs: 5000,
+      attempts: []
+    });
+
+    const freshClient = new SemanticScholarClient({ perSecondLimit: 1000, maxRetries: 1 });
+    const papers = await freshClient.searchPapers({
+      query: "independent family",
+      limit: 1,
+      sort: { field: "relevance" }
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(papers[0]?.paperId).toBe("p2");
   });
 
   it("uses conservative chunk sizes for large filtered relevance requests", async () => {

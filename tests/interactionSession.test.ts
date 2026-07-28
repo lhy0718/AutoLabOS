@@ -23,7 +23,7 @@ function makeRun(id: string): RunRecord {
     id,
     title: `Run ${id}`,
     topic: "topic",
-    constraints: ["recent papers"],
+    constraints: ["declared literature scope"],
     objectiveMetric: "metric",
     status: "pending",
     currentNode: graph.currentNode,
@@ -37,6 +37,57 @@ function makeRun(id: string): RunRecord {
       longTermPath: `.autolabos/runs/${id}/memory/long_term.jsonl`,
       episodePath: `.autolabos/runs/${id}/memory/episodes.jsonl`
     }
+  };
+}
+
+function makeNeutralResultsArtifact() {
+  return {
+    schema_version: "2.0",
+    metrics: [
+      { id: "primary_score", label: "Primary score", direction: "higher_better", unit: "score" }
+    ],
+    series: [
+      {
+        id: "reference_condition",
+        label: "Reference condition",
+        role: "baseline",
+        dimensions: { condition: "reference" }
+      },
+      {
+        id: "candidate_condition",
+        label: "Candidate condition",
+        role: "primary",
+        dimensions: { condition: "candidate" }
+      }
+    ],
+    observations: [
+      {
+        id: "reference_observation",
+        series_id: "reference_condition",
+        metric_id: "primary_score",
+        scope: { partition: "validation_partition" },
+        value: 0.76,
+        evidence_refs: ["metrics.json"]
+      },
+      {
+        id: "candidate_observation",
+        series_id: "candidate_condition",
+        metric_id: "primary_score",
+        scope: { partition: "validation_partition" },
+        value: 0.81,
+        evidence_refs: ["metrics.json"]
+      }
+    ],
+    comparisons: [
+      {
+        id: "candidate_vs_reference",
+        subject_observation_id: "candidate_observation",
+        reference_observation_id: "reference_observation",
+        delta: 0.05,
+        judgement: "candidate higher than reference",
+        evidence_refs: ["metrics.json"]
+      }
+    ]
   };
 }
 
@@ -61,7 +112,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -78,9 +129,9 @@ describe("InteractionSession", () => {
     await session.start();
 
     const run = await session.createRun({
-      topic: "Agent planning",
-      constraints: ["recent papers"],
-      objectiveMetric: "sample efficiency"
+      topic: "Candidate evaluation",
+      constraints: ["declared literature scope"],
+      objectiveMetric: "primary_score"
     });
 
     expect(run.title).toBe("Generated title");
@@ -88,12 +139,96 @@ describe("InteractionSession", () => {
     expect(session.snapshot().logs.some((line) => line.includes(`Created run ${run.id}`))).toBe(true);
   });
 
+  it("starts a run in the background without holding the caller open", async () => {
+    let finishRun: ((value: {
+      run: RunRecord;
+      result: { status: "success"; summary: string };
+    }) => void) | undefined;
+    const run = await runStore.createRun({
+      title: "Background start",
+      topic: "Candidate evaluation",
+      constraints: ["declared literature scope"],
+      objectiveMetric: "primary_score"
+    });
+    const runCurrentAgentWithOptions = vi.fn(
+      () =>
+        new Promise<{
+          run: RunRecord;
+          result: { status: "success"; summary: string };
+        }>((resolve) => {
+          finishRun = resolve;
+        })
+    );
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["declared literature scope"],
+          default_objective_metric: "metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: { runCurrentAgentWithOptions } as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    expect(session.startRunInBackground(run.id)).toBe(true);
+    expect(session.snapshot()).toMatchObject({
+      activeRunId: run.id,
+      busy: true,
+      canCancel: true
+    });
+    expect(session.startRunInBackground(run.id)).toBe(false);
+    await vi.waitFor(() => {
+      expect(runCurrentAgentWithOptions).toHaveBeenCalledTimes(1);
+    });
+
+    finishRun?.({
+      run,
+      result: { status: "success", summary: "Background run finished." }
+    });
+    await vi.waitFor(() => {
+      expect(session.snapshot().busy).toBe(false);
+    });
+    expect(session.snapshot().logs).toContain("Research start result: Background run finished.");
+  });
+
+  it("fails closed before title generation when required research inputs are missing", async () => {
+    const generateTitle = vi.fn().mockResolvedValue("unused title");
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: { research: { default_topic: "", default_constraints: [], default_objective_metric: "" } } as any,
+      runStore,
+      titleGenerator: { generateTitle } as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+
+    await expect(session.createRun({
+      topic: " ",
+      constraints: [],
+      objectiveMetric: ""
+    })).rejects.toThrow("Research run input is incomplete: topic, constraints, objectiveMetric");
+    expect(generateTitle).not.toHaveBeenCalled();
+    await expect(runStore.listRuns()).resolves.toEqual([]);
+  });
+
   it("reads repository knowledge for the active run via /knowledge", async () => {
     const run = await runStore.createRun({
       title: "Knowledge run",
       topic: "topic",
       constraints: [],
-      objectiveMetric: "metric"
+      objectiveMetric: "primary_score"
     });
     const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(runDir, { recursive: true });
@@ -139,8 +274,8 @@ describe("InteractionSession", () => {
               public_output_root: `outputs/${run.id}`,
               public_manifest: `outputs/${run.id}/manifest.json`,
               knowledge_note: `.autolabos/knowledge/runs/${run.id}.md`,
-              research_question: "Does the treatment outperform the baseline?",
-              analysis_summary: "Treatment improved accuracy over baseline.",
+              research_question: "Does the candidate condition outperform the reference condition?",
+              analysis_summary: "The candidate condition improved primary_score over the reference condition.",
               manuscript_type: "paper_scale_candidate",
               sections: [
                 {
@@ -163,7 +298,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -181,8 +316,8 @@ describe("InteractionSession", () => {
     const result = await session.submitInput("/knowledge");
 
     expect(result.logs.some((line) => line.includes(`Knowledge entry: ${run.id}`))).toBe(true);
-    expect(result.logs.some((line) => line.includes("Research question: Does the treatment outperform the baseline?"))).toBe(true);
-    expect(result.logs.some((line) => line.includes("Analysis summary: Treatment improved accuracy over baseline."))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Research question: Does the candidate condition outperform the reference condition?"))).toBe(true);
+    expect(result.logs.some((line) => line.includes("Analysis summary: The candidate condition improved primary_score over the reference condition."))).toBe(true);
     expect(result.logs.some((line) => line.includes("Literature corpus: 2 paper(s), 1 with PDF, 1 with BibTeX"))).toBe(true);
     expect(result.logs.some((line) => line.includes("Analysis coverage: 1 summaries, 1 evidence rows"))).toBe(true);
   });
@@ -239,7 +374,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -259,6 +394,76 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes(`Artifact preview (${run.id}): paper/manuscript_quality_gate.json`))).toBe(true);
     expect(result.logs.some((line) => line.includes('"action": "pass"'))).toBe(true);
   });
+  it("keeps the active run stable while inspecting another run", async () => {
+    const activeRun = await runStore.createRun({
+      title: "Active scope",
+      topic: "active scope",
+      constraints: [],
+      objectiveMetric: "primary metric"
+    });
+    const inspectedRun = await runStore.createRun({
+      title: "Inspected scope",
+      topic: "inspected scope",
+      constraints: [],
+      objectiveMetric: "primary metric"
+    });
+    inspectedRun.currentNode = "analyze_results";
+    inspectedRun.graph.currentNode = "analyze_results";
+    inspectedRun.graph.nodeStates.analyze_results.status = "completed";
+    inspectedRun.status = "paused";
+    await runStore.updateRun(inspectedRun);
+
+    const inspectedRunDir = path.join(cwd, ".autolabos", "runs", inspectedRun.id);
+    await fs.mkdir(inspectedRunDir, { recursive: true });
+    await fs.writeFile(
+      path.join(inspectedRunDir, "inspection.json"),
+      JSON.stringify({ source: "inspected run" }, null, 2),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(inspectedRunDir, "result_analysis.json"),
+      JSON.stringify({
+        overview: {
+          objective_status: "met",
+          objective_summary: "The inspected run reached its bounded objective."
+        },
+        failure_taxonomy: [],
+        synthesis: { follow_up_actions: [] }
+      }, null, 2),
+      "utf8"
+    );
+
+    const session = new InteractionSession({
+      workspaceRoot: cwd,
+      config: {
+        research: {
+          defaultTopic: "topic",
+          defaultConstraints: ["declared literature scope"],
+          default_objective_metric: "primary metric"
+        }
+      } as any,
+      runStore,
+      titleGenerator: {} as any,
+      codex: {} as any,
+      openAiTextClient: undefined,
+      eventStream: new InMemoryEventStream(),
+      orchestrator: {} as any,
+      semanticScholarApiKeyConfigured: true
+    });
+    await session.start();
+    await session.selectRun(activeRun.id);
+
+    const artifactResult = await session.submitInput(
+      `/artifact inspection.json --run ${inspectedRun.id}`
+    );
+    expect(artifactResult.logs.some((line) => line.includes(`Artifact preview (${inspectedRun.id})`))).toBe(true);
+    expect(session.getActiveRunId()).toBe(activeRun.id);
+
+    const analysisResult = await session.submitInput(`/analyze-results ${inspectedRun.id}`);
+    expect(analysisResult.logs.some((line) => line.includes(`operator view for ${inspectedRun.id}`))).toBe(true);
+    expect(session.getActiveRunId()).toBe(activeRun.id);
+  });
+
 
   it("reports tune-node comparisons through /agent tune-node", async () => {
     const run = await runStore.createRun({
@@ -273,7 +478,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -324,7 +529,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -370,7 +575,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -402,13 +607,23 @@ describe("InteractionSession", () => {
     run.currentNode = "review";
     run.graph.currentNode = "review";
     run.status = "paused";
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.figure_audit.status = "completed";
     run.graph.nodeStates.review.status = "needs_approval";
     await runStore.updateRun(run);
 
     const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(path.join(runDir, "review"), { recursive: true });
     await fs.writeFile(path.join(runDir, "events.jsonl"), `${JSON.stringify({ timestamp: "2026-03-28T12:00:00.000Z" })}\n`, "utf8");
-    await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: { objective_status: "met", objective_summary: "objective met" } }, null, 2), "utf8");
+    await fs.writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify({
+        results_artifact: makeNeutralResultsArtifact(),
+        primary_comparison_id: "candidate_vs_reference",
+        overview: { objective_status: "met", objective_summary: "objective met" }
+      }, null, 2),
+      "utf8"
+    );
     await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance", targetNode: "review", reason: "Ready for review." }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "review", "review_packet.json"), JSON.stringify({ generated_at: "", checks: [], readiness: { status: "ready", ready_checks: 1, warning_checks: 0, blocking_checks: 0, manual_checks: 1 }, objective_status: "met", objective_summary: "objective met", suggested_actions: [] }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "review", "paper_critique.json"), JSON.stringify({ blocking_issues_count: 0, paper_readiness_state: "paper_scale_candidate" }, null, 2), "utf8");
@@ -420,7 +635,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         workflow: {
@@ -449,7 +664,7 @@ describe("InteractionSession", () => {
       title: "Analyze helper run",
       topic: "topic",
       constraints: [],
-      objectiveMetric: "metric"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "analyze_results";
     run.graph.currentNode = "analyze_results";
@@ -463,7 +678,7 @@ describe("InteractionSession", () => {
       path.join(runDir, "result_analysis.json"),
       JSON.stringify({
         mean_score: 8.2,
-        overview: { objective_status: "met", objective_summary: "Accuracy exceeded the baseline target." },
+        overview: { objective_status: "met", objective_summary: "The primary score exceeded the reference target." },
         failure_taxonomy: [],
         synthesis: { follow_up_actions: ["Enter review and confirm the claim-evidence mapping."] },
         transition_recommendation: { action: "advance", targetNode: "review", reason: "Ready for the review gate." }
@@ -477,7 +692,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         workflow: {
@@ -525,7 +740,7 @@ describe("InteractionSession", () => {
     await fs.mkdir(path.join(runDir, "review"), { recursive: true });
     await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
     await fs.writeFile(path.join(runDir, "experiment.py"), "print('ok')\n", "utf8");
-    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_score: 0.1 }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
@@ -546,7 +761,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -602,7 +817,7 @@ describe("InteractionSession", () => {
     const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(path.join(runDir, "review"), { recursive: true });
     await fs.mkdir(path.join(runDir, "paper"), { recursive: true });
-    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_score: 0.1 }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "objective_evaluation.json"), JSON.stringify({ status: "met" }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
     await fs.writeFile(path.join(runDir, "transition_recommendation.json"), JSON.stringify({ action: "advance" }, null, 2), "utf8");
@@ -620,7 +835,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -638,7 +853,7 @@ describe("InteractionSession", () => {
     await session.submitInput(`/agent clear analyze_results ${run.id}`);
     const persisted = await runStore.getRun(run.id);
 
-    expect(await fs.readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"accuracy": 0.1');
+    expect(await fs.readFile(path.join(runDir, "metrics.json"), "utf8")).toContain('"primary_score": 0.1');
     expect(await fs.readFile(path.join(runDir, "objective_evaluation.json"), "utf8")).toContain('"status": "met"');
     expect(await fs.stat(path.join(runDir, "result_analysis.json")).catch(() => undefined)).toBeUndefined();
     expect(await fs.stat(path.join(runDir, "transition_recommendation.json")).catch(() => undefined)).toBeUndefined();
@@ -658,7 +873,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -713,7 +928,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -765,42 +980,44 @@ describe("InteractionSession", () => {
     const runDir = path.join(cwd, ".autolabos", "runs", run.id);
     await fs.mkdir(path.join(runDir, "figures"), { recursive: true });
     await fs.writeFile(path.join(runDir, "figures", "performance.svg"), "<svg></svg>", "utf8");
-    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.81 }, null, 2), "utf8");
+    await fs.writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_score: 0.81 }, null, 2), "utf8");
     await fs.writeFile(
       path.join(runDir, "result_analysis.json"),
       JSON.stringify(
         {
           analysis_version: 1,
           generated_at: new Date().toISOString(),
+          results_artifact: makeNeutralResultsArtifact(),
+          primary_comparison_id: "candidate_vs_reference",
           mean_score: 0.81,
-          metrics: { accuracy: 0.81 },
+          metrics: { primary_score: 0.81 },
           objective_metric: {
-            raw: "metric",
+            raw: "primary_score",
             evaluation: {
               status: "met",
-              summary: "accuracy reached the configured target.",
-              matchedMetricKey: "accuracy",
+              summary: "primary_score reached the configured target.",
+              matchedMetricKey: "primary_score",
               observedValue: 0.81,
-              targetDescription: "accuracy >= 0.8"
+              targetDescription: "primary_score >= 0.8"
             },
             profile: {
               source: "heuristic",
-              primary_metric: "accuracy",
-              preferred_metric_keys: ["accuracy"],
-              target_description: "accuracy >= 0.8",
-              analysis_focus: ["accuracy"],
-              paper_emphasis: ["accuracy"],
+              primary_metric: "primary_score",
+              preferred_metric_keys: ["primary_score"],
+              target_description: "primary_score >= 0.8",
+              analysis_focus: ["primary_score"],
+              paper_emphasis: ["primary_score"],
               assumptions: []
             }
           },
           overview: {
             objective_status: "met",
-            objective_summary: "accuracy reached the configured target.",
-            matched_metric_key: "accuracy",
+            objective_summary: "primary_score reached the configured target.",
+            matched_metric_key: "primary_score",
             observed_value: 0.81,
-            target_description: "accuracy >= 0.8",
+            target_description: "primary_score >= 0.8",
             execution_runs: 3,
-            top_metric: { key: "accuracy", value: 0.81 }
+            top_metric: { key: "primary_score", value: 0.81 }
           },
           plan_context: {
             shortlisted_designs: [],
@@ -809,22 +1026,22 @@ describe("InteractionSession", () => {
             evaluation_notes: [],
             assumptions: []
           },
-          metric_table: [{ key: "accuracy", value: 0.81 }],
+          metric_table: [{ key: "primary_score", value: 0.81 }],
           condition_comparisons: [
             {
-              id: "treatment_vs_baseline",
-              label: "Treatment vs baseline",
+              id: "candidate_vs_reference",
+              label: "Candidate condition vs reference condition",
               source: "metrics.comparison",
               metrics: [
                 {
-                  key: "accuracy",
+                  key: "primary_score",
                   value: 0.05,
                   primary_value: 0.81,
                   baseline_value: 0.76
                 }
               ],
               hypothesis_supported: true,
-              summary: "Treatment improved accuracy over the baseline by 0.05."
+              summary: "The candidate condition improved primary_score over the reference condition by 0.05."
             }
           ],
           execution_summary: {
@@ -833,13 +1050,13 @@ describe("InteractionSession", () => {
             sources: ["local_python"],
             stderr_excerpts: []
           },
-          primary_findings: ["Treatment accuracy improved over the baseline by 0.05."],
+          primary_findings: ["The candidate condition improved primary_score over the reference condition by 0.05."],
           limitations: ["Only one confirmatory configuration was executed."],
           warnings: [],
           paper_claims: [
             {
-              claim: "The treatment improved the primary metric.",
-              evidence: ["accuracy=0.81"]
+              claim: "The candidate condition improved the primary metric.",
+              evidence: ["primary_score=0.81"]
             }
           ],
           figure_specs: [
@@ -847,8 +1064,8 @@ describe("InteractionSession", () => {
               id: "performance",
               title: "Performance overview",
               path: "figures/performance.svg",
-              metric_keys: ["accuracy"],
-              summary: "Accuracy increased in the treatment condition."
+              metric_keys: ["primary_score"],
+              summary: "The primary score increased in the candidate condition."
             }
           ],
           supplemental_runs: [],
@@ -859,24 +1076,24 @@ describe("InteractionSession", () => {
             cached_trials: 0,
             confidence_intervals: [
               {
-                metric_key: "accuracy",
-                label: "Accuracy 95% CI",
+                metric_key: "primary_score",
+                label: "Primary score 95% CI",
                 lower: 0.78,
                 upper: 0.84,
                 level: 0.95,
                 sample_size: 3,
                 source: "metrics",
-                summary: "Accuracy remained within a narrow 95% confidence interval across the observed trials."
+                summary: "The primary score remained within a narrow 95% confidence interval across the observed trials."
               }
             ],
-            stability_metrics: [{ key: "accuracy_std", value: 0.02 }],
+            stability_metrics: [{ key: "primary_score_std", value: 0.02 }],
             effect_estimates: [
               {
-                comparison_id: "treatment_vs_baseline",
-                metric_key: "accuracy",
+                comparison_id: "candidate_vs_reference",
+                metric_key: "primary_score",
                 delta: 0.05,
                 direction: "positive",
-                summary: "The treatment delivered a positive effect estimate of +0.05 accuracy versus baseline."
+                summary: "The candidate condition delivered a positive effect estimate of +0.05 primary_score versus the reference condition."
               }
             ],
             notes: ["Variance remained low across the observed trials."]
@@ -894,7 +1111,7 @@ describe("InteractionSession", () => {
           ],
           synthesis: {
             source: "fallback",
-            discussion_points: ["The treatment cleared the objective threshold with limited run-to-run variance."],
+            discussion_points: ["The candidate condition cleared the objective threshold with limited run-to-run variance."],
             failure_analysis: ["No concrete execution failure was observed; scope remains the main uncertainty."],
             follow_up_actions: ["Run an additional confirmatory configuration."],
             confidence_statement: "Overall confidence is moderate because the metric cleared the target but only one confirmatory configuration was executed."
@@ -906,7 +1123,7 @@ describe("InteractionSession", () => {
             reason: "The objective is met and no blocking runtime issue remains, so the run can proceed to review before paper writing.",
             confidence: 0.88,
             autoExecutable: true,
-            evidence: ["accuracy reached the configured target."],
+            evidence: ["primary_score reached the configured target."],
             suggestedCommands: ["/approve"],
             generatedAt: new Date().toISOString()
           }
@@ -922,7 +1139,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -952,7 +1169,7 @@ describe("InteractionSession", () => {
     expect(result.logs.some((line) => line.includes("Count(analyze_results): 1 figure files"))).toBe(true);
     expect(result.logs.some((line) => line.includes("objective met"))).toBe(true);
     expect(result.logs.some((line) => line.includes("Top issue [medium/risk]"))).toBe(true);
-    expect(result.logs.some((line) => line.includes("Discussion: The treatment cleared the objective threshold"))).toBe(
+    expect(result.logs.some((line) => line.includes("Discussion: The candidate condition cleared the objective threshold"))).toBe(
       true
     );
     expect(result.logs.some((line) => line.includes("Confidence: Overall confidence is moderate"))).toBe(true);
@@ -969,33 +1186,31 @@ describe("InteractionSession", () => {
       expect.arrayContaining([
         expect.objectContaining({
           kind: "comparison",
-          label: "Comparison: Treatment vs baseline",
-          path: "result_analysis.json",
-          summary: "Treatment improved accuracy over the baseline by 0.05.",
+          label: "Comparison: Candidate condition vs Reference condition",
+          path: "result_analysis.json#/results_artifact/comparisons/0",
+          summary: "Candidate condition vs Reference condition on Primary score: 0.81 vs 0.76 (delta 0.05). Judgement: candidate higher than reference.",
           facts: expect.arrayContaining([
-            expect.objectContaining({ label: "Metric", value: "accuracy" }),
-            expect.objectContaining({ label: "Delta", value: "+0.05" }),
-            expect.objectContaining({ label: "Support", value: "yes" })
+            expect.objectContaining({ label: "Metric", value: "primary_score" }),
+            expect.objectContaining({ label: "Delta", value: "+0.05" })
           ])
         }),
         expect.objectContaining({
           kind: "statistics",
-          label: "Statistics: accuracy",
-          path: "result_analysis.json",
-          summary: "The treatment delivered a positive effect estimate of +0.05 accuracy versus baseline.",
+          label: "Statistics: primary_score",
+          path: "result_analysis.json#/results_artifact/comparisons/0",
+          summary: "Candidate condition vs Reference condition on Primary score: 0.81 vs 0.76 (delta 0.05). Judgement: candidate higher than reference.",
           facts: expect.arrayContaining([
-            expect.objectContaining({ label: "Metric", value: "accuracy" }),
-            expect.objectContaining({ label: "Delta", value: "+0.05" }),
-            expect.objectContaining({ label: "Confidence", value: "95%" })
+            expect.objectContaining({ label: "Metric", value: "primary_score" }),
+            expect.objectContaining({ label: "Delta", value: "+0.05" })
           ])
         }),
         expect.objectContaining({
           kind: "figure",
           label: "Figure: Performance overview",
           path: "figures/performance.svg",
-          summary: "Accuracy increased in the treatment condition.",
+          summary: "The primary score increased in the candidate condition.",
           facts: expect.arrayContaining([
-            expect.objectContaining({ label: "Matched metric", value: "accuracy" }),
+            expect.objectContaining({ label: "Matched metric", value: "primary_score" }),
             expect.objectContaining({ label: "Runs", value: "3" })
           ])
         }),
@@ -1003,7 +1218,7 @@ describe("InteractionSession", () => {
           kind: "transition",
           label: "Transition rationale",
           path: "transition_recommendation.json",
-          summary: "accuracy reached the configured target.",
+          summary: "primary_score reached the configured target.",
           facts: expect.arrayContaining([
             expect.objectContaining({ label: "Confidence", value: "88%" }),
             expect.objectContaining({ label: "Target", value: "review" })
@@ -1016,7 +1231,7 @@ describe("InteractionSession", () => {
           summary: expect.stringContaining("Overall confidence is moderate"),
           facts: expect.arrayContaining([
             expect.objectContaining({ label: "Mean", value: "0.81" }),
-            expect.objectContaining({ label: "Matched metric", value: "accuracy" }),
+            expect.objectContaining({ label: "Matched metric", value: "primary_score" }),
             expect.objectContaining({ label: "Objective", value: "met" })
           ])
         })
@@ -1059,7 +1274,7 @@ describe("InteractionSession", () => {
       reason: "Proceed to figure audit.",
       confidence: 0.88,
       autoExecutable: true,
-      evidence: ["accuracy reached the configured target."],
+      evidence: ["primary_score reached the configured target."],
       suggestedCommands: ["/approve"],
       generatedAt: new Date().toISOString()
     };
@@ -1075,13 +1290,13 @@ describe("InteractionSession", () => {
         manual_checks: 1
       },
       objective_status: "met",
-      objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+      objective_summary: "Objective metric met: primary_score=0.91 >= 0.9.",
       recommendation: {
         action: "advance",
         target: "review",
         confidence_pct: 88,
         reason: "The run can proceed to manual review before paper writing.",
-        evidence: ["accuracy reached the configured target."]
+        evidence: ["primary_score reached the configured target."]
       },
       checks: [
         {
@@ -1193,7 +1408,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -1322,7 +1537,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -1535,7 +1750,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -1649,7 +1864,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -1738,7 +1953,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -1827,7 +2042,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,
@@ -1872,7 +2087,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -1950,7 +2165,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -2050,7 +2265,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         },
         providers: {
@@ -2108,7 +2323,7 @@ describe("InteractionSession", () => {
       config: {
         research: {
           defaultTopic: "topic",
-          defaultConstraints: ["recent papers"],
+          defaultConstraints: ["declared literature scope"],
           default_objective_metric: "metric"
         }
       } as any,

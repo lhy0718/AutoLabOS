@@ -1,0 +1,174 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_replay_summary",
+  "scientific_stage": "bounded_development",
+  "replay_count": 3,
+  "registry_sha256": "6c71670be7ea6758fe2bc612f41792d1e857c7ccc2880284a1761ce10711c9e4",
+  "adjudication_sha256": "b53330e63febbb2f9968e102ef915184b926e3256c612fd6f8adc524371fe7e6",
+  "manifest_sha256": "28716569d8afff554a3c60d6d504ac088fa06eea978c5fd69080d4e919357d1b",
+  "runner_sha256": "5fdb104078a36477934df1198cca1aa82ddc790225d0e1f0688f7f7ead75f5f5",
+  "probe_count": 14,
+  "source_count": 3,
+  "outcome_signature_sha256": "08f9badf0429e1852f143fb82cd622f7acfd5f2356222eebba53ea605049a0f1",
+  "relation_outcomes_stable": true,
+  "all_historical_faults_reproduced": true,
+  "fixed_revision_false_alarm_count": 0,
+  "runtime_measurements_are_diagnostic_only": true,
+  "paper_scale_claim_authorized": false,
+  "provenance": [
+    {
+      "reference": "studies/grader-conform/results/bounded-development-replay-1.json",
+      "sha256": "191943a3302aabcf707171392a34fb131873f995ff1878a48c416ad98ccaa0cb"
+    },
+    {
+      "reference": "studies/grader-conform/results/bounded-development-replay-2.json",
+      "sha256": "08b7af480efed0943b1eecef62fbd66a565357e85dced3c4b36192459bba65d5"
+    },
+    {
+      "reference": "studies/grader-conform/results/bounded-development-replay-3.json",
+      "sha256": "4cd241912cbd8931d915205aaf596adf651d911c02e74a487f2d4c667b4c66af"
+    }
+  ],
+  "lineages": [
+    {
+      "lineage_id": "lineage_001",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1535.812868,
+      "fixed_runtime_ms_median": 1517.276525
+    },
+    {
+      "lineage_id": "lineage_007",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 94.113168,
+      "fixed_runtime_ms_median": 97.437023
+    },
+    {
+      "lineage_id": "lineage_014",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 226.409176,
+      "fixed_runtime_ms_median": 213.734285
+    },
+    {
+      "lineage_id": "lineage_002",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1530.885249,
+      "fixed_runtime_ms_median": 1496.352706
+    },
+    {
+      "lineage_id": "lineage_003",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1476.172783,
+      "fixed_runtime_ms_median": 1485.453735
+    },
+    {
+      "lineage_id": "lineage_004",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1463.011932,
+      "fixed_runtime_ms_median": 1494.863074
+    },
+    {
+      "lineage_id": "lineage_005",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1475.514862,
+      "fixed_runtime_ms_median": 1484.290553
+    },
+    {
+      "lineage_id": "lineage_006",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 1511.769237,
+      "fixed_runtime_ms_median": 1483.78899
+    },
+    {
+      "lineage_id": "lineage_008",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 60.464316,
+      "fixed_runtime_ms_median": 56.36263
+    },
+    {
+      "lineage_id": "lineage_009",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 340.785804,
+      "fixed_runtime_ms_median": 340.601496
+    },
+    {
+      "lineage_id": "lineage_012",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 22.462567,
+      "fixed_runtime_ms_median": 23.742337
+    },
+    {
+      "lineage_id": "lineage_013",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 63.42496,
+      "fixed_runtime_ms_median": 61.043518
+    },
+    {
+      "lineage_id": "lineage_015",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 27.966085,
+      "fixed_runtime_ms_median": 26.175175
+    },
+    {
+      "lineage_id": "lineage_016",
+      "relation_outcome_stable": true,
+      "parent_relation_holds": false,
+      "fixed_relation_holds": true,
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "parent_runtime_ms_median": 23.145364,
+      "fixed_runtime_ms_median": 26.05009
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-25
+Last updated: 2026-07-28
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,1255 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-666
+
+- Status: reproduced by shared-projection audit; repair in progress and real TUI/Web revalidation pending
+- Category: `in_memory_projection_bug` / topic portfolio evidence is discarded before operator surfaces
+- Validation target: every generated topic candidate must remain inspectable in the shared projection and both operator surfaces, including its scorecard, comparison contract, closest-prior absorption result, reviewer objection, non-overlap claim, kill signal, minimum evidence, topic-memory disposition, and blocking gates.
+- Environment/session context: current worktree audit of `hypothesis_generation/topic_portfolio.json`, the shared jobs projection, TUI run detail, and the Web research-funnel summary on 2026-07-28.
+- Reproduction steps:
+  1. Build a valid topic-discovery portfolio containing five to seven candidates with candidate-level reviews and prior-absorption evidence.
+  2. Load the common `RunResearchFunnelProjection` and inspect the same run through TUI and Web.
+  3. Compare visible candidate information with the persisted topic portfolio.
+- Expected behavior: all bounded candidates are visible as read-only audit records with explicit trust, status, score, direct-prior, objection, falsification, and evidence-floor information; no diagnostic record can authorize execution.
+- Actual behavior: the common projection retains candidate count, shortlist identifiers, and shortlist statements only. Web shows the shortlist statements, while TUI shows only aggregate counts; deferred and rejected candidate evidence is invisible without opening raw artifacts.
+- Fresh vs existing session comparison:
+  - Fresh session: any newly projected valid portfolio loses the same candidate-level fields before reaching TUI/Web.
+  - Existing session: reloaded runs use the same compact shared projection and lose the same fields deterministically.
+  - Divergence: none; the defect is a shared projection omission rather than stale state or refresh timing.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - The topic portfolio evolved into an auditable scientific scorecard, but the operator projection retained its earlier count-and-shortlist contract.
+- Code/test changes:
+  - In progress: add a non-authoritative candidate audit projection, preserve trust and lineage-sensitive fields, render compact TUI summaries and full Web rows, and cover valid and tampered portfolios.
+- Regression status: pending focused projection, TUI, Web, public-code, build, and same-flow live validation.
+- Follow-up risks: candidate diagnostics must remain display-only; selection and execution authority continue to require the validated closed chain, candidate-prior receipt, active probe contract, and estimator gate.
+- Evidence/artifacts: `src/core/researchFunnel.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/runs/jobsProjection.ts`, `src/types.ts`, `src/tui/runProjection.ts`, and `web/src/App.tsx`.
+
+---
+
+## Issue: LV-665
+
+- Status: repair implemented; focused core, public-sanitization, build, and Web regressions passing; fresh successor TUI/Web validation pending
+- Category: research completion risk / rejected research objects can re-enter through renamed or deferred refresh candidates
+- Validation target: a validated `refresh_topic_portfolio` successor must reject the prior research object across the entire refreshed 5-7 candidate portfolio, not only by candidate/topic identifier and not only for the newly selected active candidate.
+- Environment/session context: topic-probe rejection, topic-memory persistence, successor handoff, and `design_experiments` admission paths audited on 2026-07-28.
+- Reproduction steps:
+  1. Reject an active bounded-probe candidate and build a `refresh_portfolio_excluding_rejected` successor route.
+  2. Generate a child portfolio with new candidate and topic identifiers.
+  3. Keep the rejected formulation under one renamed candidate, or place it in a deferred candidate while selecting a distinct active candidate.
+  4. Observe that the pre-repair route forbids only the exact source identifiers and validates only the selected candidate.
+- Expected behavior: the successor binds the rejected topic-memory descriptor; every refreshed candidate must change the contribution object and at least three counted formulation axes, remain clear against current topic memory, and provide a complete candidate-owned contract. Identifier-only, wording-only, dataset-only, and metric-only substitutions remain blocked.
+- Actual behavior: new identifiers bypass the route target, and an unchanged deferred candidate can survive the refresh check and become an exact frozen target in a later successor run.
+- Fresh vs existing session comparison:
+  - Fresh session: a newly constructed successor fixture reproduced both a renamed active-candidate bypass and an unchanged deferred-candidate bypass before the repair.
+  - Existing session: no persisted real successor run currently exists in the cleaned workspace; same-flow TUI/Web validation remains pending and is not claimed as complete.
+  - Divergence: the defect is in the shared successor admission contract, so the automated fresh path proves the code-level bypass while persisted-session behavior remains unmeasured.
+- Root cause hypothesis:
+  - Type: research-integrity gate bug.
+  - The successor contract treated a portfolio refresh as an identifier exclusion and evaluated only the immediate target candidate, even though deferred candidates remain executable research options.
+- Code/test changes:
+  - `topic_probe_successor_route_target` schema version 3 now binds the rejected formulation descriptor and a deterministic divergence policy.
+  - Refresh candidates must change `contribution_object` and at least three of `contribution_object`, `method_mechanism`, `data_task_scope`, and `evaluation_protocol`, and must receive a clear topic-memory decision.
+  - `design_experiments` applies the route target to every candidate in a refreshed portfolio, closing the deferred-candidate bypass.
+  - The generated follow-up brief and architecture contract explicitly reject identifier, wording, dataset, and metric substitutions around the same research object.
+- Regression status: 39 focused tests pass across successor route, successor design, follow-up handoff, design-node integration, and public-code sanitization; `npm run build` passes; 32 Web tests pass. The Web dependency audit also passes after updating the transitive PostCSS lock to a fixed release.
+- Follow-up risks: changed-axis comparison is a deterministic minimum rather than proof of semantic novelty. Candidate-conditioned closest-prior search, full-text absorption review, and topic-memory adjudication remain mandatory. A fresh real successor run must still verify that TUI and Web expose the same refresh blocker and backtrack target.
+- Evidence/artifacts: `src/core/topicMemory.ts`, `src/core/topicProbeSuccessorRouteTarget.ts`, `src/core/topicProbeSuccessorDesignTarget.ts`, `src/core/topicProbeFollowup.ts`, `src/core/nodes/designExperiments.ts`, `tests/topicProbeSuccessorDesignTarget.test.ts`, `docs/architecture.md`, and `docs/research/topic-discovery-controller-state.json`.
+
+---
+
+## Issue: LV-664
+
+- Status: repair implemented; core and Web regressions passing, fresh live TUI/Web validation pending
+- Category: in-memory projection bug / execution authorization is split across mutually inconsistent gates
+- Validation target: one fail-closed `effective_execution_authorized` decision must compose the trusted research funnel, candidate-conditioned direct-prior receipt coverage for the selected candidate, and a promoted executable estimator contract; jobs API, Web, TUI, `implement_experiments`, direct `ImplementSessionManager`, and `run_experiments` must consume that same decision.
+- Environment/session context: topic-discovery projection and execution preflights audited on 2026-07-28.
+- Reproduction steps:
+  1. Persist a valid topic portfolio, topic decision, and active bounded-probe contract.
+  2. Leave candidate direct-prior search unmeasured or bind its valid receipt to a different candidate, and persist a blocked or unmeasured estimator report.
+  3. Observe that the projection can still report pre-probe authorization while Web derives experiment execution only from the estimator, and implement/run preflights do not validate candidate direct-prior coverage.
+- Expected behavior: execution remains blocked unless all three component gates are trusted, current-cycle bound, selected-candidate bound, and passing; every surface reports the same component reasons.
+- Actual behavior: `authorization_probe_allowed`, candidate-prior status, and estimator `execution_authorized` are independent values; execution nodes check mode lineage plus estimator but omit the candidate-prior gate.
+- Additional reproduced failures:
+  - Completed candidate-prior plans were compared to the post-backtrack cycle instead of their creation cycle, making valid receipts appear stale.
+  - The projection validated the latest candidate-prior query plan as if it were a broad topic-portfolio plan and compared preserved parent quality artifacts to the current additional-collection attempt, making a normal completed chain impossible to authorize.
+- Fresh vs existing session comparison:
+  - Fresh session: constructed projection and execution-preflight fixtures reproduced unmeasured, wrong-candidate, and blocked-estimator authorization splits.
+  - Existing session: no persisted live run was available in the cleaned workspace; fresh TUI/Web revalidation remains pending.
+  - Divergence: the shared authorization defect is proven in deterministic fixtures, while persisted-session behavior remains unmeasured.
+- Root cause hypothesis:
+  - Type: `in_memory_projection_bug` at the mode-specific policy divergence boundary.
+  - Successive gates were added as diagnostics and local preflights without a canonical composed authorization contract.
+- Code/test changes:
+  - Added one composed topic-probe execution authorization contract and made jobs, Web, TUI, implementation, manager, and execution preflights consume it.
+  - Added current-cycle, selected-candidate, parent-archive, promoted-contract, and tamper regressions.
+- Regression status: the shared composer covers unmeasured prior search, missing selected-candidate coverage, blocked estimator, invalid lineage, and full authorization. A full hash-bound integration covers broad parent archive -> backtracked candidate collection -> valid receipt -> passing estimator -> promoted executable contract, and a parent immutable-artifact tamper revokes authority. Direct implement/run/manager preflights block before model, ACI, tests, or experiment commands. Typecheck passes; 176 focused core tests and 32 Web tests pass on 2026-07-28.
+- Follow-up risks: preserve pre-probe design admission as a distinct diagnostic; do not relabel it as executable authority, and do not hide a verified active probe merely because execution preflight remains pending.
+- Evidence/artifacts: `src/core/topicProbeExecutionAuthorization.ts`, `src/core/runs/topicProbeExecutionAuthorizationGate.ts`, `src/core/runs/topicDiscoveryCollectionLineage.ts`, `src/core/collection/collectAttemptArchive.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/nodes/implementExperiments.ts`, `src/core/agents/implementSessionManager.ts`, `src/core/nodes/runExperiments.ts`, `src/core/runs/jobsProjection.ts`, `src/tui/runProjection.ts`, and `web/src/App.tsx`.
+
+---
+
+## Issue: LV-663
+
+- Status: repair implemented; generation-to-follow-up automated regressions passing, fresh live topic-discovery validation pending
+- Category: research completion risk / evidence-axis and prior-absorption provenance are not closed-chain inputs
+- Validation target: every topic-discovery candidate axis must resolve to the emitted evidence-axis artifact, and downstream authorization must byte-bind and validate both `evidence_axes.json` and `prior_absorption_matrix.json`.
+- Environment/session context: staged hypothesis hard gates and `validateResearchFunnelClosedChain(...)` audited on 2026-07-28.
+- Reproduction steps:
+  1. Emit one valid evidence axis named `axis_measurement`.
+  2. Return an otherwise complete, independently reviewed candidate with `axis_ids=["axis_unknown"]`.
+  3. Observe that the pre-repair hard gate accepts the candidate and that portfolio cluster diversity counts arbitrary axis strings.
+  4. Inspect the closed-chain source manifest and observe that neither the evidence-axis bytes nor the prior-absorption-matrix bytes are required inputs.
+- Expected behavior: unknown or missing topic-discovery axis references are rejected before ranking; a missing, malformed, stale, cross-run, or tampered axes/matrix artifact blocks portfolio and execution authorization.
+- Actual behavior: the candidate axis list is normalized but not resolved against emitted axes, while the portfolio stores only a matrix content hash and validates neither source artifact's actual bytes downstream.
+- Fresh vs existing session comparison:
+  - Fresh session: adversarial fixtures with an unknown axis and coordinated artifact tampering reproduced the closed-chain bypass.
+  - Existing session: no persisted topic-discovery run was available after workspace cleanup; live revalidation remains pending.
+  - Divergence: no session-specific divergence is expected because the missing bindings affected the shared artifact validator.
+- Root cause hypothesis:
+  - Type: research-integrity gate bug.
+  - Cluster labels and absorption projections were added after the original five-artifact closed-chain manifest and remained self-attested metadata rather than independently revalidated source artifacts.
+- Code/test changes:
+  - Required candidate axis resolution against the emitted evidence-axis inventory.
+  - Added byte bindings and downstream validation for evidence axes and the prior-absorption matrix, with tamper and missing-artifact regressions.
+- Regression status: unknown-axis, axis-byte tamper, matrix evidence-span forgery, generated-artifact, design, projection, outcome, and follow-up regressions pass. The focused command covering eight suites completed with 182/182 tests passing on 2026-07-28.
+- Follow-up risks: single-pass and deterministic fallbacks have no emitted axis taxonomy and must not fabricate cluster breadth; downstream design, projection, outcome, and execution guards must read the same two new source artifacts.
+- Evidence/artifacts: `src/core/analysis/researchPlanning.ts`, `src/core/researchFunnel.ts`, `src/core/nodes/generateHypotheses.ts`, `src/core/nodes/designExperiments.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/topicProbeOutcomeArtifacts.ts`, `src/core/topicProbeFollowup.ts`, and the focused research-funnel regression suites.
+
+---
+
+## Issue: LV-662
+
+- Status: repair implemented; automated node-level regression passing, fresh live topic-discovery validation pending
+- Category: research completion risk / shortlisted candidates can bypass candidate-conditioned direct-prior search
+- Validation target: every non-absorbed shortlisted topic candidate must have a valid, contract-bound direct-prior search receipt before probe authorization, even when the original gap literature is judged non-overlapping.
+- Environment/session context: candidate prior-search routing in `generate_hypotheses` audited on 2026-07-28.
+- Reproduction steps:
+  1. Generate shortlisted candidates from two gap-evidence papers.
+  2. Mark every candidate/prior pair `non_overlapping` on all five prior-absorption axes.
+  3. Run `generate_hypotheses` without a candidate-conditioned search receipt.
+- Expected behavior:
+  - The node builds the exact 3-intent by 2-lane candidate search plan and backtracks to `collect_papers`.
+  - A valid receipt bound to the candidate contract and result corpus is required before the same candidate can proceed.
+- Actual behavior:
+  - Candidate search is invoked only for shortlisted candidates already blocked by the gap-evidence absorption matrix.
+  - A candidate judged non-overlapping against those papers is considered executable without ever searching for its closest direct prior.
+- Fresh vs existing session comparison:
+  - Fresh session: a run with no candidate receipt can bypass the search whenever its initial matrix is fully non-overlapping.
+  - Existing session: a resumed run with a valid receipt is distinguishable in existing lineage code, but that distinction was never required for already-eligible candidates.
+  - Divergence: both paths shared the same missing authorization requirement; the persisted receipt only made the omitted distinction observable.
+- Root-cause hypothesis:
+  - Type: research-integrity gate bug.
+  - Gap evidence and candidate-specific closest-prior evidence share one eligibility decision even though they answer different questions.
+- Code/test changes:
+  - Required candidate-conditioned direct-prior collection for every non-absorbed shortlisted candidate.
+  - Added exact plan/receipt binding, bounded exhaustion, changed-contract invalidation, and tampered-receipt regressions.
+- Regression status: the bound-plan integration now proves that complete `non_overlapping` assessments still request a candidate-conditioned collection pass, valid receipts suppress duplicate search, two bounded rounds fail closed at the node boundary, and tampered receipts remain blocked. `npm exec tsc -- --noEmit` and the 37 focused planning/node tests pass on 2026-07-28.
+- Follow-up risks: bounded exhaustion must fail closed, absorbed candidates need no redundant search, and changed candidate contracts must invalidate old receipts without causing an unbounded loop.
+- Evidence/artifacts: `src/core/nodes/generateHypotheses.ts`, `src/core/candidatePriorSearch.ts`, and `tests/generateHypothesesNode.test.ts`.
+
+---
+
+## Issue: LV-661
+
+- Status: repair implemented; focused and adjacent automated regression passing, same-flow live validation pending
+- Category: `persisted_state_bug` / successful design artifacts are misread as retry evidence
+- Validation target: rerunning `design_experiments` without a prior result, failure, or backward transition must be idempotent apart from timestamps and must not synthesize a bounded-run retry context.
+- Environment/session context: the existing idempotent public-plan regeneration test was run independently on 2026-07-28.
+- Reproduction steps:
+  1. Execute `design_experiments` once for a run with hypotheses but no prior experiment outcome.
+  2. Replace only the public plan copy with stale text.
+  3. Execute the same node again to regenerate the public copy.
+- Expected behavior:
+  - The private source plan is reproduced unchanged.
+  - Passing panel reviews and a passing estimator report are not treated as evidence of a previous bounded experiment.
+- Actual behavior:
+  - `loadDesignRetryContext(...)` reads the first execution's panel and estimator artifacts.
+  - `buildRetryDirectives(...)` unconditionally appends a comparator directive, making the context nonempty and rewriting the plan as though a prior bounded run had failed.
+- Fresh vs existing session comparison:
+  - Fresh session: the first execution has no retry context.
+  - Existing session: the immediate same-run re-execution invents one solely because node-owned inspection artifacts now exist.
+  - Divergence: persisted inspection artifacts create the false retry signal only after the first execution.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`.
+  - A generic comparator instruction was appended even when no substantive retry signal had been detected.
+- Code/test changes:
+  - Add the generic comparator preservation directive only after at least one real retry directive exists.
+  - Reuse the existing byte-for-byte public-plan regeneration assertion as the regression.
+- Regression status: pre-repair failure reproduced with `npm test -- --run tests/constraintPropagation.test.ts -t "writes run constraints into experiment_plan.yaml"`; the focused design and adjacent constraint suites now pass 18/18 on 2026-07-28.
+- Follow-up risks: retry context should remain available for genuine result-analysis, implementation, verifier, estimator, or panel hard-block signals.
+- Evidence/artifacts: `src/core/nodes/designExperiments.ts` and `tests/constraintPropagation.test.ts`.
+
+---
+
+## Issue: LV-660
+
+- Status: repair implemented; focused and adjacent automated regression passing, same-flow live validation pending
+- Category: `persisted_state_bug` / hypothesis backtrack skips the cycle-bound analysis prerequisite
+- Validation target: a topic-discovery authorization failure in `design_experiments` must backtrack to a node that can republish the evidence and gap lineage for the incremented research cycle.
+- Environment/session context: `design_experiments` transition recommendation and `StateGraphRuntime.applyJumpState(...)` audited on 2026-07-28.
+- Reproduction steps:
+  1. Complete analysis and hypothesis artifacts in research cycle N.
+  2. Let `design_experiments` return `backtrack_to_hypotheses` because the portfolio is not probe-authorized.
+  3. Apply its current target `generate_hypotheses`; the runtime increments the run to cycle N+1 and resets that node and downstream only.
+  4. Re-run `generate_hypotheses` against the persisted cycle-N gap map.
+- Expected behavior:
+  - Topic-discovery backtracking restarts at the earliest prerequisite that can regenerate a cycle-N+1 closed evidence/gap chain.
+  - General research mode preserves the narrower hypothesis-only retry when it has no cycle-bound topic-discovery chain.
+- Actual behavior:
+  - The applied transition targets `generate_hypotheses` directly.
+  - Its strict gap-map binding rejects the cycle-N artifact with `research_gap_map_research_cycle_mismatch`, so the recommended automatic recovery cannot execute.
+- Fresh vs existing session comparison:
+  - Fresh session: a fresh cycle-0 run does not expose the mismatch until its first design-to-hypothesis backtrack.
+  - Existing session: the mismatch appears after a backward transition from an existing cycle-bound topic-discovery run.
+  - Divergence: only the existing post-backtrack cycle has stale cycle-N gap artifacts under a cycle-N+1 runtime.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`.
+  - Transition semantics and cycle-bound artifact lineage evolved independently; the recommendation names the conceptual repair stage rather than the earliest executable prerequisite.
+- Code/test changes:
+  - Routed topic-discovery authorization failures to `analyze_papers` so the incremented cycle can republish evidence and gap lineage.
+  - Preserved the narrower `generate_hypotheses` retry for general research mode and added mode-specific transition regressions.
+- Regression status: the topic-discovery transition now targets `analyze_papers`, while general research mode retains `generate_hypotheses`; focused design and adjacent constraint suites pass 18/18 on 2026-07-28.
+- Follow-up risks: reanalysis should reuse the frozen paper selection and cached analyses where valid, while republishing cycle-bound synthesis and gap artifacts rather than silently carrying old hashes forward.
+- Evidence/artifacts: `src/core/nodes/designExperiments.ts`, `src/core/stateGraph/runtime.ts`, `src/core/nodes/generateHypotheses.ts`, `tests/designExperimentsNode.test.ts`, and `tests/researchFunnelProjection.test.ts`.
+
+---
+
+## Issue: LV-659
+
+- Status: repair implemented; focused planner/node regression passing, fresh live topic-discovery validation pending
+- Category: research completion risk / generated hypothesis provenance can be fabricated during normalization
+- Validation target: hypothesis candidates and evidence axes must preserve the model-supplied evidence references exactly enough for hard gates to reject missing or unresolved provenance.
+- Environment/session context: `generateHypothesesFromEvidence(...)` audited on 2026-07-28 while adversarially reviewing the topic-discovery funnel.
+- Reproduction steps:
+  1. Supply one valid evidence seed to the hypothesis planner.
+  2. Return an otherwise complete LLM candidate that either omits `evidence_links` or references only `ev_unknown`.
+  3. Give the candidate a favorable review and run the staged hypothesis hard gate.
+- Expected behavior:
+  - Missing evidence links remain missing and fail the minimum-evidence gate.
+  - Evidence IDs absent from the curated evidence panel fail an unresolved-provenance gate.
+  - The rejection reason remains available as an auditable node artifact for review and meta-harness diagnosis.
+- Actual behavior:
+  - `normalizeHypothesisCandidate(...)` replaces an omitted evidence list with a panel evidence ID.
+  - The hard gate counts unknown evidence IDs without checking that they resolve to an evidence seed.
+  - Both malformed candidates are accepted as LLM-grounded probe candidates.
+- Fresh vs existing session comparison:
+  - Fresh session: a focused unit reproduction fails for both omitted and unknown evidence references before repair.
+  - Existing session: the same normalization and hard-gate code is reused after reload, so no persisted-session-specific behavior is expected.
+  - Divergence: none; the defect is deterministic and independent of persisted-session state.
+- Root-cause hypothesis:
+  - Type: research-integrity gate bug.
+  - Normalization performs semantic completion of provenance fields, while the hard gate validates only reference count rather than referential integrity.
+- Code/test changes:
+  - Stopped normalization from inventing missing evidence links and required every supplied ID to resolve against the curated evidence panel.
+  - Preserved rejection artifacts and added staged and single-pass regressions for missing and unknown provenance.
+- Regression status: missing and unknown evidence links are now rejected without provenance injection, staged and single-pass rejection records are preserved, and the focused planning/node suites pass 37/37 with TypeScript clean on 2026-07-28.
+- Follow-up risks: evidence-axis provenance follows the same fallback-injection pattern and must be repaired in the same work radius; deterministic fallback hypotheses may retain explicit provenance only when it is derived directly from a real input evidence seed.
+- Evidence/artifacts: `src/core/analysis/researchPlanning.ts` and `tests/researchPlanning.test.ts`.
+
+---
+
+## Issue: LV-658
+
+- Status: open; deterministic projection reproduction complete, automated and live regression pending
+- Category: `in_memory_projection_bug` / persisted research gates lose operator-visible provenance
+- Validation target: candidate-prior search, estimator feasibility, and applied retry/backtrack decisions must remain auditable and semantically consistent across the persisted run, run-list projection, TUI, and Web UI.
+- Environment/session context: current topic-discovery implementation and the shared run projection audited on 2026-07-28.
+- Reproduction steps:
+  1. Let `design_experiments` materialize an estimator feasibility report that blocks the selected design before promotion to the executable `experiment_contract.json`.
+  2. Reload the run through the indexed run projection and inspect the Web/TUI research funnel.
+  3. Apply a retry or backward transition, reload again, and inspect the decision focus and contextual guidance.
+- Expected behavior:
+  - A non-executable candidate experiment contract remains hash-bound to the blocked estimator report without being mistaken for execution authorization.
+  - Candidate-prior plan/receipt status and estimator status are visible on both operator surfaces.
+  - The last applied transition reason survives the compact run-list projection.
+  - Retry/backtrack guidance describes applying or executing that transition rather than approving forward progress.
+- Actual behavior:
+  - A blocked estimator report can be persisted without the candidate experiment contract it evaluated, so its mathematical decision cannot be reconstructed after reload.
+  - Candidate-prior and estimator artifacts are absent from the common research-funnel projection; the UI can still emphasize probe authorization even when estimator execution is blocked.
+  - `projectRunRecord(...)` removes all transition history while TUI/Web presentation searches that history for the last applied backtrack.
+  - contextual guidance may describe `/approve` as continuing the workflow for a non-forward pending transition.
+- Fresh vs existing session comparison:
+  - Fresh session: in-memory full run records retain transition history.
+  - Existing session: indexed or reloaded projections intentionally strip it, creating a deterministic resume mismatch for the operator-visible reason.
+  - Divergence: the compact persisted projection loses provenance that remains available before reload.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Execution authority, diagnostic candidate state, and compact operator projection were evolved independently, leaving no explicit summary contract across their boundaries.
+- Code/test changes:
+  - Pending: persist the evaluated candidate contract, add candidate-prior and estimator status to the common projection, preserve the last applied transition summary, and align retry/backtrack guidance across TUI and Web.
+- Regression status: pending candidate-contract persistence, common projection coverage, Web/TUI rendering tests, and same-flow rebuilt validation.
+- Follow-up risks: diagnostic candidate artifacts must never authorize implementation or execution; only the promoted official experiment contract plus a passing estimator bundle may cross the execution gate.
+- Evidence/artifacts: `src/core/nodes/designExperiments.ts`, `src/core/estimatorFeasibilityGate.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/runs/runStore.ts`, `src/tui/runProjection.ts`, `src/tui/contextualGuidance.ts`, and `web/src/App.tsx`.
+
+---
+
+## Issue: LV-657
+
+- Status: closed after rebuilt active-write Firefox and API stress validation on 2026-07-28
+- Category: `race_timing_bug` / artifact listing observes atomic-write temp files
+- Validation target: artifact polling during active writes must expose only durable artifacts and tolerate a file disappearing between directory enumeration and metadata lookup.
+- Environment/session context: rebuilt Firefox Web flow for run `a562305b-43ed-4b3b-bfbe-737cd368021b` immediately after the LV-656 repair.
+- Reproduction steps:
+  1. Create an auto-start run and let Web polling refresh run details while `run_record.json` is updated atomically.
+  2. Let `listRunArtifacts(...)` enumerate the run directory while the atomic temp file is renamed.
+  3. Observe the operator error alert.
+- Expected behavior: internal atomic-write temp files are never listed, and a vanished directory entry is skipped without hiding other I/O failures.
+- Actual behavior: artifact walking enumerated `.run_record.json.<pid>.<time>.<nonce>.tmp`, then `fs.stat(...)` raced its rename and returned `ENOENT`; the API propagated the error to the global sync alert.
+- Fresh vs existing session comparison:
+  - Fresh session: the rebuilt active-write Firefox and API stress run completed with no artifact-sync alert or failed request.
+  - Existing session: the original persisted run exposed an atomic temp filename in the global sync alert while polling overlapped a write.
+  - Divergence: the race depended on write timing, but only the pre-repair observer exposed internal temp entries.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`
+  - The artifact observer treated storage-internal temp files as public entries and assumed `readdir` results remained stable through every `stat`.
+- Code/test changes:
+  - Skip hidden atomic-write `.tmp` entries before metadata lookup.
+  - Skip only per-entry `ENOENT` races; preserve failures for other error classes.
+  - Add deterministic coverage for both a visible temp file and an entry removed after `readdir`.
+- Regression status: 35 focused artifact/session/start-gate tests, Web tests, TypeScript checking, and production build pass. A second rebuilt auto-start run completed independently while 240 run/artifact/checkpoint requests produced zero failures; Firefox displayed no sync alert.
+- Evidence/artifacts: original Firefox alert naming `.run_record.json.1155824.1785179894751.8599d5e753526.tmp`, repaired run `f5eb93c5-794b-4581-87e4-d1ea7b42f8c5`, `src/web/artifacts.ts`, and `tests/webArtifacts.test.ts`.
+
+---
+
+## Issue: LV-656
+
+- Status: closed after rebuilt same-flow Firefox validation on 2026-07-28
+- Category: `race_timing_bug` / long-lived create-run request reports a false failure after committing the run
+- Validation target: creating a run with auto-start must return the committed run immediately and move the long research execution onto the observable, cancelable session background boundary.
+- Environment/session context: Firefox Web session on `127.0.0.1:4329`, run `4fd4a443-b3c4-433f-82cb-2f903fbbbdb9`, approximately 684 seconds of `collect_papers` work.
+- Reproduction steps:
+  1. Submit a complete research brief through the Web `New run` form with auto-start enabled.
+  2. Let the research node remain active for several minutes.
+  3. Inspect the browser request list and the visible operator alert after the run has been created and executed.
+- Expected behavior: `POST /api/runs` returns after durable run creation; SSE/polling carries later node progress and the operator can cancel the background operation.
+- Actual behavior: the server awaited `createRunFromBrief(..., autoStart=true)` through the whole research execution. Firefox eventually aborted `POST /api/runs` with `NS_ERROR_ABORT`, while the persisted run continued to completion; the UI therefore showed a generic `NetworkError` alongside the real failed run.
+- Fresh vs existing session comparison:
+  - Fresh session: the rebuilt create-run flow returned the durable run and cancelable busy state before background collection completed.
+  - Existing session: the original long-lived request aborted after the run and all three collection attempts had already been committed; polling recovered state but retained the stale error alert.
+  - Divergence: durable state agreed, but only the pre-repair HTTP request lifetime reported a false client failure.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`
+  - Run creation and long-running node execution shared one HTTP request lifetime even though progress already had SSE and polling channels.
+- Code/test changes:
+  - `InteractionSession.startRunInBackground(...)` starts the existing cancelable busy action without holding the caller open and rejects a concurrent duplicate start.
+  - `POST /api/runs` now creates and snapshots the run first, then schedules auto-start on that background boundary.
+  - `tests/interactionSession.test.ts` verifies immediate busy/cancel projection, one execution, duplicate rejection, and eventual completion.
+- Regression status: 35 focused artifact/session/start-gate tests, Web tests, TypeScript checking, and production build passed. In the rebuilt real form, `POST /api/runs` returned the durable run and cancelable busy state in 6.5 seconds; `collect_papers` continued independently for 32 seconds and reached `needs_approval`.
+- Evidence/artifacts: original browser request 135 (`POST /api/runs => NS_ERROR_ABORT`), repaired run `a562305b-43ed-4b3b-bfbe-737cd368021b`, `src/web/server.ts`, and `src/interaction/InteractionSession.ts`.
+
+---
+
+## Issue: LV-655
+
+- Status: closed after adversarial repair, automated tamper coverage, and fresh real-flow validation on 2026-07-28
+- Category: research completion risk / non-reproducible family-local provider ranking
+- Validation target: provider-provenance fallback must select candidates in the deterministic retrieval order of the exact query family that retrieved them.
+- Environment/session context: current candidate-recall v4 implementation and real run `9a4fc811-00a3-42fe-bfb4-eaf26da8c642`, which includes candidates retrieved by more than one family.
+- Reproduction steps:
+  1. Retrieve one canonical paper under two query families at different family-local ranks.
+  2. Let one family require provider-provenance fallback.
+  3. Inspect the selected fallback order and candidate sidecar.
+- Expected behavior: each family owns an ordered candidate list; fallback selection, sidecar rank, and replay validation use that family-local order.
+- Actual behavior: `paperQueryFamilies` preserves only set membership, while fallback scans the global candidate map. A multi-family paper inherits its first global insertion position, and the sidecar records neither family-local rank nor canonical provider provenance.
+- Fresh vs existing session comparison:
+  - Fresh session: the repaired real flow persisted schema-v2 family-local ranks and provider provenance, including multi-family candidates.
+  - Existing session: the pre-repair collection representation retained only global insertion order and family membership.
+  - Divergence: reload reproduced whichever ordering metadata had been persisted; the old artifact lacked the information needed for family-local replay.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - The collection layer canonicalizes candidates globally before the semantic-audit layer asks for family-specific ranking, so the required order has already been discarded.
+- Code/test changes:
+  - Persisted ordered per-family retrieval provenance, family-local rank, canonical provider, and search provider in the candidate sidecar.
+  - Added family-order, rank-tamper, provider-tamper, and multi-family replay regressions.
+- Regression status: family-local order, rank tamper, provider tamper, and multi-family replay tests pass. The fresh run persisted schema-v2 rows with per-family ranks and canonical/search-provider provenance, including candidates retrieved under multiple families.
+- Evidence/artifacts: `src/core/nodes/collectPapers.ts`, `src/core/collection/topicDiscoverySemanticAudit.ts`, `src/core/runs/topicDiscoverySemanticLineage.ts`, and run `4fd4a443-b3c4-433f-82cb-2f903fbbbdb9` attempt `20260727184847930-3af1ef1971b8`.
+
+---
+
+## Issue: LV-654
+
+- Status: closed by exact-span semantic-evidence repair and focused adversarial regression on 2026-07-28
+- Category: research completion risk / provider-recall evidence re-gated by lexical matching
+- Validation target: a provider-provenance candidate using a valid acronym or scholarly synonym must be eligible for `direct_support` when the reviewer supplies an exact, bounded, non-anchor-only span from the local title or abstract.
+- Environment/session context: candidate-recall semantics v4 and semantic-audit v4.
+- Reproduction steps:
+  1. Supply a family whose axis uses one scientific term and a provider-retrieved paper whose title uses a non-lexical synonym.
+  2. Request semantic review through `provider_provenance_floor`.
+  3. Return `direct_support` with an exact local span expressing the synonym.
+- Expected behavior: the exact-span and conservative semantic verdict gate the fallback candidate without silently reinstating the lexical prefilter.
+- Actual behavior: `validEvidenceSpan(...)` requires the span to contain a literal normalized axis token. The candidate can reach the reviewer but cannot become direct support, so acronym/synonym recovery is illusory.
+- Fresh vs existing session comparison:
+  - Fresh session: deterministic provider-fallback fixtures exercised synonym and acronym evidence while rejecting anchor-only spans.
+  - Existing session: the fresh real corpus reached direct support through a lexical candidate, so the provider-synonym branch remained unexercised in that persisted run.
+  - Divergence: no conflicting behavior was observed; live coverage was narrower than the deterministic regression coverage.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Evidence validation reused the lexical-axis condition that provider fallback was introduced to bypass.
+- Code/test changes:
+  - Decoupled bounded exact-span validation from literal axis-token matching for provider-provenance fallback rows.
+  - Retained conservative rejection for anchor-only spans and added synonym/acronym regressions.
+- Regression status: provider-fallback synonym/acronym acceptance and anchor-only evidence rejection tests pass. The fresh real flow also exercised exact-span validation without protocol violations; its sole direct-support paper arrived lexically, so the provider-synonym branch remains covered deterministically rather than by that live corpus.
+- Evidence/artifacts: `src/core/collection/topicDiscoverySemanticAudit.ts`, `tests/topicDiscoverySemanticAudit.test.ts`, and run `4fd4a443-b3c4-433f-82cb-2f903fbbbdb9`.
+
+---
+
+## Issue: LV-653
+
+- Status: closed after independent decision reconstruction, coordinated-tamper regression, and fresh UI projection validation on 2026-07-28
+- Category: research completion risk / self-attested collection quality authorization
+- Validation target: research-funnel authorization must independently reconstruct the fixed numeric floors, family independence, retained inventory, publication flags, and exact direct-support evidence before trusting `collect_corpus_quality.json`.
+- Environment/session context: current semantic lineage validator and research-funnel projection after the v4/v6 transition.
+- Reproduction steps:
+  1. Construct hash-consistent semantic input, review, quality, and candidate sidecars for one paper and one family.
+  2. Set `quality.passed=true` while preserving internally consistent pair/count fields.
+  3. Load the research-funnel projection.
+- Expected behavior: authorization fails because the fixed floors require eight direct-support papers, two independent families, two direct-support papers per family, and semantic precision at least 0.5.
+- Actual behavior: the shared semantic-lineage validator checks versions, hashes, pair/source maps, and counts but trusts `passed=true`; the existing one-paper fixture is therefore authorized.
+- Fresh vs existing session comparison:
+  - Fresh session: a coordinated hash-consistent forged-pass fixture was rejected after independent decision reconstruction, and a fresh failed corpus projected `Not authoritative`.
+  - Existing session: pre-repair artifacts could remain internally hash-consistent while carrying a self-attested passing decision below fixed evidence floors.
+  - Divergence: the repaired projection recomputes the same decision after reload instead of trusting the persisted boolean.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Authorization validates artifact consistency but not the scientific decision function represented by those artifacts.
+- Code/test changes:
+  - Recomputed fixed global, per-family, precision, independent-family, retained-inventory, and publication predicates from bound source artifacts.
+  - Added forged-pass, coordinated-tamper, threshold, inventory, publication-flag, and UI projection regressions.
+- Regression status: forged pass, thresholds, observed counts, family floors, inventory/publication flags, generic shared-anchor self-attestation, and coordinated hash tamper tests pass. The fresh failed corpus projected `Not authoritative` and did not authorize a probe.
+- Evidence/artifacts: `src/core/runs/topicDiscoverySemanticLineage.ts`, `src/core/runs/researchFunnelProjection.ts`, `tests/researchFunnelProjection.test.ts`, and the Web projection for run `4fd4a443-b3c4-433f-82cb-2f903fbbbdb9`.
+
+---
+
+## Issue: LV-652
+
+- Status: closed after bounded partition recovery and fresh same-flow Web validation on 2026-07-28
+- Category: `race_timing_bug` / semantic-review timeout after bounded recall
+- Validation target: the bounded provider-recall batch must complete or degrade through an auditable bounded retry without learning false query feedback.
+- Environment/session context: real TUI run `9a4fc811-00a3-42fe-bfb4-eaf26da8c642`, Codex research backend, 337 governance-usable candidates, 12 requested paper-family pairs.
+- Reproduction steps:
+  1. Run the governed Scientific Scope brief after the LV-651 recall repair.
+  2. Let three query families fill a four-pair semantic-review floor.
+  3. Wait for the single 12-pair reviewer call under the default 30-second boundary.
+- Expected behavior: the reviewer completes within a justified budget, or a bounded smaller-batch retry preserves the same pair universe and records the operational fallback.
+- Actual behavior: the reviewer timed out at 30 seconds. All 12 pairs became `uncertain`, quality failed honestly, and no query-plan rejection feedback was learned.
+- Fresh vs existing session comparison:
+  - Fresh session: before repair, the 12-pair call persisted `semantic_audit_timeout`; after repair, the same fresh flow recovered through exactly three contiguous 4-pair calls.
+  - Existing session: resume-check restored the persisted post-call node state and `/doctor` completed without re-executing collection.
+  - Divergence: the repair changes only bounded reviewer-call recovery; fresh and resumed projections agree on the resulting artifact state.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`
+  - The pair/byte cap is bounded, but the timeout policy does not account for batch size or provide a bounded partitioned retry.
+- Code/test changes:
+  - Added a bounded partitioned retry that preserves the exact pair universe, non-overlap, parent abort, and total deadline constraints.
+  - Added timeout-only partition, exhaustion, and no-outer-retry regressions.
+- Regression status: timeout-only partition, non-overlap, exact-universe, call/deadline cap, parent-abort, exhaustion, and runtime no-outer-retry tests pass. In the fresh run, a 12-pair primary timeout recovered through exactly three contiguous 4-pair calls; collection was not re-executed for the operational timeout.
+- Evidence/artifacts: run `4fd4a443-b3c4-433f-82cb-2f903fbbbdb9` attempt `20260727184847930-3af1ef1971b8`, `src/core/collection/topicDiscoverySemanticAudit.ts`, and `tests/topicDiscoverySemanticAudit.test.ts`.
+
+---
+
+## Issue: LV-651
+
+- Status: closed after provider-recall repair and downstream LV-652 through LV-655 closure on 2026-07-28
+- Category: research completion risk / semantic-review recall starvation
+- Validation target: provider-retrieved papers with valid query-family provenance must receive a bounded opportunity for semantic review even when their titles or abstracts use terminology not captured by the lexical normalizer. Lexical matching should prioritize reviewer input, not be the only route into it.
+- Environment/session context: original run `d89c47a3-0fdb-4fc0-8fbf-95e893babdbc` and repaired run `9a4fc811-00a3-42fe-bfb4-eaf26da8c642` in `<validation-workspace>`, Codex research backend, cross-provider collection, Scientific Scope contract version 3, query-plan version 4, candidate-recall semantics version 4.
+- Reproduction steps:
+  1. Run the governed topic-discovery brief over a scientific object with multiple declared uncertainty axes.
+  2. Let `collect_papers` execute the bounded cross-provider query families.
+  3. Inspect the candidate sidecar, lexical pool, and semantic-review input for the final attempt.
+  4. Compare provider retrieval counts with requested semantic paper-family pairs.
+- Expected behavior: lexical matches enter semantic review first. If a query family remains below a small reviewer-candidate floor, top governance-usable papers retrieved for that exact family are added under a deterministic per-family and global budget. Only an explicit `direct_support` judgment with an exact supplied evidence span may count toward corpus quality.
+- Actual behavior: the two final query families retrieved approximately 119 and 122 family-result records, but only one paper-family pair survived the lexical prefilter and reached semantic review. `topicDiscoveryCandidateRows` retains the broader provider result pool and its family provenance, yet `runTopicDiscoverySemanticAudit(...)` receives only `topicDiscoveryLexicalRows` and `lexicalMatchedFamilyIdsByPaper`. The semantic reviewer therefore cannot recover acronym, synonym, or alternate scholarly phrasing missed by lexical normalization.
+- Fresh vs existing session comparison:
+  - Fresh session: final collection attempt requested and reviewed one pair, yielding one direct-support judgment but failing the unchanged evidence floors.
+  - Existing session: the resumed run reconstructed the same one-pair review and failed quality state.
+  - Divergence: none; the starvation is persisted consistently and originates before review execution.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Confirmed boundary: provider provenance is recorded for every governance-usable candidate, but the projection into semantic-review pairs is restricted to lexical matches. The candidate sidecar and lineage validator also encode `semantic_review_requested` as equivalent to `lexical_matched_query_families.length > 0`, making the accidental restriction part of the artifact contract.
+- Code/test changes:
+  - Added lexical-first, per-family provider-provenance recall to four requested pairs per family under the existing pair and byte caps.
+  - Preserved requested families and `selection_source` across reviewer input, review, candidate sidecar, quality, projection, and analysis lineage.
+  - Moved semantic precision to the actual audited request denominator without lowering the global, per-family, precision, or independent-family floors.
+  - Bumped candidate recall to v4, semantic audit to v4, and corpus quality to v6; stale lineage fails closed.
+- Regression status:
+  - Real-flow reproduction: complete.
+  - Automated regression: 183 focused tests passed together; TypeScript and production build passed.
+  - Same-flow revalidation: passed for recall and resume consistency. The repaired run retained 337 candidates, found 3 lexical papers, requested 12 pairs across three families, and recorded 9 provider-provenance pairs. The downstream semantic call then exposed LV-652.
+- Follow-up risks: broad query quality remains a scientific topic-selection problem, not a recall plumbing failure; the latest run correctly exhausted the unchanged evidence floors.
+- Evidence/artifacts: original final attempt `<validation-workspace>/.autolabos/runs/d89c47a3-0fdb-4fc0-8fbf-95e893babdbc/collect_attempts/20260727160748829-b9c692c27135/`; repaired runs `<validation-workspace>/.autolabos/runs/9a4fc811-00a3-42fe-bfb4-eaf26da8c642/` and `<validation-workspace>/.autolabos/runs/4fd4a443-b3c4-433f-82cb-2f903fbbbdb9/`; and the affected collection, semantic-audit, quality, projection, and analysis modules.
+
+---
+
+## Issue: LV-650
+
+- Status: closed as a validation false positive after direct Chromium remeasurement; no product patch made
+- Category: validation interpretation error, not a confirmed interactive defect
+- Validation target: determine whether long Inspector logs overlap the command form at desktop or mobile widths.
+- Environment/session context: latest built Web UI served from `<validation-workspace>` on `127.0.0.1:4329`, showing persisted run `d89c47a3-0fdb-4fc0-8fbf-95e893babdbc`; real headless Chromium was measured at `1440x1000` and `390x844`.
+- Reproduction steps:
+  1. Open the Logs Inspector tab for a run with long replay logs.
+  2. Record `getBoundingClientRect()`, `clientHeight`, `scrollHeight`, computed `overflow`, and computed grid tracks for the Inspector body and command form.
+  3. Repeat at desktop and mobile viewport widths.
+- Expected behavior: the body bounding box ends before the command form begins, while oversized log content remains inside an `overflow: auto` scroll container.
+- Actual behavior:
+  - Desktop: the body is `513px` high and ends at `y=812`; the command form starts at `y=826`. The body's `2246px` value is `scrollHeight`/intrinsic content track size, not its rendered bounding-box height.
+  - Mobile: the body is approximately `303.8px` high and ends near `y=6782.9`; the command form starts near `y=6796.9`. The `2408px` value is again intrinsic scroll content, not rendered body height.
+  - Both modes have a positive 14px separation and `overflow: auto`; no sibling bounding boxes intersect.
+- Fresh vs existing session comparison:
+  - Fresh session: a fresh Chromium session measured positive separation at both desktop and mobile viewport widths.
+  - Existing session: the persisted run rendered the same non-overlapping geometry when reopened; its long logs remained inside the scroll container.
+  - Divergence: none; the suspected overlap was a measurement-interpretation error, not a session-state defect.
+- Root-cause hypothesis:
+  - Type: rejected `refresh_render_bug` hypothesis; validation false positive.
+  - The initial observation confused computed inner grid-track/scroll-content height with the scroll container's bounding-box height.
+  - Direct element geometry rejected the `refresh_render_bug` hypothesis before any CSS change was made.
+- Code/test changes: no product code changed. The project validation skill now requires geometry and scroll-boundary checks before classifying an overlap defect.
+- Regression status:
+  - Real-browser remeasurement: passed at `1440x1000` and `390x844`.
+  - Product regression test: not applicable because no product defect or behavior change remains.
+- Follow-up risks: screenshots alone can still hide clipping or inaccessible controls; future checks should combine visual inspection, geometry, overflow state, and keyboard/scroll reachability.
+- Evidence/artifacts: Playwright evaluation output for the two viewports, `outputs/playwright/fresh-run-web.png`, `web/src/App.tsx`, and `web/src/styles.css`.
+
+---
+
+## Issue: LV-649
+
+- Status: resolved in automated projection coverage and a rebuilt real Web session
+- Category: `in_memory_projection_bug` / Doctor readiness field loss
+- Validation target: the Web Doctor readiness summary must project the same configured backend, PDF analysis mode, and candidate-isolation policy computed by the core Doctor report.
+- Environment/session context: latest built Web UI served from `<validation-workspace>` on a separate localhost port after the fresh TUI run `df61b437-39e4-454a-a66d-20d1215abf35`.
+- Reproduction steps:
+  1. Start the latest built Web server from the live-validation workspace.
+  2. Open the Web UI in a real Chromium browser and select the Doctor inspector tab.
+  3. Compare the readiness cards with `/api/doctor` and the configured runtime checks.
+- Expected behavior: the readiness cards identify the configured Codex backend/PDF mode and `attempt_snapshot_restore` isolation policy.
+- Actual behavior: the Doctor checks correctly report the configured Codex model and attempt-snapshot isolation, while the readiness cards show `unknown / unknown` and `not-configured`.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a fresh Web server/browser session.
+  - Existing session: the response mapping is shared and omits the same fields independently of selected-run history.
+  - Divergence: no; the field loss occurs in both `/api/doctor` response branches.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Hypothesis: `runDoctorReport(...)` computes `llmMode`, `pdfAnalysisMode`, and `candidateIsolation`, but `src/web/server.ts` manually reconstructs a narrower readiness object and drops those fields before serialization.
+- Code/test changes:
+  - Code: `src/web/doctorProjection.ts` now owns the typed Doctor readiness API projection, and both configured and unconfigured branches in `src/web/server.ts` use it.
+  - Tests: `tests/webDoctorReadinessProjection.test.ts` covers backend, PDF, isolation, network, session, dependency, and approval fields; the existing Web Doctor rendering test remains green.
+- Regression status:
+  - Automated regression test linked: passing (`tests/webDoctorReadinessProjection.test.ts`, `tests/doctorHarnessIntegration.test.ts`, and the targeted Web Doctor UI test).
+  - Re-validation result: `/api/doctor` returns `llmMode=codex`, `pdfAnalysisMode=codex_text_image_hybrid`, and `candidateIsolation=attempt_snapshot_restore`; a fresh Chromium session displayed all three values with zero `unknown` and no `not-configured` fallback.
+- Follow-up risks: manual response projections can drift again when the core readiness schema grows; the shared mapper must remain the single API boundary.
+- Evidence/artifacts: `/api/doctor`, a local browser recheck screenshot (not committed), `src/core/doctor.ts`, `src/web/doctorProjection.ts`, `src/web/server.ts`, `tests/webDoctorReadinessProjection.test.ts`, and `web/src/App.tsx`.
+
+---
+
+## Issue: LV-648
+
+- Status: resolved in fresh and resumed real TUI sessions
+- Category: research completion risk / semantic-review candidate recall defect
+- Validation target: topic-discovery retrieval candidates that satisfy the declared scientific anchor and express an authorized axis through normalized scientific terminology must reach the bounded semantic reviewer; the lexical prefilter must not silently convert semantic review into an empty no-op.
+- Environment/session context: original real TUI run `4d4a49a8-0d5c-42e1-988b-94ae57c803b1` and repaired fresh run `d89c47a3-0fdb-4fc0-8fbf-95e893babdbc` in `<validation-workspace>`, Codex research backend, cross-provider collection, Scientific Scope contract version 3, candidate-recall semantics version 3.
+- Reproduction steps:
+  1. Start the governed topic-discovery brief whose scientific object is `language model evaluation` and whose authorized axes include finite-sample uncertainty and comparative stability.
+  2. Let `collect_papers` retrieve across Semantic Scholar, OpenAlex, Crossref, and arXiv for three bounded query-plan attempts.
+  3. Inspect the archived candidate `arxiv:2504.21303`, whose title and abstract directly discuss language-model evaluation, limited samples, probabilistic uncertainty, and model ranking.
+  4. Inspect `collect_topic_discovery_candidates.jsonl` and `collect_semantic_review.json`: the paper has no lexical family match, `semantic_review_requested=false`, and the completed semantic review contains zero requested pairs.
+- Expected behavior: authorized scientific variants such as `finite sample` and `limited-sample` share a normalized representation before the recall prefilter. The candidate is forwarded to the bounded reviewer, while the unchanged semantic precision and per-family evidence floors decide whether it can enter the corpus.
+- Actual behavior: scope/query validation normalizes some derivational variants, but corpus relevance uses a separate shallow token normalizer. The prefilter therefore requires an exact `finite` token even when the paper says `limited-sample`, excludes the otherwise direct candidate, and records a vacuous complete semantic review with zero pairs.
+- Fresh vs existing session comparison:
+  - Fresh session: the original run exhausted `collect_papers` with zero review pairs; the repaired fresh attempt forwarded the limited-sample candidate and recorded one reviewed `direct_support` pair.
+  - Existing session: `validation:resume-check` reconstructed the repaired run's same final failed collection state and `/doctor` completed successfully.
+  - Divergence: none after repair; persisted artifacts and resumed TUI agree. The final run still failed honestly because one direct-support paper does not satisfy the eight-paper global floor, the two-paper per-family floor, or the two-independent-family floor.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`
+  - Confirmed cause: topic-discovery scope validation and corpus relevance maintained separate scientific-term normalization paths. The candidate-to-review projection applied complete-axis lexical matching before semantic review, so semantically equivalent finite/limited-sample variants could not reach the component intended to judge semantic support.
+- Code/test changes:
+  - Code: `src/core/topicDiscoveryScientificTerms.ts` now owns conservative scientific and phrase-context candidate normalization; finite-sample surface variants share a canonical family signature, while unrelated limit concepts remain distinct. `src/core/literatureQueryGeneration.ts` deduplicates only exact canonical family signatures. Corpus and semantic-review paths use the shared semantics without lowering final quality floors.
+  - Budget safety: semantic-review pairs are selected round-robin across families, the 64-pair cap is deterministic, and even an oversized base envelope now respects the declared byte hard cap without calling the reviewer.
+  - Lineage safety: query-plan producer and analyzer share the v4 artifact contract, and research-funnel authorization now requires complete semantic input, review, and candidate sidecar lineage.
+  - Tests: finite/limited/sample-limited equivalence, detection-limit false-positive prevention, independent-axis preservation, family-floor deduplication, byte-cap enforcement, collect-to-analyze contract compatibility, and semantic sidecar tamper cases are covered.
+- Regression status:
+  - Automated regression test linked: 181 planner/collect/corpus/semantic/funnel/analyze tests passed together; public-code sanitization passed; TypeScript and Web production build passed.
+  - Re-validation result: fresh `validation:start-live` and resumed `validation:resume-check` passed. The repaired attempt produced a non-vacuous semantic review and the unchanged corpus gate rejected insufficient evidence.
+- Follow-up risks: external provider recall remains the next research bottleneck. Only one direct-support paper was recovered, so the next run must improve independent query-family design or source acquisition rather than lower semantic precision or evidence floors.
+- Evidence/artifacts: original attempt `<validation-workspace>/.autolabos/runs/4d4a49a8-0d5c-42e1-988b-94ae57c803b1/collect_attempts/20260727140515620-428bf99e6f5c/`; repaired attempt `<validation-workspace>/.autolabos/runs/d89c47a3-0fdb-4fc0-8fbf-95e893babdbc/collect_attempts/20260727160748829-b9c692c27135/`; and `outputs/live-validation-scientific-scope-v4-contract-20260728/live-validation-{start,resume-check}-output.txt`.
+
+---
+
+## Issue: LV-647
+
+- Status: reproduced by adversarial route-to-execution audit; repair in progress
+- Category: research completion risk / successor scientific-contract drift
+- Validation target: each delegated successor must execute the scientific target authorized by its route, with a hash-bound target candidate or frozen comparison and a child-owned compute contract; an autonomous child must not satisfy a route by silently designing a different study.
+- Environment/session context: current worktree while LV-646 generalizes the five topic-probe successor routes.
+- Reproduction steps:
+  1. Produce `try_deferred_candidate` from a rejected active candidate whose contract lists one or more deferred candidate IDs.
+  2. Inspect `topic_probe_followup_handoff.json` and the child lineage: the handoff binds the rejected active candidate and only lists deferred IDs in prose; it does not bind the parent portfolio, select one successor candidate, or carry that candidate's content hash and scientific contract.
+  3. Follow a repeat, evidence-repair, or confirmatory child through `collect_papers`, `generate_hypotheses`, and `design_experiments` and observe that no machine gate compares the resulting design target with the route's frozen source contract.
+  4. Observe that the implementation and execution budget consumers previously treated every successor as confirmatory and read the copied parent contract even when a topic-discovery child generated its own active contract.
+- Expected behavior: the route authority names exactly what may change. Confirmatory, repeat, and evidence-repair routes preserve every frozen scientific field and fail closed on drift. Deferred-candidate routing deterministically selects one candidate from the hash-bound parent portfolio and carries its complete candidate-owned contract. Portfolio refresh permits a new candidate but preserves the rejected-candidate exclusion and evidence ceiling. Implementation and execution consume the child-owned active contract for every topic-discovery successor and the frozen source contract only for confirmatory execution.
+- Actual behavior: route metadata is durable, but the downstream scientific target is partly prose-governed. A valid delegated child can regenerate a different candidate or design while retaining a receipt whose hashes cover only the parent outcome and rejected active candidate.
+- Fresh vs existing: deterministic for fresh children because the gap is in handoff and design authorization. Resume preserves the route receipt but cannot reconstruct a missing selected deferred candidate or prove that a regenerated design matches the authorized route.
+- Root-cause hypothesis: promotion was generalized at the orchestration layer before a route-owned scientific-contract projection was defined. Lineage proves where a child came from, but not yet that the child's design is the only design authorized by that route.
+- Code/test changes: shared compute-contract source policy is implemented and route-matrix tested. Pending work is a hash-bound route target, deterministic deferred-candidate selection, design-time contract matching, refresh exclusion, adversarial drift tests, and same-flow live validation.
+- Regression status: pending.
+- Evidence/artifacts: `src/core/topicProbeFollowup.ts`, `src/core/topicProbeFollowupRun.ts`, `src/core/runs/topicProbeSuccessorLineage.ts`, `src/core/runs/researchRunModeGuard.ts`, `src/core/nodes/designExperiments.ts`, `src/core/agents/implementSessionManager.ts`, `src/core/nodes/runExperiments.ts`, and successor-focused tests.
+
+---
+
+## Issue: LV-646
+
+- Status: reproduced by adversarial architecture audit; repair in progress
+- Category: research completion risk / autonomous successor-delegation dead end
+- Validation target: every validated topic-probe outcome must either create exactly one hash-bound governed successor or fail closed; `pause_for_human` must remain terminal in every automation mode, while only an explicit machine-delegation transition may be consumed automatically.
+- Environment/session context: current worktree after the typed topic-opportunity and bounded-probe outcome contracts were added; the defect is present in the shared review, promotion, and autonomous-controller paths.
+- Reproduction steps:
+  1. Produce a valid topic-probe outcome whose next action is `repeat_bounded_probe`, `try_deferred_candidate`, `refresh_topic_portfolio`, or `repair_probe_evidence`.
+  2. Let `review` persist its valid follow-up handoff and gate.
+  3. Observe that review emits `pause_for_human`, the autonomous controller treats that nominally terminal signal as one special confirmatory-consumption hook, and the follow-up manager returns `not_applicable` for every non-confirmatory route.
+  4. Restart after reservation, child creation, or lease claim and inspect whether a single durable successor lineage can be recovered without creating another child.
+- Expected behavior: review emits a distinct `delegate_successor` recommendation only for a complete hash-bound gate and handoff. All five next-action routes derive an explicit successor relation, research mode, evidence stage, immutable receipt, deterministic child id, and fenced one-shot execution. Manual pauses are never auto-consumed. A resumed controller follows the same unique lineage and does not duplicate or silently abandon a successor.
+- Actual behavior: only `promote_to_confirmatory -> start_confirmatory_run` creates a child. Repeat, deferred-candidate, portfolio-refresh, and evidence-repair outcomes stop at `manual_review_required`; the confirmatory exception is reached through `pause_for_human`, contradicting the terminal human-pause contract.
+- Fresh vs existing: a fresh confirmatory route may appear autonomous because of the controller exception; every other fresh route stops. Existing sessions additionally depend on whether reservation, child initialization, or lease state was persisted before interruption.
+- Root-cause hypothesis: follow-up handoff generation supports five routes, but the execution manager, run role, lineage manifest, mode guard, and controller were specialized to confirmation and reused the human-pause action as an implicit machine authority.
+- Code/test changes: pending route-generic successor relation and lineage schemas, explicit machine-delegation action, generalized mode/evidence guards, one-child idempotency and fencing, controller chain recovery, route matrix tests, full CI, and same-flow TUI/Web revalidation.
+- Regression status: pending.
+- Evidence/artifacts: `src/core/nodes/review.ts`, `src/core/topicProbeReviewGate.ts`, `src/core/topicProbeFollowup.ts`, `src/core/topicProbeFollowupRun.ts`, `src/core/runs/runPromotionStore.ts`, `src/core/runs/researchRunModeGuard.ts`, `src/core/agents/autonomousRunController.ts`, `src/types.ts`, and their focused tests.
+
+---
+
+## Issue: LV-645
+
+- Status: repair implemented; focused TUI/Web regressions and persisted-run Web verification passed; same-flow current-build TUI revalidation pending
+- Category: `in_memory_projection_bug` / stale collection-generation authorization state
+- Validation target: a new or retried collection generation must never project quality, authorization, failure detail, or attempt counts from an older generation; Web and TUI must derive the same fail-closed state from the persisted artifacts.
+- Environment/session context: an exhausted topic-discovery run with nine cumulative node executions, a current `collect_papers` retry generation, and older v4 quality/reformulation artifacts still present on disk.
+- Reproduction steps:
+  1. Persist a completed collection attempt and its v4 quality, then begin a newer generation without deleting the older artifacts.
+  2. Load the run through the TUI/Web projection while the newer generation is running.
+  3. Observe the old quality disposition and error note projected against the new generation, an attempt count such as `8/3`, and downstream authorization that is not revoked by an incomplete collection gate.
+- Expected behavior: generation mismatch projects `collecting`, clears stale error/note and reformulation hints, reports a bounded current attempt count, preserves the exact collection failure class when the generation finishes, and blocks all probe authorization until a same-generation complete v4 pass exists.
+- Actual behavior: projection combined cumulative execution counters with the retry limit, reused older quality and error state during a new generation, and did not consistently revoke an existing downstream authorization for a retired or incomplete collection gate.
+- Fresh vs existing: a fresh run without older quality artifacts usually projects correctly; an existing or resumed run can combine the newest generation with stale persisted artifacts and expose a contradictory authorized state.
+- Root-cause hypothesis: collection projection was keyed incompletely, retry display used graph-level cumulative executions, and persisted running transitions retained old note/error fields.
+- Code/test changes: generation-keyed stale-artifact rejection, complete-v4 authorization gating, preserved failure classes, bounded attempt projection, running-state error clearing, Web collection status, and state-matrix regressions were added in `researchFunnelProjection.ts`, `runtime.ts`, TUI/Web projections, shared types, and tests.
+- Regression status: 99 focused runtime/projection tests, 31 Web tests, root/Web type checks, production build, and a persisted-run Web inspection passed. A current-build real TUI retry of the same flow remains required.
+- Evidence/artifacts: `src/core/runs/researchFunnelProjection.ts`, `src/core/stateGraph/runtime.ts`, `src/tui/runProjection.ts`, `web/src/App.tsx`, `tests/researchFunnelProjection.test.ts`, `tests/runProjection.test.ts`, `tests/stateGraphRuntime.test.ts`, and `web/src/App.test.tsx`.
+
+---
+
+## Issue: LV-644
+
+- Status: repair implemented; 66 focused regressions and production build passed; same-flow current-build TUI revalidation pending
+- Category: research completion risk / analysis-selection reproducibility defect
+- Validation target: changing paper-analysis settings or evidence semantics must reanalyze the already frozen paper selection without rerunning the stochastic selector; only a selection request, selection semantics, or corpus change may replace the selected paper set.
+- Environment/session context: run `8cbd27be-c834-46e5-ac7f-4ca665d7714d`; evidence semantics changed from 3 to 4 while the corpus and `--top-n 12` request remained unchanged.
+- Reproduction steps:
+  1. Complete `analyze_papers --top-n 12` and persist a successful reranked 12-paper manifest.
+  2. Change only the analysis fingerprint by incrementing evidence semantics for a grounding fix.
+  3. Re-run the same node and observe a new LLM rerank instead of selection reuse.
+  4. Let the 20-second rerank time out; observe deterministic fallback plus the quality guard replace the previous 12 papers with a different 7-paper set and reset all evidence.
+- Expected behavior: the 12-paper selection remains frozen and only its analyses are invalidated. The event log reports cached selection reuse plus analysis-setting reanalysis.
+- Actual behavior: `canReuseManifestSelection(...)` requires `manifest.analysisFingerprint === analysisFingerprint`, coupling selection reuse to extractor settings. A grounding-only change therefore reopens stochastic sample selection and destroys comparability.
+- Fresh vs existing: the defect requires an existing manifest; a fresh session creates one selection, while a resumed reanalysis can silently switch the empirical literature sample under an unchanged request and corpus.
+- Root-cause hypothesis: one manifest stores both selection and analysis state, and its selection-cache predicate incorrectly treats the downstream analysis fingerprint as a selection dependency.
+- Code/test changes: selection reuse now depends on the frozen selection request, selection semantics, and corpus rather than the downstream analysis fingerprint. Analysis-setting changes invalidate only analysis outputs, and tampered/missing topic-discovery lineage blocks before analysis.
+- Regression status: `tests/analyzePapers.test.ts` passed 66/66, root type checking and production build passed. The original same-run TUI reanalysis still requires current-build revalidation.
+- Evidence/artifacts: event timestamps `2026-07-27T05:24:19Z` and `2026-07-27T05:52:47Z`, `analysis_manifest.json`, `src/core/nodes/analyzePapers.ts`, and `tests/analyzePapers.test.ts`.
+
+---
+
+## Issue: LV-643
+
+- Status: repair implemented; typed synthesis, gap-map, and hypothesis regressions passed; same-flow current-build TUI revalidation pending
+- Category: research completion risk / topic-opportunity recall defect
+- Validation target: topic discovery must be able to propose reviewer-auditable opportunities from explicit author limitations, cross-paper result disagreement, boundary or transfer mismatch, missing comparator or causal control, and reproducibility gaps without weakening the closed evidence chain.
+- Environment/session context: current worktree and real topic-discovery run `8cbd27be-c834-46e5-ac7f-4ca665d7714d`; `researchGapSynthesis.ts` semantics version 2.
+- Reproduction steps:
+  1. Inspect `HypothesisEvidenceSeed` and observe that analyzed evidence rows carry method/result fields on disk but the planning seed omits them.
+  2. Inspect `prepareEvidence(...)` in `researchGapSynthesis.ts` and observe that every row whose `limitation_kind` is not exactly `scientific` is excluded before the proposer sees it.
+  3. Run the real analysis and observe the proposer message reporting only scientific limitation candidates even though the evidence store also contains grounded claims, methods, results, datasets, and metrics.
+- Expected behavior: explicit limitations remain the highest-trust route, while additional opportunity types use their own typed signal, independent-paper requirement, exact grounded spans, adversarial review, and downstream validation. A topical similarity or unsupported inference must still fail closed.
+- Actual behavior: the synthesis contract equates research opportunity discovery with clustering explicit author limitation statements. Cross-paper contradictions, transfer boundaries, comparator omissions, and reproducibility failures are unrepresentable regardless of evidence quality.
+- Fresh vs existing: deterministic for both fresh and resumed runs because the loss occurs in the synthesis input contract before cache or UI projection.
+- Root-cause hypothesis: the repaired limitation-specific gate was promoted into the only semantic discovery path instead of remaining one high-precision opportunity lens among several independently validated lenses.
+- Code/test changes: synthesis schema 2 and semantics 3 now preserve method/result fields and five `opportunity_type` routes with exact grounded full-text signals, independent canonical works, shared-frame checks, type-specific reviewer conditions, deep reuse validation, and typed gap-map replay. Opportunity types remain attached through the hypothesis governance prompt.
+- Regression status: 23 synthesis, 24 funnel, 35 funnel-integrity, and 12 hypothesis-node tests passed with root type checking. A real current-build analysis/generation flow still must confirm the new artifacts and UI projection.
+- Evidence/artifacts: `src/core/analysis/researchPlanning.ts`, `src/core/analysis/researchGapSynthesis.ts`, `src/core/researchFunnel.ts`, the real `evidence_store.jsonl`, and `analysis/gap_synthesis.json`.
+
+---
+
+## Issue: LV-642
+
+- Status: repair implemented; semantic-universe and fail-closed regressions passed; same-flow current-build TUI revalidation pending
+- Category: research completion risk / literature-family semantic precision defect
+- Validation target: broad topic discovery must retrieve independently useful scientific lenses while distinguishing work about the target method or measurement problem from domain applications that merely repeat all query terms.
+- Environment/session context: real run `8cbd27be-c834-46e5-ac7f-4ca665d7714d`; final query families were uncertainty estimation, benchmark contamination, and benchmark reliability under the shared anchor `large language models`.
+- Reproduction steps:
+  1. Inspect `collect_query_plan.json` and the shared-anchor plus three-axis contract.
+  2. Inspect `collect_corpus_quality.json`: 236 papers were retrieved, 27 passed lexical proximity, relevant share was 0.1144, and the corpus still passed all gates.
+  3. Inspect the seven retained `benchmark reliability` papers and observe multiple medical, literary-analysis, drug-information, and generic application benchmarks rather than general evaluation-reliability methods.
+  4. Observe that exact anchor/axis term proximity is sufficient for per-family relevance and no family intent or contribution-scope check distinguishes a method paper from an application paper.
+- Expected behavior: each family declares and satisfies a scientific search lens or contribution intent; the quality artifact exposes semantic precision and blocks or repairs a family dominated by off-scope applications while preserving genuinely supported families.
+- Actual behavior: three lexically distinct axes sharing a generic object anchor are treated as independent research clusters. Application papers can satisfy every deterministic term gate and authorize downstream analysis despite weak methodological coverage.
+- Fresh vs existing: the same accepted corpus and family counts persist across resume because the defect is in query-family construction and quality classification, not rendering.
+- Root-cause hypothesis: topic-family independence is defined by token-set differences, and corpus relevance is defined by anchor-axis proximity, with no typed search lens, contribution intent, or bounded semantic precision audit.
+- Code/test changes: query families now bind lens, contribution intent, and a recomputed contract fingerprint. The full lexical pair universe is reviewed before corpus capping; candidates retain retrieval/lexical/semantic/publication states; partial or unavailable semantic review cannot update query feedback; analyze independently rebuilds the pair universe and verifies immutable attempt manifests and fixed v4 floors.
+- Regression status: 91 focused collect/quality/semantic tests, 66 analyze tests, root type checking, and production build passed. The latest real run used an older build and correctly failed the quality gate, so the repaired current build still requires the same-flow TUI retry.
+- Evidence/artifacts: the real `collect_query_plan.json`, `collect_corpus_quality.json`, `corpus.jsonl`, `src/core/literatureQueryGeneration.ts`, `src/core/collection/topicDiscoveryCorpusQuality.ts`, and `src/core/nodes/collectPapers.ts`.
+
+---
+
+## Issue: LV-641
+
+- Status: reproduced in a same-flow real TUI rerun; repair in progress
+- Category: research completion risk / full-text grounding false negative
+- Validation target: Responses PDF analysis must validate verbatim evidence spans against a lossless local extraction of the same PDF, while keeping the bounded section-aware excerpt used for local-model prompt budgeting separate.
+- Environment/session context: current-build rerun of `analyze_papers --top-n 12` for run `8cbd27be-c834-46e5-ac7f-4ca665d7714d` under `<validation-workspace>/.live/topic-discovery-20260727-c`; evidence semantics version 3; actual Web UI at the same run showed the evidence chain blocked while analysis was running.
+- Reproduction steps:
+  1. Reanalyze a cached ACL PDF through the Responses PDF path.
+  2. Observe that the extractor returns a contiguous author limitation sentence from the PDF.
+  3. Compare the sentence with `analysis_cache/texts/<paper>.v2.txt` and the cached PDF.
+  4. Observe that the local cache contains only page heads/tails with `[PAGE EXCERPT]`; the sentence lies in a discarded page middle and is therefore marked `ungrounded_span` with confidence capped at `0.35`.
+- Expected behavior: model-input truncation remains bounded, but exact-span verification uses the lossless local PDF text; a verbatim sentence present in the PDF is grounded, while text absent from the complete extraction remains blocked.
+- Actual behavior: `ResolvedPaperSource.text` serves both prompt budgeting and provenance verification. `buildSectionAwarePdfText(...)` intentionally drops page interiors, so genuine full-PDF evidence returned by the Responses path is rejected solely because the verifier's local copy is lossy.
+- Fresh vs existing: the defect reproduces on a same-node rerun with newly invalidated analysis cache semantics; old cached PDFs make the failure faster but do not cause it. Freshly downloaded PDFs follow the same lossy extraction path.
+- Root-cause hypothesis: one bounded `text` field conflates model prompt context with the complete grounding corpus; the Responses path reads the full PDF remotely but `calibrateEvidenceRows(...)` checks only the bounded local excerpt.
+- Code/test changes: pending separate lossless grounding text/cache fields, full-PDF source-scope projection for the Responses path, exact-span regression coverage, build, and same-flow TUI/Web revalidation.
+- Regression status: pending.
+- Evidence/artifacts: actual `evidence_store.jsonl`, cached PDF and `.v2.txt` for `doi:10.18653/v1/2024.findings-acl.716`, `src/core/analysis/paperText.ts`, `src/core/analysis/paperAnalyzer.ts`, `tests/paperText.test.ts`, and `tests/paperAnalyzer.test.ts`.
+
+---
+
+## Issue: LV-640
+
+- Status: reproduced by adversarial closed-chain inspection; repair in progress
+- Category: `in_memory_projection_bug` / research authorization trust gap
+- Validation target: every topic-discovery trust or probe-authorization projection must re-derive gap support from the exact persisted evidence store, reviewed synthesis, analysis coverage, corpus binding, and prompt/semantics versions before presenting the chain as trusted or allowing experiment design.
+- Environment/session context: current worktree after LV-639 evidence-v2 and reviewed-synthesis enforcement; actual run `8cbd27be-c834-46e5-ac7f-4ca665d7714d` under `<validation-workspace>/.live/topic-discovery-20260727-c` is being reanalyzed in the real TUI.
+- Reproduction steps:
+  1. Inspect `loadResearchFunnelProjection(...)` and both topic-discovery calls in `design_experiments`.
+  2. Observe that they call `validateResearchFunnelClosedChain(...)` with `analysis/gap_map.json` but without `evidence_store.jsonl`, `corpus.jsonl`, or `analysis/gap_synthesis.json`.
+  3. Supply a self-consistent, rehashed gap map whose evidence identifiers do not exist in the persisted evidence store.
+  4. Observe that the gap validator skips `validateGapLinksAgainstEvidence(...)` whenever external evidence is absent, so gap gates can be projected as trusted and a retired/rehashed chain can reach design authorization logic.
+- Expected behavior: missing, malformed, hash-mismatched, ungrounded, non-scientific, non-independent, reviewer-rejected, or incomplete-analysis gap support blocks projection trust and probe authorization; Web/TUI expose the evidence/synthesis/coverage status that produced the block.
+- Actual behavior: the strongest downstream validator is used only in `generate_hypotheses`; projection and experiment-design validation reopen a weaker path that trusts internal map counts and hashes without re-deriving evidence links or requiring reviewed synthesis.
+- Fresh vs existing: the defect is deterministic for both fresh and resumed sessions because it is in the shared artifact-loading path, not stale rendering; resumed sessions increase the risk because independently modified or retired artifacts may still look internally consistent.
+- Root-cause hypothesis: `ResearchFunnelClosedChainInput` carries only gap/portfolio/decision JSON and reconstructs a minimal validation context, while external evidence and synthesis lineage are optional parameters available only to direct gap-map callers.
+- Code/test changes: pending a rich gap-validation context in the closed-chain API, strict artifact readers in projection/design, explicit evidence-quality projection fields, adversarial ghost/tamper regressions, build, and actual Web/TUI revalidation.
+- Regression status: pending.
+- Evidence/artifacts: `src/core/researchFunnel.ts`, `src/core/runs/researchFunnelProjection.ts`, `src/core/nodes/designExperiments.ts`, `src/core/nodes/generateHypotheses.ts`, `tests/researchFunnelProjection.test.ts`, and LV-639's actual evidence/synthesis chain.
+
+---
+
+## Issue: LV-639
+
+- Status: reproduced in the current-build TUI artifact chain and by two independent adversarial audits; repair in progress
+- Category: research completion risk / unsupported semantic-gap promotion
+- Validation target: topic-discovery gap support must distinguish scientific limitations from source/excerpt visibility failures, require grounded evidence from independent works, preserve reviewer rejection, bind the gap map to the reviewed synthesis and complete analysis generation, and reject ghost evidence during downstream validation.
+- Environment/session context: current-build run `8cbd27be-c834-46e5-ac7f-4ca665d7714d` under `<validation-workspace>/.live/topic-discovery-20260727-c`; 11 selected papers produced 44 evidence rows and a 43-gap provisional map.
+- Reproduction steps:
+  1. Inspect all 44 persisted evidence rows and compare their limitation slots with the cached source excerpts and complete cached PDFs.
+  2. Observe that `source_type=full_text` records PDF acquisition while local model input is capped at a truncated 16,000-character extraction.
+  3. Pass two identical low-confidence visibility caveats through a completed synthesis whose reviewer accepts no clusters.
+  4. Rehash a structurally self-consistent gap map containing evidence and paper identifiers absent from `evidence_store.jsonl`.
+- Expected behavior: operational visibility caveats remain excluded diagnostics; only explicit scientific limitations with grounded spans can enter semantic review; only reviewer-accepted clusters from independent works can be supported; partial analysis emits a downstream-blocking map; external evidence and synthesis lineage are re-derived before hypothesis planning.
+- Actual behavior: 22/44 evidence rows are source/excerpt visibility caveats and all 44 have confidence at or below 0.45. Rejected or unclustered rows can re-enter the retired exact-string grouping path and become `supported_candidate`; the gap-map validator accepts rehashed ghost identifiers because it validates only internal counts and hashes; partial analysis can still materialize an apparently promotable map before its failure branch.
+- Fresh vs existing: the weak evidence originated in a fresh current-build analysis; resume faithfully preserves it, so this is an extraction/schema/promotion-contract defect rather than stale rendering.
+- Root-cause hypothesis: one `limitation_slot` conflates scientific limitations, claim caveats, reporting omissions, and extraction visibility; `full_text` conflates PDF acquisition with complete-document verification; semantic review is optional around a retired support path; and the gap-map contract is not closed over the evidence, synthesis, and manifest artifacts.
+- Code/test changes: deep synthesis-cache validation and direct proposer/reviewer tests have been added. Evidence classification, source scope, reviewer-only support, partial-analysis construction mode, closed lineage validation, and same-flow live rerun remain in progress.
+- Regression status: 29 focused synthesis/funnel tests and the production build pass. P0 bypass and source-scope repairs are not yet complete.
+- Evidence/artifacts: actual `evidence_store.jsonl`, `analysis/gap_map.json`, cached PDFs/texts, `src/core/analysis/researchGapSynthesis.ts`, `src/core/researchFunnel.ts`, `src/core/nodes/analyzePapers.ts`, `src/core/nodes/generateHypotheses.ts`, and independent architecture/research-method audit reports.
+
+---
+
+## Issue: LV-638
+
+- Status: repair implemented; 108 focused regressions and production build passed; same-flow TUI revalidation pending
+- Category: research completion risk / autonomous backtrack dead end
+- Validation target: when every paper from a nonempty topic-discovery query family fails the analysis relevance guard, the system must preserve the exclusion, record a diagnostic, reject that query family, and backtrack to collection instead of recommending the same analysis again.
+- Environment/session context: current-build run `8cbd27be-c834-46e5-ac7f-4ca665d7714d` under `<validation-workspace>/.live/topic-discovery-20260727-c`, with a 21-paper corpus carrying three exact family counts of 12, 8, and 1.
+- Reproduction steps:
+  1. Approve `collect_papers` into `analyze_papers` in the real TUI.
+  2. Let the selection relevance and quality guards filter the accepted corpus.
+  3. Inspect the approval recommendation and available artifacts after family coverage reaches only 2/3.
+- Expected behavior: the only weak candidate from the uncovered family remains excluded; a machine-readable gate records candidate eligibility and selection provenance; query-plan feedback preserves represented families while rejecting the uncovered family query; the transition targets `collect_papers` and is auto-executable within the bounded backward-jump policy.
+- Actual behavior: the sole third-family paper had no abstract or PDF locator and weak topical fit, so exclusion was correct. The node nevertheless wrote no selection manifest or replacement diagnostic and emitted `pause_for_human -> stay` with only a same-node rerun command, guaranteeing the same 2/3 result.
+- Fresh vs existing: the failure arose on the first analysis of the newly collected 21-paper generation and persisted at the approval boundary; no stale manifest caused it.
+- Root-cause hypothesis: family coverage was enforced after quality filtering, but the failure branch discarded the selection audit and reused a generic manual-review recommendation instead of feeding the failed family into the existing bounded literature-query repair loop.
+- Code/test changes: added `analysis/topic_family_coverage_gate.json`; persisted rejected and supported query-family feedback through the existing query planner memory; added `backtrack_to_collection` as a governed transition action; made the recommendation auto-executable and target `collect_papers`; added node integration, query-planning, state-runtime, and public-code regressions.
+- Regression status: production TypeScript/Web build passed; 108 focused tests passed. Same-flow TUI rerun must still confirm the diagnostic artifact, explicit transition, safe jump, and replacement-family query plan.
+- Evidence/artifacts: actual TUI output under `<validation-workspace>/.live/topic-discovery-20260727-c/outputs/lv635-analyze-family-coverage-current-build/`, run `events.jsonl`, the third-family corpus row, `src/core/nodes/analyzePapers.ts`, `src/core/literatureQueryGeneration.ts`, `src/core/stateGraph/runtime.ts`, and `tests/analyzePapers.test.ts`.
+
+---
+
+## Issue: LV-637
+
+- Status: reproduced from a fresh current-build TUI run and independent code/artifact audit; repair pending
+- Category: research completion risk / research-funnel ordering defect
+- Validation target: every `analyze_papers` pass with persisted evidence must materialize a hash-bound research gap map before any partial-result stop, and topic-discovery hypothesis generation must reject a missing, invalid, or independently unsupported gap map before making model calls.
+- Environment/session context: fresh run under `<validation-workspace>/.live/topic-discovery-20260727-c`; 29 summaries and 113 evidence rows survived one quarantined analysis, but the node returned before writing `analysis/gap_map.json`.
+- Reproduction steps:
+  1. Let `analyze_papers` persist partial evidence while one selected paper enters a classified failure branch.
+  2. Inspect the run artifacts at the resulting approval boundary.
+  3. Compare the return sites with gap-map construction and run `generate_hypotheses` against a missing or independently unsupported map.
+- Expected behavior: the accepted evidence subset always produces a corpus/evidence/attempt-bound gap map before stopping. In topic-discovery mode, hypothesis generation checks both artifact integrity and `independent_gap_support_present=pass` before any planning or prior-absorption model call.
+- Actual behavior: all partial-failure branches return before the gap-map block. `generate_hypotheses` logs an invalid map only after candidate planning, and a structurally valid map with only provisional gaps can still spend model calls before the later closed-chain gate blocks execution.
+- Fresh vs existing: the missing map originated in the fresh analysis pass and remains missing on resume; downstream behavior therefore depends on whether an operator manually advances into a knowingly incomplete funnel.
+- Root-cause hypothesis: gap-map materialization is placed only on the zero-failure tail of `analyze_papers`, while `generate_hypotheses` treats map validity as a late probe-authorization concern rather than a preflight requirement for topic discovery.
+- Code/test changes: pending.
+- Regression status: pending partial-analysis gap-map, zero-call hypothesis preflight, focused funnel, build, and same-flow TUI revalidation.
+- Evidence/artifacts: `src/core/nodes/analyzePapers.ts`, `src/core/nodes/generateHypotheses.ts`, `src/core/researchFunnel.ts`, persisted summaries/evidence, and the absent `analysis/gap_map.json` at the reproduced stop boundary.
+
+---
+
+## Issue: LV-636
+
+- Status: reproduced by applying the current validator to a quarantined structured analysis; repair pending
+- Category: research completion risk / source-validation false positive
+- Validation target: source-identity quarantine must require explicit evidence that the supplied source is a different paper, not ordinary scientific prose that mentions a bibliographic metadata discrepancy.
+- Environment/session context: the same fresh TUI analysis quarantined one abstract-backed paper after LLM extraction; title, authors, and identifier remained aligned with the requested paper.
+- Reproduction steps:
+  1. Analyze a paper whose structured limitations or reproducibility notes mention that bibliographic metadata does not match across publication records.
+  2. Join the current summary/evidence fields as `validateAnalysisBeforePersist(...)` does.
+  3. Apply the `metadata.*(does not match|did not match|mismatch)` pattern.
+- Expected behavior: ordinary domain content about metadata disagreement persists as caveated evidence. Quarantine remains active for an explicitly supplied/resolved/input source that reports itself as unrelated, another paper, or a different document.
+- Actual behavior: the broad metadata pattern classifies the ordinary sentence as `analysis_content_mismatch`, discards otherwise aligned output, and reports a stronger source-contamination conclusion than the evidence supports.
+- Fresh vs existing: the false positive occurred during fresh extraction and is persisted as a failed manifest entry, so resumed analysis repeats or preserves the same incorrect classification.
+- Root-cause hypothesis: a free-text regex treats any occurrence of `metadata` followed by `mismatch` as an analyst-level source warning without requiring supplied-source context.
+- Code/test changes: pending.
+- Regression status: pending negative metadata-discrepancy case, positive unrelated-source cases, build, and same-flow TUI revalidation.
+- Evidence/artifacts: `validateAnalysisBeforePersist(...)`, `analysis_manifest.json`, `analysis_quarantine.jsonl`, and the quarantined structured analysis from the reproduced run.
+
+---
+
+## Issue: LV-635
+
+- Status: reproduced in a fresh current-build TUI run; repair pending
+- Category: research completion risk / analysis-selection coverage defect
+- Validation target: a topic-discovery analysis shortlist must preserve inspectable representation of the independent query families that produced the accepted corpus, including rare nonempty families, under both model reranking and deterministic fallback.
+- Environment/session context: fresh run `8cbd27be-c834-46e5-ac7f-4ca665d7714d` under `<validation-workspace>/.live/topic-discovery-20260727-c`; accepted corpus quality reported three query families with 1, 5, and 48 relevant papers; `analyze_papers --top-n 30` then hit its bounded reranker timeout.
+- Reproduction steps:
+  1. Collect a topic-discovery portfolio whose accepted papers are imbalanced across at least three independent query families.
+  2. Run top-N analysis and let the optional LLM reranker time out so the deterministic selection path is used.
+  3. Compare `collect_corpus_quality.json` family counts with `analysis_manifest.json` selected titles and inspect accepted `corpus.jsonl` for family provenance.
+- Expected behavior: accepted corpus rows retain their matched query-family provenance; top-N selection reserves a bounded floor for every nonempty family before filling remaining slots by the normal relevance ranking; the manifest exposes achieved family coverage; the same policy applies after rerank failure and invalidates incompatible cached selections.
+- Actual behavior: the accepted corpus drops paper-to-family provenance, the success-path candidate provenance artifact is empty, and the analysis selector globally ranks by title/topic similarity, citations, recency, and PDF availability. After the reranker timed out, the top-30 shortlist was dominated by generic multiple-choice application papers while rare test-contamination and answer-consistency evidence was skipped or severely underrepresented.
+- Fresh vs existing: the biased shortlist was created in a fresh run. Because its selection is cached in `analysis_manifest.json`, a resumed run reuses the same shortlist unless the corpus or selection fingerprint changes.
+- Root-cause hypothesis: collection computes `paperQueryFamilies` only for its quality decision and failed-retry candidate pool, but does not persist it on accepted corpus rows. The generic analysis selector therefore has no family coverage signal, and its deterministic fallback optimizes one global score without a diversity floor.
+- Code/test changes: pending.
+- Regression status: pending focused collection, selection, manifest/cache, public-code, build, and same-flow TUI revalidation.
+- Evidence/artifacts: `collect_corpus_quality.json`, `corpus.jsonl`, `analysis_manifest.json`, `src/core/nodes/collectPapers.ts`, `src/core/collection/types.ts`, `src/core/analysis/paperSelection.ts`, and `src/core/nodes/analyzePapers.ts`.
+
+---
+
+## Issue: LV-634
+
+- Status: repaired; helper self-test, 15 focused regressions, and same-flow resumed TUI revalidation passed on 2026-07-27
+- Category: `in_memory_projection_bug`
+- Validation target: the unattended live-validation helper must approve an ordinary `needs_approval` node into its fixed canonical successor even when the runtime has no explicit `pendingTransition`, while retaining exact-target protection for explicit backtracks or jumps.
+- Environment/session context: fresh current-build TUI run under `<validation-workspace>/.live/topic-discovery-20260727-c`, run `8cbd27be-c834-46e5-ac7f-4ca665d7714d`, after `collect_papers` completed its bounded collection attempts and paused at `needs_approval`.
+- Reproduction steps:
+  1. Let `collect_papers` finish normally at `needs_approval` without emitting an explicit `graph.pendingTransition`.
+  2. Invoke `scripts/live-validation-approve-and-run-next.py` with `AUTOLABOS_VALIDATION_NEXT_NODE=analyze_papers`.
+  3. Inspect the selected command and persisted run record.
+- Expected behavior: in the absence of an explicit transition, the helper verifies that `analyze_papers` is the fixed canonical successor of `collect_papers`, sends `/approve`, and observes that node. If an explicit transition exists, its exact target remains authoritative.
+- Actual behavior: the helper refuses before sending a command because `pendingTransition.targetNode` is empty, although the runtime's own approval path computes the same canonical successor from the fixed workflow order.
+- Fresh vs existing: the defect was reproduced on the first approval boundary of a fresh run; an explicit-transition resumed run remains protected by LV-631's exact-target check. The ordinary no-transition branch was missing from the helper regression suite.
+- Root-cause hypothesis: LV-631 correctly made explicit transitions authoritative but treated their absence as an error. The helper did not mirror the runtime's canonical-successor fallback for ordinary approval boundaries.
+- Code/test changes: the helper now derives its workflow-node set from one ordered 10-node contract; an absent explicit transition permits only the current node's canonical successor, while a present `pendingTransition.targetNode` remains authoritative and mismatches still fail closed. The self-test covers ordinary approval, explicit transition approval, both mismatch branches, same-node rerun, and invalid nodes.
+- Regression status: `AUTOLABOS_VALIDATION_CONTINUE_SELFTEST=1` passed; all 15 focused helper/public-code tests passed. In the preserved real run, the helper sent exactly `['/approve']`, observed `analyze_papers`, recovered the pending 54-paper enrichment job, completed 29/30 selected analyses with 113 evidence items, quarantined one source-identity mismatch, and stopped at an explicit review boundary.
+- Evidence/artifacts: persisted `run_record.json` for run `8cbd27be-c834-46e5-ac7f-4ca665d7714d`, `scripts/live-validation-approve-and-run-next.py`, and `tests/liveValidationContinueScript.test.ts`.
+
+---
+
+## Issue: LV-633
+
+- Status: repair implemented; 71 focused regressions and a fresh current-build TUI collect-to-analyze handoff passed; exact partial-family preservation branch remains deterministic-test verified
+- Category: research completion risk / retry-controller regression
+- Validation target: when a topic-discovery corpus misses the portfolio floor, a query family that already met the executed per-family relevance floor must remain available while only failed family slots are reformulated.
+- Environment/session context: fresh current-build TUI run under `<validation-workspace>/.live/`, with three bounded `collect_papers` attempts and immutable attempt archives.
+- Reproduction steps:
+  1. Run a topic-discovery collection portfolio with at least two independent query families.
+  2. Let one family meet the per-family evidence floor while another family fails, so the overall multi-family gate remains closed.
+  3. Inspect the next retry's memory feedback, query plan, and corpus quality.
+- Expected behavior: family-level relevant-paper counts are persisted; the supported query remains fixed; only failed family queries are rejected and replaced; the unchanged final corpus gate decides whether the combined portfolio can advance.
+- Actual behavior: the second bounded attempt retained eight relevant papers from one family but lacked a second covered family. The retry controller marked every family as rejected and reduced title-and-abstract support to title-only hints. The third attempt therefore discarded the one productive family and regressed from eight relevant papers to zero.
+- Fresh vs existing session comparison:
+  - Fresh session: the repaired current-build TUI run accepted 54 papers across two covered families and reached the collect-to-analyze handoff.
+  - Existing session: resuming that repaired run recovered deferred enrichment without changing the persisted final corpus; historical pre-repair attempt archives still show the productive family being discarded.
+  - Divergence: none after repair for the observed final state; the exact partial-success branch remains deterministic-test verified because the fresh run's intermediate families stayed below the floor.
+- Root-cause hypothesis: the collection gate emitted one run-level failure without preserving its family-level partial successes, while planner feedback treated all attempted queries as equivalent failures. Candidate titles were used as the only repeated-support signal even though the executed relevance gate had already established stronger title-and-abstract evidence.
+- Code/test changes: query feedback now records family-level relevant-paper counts and explicit supported families; only below-floor families enter `rejectedQueries`; executed supported families outrank title-only hints, are deterministically preserved under the same anchor, and failed slots alone are replaced; reformulation artifacts expose both supported and rejected families.
+- Regression status: planner preservation, collect-node integration, corpus-quality adjacency, and public-code sanitization passed 71/71 focused tests; TypeScript and Web production builds passed. A fresh TUI run completed three bounded collection attempts, accepted 54 papers across two covered families, preserved all ten final collect artifacts in its immutable archive, recovered deferred enrichment on resume, and handed off to `analyze_papers`. That run did not reproduce the exact supported-family-plus-failed-family branch because its intermediate families remained below the per-family floor; that branch remains covered by the focused planner and collect-node integration tests.
+- Evidence/artifacts: fresh-run attempt archives and `collect_query_plan.json`, `collect_corpus_quality.json`, `collect_query_reformulation_hints.json`, `collect_topic_discovery_candidates.jsonl`; implementation in `src/core/literatureQueryGeneration.ts` and `src/core/nodes/collectPapers.ts`; regressions in `tests/collectPlanningTimeouts.test.ts` and `tests/collectPapers.test.ts`.
+
+---
+
+## Issue: LV-632
+
+- Status: repair implemented; 97 focused regressions, production build, and fresh actual TUI provider-path revalidation passed on 2026-07-27; downstream retry regression tracked as LV-633
+- Category: research completion risk / collection relevance defect
+- Validation target: topic discovery must preserve each provider's native relevance ranking while applying corpus precision gates after retrieval.
+- Environment/session context: fresh current-build TUI run under `<validation-workspace>/.live/`, using a governed topic-discovery brief and the enabled scholarly-search providers.
+- Reproduction steps:
+  1. Run a topic-discovery collection attempt with a complete shared anchor and a scientific axis.
+  2. Inspect the OpenAlex query transformation in `collect_search_aggregation.json` and the retained corpus.
+  3. Compare the same term sequence as a plain relevance query and as the generated Boolean quorum query against the same provider limit.
+- Expected behavior: OpenAlex receives the normalized plain term sequence, its relevance ranking remains available to retrieval, and downstream anchor/axis quality gates decide corpus admission.
+- Actual behavior: the provider adapter rewrites the family as a large anchor-quorum Boolean expression conjoined with an axis disjunction. In a controlled top-100 comparison, the plain query recovered several directly relevant prior works while the transformed query recovered none; the fresh run consequently considered 182 broad candidates but retained only three papers from one family and failed the literature floor.
+- Fresh vs existing session comparison:
+  - Fresh session: the repaired actual TUI run sent plain relevance queries, retrieved 245 canonical candidates, and archived all ten final collection artifacts.
+  - Existing session: the pre-repair run and its immutable artifacts retain the Boolean-query behavior and three-paper single-family failure for audit.
+  - Divergence: expected across the repair boundary; current fresh and resumed projections preserve whichever provider-query semantics their immutable artifacts record.
+- Root-cause hypothesis: a provider-agnostic precision strategy was pushed into OpenAlex's `search` parameter even though the collection layer already enforces stricter title-and-abstract relevance after retrieval. The Boolean expansion displaced relevant works before the post-retrieval gate could inspect them.
+- Code/test changes: OpenAlex topic discovery now sends the normalized plain anchor-plus-axis term sequence and records `topic_discovery_plain_relevance`; the unused OpenAlex Boolean compiler was removed; provider-planning regression coverage rejects injected `AND`/`OR` syntax while preserving arXiv's fielded query semantics.
+- Regression status: 97 provider-planning, routing, collection, corpus-quality, research-funnel, and public-code tests passed; the production build passed. In a new actual TUI run, both OpenAlex requests returned 200 with `topic_discovery_plain_relevance`, one plain variant each, and 100 works total; the full collection produced 245 canonical candidates and archived all ten final artifacts under one attempt. The corpus still failed downstream because the retry controller discarded a previously productive family, now tracked separately as LV-633.
+- Evidence/artifacts: fresh-run `collect_search_aggregation.json`, `collect_corpus_quality.json`, immutable collect-attempt archive, `src/tools/openAlex.ts`, `src/tools/topicDiscoveryProviderQuery.ts`, and `tests/providerQueryPlanning.test.ts`.
+
+---
+
+## Issue: LV-631
+
+- Status: repair implemented; helper regression and actual same-flow TUI revalidation passed on 2026-07-27
+- Category: `in_memory_projection_bug`
+- Validation target: `AUTOLABOS_VALIDATION_NEXT_NODE` must identify the node that the live helper will execute or reach; it must never silently approve a different current gate.
+- Environment/session context: resumed topic-discovery run `70c6c237-0ac1-48ec-93b5-7147b85788b2` under `<validation-workspace>/.live/topic-discovery-20260726-e`, with `collect_papers` awaiting approval before a same-node revalidation attempt.
+- Reproduction steps:
+  1. Leave a run at `collect_papers/needs_approval` with a persisted transition to `analyze_papers`.
+  2. Invoke `scripts/live-validation-approve-and-run-next.py` with `AUTOLABOS_VALIDATION_NEXT_NODE=collect_papers` and no explicit command override.
+  3. Inspect the emitted command and persisted run state.
+- Expected behavior: requesting the current approval-waiting node reruns that node, while requesting the persisted next node approves only when the transition target matches. Any unrelated or invalid target fails before changing state.
+- Actual behavior: the helper sends `/approve` whenever the current node is awaiting approval, ignores that the requested node is the current node, and starts `analyze_papers`. The helper can later report that it attempted the requested node even though a different node ran.
+- Fresh vs existing session comparison:
+  - Fresh session: a pending target node is run with `/agent run` as expected.
+  - Existing session: the same target name at an approval gate is projected to `/approve`, so the persisted result is accepted and the next node starts.
+  - Divergence: yes; command meaning changes with persisted gate status without an explicit operator instruction.
+- Root-cause hypothesis: `build_continue_command(...)` checks `needs_approval` before validating same-node rerun intent or the persisted transition target, and `AUTOLABOS_VALIDATION_NEXT_NODE` is not validated against the workflow node contract.
+- Code/test changes: the helper now validates the fixed workflow-node set, distinguishes a same-node rerun from approval of the persisted transition target, rejects mismatched transition approval, preserves an explicit `/approve` override, and reports the exact commands it sent plus the final observed node.
+- Regression status: command-selection self-test passed; Python compilation passed; all 10 focused Vitest cases passed. In a new PTY session against the preserved `topic-discovery-20260726-j` run, requesting `collect_papers` without a command override sent `/agent run collect_papers 5572171e-13c1-4271-b801-67193803f9ab`; `collect_papers` reran and `analyze_papers` remained `pending` through the final failed quality gate. A separate resumed session against `topic-discovery-20260726-k` sent the explicit collect retry and observed the requested node without an approval jump.
+- Evidence/artifacts: `scripts/live-validation-approve-and-run-next.py`, `tests/liveValidationContinueScript.test.ts`, checkpoint `0018-analyze_papers-before.json`, checkpoint `0019-collect_papers-jump.json`, `<validation-workspace>/.live/topic-discovery-20260726-j/outputs/lv631-same-node-needs-approval-current-build/live-validation-continue-collect_papers-output.txt`, and `<validation-workspace>/.live/topic-discovery-20260726-k/outputs/lv631-collect-retry-current-build/live-validation-continue-collect_papers-output.txt`.
+
+---
+
+## Issue: LV-630
+
+- Status: repair implemented; focused cleanup regression and persisted actual TUI resume passed on 2026-07-27
+- Category: `persisted_state_bug`
+- Validation target: repository tests must not delete persisted real TUI validation workspaces that are intentionally isolated under the validation root.
+- Environment/session context: fresh Ollama TUI run `1d8aa47c-f4fa-41d4-ba11-7bb7b45dfdfd` under `<validation-workspace>/.live/topic-discovery-20260726-d`, followed by the focused topic-discovery Vitest suite.
+- Reproduction steps:
+  1. Create an isolated live workspace under `<validation-workspace>/.live/` and run `/doctor` plus `/brief start` until `collect_papers` reaches a persisted stop.
+  2. Confirm that the run record and collection artifacts exist.
+  3. Run a focused Vitest suite from the repository.
+  4. Attempt to resume or inspect the live run.
+- Expected behavior: test cleanup preserves both the canonical `live-validation` workspace and explicitly isolated `.live` workspaces, so actual run evidence remains resumable across regression tests.
+- Actual behavior: `tests/globalTeardown.ts` preserves `live-validation` but not `.live`; global setup/teardown recursively removes `.live`, including the run record and all node-owned artifacts. The same cleanup explains why the two earlier LV-629 workspaces could not be resumed.
+- Fresh vs existing session comparison:
+  - Fresh session: the actual TUI run reaches its first persisted stop and its artifacts are inspectable before tests.
+  - Existing session: after Vitest cleanup, the workspace no longer exists and resume is impossible.
+  - Divergence: yes; test cleanup destroys the persisted state required by the resumed session.
+- Root-cause hypothesis: the validation-root allowlist recognizes only one historical live workspace basename even though current live-validation tooling permits an explicit workspace anywhere under the validation root.
+- Code/test changes: `tests/globalTeardown.ts` now preserves the explicit `.live` validation namespace in addition to the historical `live-validation` directory, with a focused regression assertion.
+- Regression status: all 10 focused live-validation helper tests passed and the current TypeScript/web build passed. The existing `topic-discovery-20260726-k` run remained present after the focused suite, then resumed successfully in two new actual PTY sessions for `collect_papers` and `analyze_papers`; its run record, checkpoints, and node-owned artifacts remained inspectable throughout.
+- Evidence/artifacts: `tests/globalTeardown.ts`, `tests/liveValidationContinueScript.test.ts`, and `outputs/lv629-topic-discovery-revalidation-d/live-validation-start-output.txt`; the affected run directory itself was deleted by the reproduced defect.
+
+---
+
+## Issue: LV-629
+
+- Status: atomic scientific-scope repair implemented with focused and adjacent regressions passing; rebuilt same-flow TUI and Web revalidation pending
+- Category: `persisted_state_bug`
+- Validation target: a `topic_discovery` brief must produce a broad, topically precise, multi-query literature corpus under every supported LLM mode; planning retries and relevance gates must remain observable and bounded.
+- Environment/session context: fresh real TUI runs in isolated workspaces under `<validation-workspace>/.live/`; Codex OAuth and Ollama planning paths; Semantic Scholar, OpenAlex, Crossref, and arXiv aggregation enabled.
+- Reproduction steps:
+  1. Start the governed budgeted language-model evaluation topic-discovery brief.
+  2. Let the configured research model exceed the former 20-second planning default and observe the applied timeout policy.
+  3. Allow failed query families to feed anchor-proximate candidate titles into the bounded replanner.
+  4. Inspect `collect_query_plan.json`, `collect_corpus_quality.json`, `collect_query_reformulation_hints.json`, and retained corpus titles after all node attempts.
+- Expected behavior: every supported LLM mode receives the same explicit bounded planning window; provider retrieval may be broad, but the final precision gate requires the complete shared anchor and complete scientific-axis concept near each other. Failed plans remain query hints only and never become paper evidence.
+- Actual behavior: an earlier repaired run exposed a generic `evaluation benchmark` axis that was lexically complete but scientifically non-diagnostic. The generation-binding repair now keeps current result, quality, corpus, and index projections consistent. However, fresh current-build run `a3d3b946-9ea9-4dd6-bc3d-548b4636ca97` still exhausted all three `collect_papers` attempts: the first portfolio retained no direct-support papers, an intermediate portfolio retained two, and the final portfolio retained only one of the required eight. The replanner drifted from the brief's finite-benchmark reliability problem toward generic confidence calibration and an adjacent mitigation topic. OpenAlex, Crossref, and arXiv continued returning broad candidates while Semantic Scholar was rate limited, so provider outage was not the dominant failure. The quality gate correctly refused to treat those retrieved titles as a publishable corpus. A first flat-term continuity repair was then tested against the same persisted node and falsified: it admitted generic source-token echoes and generated `"llm evaluation" benchmark subsampling` plus `"llm evaluation" grading reliability`, after which the collection again retained zero direct-support papers. That failed repair has been removed rather than retained as a compatibility path.
+- Fresh vs existing session comparison:
+  - Fresh session: the current build created run `a3d3b946-9ea9-4dd6-bc3d-548b4636ca97`, persisted each bounded replan and retrieval phase, then stopped at `collect_papers/failed` after retry `3/3` with one direct-support paper.
+  - Existing session: `validation:resume-check` reconstructed the same failed node, retry count, quality reasons, query-only candidate titles, and downgraded topic-discovery state from persisted artifacts.
+  - Divergence: none observed at the state/artifact projection boundary; the remaining failure is scientific query-recovery quality.
+- Root-cause hypothesis: the repaired persistence layer is behaving correctly, but the bounded replanner previously treated a flat bag of brief words and free-form lens text as interchangeable evidence. A family could therefore copy one generic source token into its lens or axis and let repeated candidate titles become de facto topic authority. Structural retries could also project a newly generated anchor over the already executed anchor, and feedback had no scope fingerprint to prevent cross-brief inheritance.
+- Code/test changes: `topicDiscoveryScopeContract.ts` now derives hashed atomic axes only from scientific brief sections, excludes explicit negative units and generic process vocabulary, freezes the first accepted or executed anchor, distinguishes lexical refinement from title-supported technical expansion, ignores lens prose as scope evidence, and fails closed on insufficient recovery scope. Query-plan cache keys include the bound contract fingerprint; feedback schema v4 is tied to the anchor-independent scope fingerprint; stale cross-scope feedback is quarantined; structural replans preserve the executed anchor; bounded unsupported repair cannot bypass a scope rejection. `collect_query_plan.json` v4 exposes the scope contract and family diagnostics. The falsified flat continuity implementation and its field names were removed completely.
+- Regression status: 45 focused scope/planner/portfolio tests pass, including adversarial cases for title-driven drift, lens laundering, structural-anchor replacement, insufficient-scope recovery, bounded-repair bypass, and cross-scope feedback inheritance. The wider collection, corpus-quality, TUI projection, and public-code set reached 150/151 passing; the only failure was a stale expected artifact schema version and has been corrected. A rebuilt same-flow TUI retry and Web live inspection remain required before closing this issue.
+- Evidence/artifacts: isolated live retry artifacts under `collect_attempts/20260726232850069-62b99ffe4c9b/`; current-build run `a3d3b946-9ea9-4dd6-bc3d-548b4636ca97` with `run_record.json`, `events.jsonl`, `collect_query_plan.json`, `collect_corpus_quality.json`, and `collect_attempts/`; first-repair falsification output at `outputs/live-validation-preflight/live-validation-continue-collect_papers-output.txt`; implementation evidence in `src/core/topicDiscoveryScopeContract.ts`, `src/core/literatureQueryGeneration.ts`, `src/core/nodes/collectPapers.ts`, `tests/topicDiscoveryScopeContract.test.ts`, and `tests/collectPlanningTimeouts.test.ts`.
+
+---
+
+## Issue: LV-628
+
+- Status: repair implemented; same-flow live TUI start and persisted resume revalidated on 2026-07-26
+- Category: `persisted_state_bug`
+- Validation target: `/doctor` and live-validation preflight must apply the same Research Brief validity contract as `/brief start`.
+- Environment/session context: fresh real TUI/PTy run in `<validation-workspace>` with Ollama provider mode and a complete topic-discovery brief.
+- Reproduction steps:
+  1. Put `` `topic_discovery` `` in the `## Research Mode` section of an otherwise complete governed brief.
+  2. Run live-validation preflight and TUI `/doctor`.
+  3. Start the same brief with `/brief start briefs/budgeted-evaluation-topic-discovery.md`.
+- Expected behavior: Markdown inline-code formatting around a valid mode is normalized consistently; if a declared mode is invalid, preflight and `/doctor` must block before `/brief start`.
+- Actual behavior: preflight and `/doctor` report the brief contract ready, but `/brief start` rejects it with `Set "## Research Mode" to either "hypothesis_test" or "topic_discovery"`; no run record is created.
+- Fresh vs existing session comparison:
+  - Fresh session: the first start attempt fails before run creation despite a ready preflight verdict.
+  - Existing session: no run exists to resume; rerunning the same brief reproduces the parser disagreement.
+  - Divergence: yes; readiness projection and runtime start validation disagree on the same persisted brief.
+- Root-cause hypothesis: the mode parser does not unwrap inline code, while doctor checks section completeness only and omits `validateResearchBriefMarkdown(...)` semantic errors.
+- Code/test changes: `parseDeclaredResearchRunMode(...)` now unwraps one inline-code token without changing the absent-mode default; doctor now combines section completeness with `validateResearchBriefMarkdown(...)` semantic errors; parser and doctor regressions cover inline-code and invalid-mode inputs.
+- Regression status: 48 focused parser/brief/doctor/preflight tests passed; `npm run build` passed; the same brief created run `6f5784e2-c0d1-4720-8322-3d96c94af87f`, reached `collect_papers/needs_approval`, and `validation:resume-check` reconstructed the persisted state successfully. Full-suite validation remains pending after the other active contract repairs.
+- Evidence/artifacts: `<validation-workspace>/preflight/doctor-pty-output.txt`, failed `validation:start-live` PTY buffer, `src/core/runs/runBriefParser.ts`, `src/core/doctor.ts`
+
+---
+
+## Issue: LV-627
+
+- Status: repair implemented; actual Ollama preflight and TUI `/doctor` revalidated on 2026-07-26
+- Category: `persisted_state_bug`
+- Validation target: live-validation preflight must persist and diagnose the explicitly selected LLM provider instead of silently substituting another provider.
+- Environment/session context: isolated `<validation-workspace>`; repository build from 2026-07-26; local Ollama server and installed models available.
+- Reproduction steps:
+  1. Run `scripts/live-validation-preflight.mjs` with `AUTOLABOS_VALIDATION_LLM_MODE=ollama` and an explicit Ollama research model.
+  2. Inspect the generated validation-workspace `.autolabos/config.yaml`.
+  3. Inspect the preflight verdict.
+- Expected behavior: the generated config records `providers.llm_mode: ollama`, includes the selected role models and base URL, and `/doctor` validates that exact provider profile before reporting readiness.
+- Actual behavior: the preflight exits successfully but writes `providers.llm_mode: codex_chatgpt_only`; the supplied Ollama mode and model are ignored, and doctor evaluates the substituted Codex profile.
+- Fresh vs existing session comparison:
+  - Fresh session: the first preflight invocation creates the wrong Codex-only provider config.
+  - Existing session: rerunning preflight rewrites the same provider config, so the incorrect projection persists.
+  - Divergence: the requested validation profile and persisted runtime profile disagree deterministically.
+- Root-cause hypothesis: `scripts/live-validation-preflight.mjs` hardcodes both the generated provider block and doctor options instead of deriving them from one validated provider-profile contract.
+- Code/test changes: `scripts/live-validation-preflight.mjs` now validates an explicit provider mode, writes provider-specific Ollama role settings, passes the same profile to doctor, records the selected provider in its summary, and checks requested-versus-diagnosed profile equality; a regression inspects both generated config and doctor summary.
+- Regression status: `tests/liveValidationContinueScript.test.ts` passed 10/10; extended `ml-cuda-acl` preflight passed with two RTX 4090 devices and all three configured Ollama role models; actual TUI `/doctor` reported `llm=ollama`, `pdf=ollama_vision`, all role models available, and harness 0 issues. Full-suite validation remains pending after the other active contract repairs.
+- Evidence/artifacts: `<validation-workspace>/.autolabos/config.yaml`, `<validation-workspace>/out/preflight-summary.json`, `scripts/live-validation-preflight.mjs`
+
+---
+
+## Issue: LV-626
+
+- Status: reproduced; remediation in progress
+- Category: `in_memory_projection_bug`
+- Validation target: successful node notes must remain operator context and must never become failure seeds or blocking reasons.
+- Environment/session context: repository-level jobs/status projection tests over synthetic persisted run records; same-flow live TUI/Web revalidation has not yet been run.
+- Reproduction steps:
+  1. Build a paused or running run whose current node has a successful summary in `note` and no `lastError`.
+  2. Build the operator status or jobs projection.
+  3. Observe that the success note becomes `dominant_failure`, `blocker_summary`, and `blocking_reasons`.
+- Expected behavior: only an explicit runtime failure state or `lastError` can seed a runtime blocker; ordinary notes remain non-blocking context.
+- Actual behavior: `deriveDominantFailure(...)` uses `lastError || note`, so a success message can force `inspect_blocker`.
+- Fresh vs existing session comparison:
+  - Fresh session: a newly built projection treats the successful node note as a dominant failure.
+  - Existing session: reloading the same persisted node state reproduces the same false blocker.
+  - Divergence: no; the defect is deterministic because both paths recompute from the same persisted fields.
+- Root-cause hypothesis: node narration and failure evidence share one fallback field in the operator-status projection.
+- Code/test changes: remove the `note` fallback and add a jobs-projection regression for a successful probe-authorization note.
+- Regression status: targeted tests pending; full build and live TUI/Web validation pending.
+- Evidence/artifacts: `src/core/runs/runStatus.ts`, `tests/jobsProjection.test.ts`
+
+---
+
+## Issue: LV-625
+
+- Status: reproduced; remediation in progress
+- Category: `in_memory_projection_bug`
+- Validation target: a node waiting for approval must remain paused in event-driven TUI/Web projections and must not be presented as completed.
+- Environment/session context: event-driven run-projection tests around the final node approval boundary; persisted reload behavior is compared separately and live TUI/Web revalidation remains pending.
+- Reproduction steps:
+  1. Execute the final workflow node with `needsApproval=true`.
+  2. Observe the persisted run state as `paused/needs_approval`.
+  3. Replay the emitted `NODE_COMPLETED` event through the TUI run projection.
+  4. Observe the projection change to `completed/completed`.
+- Expected behavior: runtime emits a distinct approval-wait event; completion is emitted only after the node is actually approved and finalized.
+- Actual behavior: runtime emits `NODE_COMPLETED` for `needs_approval`, and `write_paper` emits an additional early completion event.
+- Fresh vs existing session comparison:
+  - Fresh session: replaying the emitted completion event can project the approval-waiting run as completed.
+  - Existing session: a successful reload recovers the persisted paused state, while replay-only or refresh-failure paths retain the false completion.
+  - Divergence: yes; the event projection and persisted run snapshot disagree at the approval boundary.
+- Root-cause hypothesis: artifact generation completion and governed workflow completion were represented by the same event.
+- Code/test changes: introduce an approval-wait event, remove the node-owned duplicate completion event, and update event projection/log tests.
+- Regression status: targeted tests pending; full build and same-flow TUI/Web validation pending.
+- Evidence/artifacts: `src/core/events.ts`, `src/core/stateGraph/runtime.ts`, `src/core/nodes/writePaper.ts`, `src/tui/runProjection.ts`
+
+---
+
+## Issue: LV-624
+
+- Status: reproduced; remediation in progress
+- Category: `persisted_state_bug`
+- Validation target: backward jumps and explicit checkpoint rewinds must not reuse downstream readiness artifacts from a superseded research cycle.
+- Environment/session context: checkpoint/runtime and jobs-projection tests with persisted downstream artifacts; actual TUI/Web rewind revalidation remains pending.
+- Reproduction steps:
+  1. Persist analysis, review, paper-readiness, and `run_status.json` artifacts for a completed downstream state.
+  2. Jump backward to `design_experiments` or restore an earlier checkpoint.
+  3. Build the jobs/Web projection.
+  4. Observe the runtime at an upstream pending node while the projection still reports downstream readiness and `paper_ready=true`.
+- Expected behavior: downstream readiness is bound to the current run/cycle/checkpoint state and is ignored or regenerated after a rewind.
+- Actual behavior: graph nodes reset, but `run_status.json` and downstream files remain authoritative based on existence alone.
+- Fresh vs existing session comparison:
+  - Fresh session: loading the rewound run still reads stale downstream readiness artifacts from disk.
+  - Existing session: resuming the same run reproduces the mismatch because those artifacts survive the rewind.
+  - Divergence: no; both paths observe the same stale persisted artifacts.
+- Root-cause hypothesis: checkpointed graph state and derived readiness artifacts lack a shared freshness binding and invalidation rule.
+- Code/test changes: bind generated status to run/cycle/checkpoint metadata, reject stale cached status, and gate downstream readiness on current node state; explicit rewind behavior must invalidate downstream projections.
+- Regression status: targeted tests pending; full build and same-flow TUI/Web validation pending.
+- Evidence/artifacts: `src/core/stateGraph/runtime.ts`, `src/core/runs/runStatus.ts`, `src/core/runs/jobsProjection.ts`, `tests/stateGraphRuntime.test.ts`, `tests/jobsProjection.test.ts`
+
+---
+
+## Issue: LV-623
+
+- Status: reproduced; contract migration pending
+- Category: research-design and result-semantics risk; the interactive bug taxonomy does not apply
+- Validation target: experiment design must declare metric identity, direction, unit, series roles, and required comparisons explicitly, and downstream result validation must prove that the executed artifact preserves that meaning.
+- Environment/session context: current `ExperimentContract` writer, V2 results plan/artifact validators, and the `design_experiments` to `analyze_results` handoff.
+- Reproduction steps:
+  1. Inspect `src/core/experiments/experimentContract.ts`.
+  2. Observe that the writer builds `results_table_schema` from free-form metric names and a fallback direction.
+  3. Inspect `buildResultsTableSchema(...)` and `inferMetricDirection(...)` in `src/core/analysis/resultsTableSchema.ts`.
+  4. Inspect `ResultsPlanV2` and `checkResultsContractCompleteness(...)`.
+- Expected behavior:
+  - New experiment contracts require explicit metric definitions, including stable ID, direction, and unit where applicable.
+  - Required series and comparisons use explicit stable references rather than row order, labels, or score ranking.
+  - Result completeness rejects a metric whose executed direction or unit disagrees with the frozen design.
+  - Historical artifacts may be read only through a bounded adapter; no new writer emits the old results-table contract.
+- Actual behavior:
+  - `ExperimentContract.version` remains `1` and new writers emit `results_table_schema`.
+  - Metric direction is inferred from words such as loss, latency, error, and memory, with an otherwise global fallback.
+  - `ResultsPlanV2` records required metric IDs but not the planned metric definitions.
+  - Completeness checks prove that an ID is present, but do not prove that direction or unit matches the design.
+  - A semantically incompatible result can therefore satisfy the structural plan if it reuses the expected metric ID.
+- Fresh vs existing session comparison:
+  - Fresh session: reads the same mixed V1/V2 artifacts and reproduces the semantic mismatch.
+  - Existing session: resumed state preserves those artifacts and reproduces the same mismatch.
+- Root-cause hypothesis:
+  - The output artifact was upgraded before the design-side meaning contract, leaving a mixed V1/V2 boundary.
+  - Structural presence and semantic identity were treated as equivalent.
+- Code/test changes:
+  - Introduce a new experiment-contract writer whose authoritative `results_plan` includes explicit metric definitions.
+  - Remove metric-name direction inference from every new-write path.
+  - Validate exact metric direction and unit compatibility between the frozen plan and `ResultsArtifactV2`.
+  - Keep any old-format conversion at the read boundary and mark its provenance.
+  - Add metamorphic regressions for row reordering, opaque renaming, direction inversion, unit mismatch, and missing role declarations.
+- Regression status:
+  - Focused schema tests: pending.
+  - Design-to-analysis propagation tests: pending.
+  - Full build and test suite: pending.
+  - Same-flow TUI/Web validation: pending.
+- Evidence/artifacts:
+  - `src/core/experiments/experimentContract.ts`
+  - `src/core/analysis/resultsTableSchema.ts`
+  - `src/core/nodes/designExperiments.ts`
+  - `src/core/nodes/analyzeResults.ts`
+  - `tests/experimentContract.test.ts`
+  - `tests/resultsTableSchema.test.ts`
+  - `tests/objectiveMetricPropagation.test.ts`
+
+---
+
+## Issue: LV-622
+
+- Status: reproduced; rejected benchmark removed; generalized controller remediation in progress
+- Category: research-design and paper-readiness risk; the interactive bug taxonomy does not apply
+- Validation target: topic discovery must authorize only a bounded execution probe before empirical evidence exists, and the pilot decision rules must distinguish the strongest baseline from the proposed intervention without predetermining the result.
+- Environment/session context: current unexecuted topic-funnel implementation and a rejected task-local pilot contract; zero campaign trajectories and zero aggregate results were admitted as evidence.
+- Reproduction steps:
+  1. Inspect `src/core/researchFunnel.ts`, `src/core/nodes/designExperiments.ts`, and the Web research-funnel labels.
+  2. Observe that an integrity-valid literature portfolio emits `promotion_allowed=true`, `disposition=selected`, and user-facing `Promotion allowed` before any experiment runs.
+  3. Inspect the historical controller record and confirm that the rejected pilot's strongest baseline absorbed its proposed distinction.
+  4. Confirm that no rejected pilot implementation or preregistration remains in the public benchmark tree.
+- Expected behavior:
+  - Literature and reviewer scores may authorize a bounded probe shortlist, but cannot select a paper topic or imply empirical promotion.
+  - The portfolio must preserve breadth across independent evidence axes before narrowing.
+  - The strongest practical baseline may absorb the proposed mechanism; that outcome must kill or downgrade the contribution instead of becoming an impossible or tautological gate.
+  - Every hard promotion rule must be measurable under at least one plausible execution path and must map to a predeclared interpretation.
+- Actual behavior:
+  - The persisted decision and Web UI use final-sounding `selected` and `promotion` language before empirical evidence exists.
+  - The topic portfolio enforces a 5-7 count but does not enforce the declared three-cluster breadth floor.
+  - The proposed and baseline arms enforce the same behavior on the primary endpoint, making their expected values structurally equal under the original definition.
+  - The proposed arm adds checks without a prespecified advantage on the ordinary-run endpoint.
+  - The hard absorption gate consequently depends on incidental execution failures instead of measuring the intended contribution.
+- Fresh vs existing session comparison:
+  - Fresh session: projects the pre-experiment authorization artifacts with premature promotion semantics.
+  - Existing session: reloads the persisted artifacts and projects the same premature semantics.
+- Root-cause hypothesis:
+  - Candidate shortlisting, bounded-pilot authorization, empirical topic promotion, and paper selection were represented as one state.
+  - The pilot gate treated an internal mechanism as required novelty even though the strongest baseline already supplied the relevant behavior.
+- Code/test changes:
+  - Replace pre-experiment selection/promotion semantics with an explicit bounded-probe authorization contract and UI.
+  - Require at least three distinct evidence-axis clusters across the 5-7 candidate portfolio and recompute this gate during artifact validation.
+  - Remove the rejected pilot implementation and keep only its evidence-backed rejection in the topic-search ledger.
+  - Add domain-neutral tests proving that closest-prior absorption blocks a shortlist and that no paper-topic selection is exposed before executed evidence.
+- Regression status:
+  - Automated regression: pending.
+  - Deterministic benchmark validation: pending.
+  - Real local model execution: intentionally blocked until the preregistration and harness agree.
+  - Same-flow TUI/Web revalidation: pending.
+- Evidence/artifacts:
+  - `src/core/researchFunnel.ts`
+  - `src/core/nodes/designExperiments.ts`
+  - `src/core/runs/researchFunnelProjection.ts`
+  - `web/src/App.tsx`
+  - `docs/research/topic-search-portfolio-2026-07-26.md`
+
+---
+
+## Issue: LV-621
+
+- Status: reproduced; remediation and same-flow validation in progress
+- Category: research-contract contamination and paper-readiness risk; the interactive bug taxonomy does not apply
+- Validation target: a topic-driven run must derive its design, implementation, conditions, datasets, and metrics from the governed brief or an explicitly selected domain capability, without silently substituting a historical experiment.
+- Environment/session context: clean `main` worktree, current 10-node runtime, default configuration, node implementations, public tests, and the existing promotion-governance paper bundle.
+- Reproduction steps:
+  1. Inspect the default topic and objective used when no explicit research contract is supplied.
+  2. Create or load a run whose topic contains broad multi-agent and reproducibility terminology.
+  3. Execute `design_experiments` and `implement_experiments`, then inspect the generated design, runner, conditions, datasets, and metrics.
+  4. Invoke `/agent tune-node` without injecting a real held-out evaluator and inspect the reported comparison provenance.
+- Expected behavior:
+  - A missing research contract fails closed or enters an explicit topic-discovery state.
+  - Experiment design and implementation remain domain-neutral until the brief or an explicit capability selects a runner.
+  - Historical experiments can exist only as opt-in examples, paper artifacts, or domain capabilities with visible provenance.
+  - Synthetic evaluation is clearly marked and cannot be presented as real model or paper evidence.
+- Actual behavior:
+  - The default configuration names a historical multi-agent reproducibility topic.
+  - Broad topic keywords activate a fixed shared-state-schema versus free-form-chat experiment with embedded mini benchmark tasks, conditions, metrics, and sample counts.
+  - `implement_experiments` can replace the implementer's output with that fixed bundle, hiding a failed or unrelated implementation.
+  - `run_experiments` and planning fallbacks repeat the same historical condition and baseline assumptions.
+  - `/agent tune-node` uses a fixed synthetic evaluator by default while exposing comparison scores through an operator-facing command.
+  - Public-code sanitization catches narrow numeric condition identifiers but does not catch semantic experiment contamination.
+- Fresh vs existing session comparison:
+  - Fresh session: reaches the contaminated fallback paths from shared source and generated artifacts.
+  - Existing session: resumes into the same paths because the contamination is persisted rather than transient UI state.
+- Root-cause hypothesis:
+  - Research-specific fixtures, fallbacks, benchmark systems, and synthetic evaluators were promoted into the reusable core instead of remaining explicit opt-in capabilities.
+  - Tests asserted the historical experiment's outputs, which turned one study into an accidental public contract.
+- Code/test changes:
+  - Remove semantic auto-activation and silent implementation replacement.
+  - Require an explicit runner/capability contract and fail closed when executable evidence is absent.
+  - Replace research-specific core fixtures with domain-neutral contract fixtures.
+  - Add semantic public-code contamination families to the sanitization suite.
+  - Add an auditable topic portfolio, closest-prior, feasibility, baseline, kill-signal, and selection ledger without changing the fixed 10-node workflow contract.
+  - Project topic-discovery status through the shared TUI/Web exploration snapshot.
+- Regression status:
+  - Automated regression test linked: pending.
+  - Same-flow TUI/Web revalidation: pending.
+  - Full build, test, harness, governance, plugin, and smoke validation: pending.
+- Current paper risk:
+  - The promotion-governance manuscript remains quarantined as a non-ready conformance study because its deterministic oracle and proposed audit share a contract, its real-model comparator cannot inspect mutated artifacts, its source families use one template family, and its citation approvals remain incomplete.
+- Evidence/artifacts:
+  - `src/config.ts`
+  - `src/core/nodes/designExperiments.ts`
+  - `src/core/agents/implementSessionManager.ts`
+  - `src/core/experiments/realExecutionBundle.ts`
+  - `src/core/nodes/runExperiments.ts`
+  - `src/core/agents/tuneNode.ts`
+  - `tests/publicCodeSanitization.test.ts`
+  - `docs/research/topic-discovery-controller-state.json`
 
 ---
 

@@ -1,6 +1,6 @@
 {
   "name": "autolabos-research-governor",
-  "version": "0.1.0+codex.20260721084932",
+  "version": "0.1.0+codex.20260726051448",
   "description": "Codex-native governance harness for evidence-gated research runs.",
   "author": {
     "name": "AutoLabOS maintainers"
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "AutoLabOS Research Governor",
     "shortDescription": "Govern Codex research work with evidence gates.",
-    "longDescription": "AutoLabOS Research Governor helps Codex create governed briefs, audit research artifacts, enforce claim ceilings, and strengthen weak research nodes through evidence gates.",
+    "longDescription": "AutoLabOS Research Governor helps Codex create governed briefs, explore paper topics inside the fixed research workflow, audit artifacts, enforce claim ceilings, and strengthen weak research nodes through evidence gates.",
     "developerName": "AutoLabOS",
     "category": "Productivity",
     "capabilities": [
@@ -29,6 +29,7 @@
     ],
     "defaultPrompt": [
       "Create a governed research brief.",
+      "Discover paper topics from a broad governed discovery brief.",
       "Audit this run for paper readiness.",
       "Strengthen weak research nodes."
     ]

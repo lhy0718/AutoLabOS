@@ -1,10 +1,8 @@
 export const ACL_BIBLIOGRAPHY_STYLE = "acl_natbib";
 
 export type AclTemplatePackage = {
-  generation: "current" | "year_specific";
   packageName: string;
   packageCommand: string;
-  bibliographyStyleOwner: "package" | "document";
 };
 
 export type AclTemplateSurface = {
@@ -15,7 +13,6 @@ export type AclTemplateSurface = {
 };
 
 const USE_PACKAGE_PATTERN = /^[ \t]*(\\usepackage\s*(?:\[[^\]]*\]\s*)?\{([^}]+)\})/gmu;
-const YEAR_SPECIFIC_ACL_PACKAGE_PATTERN = /^ACL20\d{2}$/iu;
 const BIBLIOGRAPHY_STYLE_PATTERN = /\\bibliographystyle\s*\{([^}]+)\}/u;
 const KEYWORDS_FIELD_PATTERN = /\\textbf\s*\{\s*Keywords\s*:\s*\}|\\keywords\s*\{/iu;
 
@@ -27,18 +24,8 @@ export function detectAclTemplatePackage(source: string): AclTemplatePackage | n
     for (const packageName of packageNames) {
       if (packageName === "acl") {
         return {
-          generation: "current",
           packageName,
-          packageCommand,
-          bibliographyStyleOwner: "package"
-        };
-      }
-      if (YEAR_SPECIFIC_ACL_PACKAGE_PATTERN.test(packageName)) {
-        return {
-          generation: "year_specific",
-          packageName,
-          packageCommand,
-          bibliographyStyleOwner: "document"
+          packageCommand
         };
       }
     }
@@ -62,9 +49,7 @@ export function inspectAclTemplateSurface(source: string): AclTemplateSurface {
   return {
     template,
     explicitBibliographyStyle,
-    hasBibliographyStyleMismatch:
-      template?.bibliographyStyleOwner === "document"
-      && explicitBibliographyStyle !== ACL_BIBLIOGRAPHY_STYLE,
+    hasBibliographyStyleMismatch: template !== null && explicitBibliographyStyle !== null,
     hasExcludedKeywords: template !== null && hasLatexKeywordsField(source)
   };
 }

@@ -273,7 +273,7 @@ describe("buildGateWarningLimitationSentences", () => {
 
   it("groups warnings by category and includes severity", () => {
     const warnings: GateWarningItem[] = [
-      { severity: "warning", category: "evidence_quality", message: "No baseline comparator found" },
+      { severity: "warning", category: "evidence_quality", message: "No reference series found" },
       { severity: "error", category: "result_table", message: "Result table missing quantitative data" }
     ];
 
@@ -287,14 +287,14 @@ describe("buildGateWarningLimitationSentences", () => {
 
   it("combines multiple warnings in the same category", () => {
     const warnings: GateWarningItem[] = [
-      { severity: "warning", category: "evidence_quality", message: "No baseline" },
-      { severity: "warning", category: "evidence_quality", message: "No comparator" }
+      { severity: "warning", category: "evidence_quality", message: "Series U is missing" },
+      { severity: "warning", category: "evidence_quality", message: "Series V is missing" }
     ];
 
     const result = buildGateWarningLimitationSentences(warnings);
     expect(result).toHaveLength(1);
-    expect(result[0]).toContain("No baseline");
-    expect(result[0]).toContain("No comparator");
+    expect(result[0]).toContain("Series U is missing");
+    expect(result[0]).toContain("Series V is missing");
   });
 
   it("limits output to 5 sentences", () => {
@@ -437,6 +437,54 @@ describe("renderSubmissionPaperTex column_count", () => {
     expect(tex).not.toContain("\\usepackage[margin=1in]{geometry}");
   });
 
+  it("preserves ACL bibliography behavior and deterministic citation ordering", () => {
+    const manuscript: PaperManuscript = {
+      ...makeMinimalManuscript(),
+      sections: [
+        {
+          heading: "Related Work",
+          paragraphs: ["Prior work defines protocol Q."]
+        }
+      ]
+    };
+    const traceability: PaperTraceabilityReport = {
+      ...makeMinimalTraceability(),
+      paragraphs: [
+        {
+          manuscript_section: "Related Work",
+          paragraph_index: 0,
+          source_draft_section: "Related Work",
+          evidence_ids: [],
+          citation_paper_ids: ["paper_z", "paper_a"]
+        }
+      ]
+    };
+    const parsedTemplate: ParsedLatexTemplate = {
+      sourcePath: "/tmp/template-q.tex",
+      documentClass: "\\documentclass[11pt]{article}",
+      preamble: "\\usepackage{acl}",
+      columnLayout: 2,
+      packages: ["\\usepackage{acl}"],
+      sectionOrder: ["Related Work"],
+      customCommands: [],
+      bibliographyStyle: null
+    };
+
+    const tex = renderSubmissionPaperTex({
+      manuscript,
+      traceability,
+      citationKeysByPaperId: new Map([
+        ["paper_z", "zeta2025"],
+        ["paper_a", "alpha2024"]
+      ]),
+      parsedTemplate,
+      includeKeywords: false
+    });
+
+    expect(tex).toContain("\\cite{alpha2024,zeta2025}");
+    expect(tex).not.toContain("\\bibliographystyle{");
+  });
+
   it("renders author metadata and column-safe table/figure environments", () => {
     const manuscript: PaperManuscript = {
       ...makeMinimalManuscript(),
@@ -452,8 +500,8 @@ describe("renderSubmissionPaperTex column_count", () => {
         {
           caption: "Main result chart.",
           bars: [
-            { label: "Baseline", value: 0.31 },
-            { label: "Candidate", value: 0.42 }
+            { label: "Series U", value: 0.31 },
+            { label: "Series V", value: 0.42 }
           ]
         }
       ]

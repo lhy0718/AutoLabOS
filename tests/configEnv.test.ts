@@ -20,29 +20,38 @@ import {
   saveConfig,
   upsertEnvVar
 } from "../src/config.js";
-import {
-  DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL
-} from "../src/integrations/ollama/modelCatalog.js";
+import { DEFAULT_OLLAMA_BASE_URL } from "../src/integrations/ollama/modelCatalog.js";
 import * as codexOAuthAuth from "../src/integrations/codex/oauthAuth.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
 const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
+const OLLAMA_CHAT_MODEL = "local-model-a:latest";
+const OLLAMA_RESEARCH_MODEL = "local-model-b:latest";
+const OLLAMA_EXPERIMENT_MODEL = "local-model-c:latest";
+const OLLAMA_VISION_MODEL = "local-model-d:latest";
 
 async function recordWizardQuestions(
   paths: ReturnType<typeof resolveAppPaths>,
   questionMap: Record<string, string>
 ): Promise<string[]> {
   const asked: string[] = [];
-  await runSetupWizard(paths, async (question, defaultValue = "") => {
-    asked.push(question);
-    return makePromptReaderFromQuestionMap(questionMap)(question, defaultValue);
-  });
+  await runSetupWizard(
+    paths,
+    async (question, defaultValue = "") => {
+      asked.push(question);
+      return makePromptReaderFromQuestionMap(questionMap)(question, defaultValue);
+    },
+    {
+      discoverOllamaModels: async () => [
+        OLLAMA_CHAT_MODEL,
+        OLLAMA_RESEARCH_MODEL,
+        OLLAMA_EXPERIMENT_MODEL,
+        OLLAMA_VISION_MODEL
+      ]
+    }
+  );
   return asked;
 }
 
@@ -127,9 +136,9 @@ function makeConfig(): AppConfig {
       per_second_limit: 1
     },
     research: {
-      default_topic: "Multi-agent collaboration",
-      default_constraints: ["recent papers"],
-      default_objective_metric: "reproducibility"
+      default_topic: "configured research topic",
+      default_constraints: ["declared literature scope"],
+      default_objective_metric: "configured evaluation metric"
     },
     workflow: {
       mode: "agent_approval",
@@ -239,9 +248,9 @@ describe("config .env overrides", () => {
       per_second_limit: 1
     });
     expect(loaded.research).toEqual({
-      default_topic: "Multi-agent collaboration",
-      default_constraints: ["recent papers", "last 5 years"],
-      default_objective_metric: "state-of-the-art reproducibility"
+      default_topic: "",
+      default_constraints: [],
+      default_objective_metric: ""
     });
     expect(loaded.workflow.approval_mode).toBe("minimal");
     expect(loaded.workflow.execution_approval_mode).toBe("manual");
@@ -271,9 +280,9 @@ describe("config .env overrides", () => {
 
     await runNonInteractiveSetup(paths, {
       projectName: "AutoLabOS",
-      defaultTopic: "Multi-agent collaboration",
-      defaultConstraints: ["recent papers"],
-      defaultObjectiveMetric: "reproducibility",
+      defaultTopic: "configured research topic",
+      defaultConstraints: ["declared literature scope"],
+      defaultObjectiveMetric: "configured evaluation metric",
       llmMode: "codex_chatgpt_only",
       semanticScholarApiKey: "semantic-key",
       networkPolicy: "declared",
@@ -493,10 +502,10 @@ describe("config .env overrides", () => {
     const asked = await recordWizardQuestions(paths, {
         "Primary LLM provider (codex/api/ollama)": "ollama",
         "Ollama base URL": DEFAULT_OLLAMA_BASE_URL,
-        "Chat model": DEFAULT_OLLAMA_CHAT_MODEL,
-        "Research backend model": DEFAULT_OLLAMA_RESEARCH_MODEL,
-        "Experiment/code model": DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-        "Vision/PDF model": DEFAULT_OLLAMA_VISION_MODEL
+        "Chat model": OLLAMA_CHAT_MODEL,
+        "Research backend model": OLLAMA_RESEARCH_MODEL,
+        "Experiment/code model": OLLAMA_EXPERIMENT_MODEL,
+        "Vision/PDF model": OLLAMA_VISION_MODEL
       });
 
     expect(asked.filter((question) => question.startsWith("Ollama base URL"))).toHaveLength(1);
@@ -563,7 +572,7 @@ describe("config .env overrides", () => {
     const config = await runNonInteractiveSetup(paths, {
       projectName: "web-project",
       defaultTopic: "Agent planning",
-      defaultConstraints: ["recent papers", "benchmarks"],
+      defaultConstraints: ["declared literature scope", "configured comparator"],
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "openai_api",
       semanticScholarApiKey: "semantic-key",
@@ -583,7 +592,9 @@ describe("config .env overrides", () => {
     expect(raw).toContain("experiments:");
     expect(raw).toContain("paper:");
     expect(raw).toContain("paths:");
-    expect(raw).not.toContain("\nresearch:\n");
+    expect(raw).toContain("\nresearch:\n");
+    expect(raw).toContain("Agent planning");
+    expect(raw).toContain("declared literature scope");
     expect(raw).not.toContain("template:");
     expect(raw).not.toContain("column_count:");
     expect(raw).not.toContain("target_main_pages:");
@@ -600,7 +611,7 @@ describe("config .env overrides", () => {
     const config = await runNonInteractiveSetup(paths, {
       projectName: "web-project",
       defaultTopic: "Agent planning",
-      defaultConstraints: ["recent papers"],
+      defaultConstraints: ["declared literature scope"],
       defaultObjectiveMetric: "sample efficiency",
       llmMode: "codex_chatgpt_only",
       semanticScholarApiKey: "semantic-key",
@@ -725,7 +736,9 @@ describe("config .env overrides", () => {
     expect(raw).toContain("paths:");
     expect(raw).not.toContain("\n  pdf:\n");
     expect(raw).not.toContain("\nanalysis:\n");
-    expect(raw).not.toContain("\nresearch:\n");
+    expect(raw).toContain("\nresearch:\n");
+    expect(raw).toContain("configured research topic");
+    expect(raw).toContain("declared literature scope");
     expect(raw).not.toContain("template:");
     expect(raw).not.toContain("column_count:");
     expect(raw).not.toContain("target_main_pages:");
@@ -742,7 +755,7 @@ describe("config .env overrides", () => {
 
     const loaded = await loadConfig(paths);
     expect(getDefaultPdfAnalysisModeForLlmMode(loaded.providers.llm_mode)).toBe("responses_api_pdf");
-    expect(loaded.research.default_topic).toBe("Multi-agent collaboration");
+    expect(loaded.research.default_topic).toBe("configured research topic");
     expect(loaded.experiments.network_policy).toBe("blocked");
     expect(loaded.paper.validation_mode).toBe("default");
     expect(loaded.paper.template).toBe("acl");

@@ -4,7 +4,17 @@ import { evaluateObjectiveMetric, ObjectiveMetricEvaluation, ObjectiveMetricProf
 import { ExperimentPortfolio, ExperimentRunManifest } from "./experiments/experimentPortfolio.js";
 import { RunVerifierReport } from "./experiments/runVerifierFeedback.js";
 import { RunRecord, TransitionRecommendation } from "../types.js";
-import type { ResultsTableSchema } from "./analysis/resultsTableSchema.js";
+import {
+  adaptResultsTableSchemaV1ToV2,
+  validateResultsArtifactV2,
+  validateResultsTableSchema,
+  type ResultsArtifactV2,
+  type ResultsPlanV2,
+  type ResultsTableDirection,
+  type ResultsTableSchema
+} from "./analysis/resultsTableSchema.js";
+import type { ResultsArtifactProjectionResult } from "./analysis/resultsArtifactProjection.js";
+import type { CandidateMetricScale } from "./effectCriterion.js";
 
 export interface AnalysisMetricEntry {
   key: string;
@@ -14,27 +24,60 @@ export interface AnalysisMetricEntry {
 export interface AnalysisComparisonMetric {
   key: string;
   value: number;
+  direction?: ResultsTableDirection;
+  subject_value?: number;
+  reference_value?: number;
+  /** @deprecated Compatibility alias for subject_value. */
   primary_value?: number;
+  /** @deprecated Compatibility alias for reference_value. */
   baseline_value?: number;
 }
 
 export interface AnalysisConditionComparison {
   id: string;
   label: string;
-  source:
-    | "metrics.comparison"
-    | "metrics.condition_metrics"
-    | "metrics.results"
-    | "metrics.result_rows"
-    | "metrics.recipes"
-    | "metrics.conditions"
-    | "metrics.condition_results"
-    | "metrics.condition_summaries"
-    | "metrics.condition_aggregates"
-    | "metrics.per_condition"
-    | "metrics.per_condition_average_accuracy";
+  source: "results_artifact";
+  subject_series_id?: string;
+  reference_series_id?: string;
+  subject_label?: string;
+  reference_label?: string;
+  metric_id?: string;
+  metric_direction?: ResultsTableDirection;
+  judgement?: string;
   metrics: AnalysisComparisonMetric[];
   hypothesis_supported?: boolean;
+  summary: string;
+}
+
+export interface AnalysisResultsArtifactEntityLink {
+  id: string;
+  link: string;
+}
+
+export interface AnalysisResultsArtifactComparison {
+  comparison: AnalysisResultsArtifactEntityLink & {
+    judgement?: string;
+    evidence_refs: string[];
+  };
+  subject_observation: AnalysisResultsArtifactEntityLink & {
+    value: number;
+  };
+  reference_observation: AnalysisResultsArtifactEntityLink & {
+    value: number;
+  };
+  metric: AnalysisResultsArtifactEntityLink & {
+    label: string;
+    direction: ResultsTableDirection;
+  };
+  subject_series: AnalysisResultsArtifactEntityLink & {
+    label: string;
+  };
+  reference_series: AnalysisResultsArtifactEntityLink & {
+    label: string;
+  };
+  delta: number;
+  hypothesis_supported?: boolean;
+  evidence_links: string[];
   summary: string;
 }
 
@@ -160,6 +203,10 @@ export interface AnalysisVerifierFeedback {
 
 export interface AnalysisConfidenceInterval {
   metric_key: string;
+  comparison_id?: string;
+  estimand?: "metric_value" | "effect_delta";
+  metric_scale?: CandidateMetricScale;
+  trial_source?: "fresh_executed" | "mixed" | "cached";
   label: string;
   lower: number;
   upper: number;
@@ -219,7 +266,17 @@ export interface AnalysisReport {
       source: ObjectiveMetricProfile["source"];
       primary_metric?: string;
       preferred_metric_keys: string[];
+      direction?: ObjectiveMetricProfile["direction"];
+      comparator?: ObjectiveMetricProfile["comparator"];
+      target_value?: number;
       target_description?: string;
+      unit?: string;
+      scale?: ObjectiveMetricProfile["scale"];
+      target_unit?: string;
+      target_scale?: ObjectiveMetricProfile["targetScale"];
+      comparison?: ObjectiveMetricProfile["comparison"];
+      candidate_contract?: ObjectiveMetricProfile["candidate_contract"];
+      delta_contract?: ObjectiveMetricProfile["delta_contract"];
       analysis_focus: string[];
       paper_emphasis: string[];
       assumptions: string[];
@@ -238,6 +295,10 @@ export interface AnalysisReport {
   plan_context: AnalysisPlanContext;
   experiment_portfolio?: AnalysisExperimentPortfolio;
   metric_table: AnalysisMetricEntry[];
+  results_artifact: ResultsArtifactV2;
+  results_plan?: ResultsPlanV2;
+  primary_comparison_id?: string;
+  /** @deprecated Historical read compatibility only. New runtime reports do not write this field. */
   results_table?: ResultsTableSchema;
   condition_comparisons: AnalysisConditionComparison[];
   execution_summary: AnalysisExecutionSummary;
@@ -260,80 +321,115 @@ export interface AnalysisReport {
   transition_recommendation?: TransitionRecommendation;
 }
 
+const PERSISTED_METRICS_MAX_DEPTH = 6;
+const PERSISTED_METRICS_MAX_ARRAY_ITEMS = 24;
+const PERSISTED_METRICS_MAX_OBJECT_ENTRIES = 64;
+const PERSISTED_METRICS_MAX_STRING_LENGTH = 2_000;
+const OMIT_PROJECTED_VALUE = Symbol("omit_projected_value");
+
+interface BoundedMetricsProjectionState {
+  active: WeakSet<object>;
+  omittedPaths: Set<string>;
+}
+
 export function buildPersistedAnalysisMetricsProjection(
   metrics: Record<string, unknown>,
   sourceMetricsRef: string
 ): Record<string, unknown> {
-  const projected: Record<string, unknown> = { ...metrics };
-  const omittedFields: string[] = [];
-  const rawConditionResults = Array.isArray(metrics.raw_condition_results)
-    ? metrics.raw_condition_results
-    : undefined;
-
-  if (rawConditionResults) {
-    delete projected.raw_condition_results;
-    projected.raw_condition_result_count = rawConditionResults.length;
-    omittedFields.push("raw_condition_results");
-  }
-
-  for (const key of ["conditions", "condition_results", "condition_summaries", "per_condition"]) {
-    const rows = metrics[key];
-    if (!Array.isArray(rows)) {
-      continue;
-    }
-    projected[key] = rows.map((row) => compactPersistedCondition(row, key, omittedFields));
-  }
-
-  if (metrics.best_condition && typeof metrics.best_condition === "object" && !Array.isArray(metrics.best_condition)) {
-    projected.best_condition = compactPersistedCondition(metrics.best_condition, "best_condition", omittedFields);
-  }
+  const state: BoundedMetricsProjectionState = {
+    active: new WeakSet<object>(),
+    omittedPaths: new Set<string>()
+  };
+  const bounded = projectBoundedMetricsValue(metrics, "", 0, state);
+  const projected =
+    bounded && bounded !== OMIT_PROJECTED_VALUE && typeof bounded === "object" && !Array.isArray(bounded)
+      ? bounded as Record<string, unknown>
+      : {};
 
   projected.analysis_artifact_projection = {
     schema_version: "1.0",
     source_metrics_ref: sourceMetricsRef,
-    omitted_fields: [...new Set(omittedFields)]
+    omitted_fields: [...state.omittedPaths].sort(),
+    limits: {
+      max_depth: PERSISTED_METRICS_MAX_DEPTH,
+      max_array_items: PERSISTED_METRICS_MAX_ARRAY_ITEMS,
+      max_object_entries: PERSISTED_METRICS_MAX_OBJECT_ENTRIES,
+      max_string_length: PERSISTED_METRICS_MAX_STRING_LENGTH
+    }
   };
   return projected;
 }
 
-function compactPersistedCondition(
+function projectBoundedMetricsValue(
   value: unknown,
-  fieldPath: string,
-  omittedFields: string[]
-): unknown {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
+  path: string,
+  depth: number,
+  state: BoundedMetricsProjectionState
+): unknown | typeof OMIT_PROJECTED_VALUE {
+  if (isResultsArtifactProjectionValue(value)) {
+    state.omittedPaths.add(path || "<root>");
+    return OMIT_PROJECTED_VALUE;
+  }
+  if (typeof value === "string") {
+    if (value.length <= PERSISTED_METRICS_MAX_STRING_LENGTH) {
+      return value;
+    }
+    state.omittedPaths.add(path || "<root>");
+    return `${value.slice(0, PERSISTED_METRICS_MAX_STRING_LENGTH)}...`;
+  }
+  if (!value || typeof value !== "object") {
     return value;
   }
-  const condition = value as Record<string, unknown>;
-  const evaluation = condition.evaluation;
-  if (!evaluation || typeof evaluation !== "object" || Array.isArray(evaluation)) {
-    return { ...condition };
+  if (state.active.has(value)) {
+    state.omittedPaths.add(path || "<root>");
+    return "[circular]";
+  }
+  if (depth >= PERSISTED_METRICS_MAX_DEPTH) {
+    state.omittedPaths.add(path || "<root>");
+    return Array.isArray(value) ? [] : {};
   }
 
-  const compactEvaluation: Record<string, unknown> = {};
-  for (const [task, taskValue] of Object.entries(evaluation as Record<string, unknown>)) {
-    if (!taskValue || typeof taskValue !== "object" || Array.isArray(taskValue)) {
-      compactEvaluation[task] = taskValue;
-      continue;
+  state.active.add(value);
+  if (Array.isArray(value)) {
+    if (value.length > PERSISTED_METRICS_MAX_ARRAY_ITEMS) {
+      state.omittedPaths.add(`${path || "<root>"}[${PERSISTED_METRICS_MAX_ARRAY_ITEMS}:]`);
     }
-    const taskRecord = taskValue as Record<string, unknown>;
-    const predictions = Array.isArray(taskRecord.predictions) ? taskRecord.predictions : undefined;
-    if (!predictions) {
-      compactEvaluation[task] = { ...taskRecord };
-      continue;
-    }
-    const { predictions: _predictions, ...taskSummary } = taskRecord;
-    compactEvaluation[task] = {
-      ...taskSummary,
-      prediction_count: predictions.length
-    };
-    omittedFields.push(`${fieldPath}[*].evaluation.${task}.predictions`);
+    const projected = value
+      .slice(0, PERSISTED_METRICS_MAX_ARRAY_ITEMS)
+      .map((item, index) => projectBoundedMetricsValue(item, `${path}[${index}]`, depth + 1, state))
+      .filter((item) => item !== OMIT_PROJECTED_VALUE);
+    state.active.delete(value);
+    return projected;
   }
 
-  return {
-    ...condition,
-    evaluation: compactEvaluation
-  };
+  const entries = Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length > PERSISTED_METRICS_MAX_OBJECT_ENTRIES) {
+    state.omittedPaths.add(`${path || "<root>"}.{remaining}`);
+  }
+  const projected: Record<string, unknown> = {};
+  for (const [key, child] of entries.slice(0, PERSISTED_METRICS_MAX_OBJECT_ENTRIES)) {
+    const childPath = path ? `${path}.${key}` : key;
+    const childProjection = projectBoundedMetricsValue(child, childPath, depth + 1, state);
+    if (childProjection !== OMIT_PROJECTED_VALUE) {
+      projected[key] = childProjection;
+    }
+  }
+  state.active.delete(value);
+  return projected;
+}
+
+function isResultsArtifactProjectionValue(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  return record.schema_version === "2.0"
+    && Array.isArray(record.metrics)
+    && Array.isArray(record.series)
+    && Array.isArray(record.observations)
+    && Array.isArray(record.comparisons)
+    && validateResultsArtifactV2(value).valid;
 }
 
 interface ExecutionObservation {
@@ -375,31 +471,115 @@ interface BuildAnalysisReportArgs {
   };
   recentPaperComparison?: Record<string, unknown>;
   recentPaperComparisonPath?: string;
+  resultsPlan?: ResultsPlanV2;
+  primaryComparisonId?: string;
+  resultsArtifactProjection?: ResultsArtifactProjectionResult;
 }
 
 const DEFAULT_FIGURE_PATH = "figures/performance.svg";
 
+function resolveCanonicalResultsArtifactProjection(
+  metrics: Record<string, unknown>,
+  candidate?: ResultsArtifactProjectionResult
+): ResultsArtifactProjectionResult {
+  if (candidate?.source === "explicit_results_artifact") {
+    const validation = validateResultsArtifactV2(candidate.artifact);
+    if (validation.valid) {
+      return candidate;
+    }
+    return {
+      artifact: createEmptyResultsArtifact(),
+      source: "explicit_results_artifact",
+      valid: false,
+      blocked: true,
+      issues: uniqueStrings([...candidate.issues, ...validation.issues]),
+      warnings: [...candidate.warnings]
+    };
+  }
+
+  if (Object.hasOwn(metrics, "results_artifact")) {
+    const validation = validateResultsArtifactV2(metrics.results_artifact);
+    if (validation.valid) {
+      return {
+        artifact: metrics.results_artifact as ResultsArtifactV2,
+        source: "explicit_results_artifact",
+        valid: true,
+        blocked: false,
+        issues: [],
+        warnings: []
+      };
+    }
+    return {
+      artifact: createEmptyResultsArtifact(),
+      source: "explicit_results_artifact",
+      valid: false,
+      blocked: true,
+      issues: validation.issues,
+      warnings: []
+    };
+  }
+
+  return {
+    artifact: createEmptyResultsArtifact(),
+    source: "generic_metrics",
+    valid: true,
+    blocked: false,
+    issues: [],
+    warnings: [
+      "No explicit ResultsArtifactV2 was available; generic metrics were retained without synthesizing canonical observations or comparisons."
+    ]
+  };
+}
+
+function createEmptyResultsArtifact(): ResultsArtifactV2 {
+  return {
+    schema_version: "2.0",
+    metrics: [],
+    series: [],
+    observations: [],
+    comparisons: []
+  };
+}
+
 export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisReport {
-  const metricTable = sortMetricTable(flattenNumericMetrics(args.metrics), args.objectiveEvaluation.matchedMetricKey);
-  const meanScore = computeMeanScore(args.metrics);
-  const rawPlanContext = parseExperimentPlan(args.experimentPlanRaw || "");
-  const executionSummary = summarizeObservations(args.observationsRaw || "");
-  const conditionComparisons = buildConditionComparisons(
+  const resultsArtifactProjection = resolveCanonicalResultsArtifactProjection(
     args.metrics,
+    args.resultsArtifactProjection
+  );
+  const objectiveMetricIds = buildExactObjectiveMetricIds(
     args.objectiveEvaluation,
     args.objectiveProfile
   );
+  const metricTable = sortMetricTable(
+    buildAnalysisMetricTable(args.metrics, resultsArtifactProjection),
+    objectiveMetricIds
+  );
+  const topMetric = summarizeExactObjectiveMetric(metricTable, objectiveMetricIds);
+  const meanScore = topMetric?.value ?? 0;
+  const rawPlanContext = parseExperimentPlan(args.experimentPlanRaw || "");
+  const executionSummary = summarizeObservations(args.observationsRaw || "");
+  const conditionComparisons = buildConditionComparisons(resultsArtifactProjection.artifact);
+  const primaryResultsComparison = resolvePrimaryResultsArtifactComparison(
+    resultsArtifactProjection.artifact,
+    args.primaryComparisonId
+  );
+  const explicitPrimaryComparisonId = args.primaryComparisonId === primaryResultsComparison?.comparison.id
+    ? args.primaryComparisonId
+    : undefined;
   const warnings = buildWarnings({
     objectiveEvaluation: args.objectiveEvaluation,
     metricTable,
     executionSummary,
     planContext: rawPlanContext,
-    inputWarnings: args.inputWarnings || [],
+    inputWarnings: [
+      ...(args.inputWarnings || []),
+      ...resultsArtifactProjection.issues,
+      ...resultsArtifactProjection.warnings
+    ],
     verifierFeedback: args.runVerifierReport,
     supplementalRuns: args.supplementalMetrics || [],
     supplementalExpectation: args.supplementalExpectation
   });
-  const topMetric = metricTable[0];
   const verifierFeedback = normalizeVerifierFeedback(args.runVerifierReport);
   const rawExperimentPortfolio = buildExperimentPortfolioSummary(
     args.experimentPortfolio || args.runManifest?.portfolio,
@@ -409,7 +589,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     runs: args.supplementalMetrics || [],
     runManifest: args.runManifest,
     objectiveProfile: args.objectiveProfile,
-    rawObjectiveMetric: args.run.objectiveMetric
+    rawObjectiveMetric: args.objectiveProfile.raw
   });
   const externalComparisons = buildExternalComparisons({
     metrics: args.metrics,
@@ -419,13 +599,13 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
   });
   const statisticalSummary = buildStatisticalSummary({
     metrics: args.metrics,
-    objectiveEvaluation: args.objectiveEvaluation,
-    objectiveProfile: args.objectiveProfile,
-    conditionComparisons,
+    resultsArtifact: resultsArtifactProjection.artifact,
+    objectiveMetricIds,
+    primaryResultsComparison,
     supplementalMetrics: args.supplementalMetrics || [],
     supplementalExpectation: args.supplementalExpectation
   });
-  const evidenceScope = buildAnalysisEvidenceScope(args.metrics, statisticalSummary);
+  const evidenceScope = buildAnalysisEvidenceScope(statisticalSummary);
   const planContext = groundPlanContextToAnalysisEvidence(rawPlanContext, evidenceScope);
   const experimentPortfolio = groundExperimentPortfolioToAnalysisEvidence(rawExperimentPortfolio, evidenceScope);
   const limitations = buildLimitations(planContext, warnings, evidenceScope);
@@ -448,7 +628,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
   });
   const figureSpecs = buildFigureSpecs(
     metricTable,
-    args.objectiveEvaluation.matchedMetricKey,
+    objectiveMetricIds,
     args.performanceFigurePath || DEFAULT_FIGURE_PATH
   );
   const primaryFindings = buildPrimaryFindings({
@@ -456,7 +636,7 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     planContext,
     executionSummary,
     topMetric,
-    conditionComparisons,
+    primaryResultsComparison,
     warnings,
     verifierFeedback,
     supplementalRuns,
@@ -465,7 +645,12 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     failureTaxonomy,
     experimentPortfolio
   });
-  const paperClaims = buildPaperClaims(primaryFindings, planContext, conditionComparisons, externalComparisons);
+  const paperClaims = buildPaperClaims({
+    objectiveSummary: args.objectiveEvaluation.summary,
+    planContext,
+    primaryResultsComparison,
+    externalComparisons
+  });
 
   return {
     analysis_version: 1,
@@ -473,13 +658,32 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     mean_score: meanScore,
     metrics: args.metrics,
     objective_metric: {
-      raw: args.run.objectiveMetric,
+      raw: args.objectiveProfile.raw,
       evaluation: args.objectiveEvaluation,
       profile: {
         source: args.objectiveProfile.source,
         primary_metric: args.objectiveProfile.primaryMetric,
         preferred_metric_keys: args.objectiveProfile.preferredMetricKeys,
+        direction: args.objectiveProfile.direction,
+        comparator: args.objectiveProfile.comparator,
+        target_value: args.objectiveProfile.targetValue,
         target_description: args.objectiveProfile.targetDescription,
+        unit: args.objectiveProfile.unit,
+        scale: args.objectiveProfile.scale,
+        target_unit: args.objectiveProfile.targetUnit,
+        target_scale: args.objectiveProfile.targetScale,
+        comparison: args.objectiveProfile.comparison
+          ? { ...args.objectiveProfile.comparison }
+          : undefined,
+        candidate_contract: args.objectiveProfile.candidate_contract
+          ? {
+              ...args.objectiveProfile.candidate_contract,
+              effect_criterion: { ...args.objectiveProfile.candidate_contract.effect_criterion }
+            }
+          : undefined,
+        delta_contract: args.objectiveProfile.delta_contract
+          ? { ...args.objectiveProfile.delta_contract }
+          : undefined,
         analysis_focus: args.objectiveProfile.analysisFocus,
         paper_emphasis: args.objectiveProfile.paperEmphasis,
         assumptions: args.objectiveProfile.assumptions
@@ -498,7 +702,9 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
     plan_context: planContext,
     experiment_portfolio: experimentPortfolio,
     metric_table: metricTable,
-    results_table: [],
+    results_artifact: resultsArtifactProjection.artifact,
+    ...(args.resultsPlan ? { results_plan: args.resultsPlan } : {}),
+    ...(explicitPrimaryComparisonId ? { primary_comparison_id: explicitPrimaryComparisonId } : {}),
     condition_comparisons: conditionComparisons,
     execution_summary: executionSummary,
     primary_findings: primaryFindings,
@@ -518,7 +724,11 @@ export function buildAnalysisReport(args: BuildAnalysisReportArgs): AnalysisRepo
 export function renderPerformanceFigureSvg(report: AnalysisReport): string | undefined {
   const selectedMetrics = pickFigureMetrics(
     report.metric_table,
-    report.objective_metric.evaluation.matchedMetricKey
+    uniqueStrings([
+      report.objective_metric.evaluation.matchedMetricKey,
+      report.objective_metric.profile.primary_metric,
+      ...report.objective_metric.profile.preferred_metric_keys
+    ])
   );
   if (selectedMetrics.length === 0) {
     return undefined;
@@ -563,10 +773,114 @@ export function parseAnalysisReport(raw: string): AnalysisReport | undefined {
     return undefined;
   }
   try {
-    return JSON.parse(raw) as AnalysisReport;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return undefined;
+    }
+    const report = parsed as Record<string, unknown>;
+    if (Object.hasOwn(report, "results_artifact")) {
+      if (!validateResultsArtifactV2(report.results_artifact).valid) {
+        return undefined;
+      }
+      return useResultsArtifactAsCanonicalSource(
+        report,
+        report.results_artifact as ResultsArtifactV2
+      );
+    }
+
+    const historicalValidation = validateResultsTableSchema(report.results_table);
+    if (!historicalValidation.valid) {
+      return undefined;
+    }
+    return useResultsArtifactAsCanonicalSource(
+      report,
+      adaptResultsTableSchemaV1ToV2(historicalValidation.rows)
+    );
   } catch {
     return undefined;
   }
+}
+
+function useResultsArtifactAsCanonicalSource(
+  report: Record<string, unknown>,
+  artifact: ResultsArtifactV2
+): AnalysisReport {
+  const explicitPrimaryComparisonId = typeof report.primary_comparison_id === "string"
+    ? report.primary_comparison_id
+    : undefined;
+  const primaryResultsComparison = resolvePrimaryResultsArtifactComparison(
+    artifact,
+    explicitPrimaryComparisonId
+  );
+  const canonicalPrimaryComparisonId = explicitPrimaryComparisonId === primaryResultsComparison?.comparison.id
+    ? explicitPrimaryComparisonId
+    : undefined;
+  const statisticalSummary = asRecord(report.statistical_summary);
+  const objectiveMetricIds = readExactObjectiveMetricIdsFromReport(report);
+  const effectEstimates = buildStatisticalEffects(artifact, objectiveMetricIds);
+  const primaryEffect = primaryResultsComparison
+    ? effectEstimates.find((item) => item.comparison_id === primaryResultsComparison.comparison.id)
+    : undefined;
+  const confidenceIntervals = Array.isArray(statisticalSummary.confidence_intervals)
+    ? statisticalSummary.confidence_intervals as AnalysisConfidenceInterval[]
+    : [];
+  const stabilityMetrics = Array.isArray(statisticalSummary.stability_metrics)
+    ? statisticalSummary.stability_metrics as AnalysisMetricEntry[]
+    : [];
+  const reportWithoutPrimaryComparison = { ...report };
+  delete reportWithoutPrimaryComparison.primary_comparison_id;
+  const objectiveMetric = asRecord(report.objective_metric);
+  const objectiveEvaluation = asRecord(objectiveMetric.evaluation);
+  const overview = asRecord(report.overview);
+  const planContext = asRecord(report.plan_context) as unknown as AnalysisPlanContext;
+  const externalComparisons = Array.isArray(report.external_comparisons)
+    ? report.external_comparisons as AnalysisExternalComparison[]
+    : [];
+  const paperClaims = buildPaperClaims({
+    objectiveSummary: asString(objectiveEvaluation.summary) || asString(overview.objective_summary),
+    planContext,
+    primaryResultsComparison,
+    externalComparisons
+  });
+
+  return {
+    ...reportWithoutPrimaryComparison,
+    results_artifact: artifact,
+    ...(canonicalPrimaryComparisonId ? { primary_comparison_id: canonicalPrimaryComparisonId } : {}),
+    condition_comparisons: buildConditionComparisons(artifact),
+    paper_claims: paperClaims,
+    ...(Object.keys(statisticalSummary).length > 0
+      ? {
+        statistical_summary: {
+          ...statisticalSummary,
+          effect_estimates: effectEstimates,
+          notes: buildStatisticalNotes({
+            totalTrials: asNumber(statisticalSummary.total_trials),
+            executedTrials: asNumber(statisticalSummary.executed_trials),
+            cachedTrials: asNumber(statisticalSummary.cached_trials),
+            confidenceIntervals,
+            stabilityMetrics,
+            primaryEffect
+          })
+        }
+      }
+      : {})
+  } as unknown as AnalysisReport;
+}
+
+function readExactObjectiveMetricIdsFromReport(
+  report: Record<string, unknown>
+): string[] {
+  const objectiveMetric = asRecord(report.objective_metric);
+  const evaluation = asRecord(objectiveMetric.evaluation);
+  const profile = asRecord(objectiveMetric.profile);
+  return uniqueStrings([
+    asString(evaluation.matchedMetricKey),
+    asString(evaluation.primaryMetric),
+    ...asStringList(evaluation.preferredMetricKeys),
+    asString(profile.primary_metric),
+    ...asStringList(profile.preferred_metric_keys)
+  ]);
 }
 
 function parseExperimentPlan(raw: string): AnalysisPlanContext {
@@ -676,119 +990,163 @@ function summarizeObservations(raw: string): AnalysisExecutionSummary {
 }
 
 function buildConditionComparisons(
-  metrics: Record<string, unknown>,
-  objectiveEvaluation: ObjectiveMetricEvaluation,
-  objectiveProfile: ObjectiveMetricProfile
+  artifact: ResultsArtifactV2
 ): AnalysisConditionComparison[] {
-  const comparisons: AnalysisConditionComparison[] = [];
-  const comparisonRoot = asRecord(metrics.comparison);
-
-  for (const [comparisonId, raw] of Object.entries(comparisonRoot)) {
-    const entry = asRecord(raw);
-    const metricEntries = flattenNumericMetrics(entry).map((item) => ({
-      key: item.key,
-      value: item.value
-    }));
-    if (metricEntries.length === 0) {
-      continue;
-    }
-    const hypothesisSupported =
-      typeof entry.hypothesis_supported === "boolean" ? entry.hypothesis_supported : undefined;
-    const headline = metricEntries
-      .slice(0, 3)
-      .map((item) => `${item.key}=${formatMetricValue(item.value)}`)
-      .join(", ");
-    comparisons.push({
-      id: comparisonId,
-      label: humanizeComparisonLabel(comparisonId),
-      source: "metrics.comparison",
-      metrics: metricEntries,
-      hypothesis_supported: hypothesisSupported,
-      summary: hypothesisSupported === undefined
-        ? `${humanizeComparisonLabel(comparisonId)}: ${headline}.`
-        : hypothesisSupported
-          ? `${humanizeComparisonLabel(comparisonId)}: ${headline}. This comparison supports the preregistered hypothesis.`
-          : `${humanizeComparisonLabel(comparisonId)}: ${headline}. This comparison does not support the preregistered hypothesis.`
-    });
-  }
-
-  const conditionMetrics = asRecord(metrics.condition_metrics);
-  const conditionNames = Object.keys(conditionMetrics);
-  if (conditionNames.length >= 2) {
-    const preferredKeys = uniqueStrings(
-      [
-        objectiveEvaluation.matchedMetricKey,
-        objectiveProfile.primaryMetric,
-        ...objectiveProfile.preferredMetricKeys
-      ].filter((item): item is string => Boolean(item))
-    );
-    const primaryCondition = selectPrimaryCondition({
-      metrics,
-      conditionMetrics,
-      conditionNames,
-      preferredKeys,
-      direction: objectiveProfile.direction
-    });
-    const baselineCondition = selectBaselineCondition({
-      metrics,
-      conditionMetrics,
-      conditionNames,
-      primaryCondition,
-      preferredKeys,
-      direction: objectiveProfile.direction
-    });
-
-    if (primaryCondition) {
-      const orderedComparators = orderComparatorConditions(conditionNames, primaryCondition, baselineCondition);
-      for (const comparatorCondition of orderedComparators) {
-        const pair = buildConditionMetricPair({
-          conditionMetrics,
-          primaryCondition,
-          comparatorCondition,
-          preferredKeys
-        });
-        if (!pair) {
-          continue;
+  return resolveResultsArtifactComparisons(artifact).map((resolved) => {
+    return {
+      id: resolved.comparison.id,
+      label: `${resolved.subject_series.label} vs ${resolved.reference_series.label}`,
+      source: "results_artifact",
+      subject_series_id: resolved.subject_series.id,
+      reference_series_id: resolved.reference_series.id,
+      subject_label: resolved.subject_series.label,
+      reference_label: resolved.reference_series.label,
+      metric_id: resolved.metric.id,
+      metric_direction: resolved.metric.direction,
+      judgement: resolved.comparison.judgement,
+      metrics: [
+        {
+          key: resolved.metric.id,
+          value: resolved.delta,
+          direction: resolved.metric.direction,
+          subject_value: resolved.subject_observation.value,
+          reference_value: resolved.reference_observation.value,
+          primary_value: resolved.subject_observation.value,
+          baseline_value: resolved.reference_observation.value
         }
-        comparisons.push(pair);
+      ],
+      hypothesis_supported: resolved.hypothesis_supported,
+      summary: resolved.summary
+    };
+  });
+}
+
+export function resolveResultsArtifactComparisons(
+  artifact: unknown
+): AnalysisResultsArtifactComparison[] {
+  if (!validateResultsArtifactV2(artifact).valid) {
+    return [];
+  }
+
+  const canonicalArtifact = artifact as ResultsArtifactV2;
+  const observationsById = new Map(
+    canonicalArtifact.observations.map((observation, index) => [
+      observation.id,
+      { observation, index }
+    ] as const)
+  );
+  const metricsById = new Map(
+    canonicalArtifact.metrics.map((metric, index) => [metric.id, { metric, index }] as const)
+  );
+  const seriesById = new Map(
+    canonicalArtifact.series.map((series, index) => [series.id, { series, index }] as const)
+  );
+
+  return canonicalArtifact.comparisons
+    .map((comparison, comparisonIndex): AnalysisResultsArtifactComparison | undefined => {
+      const subjectEntry = observationsById.get(comparison.subject_observation_id);
+      const referenceEntry = observationsById.get(comparison.reference_observation_id);
+      if (!subjectEntry || !referenceEntry) {
+        return undefined;
       }
-    }
-  }
+      if (subjectEntry.observation.metric_id !== referenceEntry.observation.metric_id) {
+        return undefined;
+      }
+      const metricEntry = metricsById.get(subjectEntry.observation.metric_id);
+      const subjectSeriesEntry = seriesById.get(subjectEntry.observation.series_id);
+      const referenceSeriesEntry = seriesById.get(referenceEntry.observation.series_id);
+      if (!metricEntry || !subjectSeriesEntry || !referenceSeriesEntry) {
+        return undefined;
+      }
 
-  if (comparisons.length === 0) {
-    const resultsComparison = buildResultsArrayConditionComparison({
-      metrics,
-      objectiveEvaluation,
-      objectiveProfile
-    });
-    if (resultsComparison) {
-      comparisons.push(resultsComparison);
-    }
-  }
+      const comparisonLink = resultsArtifactEntityLink("comparisons", comparisonIndex);
+      const subjectObservationLink = resultsArtifactEntityLink("observations", subjectEntry.index);
+      const referenceObservationLink = resultsArtifactEntityLink("observations", referenceEntry.index);
+      const metricLink = resultsArtifactEntityLink("metrics", metricEntry.index);
+      const subjectSeriesLink = resultsArtifactEntityLink("series", subjectSeriesEntry.index);
+      const referenceSeriesLink = resultsArtifactEntityLink("series", referenceSeriesEntry.index);
+      const hypothesisSupported = hypothesisSupportFromJudgement(comparison.judgement);
+      const judgementSummary = comparison.judgement ? ` Judgement: ${comparison.judgement}.` : "";
+      const summary = `${subjectSeriesEntry.series.label} vs ${referenceSeriesEntry.series.label} on ${metricEntry.metric.label}: ${formatMetricValue(subjectEntry.observation.value)} vs ${formatMetricValue(referenceEntry.observation.value)} (delta ${formatMetricValue(comparison.delta)}).${judgementSummary}`;
 
-  if (comparisons.length === 0) {
-    const recipesComparison = buildRecipesConditionComparison({
-      metrics,
-      objectiveEvaluation,
-      objectiveProfile
-    });
-    if (recipesComparison) {
-      comparisons.push(recipesComparison);
-    }
-  }
+      return {
+        comparison: {
+          id: comparison.id,
+          link: comparisonLink,
+          judgement: comparison.judgement,
+          evidence_refs: [...(comparison.evidence_refs || [])]
+        },
+        subject_observation: {
+          id: subjectEntry.observation.id,
+          link: subjectObservationLink,
+          value: subjectEntry.observation.value
+        },
+        reference_observation: {
+          id: referenceEntry.observation.id,
+          link: referenceObservationLink,
+          value: referenceEntry.observation.value
+        },
+        metric: {
+          id: metricEntry.metric.id,
+          link: metricLink,
+          label: metricEntry.metric.label,
+          direction: metricEntry.metric.direction
+        },
+        subject_series: {
+          id: subjectSeriesEntry.series.id,
+          link: subjectSeriesLink,
+          label: subjectSeriesEntry.series.label
+        },
+        reference_series: {
+          id: referenceSeriesEntry.series.id,
+          link: referenceSeriesLink,
+          label: referenceSeriesEntry.series.label
+        },
+        delta: comparison.delta,
+        hypothesis_supported: hypothesisSupported,
+        evidence_links: uniqueStrings([
+          comparisonLink,
+          subjectObservationLink,
+          referenceObservationLink,
+          metricLink,
+          subjectSeriesLink,
+          referenceSeriesLink,
+          ...(comparison.evidence_refs || []),
+          ...(subjectEntry.observation.evidence_refs || []),
+          ...(referenceEntry.observation.evidence_refs || [])
+        ]),
+        summary
+      };
+    })
+    .filter((item): item is AnalysisResultsArtifactComparison => item !== undefined)
+    .sort((left, right) => left.comparison.id.localeCompare(right.comparison.id));
+}
 
-  if (comparisons.length === 0) {
-    const conditionsComparison = buildConditionsArrayConditionComparison({
-      metrics,
-      objectiveEvaluation,
-      objectiveProfile
-    });
-    if (conditionsComparison) {
-      comparisons.push(conditionsComparison);
-    }
+export function resolvePrimaryResultsArtifactComparison(
+  artifact: unknown,
+  explicitPrimaryComparisonId?: unknown
+): AnalysisResultsArtifactComparison | undefined {
+  const comparisons = resolveResultsArtifactComparisons(artifact);
+  if (typeof explicitPrimaryComparisonId === "string" && explicitPrimaryComparisonId.length > 0) {
+    return comparisons.find((item) => item.comparison.id === explicitPrimaryComparisonId);
   }
+  return comparisons.length === 1 ? comparisons[0] : undefined;
+}
 
-  return comparisons;
+function resultsArtifactEntityLink(collection: string, index: number): string {
+  return `result_analysis.json#/results_artifact/${collection}/${index}`;
+}
+
+function hypothesisSupportFromJudgement(
+  judgement: string | undefined
+): boolean | undefined {
+  if (judgement === "supported") {
+    return true;
+  }
+  if (judgement === "not_supported") {
+    return false;
+  }
+  return undefined;
 }
 
 function buildWarnings(args: {
@@ -928,80 +1286,15 @@ function groundExperimentPortfolioToAnalysisEvidence(
 }
 
 function buildAnalysisEvidenceScope(
-  metrics: Record<string, unknown>,
   statisticalSummary: AnalysisStatisticalSummary
 ): AnalysisEvidenceScope {
-  const rows = collectConditionEvidenceRows(metrics);
-  const maxSeedCount = maxFiniteNumber(rows.flatMap((row) => collectConditionSeedCounts(row)));
-  const maxCiSampleSize = maxFiniteNumber([
-    ...statisticalSummary.confidence_intervals.map((item) => item.sample_size),
-    ...rows.flatMap((row) => collectConditionSampleSizes(row))
-  ]);
-
   return {
-    max_seed_count: maxSeedCount,
-    max_ci_sample_size: maxCiSampleSize,
-    has_condition_correct_totals: rows.some((row) => hasCorrectTotalPair(row)),
-    has_task_correct_totals: rows.some((row) => hasNestedTaskCorrectTotals(row))
+    max_ci_sample_size: maxFiniteNumber(
+      statisticalSummary.confidence_intervals.map((item) => item.sample_size)
+    ),
+    has_condition_correct_totals: false,
+    has_task_correct_totals: false
   };
-}
-
-function collectConditionEvidenceRows(metrics: Record<string, unknown>): Record<string, unknown>[] {
-  const conditionRows = [
-    ...conditionPredictionRows(metrics, "condition_results"),
-    ...conditionPredictionRows(metrics, "conditions")
-  ].map((item) => item.row);
-  const summariesRaw = metrics.condition_summaries;
-  const summaryRows = Array.isArray(summariesRaw)
-    ? summariesRaw.map((item) => asRecord(item))
-    : Object.entries(asRecord(summariesRaw)).map(([name, value]) => ({ name, ...asRecord(value) }));
-  return [...conditionRows, ...summaryRows].filter((row) => Object.keys(row).length > 0);
-}
-
-function collectConditionSeedCounts(row: Record<string, unknown>): number[] {
-  const directCounts = [
-    asNumber(row.seed_count),
-    asNumber(row.completed_seed_count),
-    asNumber(row.planned_seed_count)
-  ];
-  const seeds = asArray(row.seeds).filter((item) => typeof item === "string" || typeof item === "number");
-  const predictionSeeds = new Set(
-    asArray(row.predictions)
-      .map((item) => asRecord(item).seed ?? asRecord(item).seed_id)
-      .filter((item) => typeof item === "string" || typeof item === "number")
-  );
-  return [
-    ...directCounts,
-    seeds.length > 0 ? seeds.length : undefined,
-    predictionSeeds.size > 0 ? predictionSeeds.size : undefined
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-}
-
-function collectConditionSampleSizes(row: Record<string, unknown>): number[] {
-  const directSizes = [asNumber(row.sample_size), asNumber(row.total_count), asNumber(row.total)];
-  const predictions = asArray(row.predictions);
-  const confidenceInterval = asRecord(row.confidence_interval);
-  const nestedSizes = Object.values(asRecord(row.evaluation)).flatMap((value) => {
-    const record = asRecord(value);
-    const interval = asRecord(record.confidence_interval);
-    return [asNumber(record.sample_size), asNumber(record.total_count), asNumber(record.total), asNumber(interval.sample_size)];
-  });
-  return [
-    ...directSizes,
-    predictions.length > 0 ? predictions.length : undefined,
-    asNumber(confidenceInterval.sample_size),
-    ...nestedSizes
-  ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-}
-
-function hasCorrectTotalPair(row: Record<string, unknown>): boolean {
-  const correct = asNumber(row.correct_count) ?? asNumber(row.correct);
-  const total = asNumber(row.total_count) ?? asNumber(row.total);
-  return typeof correct === "number" && typeof total === "number";
-}
-
-function hasNestedTaskCorrectTotals(row: Record<string, unknown>): boolean {
-  return Object.values(asRecord(row.evaluation)).some((value) => hasCorrectTotalPair(asRecord(value)));
 }
 
 function contradictsAnalysisEvidenceScope(text: string, scope: AnalysisEvidenceScope): boolean {
@@ -1046,7 +1339,7 @@ function buildPrimaryFindings(args: {
   planContext: AnalysisPlanContext;
   executionSummary: AnalysisExecutionSummary;
   topMetric?: AnalysisMetricEntry;
-  conditionComparisons: AnalysisConditionComparison[];
+  primaryResultsComparison?: AnalysisResultsArtifactComparison;
   warnings: string[];
   verifierFeedback?: AnalysisVerifierFeedback;
   supplementalRuns: AnalysisSupplementalRun[];
@@ -1092,8 +1385,8 @@ function buildPrimaryFindings(args: {
     );
   }
 
-  if (args.conditionComparisons.length > 0) {
-    findings.push(args.conditionComparisons[0].summary);
+  if (args.primaryResultsComparison) {
+    findings.push(args.primaryResultsComparison.summary);
   }
 
   if (args.supplementalRuns.length > 0) {
@@ -1133,36 +1426,38 @@ function buildPrimaryFindings(args: {
   return uniqueStrings(findings);
 }
 
-function buildPaperClaims(
-  primaryFindings: string[],
-  planContext: AnalysisPlanContext,
-  conditionComparisons: AnalysisConditionComparison[],
-  externalComparisons: AnalysisExternalComparison[]
-): AnalysisPaperClaim[] {
-  const claims: AnalysisPaperClaim[] = primaryFindings.slice(0, 2).map((claim, index) => ({
-    claim,
-    evidence: index === 0
-      ? ["objective_metric.evaluation.summary"]
-      : ["primary_findings"]
-  }));
+function buildPaperClaims(args: {
+  objectiveSummary?: string;
+  planContext: AnalysisPlanContext;
+  primaryResultsComparison?: AnalysisResultsArtifactComparison;
+  externalComparisons: AnalysisExternalComparison[];
+}): AnalysisPaperClaim[] {
+  const claims: AnalysisPaperClaim[] = [];
 
-  if (planContext.selected_design?.summary) {
+  if (args.objectiveSummary) {
     claims.push({
-      claim: `Experiment design summary: ${planContext.selected_design.summary}`,
+      claim: args.objectiveSummary,
+      evidence: ["objective_metric.evaluation.summary"]
+    });
+  }
+
+  if (args.planContext.selected_design?.summary) {
+    claims.push({
+      claim: `Experiment design summary: ${args.planContext.selected_design.summary}`,
       evidence: ["plan_context.selected_design.summary"]
     });
   }
 
-  if (conditionComparisons[0]) {
+  if (args.primaryResultsComparison) {
     claims.push({
-      claim: conditionComparisons[0].summary,
-      evidence: ["condition_comparisons[0].summary"]
+      claim: args.primaryResultsComparison.summary,
+      evidence: [...args.primaryResultsComparison.evidence_links]
     });
   }
 
-  if (externalComparisons[0]) {
+  if (args.externalComparisons[0]) {
     claims.push({
-      claim: externalComparisons[0].summary,
+      claim: args.externalComparisons[0].summary,
       evidence: ["external_comparisons[0].summary"]
     });
   }
@@ -1172,10 +1467,10 @@ function buildPaperClaims(
 
 function buildFigureSpecs(
   metricTable: AnalysisMetricEntry[],
-  matchedMetricKey: string | undefined,
+  objectiveMetricIds: string[],
   performanceFigurePath: string
 ): AnalysisFigureSpec[] {
-  const selectedMetrics = pickFigureMetrics(metricTable, matchedMetricKey);
+  const selectedMetrics = pickFigureMetrics(metricTable, objectiveMetricIds);
   if (selectedMetrics.length === 0) {
     return [];
   }
@@ -1193,34 +1488,29 @@ function buildFigureSpecs(
 
 function pickFigureMetrics(
   metricTable: AnalysisMetricEntry[],
-  matchedMetricKey: string | undefined
+  objectiveMetricIds: string[]
 ): AnalysisMetricEntry[] {
-  const preferred = metricTable.filter(
-    (item) => item.key === matchedMetricKey || isLikelyPerformanceMetric(item.key, item.value)
-  );
-  const source = preferred.length > 0 ? preferred : metricTable;
-  return source
-    .filter((item) => Number.isFinite(item.value) && item.value >= 0)
+  return objectiveMetricIds
+    .map((metricId) => summarizeMetricById(metricTable, metricId))
+    .filter((item): item is AnalysisMetricEntry => item !== undefined)
     .slice(0, 5);
 }
 
-function sortMetricTable(metricTable: AnalysisMetricEntry[], matchedMetricKey: string | undefined): AnalysisMetricEntry[] {
+function sortMetricTable(
+  metricTable: AnalysisMetricEntry[],
+  objectiveMetricIds: string[]
+): AnalysisMetricEntry[] {
   return [...metricTable].sort((left, right) => {
-    const leftPriority = left.key === matchedMetricKey ? 1 : 0;
-    const rightPriority = right.key === matchedMetricKey ? 1 : 0;
-    if (leftPriority !== rightPriority) {
-      return rightPriority - leftPriority;
+    const leftRank = exactMetricRank(left.key, objectiveMetricIds);
+    const rightRank = exactMetricRank(right.key, objectiveMetricIds);
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
     }
-    const leftPerformance = isLikelyPerformanceMetric(left.key, left.value) ? 1 : 0;
-    const rightPerformance = isLikelyPerformanceMetric(right.key, right.value) ? 1 : 0;
-    if (leftPerformance !== rightPerformance) {
-      return rightPerformance - leftPerformance;
+    const keyOrder = left.key.localeCompare(right.key);
+    if (keyOrder !== 0) {
+      return keyOrder;
     }
-    const magnitude = Math.abs(right.value) - Math.abs(left.value);
-    if (magnitude !== 0) {
-      return magnitude;
-    }
-    return left.key.localeCompare(right.key);
+    return left.value - right.value;
   });
 }
 
@@ -1258,21 +1548,29 @@ function buildSupplementalRuns(args: {
   );
   return args.runs
     .map((item) => {
-      const metricTable = sortMetricTable(
-        flattenNumericMetrics(item.metrics),
-        findMatchingMetricKey(flattenNumericMetrics(item.metrics), args.objectiveProfile)
-      );
       const objectiveEvaluation = evaluateObjectiveMetric(
         item.metrics,
         args.objectiveProfile,
         args.rawObjectiveMetric
+      );
+      const objectiveMetricIds = buildExactObjectiveMetricIds(
+        objectiveEvaluation,
+        args.objectiveProfile
+      );
+      const metricTable = sortMetricTable(
+        flattenNumericMetrics(item.metrics),
+        objectiveMetricIds
+      );
+      const objectiveMetric = summarizeExactObjectiveMetric(
+        metricTable,
+        objectiveMetricIds
       );
       const sampling = asRecord(item.metrics.sampling_profile);
       const portfolioGroup = portfolioGroupsByProfile.get(item.profile);
       return {
         profile: item.profile,
         path: portfolioGroup?.metrics_path || item.path,
-        mean_score: computeMeanScore(item.metrics),
+        mean_score: objectiveMetric?.value ?? 0,
         objective_evaluation: objectiveEvaluation,
         metric_table: metricTable.slice(0, 6),
         sampling_profile: {
@@ -1365,7 +1663,7 @@ function buildExternalComparisons(args: {
   const gap =
     typeof observed === "number" && typeof bestRecentScore === "number"
       ? Number((observed - bestRecentScore).toFixed(4))
-      : asNumber(asRecord(args.metrics.comparison).shared_state_gap_vs_best_recent_paper);
+      : undefined;
 
   const metrics: AnalysisComparisonMetric[] = [];
   if (typeof bestRecentScore === "number") {
@@ -1401,9 +1699,9 @@ function buildExternalComparisons(args: {
 
 function buildStatisticalSummary(args: {
   metrics: Record<string, unknown>;
-  objectiveEvaluation: ObjectiveMetricEvaluation;
-  objectiveProfile: ObjectiveMetricProfile;
-  conditionComparisons: AnalysisConditionComparison[];
+  resultsArtifact: ResultsArtifactV2;
+  objectiveMetricIds: string[];
+  primaryResultsComparison?: AnalysisResultsArtifactComparison;
   supplementalMetrics: Array<{ profile: string; path?: string; metrics: Record<string, unknown> }>;
   supplementalExpectation?: {
     applicable: boolean;
@@ -1455,21 +1753,13 @@ function buildStatisticalSummary(args: {
   const cachedTrials =
     asNumber(sampling.cached_trials) ??
     firstNumber(args.metrics, ["cached_trials", "cached_run_count", "cached_trial_count"]);
-  const preferredKeys = uniqueStrings(
-    [
-      args.objectiveEvaluation.matchedMetricKey,
-      args.objectiveProfile.primaryMetric,
-      ...args.objectiveProfile.preferredMetricKeys
-    ].filter((item): item is string => Boolean(item))
-  );
+  const preferredKeys = args.objectiveMetricIds;
 
   const confidenceIntervals = sortConfidenceIntervals([
     ...extractConfidenceIntervals({
       value: args.metrics,
       sampleSize: totalTrials
     }),
-    ...extractConditionSummaryHalfWidthConfidenceIntervals(args.metrics),
-    ...extractPredictionAccuracyConfidenceIntervals(args.metrics),
     ...args.supplementalMetrics.flatMap((item) =>
       extractConfidenceIntervals({
         value: item.metrics,
@@ -1481,14 +1771,20 @@ function buildStatisticalSummary(args: {
   ], preferredKeys).slice(0, 8);
 
   const stabilityMetrics = pickStabilityMetrics(args.metrics);
-  const effectEstimates = buildStatisticalEffects(args.conditionComparisons, args.objectiveProfile);
+  const effectEstimates = buildStatisticalEffects(
+    args.resultsArtifact,
+    args.objectiveMetricIds
+  );
+  const primaryEffect = args.primaryResultsComparison
+    ? effectEstimates.find((item) => item.comparison_id === args.primaryResultsComparison?.comparison.id)
+    : undefined;
   const notes = buildStatisticalNotes({
     totalTrials,
     executedTrials,
     cachedTrials,
     confidenceIntervals,
     stabilityMetrics,
-    effectEstimates,
+    primaryEffect,
     supplementalExpectation: args.supplementalExpectation
   });
 
@@ -1666,8 +1962,7 @@ function extractConfidenceIntervals(args: {
       const level = normalizeConfidenceLevel(asNumber(match[1]));
       if (typeof lower === "number" && typeof upper === "number" && typeof level === "number") {
         const metricKey = args.prefix ? `${args.prefix}.${match[2]}` : match[2];
-        const source =
-          metricKey.startsWith("condition_metrics.") ? "condition_metrics" : args.source || "metrics";
+        const source = args.source || "metrics";
         const label = humanizeMetricLabel(metricKey);
         intervals.push({
           metric_key: metricKey,
@@ -1699,194 +1994,6 @@ function extractConfidenceIntervals(args: {
   }
 
   return intervals;
-}
-
-function extractConditionSummaryHalfWidthConfidenceIntervals(
-  metrics: Record<string, unknown>
-): AnalysisConfidenceInterval[] {
-  return asArray(metrics.condition_summaries)
-    .map((item) => asRecord(item))
-    .flatMap((row) => {
-      const conditionName = readConditionName(row);
-      return Object.entries(row)
-        .map(([key, raw]) => {
-          const match = key.match(/^(.+)_ci(\d{2,3})$/iu);
-          const halfWidth = asNumber(raw);
-          if (!match || typeof halfWidth !== "number") {
-            return undefined;
-          }
-          const metricBase = match[1];
-          const mean =
-            asNumber(row[`${metricBase}_mean`]) ??
-            asNumber(row[metricBase]);
-          if (typeof mean !== "number") {
-            return undefined;
-          }
-          const level = normalizeConfidenceLevel(Number(match[2])) ?? 0.95;
-          const metricKey = conditionName
-            ? `condition_summaries.${conditionName}.${metricBase}`
-            : `condition_summaries.${metricBase}`;
-          const sampleSize =
-            asNumber(row[`${metricBase}_count`]) ??
-            asNumber(row.completed_seed_count) ??
-            asNumber(row.planned_seed_count);
-          const lower = Number((mean - halfWidth).toFixed(6));
-          const upper = Number((mean + halfWidth).toFixed(6));
-          const label = humanizeMetricLabel(metricKey);
-          const interval: AnalysisConfidenceInterval = {
-            metric_key: metricKey,
-            label,
-            lower,
-            upper,
-            level,
-            source: "condition_metrics" as const,
-            summary: `${label} ${formatConfidenceIntervalPercent(level)}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
-              typeof sampleSize === "number" ? ` over n=${sampleSize}` : ""
-            }.`
-          };
-          if (typeof sampleSize === "number") {
-            interval.sample_size = sampleSize;
-          }
-          return interval;
-        })
-        .filter((item): item is AnalysisConfidenceInterval => item !== undefined);
-    });
-}
-
-function extractPredictionAccuracyConfidenceIntervals(
-  metrics: Record<string, unknown>
-): AnalysisConfidenceInterval[] {
-  return [
-    ...conditionPredictionRows(metrics, "condition_results"),
-    ...conditionPredictionRows(metrics, "conditions")
-  ].flatMap(({ collection, conditionName, row }) => {
-    if (!isCompletedConditionRow(row)) {
-      return [];
-    }
-    const summaries = collectPredictionCorrectness(row);
-    const aggregate = summaries.reduce(
-      (acc, item) => ({
-        correct: acc.correct + item.correct,
-        total: acc.total + item.total
-      }),
-      { correct: 0, total: 0 }
-    );
-    if (aggregate.total === 0) {
-      return [];
-    }
-    const interval = wilsonConfidenceInterval(aggregate.correct, aggregate.total);
-    const metricKey = `${collection}.${conditionName || "condition"}.average_accuracy`;
-    const label = humanizeMetricLabel(metricKey);
-    return [{
-      metric_key: metricKey,
-      label,
-      lower: interval.lower,
-      upper: interval.upper,
-      level: interval.level,
-      sample_size: aggregate.total,
-      source: "condition_metrics" as const,
-      summary: `${label} ${formatConfidenceIntervalPercent(interval.level)}% CI [${formatMetricValue(interval.lower)}, ${formatMetricValue(interval.upper)}] over n=${aggregate.total} prediction(s).`
-    }];
-  });
-}
-
-function conditionPredictionRows(
-  metrics: Record<string, unknown>,
-  collection: "condition_results" | "conditions"
-): Array<{ collection: string; conditionName: string; row: Record<string, unknown> }> {
-  const raw = metrics[collection];
-  const rows = Array.isArray(raw)
-    ? raw.map((item) => asRecord(item))
-    : Object.entries(asRecord(raw)).map(([name, value]) => ({
-      name,
-      ...asRecord(value)
-    }));
-  return rows
-    .filter((row) => Object.keys(row).length > 0)
-    .map((row, index) => ({
-      collection,
-      conditionName: readConditionName(row) || `condition_${index + 1}`,
-      row
-    }));
-}
-
-function collectPredictionCorrectness(
-  value: Record<string, unknown>,
-  path = ""
-): Array<{ path: string; correct: number; total: number }> {
-  const predictions = asArray(value.predictions)
-    .map((item) => readPredictionCorrect(asRecord(item)))
-    .filter((item): item is boolean => typeof item === "boolean");
-  const correctCount = asNumber(value.correct);
-  const totalCount = asNumber(value.total);
-  const currentFromCounts =
-    typeof correctCount === "number" &&
-    typeof totalCount === "number" &&
-    Number.isFinite(correctCount) &&
-    Number.isFinite(totalCount) &&
-    totalCount > 0 &&
-    correctCount >= 0 &&
-    correctCount <= totalCount
-      ? [{
-        path,
-        correct: correctCount,
-        total: totalCount
-      }]
-      : [];
-  const currentFromPredictions = predictions.length > 0
-    ? [{
-      path,
-      correct: predictions.filter(Boolean).length,
-      total: predictions.length
-    }]
-    : [];
-  const current = currentFromCounts.length > 0 ? currentFromCounts : currentFromPredictions;
-  const nested = Object.entries(value)
-    .filter(([key, raw]) => key !== "predictions" && raw && typeof raw === "object" && !Array.isArray(raw))
-    .flatMap(([key, raw]) =>
-      collectPredictionCorrectness(
-        raw as Record<string, unknown>,
-        path ? `${path}.${key}` : key
-      )
-    );
-  return [...current, ...nested];
-}
-
-function readPredictionCorrect(row: Record<string, unknown>): boolean | undefined {
-  const raw = row.correct;
-  if (typeof raw === "boolean") {
-    return raw;
-  }
-  if (typeof raw === "number" && Number.isFinite(raw)) {
-    return raw !== 0;
-  }
-  if (typeof raw === "string") {
-    const normalized = raw.trim().toLowerCase();
-    if (["true", "1", "correct", "yes", "y"].includes(normalized)) {
-      return true;
-    }
-    if (["false", "0", "incorrect", "no", "n"].includes(normalized)) {
-      return false;
-    }
-  }
-  return undefined;
-}
-
-function wilsonConfidenceInterval(
-  correct: number,
-  total: number,
-  level = 0.95
-): { lower: number; upper: number; level: number } {
-  const z = 1.959963984540054;
-  const p = correct / total;
-  const denominator = 1 + (z * z) / total;
-  const center = p + (z * z) / (2 * total);
-  const margin = z * Math.sqrt((p * (1 - p) + (z * z) / (4 * total)) / total);
-  return {
-    lower: Number(Math.max(0, (center - margin) / denominator).toFixed(6)),
-    upper: Number(Math.min(1, (center + margin) / denominator).toFixed(6)),
-    level
-  };
 }
 
 function readDirectConfidenceInterval(args: {
@@ -1926,22 +2033,50 @@ function readDirectConfidenceInterval(args: {
     asString(args.value.metric_key) ||
     asString(args.value.metric) ||
     inferConfidenceIntervalMetricKey(args.prefix);
-  const source = metricKey.startsWith("condition_metrics.") ? "condition_metrics" : args.source || "metrics";
+  const comparisonId = asString(args.value.comparison_id);
+  const estimand = args.value.estimand === "effect_delta" || args.value.estimand === "metric_value"
+    ? args.value.estimand
+    : undefined;
+  const metricScale = isCandidateMetricScale(args.value.metric_scale)
+    ? args.value.metric_scale
+    : undefined;
+  const trialSource = isConfidenceIntervalTrialSource(args.value.trial_source)
+    ? args.value.trial_source
+    : undefined;
+  const sampleSize = asNumber(args.value.sample_size) ?? args.sampleSize;
+  const source = args.source || "metrics";
   const label = humanizeMetricLabel(metricKey);
 
   return {
     metric_key: metricKey,
+    ...(comparisonId ? { comparison_id: comparisonId } : {}),
+    ...(estimand ? { estimand } : {}),
+    ...(metricScale ? { metric_scale: metricScale } : {}),
+    ...(trialSource ? { trial_source: trialSource } : {}),
     label,
     lower,
     upper,
     level,
-    sample_size: args.sampleSize,
+    sample_size: sampleSize,
     source,
     profile: args.profile,
     summary: `${label} ${formatConfidenceIntervalPercent(level)}% CI [${formatMetricValue(lower)}, ${formatMetricValue(upper)}]${
-      typeof args.sampleSize === "number" ? ` over n=${args.sampleSize}` : ""
+      typeof sampleSize === "number" ? ` over n=${sampleSize}` : ""
     }.`
   };
+}
+
+function isCandidateMetricScale(value: unknown): value is CandidateMetricScale {
+  return value === "raw"
+    || value === "proportion"
+    || value === "percent"
+    || value === "percentage_point";
+}
+
+function isConfidenceIntervalTrialSource(
+  value: unknown
+): value is "fresh_executed" | "mixed" | "cached" {
+  return value === "fresh_executed" || value === "mixed" || value === "cached";
 }
 
 function normalizeConfidenceLevel(level: number | undefined): number | undefined {
@@ -1981,19 +2116,13 @@ function inferConfidenceIntervalMetricKey(prefix: string | undefined): string {
   }
   const parts = prefix.split(".");
   const lastPart = parts.at(-1)?.toLowerCase() ?? "";
-  if (/bootstrap.*mean.*ci|mean.*confidence.*interval/u.test(lastPart)) {
+  if (
+    /bootstrap.*mean.*ci|mean.*confidence.*interval|pooled.*bootstrap|bootstrap.*pooled|bootstrap.*ci|confidence.*interval|^ci\d*$/u.test(
+      lastPart
+    )
+  ) {
     parts.pop();
-    const owner = parts.join(".");
-    return owner ? `${owner}.mean_zero_shot_accuracy` : "mean_zero_shot_accuracy";
-  }
-  if (/pooled.*bootstrap|bootstrap.*pooled/u.test(lastPart)) {
-    parts.pop();
-    const owner = parts.join(".");
-    return owner ? `${owner}.mean_zero_shot_accuracy` : "mean_zero_shot_accuracy";
-  }
-  if (/bootstrap.*ci|confidence.*interval|^ci\d*$/u.test(lastPart)) {
-    parts.pop();
-    return parts.join(".") || prefix;
+    return parts.join(".") || "metric";
   }
   return prefix;
 }
@@ -2018,58 +2147,56 @@ function sortConfidenceIntervals(
 }
 
 function pickStabilityMetrics(metrics: Record<string, unknown>): AnalysisMetricEntry[] {
-  const orderedKeys = [
-    "cross_run_variance",
-    "run_to_run_variance",
-    "seed_stability",
-    "rank_stability",
-    "mean_nested_rank_stability",
-    "pairwise_ranking_agreement",
-    "winner_consistency",
-    "sign_consistency_vs_logreg",
-    "prompt_paraphrase_sensitivity",
-    "paraphrase_stability",
-    "replication_success_rate",
-    "failure_rate",
-    "artifact_consistency_rate"
-  ];
-
-  return orderedKeys
-    .map((key) => {
-      const value = asNumber(metrics[key]);
-      return typeof value === "number" ? { key, value } : undefined;
-    })
-    .filter((item): item is AnalysisMetricEntry => item !== undefined);
+  return flattenNumericMetrics(asRecord(metrics.stability_metrics))
+    .sort((left, right) => left.key.localeCompare(right.key));
 }
 
 function buildStatisticalEffects(
-  conditionComparisons: AnalysisConditionComparison[],
-  objectiveProfile: ObjectiveMetricProfile
+  artifact: ResultsArtifactV2,
+  objectiveMetricIds: string[]
 ): AnalysisStatisticalEffect[] {
-  return conditionComparisons
-    .map((comparison) => {
-      const metric = selectEffectMetric(comparison, objectiveProfile);
-      if (!metric) {
-        return undefined;
-      }
-      const direction = classifyEffectDirection(metric.key, metric.value, objectiveProfile.direction);
-      const label = humanizeMetricLabel(metric.key);
+  return resolveResultsArtifactComparisons(artifact)
+    .map((resolved) => {
+      const direction = classifyEffectDirection(
+        resolved.metric.direction,
+        resolved.delta
+      );
+      const comparisonLabel = `${resolved.subject_series.label} vs ${resolved.reference_series.label}`;
       const summary =
         direction === "neutral"
-          ? `${comparison.label} is neutral on ${label} (delta ${formatMetricValue(metric.value)}).`
+          ? `${comparisonLabel} is neutral on ${resolved.metric.label} (delta ${formatMetricValue(resolved.delta)}).`
           : direction === "positive"
-            ? `${comparison.label} improves ${label} by ${formatMetricValue(Math.abs(metric.value))}.`
-            : `${comparison.label} trails on ${label} by ${formatMetricValue(Math.abs(metric.value))}.`;
+            ? `${comparisonLabel} improves ${resolved.metric.label} by ${formatMetricValue(Math.abs(resolved.delta))}.`
+            : `${comparisonLabel} trails on ${resolved.metric.label} by ${formatMetricValue(Math.abs(resolved.delta))}.`;
       return {
-        comparison_id: comparison.id,
-        metric_key: metric.key,
-        delta: metric.value,
+        comparison_id: resolved.comparison.id,
+        metric_key: resolved.metric.id,
+        delta: resolved.delta,
         direction,
         summary
       };
     })
-    .filter((item): item is AnalysisStatisticalEffect => item !== undefined)
-    .slice(0, 4);
+    .sort((left, right) => {
+      const leftRank = exactMetricRank(left.metric_key, objectiveMetricIds);
+      const rightRank = exactMetricRank(right.metric_key, objectiveMetricIds);
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+      return left.comparison_id.localeCompare(right.comparison_id);
+    });
+}
+
+function classifyEffectDirection(
+  metricDirection: ResultsTableDirection,
+  delta: number
+): "positive" | "negative" | "neutral" {
+  if (delta === 0) {
+    return "neutral";
+  }
+  if (metricDirection === "lower_better") {
+    return delta < 0 ? "positive" : "negative";
+  }
+  return delta > 0 ? "positive" : "negative";
 }
 
 function buildStatisticalNotes(args: {
@@ -2078,7 +2205,7 @@ function buildStatisticalNotes(args: {
   cachedTrials?: number;
   confidenceIntervals: AnalysisConfidenceInterval[];
   stabilityMetrics: AnalysisMetricEntry[];
-  effectEstimates: AnalysisStatisticalEffect[];
+  primaryEffect?: AnalysisStatisticalEffect;
   supplementalExpectation?: {
     applicable: boolean;
     profiles: string[];
@@ -2106,8 +2233,8 @@ function buildStatisticalNotes(args: {
     );
   }
 
-  if (args.effectEstimates[0]) {
-    notes.push(args.effectEstimates[0].summary);
+  if (args.primaryEffect) {
+    notes.push(args.primaryEffect.summary);
   }
 
   if (args.supplementalExpectation?.applicable === false && args.supplementalExpectation.reason) {
@@ -2121,1206 +2248,8 @@ function buildStatisticalNotes(args: {
   return uniqueStrings(notes).slice(0, 6);
 }
 
-function selectPrimaryCondition(args: {
-  metrics: Record<string, unknown>;
-  conditionMetrics: Record<string, unknown>;
-  conditionNames: string[];
-  preferredKeys: string[];
-  direction?: ObjectiveMetricProfile["direction"];
-}): string | undefined {
-  const explicit = asString(args.metrics.primary_condition);
-  if (explicit && args.conditionNames.includes(explicit)) {
-    return explicit;
-  }
-
-  const heuristic = args.conditionNames.find(
-    (name) => isLikelyPrimaryCondition(name) && !isLikelyBaselineCondition(name)
-  );
-  if (heuristic) {
-    return heuristic;
-  }
-
-  const byMetric = selectConditionByMetric({
-    conditionMetrics: args.conditionMetrics,
-    conditionNames: args.conditionNames,
-    preferredKeys: args.preferredKeys,
-    direction: args.direction,
-    mode: "best"
-  });
-  return byMetric || args.conditionNames[0];
-}
-
-function selectBaselineCondition(args: {
-  metrics: Record<string, unknown>;
-  conditionMetrics: Record<string, unknown>;
-  conditionNames: string[];
-  primaryCondition?: string;
-  preferredKeys: string[];
-  direction?: ObjectiveMetricProfile["direction"];
-}): string | undefined {
-  const explicit = asString(args.metrics.baseline_condition);
-  if (explicit && args.conditionNames.includes(explicit) && explicit !== args.primaryCondition) {
-    return explicit;
-  }
-
-  const heuristic = args.conditionNames.find(
-    (name) => name !== args.primaryCondition && isLikelyBaselineCondition(name)
-  );
-  if (heuristic) {
-    return heuristic;
-  }
-
-  const byMetric = selectConditionByMetric({
-    conditionMetrics: args.conditionMetrics,
-    conditionNames: args.conditionNames.filter((name) => name !== args.primaryCondition),
-    preferredKeys: args.preferredKeys,
-    direction: args.direction,
-    mode: "worst"
-  });
-  return byMetric || args.conditionNames.find((name) => name !== args.primaryCondition);
-}
-
-function orderComparatorConditions(
-  conditionNames: string[],
-  primaryCondition: string,
-  baselineCondition: string | undefined
-): string[] {
-  return conditionNames
-    .filter((name) => name !== primaryCondition)
-    .sort((left, right) => {
-      const leftBaseline = left === baselineCondition ? 1 : 0;
-      const rightBaseline = right === baselineCondition ? 1 : 0;
-      if (leftBaseline !== rightBaseline) {
-        return rightBaseline - leftBaseline;
-      }
-      return left.localeCompare(right);
-    });
-}
-
-function buildConditionMetricPair(args: {
-  conditionMetrics: Record<string, unknown>;
-  primaryCondition: string;
-  comparatorCondition: string;
-  preferredKeys: string[];
-}): AnalysisConditionComparison | undefined {
-  const primaryMetrics = flattenNumericMetrics(asRecord(args.conditionMetrics[args.primaryCondition]));
-  const comparatorMetrics = new Map(
-    flattenNumericMetrics(asRecord(args.conditionMetrics[args.comparatorCondition])).map((item) => [item.key, item.value])
-  );
-
-  const shared = primaryMetrics
-    .filter((item) => comparatorMetrics.has(item.key))
-    .map((item) => ({
-      key: item.key,
-      primary_value: item.value,
-      baseline_value: comparatorMetrics.get(item.key) as number,
-      value: Number((item.value - (comparatorMetrics.get(item.key) as number)).toFixed(4))
-    }))
-    .sort((left, right) => {
-      const leftRank = metricPreferenceRank(left.key, args.preferredKeys);
-      const rightRank = metricPreferenceRank(right.key, args.preferredKeys);
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      const leftStatisticRank = preferredMetricStatisticRank(left.key, args.preferredKeys);
-      const rightStatisticRank = preferredMetricStatisticRank(right.key, args.preferredKeys);
-      if (leftStatisticRank !== rightStatisticRank) {
-        return leftStatisticRank - rightStatisticRank;
-      }
-      return Math.abs(right.value) - Math.abs(left.value);
-    })
-    .slice(0, 4);
-
-  if (shared.length === 0) {
-    return undefined;
-  }
-
-  const sharedSummary = shared
-    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
-    .join(", ");
-  return {
-    id: `${args.primaryCondition}_vs_${args.comparatorCondition}`,
-    label: `${humanizeConditionLabel(args.primaryCondition)} vs ${humanizeConditionLabel(args.comparatorCondition)}`,
-    source: "metrics.condition_metrics",
-    metrics: shared,
-    summary: `${humanizeConditionLabel(args.primaryCondition)} vs ${humanizeConditionLabel(args.comparatorCondition)}: ${sharedSummary}.`
-  };
-}
-
-function hasLockedBaselineMarker(row: Record<string, unknown>): boolean {
-  if (row.is_locked_baseline === true) {
-    return true;
-  }
-  const lockedBaselineMarker = new RegExp("^is_locked_[a-z0-9]+_baseline$", "iu");
-  return Object.entries(row).some(([key, value]) => value === true && lockedBaselineMarker.test(key));
-}
-
-function buildResultsArrayConditionComparison(args: {
-  metrics: Record<string, unknown>;
-  objectiveEvaluation: ObjectiveMetricEvaluation;
-  objectiveProfile: ObjectiveMetricProfile;
-}): AnalysisConditionComparison | undefined {
-  const { source: resultRowsSource, rows: resultRows } = readResultRowsFromMetrics(args.metrics);
-  if (resultRows.length < 2) {
-    return undefined;
-  }
-
-  const baselineRow =
-    resultRows.find((row) => hasLockedBaselineMarker(row) || asString(row.recipe_type)?.toLowerCase() === "locked_baseline") ||
-    resultRows.find((row) => {
-      const recipe = asString(row.recipe)?.toLowerCase();
-      const methodType = asString(row.method_type ?? row.configuration_type)?.toLowerCase();
-      const conditionId = asString(row.condition_id)?.toLowerCase();
-      return (
-        recipe === "baseline" ||
-        isLikelyBaselineCondition(recipe || "") ||
-        methodType === "none" ||
-        conditionId === "baseline" ||
-        isLikelyBaselineCondition(conditionId || "") ||
-        row.is_baseline_reference === true
-      );
-    });
-
-  if (!baselineRow) {
-    return undefined;
-  }
-
-  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
-  const candidates = resultRows.filter((row) => row !== baselineRow);
-  const bestRecipe = asString(args.metrics.best_recipe) || asString(args.metrics.best_tuned_condition_id) || asString(args.metrics.best_condition_id);
-  const explicitComparator = bestRecipe
-    ? candidates.find((row) => asString(row.recipe) === bestRecipe || asString(row.condition_id) === bestRecipe)
-    : undefined;
-  const comparatorRow =
-    explicitComparator ||
-    selectConditionRowByMetric({
-      rows: candidates,
-      preferredKeys,
-      direction: args.objectiveProfile.direction
-    });
-  if (!comparatorRow) {
-    return undefined;
-  }
-
-  const baselineMetrics = new Map(
-    flattenNumericMetrics(baselineRow).map((item) => [item.key, item.value])
-  );
-  const shared = flattenNumericMetrics(comparatorRow)
-    .filter((item) => baselineMetrics.has(item.key))
-    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
-    .map((item) => {
-      const baselineValue = baselineMetrics.get(item.key) as number;
-      return {
-        key: item.key,
-        primary_value: item.value,
-        baseline_value: baselineValue,
-        value: Number((item.value - baselineValue).toFixed(4))
-      };
-    })
-    .sort((left, right) => {
-      const leftRank = metricPreferenceRank(left.key, preferredKeys);
-      const rightRank = metricPreferenceRank(right.key, preferredKeys);
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
-      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
-      if (leftStatisticRank !== rightStatisticRank) {
-        return leftStatisticRank - rightStatisticRank;
-      }
-      return Math.abs(right.value) - Math.abs(left.value);
-    })
-    .slice(0, 6);
-
-  if (shared.length === 0) {
-    return undefined;
-  }
-
-  const baselineName = asString(baselineRow.recipe) || asString(baselineRow.condition_id) || "baseline";
-  const comparatorName = asString(comparatorRow.recipe) || asString(comparatorRow.condition_id) || bestRecipe || "comparator";
-  const sharedSummary = shared
-    .slice(0, 4)
-    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
-    .join(", ");
-
-  return {
-    id: `${comparatorName}_vs_${baselineName}`,
-    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
-    source: resultRowsSource,
-    metrics: shared,
-    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
-  };
-}
-
-function readResultRowsFromMetrics(metrics: Record<string, unknown>): {
-  source: "metrics.results" | "metrics.result_rows";
-  rows: Array<Record<string, unknown>>;
-} {
-  const resultsArray = asArray(metrics.results).map((item) => enrichResultRow(asRecord(item)));
-  if (resultsArray.length > 0) {
-    return { source: "metrics.results", rows: resultsArray };
-  }
-
-  const resultsRecord = asRecord(metrics.results);
-  const objectRows = Object.entries(resultsRecord)
-    .map(([name, value]) => {
-      const row = { ...asRecord(value) };
-      if (!asString(row.recipe)) {
-        row.recipe = name;
-      }
-      if (!asString(row.condition_id)) {
-        row.condition_id = name;
-      }
-      return enrichResultRow(row);
-    })
-    .filter((row) => Object.keys(row).length > 0);
-  if (objectRows.length > 0) {
-    return { source: "metrics.results", rows: objectRows };
-  }
-
-  return {
-    source: "metrics.result_rows",
-    rows: asArray(metrics.result_rows).map((item) => enrichResultRow(asRecord(item)))
-  };
-}
-
-function enrichResultRow(row: Record<string, unknown>): Record<string, unknown> {
-  const next = { ...row };
-  const rawEvidence = asRecord(next.raw_evidence);
-  const nestedRawEvidence = asRecord(rawEvidence.raw_evidence);
-  const evidence = Object.keys(nestedRawEvidence).length > 0 ? nestedRawEvidence : rawEvidence;
-  const evidenceCondition = asRecord(evidence.condition);
-
-  for (const key of ["condition_name", "condition_id", "condition_marker", "marker"] as const) {
-    if (next[key] === undefined && evidence[key] !== undefined) {
-      next[key] = evidence[key];
-    }
-  }
-  if (next.condition_id === undefined && evidenceCondition.condition_id !== undefined) {
-    next.condition_id = evidenceCondition.condition_id;
-  }
-  if (next.condition_marker === undefined && evidenceCondition.marker !== undefined) {
-    next.condition_marker = evidenceCondition.marker;
-  }
-  if (next.is_baseline === undefined && evidenceCondition.is_baseline !== undefined) {
-    next.is_baseline = evidenceCondition.is_baseline;
-  }
-  if (next.average_accuracy === undefined && evidence.average_accuracy !== undefined) {
-    next.average_accuracy = evidence.average_accuracy;
-  }
-  if (next.train_loss === undefined && evidence.train_loss !== undefined) {
-    next.train_loss = evidence.train_loss;
-  }
-  if (next.runtime_sec === undefined && evidence.runtime_sec !== undefined) {
-    next.runtime_sec = evidence.runtime_sec;
-  }
-  if (next.peak_vram_bytes === undefined && evidence.peak_vram_bytes !== undefined) {
-    next.peak_vram_bytes = evidence.peak_vram_bytes;
-  }
-
-  const taskMetrics = asRecord(evidence.task_metrics);
-  for (const [taskName, value] of Object.entries(taskMetrics)) {
-    const taskRecord = asRecord(value);
-    const accuracy = asNumber(taskRecord.accuracy);
-    if (accuracy !== undefined && next[`${taskName}_accuracy`] === undefined) {
-      next[`${taskName}_accuracy`] = accuracy;
-    }
-  }
-
-  const taskAccuracies = extractTaskAccuracies(next);
-  if (taskAccuracies.length >= 2 && next.mean_accuracy === undefined) {
-    next.mean_accuracy = meanRounded(taskAccuracies.map((entry) => entry.accuracy));
-  }
-  if (taskAccuracies.length >= 2 && next.mean_zero_shot_accuracy === undefined) {
-    next.mean_zero_shot_accuracy = meanRounded(taskAccuracies.map((entry) => entry.accuracy));
-  }
-  return next;
-}
-
-function extractTaskAccuracies(row: Record<string, unknown>): Array<{ task: string; accuracy: number }> {
-  const entries: Array<{ task: string; accuracy: number }> = [];
-  const seen = new Set<string>();
-  const add = (task: string, value: unknown) => {
-    const normalizedTask = task.trim();
-    if (!normalizedTask || seen.has(normalizedTask)) {
-      return;
-    }
-    const accuracy = asNumber(value);
-    if (accuracy === undefined) {
-      return;
-    }
-    seen.add(normalizedTask);
-    entries.push({ task: normalizedTask, accuracy });
-  };
-
-  for (const container of [
-    asRecord(row.evaluation),
-    asRecord(row.task_accuracies),
-    asRecord(row.task_reports),
-    asRecord(row.tasks)
-  ]) {
-    for (const [task, value] of Object.entries(container)) {
-      const record = asRecord(value);
-      if (Object.keys(record).length > 0) {
-        add(task, record.accuracy);
-      } else if (/accuracy/iu.test(task)) {
-        add(task.replace(/_?accuracy$/iu, ""), value);
-      }
-    }
-  }
-
-  return entries;
-}
-
-function meanRounded(values: number[]): number {
-  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(6));
-}
-
-function enrichConditionRow(row: Record<string, unknown>): Record<string, unknown> {
-  const next = enrichResultRow(row);
-  const evaluation = asRecord(next.evaluation);
-  const evalMetrics = asRecord(next.eval_metrics);
-  const training = asRecord(next.training);
-  const parameterReport = asRecord(next.parameter_report);
-
-  const evalMeanAccuracy = asNumber(evalMetrics.mean_accuracy);
-  const evalMeanZeroShotAccuracy =
-    asNumber(evaluation.mean_zero_shot_accuracy) ||
-    asNumber(evalMetrics.mean_zero_shot_accuracy) ||
-    asNumber(next.mean_zero_shot_accuracy);
-  if (next.mean_accuracy === undefined && typeof evalMeanAccuracy === "number") {
-    next.mean_accuracy = evalMeanAccuracy;
-  }
-  if (next.mean_zero_shot_accuracy === undefined && typeof evalMeanZeroShotAccuracy === "number") {
-    next.mean_zero_shot_accuracy = evalMeanZeroShotAccuracy;
-  }
-  if (next.mean_accuracy === undefined && typeof evalMeanZeroShotAccuracy === "number") {
-    next.mean_accuracy = evalMeanZeroShotAccuracy;
-  }
-
-  const trainableParams =
-    asNumber(next.trainable_params) ||
-    asNumber(next.trainable_parameters) ||
-    asNumber(training.trainable_params) ||
-    asNumber(training.trainable_parameters) ||
-    asNumber(parameterReport.trainable_params) ||
-    asNumber(parameterReport.trainable_parameters);
-  if (next.trainable_params === undefined && typeof trainableParams === "number") {
-    next.trainable_params = trainableParams;
-  }
-
-  const trainingWallTime =
-    asNumber(next.training_wall_time_sec) ||
-    asNumber(training.wall_time_sec) ||
-    asNumber(training.wall_clock_seconds) ||
-    asNumber(training.runtime_seconds);
-  if (next.training_wall_time_sec === undefined && typeof trainingWallTime === "number") {
-    next.training_wall_time_sec = trainingWallTime;
-  }
-
-  return next;
-}
-
-function buildResultArrayPreferredKeys(
-  objectiveEvaluation: ObjectiveMetricEvaluation,
-  objectiveProfile: ObjectiveMetricProfile
-): string[] {
-  return uniqueStrings([
-    objectiveEvaluation.matchedMetricKey,
-    objectiveProfile.primaryMetric,
-    ...objectiveProfile.preferredMetricKeys,
-    "average_accuracy",
-    "accuracy_delta_vs_baseline",
-    "mean_zero_shot_accuracy",
-    "mean_accuracy",
-    "trainable_params",
-    "training_wall_time_sec",
-    "wall_clock_seconds",
-    "peak_gpu_memory_allocated_bytes",
-    "max_gpu_memory_allocated_bytes"
-  ]);
-}
-
-function buildRecipesConditionComparison(args: {
-  metrics: Record<string, unknown>;
-  objectiveEvaluation: ObjectiveMetricEvaluation;
-  objectiveProfile: ObjectiveMetricProfile;
-}): AnalysisConditionComparison | undefined {
-  const recipes = asRecord(args.metrics.recipes);
-  const recipeNames = Object.keys(recipes).filter((name) => Object.keys(asRecord(recipes[name])).length > 0);
-  if (recipeNames.length < 2) {
-    return undefined;
-  }
-
-  const baselineName =
-    recipeNames.find((name) => isLikelyBaselineCondition(name)) ||
-    recipeNames.find((name) => asString(asRecord(recipes[name]).recipe)?.toLowerCase() === "baseline");
-  if (!baselineName) {
-    return undefined;
-  }
-
-  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
-  const candidateNames = recipeNames.filter((name) => name !== baselineName);
-  const bestRecipe = asString(args.metrics.best_recipe);
-  const explicitBest =
-    bestRecipe && bestRecipe !== baselineName && candidateNames.includes(bestRecipe) ? bestRecipe : undefined;
-  const comparatorName =
-    explicitBest ||
-    selectRecipeConditionByMetric({
-      recipes,
-      recipeNames: candidateNames,
-      preferredKeys,
-      direction: args.objectiveProfile.direction
-    });
-  if (!comparatorName) {
-    return undefined;
-  }
-
-  const baselineMetrics = new Map(
-    flattenNumericMetrics(asRecord(recipes[baselineName])).map((item) => [item.key, item.value])
-  );
-  const shared = flattenNumericMetrics(asRecord(recipes[comparatorName]))
-    .filter((item) => baselineMetrics.has(item.key))
-    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
-    .map((item) => {
-      const baselineValue = baselineMetrics.get(item.key) as number;
-      return {
-        key: item.key,
-        primary_value: item.value,
-        baseline_value: baselineValue,
-        value: Number((item.value - baselineValue).toFixed(4))
-      };
-    })
-    .sort((left, right) => {
-      const leftRank = metricPreferenceRank(left.key, preferredKeys);
-      const rightRank = metricPreferenceRank(right.key, preferredKeys);
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
-      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
-      if (leftStatisticRank !== rightStatisticRank) {
-        return leftStatisticRank - rightStatisticRank;
-      }
-      return Math.abs(right.value) - Math.abs(left.value);
-    })
-    .slice(0, 6);
-
-  if (shared.length === 0) {
-    return undefined;
-  }
-
-  const sharedSummary = shared
-    .slice(0, 4)
-    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
-    .join(", ");
-
-  return {
-    id: `${comparatorName}_vs_${baselineName}`,
-    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
-    source: "metrics.recipes",
-    metrics: shared,
-    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
-  };
-}
-
-function buildConditionsArrayConditionComparison(args: {
-  metrics: Record<string, unknown>;
-  objectiveEvaluation: ObjectiveMetricEvaluation;
-  objectiveProfile: ObjectiveMetricProfile;
-}): AnalysisConditionComparison | undefined {
-  const conditionRowSource = readConditionRowsFromMetrics(args.metrics);
-  const conditionRows = conditionRowSource.rows
-    .filter((row) => Object.keys(row).length > 0)
-    .filter((row) => isCompletedConditionRow(row));
-  if (conditionRows.length < 2) {
-    return undefined;
-  }
-
-  const baselineRow = selectBaselineConditionRow(conditionRows);
-  if (!baselineRow) {
-    return undefined;
-  }
-
-  const candidates = selectEligibleComparatorConditionRows(conditionRows.filter((row) => row !== baselineRow));
-  if (candidates.length === 0) {
-    return undefined;
-  }
-
-  const preferredKeys = buildResultArrayPreferredKeys(args.objectiveEvaluation, args.objectiveProfile);
-  const explicitBestCondition = readBestConditionName(args.metrics);
-  const explicitComparator = explicitBestCondition
-    ? candidates.find((row) => readConditionName(row) === explicitBestCondition)
-    : undefined;
-  const comparatorRow =
-    explicitComparator ||
-    selectConditionRowByMetric({
-      rows: candidates,
-      preferredKeys,
-      direction: args.objectiveProfile.direction
-    });
-  if (!comparatorRow) {
-    return undefined;
-  }
-
-  const baselineMetrics = new Map(
-    flattenNumericMetrics(baselineRow).map((item) => [item.key, item.value])
-  );
-  const shared = flattenNumericMetrics(comparatorRow)
-    .filter((item) => baselineMetrics.has(item.key))
-    .filter((item) => isUsefulResultArrayMetric(item.key, preferredKeys))
-    .map((item) => {
-      const baselineValue = baselineMetrics.get(item.key) as number;
-      return {
-        key: item.key,
-        primary_value: item.value,
-        baseline_value: baselineValue,
-        value: Number((item.value - baselineValue).toFixed(4))
-      };
-    })
-    .sort((left, right) => {
-      const leftRank = metricPreferenceRank(left.key, preferredKeys);
-      const rightRank = metricPreferenceRank(right.key, preferredKeys);
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
-      }
-      const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
-      const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
-      if (leftStatisticRank !== rightStatisticRank) {
-        return leftStatisticRank - rightStatisticRank;
-      }
-      return Math.abs(right.value) - Math.abs(left.value);
-    })
-    .slice(0, 6);
-
-  if (shared.length === 0) {
-    return undefined;
-  }
-
-  const baselineName = readConditionName(baselineRow) || "baseline";
-  const comparatorName = readConditionName(comparatorRow) || "comparator";
-  const headlineMetric = shared[0];
-  const hypothesisSupported = headlineMetric
-    ? args.objectiveProfile.direction === "minimize"
-      ? headlineMetric.value < 0
-      : headlineMetric.value > 0
-    : undefined;
-  const sharedSummary = shared
-    .slice(0, 4)
-    .map((item) => `${item.key}: ${formatMetricValue(item.primary_value)} vs ${formatMetricValue(item.baseline_value)} (delta ${formatMetricValue(item.value)})`)
-    .join(", ");
-
-  return {
-    id: `${comparatorName}_vs_${baselineName}`,
-    label: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}`,
-    source: conditionRowSource.source,
-    metrics: shared,
-    hypothesis_supported: hypothesisSupported,
-    summary: `${humanizeConditionLabel(comparatorName)} vs ${humanizeConditionLabel(baselineName)}: ${sharedSummary}.`
-  };
-}
-
-function readConditionRowsFromMetrics(metrics: Record<string, unknown>): {
-  source:
-    | "metrics.conditions"
-    | "metrics.condition_results"
-    | "metrics.condition_summaries"
-    | "metrics.condition_aggregates"
-    | "metrics.per_condition"
-    | "metrics.per_condition_average_accuracy";
-  rows: Array<Record<string, unknown>>;
-} {
-  const baselineMarkers = readBaselineConditionMarkers(metrics);
-  const summaryRows = asArray(metrics.condition_summaries)
-    .map((item) => markBaselineConditionRow(enrichConditionRow(asRecord(item)), baselineMarkers))
-    .filter((row) => Object.keys(row).length > 0);
-  const aggregateRows = asArray(metrics.condition_aggregates)
-    .map((item) => markBaselineConditionRow(enrichConditionRow(asRecord(item)), baselineMarkers))
-    .filter((row) => Object.keys(row).length > 0);
-  const conditionSummaryRows = summaryRows.length > 0 ? summaryRows : aggregateRows;
-  const summariesByName = new Map(
-    conditionSummaryRows
-      .map((row) => [readConditionName(row), row] as const)
-      .filter(([name]) => Boolean(name))
-  );
-  const explicitBaselineRows = readExplicitBaselineConditionRows(metrics, summariesByName);
-  const conditionRowsFromArray = mergeConditionRowsByName([
-    ...explicitBaselineRows,
-    ...asArray(metrics.conditions)
-    .map((item) => {
-      const row = asRecord(item);
-      const name = readConditionName(row);
-      const summary = name ? summariesByName.get(name) : undefined;
-      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
-    })
-    .filter((row) => Object.keys(row).length > 0)
-  ]);
-  const conditionRowsFromRecord = mergeConditionRowsByName([
-    ...explicitBaselineRows,
-    ...Object.entries(asRecord(metrics.conditions))
-    .map(([name, value]) => {
-      const row = { ...asRecord(value) };
-      if (!asString(row.name)) {
-        row.name = name;
-      }
-      if (!asString(row.condition_id)) {
-        row.condition_id = name;
-      }
-      const rowName = readConditionName(row);
-      const summary = rowName ? summariesByName.get(rowName) : undefined;
-      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
-    })
-    .filter((row) => Object.keys(row).length > 0)
-  ]);
-  const perConditionArrayRows = mergeConditionRowsByName([
-    ...explicitBaselineRows,
-    ...asArray(metrics.per_condition)
-      .map((item) => {
-        const row = asRecord(item);
-        const name = readConditionName(row);
-        const summary = name ? summariesByName.get(name) : undefined;
-        return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
-      })
-      .filter((row) => Object.keys(row).length > 0)
-  ]);
-  const conditionRows = conditionRowsFromArray.length > 0
-    ? conditionRowsFromArray
-    : conditionRowsFromRecord;
-  const conditionResultRows = asArray(metrics.condition_results)
-    .map((item) => {
-      const row = asRecord(item);
-      const name = readConditionName(row);
-      const summary = name ? summariesByName.get(name) : undefined;
-      return markBaselineConditionRow(enrichConditionRow(summary ? { ...summary, ...row } : row), baselineMarkers);
-    })
-    .filter((row) => Object.keys(row).length > 0);
-  if (conditionRows.length > 0) {
-    return { source: "metrics.conditions", rows: conditionRows };
-  }
-  if (perConditionArrayRows.length > 0) {
-    return { source: "metrics.per_condition", rows: perConditionArrayRows };
-  }
-  if (conditionResultRows.length > 0) {
-    return { source: "metrics.condition_results", rows: conditionResultRows };
-  }
-  const perConditionRows = readPerConditionAverageAccuracyRows(metrics)
-    .map((row) => markBaselineConditionRow(enrichConditionRow(row), baselineMarkers))
-    .filter((row) => Object.keys(row).length > 0);
-  if (perConditionRows.length > 0) {
-    return { source: "metrics.per_condition_average_accuracy", rows: perConditionRows };
-  }
-  if (summaryRows.length > 0) {
-    return { source: "metrics.condition_summaries", rows: summaryRows };
-  }
-  return { source: "metrics.condition_aggregates", rows: aggregateRows };
-}
-
-function readPerConditionAverageAccuracyRows(
-  metrics: Record<string, unknown>
-): Array<Record<string, unknown>> {
-  const averages = asRecord(metrics.per_condition_average_accuracy);
-  const conditionNames = uniqueStrings([
-    ...asArray(metrics.condition_order)
-      .map((item) => asString(item))
-      .filter((item): item is string => Boolean(item)),
-    ...Object.keys(averages)
-  ]);
-  if (conditionNames.length === 0) {
-    return [];
-  }
-
-  const statuses = asRecord(metrics.condition_statuses);
-  const trainLosses = asRecord(metrics.per_condition_train_loss);
-  const perTaskAccuracy = asRecord(metrics.per_task_accuracy);
-  const baselineAverage = asNumber(metrics.baseline_average_accuracy);
-
-  return conditionNames
-    .map((conditionName) => {
-      const averageAccuracy = asNumber(averages[conditionName]);
-      if (averageAccuracy === undefined) {
-        return undefined;
-      }
-      const taskAccuracy = asRecord(perTaskAccuracy[conditionName]);
-      const row: Record<string, unknown> = {
-        condition_name: conditionName,
-        condition_marker: conditionName,
-        status: asString(statuses[conditionName]) || "completed",
-        average_accuracy: averageAccuracy,
-        mean_accuracy: averageAccuracy,
-        mean_zero_shot_accuracy: averageAccuracy
-      };
-      const trainLoss = asNumber(trainLosses[conditionName]);
-      if (trainLoss !== undefined) {
-        row.train_loss = trainLoss;
-      }
-      if (baselineAverage !== undefined) {
-        row.accuracy_delta_vs_baseline = Number((averageAccuracy - baselineAverage).toFixed(6));
-      }
-      for (const [taskName, value] of Object.entries(taskAccuracy)) {
-        const numericValue = asNumber(value);
-        if (numericValue === undefined) {
-          continue;
-        }
-        row[`${taskName}_accuracy`] = numericValue;
-      }
-      return row;
-    })
-    .filter((row): row is Record<string, unknown> => row !== undefined);
-}
-
-function readBaselineConditionMarkers(metrics: Record<string, unknown>): Set<string> {
-  const studySummary = asRecord(metrics.study_summary);
-  const studyContract = asRecord(metrics.study_contract);
-  const summary = asRecord(metrics.summary);
-  return new Set(
-    [
-      asString(metrics.baseline_marker),
-      asString(metrics.baseline_condition_marker),
-      asString(metrics.baseline_condition),
-      asString(metrics.baseline_condition_id),
-      asString(studyContract.baseline_marker),
-      asString(studyContract.baseline_condition_marker),
-      asString(studyContract.baseline_condition),
-      asString(studyContract.baseline_condition_id),
-      asString(studySummary.baseline_marker),
-      asString(studySummary.baseline_condition_marker),
-      asString(studySummary.baseline_condition),
-      asString(studySummary.baseline_condition_id),
-      asString(summary.baseline_marker),
-      asString(summary.baseline_condition_marker),
-      asString(summary.baseline_condition),
-      asString(summary.baseline_condition_id)
-    ].filter((item): item is string => Boolean(item))
-  );
-}
-
-function markBaselineConditionRow(
-  row: Record<string, unknown>,
-  baselineMarkers: Set<string>
-): Record<string, unknown> {
-  const name = readConditionName(row);
-  if (!name || !baselineMarkers.has(name) || row.is_baseline === true || row.baseline === true) {
-    return row;
-  }
-  return { ...row, is_baseline: true };
-}
-
-function readExplicitBaselineConditionRows(
-  metrics: Record<string, unknown>,
-  summariesByName: Map<string, Record<string, unknown>>
-): Array<Record<string, unknown>> {
-  const baseline = asRecord(metrics.baseline);
-  if (Object.keys(baseline).length === 0) {
-    return [];
-  }
-  const row = { ...baseline };
-  if (!asString(row.name) && !asString(row.condition_name) && !asString(row.condition_id)) {
-    row.condition_name = "baseline";
-  }
-  if (row.is_baseline !== false) {
-    row.is_baseline = true;
-  }
-  const name = readConditionName(row);
-  const summary = name ? summariesByName.get(name) : undefined;
-  return [enrichConditionRow(summary ? { ...summary, ...row } : row)].filter(
-    (item) => Object.keys(item).length > 0
-  );
-}
-
-function mergeConditionRowsByName(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
-  const merged = new Map<string, Record<string, unknown>>();
-  const anonymous: Array<Record<string, unknown>> = [];
-  for (const row of rows) {
-    const name = readConditionName(row);
-    if (!name) {
-      anonymous.push(row);
-      continue;
-    }
-    const existing = merged.get(name);
-    merged.set(name, existing ? mergeConditionMetricRows(existing, row) : row);
-  }
-  return [...merged.values(), ...anonymous];
-}
-
-function mergeConditionMetricRows(
-  existing: Record<string, unknown>,
-  incoming: Record<string, unknown>
-): Record<string, unknown> {
-  const merged = { ...existing, ...incoming };
-  for (const [key, value] of Object.entries(existing)) {
-    if (merged[key] === undefined || merged[key] === null) {
-      merged[key] = value;
-    }
-  }
-  const existingTask = asString(existing.task);
-  const incomingTask = asString(incoming.task);
-  const existingAccuracy = asNumber(existing.accuracy);
-  const incomingAccuracy = asNumber(incoming.accuracy);
-  if (existingTask && existingAccuracy !== undefined && merged[`${existingTask}_accuracy`] === undefined) {
-    merged[`${existingTask}_accuracy`] = existingAccuracy;
-  }
-  if (incomingTask && incomingAccuracy !== undefined && merged[`${incomingTask}_accuracy`] === undefined) {
-    merged[`${incomingTask}_accuracy`] = incomingAccuracy;
-  }
-  return enrichConditionRow(merged);
-}
-
-function isCompletedConditionRow(row: Record<string, unknown>): boolean {
-  const status = asString(row.status)?.toLowerCase();
-  if (!status) {
-    return true;
-  }
-  return /^(completed|complete|success|succeeded|ok|pass|passed)$/u.test(status);
-}
-
-function readConditionName(row: Record<string, unknown>): string {
-  const conditionConfig = asRecord(row.condition_config);
-  return (
-    asString(row.name) ||
-    asString(row.condition_name) ||
-    asString(row.condition_id) ||
-    asString(row.condition_marker) ||
-    asString(row.marker) ||
-    asString(row.id) ||
-    asString(row.recipe) ||
-    asString(row.recipe_id) ||
-    asString(conditionConfig.name) ||
-    asString(conditionConfig.marker) ||
-    ""
-  );
-}
-
-function isBaselineConditionRow(row: Record<string, unknown>): boolean {
-  return baselineConditionRowScore(row) > 0;
-}
-
-function selectBaselineConditionRow(rows: Array<Record<string, unknown>>): Record<string, unknown> | undefined {
-  return rows
-    .map((row, index) => ({
-      row,
-      index,
-      score: baselineConditionRowScore(row)
-    }))
-    .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.row;
-}
-
-function selectEligibleComparatorConditionRows(
-  rows: Array<Record<string, unknown>>
-): Array<Record<string, unknown>> {
-  const nonBaselineRows = rows.filter((row) => !isBaselineConditionRow(row));
-  return nonBaselineRows.length > 0 ? nonBaselineRows : rows;
-}
-
-function baselineConditionRowScore(row: Record<string, unknown>): number {
-  if (row.is_baseline === true || row.baseline === true) {
-    return 5;
-  }
-  const roleText = [
-    readConditionName(row),
-    asString(row.condition_type),
-    asString(row.type),
-    asString(row.role),
-    asString(row.group_kind)
-  ].filter((item): item is string => Boolean(item)).join(" ");
-  return baselineConditionTextScore(roleText);
-}
-
-function baselineConditionTextScore(text: string): number {
-  const lower = text.toLowerCase();
-  const referenceBaseline =
-    /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(lower);
-  const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(lower);
-  const tunedBaseline =
-    /(?:^|[_\s-])(?:tuned|locked|configured)[\w\s-]*baseline(?:[_\s-]|$)/u.test(lower) ||
-    /(?:^|[_\s-])baseline[\w\s-]*(?:tuned|locked|configured)(?:[_\s-]|$)/u.test(lower);
-
-  if (tunedBaseline && !referenceBaseline) {
-    return 4;
-  }
-  if (explicitBaseline && !referenceBaseline) {
-    return 3;
-  }
-  if (explicitBaseline) {
-    return 2;
-  }
-  return referenceBaseline || isLikelyBaselineCondition(lower) ? 1 : 0;
-}
-
-function readBestConditionName(metrics: Record<string, unknown>): string | undefined {
-  const primaryMetric = asRecord(metrics.primary_metric);
-  const studySummary = asRecord(metrics.study_summary);
-  const summary = asRecord(metrics.summary);
-  const bestCondition = asRecord(metrics.best_condition);
-  const bestTunedCondition = asRecord(metrics.best_tuned_condition);
-  return (
-    asString(primaryMetric.best_condition) ||
-    asString(primaryMetric.best_condition_id) ||
-    asString(primaryMetric.best_condition_marker) ||
-    asString(primaryMetric.best_nonbaseline_condition) ||
-    asString(primaryMetric.best_nonbaseline_condition_id) ||
-    asString(primaryMetric.best_nonbaseline_condition_marker) ||
-    asString(studySummary.best_condition) ||
-    asString(studySummary.best_condition_id) ||
-    asString(studySummary.best_condition_marker) ||
-    asString(studySummary.best_nonbaseline_condition) ||
-    asString(studySummary.best_nonbaseline_condition_id) ||
-    asString(studySummary.best_nonbaseline_condition_marker) ||
-    asString(summary.best_condition) ||
-    asString(summary.best_condition_id) ||
-    asString(summary.best_condition_marker) ||
-    asString(summary.best_nonbaseline_condition) ||
-    asString(summary.best_nonbaseline_condition_id) ||
-    asString(summary.best_nonbaseline_condition_marker) ||
-    asString(bestCondition.name) ||
-    asString(bestCondition.condition_id) ||
-    asString(bestCondition.condition_marker) ||
-    asString(bestCondition.id) ||
-    asString(bestCondition.recipe) ||
-    asString(bestTunedCondition.name) ||
-    asString(bestTunedCondition.condition_name) ||
-    asString(bestTunedCondition.condition_id) ||
-    asString(bestTunedCondition.condition_marker) ||
-    asString(bestTunedCondition.id) ||
-    asString(bestTunedCondition.recipe) ||
-    asString(metrics.best_condition) ||
-    asString(metrics.best_condition_id) ||
-    asString(metrics.best_condition_marker) ||
-    asString(metrics.best_nonbaseline_condition) ||
-    asString(metrics.best_nonbaseline_condition_id) ||
-    asString(metrics.best_nonbaseline_condition_marker) ||
-    asString(metrics.best_tuned_condition_id) ||
-    asString(metrics.best_recipe)
-  );
-}
-
-function selectConditionRowByMetric(args: {
-  rows: Array<Record<string, unknown>>;
-  preferredKeys: string[];
-  direction?: ObjectiveMetricProfile["direction"];
-}): Record<string, unknown> | undefined {
-  const scored = args.rows
-    .map((row) => {
-      const metric = selectPreferredNumericMetric(flattenNumericMetrics(row), args.preferredKeys);
-      return metric ? { row, value: metric.value } : undefined;
-    })
-    .filter((item): item is { row: Record<string, unknown>; value: number } => item !== undefined);
-  if (scored.length === 0) {
-    return args.rows[0];
-  }
-
-  const direction = args.direction || "maximize";
-  const sorted = [...scored].sort((left, right) => {
-    if (direction === "minimize") {
-      return left.value - right.value;
-    }
-    return right.value - left.value;
-  });
-  return sorted[0]?.row;
-}
-
-function selectRecipeConditionByMetric(args: {
-  recipes: Record<string, unknown>;
-  recipeNames: string[];
-  preferredKeys: string[];
-  direction?: ObjectiveMetricProfile["direction"];
-}): string | undefined {
-  const scored = args.recipeNames
-    .map((name) => {
-      const metric = selectPreferredNumericMetric(flattenNumericMetrics(asRecord(args.recipes[name])), args.preferredKeys);
-      return metric ? { name, value: metric.value } : undefined;
-    })
-    .filter((item): item is { name: string; value: number } => item !== undefined);
-  if (scored.length === 0) {
-    return args.recipeNames[0];
-  }
-
-  const direction = args.direction || "maximize";
-  const sorted = [...scored].sort((left, right) => {
-    if (direction === "minimize") {
-      return left.value - right.value;
-    }
-    return right.value - left.value;
-  });
-  return sorted[0]?.name;
-}
-
-function selectPreferredNumericMetric(
-  metrics: Array<{ key: string; value: number }>,
-  preferredKeys: string[]
-): { key: string; value: number } | undefined {
-  if (metrics.length === 0) {
-    return undefined;
-  }
-  return [...metrics].sort((left, right) => {
-    const leftRank = metricPreferenceRank(left.key, preferredKeys);
-    const rightRank = metricPreferenceRank(right.key, preferredKeys);
-    if (leftRank !== rightRank) {
-      return leftRank - rightRank;
-    }
-    const leftStatisticRank = preferredMetricStatisticRank(left.key, preferredKeys);
-    const rightStatisticRank = preferredMetricStatisticRank(right.key, preferredKeys);
-    if (leftStatisticRank !== rightStatisticRank) {
-      return leftStatisticRank - rightStatisticRank;
-    }
-    return left.key.localeCompare(right.key);
-  })[0];
-}
-
-function metricPreferenceRank(key: string, preferredKeys: string[]): number {
-  const exact = preferredKeys.indexOf(key);
-  if (exact >= 0) {
-    return exact;
-  }
-  const lowerKey = key.toLowerCase();
-  const fuzzy = preferredKeys.findIndex((preferred) => {
-    const lowerPreferred = preferred.toLowerCase();
-    return lowerKey.includes(lowerPreferred) || lowerPreferred.includes(lowerKey);
-  });
-  return fuzzy >= 0 ? preferredKeys.length + fuzzy : Number.MAX_SAFE_INTEGER;
-}
-
-function preferredMetricStatisticRank(key: string, preferredKeys: string[]): number {
-  if (preferredKeys.length === 0) {
-    return Number.MAX_SAFE_INTEGER;
-  }
-  const normalizedKey = normalizeMetricStatisticKey(key);
-  let best = Number.MAX_SAFE_INTEGER;
-  preferredKeys.forEach((preferred, preferredIndex) => {
-    const normalizedPreferred = normalizeMetricStatisticKey(preferred);
-    const position = normalizedKey.indexOf(normalizedPreferred);
-    if (position < 0) {
-      return;
-    }
-    const suffix = normalizedKey.slice(position + normalizedPreferred.length).replace(/^_+/, "");
-    const prefixPenalty = position === 0 ? 0 : 20;
-    const rank = preferredIndex * 1000 + prefixPenalty + metricStatisticSuffixRank(suffix);
-    best = Math.min(best, rank);
-  });
-  return best;
-}
-
-function normalizeMetricStatisticKey(value: string): string {
-  return value.toLowerCase().replace(/[.-]+/gu, "_");
-}
-
-function metricStatisticSuffixRank(suffix: string): number {
-  if (!suffix) {
-    return 0;
-  }
-  if (/^(mean|avg|average)(?:_|$)/u.test(suffix)) {
-    return 1;
-  }
-  if (/^(value|score|observed)(?:_|$)/u.test(suffix)) {
-    return 2;
-  }
-  if (/^median(?:_|$)/u.test(suffix)) {
-    return 3;
-  }
-  if (/^(max|maximum)(?:_|$)/u.test(suffix)) {
-    return 10;
-  }
-  if (/^(min|minimum)(?:_|$)/u.test(suffix)) {
-    return 11;
-  }
-  if (/^ci\d*(?:_|$)/u.test(suffix)) {
-    return 40;
-  }
-  if (/^(sem|std|stdev|variance)(?:_|$)/u.test(suffix)) {
-    return 45;
-  }
-  if (/^(count|n|seed_count|sample_size)(?:_|$)/u.test(suffix)) {
-    return 80;
-  }
-  return 30;
-}
-
-function isUsefulResultArrayMetric(key: string, preferredKeys: string[]): boolean {
-  if (metricPreferenceRank(key, preferredKeys) !== Number.MAX_SAFE_INTEGER) {
-    return true;
-  }
-  return /(?:^|[._-])(accuracy|acc|score|f1|precision|recall|loss|latency|runtime|memory|seconds|time)(?:[._-]|$)/i.test(key);
-}
-
-function selectConditionByMetric(args: {
-  conditionMetrics: Record<string, unknown>;
-  conditionNames: string[];
-  preferredKeys: string[];
-  direction?: ObjectiveMetricProfile["direction"];
-  mode: "best" | "worst";
-}): string | undefined {
-  const scored = args.conditionNames
-    .map((name) => {
-      const metricValue = findPreferredMetricValue(asRecord(args.conditionMetrics[name]), args.preferredKeys);
-      return metricValue === undefined ? undefined : { name, value: metricValue };
-    })
-    .filter((item): item is { name: string; value: number } => item !== undefined);
-
-  if (scored.length === 0) {
-    return undefined;
-  }
-
-  const direction = args.direction || "maximize";
-  const sorted = [...scored].sort((left, right) => {
-    if (direction === "minimize") {
-      return left.value - right.value;
-    }
-    return right.value - left.value;
-  });
-
-  return args.mode === "best" ? sorted[0]?.name : sorted.at(-1)?.name;
-}
-
-function findPreferredMetricValue(metrics: Record<string, unknown>, preferredKeys: string[]): number | undefined {
-  const flattened = flattenNumericMetrics(metrics);
-  if (preferredKeys.length === 0) {
-    return flattened[0]?.value;
-  }
-  const matched = flattened.find((item) => preferredKeys.includes(item.key));
-  return matched?.value;
-}
-
-function findMatchingMetricKey(
-  metricTable: AnalysisMetricEntry[],
-  objectiveProfile: ObjectiveMetricProfile
-): string | undefined {
-  const preferredKeys = uniqueStrings(
-    [objectiveProfile.primaryMetric, ...objectiveProfile.preferredMetricKeys].filter((item): item is string => Boolean(item))
-  );
-  return metricTable.find((item) => preferredKeys.includes(item.key))?.key;
-}
-
-function selectEffectMetric(
-  comparison: AnalysisConditionComparison,
-  objectiveProfile: ObjectiveMetricProfile
-): AnalysisComparisonMetric | undefined {
-  const preferredKeys = uniqueStrings(
-    [objectiveProfile.primaryMetric, ...objectiveProfile.preferredMetricKeys].filter((item): item is string => Boolean(item))
-  );
-  return (
-    comparison.metrics.find((item) => preferredKeys.includes(item.key)) ||
-    comparison.metrics.find((item) => isLikelyPerformanceMetric(item.key, Math.abs(item.value))) ||
-    comparison.metrics[0]
-  );
-}
-
-function classifyEffectDirection(
-  metricKey: string,
-  delta: number,
-  objectiveDirection: ObjectiveMetricProfile["direction"] | undefined
-): "positive" | "negative" | "neutral" {
-  if (Math.abs(delta) < 0.0001) {
-    return "neutral";
-  }
-  const lowerIsBetter = isLowerBetterMetric(metricKey, objectiveDirection);
-  if (lowerIsBetter) {
-    return delta < 0 ? "positive" : "negative";
-  }
-  return delta > 0 ? "positive" : "negative";
-}
-
 function isPreferredMetricKey(metricKey: string, preferredKeys: string[]): boolean {
-  return preferredKeys.some((key) => metricKey === key || metricKey.endsWith(`.${key}`));
+  return preferredKeys.includes(metricKey);
 }
 
 function humanizeMetricLabel(metricKey: string): string {
@@ -3347,34 +2276,67 @@ function buildSupplementalRunSummary(
   return `${humanizeConditionLabel(profile)} supplemental run: ${details.join(", ")}.`;
 }
 
-function computeMeanScore(metrics: Record<string, unknown>): number {
-  const values = flattenNumericMetrics(metrics)
-    .filter((entry) => isMeanScoreMetric(entry.key, entry.value))
-    .map((entry) => entry.value);
-  if (values.length === 0) {
-    return 0;
-  }
-  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4));
+function buildExactObjectiveMetricIds(
+  objectiveEvaluation: ObjectiveMetricEvaluation,
+  objectiveProfile: ObjectiveMetricProfile
+): string[] {
+  return uniqueStrings([
+    objectiveEvaluation.matchedMetricKey,
+    objectiveEvaluation.primaryMetric,
+    ...objectiveEvaluation.preferredMetricKeys,
+    objectiveProfile.primaryMetric,
+    ...objectiveProfile.preferredMetricKeys
+  ]);
 }
 
-function isMeanScoreMetric(key: string, value: number): boolean {
-  if (!Number.isFinite(value)) {
-    return false;
+function summarizeExactObjectiveMetric(
+  metricTable: AnalysisMetricEntry[],
+  objectiveMetricIds: string[]
+): AnalysisMetricEntry | undefined {
+  for (const metricId of objectiveMetricIds) {
+    const summary = summarizeMetricById(metricTable, metricId);
+    if (summary) {
+      return summary;
+    }
   }
-  const normalized = key.toLocaleLowerCase();
-  if (
-    /(?:^|[._-])(?:memory|bytes|byte|vram|ram|allocated|reserved|runtime|latency|duration|seconds|wall_clock|time|timestamp|started|finished|elapsed|count|total|planned|completed|failed|seed|factor|parameter(?:_[a-z0-9]+)?|example|sample|step|epoch|token|index|order|trial)(?:[._-]|$)/u.test(
-      normalized
-    )
-  ) {
-    return false;
+  return undefined;
+}
+
+function summarizeMetricById(
+  metricTable: AnalysisMetricEntry[],
+  metricId: string
+): AnalysisMetricEntry | undefined {
+  const values = metricTable
+    .filter((entry) => entry.key === metricId && Number.isFinite(entry.value))
+    .map((entry) => entry.value);
+  if (values.length === 0) {
+    return undefined;
   }
-  if (/(?:^|[._-])(?:loss|perplexity)(?:[._-]|$)/u.test(normalized)) {
-    return false;
+  return {
+    key: metricId,
+    value: Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(6))
+  };
+}
+
+function exactMetricRank(metricId: string, objectiveMetricIds: string[]): number {
+  const rank = objectiveMetricIds.indexOf(metricId);
+  return rank >= 0 ? rank : Number.MAX_SAFE_INTEGER;
+}
+
+function buildAnalysisMetricTable(
+  metrics: Record<string, unknown>,
+  projection: ResultsArtifactProjectionResult
+): AnalysisMetricEntry[] {
+  if (projection.artifact.observations.length > 0) {
+    return projection.artifact.observations.map((observation) => ({
+      key: observation.metric_id,
+      value: Number(observation.value.toFixed(6))
+    }));
   }
-  return /(?:^|[._-])(?:accuracy|acc|f1|precision|recall|bleu|rouge|auc|score|delta|improvement|pass@\d+)(?:[._-]|$)/u.test(
-    normalized
-  );
+  if (projection.source === "explicit_results_artifact") {
+    return [];
+  }
+  return flattenNumericMetrics(metrics);
 }
 
 function flattenNumericMetrics(
@@ -3472,37 +2434,4 @@ function truncateOneLine(text: string, maxLength: number): string {
     return compact;
   }
   return `${compact.slice(0, maxLength - 3)}...`;
-}
-
-function isLikelyPerformanceMetric(key: string, value: number): boolean {
-  const lower = key.toLowerCase();
-  if (/count|total_trials|executed_trials|cached_trials|task_count|max_workers|year/u.test(lower)) {
-    return false;
-  }
-  if (value < 0 || value > 1.5) {
-    return false;
-  }
-  return /accuracy|f1|score|precision|recall|reproducibility|success|stability|consistency|availability|variance|loss|latency/u.test(lower);
-}
-
-function isLowerBetterMetric(
-  key: string,
-  objectiveDirection?: ObjectiveMetricProfile["direction"]
-): boolean {
-  const lower = key.toLowerCase();
-  if (/variance|failure|loss|latency|error|distance|gap/u.test(lower)) {
-    return true;
-  }
-  if (/accuracy|f1|score|precision|recall|success|stability|consistency|availability|reproducibility/u.test(lower)) {
-    return false;
-  }
-  return objectiveDirection === "minimize";
-}
-
-function isLikelyBaselineCondition(name: string): boolean {
-  return /(?:^|[_ -])(baseline|base|control|reference|free[_ -]?form|plain|unstructured|default|unmodified|pretrained|zero[_ -]?shot)(?:[_ -]|$)/u.test(name.toLowerCase());
-}
-
-function isLikelyPrimaryCondition(name: string): boolean {
-  return /primary|treatment|schema|shared[_ -]?state|experimental|structured/u.test(name.toLowerCase());
 }

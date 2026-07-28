@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "reviewer_evaluator_audit_preflight_contract",
+  "study_slug": "reviewer-evaluator-audit",
+  "working_title": "Who Judges the Reviewer? Evaluator Sensitivity in Scientific Error Localization",
+  "research_question": "How sensitive are scientific-error localization decisions and model rankings to ground-truth granularity, metric implementation, and evaluator choice?",
+  "claim_ceiling": "A benchmark-specific reproducibility audit of the public non-ML CS extension; no claim about all scientific-review benchmarks or the full benchmark leaderboard.",
+  "source": {
+    "dataset_id": "xasayi/FLAWS",
+    "dataset_url": "https://huggingface.co/datasets/xasayi/FLAWS",
+    "revision": "a20a57860ed4afc8a046a73abab6bd1222068762",
+    "license": "CC-BY-4.0",
+    "code_url": "https://github.com/xasayi/FLAWS",
+    "code_commit": "80309b1948c45a43ab6b9c128247eecdf4c4db0e"
+  },
+  "bundles": [
+    {
+      "bundle_id": "insertion_family_a",
+      "archive_name": "OPENAI_NON_ML.zip",
+      "archive_url": "https://huggingface.co/datasets/xasayi/FLAWS/resolve/a20a57860ed4afc8a046a73abab6bd1222068762/OPENAI_NON_ML.zip",
+      "archive_sha256": "042738b3e647348a9583934e6ebcfabd89c36f723be897d37784c6b4f1770788",
+      "root_directory": "OPENAI_NON_ML",
+      "metadata_file": "openai_all.json",
+      "insertion_model": "gpt-5-2025-08-07",
+      "expected_instance_count": 48
+    },
+    {
+      "bundle_id": "insertion_family_b",
+      "archive_name": "GEMINI_NON_ML.zip",
+      "archive_url": "https://huggingface.co/datasets/xasayi/FLAWS/resolve/a20a57860ed4afc8a046a73abab6bd1222068762/GEMINI_NON_ML.zip",
+      "archive_sha256": "abe0a2638a81e8d9de79c7d81bbf08548c6fbb82e3e64d453a190776a59e7c58",
+      "root_directory": "GEMINI_NON_ML",
+      "metadata_file": "gemini_all.json",
+      "insertion_model": "gemini-2.5-pro",
+      "expected_instance_count": 67
+    }
+  ],
+  "identification_models": [
+    "claude-sonnet-4-5",
+    "deepseek-reasoner",
+    "gemini-2.5-pro",
+    "gpt-5-2025-08-07",
+    "grok-4"
+  ],
+  "published_evaluation": {
+    "top_k": 10,
+    "lexical_threshold": 0.5,
+    "combination_rule": "lexical_or_insertion_model_judge"
+  },
+  "corpus_gates": {
+    "minimum_error_instances": 100,
+    "minimum_unique_papers": 60,
+    "minimum_insertion_families": 2,
+    "minimum_complete_prediction_cells": 500,
+    "maximum_missing_required_artifacts": 0
+  },
+  "disallowed_shortcuts": [
+    "Treating insertion-model judge labels as independent human ground truth",
+    "Treating repeated errors from the same paper as independent in uncertainty estimates",
+    "Changing effect thresholds after independent-judge results are observed",
+    "Generalizing non-ML extension findings to the full benchmark without a separate replication"
+  ]
+}

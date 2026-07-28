@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "reviewer_evaluator_corpus_preflight",
+  "generated_without_new_model_outputs": true,
+  "config_sha256": "2d2b48fe1a362bfb4ba60a3860901f1c88076e2745e6b11d46209438988a81f0",
+  "source": {
+    "dataset_id": "xasayi/FLAWS",
+    "dataset_url": "https://huggingface.co/datasets/xasayi/FLAWS",
+    "revision": "a20a57860ed4afc8a046a73abab6bd1222068762",
+    "license": "CC-BY-4.0",
+    "code_url": "https://github.com/xasayi/FLAWS",
+    "code_commit": "80309b1948c45a43ab6b9c128247eecdf4c4db0e"
+  },
+  "bundle_summaries": [
+    {
+      "bundle_id": "insertion_family_a",
+      "expected_instance_count": 48,
+      "observed_instance_count": 48
+    },
+    {
+      "bundle_id": "insertion_family_b",
+      "expected_instance_count": 67,
+      "observed_instance_count": 67
+    }
+  ],
+  "instance_count": 115,
+  "unique_paper_count": 68,
+  "papers_present_in_multiple_bundles": 47,
+  "complete_prediction_cell_count": 575,
+  "expected_prediction_cell_count": 575,
+  "missing_required_artifact_count": 0,
+  "missing_required_artifacts": [],
+  "ground_truth_context": {
+    "audited_instance_count": 115,
+    "paired_modified_block_count": 260,
+    "aggregate_unchanged_modified_word_ratio": 0.39958448753462605,
+    "instance_ratio_q25": 0.06666666666666667,
+    "instance_ratio_median": 0.3584905660377358,
+    "instance_ratio_q75": 0.5514018691588785,
+    "instances_over_half_unchanged": 35,
+    "instances_without_changed_modified_sentence": 0
+  },
+  "published_evaluator_components": {
+    "claude-sonnet-4-5": {
+      "count": 115,
+      "lexical_positive": 22,
+      "insertion_judge_positive": 25,
+      "combined_positive": 25,
+      "lexical_only_positive": 0,
+      "insertion_judge_only_positive": 3,
+      "judge_parser_disagreement": 0
+    },
+    "deepseek-reasoner": {
+      "count": 115,
+      "lexical_positive": 22,
+      "insertion_judge_positive": 32,
+      "combined_positive": 32,
+      "lexical_only_positive": 0,
+      "insertion_judge_only_positive": 10,
+      "judge_parser_disagreement": 0
+    },
+    "gemini-2.5-pro": {
+      "count": 115,
+      "lexical_positive": 19,
+      "insertion_judge_positive": 28,
+      "combined_positive": 28,
+      "lexical_only_positive": 0,
+      "insertion_judge_only_positive": 9,
+      "judge_parser_disagreement": 0
+    },
+    "gpt-5-2025-08-07": {
+      "count": 115,
+      "lexical_positive": 32,
+      "insertion_judge_positive": 45,
+      "combined_positive": 46,
+      "lexical_only_positive": 1,
+      "insertion_judge_only_positive": 14,
+      "judge_parser_disagreement": 0
+    },
+    "grok-4": {
+      "count": 115,
+      "lexical_positive": 22,
+      "insertion_judge_positive": 31,
+      "combined_positive": 31,
+      "lexical_only_positive": 0,
+      "insertion_judge_only_positive": 9,
+      "judge_parser_disagreement": 0
+    }
+  },
+  "gates": {
+    "minimum_error_instances": {
+      "observed": 115,
+      "required": 100,
+      "comparison": "minimum",
+      "pass": true
+    },
+    "minimum_unique_papers": {
+      "observed": 68,
+      "required": 60,
+      "comparison": "minimum",
+      "pass": true
+    },
+    "minimum_insertion_families": {
+      "observed": 2,
+      "required": 2,
+      "comparison": "minimum",
+      "pass": true
+    },
+    "minimum_complete_prediction_cells": {
+      "observed": 575,
+      "required": 500,
+      "comparison": "minimum",
+      "pass": true
+    },
+    "maximum_missing_required_artifacts": {
+      "observed": 0,
+      "required": 0,
+      "comparison": "maximum",
+      "pass": true
+    },
+    "declared_bundle_counts_match": {
+      "observed": true,
+      "required": true,
+      "comparison": "exact",
+      "pass": true
+    }
+  },
+  "corpus_eligible": true,
+  "decision": "protocol_freeze_may_proceed",
+  "content_sha256": "7da019c0e31a3797ab3745ba177800b3ee36c52552e3b1944074450805d9fb7f"
+}

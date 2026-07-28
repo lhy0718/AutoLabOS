@@ -12,6 +12,26 @@ export interface ResolvedRunCommand {
   metricsPath: string;
   testCommand?: string;
   testCwd?: string;
+  requestedGpuCount?: number;
+  requestedGpuCountSource?: string;
+  environmentGpuLimit?: number;
+  environmentGpuLimitSource?: string;
+  gpuRequestIssue?: string;
+}
+
+export type RunCommandGpuRequestMetadata = Pick<
+  ResolvedRunCommand,
+  | "requestedGpuCount"
+  | "requestedGpuCountSource"
+  | "environmentGpuLimit"
+  | "environmentGpuLimitSource"
+  | "gpuRequestIssue"
+>;
+
+export function resolveRunCommandGpuRequestMetadata(
+  command: string
+): RunCommandGpuRequestMetadata {
+  return resolveGpuRequestMetadata(command, undefined, undefined);
 }
 
 export async function resolveRunCommand(
@@ -29,6 +49,16 @@ export async function resolveRunCommand(
   const explicitCwd =
     resolveMaybeRelative(await runContext.get<string>("implement_experiments.cwd"), workspaceRoot) || workspaceRoot;
   const testCommand = await runContext.get<string>("implement_experiments.test_command");
+  const declaredRequestedGpuCount = await runContext.get<unknown>(
+    "implement_experiments.requested_gpu_count"
+  );
+  const environmentSnapshot = await runContext.get<unknown>(
+    "implement_experiments.environment_snapshot"
+  );
+  const withGpuMetadata = (resolved: ResolvedRunCommand): ResolvedRunCommand => ({
+    ...resolved,
+    ...resolveGpuRequestMetadata(resolved.command, declaredRequestedGpuCount, environmentSnapshot)
+  });
   const explicitCommandArtifact = explicitCommand
     ? resolveCommandArtifactPath(explicitCommand, explicitCwd, workspaceRoot)
     : undefined;
@@ -46,16 +76,16 @@ export async function resolveRunCommand(
         })
       : undefined;
     if (fullStudyAlternative) {
-      return fullStudyAlternative;
+      return withGpuMetadata(fullStudyAlternative);
     }
-    return {
+    return withGpuMetadata({
       command: explicitCommand,
       cwd: explicitCwd,
       source: "run_context.run_command",
       metricsPath,
       testCommand: testCommand || undefined,
       testCwd: explicitCwd
-    };
+    });
   }
 
   const scriptPathCandidates = [
@@ -65,14 +95,14 @@ export async function resolveRunCommand(
   ].filter((value): value is string => Boolean(value));
   const scriptPath = await firstExistingPath(scriptPathCandidates);
   if (scriptPath) {
-    return {
+    return withGpuMetadata({
       command: inferCommandForScript(scriptPath),
       cwd: explicitCwd,
       source: "run_context.script",
       metricsPath,
       testCommand: testCommand || undefined,
       testCwd: explicitCwd
-    };
+    });
   }
 
   for (const [dir, sourcePrefix, cwd] of [
@@ -92,14 +122,14 @@ export async function resolveRunCommand(
     ]) {
       const candidate = path.join(dir, relative);
       if (await fileExists(candidate)) {
-        return {
+        return withGpuMetadata({
           command: inferCommandForScript(candidate),
           cwd,
           source: `${sourcePrefix}.${relative}`,
           metricsPath,
           testCommand: testCommand || undefined,
           testCwd: cwd
-        };
+        });
       }
     }
   }
@@ -115,27 +145,27 @@ export async function resolveRunCommand(
     if (await fileExists(packageJsonPath)) {
       const packageJson = await readPackageJson(packageJsonPath);
       if (packageJson?.scripts?.experiment) {
-        return {
+        return withGpuMetadata({
           command: "npm run experiment",
           cwd: dir,
           source: `${sourcePrefix}.package_json#experiment`,
           metricsPath,
           testCommand: packageJson.scripts.test ? "npm test -- --runInBand" : testCommand || undefined,
           testCwd: dir
-        };
+        });
       }
     }
   }
 
   if (explicitCommand) {
-    return {
+    return withGpuMetadata({
       command: explicitCommand,
       cwd: explicitCwd,
       source: "run_context.run_command",
       metricsPath,
       testCommand: testCommand || undefined,
       testCwd: explicitCwd
-    };
+    });
   }
 
   throw new Error(`No runnable experiment artifact found for run ${run.id}. Execute implement_experiments first.`);
@@ -153,6 +183,209 @@ function inferCommandForScript(scriptPath: string): string {
     return `bash ${quoted}`;
   }
   return quoted;
+}
+
+function resolveGpuRequestMetadata(
+  command: string,
+  declaredRequestedGpuCount: unknown,
+  environmentSnapshot: unknown
+): Pick<
+  ResolvedRunCommand,
+  | "requestedGpuCount"
+  | "requestedGpuCountSource"
+  | "environmentGpuLimit"
+  | "environmentGpuLimitSource"
+  | "gpuRequestIssue"
+> {
+  const requestCandidates: Array<{ value: number; source: string }> = [];
+  const issues: string[] = [];
+  if (declaredRequestedGpuCount !== undefined && declaredRequestedGpuCount !== null) {
+    if (isNonNegativeInteger(declaredRequestedGpuCount)) {
+      requestCandidates.push({
+        value: declaredRequestedGpuCount,
+        source: "run_context.implement_experiments.requested_gpu_count"
+      });
+    } else {
+      issues.push("run_context.implement_experiments.requested_gpu_count must be a non-negative integer");
+    }
+  }
+
+  const commandRequestedGpuCount = readCommandRequestedGpuCount(command);
+  if (commandRequestedGpuCount.issue) {
+    issues.push(commandRequestedGpuCount.issue);
+  } else if (commandRequestedGpuCount.value !== undefined) {
+    requestCandidates.push({
+      value: commandRequestedGpuCount.value,
+      source: commandRequestedGpuCount.source || "run_command"
+    });
+  }
+
+  const distinctRequests = new Map<number, string[]>();
+  for (const candidate of requestCandidates) {
+    distinctRequests.set(candidate.value, [
+      ...(distinctRequests.get(candidate.value) || []),
+      candidate.source
+    ]);
+  }
+  if (distinctRequests.size > 1) {
+    issues.push(
+      "conflicting requested GPU counts: "
+      + requestCandidates.map((candidate) => `${candidate.source}=${candidate.value}`).join(", ")
+    );
+  }
+
+  const environmentLimits: Array<{ value: number; source: string }> = [];
+  for (const variable of ["CUDA_VISIBLE_DEVICES", "NVIDIA_VISIBLE_DEVICES"] as const) {
+    const rawValue = readCommandEnvironmentAssignment(command, variable);
+    const visibleCount = rawValue === undefined ? undefined : parseVisibleDeviceCount(rawValue);
+    if (visibleCount !== undefined) {
+      environmentLimits.push({
+        value: visibleCount,
+        source: `run_command.${variable}`
+      });
+    }
+  }
+  if (isRecord(environmentSnapshot) && environmentSnapshot.gpu_available === false) {
+    environmentLimits.push({
+      value: 0,
+      source: "implement_experiments.environment_snapshot.gpu_available"
+    });
+  }
+  const environmentGpuLimit = environmentLimits.length > 0
+    ? Math.min(...environmentLimits.map((candidate) => candidate.value))
+    : undefined;
+  const request = distinctRequests.size === 1 ? requestCandidates[0] : undefined;
+
+  return {
+    ...(request
+      ? {
+          requestedGpuCount: request.value,
+          requestedGpuCountSource: distinctRequests.get(request.value)?.join(",")
+        }
+      : {}),
+    ...(environmentGpuLimit !== undefined
+      ? {
+          environmentGpuLimit,
+          environmentGpuLimitSource: environmentLimits
+            .filter((candidate) => candidate.value === environmentGpuLimit)
+            .map((candidate) => candidate.source)
+            .join(",")
+        }
+      : {}),
+    ...(issues.length > 0
+      ? { gpuRequestIssue: `topic_probe_compute_requested_gpu_count_invalid:${issues.join("; ")}` }
+      : {})
+  };
+}
+
+function readCommandRequestedGpuCount(command: string): {
+  value?: number;
+  source?: string;
+  issue?: string;
+} {
+  const candidates: Array<{ raw: string; source: string }> = [];
+  const environmentValue = readCommandEnvironmentAssignment(
+    command,
+    "AUTOLABOS_REQUESTED_GPU_COUNT"
+  );
+  if (environmentValue !== undefined) {
+    candidates.push({
+      raw: environmentValue,
+      source: "run_command.AUTOLABOS_REQUESTED_GPU_COUNT"
+    });
+  }
+  const tokens = tokenizeCommand(command);
+  for (const flag of ["--requested-gpu-count", "--num-gpus", "--nproc-per-node"] as const) {
+    const raw = readCommandOptionValue(tokens, flag);
+    if (raw !== undefined) {
+      candidates.push({ raw, source: `run_command.${flag}` });
+    }
+  }
+  if (candidates.length === 0) {
+    return {};
+  }
+  const parsed = candidates.map((candidate) => ({
+    ...candidate,
+    value: parseNonNegativeInteger(candidate.raw)
+  }));
+  const firstValue = parsed[0]?.value;
+  if (firstValue === undefined || parsed.some((candidate) => candidate.value === undefined)) {
+    return {
+      issue: "run command GPU count declarations must be non-negative integers"
+    };
+  }
+  const distinct = new Set(parsed.map((candidate) => candidate.value));
+  if (distinct.size !== 1) {
+    return {
+      issue:
+        "run command contains conflicting GPU count declarations: "
+        + parsed.map((candidate) => `${candidate.source}=${candidate.raw}`).join(", ")
+    };
+  }
+  return {
+    value: firstValue,
+    source: parsed.map((candidate) => candidate.source).join(",")
+  };
+}
+
+function readCommandEnvironmentAssignment(command: string, name: string): string | undefined {
+  const escaped = escapeRegExp(name);
+  const match = command.match(
+    new RegExp(`(?:^|\\s)(?:export\\s+)?${escaped}=("[^"]*"|'[^']*'|[^\\s]+)`, "u")
+  );
+  return match?.[1] === undefined ? undefined : stripShellQuotes(match[1]);
+}
+
+function readCommandOptionValue(tokens: string[], flag: string): string | undefined {
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === flag) {
+      return tokens[index + 1];
+    }
+    if (token.startsWith(`${flag}=`)) {
+      return token.slice(flag.length + 1);
+    }
+  }
+  return undefined;
+}
+
+function parseVisibleDeviceCount(raw: string): number | undefined {
+  const value = stripShellQuotes(raw).trim();
+  if (!value || /^(?:-1|none|void)$/iu.test(value)) {
+    return 0;
+  }
+  if (/^(?:all|\$\{?[A-Za-z_][A-Za-z0-9_]*\}?)$/u.test(value)) {
+    return undefined;
+  }
+  const devices = value.split(",").map((item) => item.trim()).filter(Boolean);
+  return devices.length > 0 ? devices.length : undefined;
+}
+
+function parseNonNegativeInteger(raw: string): number | undefined {
+  if (!/^\d+$/u.test(raw)) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) ? parsed : undefined;
+}
+
+function stripShellQuotes(value: string): string {
+  if (
+    value.length >= 2
+    && ((value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function resolveMaybeRelative(value: string | undefined, workspaceRoot: string): string | undefined {

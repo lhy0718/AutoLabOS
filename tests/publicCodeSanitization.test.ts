@@ -158,6 +158,18 @@ function collectExperimentSpecificEntrypoints(
 }
 
 describe("public code sanitization", () => {
+  it("keeps study-specific verification outside the framework test tree", () => {
+    const frameworkTests = walkTextFiles("tests").filter(
+      (relativePath) => relativePath !== SANITIZER_TEST_PATH
+    );
+    const offenders = frameworkTests.filter((relativePath) => {
+      const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+      return /(?:^|[("'`/\\])studies(?:[)"'`/\\]|$)/mu.test(source);
+    });
+
+    expect(offenders).toEqual([]);
+  });
+
   it("rejects editor backups and transient source files from public trees", () => {
     const files = PUBLIC_DIRS.flatMap(walkPublicFiles);
     const offenders = files.filter((relativePath) =>
@@ -168,11 +180,15 @@ describe("public code sanitization", () => {
       "module.ts.orig",
       "module.ts.bak",
       "module.ts.backup",
+      "module.cpython-313.pyc",
+      "module.pyo",
       "module.ts.rej",
       "module.ts.swp",
       "module.ts.swo",
       "module.ts~",
-      ".#module.ts"
+      ".#module.ts",
+      "__pycache__",
+      ".pytest_cache"
     ].every((name) => !isReproducibleSourceEntry(name))).toBe(true);
   });
 

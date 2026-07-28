@@ -1,4 +1,5 @@
 import { AppConfig } from "../types.js";
+import { requireOllamaModel } from "../integrations/ollama/modelCatalog.js";
 
 export interface ExperimentLlmProfile {
   provider: "codex" | "openai" | "ollama";
@@ -21,10 +22,10 @@ export function resolveExperimentLlmProfile(config: AppConfig): ExperimentLlmPro
   if (config.providers.llm_mode === "ollama") {
     return {
       provider: "ollama",
-      model:
-        config.providers.ollama?.experiment_model ||
-        config.providers.ollama?.research_model ||
-        "qwen3.5:35b-a3b",
+      model: requireOllamaModel(
+        config.providers.ollama?.experiment_model || config.providers.ollama?.research_model,
+        "experiment"
+      ),
       reasoningEffort: "medium",
       fastMode: false
     };

@@ -51,9 +51,11 @@ interface OllamaTagsResponse {
 const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes for long generations
 
 export class OllamaClient {
-  constructor(
-    private readonly baseUrl: string = DEFAULT_OLLAMA_BASE_URL
-  ) {}
+  private readonly baseUrl: string;
+
+  constructor(baseUrl: string = DEFAULT_OLLAMA_BASE_URL) {
+    this.baseUrl = baseUrl.trim().replace(/\/+$/u, "") || DEFAULT_OLLAMA_BASE_URL;
+  }
 
   getBaseUrl(): string {
     return this.baseUrl;
@@ -85,12 +87,16 @@ export class OllamaClient {
       throw new Error(`Ollama /api/tags failed: HTTP ${response.status}`);
     }
     const data = (await response.json()) as OllamaTagsResponse;
-    return (data.models ?? []).map((m) => ({
-      name: m.name ?? "",
-      size: m.size ?? 0,
-      digest: m.digest ?? "",
-      modified_at: m.modified_at ?? ""
-    }));
+    const models = (data.models ?? [])
+      .map((model) => ({
+        name: model.name?.trim() ?? "",
+        size: model.size ?? 0,
+        digest: model.digest ?? "",
+        modified_at: model.modified_at ?? ""
+      }))
+      .filter((model) => model.name);
+    return [...new Map(models.map((model) => [model.name, model])).values()]
+      .sort((left, right) => left.name.localeCompare(right.name));
   }
 
   async isModelAvailable(modelName: string): Promise<boolean> {
@@ -114,11 +120,12 @@ export class OllamaClient {
     abortSignal?: AbortSignal;
     timeoutMs?: number;
   }): Promise<OllamaCompletionResult> {
+    const model = requireModelName(opts.model);
     const fakeResponse = resolveFakeOllamaResponse();
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       return {
         text: fakeResponse,
-        model: opts.model
+        model
       };
     }
 
@@ -132,7 +139,7 @@ export class OllamaClient {
 
     try {
       const body: Record<string, unknown> = {
-        model: opts.model,
+        model,
         messages: opts.messages,
         stream: false,
         ...(opts.format ? { format: opts.format } : {}),
@@ -160,7 +167,7 @@ export class OllamaClient {
       const text = data.message?.content ?? "";
       return {
         text,
-        model: data.model || opts.model,
+        model: data.model || model,
         totalDuration: data.total_duration,
         promptEvalCount: data.prompt_eval_count,
         evalCount: data.eval_count
@@ -178,10 +185,11 @@ export class OllamaClient {
     timeoutMs?: number;
     onToken?: (token: string) => void;
   }): Promise<OllamaCompletionResult> {
+    const model = requireModelName(opts.model);
     const fakeResponse = resolveFakeOllamaResponse();
     if (typeof fakeResponse === "string" && fakeResponse.trim()) {
       opts.onToken?.(fakeResponse);
-      return { text: fakeResponse, model: opts.model };
+      return { text: fakeResponse, model };
     }
 
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -194,7 +202,7 @@ export class OllamaClient {
 
     try {
       const body: Record<string, unknown> = {
-        model: opts.model,
+        model,
         messages: opts.messages,
         stream: true,
         ...(opts.options ? { options: opts.options } : {})
@@ -284,7 +292,7 @@ export class OllamaClient {
 
       return {
         text: chunks.join(""),
-        model: finalModel || opts.model,
+        model: finalModel || model,
         totalDuration,
         promptEvalCount,
         evalCount
@@ -335,6 +343,16 @@ async function safeReadText(response: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+function requireModelName(model: string): string {
+  const normalized = model.trim();
+  if (!normalized) {
+    throw new Error(
+      "Ollama model is not configured. Select an installed model or enter a model identifier in settings."
+    );
+  }
+  return normalized;
 }
 
 export async function encodeImageToBase64(imagePath: string): Promise<string> {

@@ -96,13 +96,11 @@
   "dependencies": {
     "better-sqlite3": "^12.8.0",
     "cheerio": "~1.0.0",
-    "hyparquet": "1.26.2",
     "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.13.14",
-    "hyparquet-writer": "0.16.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.2",
     "vite": "^6.4.3",

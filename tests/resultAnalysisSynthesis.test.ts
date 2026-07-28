@@ -18,7 +18,7 @@ describe("resultAnalysisSynthesis", () => {
         return {
           text: JSON.stringify({
             discussion_points: [
-              "The objective was met by the candidate condition.",
+              "The objective was met by Candidate A.",
               "The evidence should be treated as weak because raw correct-count denominators are not provided and available CI summaries cite only n=6 predictions.",
               "The payload has trial-accounting ambiguity between primary and executed trials."
             ],
@@ -38,16 +38,32 @@ describe("resultAnalysisSynthesis", () => {
     const report = {
       overview: {
         objective_status: "met",
-        objective_summary: "Objective metric met for candidate_condition_a.",
-        selected_design_title: "Neutral benchmark comparison",
+        objective_summary: "The declared primary score target was met for Candidate A.",
+        selected_design_title: "Configured comparison",
         observed_value: 0.02,
-        matched_metric_key: "accuracy_delta_vs_baseline"
+        matched_metric_key: "primary_score_delta"
       },
-      primary_findings: ["candidate_condition_a improved over baseline_condition."],
+      primary_findings: ["Candidate A improved over its declared reference."],
+      primary_comparison_id: "comparison_primary",
       condition_comparisons: [
         {
-          label: "candidate_condition_a vs baseline_condition",
-          summary: "candidate_condition_a improved by 0.02.",
+          id: "comparison_secondary",
+          label: "Candidate B vs reference",
+          subject_series_id: "candidate_b",
+          reference_series_id: "reference",
+          metric_id: "primary_score_delta",
+          metric_direction: "higher_better",
+          summary: "The replication comparison is secondary.",
+          hypothesis_supported: true
+        },
+        {
+          id: "comparison_primary",
+          label: "Candidate A vs reference",
+          subject_series_id: "candidate_a",
+          reference_series_id: "reference",
+          metric_id: "primary_score_delta",
+          metric_direction: "higher_better",
+          summary: "The declared primary comparison improved by 0.02.",
           hypothesis_supported: true
         }
       ],
@@ -61,8 +77,8 @@ describe("resultAnalysisSynthesis", () => {
         executed_trials: 38,
         confidence_intervals: [
           {
-            metric_key: "condition_results.candidate_condition_a.average_accuracy",
-            label: "candidate condition average accuracy",
+            metric_key: "condition_results.candidate_a.primary_score",
+            label: "Candidate A primary score",
             lower: 0.42,
             upper: 0.54,
             level: 0.95,
@@ -82,18 +98,18 @@ describe("resultAnalysisSynthesis", () => {
       metrics: {
         condition_results: [
           {
-            condition_marker: "baseline_condition",
+            condition_marker: "reference",
             seed_count: 3,
             correct_count: 132,
             total_count: 288,
             confidence_interval: { sample_size: 288, correct_count: 132, total_count: 288 },
             evaluation: {
-              benchmark_task_a: {
+              validation_partition: {
                 correct_count: 69,
                 total_count: 144,
                 confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
               },
-              benchmark_task_b: {
+              held_out_partition: {
                 correct_count: 63,
                 total_count: 144,
                 confidence_interval: { sample_size: 144, correct_count: 63, total_count: 144 }
@@ -101,18 +117,18 @@ describe("resultAnalysisSynthesis", () => {
             }
           },
           {
-            condition_marker: "candidate_condition_a",
+            condition_marker: "candidate_a",
             seed_count: 3,
             correct_count: 138,
             total_count: 288,
             confidence_interval: { sample_size: 288, correct_count: 138, total_count: 288 },
             evaluation: {
-              benchmark_task_a: {
+              validation_partition: {
                 correct_count: 69,
                 total_count: 144,
                 confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
               },
-              benchmark_task_b: {
+              held_out_partition: {
                 correct_count: 69,
                 total_count: 144,
                 confidence_interval: { sample_size: 144, correct_count: 69, total_count: 144 }
@@ -126,8 +142,8 @@ describe("resultAnalysisSynthesis", () => {
     const synthesis = await synthesizeAnalysisReport({
       run: {
         id: "run-analysis-synthesis",
-        topic: "Neutral benchmark comparison",
-        objectiveMetric: "Improve candidate accuracy over baseline.",
+        topic: "Configured comparison",
+        objectiveMetric: "Increase the declared primary score over the reference.",
         constraints: []
       },
       report,
@@ -144,6 +160,11 @@ describe("resultAnalysisSynthesis", () => {
     expect(capturedPrompt).toContain('"evidence_accounting"');
     expect(capturedPrompt).toContain('"max_seed_count": 3');
     expect(capturedPrompt).toContain('"max_ci_sample_size": 288');
+    expect(capturedPrompt).toContain('"primary_comparison_id": "comparison_primary"');
+    expect(capturedPrompt).toContain('"is_primary": true');
+    expect(capturedPrompt.indexOf('"id": "comparison_primary"')).toBeLessThan(
+      capturedPrompt.indexOf('"id": "comparison_secondary"')
+    );
     expect(synthesis.discussion_points[0]).toContain("Evidence accounting:");
     const combined = JSON.stringify(synthesis);
     expect(combined).not.toMatch(/single[- ]seed|n=6|raw counts are missing|raw correct\/total counts|raw correct-count denominators are not provided|trial-accounting ambiguity/iu);

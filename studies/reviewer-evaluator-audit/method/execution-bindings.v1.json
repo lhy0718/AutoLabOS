@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "independent_judge_execution_bindings",
+  "bound_at": "2026-07-28T16:10:53+09:00",
+  "protocol": {
+    "path": "protocol.v1.json",
+    "file_sha256": "6518abf22f8bf4ed34de5c73b1606185aeac5a4ea15fe73bb616bb64811c191d"
+  },
+  "config": {
+    "path": "preflight-contract.v1.json",
+    "file_sha256": "c49eb988f5ed9b0651d45fce0d02d3721acf52717326952fced530223204dad4"
+  },
+  "prompt": {
+    "path": "judge-prompt.v1.json",
+    "file_sha256": "47cf80b87147bc3e7cb839436b8ce1cb606f7fd1935439553fd9cdf9aa970b6d"
+  },
+  "runner": {
+    "path": "../scripts/run-independent-judge.mjs",
+    "file_sha256": "57367dad73a1e85b0d032af3f9da3ffc927f7ccd8b8d1fea02930c818980e58a"
+  },
+  "runtime": {
+    "provider": "ollama",
+    "base_url": "http://127.0.0.1:11434",
+    "ollama_version": "0.18.0",
+    "request_timeout_ms": 600000
+  },
+  "generation_options": {
+    "temperature": 0,
+    "top_p": 1,
+    "num_ctx": 16384,
+    "num_predict": 4096,
+    "keep_alive": "60m"
+  },
+  "judges": [
+    {
+      "id": "judge_lineage_qwen",
+      "model_tag": "qwen3.5:35b-a3b",
+      "model_digest": "3460ffeede5453ead027dbd2f821b12ad0aa3de54630971993babdb2165221f7",
+      "parameter_size": "36.0B",
+      "quantization_level": "Q4_K_M",
+      "size_bytes": 23869191742
+    },
+    {
+      "id": "judge_lineage_mistral",
+      "model_tag": "mistral-small3.2:24b",
+      "model_digest": "5a408ab55df5c1b5cf46533c368813b30bf9e4d8fc39263bf2a3338cfa3b895b",
+      "parameter_size": "24.0B",
+      "quantization_level": "Q4_K_M",
+      "size_bytes": 15177384862
+    }
+  ],
+  "hardware": {
+    "gpu_count": 2,
+    "gpu_model": "NVIDIA GeForce RTX 4090",
+    "memory_per_gpu_mib": 24564,
+    "driver_version": "570.211.01"
+  },
+  "execution_boundary": {
+    "expected_instance_count_per_judge": 115,
+    "adaptive_instance_exclusion_allowed": false,
+    "web_or_repository_context_supplied_to_judges": false,
+    "confirmatory_eligibility": "Every expected instance must have two valid repeats and a valid disagreement-only tiebreak whenever required."
+  }
+}

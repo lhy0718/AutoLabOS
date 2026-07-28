@@ -20,11 +20,11 @@ import {
   resolveObjectiveMetricProfile
 } from "../objectiveMetric.js";
 import {
-  AnalysisConditionComparison,
   AnalysisFailureCategory,
   AnalysisReport,
   buildAnalysisReport,
   buildPersistedAnalysisMetricsProjection,
+  resolvePrimaryResultsArtifactComparison,
   renderPerformanceFigureSvg
 } from "../resultAnalysis.js";
 import { buildAnalyzeResultsCompletionSummary } from "../resultAnalysisPresentation.js";
@@ -33,7 +33,7 @@ import { RunVerifierReport } from "../experiments/runVerifierFeedback.js";
 import { ExperimentPortfolio, ExperimentRunManifest } from "../experiments/experimentPortfolio.js";
 import { detectPreflightOnlyMetrics } from "../experiments/executedMetrics.js";
 import type { ExperimentContract } from "../experiments/experimentContract.js";
-import { GraphNodeId, TransitionRecommendation } from "../../types.js";
+import { GraphNodeId, RunRecord, TransitionRecommendation } from "../../types.js";
 import { runAnalyzeResultsPanel } from "../analyzeResultsPanel.js";
 import {
   clearPendingHumanInterventionRequest,
@@ -59,17 +59,21 @@ import {
   type AttemptDecisionVerdict
 } from "../experiments/attemptDecision.js";
 import { evaluateBriefEvidenceAgainstResults } from "../analysis/briefEvidenceValidator.js";
+import { parseResearchGapEvidenceRows } from "../analysis/researchGapEvidenceChain.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 import { buildBaselineComparisonSurface } from "../baselineComparisonSurface.js";
 import {
-  hasAnyIncompleteResultsTableRow,
-  inferMetricDirection,
-  type ResultsTableDirection,
-  type ResultsTableSchema,
-  validateResultsTableSchema
+  checkResultsContractCompleteness,
+  validateResultsTableSchema,
+  type ResultsTableSchema
 } from "../analysis/resultsTableSchema.js";
+import {
+  projectResultsArtifactV2,
+  type ResultsArtifactProjectionResult
+} from "../analysis/resultsArtifactProjection.js";
 import {
   detectNaNInf,
   detectStatisticalAnomaly,
@@ -87,6 +91,25 @@ import { loadBaselineLock } from "../exploration/baselineLock.js";
 import { loadResearchTree } from "../exploration/researchTree.js";
 import { buildWriteupInputManifest } from "../exploration/evidenceSerializer.js";
 import { projectPortableArtifactValue } from "../../utils/portableArtifact.js";
+import {
+  buildTopicProbeOutcomeDecision,
+  type TopicProbeOutcomeDecision
+} from "../topicProbeOutcome.js";
+import {
+  loadTopicProbeOutcomeArtifacts,
+  TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS,
+  TOPIC_PROBE_OUTCOME_RELATIVE_PATH
+} from "../topicProbeOutcomeArtifacts.js";
+import {
+  hashCanonical,
+  type TopicPortfolio
+} from "../researchFunnel.js";
+import type { ActiveTopicProbeContract } from "../activeTopicProbeContract.js";
+import {
+  buildTopicMemoryDatabasePath,
+  TopicMemoryStore
+} from "../runs/topicMemoryStore.js";
+import type { TopicKillPublicReasonCode } from "../topicMemory.js";
 
 export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
@@ -165,7 +188,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           payload: { text: preflightOnlyMetricsMessage }
         });
       }
-      const latestResultsPath = await buildLatestResultsFromCsvArtifact(metrics, run.id, inputWarnings);
       const managedBundleValidation = await validateManagedBundleLock({
         contract: comparisonContract,
         managedBundleLock,
@@ -197,7 +219,9 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         );
       }
       const effectiveObjectiveMetric =
-        lockedObjectiveProfile ? run.objectiveMetric : manualObjectiveClarification || run.objectiveMetric;
+        lockedObjectiveProfile
+          ? lockedObjectiveProfile.raw
+          : manualObjectiveClarification || run.objectiveMetric;
       const objectiveProfileBase =
         lockedObjectiveProfile ||
         (await resolveObjectiveMetricProfile({
@@ -223,11 +247,34 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
               effectiveObjectiveMetric
             )
           : objectiveProfileBase;
+      const resultsArtifactProjection = projectResultsArtifactV2({
+        metrics: analysisMetrics,
+        primaryMetricId: objectiveProfile.primaryMetric,
+        preferredMetricIds: objectiveProfile.preferredMetricKeys,
+        fallbackDirection:
+          objectiveProfile.direction === "minimize"
+            ? "lower_better"
+            : "higher_better",
+        evidenceRef: publicDir ? "../experiment/metrics.json" : "metrics.json"
+      });
+      const resultsArtifactProjectionMessages = uniqueStrings([
+        ...resultsArtifactProjection.issues,
+        ...resultsArtifactProjection.warnings
+      ]);
+      if (resultsArtifactProjectionMessages.length > 0) {
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: `Results artifact projection (${resultsArtifactProjection.source}): ${resultsArtifactProjectionMessages.join(" ")}`
+          }
+        });
+      }
       const cachedEvaluation =
         await runContextMemory.get<ObjectiveMetricEvaluation>("objective_metric.last_evaluation");
-      // Always re-evaluate in analyze_results: the metrics here are enriched
-      // with AOCS-derived condition_metrics and top-level aggregates that
-      // run_experiments did not have, so the cached metric match may be stale.
+      // Always re-evaluate in analyze_results because detailed result hydration
+      // can expose evidence that run_experiments did not have.
       const objectiveEvaluation = preflightOnlyMetricsMessage
         ? {
             rawObjectiveMetric: effectiveObjectiveMetric,
@@ -241,6 +288,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             summary: preflightOnlyMetricsMessage
           }
         : evaluateObjectiveMetric(analysisMetrics, objectiveProfile, effectiveObjectiveMetric);
+      await writeRunArtifact(
+        run,
+        "objective_evaluation.json",
+        JSON.stringify(objectiveEvaluation, null, 2)
+      );
       if (
         !cachedEvaluation ||
         cachedEvaluation.status !== objectiveEvaluation.status ||
@@ -311,22 +363,29 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         supplementalMetrics,
         supplementalExpectation,
         recentPaperComparison,
-        recentPaperComparisonPath
+        recentPaperComparisonPath,
+        resultsArtifactProjection,
+        resultsPlan: experimentContract?.results_plan,
+        primaryComparisonId: experimentContract?.results_plan.primary_comparison_id
       });
-      const resultsTableValidation = buildResultsTableValidation({
+      const resultsArtifactValidation = buildResultsArtifactValidation({
         report: summary,
-        experimentContract
+        experimentContract,
+        comparisonContract,
+        projection: resultsArtifactProjection
       });
-      summary.results_table = resultsTableValidation.rows;
-      if (!resultsTableValidation.valid) {
-        inputWarnings.push(...resultsTableValidation.issues);
-        summary.warnings = [...summary.warnings, ...resultsTableValidation.issues];
+      if (!resultsArtifactValidation.valid) {
+        const newValidationIssues = resultsArtifactValidation.issues.filter(
+          (issue) => !summary.warnings.includes(issue)
+        );
+        inputWarnings.push(...newValidationIssues);
+        summary.warnings = [...summary.warnings, ...newValidationIssues];
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
           runId: run.id,
           node: "analyze_results",
           payload: {
-            text: `Results table validation: ${resultsTableValidation.issues.join(" ")}`
+            text: `Results artifact validation: ${resultsArtifactValidation.issues.join(" ")}`
           }
         });
       }
@@ -386,8 +445,9 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           }
         });
       }
-      const noNumericMetrics = summary.metric_table.length === 0;
-      if (!metricsLoadError && !noNumericMetrics) {
+      const hasNumericMetrics = summary.metric_table.length > 0;
+      const noNumericMetrics = !hasNumericMetrics && resultsArtifactValidation.valid;
+      if (!metricsLoadError && hasNumericMetrics) {
         summary.synthesis = await synthesizeAnalysisReport({
           run,
           report: summary,
@@ -397,6 +457,36 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         });
       }
       const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief,
+        run
+      });
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "analyze_results blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: { text: error }
+        });
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const researchMode = researchModeGuard.effectiveMode;
       const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
       const briefEvidenceAssessment = evaluateBriefEvidenceAgainstResults({
         briefSections: briefSections ?? undefined,
@@ -420,6 +510,71 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         `${JSON.stringify(briefEvidenceAssessment, null, 2)}\n`
       );
       await runContextMemory.put("analyze_results.brief_evidence_assessment", briefEvidenceAssessment);
+      const topicProbeOutcomeState =
+        researchMode === "topic_discovery"
+          ? await evaluateAndPersistTopicProbeOutcome(run, summary)
+          : undefined;
+      if (topicProbeOutcomeState) {
+        await runContextMemory.put(
+          "analyze_results.topic_probe_outcome",
+          topicProbeOutcomeState.decision || null
+        );
+        await runContextMemory.put(
+          "analyze_results.topic_probe_outcome_gate",
+          topicProbeOutcomeState.gate
+        );
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "analyze_results",
+          payload: {
+            text: topicProbeOutcomeState.valid
+              ? `Bounded topic-probe outcome: ${topicProbeOutcomeState.decision?.disposition}. Review remains mandatory before any follow-up run.`
+              : `Bounded topic-probe outcome validation blocked: ${topicProbeOutcomeState.reasons.join(", ")}. Review must route repair; paper drafting is forbidden.`
+          }
+        });
+        if (topicProbeOutcomeState.completionFailure) {
+          const completionFailure = topicProbeOutcomeState.completionFailure;
+          const blockedTransitionRecommendation =
+            buildTopicProbeReviewGateRecommendation(topicProbeOutcomeState);
+          summary.transition_recommendation = blockedTransitionRecommendation;
+          summary.metrics = buildPersistedAnalysisMetricsProjection(
+            summary.metrics,
+            publicDir ? "../experiment/metrics.json" : "metrics.json"
+          );
+          summary = projectPortableArtifactValue(summary);
+          await writeRunArtifact(
+            run,
+            "result_analysis.json",
+            `${JSON.stringify(summary, null, 2)}\n`
+          );
+          await writeRunArtifact(
+            run,
+            "transition_recommendation.json",
+            `${JSON.stringify(blockedTransitionRecommendation, null, 2)}\n`
+          );
+          await runContextMemory.put("analyze_results.last_summary", summary);
+          await runContextMemory.put("analyze_results.last_error", completionFailure.error);
+          await runContextMemory.put(
+            "analyze_results.last_transition",
+            blockedTransitionRecommendation
+          );
+          deps.eventStream.emit({
+            type: "OBS_RECEIVED",
+            runId: run.id,
+            node: "analyze_results",
+            payload: { text: completionFailure.error }
+          });
+          return {
+            status: "failure",
+            failureKind: completionFailure.failureKind,
+            error: completionFailure.error,
+            summary: completionFailure.error,
+            toolCallsUsed: 1,
+            transitionRecommendation: blockedTransitionRecommendation
+          };
+        }
+      }
       const governanceDecision =
         comparisonContract &&
         deriveGovernedAnalysisDecision({
@@ -452,11 +607,11 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         report: summary,
         baselineRecommendation: gatedTransitionRecommendation
       });
-      const transitionRecommendation = applyRiskSignalTransitionOverride(
+      const baselinePanelTransitionRecommendation = applyRiskSignalTransitionOverride(
         applyRequiredResourceEvidenceTransitionOverride(
-          applyResultsTableTransitionOverride(
+          applyResultsArtifactTransitionOverride(
             panelResult.recommendation,
-            resultsTableValidation,
+            resultsArtifactValidation,
             summary
           ),
           resourceEvidenceGate,
@@ -465,6 +620,9 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         riskSignals,
         summary
       );
+      const transitionRecommendation = topicProbeOutcomeState
+        ? buildTopicProbeReviewGateRecommendation(topicProbeOutcomeState)
+        : baselinePanelTransitionRecommendation;
       const humanInterventionRequest = buildAnalyzeResultsHumanInterventionRequest({
         run,
         report: summary,
@@ -524,21 +682,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
         );
       }
 
-      // --- Standalone result table artifact (for review gate) ---
-      const resultTable =
-        summary.results_table && summary.results_table.length > 0
-          ? summary.results_table
-          : buildResultTable(summary);
       const resultTablePath = await writeRunArtifact(
         run,
         "result_table.json",
-        `${JSON.stringify(resultTable, null, 2)}\n`
+        `${JSON.stringify(summary.results_artifact, null, 2)}\n`
       );
       const runDir = path.join(process.cwd(), ".autolabos", "runs", run.id);
       const baselineComparisonSurface = buildBaselineComparisonSurface({
         runId: run.id,
         report: summary,
-        baselineLock: loadBaselineLock(runDir)
+        baselineLock: loadBaselineLock(runDir),
+        comparisonId: experimentContract?.results_plan.primary_comparison_id
       });
       const baselineComparisonPath = await writeRunArtifact(
         run,
@@ -555,19 +709,30 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           (failure.category === "evidence_gap" || failure.category === "scope_limit") && failure.severity !== "low"
       );
       const hasBlockingDesignFailure = blockingDesignFailures.length > 0;
-      const verdict: AttemptDecisionVerdict = hasBlockingDesignFailure
-        ? "needs_design_revision"
-        : objectiveStatus === "met"
-          ? "keep"
-          : objectiveStatus === "not_met"
-            ? "discard"
-            : "needs_replication";
+      const topicProbeVerdict = topicProbeOutcomeState
+        ? topicProbeOutcomeState.decision
+          ? mapTopicProbeOutcomeToAttemptVerdict(topicProbeOutcomeState.decision)
+          : "needs_design_revision"
+        : undefined;
+      const verdict: AttemptDecisionVerdict = topicProbeVerdict
+        ?? (hasBlockingDesignFailure
+          ? "needs_design_revision"
+          : objectiveStatus === "met"
+            ? "keep"
+            : objectiveStatus === "not_met"
+              ? "discard"
+              : "needs_replication");
       const attemptDecision = buildAttemptDecision({
         runId: run.id,
         attempt: attemptNumber,
         verdict,
-        rationale: summary.overview?.objective_summary || "No objective summary available.",
-        evidenceRefs: [resultAnalysisPath],
+        rationale: topicProbeOutcomeState?.decision
+          ? `Bounded probe disposition ${topicProbeOutcomeState.decision.disposition}: ${topicProbeOutcomeState.decision.reason_codes.join(", ")}.`
+          : summary.overview?.objective_summary || "No objective summary available.",
+        evidenceRefs: [
+          resultAnalysisPath,
+          ...(topicProbeOutcomeState?.outcomePath ? [topicProbeOutcomeState.outcomePath] : [])
+        ],
         metricName: run.objectiveMetric,
         metricImproved,
         discardReason: verdict === "discard"
@@ -616,6 +781,17 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           { label: "Transition recommendation", path: "transition_recommendation.json" },
           { label: "Latest results", path: "latest_results.json" },
           { label: "Risk signals", path: "analysis/risk_signals.json" }
+          ,...(topicProbeOutcomeState
+            ? [
+                { label: "Topic probe outcome gate", path: "analysis/topic_probe_outcome_gate.json" },
+                ...(topicProbeOutcomeState.outcomePath
+                  ? [{ label: "Topic probe outcome", path: TOPIC_PROBE_OUTCOME_RELATIVE_PATH }]
+                  : []),
+                ...(topicProbeOutcomeState.topicMemoryUpdatePath
+                  ? [{ label: "Topic memory update", path: "analysis/topic_memory_update.json" }]
+                  : [])
+              ]
+            : [])
         ]
       };
       const operatorSummaryPath = await writeRunArtifact(
@@ -671,14 +847,6 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
             targetRelativePath: "figures/performance.svg",
             optional: true
           },
-          ...(latestResultsPath
-            ? [
-                {
-                  sourcePath: latestResultsPath,
-                  targetRelativePath: "latest_results.json"
-                }
-              ]
-            : []),
           {
             sourcePath: resultTablePath,
             targetRelativePath: "result_table.json",
@@ -701,6 +869,27 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
           {
             sourcePath: riskSignalsPath,
             targetRelativePath: "risk_signals.json",
+            optional: true
+          },
+          {
+            sourcePath:
+              topicProbeOutcomeState?.gatePath
+              || path.join(process.cwd(), ".autolabos", "runs", run.id, "analysis", "topic_probe_outcome_gate.json"),
+            targetRelativePath: "topic_probe_outcome_gate.json",
+            optional: true
+          },
+          {
+            sourcePath:
+              topicProbeOutcomeState?.outcomePath
+              || path.join(process.cwd(), ".autolabos", "runs", run.id, TOPIC_PROBE_OUTCOME_RELATIVE_PATH),
+            targetRelativePath: "topic_probe_outcome.json",
+            optional: true
+          },
+          {
+            sourcePath:
+              topicProbeOutcomeState?.topicMemoryUpdatePath
+              || path.join(process.cwd(), ".autolabos", "runs", run.id, "analysis", "topic_memory_update.json"),
+            targetRelativePath: "topic_memory_update.json",
             optional: true
           }
         ]
@@ -838,6 +1027,412 @@ export function createAnalyzeResultsNode(deps: NodeExecutionDeps): GraphNodeHand
   };
 }
 
+interface TopicProbeOutcomeGateArtifact {
+  schema_version: 1;
+  artifact_kind: "topic_probe_outcome_gate";
+  run_id: string;
+  research_cycle: number;
+  status: "decided" | "blocked_invalid_artifact_chain";
+  disposition: TopicProbeOutcomeDecision["disposition"] | null;
+  outcome_content_sha256: string | null;
+  reason_codes: string[];
+  content_sha256: string;
+}
+
+interface TopicProbeOutcomeAnalysisState {
+  valid: boolean;
+  reasons: string[];
+  decision?: TopicProbeOutcomeDecision;
+  gate: TopicProbeOutcomeGateArtifact;
+  gatePath: string;
+  outcomePath?: string;
+  topicMemoryUpdatePath?: string;
+  completionFailure?: TopicProbeOutcomeCompletionFailure;
+}
+
+interface TopicProbeOutcomeCompletionFailure {
+  failureKind: "retryable" | "gate_blocked" | "environment";
+  error: string;
+}
+
+async function evaluateAndPersistTopicProbeOutcome(
+  run: RunRecord,
+  report: AnalysisReport
+): Promise<TopicProbeOutcomeAnalysisState> {
+  const sourceValidation = await loadTopicProbeOutcomeArtifacts({
+    workspaceRoot: process.cwd(),
+    runId: run.id,
+    expectedResearchCycle: run.graph.researchCycle,
+    requireOutcome: false,
+    report
+  });
+  const reasons = [...sourceValidation.reasons];
+  let decision: TopicProbeOutcomeDecision | undefined;
+  let outcomePath: string | undefined;
+  let topicMemoryUpdatePath: string | undefined;
+  let completionFailure: TopicProbeOutcomeCompletionFailure | undefined;
+
+  if (sourceValidation.valid && sourceValidation.contract) {
+    try {
+      const candidateDecision = buildTopicProbeOutcomeDecision({
+        contract: sourceValidation.contract,
+        report
+      });
+      outcomePath = await writeRunArtifact(
+        run,
+        TOPIC_PROBE_OUTCOME_RELATIVE_PATH,
+        `${JSON.stringify(candidateDecision, null, 2)}\n`
+      );
+      const verified = await loadTopicProbeOutcomeArtifacts({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        expectedResearchCycle: run.graph.researchCycle,
+        requireOutcome: true,
+        report
+      });
+      if (verified.valid && verified.decision) {
+        decision = verified.decision;
+        if (decision.disposition === "reject_candidate") {
+          try {
+            if (!verified.portfolio || !verified.contract) {
+              throw new Error("verified_topic_candidate_context_missing");
+            }
+            topicMemoryUpdatePath = await persistRejectedTopicMemory({
+              run,
+              portfolio: verified.portfolio,
+              contract: verified.contract,
+              decision
+            });
+          } catch (error) {
+            completionFailure = classifyTopicMemoryPersistenceFailure(error);
+            reasons.push(completionFailure.error);
+          }
+        }
+      } else {
+        reasons.push(...verified.reasons);
+      }
+    } catch (error) {
+      reasons.push(
+        `topic_probe_outcome_build_failed:${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  const uniqueReasons = uniqueStrings(reasons);
+  const valid = Boolean(decision) && uniqueReasons.length === 0;
+  const gatePayload: Omit<TopicProbeOutcomeGateArtifact, "content_sha256"> = {
+    schema_version: 1,
+    artifact_kind: "topic_probe_outcome_gate",
+    run_id: run.id,
+    research_cycle: run.graph.researchCycle,
+    status: valid ? "decided" : "blocked_invalid_artifact_chain",
+    disposition: valid ? decision?.disposition || null : null,
+    outcome_content_sha256: valid ? decision?.content_sha256 || null : null,
+    reason_codes: valid
+      ? [...(decision?.reason_codes || [])]
+      : uniqueReasons.length > 0
+        ? uniqueReasons
+        : ["topic_probe_outcome_unavailable"]
+  };
+  const gate: TopicProbeOutcomeGateArtifact = {
+    ...gatePayload,
+    content_sha256: hashCanonical(gatePayload)
+  };
+  const gatePath = await writeRunArtifact(
+    run,
+    "analysis/topic_probe_outcome_gate.json",
+    `${JSON.stringify(gate, null, 2)}\n`
+  );
+
+  return {
+    valid,
+    reasons: valid ? [] : gate.reason_codes,
+    decision,
+    gate,
+    gatePath,
+    outcomePath,
+    topicMemoryUpdatePath,
+    completionFailure
+  };
+}
+
+async function persistRejectedTopicMemory(input: {
+  run: RunRecord;
+  portfolio: TopicPortfolio;
+  contract: ActiveTopicProbeContract;
+  decision: TopicProbeOutcomeDecision;
+}): Promise<string> {
+  const candidate = input.portfolio.candidates.find(
+    (item) =>
+      item.source_candidate_id === input.contract.candidate_id
+      && item.topic_id === input.contract.topic_id
+      && item.content_sha256 === input.contract.candidate_content_sha256
+  );
+  if (!candidate?.topic_memory?.descriptor) {
+    throw new Error("topic_memory_candidate_descriptor_missing");
+  }
+  const snapshot = input.portfolio.topic_memory_ledger;
+  if (!snapshot) {
+    throw new Error("topic_memory_portfolio_snapshot_missing");
+  }
+  const publicReasonCodes = mapRejectedOutcomeToTopicMemoryReasons(
+    input.decision
+  );
+  const sourceFullTextEvidenceIds = await resolveRejectedTopicEvidenceIds({
+    run: input.run,
+    candidate
+  });
+  const store = new TopicMemoryStore(
+    buildTopicMemoryDatabasePath(process.cwd())
+  );
+  let update: {
+    status: "appended" | "already_present";
+    previousLedgerSha256: string;
+    currentLedgerSha256: string;
+    recordSha256: string;
+  };
+  try {
+    const current = store.loadLedger();
+    if (!ledgerHasSnapshotPrefix(current, snapshot)) {
+      throw new Error("topic_memory_portfolio_snapshot_not_ancestor");
+    }
+    const appended = store.appendIdempotent({
+      descriptor: candidate.topic_memory.descriptor,
+      kill_scope: "exact_formulation",
+      disposition_category: "bounded_probe_rejected",
+      public_reason_codes: publicReasonCodes,
+      source_run_id: input.run.id,
+      source_research_cycle: input.run.graph.researchCycle,
+      source_full_text_evidence_ids: sourceFullTextEvidenceIds,
+      source_topic_content_sha256: candidate.content_sha256,
+      source_decision_content_sha256: input.decision.content_sha256
+    }, current.ledger_sha256);
+    const persistedRecord = appended.ledger.records.find(
+      (record) => record.record_sha256 === appended.record_sha256
+    );
+    if (!persistedRecord) {
+      throw new Error("topic_memory_store_persisted_record_missing");
+    }
+    if (
+      JSON.stringify(persistedRecord.source_full_text_evidence_ids)
+        !== JSON.stringify(sourceFullTextEvidenceIds)
+    ) {
+      throw new Error("topic_memory_store_persisted_evidence_mismatch");
+    }
+    update = {
+      status: appended.appended ? "appended" : "already_present",
+      previousLedgerSha256: appended.previous_ledger_sha256,
+      currentLedgerSha256: appended.ledger.ledger_sha256,
+      recordSha256: appended.record_sha256
+    };
+  } finally {
+    store.close();
+  }
+  const payload = {
+    schema_version: 1 as const,
+    artifact_kind: "topic_memory_update" as const,
+    run_id: input.run.id,
+    research_cycle: input.run.graph.researchCycle,
+    status: update.status,
+    source_portfolio_content_sha256: input.portfolio.content_sha256,
+    source_decision_content_sha256: input.decision.content_sha256,
+    source_candidate_content_sha256: candidate.content_sha256,
+    topic_lineage_id: candidate.topic_lineage_id || candidate.topic_id,
+    formulation_id: candidate.formulation_id || "",
+    public_reason_codes: publicReasonCodes,
+    source_full_text_evidence_ids: sourceFullTextEvidenceIds,
+    previous_ledger_sha256: update.previousLedgerSha256,
+    current_ledger_sha256: update.currentLedgerSha256,
+    record_sha256: update.recordSha256
+  };
+  return await writeRunArtifact(
+    input.run,
+    "analysis/topic_memory_update.json",
+    `${JSON.stringify({
+      ...payload,
+      content_sha256: hashCanonical(payload)
+    }, null, 2)}\n`
+  );
+}
+
+async function resolveRejectedTopicEvidenceIds(input: {
+  run: RunRecord;
+  candidate: TopicPortfolio["candidates"][number];
+}): Promise<string[]> {
+  const evidencePath = path.join(
+    process.cwd(),
+    ".autolabos",
+    "runs",
+    input.run.id,
+    TOPIC_PROBE_ARTIFACT_RELATIVE_PATHS.evidenceStore
+  );
+  const evidenceRaw = await safeRead(evidencePath);
+  if (!evidenceRaw.trim()) {
+    throw new Error("topic_memory_reject_evidence_store_missing");
+  }
+  const parsed = parseResearchGapEvidenceRows(evidenceRaw);
+  if (parsed.malformedRowCount > 0) {
+    throw new Error("topic_memory_reject_evidence_store_invalid_jsonl");
+  }
+  const linkedEvidenceIds = uniqueStrings(input.candidate.evidence_links);
+  if (linkedEvidenceIds.length === 0) {
+    throw new Error("topic_memory_reject_evidence_ids_missing");
+  }
+  const rowsByEvidenceId = new Map<string, typeof parsed.rows>();
+  for (const row of parsed.rows) {
+    const evidenceId = asString(row.evidence_id);
+    if (!evidenceId) {
+      continue;
+    }
+    const rows = rowsByEvidenceId.get(evidenceId) || [];
+    rows.push(row);
+    rowsByEvidenceId.set(evidenceId, rows);
+  }
+  const linkedRows = linkedEvidenceIds.map((evidenceId) => {
+    const rows = rowsByEvidenceId.get(evidenceId) || [];
+    if (rows.length === 0) {
+      throw new Error("topic_memory_reject_evidence_id_unresolved");
+    }
+    if (rows.length > 1) {
+      throw new Error("topic_memory_reject_evidence_id_ambiguous");
+    }
+    return rows[0];
+  });
+  const closestPriorPaperIds = new Set(
+    input.candidate.closest_prior_full_text_paper_ids
+  );
+  const verifiedRows = linkedRows.filter((row) => {
+    const paperId = asString(row.paper_id);
+    return Boolean(
+      paperId
+      && closestPriorPaperIds.has(paperId)
+      && row.source_type === "full_text"
+      && (row.source_scope === "full_text_excerpt" || row.source_scope === "full_document")
+      && row.grounding_status === "grounded_span"
+      && asString(row.evidence_span)
+    );
+  });
+  const independentWorkIds = new Set(
+    verifiedRows
+      .map((row) => asString(row.canonical_work_id) || asString(row.paper_id))
+      .filter((value): value is string => Boolean(value))
+  );
+  if (independentWorkIds.size < 2) {
+    throw new Error(
+      "topic_memory_reject_independent_full_text_evidence_insufficient"
+    );
+  }
+  const evidenceIds = uniqueStrings(
+    verifiedRows
+      .map((row) => asString(row.evidence_id))
+      .filter((value): value is string => Boolean(value))
+  );
+  if (evidenceIds.length < 2) {
+    throw new Error("topic_memory_reject_evidence_ids_insufficient");
+  }
+  return evidenceIds;
+}
+
+function classifyTopicMemoryPersistenceFailure(
+  error: unknown
+): TopicProbeOutcomeCompletionFailure {
+  const message = error instanceof Error ? error.message : String(error);
+  const failureKind: TopicProbeOutcomeCompletionFailure["failureKind"] =
+    message.startsWith("topic_memory_reject_evidence_")
+    || message.startsWith("topic_memory_reject_independent_")
+    || message.startsWith("topic_memory_candidate_")
+    || message.startsWith("topic_memory_portfolio_")
+    || message.startsWith("verified_topic_")
+    || message === "topic_memory_reject_reason_unmapped"
+    || message.includes("idempotent_conflict")
+      ? "gate_blocked"
+      : message.includes("compare_and_swap")
+        || message.includes("SQLITE_BUSY")
+        || message.toLowerCase().includes("database is locked")
+        ? "retryable"
+        : "environment";
+  return {
+    failureKind,
+    error: `topic_memory_reject_persist_failed:${message}`
+  };
+}
+
+function mapRejectedOutcomeToTopicMemoryReasons(
+  decision: TopicProbeOutcomeDecision
+): TopicKillPublicReasonCode[] {
+  const reasons: TopicKillPublicReasonCode[] = [];
+  if (decision.reason_codes.includes("effect_floor_not_met")) {
+    reasons.push("bounded_probe_effect_floor_not_met");
+  }
+  if (decision.reason_codes.includes("hypothesis_not_supported")) {
+    reasons.push("bounded_probe_hypothesis_not_supported");
+  }
+  if (reasons.length === 0) {
+    throw new Error("topic_memory_reject_reason_unmapped");
+  }
+  return reasons;
+}
+
+function ledgerHasSnapshotPrefix(
+  current: NonNullable<TopicPortfolio["topic_memory_ledger"]>,
+  snapshot: NonNullable<TopicPortfolio["topic_memory_ledger"]>
+): boolean {
+  return current.records.length >= snapshot.records.length
+    && snapshot.records.every(
+      (record, index) =>
+        current.records[index]?.record_sha256 === record.record_sha256
+    );
+}
+
+function buildTopicProbeReviewGateRecommendation(
+  state: TopicProbeOutcomeAnalysisState
+): TransitionRecommendation {
+  if (state.completionFailure) {
+    const retryable = state.completionFailure.failureKind !== "gate_blocked";
+    return createRecommendation({
+      action: retryable ? "retry_same" : "pause_for_human",
+      targetNode: retryable ? "analyze_results" : undefined,
+      reason: retryable
+        ? "The bounded-probe rejection is not complete because its topic-memory record was not durably persisted. Repair the storage failure and retry analyze_results; do not advance to figure_audit."
+        : "The bounded-probe rejection lacks independently verifiable full-text evidence IDs or a valid topic-memory binding. Repair the upstream evidence chain before retrying; do not advance to figure_audit.",
+      confidence: 1,
+      autoExecutable: state.completionFailure.failureKind === "retryable",
+      evidence: uniqueStrings([
+        "analysis/topic_probe_outcome_gate.json",
+        ...(state.outcomePath ? [TOPIC_PROBE_OUTCOME_RELATIVE_PATH] : []),
+        state.completionFailure.error
+      ])
+    });
+  }
+  const disposition = state.decision?.disposition;
+  return createRecommendation({
+    action: "advance",
+    targetNode: "figure_audit",
+    reason: state.valid
+      ? `The bounded topic probe was classified as ${disposition}; advance only to figure_audit and structural review. This probe cannot authorize write_paper or paper-scale claims.`
+      : "The topic-probe artifact chain or outcome is invalid; advance only to structural review so the failure is recorded and routed upstream. Paper drafting is forbidden.",
+    confidence: 0.99,
+    autoExecutable: true,
+    evidence: uniqueStrings([
+      "analysis/topic_probe_outcome_gate.json",
+      ...(state.outcomePath ? [TOPIC_PROBE_OUTCOME_RELATIVE_PATH] : []),
+      ...state.reasons.slice(0, 4)
+    ])
+  });
+}
+
+function mapTopicProbeOutcomeToAttemptVerdict(
+  decision: TopicProbeOutcomeDecision
+): AttemptDecisionVerdict {
+  if (decision.disposition === "reject_candidate") {
+    return "discard";
+  }
+  if (decision.disposition === "blocked_invalid_evidence") {
+    return "needs_design_revision";
+  }
+  return "needs_replication";
+}
+
 async function buildFigureAuditInput(input: {
   runDir: string;
   resultAnalysisPath: string;
@@ -864,7 +1459,7 @@ function buildAnalyzeResultsHumanInterventionRequest(input: {
       kind: "objective_metric_clarification",
       title: "Clarify the objective metric",
       question:
-        'Reply with the metric key or success criterion to use for this run (for example: "accuracy >= 0.9").',
+        'Reply with the metric key or success criterion to use for this run (for example: "primary_outcome >= target").',
       context: [
         input.report.overview.objective_summary,
         metricKeys.length > 0
@@ -1136,19 +1731,19 @@ function scoreAnalysisMetrics(metrics: Record<string, unknown>): number {
   return Math.max(conditions, conditionResults, perCondition);
 }
 
-async function hydrateDetailedExperimentMetrics(
+export async function hydrateDetailedExperimentMetrics(
   metrics: Record<string, unknown>,
   publicDir: string | undefined,
-  warnings: string[]
+  warnings: string[] = []
 ): Promise<Record<string, unknown>> {
   if (Object.keys(metrics).length === 0) {
     return metrics;
   }
 
+  const aliased = aliasCompactMetrics(metrics);
   const resultsPath = resolveDetailedResultsPath(metrics, publicDir);
   if (!resultsPath) {
-    const aliased = aliasCompactMetrics(metrics);
-    return deriveConditionMetricsFromAOCSIfNeeded(aliased);
+    return enrichMetricsWithDetailedResults(aliased, {});
   }
 
   const detailedResults = await readJsonObject<Record<string, unknown>>(
@@ -1157,11 +1752,10 @@ async function hydrateDetailedExperimentMetrics(
     path.basename(resultsPath) || "latest_results.json"
   );
   if (!detailedResults) {
-    const aliased = aliasCompactMetrics(metrics);
-    return deriveConditionMetricsFromAOCSIfNeeded(aliased);
+    return enrichMetricsWithDetailedResults(aliased, {});
   }
 
-  return enrichMetricsWithDetailedResults(aliasCompactMetrics(metrics), detailedResults);
+  return enrichMetricsWithDetailedResults(aliased, detailedResults);
 }
 
 function resolveDetailedResultsPath(
@@ -1185,677 +1779,182 @@ function aliasCompactMetrics(metrics: Record<string, unknown>): Record<string, u
   if (metricAlias && typeof metricValue === "number" && next[metricAlias] === undefined) {
     next[metricAlias] = metricValue;
   }
-  if (typeof metricValue === "number" && next.macro_f1_delta_vs_logreg === undefined) {
-    if (metricAlias === "macro_f1_improvement_over_logreg" || metricAlias === "macro_f1_delta_vs_logreg") {
-      next.macro_f1_delta_vs_logreg = metricValue;
-    }
-  }
-  const logregBaseline = asNumber(metrics.mean_logreg_nested_test_macro_f1);
-  if (typeof logregBaseline === "number" && next.logreg_test_macro_f1 === undefined) {
-    next.logreg_test_macro_f1 = logregBaseline;
-  }
-  const rankStability = asNumber(metrics.mean_nested_rank_stability);
-  if (typeof rankStability === "number" && next.rank_stability === undefined) {
-    next.rank_stability = rankStability;
-  }
   return next;
+}
+
+const DETAILED_CONDITION_ROW_KEYS = [
+  "conditions",
+  "condition_results",
+  "condition_summaries",
+  "per_condition"
+] as const;
+const CONDITION_IDENTIFIER_KEYS = new Set(["condition_id", "condition", "name", "id"]);
+
+interface ConditionHydration {
+  conditionMetrics: Record<string, Record<string, unknown>>;
+  primaryCondition?: string;
+  baselineCondition?: string;
 }
 
 function enrichMetricsWithDetailedResults(
   metrics: Record<string, unknown>,
   detailedResults: Record<string, unknown>
 ): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...metrics };
-  const globalMetrics = asRecord(detailedResults.global_metrics);
-  const protocol = asRecord(detailedResults.protocol);
+  const next: Record<string, unknown> = { ...detailedResults, ...metrics };
+  const globalMetrics = {
+    ...asRecord(detailedResults.global_metrics),
+    ...asRecord(metrics.global_metrics)
+  };
+  if (Object.keys(globalMetrics).length > 0) {
+    next.global_metrics = globalMetrics;
+  }
   for (const [key, value] of Object.entries(globalMetrics)) {
     if (isScalarJsonValue(value) && next[key] === undefined) {
       next[key] = value;
     }
   }
-  if (typeof protocol.cpu_only === "boolean" && next.cpu_only === undefined) {
-    next.cpu_only = protocol.cpu_only;
+
+  const protocol = {
+    ...asRecord(detailedResults.protocol),
+    ...asRecord(metrics.protocol)
+  };
+  if (Object.keys(protocol).length > 0) {
+    next.protocol = protocol;
   }
-  const observedSeeds = collectObservedDetailedSeeds(detailedResults);
-  if (observedSeeds.length > 0) {
-    next.seeds = uniqueSeedValues([...asArray(next.seeds), ...observedSeeds]);
+  const samplingProfile = {
+    ...asRecord(detailedResults.sampling_profile),
+    ...asRecord(metrics.sampling_profile)
+  };
+  if (Object.keys(samplingProfile).length > 0) {
+    next.sampling_profile = samplingProfile;
   }
 
-  const meanImprovement = asNumber(globalMetrics.mean_macro_f1_improvement_over_logreg);
-  if (typeof meanImprovement === "number") {
-    if (next.mean_macro_f1_improvement_over_logreg === undefined) {
-      next.mean_macro_f1_improvement_over_logreg = meanImprovement;
-    }
-    if (next.macro_f1_delta_vs_logreg === undefined) {
-      next.macro_f1_delta_vs_logreg = meanImprovement;
-    }
+  const detailedHydration = collectConditionHydration(detailedResults);
+  const metricsHydration = collectConditionHydration(metrics);
+  const conditionMetrics = mergeConditionMetricMaps(
+    detailedHydration.conditionMetrics,
+    metricsHydration.conditionMetrics
+  );
+  if (Object.keys(conditionMetrics).length > 0) {
+    next.condition_metrics = conditionMetrics;
   }
 
-  const logregBaseline = asNumber(globalMetrics.mean_logreg_nested_test_macro_f1);
-  if (typeof logregBaseline === "number" && next.logreg_test_macro_f1 === undefined) {
-    next.logreg_test_macro_f1 = logregBaseline;
-  }
-
-  const rankStability = asNumber(globalMetrics.mean_nested_rank_stability);
-  if (typeof rankStability === "number" && next.rank_stability === undefined) {
-    next.rank_stability = rankStability;
-  }
-
-  const derived = deriveWorkflowAnalysisMetrics(detailedResults);
-  if (Object.keys(derived.conditionMetrics).length > 0) {
-    next.condition_metrics = {
-      ...asRecord(next.condition_metrics),
-      ...derived.conditionMetrics
-    };
-  }
-  // Fallback: derive condition_metrics from aggregate_overall_condition_summary
-  // when the standard derivation produced nothing but the experiment left an AOCS array.
-  if (Object.keys(asRecord(next.condition_metrics)).length === 0) {
-    const aocs = asArray(next.aggregate_overall_condition_summary);
-    const fallback = deriveConditionMetricsFromAOCS(aocs);
-    if (Object.keys(fallback.conditionMetrics).length >= 2) {
-      next.condition_metrics = fallback.conditionMetrics;
-      if (fallback.primaryCondition && !asString(next.primary_condition)) {
-        derived.primaryCondition = fallback.primaryCondition;
-      }
-      if (fallback.baselineCondition && !asString(next.baseline_condition)) {
-        derived.baselineCondition = fallback.baselineCondition;
-      }
+  if (!asConditionIdentifier(next.primary_condition)) {
+    const primaryCondition = metricsHydration.primaryCondition || detailedHydration.primaryCondition;
+    if (primaryCondition) {
+      next.primary_condition = primaryCondition;
     }
   }
-  if (Object.keys(derived.samplingProfile).length > 0) {
-    next.sampling_profile = {
-      ...asRecord(next.sampling_profile),
-      ...derived.samplingProfile
-    };
-  }
-  if (derived.primaryCondition && !asString(next.primary_condition)) {
-    next.primary_condition = derived.primaryCondition;
-  }
-  if (derived.baselineCondition && !asString(next.baseline_condition)) {
-    next.baseline_condition = derived.baselineCondition;
-  }
-  if (next.reproducible === undefined && typeof asNumber(asRecord(next.sampling_profile).executed_trials) === "number") {
-    next.reproducible = asNumber(asRecord(next.sampling_profile).executed_trials)! > 1;
+  if (!asConditionIdentifier(next.baseline_condition)) {
+    const baselineCondition = metricsHydration.baselineCondition || detailedHydration.baselineCondition;
+    if (baselineCondition) {
+      next.baseline_condition = baselineCondition;
+    }
   }
 
   return next;
 }
 
-function collectObservedDetailedSeeds(detailedResults: Record<string, unknown>): Array<string | number> {
-  const seeds: Array<string | number> = [];
-  const addFromRecords = (records: unknown[]): void => {
-    for (const item of records) {
-      const record = asRecord(item);
-      const seed = record.seed ?? record.random_seed;
-      if ((typeof seed === "string" && seed.trim()) || (typeof seed === "number" && Number.isFinite(seed))) {
-        seeds.push(seed);
-      }
-    }
-  };
-
-  addFromRecords(asArray(detailedResults.repeat_records));
-  for (const summary of asArray(detailedResults.dataset_summaries)) {
-    const record = asRecord(summary);
-    addFromRecords(asArray(record.seed_records));
-    addFromRecords(asArray(record.repeat_records));
-  }
-  return uniqueSeedValues(seeds);
-}
-
-function uniqueSeedValues(values: unknown[]): Array<string | number> {
-  const seeds = new Map<string, string | number>();
-  for (const value of values) {
-    if ((typeof value === "string" && value.trim()) || (typeof value === "number" && Number.isFinite(value))) {
-      seeds.set(String(value), typeof value === "string" ? value.trim() : value);
-    }
-  }
-  return [...seeds.values()];
-}
-
-function deriveWorkflowAnalysisMetrics(detailedResults: Record<string, unknown>): {
-  samplingProfile: Record<string, unknown>;
-  conditionMetrics: Record<string, Record<string, unknown>>;
-  primaryCondition?: string;
-  baselineCondition?: string;
-} {
-  const protocol = asRecord(detailedResults.protocol);
-  const datasetSummaries = asArray(detailedResults.dataset_summaries).map((item) => asRecord(item));
-  const repeatRecords = asArray(detailedResults.repeat_records).map((item) => asRecord(item));
-  const workflowsFromProtocol = asStringArray(protocol.workflows);
-  const workflowNames = workflowsFromProtocol.length > 0
-    ? workflowsFromProtocol
-    : uniqueStrings(
-        datasetSummaries.flatMap((entry) => Object.keys(asRecord(entry.workflows)))
-      );
-
-  if (workflowNames.length === 0) {
-    return deriveModelConditionAnalysisMetrics(detailedResults, datasetSummaries, protocol);
-  }
-
+function collectConditionHydration(artifact: Record<string, unknown>): ConditionHydration {
   const conditionMetrics: Record<string, Record<string, unknown>> = {};
-  const perRepeatByWorkflow = new Map<string, Array<Record<string, number>>>();
-  for (const workflow of workflowNames) {
-    const aggregate = aggregateWorkflowDatasetSummaries(datasetSummaries, workflow);
-    if (Object.keys(aggregate).length > 0) {
-      conditionMetrics[workflow] = aggregate;
-    }
-    const perRepeat = aggregateWorkflowRepeatRecords(repeatRecords, workflow);
-    if (perRepeat.length > 0) {
-      perRepeatByWorkflow.set(workflow, perRepeat);
-      const target = conditionMetrics[workflow] || {};
-      applyRepeatConfidenceIntervals(target, perRepeat, [
-        "best_mean_test_macro_f1",
-        "macro_f1_delta_vs_logreg",
-        "mean_selection_optimism"
-      ]);
-      conditionMetrics[workflow] = target;
-    }
-  }
+  let rowPrimaryCondition: string | undefined;
+  let rowBaselineCondition: string | undefined;
 
-  const totalTrials = asNumber(protocol.repeats) ?? (repeatRecords.length > 0 ? repeatRecords.length : undefined);
-  const executedTrials = repeatRecords.length > 0 ? repeatRecords.length : undefined;
-  const samplingProfile: Record<string, unknown> = {};
-  if (typeof totalTrials === "number") {
-    samplingProfile.total_trials = totalTrials;
-    samplingProfile.name = "standard";
-  }
-  if (typeof executedTrials === "number") {
-    samplingProfile.executed_trials = executedTrials;
-  }
-  if (typeof totalTrials === "number" && typeof executedTrials === "number") {
-    samplingProfile.cached_trials = Math.max(0, totalTrials - executedTrials);
-  }
-
-  const primaryCondition =
-    asString(asRecord(detailedResults.global_metrics).best_workflow) ||
-    pickBestWorkflow(conditionMetrics);
-  const baselineCondition =
-    workflowNames.find((workflow) => workflow !== primaryCondition) ||
-    undefined;
-
-  return {
-    samplingProfile,
-    conditionMetrics,
-    primaryCondition,
-    baselineCondition
-  };
-}
-
-function deriveModelConditionAnalysisMetrics(
-  detailedResults: Record<string, unknown>,
-  datasetSummaries: Array<Record<string, unknown>>,
-  protocol: Record<string, unknown>
-): {
-  samplingProfile: Record<string, unknown>;
-  conditionMetrics: Record<string, Record<string, unknown>>;
-  primaryCondition?: string;
-  baselineCondition?: string;
-} {
-  const modelNames = uniqueStrings(
-    datasetSummaries.flatMap((entry) => Object.keys(asRecord(entry.models)))
-  );
-  const conditionMetrics: Record<string, Record<string, unknown>> = {};
-
-  for (const model of modelNames) {
-    const aggregate = aggregateModelDatasetSummaries(datasetSummaries, model);
-    if (Object.keys(aggregate).length > 0) {
-      conditionMetrics[model] = aggregate;
-    }
-    const perSeed = aggregateModelSeedRecords(datasetSummaries, model);
-    if (perSeed.length > 0) {
-      const target = conditionMetrics[model] || {};
-      applyRepeatConfidenceIntervals(target, perSeed, [
-        "best_mean_test_macro_f1",
-        "macro_f1_delta_vs_logreg",
-        "runtime_seconds_mean"
-      ]);
-      conditionMetrics[model] = target;
-    }
-  }
-
-  const maxSeedCount = datasetSummaries.reduce((max, entry) => {
-    const count = asArray(entry.seed_records).length;
-    return count > max ? count : max;
-  }, 0);
-  const totalTrials = asNumber(protocol.repeats) ?? (maxSeedCount > 0 ? maxSeedCount : undefined);
-  const executedTrials = maxSeedCount > 0 ? maxSeedCount : undefined;
-  const samplingProfile: Record<string, unknown> = {};
-  if (typeof totalTrials === "number") {
-    samplingProfile.total_trials = totalTrials;
-    samplingProfile.name = "standard";
-  }
-  if (typeof executedTrials === "number") {
-    samplingProfile.executed_trials = executedTrials;
-  }
-  if (typeof totalTrials === "number" && typeof executedTrials === "number") {
-    samplingProfile.cached_trials = Math.max(0, totalTrials - executedTrials);
-  }
-
-  const globalMetrics = asRecord(detailedResults.global_metrics);
-  const primaryCondition = asString(globalMetrics.best_model) || pickBestWorkflow(conditionMetrics);
-  const baselineCondition =
-    modelNames.find((name) => /logreg|logistic/iu.test(name) && name !== primaryCondition) ||
-    modelNames.find((name) => name !== primaryCondition) ||
-    undefined;
-
-  return {
-    samplingProfile,
-    conditionMetrics,
-    primaryCondition,
-    baselineCondition
-  };
-}
-
-function aggregateWorkflowDatasetSummaries(
-  datasetSummaries: Array<Record<string, unknown>>,
-  workflow: string
-): Record<string, unknown> {
-  const bestScores: number[] = [];
-  const deltas: number[] = [];
-  const optimisms: number[] = [];
-  const agreements: number[] = [];
-  const winnerConsistency: number[] = [];
-  const signConsistency: number[] = [];
-  const runtimes: number[] = [];
-  const memories: number[] = [];
-
-  for (const datasetEntry of datasetSummaries) {
-    const workflowEntry = asRecord(asRecord(datasetEntry.workflows)[workflow]);
-    if (Object.keys(workflowEntry).length === 0) {
-      continue;
-    }
-    const modelSummary = summarizeWorkflowModelAggregate(asRecord(workflowEntry.models), "mean_test_macro_f1");
-    if (typeof modelSummary.bestScore === "number") {
-      bestScores.push(modelSummary.bestScore);
-    }
-    if (typeof modelSummary.deltaVsLogreg === "number") {
-      deltas.push(modelSummary.deltaVsLogreg);
-    }
-    if (typeof modelSummary.selectionOptimism === "number") {
-      optimisms.push(modelSummary.selectionOptimism);
-    }
-    if (typeof modelSummary.signConsistencyVsLogreg === "number") {
-      signConsistency.push(modelSummary.signConsistencyVsLogreg);
-    }
-    pushNumber(agreements, workflowEntry.pairwise_ranking_agreement);
-    pushNumber(winnerConsistency, workflowEntry.winner_consistency);
-    pushNumber(runtimes, workflowEntry.runtime_seconds_mean);
-    pushNumber(memories, workflowEntry.peak_memory_mb_mean);
-  }
-
-  return compactRecord({
-    best_mean_test_macro_f1: mean(bestScores),
-    mean_test_macro_f1: mean(bestScores),
-    macro_f1_delta_vs_logreg: mean(deltas),
-    mean_macro_f1_improvement_over_logreg: mean(deltas),
-    mean_selection_optimism: mean(optimisms),
-    pairwise_ranking_agreement: mean(agreements),
-    winner_consistency: mean(winnerConsistency),
-    sign_consistency_vs_logreg: mean(signConsistency),
-    runtime_seconds_mean: mean(runtimes),
-    peak_memory_mb_mean: mean(memories)
-  });
-}
-
-function aggregateWorkflowRepeatRecords(
-  repeatRecords: Array<Record<string, unknown>>,
-  workflow: string
-): Array<Record<string, number>> {
-  return repeatRecords
-    .map((entry) => {
-      const datasets = asArray(entry.datasets).map((item) => asRecord(item));
-      const bestScores: number[] = [];
-      const deltas: number[] = [];
-      const optimisms: number[] = [];
-
-      for (const dataset of datasets) {
-        const workflowEntry = asRecord(asRecord(dataset.workflows)[workflow]);
-        if (Object.keys(workflowEntry).length === 0) {
-          continue;
-        }
-        const modelSummary = summarizeWorkflowModelAggregate(asRecord(workflowEntry.models), "test_macro_f1");
-        if (typeof modelSummary.bestScore === "number") {
-          bestScores.push(modelSummary.bestScore);
-        }
-        if (typeof modelSummary.deltaVsLogreg === "number") {
-          deltas.push(modelSummary.deltaVsLogreg);
-        }
-        if (typeof modelSummary.selectionOptimism === "number") {
-          optimisms.push(modelSummary.selectionOptimism);
-        }
-      }
-
-      return compactNumericRecord({
-        best_mean_test_macro_f1: mean(bestScores),
-        macro_f1_delta_vs_logreg: mean(deltas),
-        mean_selection_optimism: mean(optimisms)
-      });
-    })
-    .filter((entry) => Object.keys(entry).length > 0);
-}
-
-function aggregateModelDatasetSummaries(
-  datasetSummaries: Array<Record<string, unknown>>,
-  model: string
-): Record<string, unknown> {
-  const scores: number[] = [];
-  const deltas: number[] = [];
-  const runtimes: number[] = [];
-  const memories: number[] = [];
-  const variances: number[] = [];
-  const stabilities: number[] = [];
-  const sensitivities: number[] = [];
-
-  for (const datasetEntry of datasetSummaries) {
-    const modelEntry = asRecord(asRecord(datasetEntry.models)[model]);
-    if (Object.keys(modelEntry).length === 0) {
-      continue;
-    }
-    pushNumber(scores, modelEntry.macro_f1);
-    pushNumber(deltas, modelEntry.macro_f1_delta_vs_logreg);
-    pushNumber(runtimes, modelEntry.runtime_seconds);
-    pushNumber(memories, modelEntry.peak_memory_mb);
-    pushNumber(variances, modelEntry.run_to_run_variance);
-    pushNumber(stabilities, modelEntry.fold_to_fold_stability);
-    pushNumber(sensitivities, modelEntry.seed_sensitivity);
-  }
-
-  return compactRecord({
-    best_mean_test_macro_f1: mean(scores),
-    mean_test_macro_f1: mean(scores),
-    macro_f1_delta_vs_logreg: mean(deltas),
-    mean_macro_f1_improvement_over_logreg: mean(deltas),
-    runtime_seconds_mean: mean(runtimes),
-    peak_memory_mb_mean: mean(memories),
-    run_to_run_variance: mean(variances),
-    fold_to_fold_stability: mean(stabilities),
-    seed_sensitivity: mean(sensitivities)
-  });
-}
-
-function aggregateModelSeedRecords(
-  datasetSummaries: Array<Record<string, unknown>>,
-  model: string
-): Array<Record<string, number>> {
-  const bySeedIndex = new Map<number, {
-    scores: number[];
-    deltas: number[];
-    runtimes: number[];
-  }>();
-
-  for (const datasetEntry of datasetSummaries) {
-    const seedRecords = asArray(datasetEntry.seed_records).map((item) => asRecord(item));
-    for (const [index, seedRecord] of seedRecords.entries()) {
-      const modelEntry = resolveSeedModelSummary(seedRecord, model);
-      if (Object.keys(modelEntry).length === 0) {
+  for (const key of DETAILED_CONDITION_ROW_KEYS) {
+    for (const rawRow of asArray(artifact[key])) {
+      const row = asRecord(rawRow);
+      const conditionId = resolveConditionIdentifier(row);
+      if (!conditionId) {
         continue;
       }
-      const bucket = bySeedIndex.get(index) || { scores: [], deltas: [], runtimes: [] };
-      pushNumber(bucket.scores, modelEntry.macro_f1);
-      pushNumber(bucket.scores, modelEntry.mean_test_macro_f1);
-      pushNumber(bucket.deltas, modelEntry.macro_f1_delta_vs_logreg);
-      pushNumber(bucket.deltas, modelEntry.mean_delta_vs_logreg);
-      pushNumber(bucket.runtimes, modelEntry.runtime_seconds);
-      pushNumber(bucket.runtimes, modelEntry.mean_runtime_seconds);
-      bySeedIndex.set(index, bucket);
-    }
-  }
-
-  return [...bySeedIndex.entries()]
-    .sort((left, right) => left[0] - right[0])
-    .map(([, bucket]) =>
-      compactNumericRecord({
-        best_mean_test_macro_f1: mean(bucket.scores),
-        mean_test_macro_f1: mean(bucket.scores),
-        macro_f1_delta_vs_logreg: mean(bucket.deltas),
-        runtime_seconds_mean: mean(bucket.runtimes)
-      })
-    )
-    .filter((entry) => Object.keys(entry).length > 0);
-}
-
-function resolveSeedModelSummary(
-  seedRecord: Record<string, unknown>,
-  model: string
-): Record<string, unknown> {
-  const direct = asRecord(asRecord(seedRecord.models)[model]);
-  if (Object.keys(direct).length > 0) {
-    return direct;
-  }
-  return asRecord(asRecord(seedRecord.model_summaries)[model]);
-}
-
-function summarizeWorkflowModelAggregate(
-  models: Record<string, unknown>,
-  scoreKey: "mean_test_macro_f1" | "test_macro_f1"
-): {
-  bestScore?: number;
-  deltaVsLogreg?: number;
-  selectionOptimism?: number;
-  signConsistencyVsLogreg?: number;
-} {
-  const modelEntries = Object.entries(models)
-    .map(([name, value]) => ({ name, value: asRecord(value) }))
-    .filter((entry) => Object.keys(entry.value).length > 0);
-  if (modelEntries.length === 0) {
-    return {};
-  }
-
-  const best = modelEntries
-    .map((entry) => ({
-      ...entry,
-      score: asNumber(entry.value[scoreKey])
-    }))
-    .filter((entry): entry is typeof entry & { score: number } => typeof entry.score === "number")
-    .sort((left, right) => right.score - left.score)[0];
-  const logreg = modelEntries.find((entry) => entry.name === "logreg")?.value;
-
-  const bestScore = best?.score;
-  const bestDelta =
-    best && typeof asNumber(best.value.mean_delta_vs_logreg) === "number"
-      ? asNumber(best.value.mean_delta_vs_logreg)
-      : best && logreg
-        ? difference(asNumber(best.value[scoreKey]), asNumber(logreg[scoreKey]))
-        : undefined;
-
-  return compactNumericRecord({
-    bestScore,
-    deltaVsLogreg: bestDelta,
-    selectionOptimism: best ? asNumber(best.value.mean_selection_optimism) ?? asNumber(best.value.selection_optimism) : undefined,
-    signConsistencyVsLogreg: best ? asNumber(best.value.sign_consistency_vs_logreg) : undefined
-  });
-}
-
-function applyRepeatConfidenceIntervals(
-  target: Record<string, unknown>,
-  perRepeat: Array<Record<string, number>>,
-  metricKeys: string[]
-): void {
-  for (const metricKey of metricKeys) {
-    const values = perRepeat
-      .map((entry) => entry[metricKey])
-      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    const ci = computeNormalApproxCi95(values);
-    if (ci) {
-      target[`ci95_${metricKey}`] = ci;
-    }
-  }
-}
-
-function pickBestWorkflow(conditionMetrics: Record<string, Record<string, unknown>>): string | undefined {
-  return Object.entries(conditionMetrics)
-    .map(([workflow, metrics]) => ({
-      workflow,
-      score: asNumber(metrics.macro_f1_delta_vs_logreg) ?? asNumber(metrics.best_mean_test_macro_f1)
-    }))
-    .filter((entry): entry is { workflow: string; score: number } => typeof entry.score === "number")
-    .sort((left, right) => right.score - left.score)[0]?.workflow;
-}
-
-function computeNormalApproxCi95(values: number[]): [number, number] | undefined {
-  if (values.length < 2) {
-    return undefined;
-  }
-  const meanValue = mean(values);
-  const sd = sampleStandardDeviation(values);
-  if (typeof meanValue !== "number" || typeof sd !== "number") {
-    return undefined;
-  }
-  const halfWidth = 1.96 * (sd / Math.sqrt(values.length));
-  return [
-    roundMetric(meanValue - halfWidth),
-    roundMetric(meanValue + halfWidth)
-  ];
-}
-
-function sampleStandardDeviation(values: number[]): number | undefined {
-  if (values.length < 2) {
-    return undefined;
-  }
-  const meanValue = mean(values);
-  if (typeof meanValue !== "number") {
-    return undefined;
-  }
-  const variance =
-    values.reduce((total, value) => total + (value - meanValue) ** 2, 0) / (values.length - 1);
-  return Number.isFinite(variance) ? Math.sqrt(variance) : undefined;
-}
-
-function mean(values: number[]): number | undefined {
-  if (values.length === 0) {
-    return undefined;
-  }
-  const total = values.reduce((sum, value) => sum + value, 0);
-  return roundMetric(total / values.length);
-}
-
-function difference(left: number | undefined, right: number | undefined): number | undefined {
-  if (typeof left !== "number" || typeof right !== "number") {
-    return undefined;
-  }
-  return roundMetric(left - right);
-}
-
-function roundMetric(value: number): number {
-  return Number(value.toFixed(6));
-}
-
-function pushNumber(values: number[], raw: unknown): void {
-  const parsed = asNumber(raw);
-  if (typeof parsed === "number") {
-    values.push(parsed);
-  }
-}
-
-function compactRecord<T extends Record<string, unknown>>(value: T): T {
-  return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined)) as T;
-}
-
-function compactNumericRecord(value: Record<string, number | undefined>): Record<string, number> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([, entry]) => typeof entry === "number" && Number.isFinite(entry))
-  ) as Record<string, number>;
-}
-
-/**
- * Derives condition_metrics from aggregate_overall_condition_summary (AOCS).
- * AOCS is an array of objects where each entry has a model_family + calibration combo
- * and associated metric values. We convert to the condition_metrics dict format
- * expected by the governance baseline comparison contract.
- */
-
-/**
- * Applies AOCS→condition_metrics fallback to a metrics object when condition_metrics
- * is absent but aggregate_overall_condition_summary is present.
- */
-function deriveConditionMetricsFromAOCSIfNeeded(
-  metrics: Record<string, unknown>
-): Record<string, unknown> {
-  if (Object.keys(asRecord(metrics.condition_metrics)).length > 0) {
-    return metrics;
-  }
-  const aocs = asArray(metrics.aggregate_overall_condition_summary);
-  if (aocs.length === 0) {
-    return metrics;
-  }
-  const fallback = deriveConditionMetricsFromAOCS(aocs);
-  if (Object.keys(fallback.conditionMetrics).length < 2) {
-    return metrics;
-  }
-  const next = { ...metrics };
-  next.condition_metrics = fallback.conditionMetrics;
-  if (fallback.primaryCondition) {
-    next.primary_condition = fallback.primaryCondition;
-  }
-  if (fallback.baselineCondition) {
-    next.baseline_condition = fallback.baselineCondition;
-  }
-  // Surface primary condition's key metrics as top-level scalars so the
-  // objective metric resolver can find e.g. macro_f1 before rank_reversal_count.
-  if (fallback.primaryCondition) {
-    const primary = fallback.conditionMetrics[fallback.primaryCondition];
-    if (primary) {
-      const surfaceKeys = [
-        "macro_f1", "brier_score", "ece", "ece_adaptive",
-        "ece_equal_width_10", "ece_equal_frequency_10", "auroc",
-        "runtime_seconds", "peak_memory_mb"
-      ];
-      for (const k of surfaceKeys) {
-        if (typeof primary[k] === "number" && next[k] === undefined) {
-          next[k] = primary[k];
-        }
+      conditionMetrics[conditionId] = {
+        ...conditionMetrics[conditionId],
+        ...normalizeConditionRowMetrics(row)
+      };
+      const role = asString(row.role)?.toLowerCase();
+      if (role === "primary" && !rowPrimaryCondition) {
+        rowPrimaryCondition = conditionId;
+      }
+      if (role === "baseline" && !rowBaselineCondition) {
+        rowBaselineCondition = conditionId;
       }
     }
   }
-  return next;
+
+  let mapPrimaryCondition: string | undefined;
+  let mapBaselineCondition: string | undefined;
+  for (const [rawConditionId, rawMetrics] of Object.entries(asRecord(artifact.condition_metrics))) {
+    const conditionId = asConditionIdentifier(rawConditionId);
+    if (!conditionId || !isRecordObject(rawMetrics)) {
+      continue;
+    }
+    conditionMetrics[conditionId] = {
+      ...conditionMetrics[conditionId],
+      ...rawMetrics
+    };
+    const role = asString(rawMetrics.role)?.toLowerCase();
+    if (role === "primary" && !mapPrimaryCondition) {
+      mapPrimaryCondition = conditionId;
+    }
+    if (role === "baseline" && !mapBaselineCondition) {
+      mapBaselineCondition = conditionId;
+    }
+  }
+
+  return {
+    conditionMetrics,
+    primaryCondition: mapPrimaryCondition || rowPrimaryCondition,
+    baselineCondition: mapBaselineCondition || rowBaselineCondition
+  };
 }
-/** @internal exported for testing */
-export function deriveConditionMetricsFromAOCS(aocs: unknown[]): {
-  conditionMetrics: Record<string, Record<string, unknown>>;
-  primaryCondition?: string;
-  baselineCondition?: string;
-} {
-  const conditionMetrics: Record<string, Record<string, unknown>> = {};
-  const skipKeys = new Set(["model_family", "calibration", "outer_fold_count"]);
 
-  for (const raw of aocs) {
-    const entry = raw && typeof raw === "object" && !Array.isArray(raw)
-      ? (raw as Record<string, unknown>)
-      : undefined;
-    if (!entry) continue;
-
-    const model = typeof entry.model_family === "string" ? entry.model_family : undefined;
-    const cal = typeof entry.calibration === "string" ? entry.calibration : undefined;
-    if (!model) continue;
-
-    const conditionName = cal ? `${model}_${cal}` : model;
-    const metrics: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(entry)) {
-      if (skipKeys.has(key)) continue;
-      // Strip _mean suffix for metric key compatibility
-      const cleanKey = key.endsWith("_mean") ? key.slice(0, -5) : key;
-      metrics[cleanKey] = value;
-    }
-    if (Object.keys(metrics).length > 0) {
-      conditionMetrics[conditionName] = metrics;
+function mergeConditionMetricMaps(
+  ...maps: Array<Record<string, Record<string, unknown>>>
+): Record<string, Record<string, unknown>> {
+  const merged: Record<string, Record<string, unknown>> = {};
+  for (const conditionMetrics of maps) {
+    for (const [conditionId, values] of Object.entries(conditionMetrics)) {
+      merged[conditionId] = { ...merged[conditionId], ...values };
     }
   }
+  return merged;
+}
 
-  // Pick primary (best macro_f1) and baseline (worst macro_f1)
-  let primaryCondition: string | undefined;
-  let baselineCondition: string | undefined;
-  let bestF1 = -Infinity;
-  let worstF1 = Infinity;
-  for (const [name, m] of Object.entries(conditionMetrics)) {
-    const f1 = typeof m.macro_f1 === "number" ? m.macro_f1 : undefined;
-    if (f1 !== undefined) {
-      if (f1 > bestF1) { bestF1 = f1; primaryCondition = name; }
-      if (f1 < worstF1) { worstF1 = f1; baselineCondition = name; }
+function resolveConditionIdentifier(row: Record<string, unknown>): string | undefined {
+  for (const key of CONDITION_IDENTIFIER_KEYS) {
+    const conditionId = asConditionIdentifier(row[key]);
+    if (conditionId) {
+      return conditionId;
     }
   }
+  return undefined;
+}
 
-  return { conditionMetrics, primaryCondition, baselineCondition };
+function asConditionIdentifier(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
+}
+
+function normalizeConditionRowMetrics(row: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = { ...asRecord(row.metrics) };
+  for (const [key, value] of Object.entries(row)) {
+    if (key === "metrics" || CONDITION_IDENTIFIER_KEYS.has(key)) {
+      continue;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      normalized[key] = value;
+    }
+  }
+  return normalized;
+}
+
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -1881,7 +1980,10 @@ function uniqueStrings(values: string[]): string[] {
 }
 
 function isScalarJsonValue(value: unknown): value is string | number | boolean | null {
-  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+  return value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value));
 }
 
 function resolveMaybeRelative(value: string | undefined, workspaceRoot: string): string | undefined {
@@ -2045,11 +2147,15 @@ function buildTransitionRecommendation(summary: AnalysisReport): TransitionRecom
         )
       });
     }
-    const supportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === true);
-    const unsupportedComparison = summary.condition_comparisons.some((item) => item.hypothesis_supported === false);
+    const primaryComparison = resolvePrimaryResultsArtifactComparison(
+      summary.results_artifact,
+      summary.primary_comparison_id
+    );
+    const supportedComparison = primaryComparison?.hypothesis_supported === true;
+    const unsupportedComparison = primaryComparison?.hypothesis_supported === false;
     const evidenceGap = findFailure(summary.failure_taxonomy, "evidence_gap", ["observed", "risk"]);
     const scopeLimit = findFailure(summary.failure_taxonomy, "scope_limit", ["observed", "risk"]);
-    const unsupportedSummary = firstUnsupportedComparison(summary.condition_comparisons)?.summary;
+    const unsupportedSummary = unsupportedComparison ? primaryComparison?.summary : undefined;
     const strongHypothesisReset = Boolean(unsupportedSummary) && !evidenceGap;
 
     if (!supportedComparison && unsupportedComparison) {
@@ -2133,9 +2239,144 @@ function applyBriefEvidenceTransitionOverride(
   });
 }
 
-function applyResultsTableTransitionOverride(
+export interface ResultsArtifactValidationResult {
+  valid: boolean;
+  blocked: boolean;
+  requiresObservationEvidence: boolean;
+  requiresComparisonEvidence: boolean;
+  issues: string[];
+}
+
+export function buildResultsArtifactValidation(input: {
+  report: AnalysisReport;
+  projection: ResultsArtifactProjectionResult;
+  experimentContract?: ExperimentContract;
+  comparisonContract?: ExperimentComparisonContract;
+}): ResultsArtifactValidationResult {
+  const declaredMetrics = uniqueStrings([
+    input.report.objective_metric.profile.primary_metric ?? "",
+    input.report.overview.matched_metric_key ?? "",
+    ...input.report.objective_metric.profile.preferred_metric_keys,
+    ...(input.experimentContract?.results_plan.required_metrics ?? []).map((metric) => metric.id),
+    ...(input.report.plan_context.selected_design?.metrics ?? [])
+  ].map((value) => value.trim()).filter(Boolean));
+  const declaredBaselines = uniqueStrings([
+    ...(input.experimentContract?.baselines ?? []),
+    ...(input.report.plan_context.selected_design?.baselines ?? []),
+    ...(input.comparisonContract?.baseline_candidate_ids ?? [])
+  ].map((value) => value.trim()).filter(Boolean));
+  const requiresComparisonEvidence =
+    declaredBaselines.length > 0 ||
+    (input.experimentContract?.results_plan.minimum_comparison_count ?? 0) > 0 ||
+    (input.experimentContract?.results_plan.required_comparisons?.length ?? 0) > 0 ||
+    (input.experimentContract?.brief_required_baseline_count ?? 0) > 0 ||
+    input.comparisonContract?.baseline_first_required === true ||
+    input.comparisonContract?.comparison_mode === "baseline_first_locked";
+  const requiresObservationEvidence =
+    requiresComparisonEvidence || declaredMetrics.length > 0;
+  const issues = [...input.projection.issues];
+  if (
+    input.experimentContract?.version === 2 &&
+    input.projection.source !== "explicit_results_artifact"
+  ) {
+    issues.push(
+      "ExperimentContract V2 requires metrics.results_artifact; generic metric projection is read-only compatibility and cannot satisfy a new governed run."
+    );
+  }
+  const contractCompleteness = input.experimentContract
+    ? checkResultsContractCompleteness(
+        input.projection.artifact,
+        input.experimentContract.results_plan
+      )
+    : undefined;
+  if (contractCompleteness && !contractCompleteness.complete) {
+    issues.push(...contractCompleteness.issues);
+  }
+
+  if (input.projection.blocked) {
+    issues.push(
+      "Results artifact projection is blocked; explicit invalid V2 input cannot fall back to generic metrics."
+    );
+  } else if (!input.projection.valid && input.projection.issues.length === 0) {
+    issues.push("Results artifact projection is invalid.");
+  }
+  if (requiresObservationEvidence && input.projection.artifact.observations.length === 0) {
+    issues.push(
+      "Results artifact is incomplete: the declared experiment requires numeric observations."
+    );
+  }
+  if (requiresComparisonEvidence && input.projection.artifact.comparisons.length === 0) {
+    issues.push(
+      "Results artifact is incomplete or ambiguous: the declared comparison requires at least one explicit comparison."
+    );
+  }
+
+  return {
+    valid:
+      input.projection.valid &&
+      !input.projection.blocked &&
+      issues.length === 0,
+    blocked: input.projection.blocked,
+    requiresObservationEvidence,
+    requiresComparisonEvidence,
+    issues: uniqueStrings(issues)
+  };
+}
+
+export interface ResultsTableValidationResult {
+  valid: boolean;
+  rows: ResultsTableSchema;
+  issues: string[];
+  incompleteRows: ResultsTableSchema;
+}
+
+/**
+ * @deprecated Historical API adapter only. Runtime analysis writes and gates on
+ * ResultsArtifactV2 and never calls this function.
+ */
+export function buildResultsTableValidation(input: {
+  report: AnalysisReport;
+  experimentContract?: ExperimentContract;
+}): ResultsTableValidationResult {
+  const observations = new Map(
+    input.report.results_artifact.observations.map((observation) => [
+      observation.id,
+      observation
+    ])
+  );
+  const metrics = new Map(
+    input.report.results_artifact.metrics.map((metric) => [metric.id, metric])
+  );
+  const rows = input.report.results_artifact.comparisons.flatMap((comparison) => {
+    const subject = observations.get(comparison.subject_observation_id);
+    const reference = observations.get(comparison.reference_observation_id);
+    if (!subject || !reference || subject.metric_id !== reference.metric_id) {
+      return [];
+    }
+    const metric = metrics.get(subject.metric_id);
+    return [{
+      metric: metric?.id ?? subject.metric_id,
+      baseline: reference.value,
+      comparator: subject.value,
+      delta: comparison.delta,
+      direction: metric?.direction ?? "higher_better" as const
+    }];
+  });
+  const validation = validateResultsTableSchema(rows);
+  const incompleteRows = validation.rows.filter(
+    (row) => row.baseline === null || row.comparator === null
+  );
+  return {
+    valid: validation.valid && incompleteRows.length === 0,
+    rows: validation.rows,
+    issues: validation.issues,
+    incompleteRows
+  };
+}
+
+function applyResultsArtifactTransitionOverride(
   recommendation: TransitionRecommendation,
-  validation: ResultsTableValidationResult,
+  validation: ResultsArtifactValidationResult,
   summary: AnalysisReport
 ): TransitionRecommendation {
   if (validation.valid) {
@@ -2148,8 +2389,7 @@ function applyResultsTableTransitionOverride(
     autoExecutable: false,
     evidence: collectEvidence(
       summary,
-      ...validation.issues,
-      ...validation.incompleteRows.slice(0, 3).map((row) => `${row.metric}: baseline=${row.baseline ?? "null"}, comparator=${row.comparator ?? "null"}`)
+      ...validation.issues
     )
   });
 }
@@ -2224,8 +2464,11 @@ function detectRequiredResourceCategories(
     summary.objective_metric.profile.primary_metric,
     summary.overview.matched_metric_key,
     ...summary.objective_metric.profile.preferred_metric_keys,
-    ...(experimentContract?.metrics ?? []),
-    ...(experimentContract?.results_table_schema ?? []).map((row) => row.metric),
+    ...(experimentContract?.results_plan.required_metrics ?? []).flatMap((metric) => [
+      metric.id,
+      metric.label,
+      metric.unit ?? ""
+    ]),
     experimentContract?.expected_metric_effect,
     experimentContract?.abort_condition,
     experimentContract?.keep_or_discard_rule,
@@ -2257,6 +2500,11 @@ function collectObservedNumericMetricKeys(summary: AnalysisReport): string[] {
       addKey(metric.key);
     }
   }
+  for (const observation of summary.results_artifact.observations) {
+    if (asNumber(observation.value) !== undefined) {
+      addKey(observation.metric_id);
+    }
+  }
   for (const metric of summary.statistical_summary?.stability_metrics ?? []) {
     if (asNumber(metric.value) !== undefined) {
       addKey(metric.key);
@@ -2273,11 +2521,7 @@ function collectObservedNumericMetricKeys(summary: AnalysisReport): string[] {
       }
     }
   }
-  for (const row of summary.results_table ?? []) {
-    if (asNumber(row.baseline) !== undefined || asNumber(row.comparator) !== undefined) {
-      addKey(row.metric);
-    }
-  }
+  collectHistoricalResultsTableMetricKeys(summary.results_table, keys);
   for (const supplemental of summary.supplemental_runs ?? []) {
     for (const metric of supplemental.metric_table ?? []) {
       if (asNumber(metric.value) !== undefined) {
@@ -2287,6 +2531,17 @@ function collectObservedNumericMetricKeys(summary: AnalysisReport): string[] {
   }
   collectNumericMetricKeyPaths(summary.metrics, [], keys);
   return Array.from(keys).sort((left, right) => left.localeCompare(right));
+}
+
+function collectHistoricalResultsTableMetricKeys(
+  rows: AnalysisReport["results_table"],
+  keys: Set<string>
+): void {
+  for (const row of rows ?? []) {
+    if (asNumber(row.baseline) !== undefined || asNumber(row.comparator) !== undefined) {
+      keys.add(row.metric);
+    }
+  }
 }
 
 function collectNumericMetricKeyPaths(value: unknown, pathParts: string[], keys: Set<string>): void {
@@ -2473,463 +2728,4 @@ function findFailure(
   statuses: AnalysisFailureCategory["status"][] = ["observed"]
 ): AnalysisFailureCategory | undefined {
   return failures.find((item) => item.category === category && statuses.includes(item.status));
-}
-
-function firstUnsupportedComparison(
-  comparisons: AnalysisConditionComparison[]
-): AnalysisConditionComparison | undefined {
-  return comparisons.find((item) => item.hypothesis_supported === false);
-}
-
-/**
- * Parse a dataset_summary CSV string into the dataset_summaries JSON structure
- * expected by write_paper / scientificWriting.
- *
- * Pure function (no I/O) for testability.
- */
-export function parseDatasetSummaryCsv(csv: string): Array<Record<string, unknown>> | undefined {
-  const lines = csv.trim().split("\n");
-  if (lines.length < 2) {
-    return undefined;
-  }
-
-  const headers = lines[0].split(",").map((h) => h.trim());
-  const rows = lines.slice(1).map((line) => {
-    const values = line.split(",");
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => {
-      obj[h] = values[i]?.trim() ?? "";
-    });
-    return obj;
-  });
-
-  const byDataset = new Map<string, Array<Record<string, string>>>();
-  for (const row of rows) {
-    const ds = row.dataset || "unknown";
-    if (!byDataset.has(ds)) {
-      byDataset.set(ds, []);
-    }
-    byDataset.get(ds)!.push(row);
-  }
-
-  const datasetSummaries: Array<Record<string, unknown>> = [];
-  for (const [dataset, datasetRows] of byDataset) {
-    const models: Record<string, Record<string, number>> = {};
-    for (const row of datasetRows) {
-      const modelFamily = row.model_family || row.model || "unknown_model";
-      const calibration = row.calibration || "raw";
-      const threshold = row.threshold_protocol;
-      const conditionKey = threshold
-        ? `${modelFamily}_${calibration}_${threshold}`
-        : `${modelFamily}_${calibration}`;
-      const model: Record<string, number> = {};
-      const skipKeys = new Set([
-        "dataset", "model_family", "model", "calibration",
-        "threshold_protocol", "n_outer_evaluations"
-      ]);
-      for (const [key, val] of Object.entries(row)) {
-        if (skipKeys.has(key)) {
-          continue;
-        }
-        const num = parseFloat(val);
-        if (!isNaN(num)) {
-          model[key] = num;
-        }
-      }
-      // Provide aliases expected by collectDatasetResultSummaries
-      if (model.macro_f1_mean !== undefined && model.macro_f1 === undefined) {
-        model.macro_f1 = model.macro_f1_mean;
-      }
-      if (model.runtime_seconds_mean !== undefined && model.runtime_seconds === undefined) {
-        model.runtime_seconds = model.runtime_seconds_mean;
-      }
-      if (model.peak_memory_mb_mean !== undefined && model.peak_memory_mb === undefined) {
-        model.peak_memory_mb = model.peak_memory_mb_mean;
-      }
-      if (model.brier_score_mean !== undefined && model.brier_score === undefined) {
-        model.brier_score = model.brier_score_mean;
-      }
-      if (model.auroc_mean !== undefined && model.auroc === undefined) {
-        model.auroc = model.auroc_mean;
-      }
-      models[conditionKey] = model;
-    }
-
-    // Compute delta vs logistic_regression_raw baseline for each model
-    const baselineKey = Object.keys(models).find(
-      (k) => k.includes("logistic_regression") && k.includes("raw")
-    );
-    const baselineF1 = baselineKey ? models[baselineKey]?.macro_f1 : undefined;
-    if (typeof baselineF1 === "number") {
-      for (const [key, model] of Object.entries(models)) {
-        if (typeof model.macro_f1 === "number" && model.macro_f1_delta_vs_logreg === undefined) {
-          model.macro_f1_delta_vs_logreg = model.macro_f1 - baselineF1;
-        }
-      }
-    }
-
-    datasetSummaries.push({ dataset, models });
-  }
-
-  return datasetSummaries.length > 0 ? datasetSummaries : undefined;
-}
-
-/**
- * Build latest_results.json from artifact_paths.dataset_summary_csv when
- * run_experiments produced a per-dataset CSV but did not create the JSON file
- * that write_paper expects.
- *
- * Returns the path to the written file, or undefined if not applicable.
- */
-async function buildLatestResultsFromCsvArtifact(
-  metrics: Record<string, unknown>,
-  runId: string,
-  warnings: string[]
-): Promise<string | undefined> {
-  // Resolve CSV path: try multiple locations since experiment runners
-  // may store artifact paths under different keys.
-  // Priority: aggregate_results_csv (per-condition results) over
-  // dataset_summary_csv (which may be just dataset descriptors).
-  const artifactPaths = asRecord(metrics.artifact_paths);
-  const artifacts = asRecord(metrics.artifacts);
-  const csvPath =
-    asString(artifactPaths.aggregate_results_csv) ||
-    asString(artifacts.aggregate_results_csv) ||
-    asString(artifactPaths.dataset_summary_csv) ||
-    asString(artifacts.dataset_summary_csv);
-  if (!csvPath) {
-    return undefined;
-  }
-
-  let csv: string;
-  try {
-    csv = await fs.readFile(csvPath, "utf8");
-  } catch {
-    return undefined;
-  }
-
-  const datasetSummaries = parseDatasetSummaryCsv(csv);
-  if (!datasetSummaries) {
-    return undefined;
-  }
-
-  // Derive protocol metadata from the outer-fold CSV when available.
-  // This gives the scientific writing layer accurate repeat/fold/seed
-  // counts instead of relying on heuristic extraction from plan text.
-  const outerCsvPath =
-    asString(artifacts.outer_fold_results_csv) ||
-    asString(artifactPaths.outer_fold_results_csv);
-  const protocol = await deriveProtocolFromOuterFoldCsv(outerCsvPath);
-
-  const latestResults: Record<string, unknown> = { dataset_summaries: datasetSummaries };
-  if (protocol) {
-    latestResults.protocol = protocol;
-  }
-  const outPath = path.join(".autolabos", "runs", runId, "latest_results.json");
-  try {
-    await fs.writeFile(outPath, JSON.stringify(latestResults, null, 2));
-  } catch (error) {
-    warnings.push(`Failed to write latest_results.json: ${error instanceof Error ? error.message : String(error)}`);
-    return undefined;
-  }
-  return outPath;
-}
-
-/** Derive protocol metadata (repeats, outer folds, seeds, datasets, models)
- *  from the outer-fold-level CSV so the scientific writing layer has accurate
- *  counts for consistency checks. */
-async function deriveProtocolFromOuterFoldCsv(
-  csvPath: string | undefined
-): Promise<Record<string, unknown> | undefined> {
-  if (!csvPath) {
-    return undefined;
-  }
-  let raw: string;
-  try {
-    raw = await fs.readFile(csvPath, "utf8");
-  } catch {
-    return undefined;
-  }
-  return parseOuterFoldProtocol(raw);
-}
-
-/** Pure-function protocol parser, exported for unit testing. */
-export function parseOuterFoldProtocol(csv: string): Record<string, unknown> | undefined {
-  const lines = csv.split("\n").filter(Boolean);
-  if (lines.length < 2) {
-    return undefined;
-  }
-  const header = lines[0].split(",").map((h) => h.trim());
-  const repeatIdx = header.indexOf("repeat_index");
-  const foldIdx = header.indexOf("outer_fold");
-  const seedIdx = header.indexOf("outer_seed");
-  const datasetIdx = header.indexOf("dataset");
-  const modelIdx = header.indexOf("model");
-  if (repeatIdx < 0 && foldIdx < 0) {
-    return undefined;
-  }
-  const repeats = new Set<string>();
-  const folds = new Set<string>();
-  const seeds = new Set<number>();
-  const datasets = new Set<string>();
-  const models = new Set<string>();
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",");
-    if (repeatIdx >= 0 && cols[repeatIdx]) repeats.add(cols[repeatIdx].trim());
-    if (foldIdx >= 0 && cols[foldIdx]) folds.add(cols[foldIdx].trim());
-    if (seedIdx >= 0 && cols[seedIdx]) {
-      const n = Number(cols[seedIdx].trim());
-      if (Number.isFinite(n)) seeds.add(n);
-    }
-    if (datasetIdx >= 0 && cols[datasetIdx]) datasets.add(cols[datasetIdx].trim());
-    if (modelIdx >= 0 && cols[modelIdx]) models.add(cols[modelIdx].trim());
-  }
-  const protocol: Record<string, unknown> = {};
-  if (repeats.size > 0) protocol.repeats = repeats.size;
-  if (folds.size > 0) protocol.outer_folds = folds.size;
-  if (seeds.size > 0) protocol.seed_schedule = [...seeds].sort((a, b) => a - b);
-  if (datasets.size > 0) protocol.datasets = [...datasets].sort();
-  if (models.size > 0) protocol.models = [...models].sort();
-  return Object.keys(protocol).length > 0 ? protocol : undefined;
-}
-
-// ---------------------------------------------------------------------------
-// Result table types & builder (standalone artifact for the review gate)
-// ---------------------------------------------------------------------------
-
-export interface ResultTableEntry {
-  name: string;
-  metrics: Record<string, number | string | null>;
-}
-
-export interface ResultTableComparison {
-  primary: string;
-  baseline: string;
-  metric: string;
-  delta: number | null;
-  hypothesis_supported: boolean | null;
-}
-
-export interface ResultTable {
-  conditions: ResultTableEntry[];
-  comparisons: ResultTableComparison[];
-  primary_metric: string;
-  summary: string;
-}
-
-interface ResultsTableValidationResult {
-  valid: boolean;
-  rows: ResultsTableSchema;
-  issues: string[];
-  incompleteRows: ResultsTableSchema;
-}
-
-export function buildResultTable(report: AnalysisReport): ResultTable {
-  const conditionNames = new Set<string>();
-  const conditionMetrics = new Map<string, Record<string, number | string | null>>();
-
-  for (const comparison of report.condition_comparisons) {
-    if (comparison.id && !conditionNames.has(comparison.id)) {
-      conditionNames.add(comparison.id);
-      const metrics: Record<string, number | string | null> = {};
-      for (const m of comparison.metrics ?? []) {
-        if (m.primary_value !== undefined && m.primary_value !== null) {
-          metrics[m.key] = m.primary_value;
-        }
-      }
-      conditionMetrics.set(comparison.id, metrics);
-    }
-  }
-
-  // Fallback: derive a single condition from metric_table
-  if (conditionNames.size === 0 && report.metric_table.length > 0) {
-    const defaultName = "primary";
-    conditionNames.add(defaultName);
-    const metrics: Record<string, number | string | null> = {};
-    for (const entry of report.metric_table) {
-      metrics[entry.key] = entry.value;
-    }
-    conditionMetrics.set(defaultName, metrics);
-  }
-
-  const conditions: ResultTableEntry[] = Array.from(conditionNames).map((name) => ({
-    name,
-    metrics: conditionMetrics.get(name) ?? {}
-  }));
-
-  const comparisons: ResultTableComparison[] = report.condition_comparisons.map((c) => {
-    const firstMetric = c.metrics?.[0];
-    const delta =
-      firstMetric?.primary_value != null && firstMetric?.baseline_value != null
-        ? firstMetric.primary_value - firstMetric.baseline_value
-        : null;
-    return {
-      primary: c.id || c.label || "primary",
-      baseline: c.source || "baseline",
-      metric: firstMetric?.key ?? report.overview?.matched_metric_key ?? "",
-      delta,
-      hypothesis_supported: c.hypothesis_supported ?? null
-    };
-  });
-
-  const primaryMetric =
-    report.overview?.matched_metric_key ?? report.metric_table[0]?.key ?? "";
-
-  const summaryText = report.overview?.objective_summary ?? "";
-
-  return {
-    conditions,
-    comparisons,
-    primary_metric: primaryMetric,
-    summary: summaryText
-  };
-}
-
-export function buildResultsTableValidation(input: {
-  report: AnalysisReport;
-  experimentContract?: ExperimentContract;
-}): ResultsTableValidationResult {
-  const rows = buildStructuredResultsTable(
-    input.report,
-    input.experimentContract?.results_table_schema
-  );
-  const schemaValidation = validateResultsTableSchema(rows);
-  const incompleteRows = schemaValidation.rows.filter(
-    (row) => row.baseline === null || row.comparator === null
-  );
-  const issues = [...schemaValidation.issues];
-  if (hasAnyIncompleteResultsTableRow(schemaValidation.rows)) {
-    issues.push("Results table is incomplete: baseline and comparator must both be populated for every reported row.");
-  }
-  return {
-    valid: schemaValidation.valid && incompleteRows.length === 0,
-    rows: schemaValidation.rows,
-    issues,
-    incompleteRows
-  };
-}
-
-function buildStructuredResultsTable(
-  report: AnalysisReport,
-  contractSchema: ResultsTableSchema | undefined
-): ResultsTableSchema {
-  const direction = resolveResultsTableDirection(report);
-  const metricRows = new Map<string, ResultsTableSchema[number]>();
-
-  for (const comparison of report.condition_comparisons ?? []) {
-    for (const metric of comparison.metrics ?? []) {
-      if (!metric.key) {
-        continue;
-      }
-      if (metric.primary_value == null || metric.baseline_value == null) {
-        continue;
-      }
-      if (!metricRows.has(metric.key)) {
-        metricRows.set(metric.key, {
-          metric: metric.key,
-          baseline: metric.baseline_value,
-          comparator: metric.primary_value,
-          delta: Number((metric.primary_value - metric.baseline_value).toFixed(4)),
-          direction: inferMetricDirection(metric.key, direction)
-        });
-      }
-    }
-  }
-
-  if (metricRows.size === 0) {
-    for (const row of deriveMetricTableComparisonRows(report, direction)) {
-      metricRows.set(row.metric, row);
-    }
-  }
-
-  if (metricRows.size === 0) {
-    return (contractSchema ?? [])
-      .map((row) => ({
-        metric: row.metric,
-        baseline: row.baseline,
-        comparator: row.comparator,
-        delta: row.delta,
-        direction: row.direction
-      }))
-      .filter((row) => row.metric.trim().length > 0);
-  }
-
-  const contractMetrics = new Set((contractSchema ?? []).map((row) => row.metric));
-  const orderedMetrics = contractSchema && contractSchema.length > 0
-    ? [
-        ...contractSchema.map((row) => row.metric).filter((metricName) => metricRows.has(metricName)),
-        ...Array.from(metricRows.keys()).filter((metricName) => !contractMetrics.has(metricName))
-      ]
-    : Array.from(metricRows.keys());
-
-  const rows = orderedMetrics.map((metricName) => {
-    const existing = metricRows.get(metricName);
-    const contractRow = contractSchema?.find((row) => row.metric === metricName);
-    return existing ?? {
-      metric: metricName,
-      baseline: contractRow?.baseline ?? null,
-      comparator: contractRow?.comparator ?? null,
-      delta: contractRow?.delta ?? null,
-      direction: contractRow?.direction ?? direction
-    };
-  });
-
-  return rows.filter((row) => row.metric.trim().length > 0);
-}
-
-function deriveMetricTableComparisonRows(
-  report: AnalysisReport,
-  direction: ResultsTableDirection
-): ResultsTableSchema {
-  const values = new Map<string, number>();
-  for (const metric of report.metric_table ?? []) {
-    if (typeof metric.key === "string" && typeof metric.value === "number" && Number.isFinite(metric.value)) {
-      values.set(metric.key, metric.value);
-    }
-  }
-
-  const rows: ResultsTableSchema = [];
-  const baselineAverage = values.get("baseline_average_accuracy");
-  const bestAverage = values.get("best_condition_average_accuracy");
-  const matchedMetric = report.overview?.matched_metric_key?.trim();
-  if (baselineAverage !== undefined && bestAverage !== undefined) {
-    rows.push({
-      metric: matchedMetric || "average_accuracy",
-      baseline: baselineAverage,
-      comparator: bestAverage,
-      delta: Number((bestAverage - baselineAverage).toFixed(6)),
-      direction: inferMetricDirection(matchedMetric || "average_accuracy", direction)
-    });
-  }
-
-  for (const [key, baseline] of values.entries()) {
-    if (!key.startsWith("baseline_")) {
-      continue;
-    }
-    const suffix = key.slice("baseline_".length);
-    const comparator = values.get(`best_condition_${suffix}`);
-    if (comparator === undefined) {
-      continue;
-    }
-    const metricName = suffix || key;
-    if (rows.some((row) => row.metric === metricName || row.metric === matchedMetric)) {
-      continue;
-    }
-    rows.push({
-      metric: metricName,
-      baseline,
-      comparator,
-      delta: Number((comparator - baseline).toFixed(6)),
-      direction: inferMetricDirection(metricName, direction)
-    });
-  }
-
-  return rows;
-}
-
-function resolveResultsTableDirection(report: AnalysisReport): ResultsTableDirection {
-  return report.objective_metric.profile.primary_metric
-    && /loss|latency|error|time|memory|ram/i.test(report.objective_metric.profile.primary_metric)
-    ? "lower_better"
-    : "higher_better";
 }

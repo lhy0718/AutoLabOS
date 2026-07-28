@@ -15,6 +15,7 @@ Write conservative, evidence-grounded synthesis from a structured experiment rep
 Return JSON only.
 Use only facts explicitly present in the payload.
 Do not invent metrics, thresholds, failure causes, or comparisons.
+Do not reinterpret a treatment-only or unbound metric interval as an effect interval. Preserve comparison id, estimand, metric scale, fresh/cached trial source, and sample size when those fields are present; otherwise report the effect interval as missing.
 If a failure cause is uncertain, label it as a risk or remaining uncertainty.
 Report raw denominators and correct-count changes whenever accuracy deltas are used.
 If a headline gain is explainable by one changed evaluation example, classify it as a pilot/screening signal rather than a stable effect.

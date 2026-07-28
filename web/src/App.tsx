@@ -12,6 +12,8 @@ import {
   KnowledgeFileResponse,
   KnowledgeResponse,
   RepositoryKnowledgeEntry,
+  ResearchBriefStartGate,
+  ResearchFunnelProjection,
   RunJobProjection,
   LiteratureResponse,
   RunRecord,
@@ -20,6 +22,7 @@ import {
   NodeId,
   WebConfigFormData,
   WebConfigOptions,
+  WebRunCreationResponse,
   WebSessionState
 } from "./types";
 import {
@@ -27,15 +30,8 @@ import {
   OPENAI_TASK_MODEL_DESCRIPTION
 } from "../../src/modelSlotText.js";
 import {
-  buildOllamaChatModelChoices,
-  buildOllamaExperimentModelChoices,
-  buildOllamaResearchModelChoices,
-  buildOllamaVisionModelChoices,
-  DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL
+  buildOllamaModelChoices,
+  DEFAULT_OLLAMA_BASE_URL
 } from "../../src/integrations/ollama/modelCatalog.js";
 
 const NODE_ORDER = [
@@ -79,6 +75,21 @@ interface GovernedActionConfirmation {
 }
 
 type SyncState = "connecting" | "live" | "polling" | "degraded";
+
+type OllamaDiscoveryStatus = "idle" | "loading" | "ready" | "empty" | "unreachable";
+
+interface OllamaDiscoveryState {
+  status: OllamaDiscoveryStatus;
+  models: string[];
+  error?: string;
+}
+
+interface OllamaDiscoveryResponse {
+  baseUrl: string;
+  reachable: boolean;
+  models: string[];
+  error?: string;
+}
 
 type ReviewPreviewStatus = "ready" | "warning" | "blocking" | "manual";
 
@@ -137,6 +148,7 @@ export function App() {
   const [newRunConstraints, setNewRunConstraints] = useState("");
   const [newRunObjective, setNewRunObjective] = useState("");
   const [newRunAutoStart, setNewRunAutoStart] = useState(true);
+  const [newRunBriefStartGate, setNewRunBriefStartGate] = useState<ResearchBriefStartGate | null>(null);
   const [configOptions, setConfigOptions] = useState<WebConfigOptions>(createDefaultConfigOptions());
   const [setupForm, setSetupForm] = useState<SetupFormState>(createEmptySetupForm());
   const [setupSeeded, setSetupSeeded] = useState(false);
@@ -145,9 +157,10 @@ export function App() {
   const [syncState, setSyncState] = useState<SyncState>("connecting");
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const uiActivitySeq = useRef(0);
-  const selectedRunIdRef = useRef<string | undefined>();
+  const selectedRunIdRef = useRef<string | undefined>(undefined);
   const selectedArtifactRef = useRef<ArtifactEntry | null>(null);
   const runDetailsRequestSeq = useRef(0);
+  const bootstrapRequestSeq = useRef(0);
   const literatureRequestSeq = useRef(0);
   const explorationRequestSeq = useRef(0);
   const artifactPreviewRequestSeq = useRef(0);
@@ -317,7 +330,9 @@ export function App() {
   const selectedCompletenessChecklistArtifact =
     artifacts.find((artifact) => artifact.path === "run_completeness_checklist.json") || null;
   const activeInsight =
-    session && selectedRun && session.activeRunId === selectedRun.id ? session.activeRunInsight : null;
+    session && selectedRun && session.activeRunId === selectedRun.id
+      ? session.activeRunInsight ?? null
+      : null;
   const effectiveActiveRunId = session?.activeRunId || bootstrap?.activeRunId;
   const isSelectedRunActive = Boolean(
     selectedRun && effectiveActiveRunId && selectedRun.id === effectiveActiveRunId
@@ -339,8 +354,13 @@ export function App() {
   }
 
   async function refreshBootstrap() {
+    const requestSeq = bootstrapRequestSeq.current + 1;
+    bootstrapRequestSeq.current = requestSeq;
     try {
       const data = await api<BootstrapResponse>("/api/bootstrap");
+      if (requestSeq !== bootstrapRequestSeq.current) {
+        return undefined;
+      }
       setBootstrap(data);
       if (data.jobQueue) {
         setLiveJobQueue(data.jobQueue);
@@ -348,7 +368,9 @@ export function App() {
       markSynced();
       return data;
     } catch (error) {
-      reportUiError(error, "Workspace state could not be loaded.");
+      if (requestSeq === bootstrapRequestSeq.current) {
+        reportUiError(error, "Workspace state could not be loaded.");
+      }
       return undefined;
     }
   }
@@ -537,7 +559,7 @@ export function App() {
       .map((item) => item.trim())
       .filter(Boolean);
     await withUiActivity("Creating a new run", async () => {
-      const response = await api<{ run: RunRecord; session: WebSessionState }>("/api/runs", {
+      const response = await api<WebRunCreationResponse>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
           brief: newRunBrief.trim() || undefined,
@@ -547,12 +569,15 @@ export function App() {
           autoStart: newRunAutoStart
         })
       });
-      setShowNewRunForm(false);
-      setNewRunBrief("");
+      setNewRunBriefStartGate(response.briefStartGate);
       setSession(response.session);
       inspectRun(response.run.id);
       await refreshBootstrap();
       await refreshRunDetails(response.run.id);
+      if (!response.briefStartGate.blocked) {
+        setShowNewRunForm(false);
+        setNewRunBrief("");
+      }
     });
   }
 
@@ -765,6 +790,7 @@ export function App() {
       newRunConstraints={newRunConstraints}
       newRunObjective={newRunObjective}
       newRunAutoStart={newRunAutoStart}
+      newRunBriefStartGate={newRunBriefStartGate}
       commandInput={commandInput}
       artifacts={artifacts}
       selectedArtifact={selectedArtifact}
@@ -786,13 +812,25 @@ export function App() {
       setupForm={setupForm}
       configOptions={configOptions}
       onSetRunSearch={setRunSearch}
-      onToggleNewRunForm={() => setShowNewRunForm((current) => !current)}
-      onCloseNewRunForm={() => setShowNewRunForm(false)}
-      onSetNewRunBrief={setNewRunBrief}
+      onToggleNewRunForm={() => {
+        setShowNewRunForm((current) => !current);
+        setNewRunBriefStartGate(null);
+      }}
+      onCloseNewRunForm={() => {
+        setShowNewRunForm(false);
+        setNewRunBriefStartGate(null);
+      }}
+      onSetNewRunBrief={(value) => {
+        setNewRunBrief(value);
+        setNewRunBriefStartGate(null);
+      }}
       onSetNewRunTopic={setNewRunTopic}
       onSetNewRunConstraints={setNewRunConstraints}
       onSetNewRunObjective={setNewRunObjective}
-      onSetNewRunAutoStart={setNewRunAutoStart}
+      onSetNewRunAutoStart={(value) => {
+        setNewRunAutoStart(value);
+        setNewRunBriefStartGate(null);
+      }}
       onSubmitNewRun={submitNewRun}
       onSelectRun={inspectRun}
       onActivateRun={(runId) => void activateRun(runId)}
@@ -905,6 +943,7 @@ interface ResearchWorkbenchProps {
   newRunConstraints: string;
   newRunObjective: string;
   newRunAutoStart: boolean;
+  newRunBriefStartGate: ResearchBriefStartGate | null;
   commandInput: string;
   artifacts: ArtifactEntry[];
   selectedArtifact: ArtifactEntry | null;
@@ -1133,6 +1172,7 @@ function WorkbenchRail(props: ResearchWorkbenchProps) {
 }
 
 function NewRunComposer(props: ResearchWorkbenchProps) {
+  const requiresExplicitInputs = !props.newRunBrief.trim();
   return (
     <form className="workbench-form new-run-form" onSubmit={props.onSubmitNewRun}>
       <label>
@@ -1142,20 +1182,33 @@ function NewRunComposer(props: ResearchWorkbenchProps) {
           value={props.newRunBrief}
           onChange={(event) => props.onSetNewRunBrief(event.target.value)}
           rows={4}
-          placeholder="Describe the topic, objective, constraints, and experiment plan in natural language."
+          placeholder="Paste the governed Research Brief markdown."
         />
       </label>
+      {props.newRunBriefStartGate?.blocked ? (
+        <div className="operator-error" role="status" aria-live="polite">
+          <div>
+            <strong>Research start locked</strong>
+            <p>Missing or incomplete brief fields:</p>
+            <div className="chip-list" aria-label="Missing or incomplete brief fields">
+              {props.newRunBriefStartGate.missingFields.map((field) => (
+                <span className="chip" key={field}>{field}</span>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <label>
         Topic
-        <input disabled={props.isBusy} value={props.newRunTopic} onChange={(event) => props.onSetNewRunTopic(event.target.value)} />
+        <input required={requiresExplicitInputs} disabled={props.isBusy} value={props.newRunTopic} onChange={(event) => props.onSetNewRunTopic(event.target.value)} />
       </label>
       <label>
         Constraints
-        <input disabled={props.isBusy} value={props.newRunConstraints} onChange={(event) => props.onSetNewRunConstraints(event.target.value)} />
+        <input required={requiresExplicitInputs} disabled={props.isBusy} value={props.newRunConstraints} onChange={(event) => props.onSetNewRunConstraints(event.target.value)} />
       </label>
       <label>
         Objective
-        <input disabled={props.isBusy} value={props.newRunObjective} onChange={(event) => props.onSetNewRunObjective(event.target.value)} />
+        <input required={requiresExplicitInputs} disabled={props.isBusy} value={props.newRunObjective} onChange={(event) => props.onSetNewRunObjective(event.target.value)} />
       </label>
       <label className="checkbox-row">
         <input
@@ -1209,10 +1262,11 @@ function ResearchRunHero(props: ResearchWorkbenchProps) {
   }
   const transition = props.selectedRun.graph.pendingTransition;
   const decisionFocus =
-    props.selectedJob?.blocker_summary ||
-    (transition
+    transition
       ? `${transition.action}${transition.targetNode ? ` toward ${formatNodeLabel(transition.targetNode)}` : ""}: ${transition.reason}`
-      : props.selectedRun.latestSummary || "No blocking decision is currently attached to this run.");
+      : props.selectedJob?.blocker_summary
+        || props.selectedRun.latestSummary
+        || "No blocking decision is currently attached to this run.";
   const currentState = props.selectedRun.graph.nodeStates[props.selectedRun.currentNode];
   const canApprove = props.isSelectedRunActive && currentState?.status === "needs_approval";
   const canApply = props.isSelectedRunActive
@@ -1283,7 +1337,19 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
         <article><span>Current node</span><strong>{formatNodeLabel(props.selectedRun.currentNode)}</strong></article>
         <article><span>Progress</span><strong>{props.completedNodeCount}/{NODE_ORDER.length}</strong></article>
         <article><span>Checkpoint</span><strong>#{props.selectedRun.graph.checkpointSeq}</strong></article>
-        {props.selectedJob ? <article><span>Readiness</span><strong>{formatReadinessTriple(props.selectedJob)}</strong></article> : null}
+        {props.selectedJob ? <article><span>Workflow readiness</span><strong>{formatReadinessTriple(props.selectedJob)}</strong></article> : null}
+        {props.selectedJob?.evidence_readiness ? (
+          <article>
+            <span>Evidence readiness</span>
+            <strong>{formatEvidenceReadiness(props.selectedJob.evidence_readiness)}</strong>
+          </article>
+        ) : null}
+        {props.selectedJob?.evidence_readiness?.primary_comparison_id ? (
+          <article>
+            <span>Primary comparison</span>
+            <strong><code>{props.selectedJob.evidence_readiness.primary_comparison_id}</code></strong>
+          </article>
+        ) : null}
         {props.selectedJob?.review_gate_status ? (
           <article><span>Review gate</span><strong>{props.selectedJob.review_gate_label || formatReviewGateStatus(props.selectedJob.review_gate_status, props.selectedJob.review_decision_outcome, props.selectedJob.review_recommended_transition)}</strong></article>
         ) : null}
@@ -1299,12 +1365,19 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
           </article>
         ) : null}
       </div>
+      {props.selectedJob?.research_funnel?.research_mode === "topic_discovery" ? (
+        <ResearchFunnelSummary
+          funnel={props.selectedJob.research_funnel}
+          runScope={props.selectedRun.topic}
+        />
+      ) : null}
       {props.selectedRun.constraints.length ? (
         <div className="chip-list">
           {props.selectedRun.constraints.map((constraint) => <span key={constraint} className="chip">{constraint}</span>)}
         </div>
       ) : null}
       {props.selectedRun.graph.pendingTransition ? <TransitionPanel {...props} /> : null}
+      {!props.selectedRun.graph.pendingTransition ? <AppliedTransitionNotice run={props.selectedRun} /> : null}
       {props.activeInsight ? <InsightPanel {...props} /> : null}
       <div className="decision-actions">
         <button className="button button-secondary" type="button" disabled={props.isBusy || !props.isSelectedRunActive} onClick={() => props.onOvernight(props.selectedRun!.id)}>
@@ -1315,6 +1388,534 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
         </button>
       </div>
     </section>
+  );
+}
+
+function ResearchFunnelSummary({
+  funnel,
+  runScope
+}: {
+  funnel: NonNullable<RunJobProjection["research_funnel"]>;
+  runScope: string;
+}) {
+  const toneClass = researchFunnelToneClass(funnel);
+  const activeProbe = readVerifiedActiveTopicProbe(funnel);
+  const executionAuthorization = readExecutionAuthorization(funnel);
+  const gapEvidenceAudit = normalizeResearchGapEvidenceAudit(
+    funnel.gap_evidence_audit
+  );
+  const visibleReasonCodes = funnel.reason_codes;
+  const blockedGates = funnel.gates.filter((gate) => gate.status === "block");
+  const reviewerDissent = funnel.dissent.filter(
+    (finding) => finding.hard_block || finding.findings.length > 0
+  );
+  const collectionFailure = formatCollectionFailureSummary(funnel);
+  const collectionHint = readCollectionHintView(funnel);
+  const activeQueryReformulation =
+    collectionHint
+    && isActiveQueryReformulationHint(funnel, collectionHint)
+      ? formatQueryReformulationSummary(collectionHint)
+      : undefined;
+  const portfolioCandidates = Array.isArray(funnel.portfolio_candidates)
+    ? funnel.portfolio_candidates
+    : [];
+
+  return (
+    <section className={`research-funnel ${toneClass}`} aria-label="Research topic funnel">
+      <div className="research-funnel-heading">
+        <div>
+          <p className="section-kicker">Research topic funnel</p>
+          <h3>Topic discovery lifecycle</h3>
+        </div>
+        <span className={`status-pill ${toneClass}`}>{formatResearchFunnelStatus(funnel)}</span>
+      </div>
+      <div
+        className="research-funnel-evidence-boundary"
+        role="note"
+        aria-label="Bounded probe evidence boundary"
+      >
+        Bounded probe only; not paper evidence · <code>paper_evidence_allowed=false</code>
+      </div>
+      <dl className="research-funnel-metrics">
+        <div>
+          <dt>Mode</dt>
+          <dd><code>{funnel.research_mode}</code></dd>
+        </div>
+        <div>
+          <dt>Lifecycle</dt>
+          <dd>{formatResearchFunnelLifecycle(funnel)}</dd>
+        </div>
+        <div>
+          <dt>Integrity</dt>
+          <dd>{formatStatusLabel(funnel.integrity_status)}</dd>
+        </div>
+        <div>
+          <dt>Collection</dt>
+          <dd className={collectionStateStatusClass(funnel.collection_state)}>
+            {formatStatusLabel(funnel.collection_state)}
+            {formatCollectionAttempt(funnel)}
+          </dd>
+        </div>
+        {collectionFailure ? (
+          <div>
+            <dt>Collection issue</dt>
+            <dd className="status-warning">{collectionFailure}</dd>
+          </div>
+        ) : null}
+        {activeQueryReformulation ? (
+          <div>
+            <dt>Query reformulation</dt>
+            <dd>{activeQueryReformulation}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>Pre-probe disposition</dt>
+          <dd>{formatResearchFunnelDisposition(funnel)}</dd>
+        </div>
+        <div>
+          <dt>Outcome disposition</dt>
+          <dd>{funnel.outcome_disposition
+            ? formatStatusLabel(funnel.outcome_disposition)
+            : "Unmeasured"}</dd>
+        </div>
+        <div>
+          <dt>Outcome next action</dt>
+          <dd>{funnel.outcome_next_action
+            ? formatStatusLabel(funnel.outcome_next_action)
+            : "Unmeasured"}</dd>
+        </div>
+        <div>
+          <dt>Candidates</dt>
+          <dd>{funnel.candidate_count}{funnel.diagnostics_trusted ? "" : " (diagnostic)"}</dd>
+        </div>
+        <div>
+          <dt>Clusters</dt>
+          <dd>{funnel.cluster_count}{funnel.diagnostics_trusted ? "" : " (diagnostic)"}</dd>
+        </div>
+        <div>
+          <dt>Candidate direct-prior search</dt>
+          <dd className={
+            funnel.candidate_prior_search.status === "blocked"
+            || funnel.candidate_prior_search.status === "exhausted"
+              ? "status-warning"
+              : undefined
+          }>
+            {formatStatusLabel(funnel.candidate_prior_search.status)}
+            {` · ${funnel.candidate_prior_search.trusted ? "trusted" : "not trusted"}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Direct-prior rounds</dt>
+          <dd>
+            {funnel.candidate_prior_search.completed_rounds}/{funnel.candidate_prior_search.max_rounds || "unmeasured"}
+            {` · receipt ${formatStatusLabel(funnel.candidate_prior_search.current_receipt_status)}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Estimator feasibility</dt>
+          <dd className={
+            funnel.estimator_feasibility.status === "blocked"
+            || funnel.estimator_feasibility.status === "invalid"
+              ? "status-warning"
+              : undefined
+          }>
+            {formatStatusLabel(funnel.estimator_feasibility.status)}
+            {` · ${funnel.estimator_feasibility.trusted ? "trusted" : "not trusted"}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Experiment execution</dt>
+          <dd className={
+            executionAuthorization.status === "blocked"
+            || executionAuthorization.status === "invalid"
+              ? "status-warning"
+              : undefined
+          }>
+            {formatStatusLabel(executionAuthorization.status)}
+            {` · ${executionAuthorization.trusted ? "trusted" : "not trusted"}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Topic memory</dt>
+          <dd className={
+            funnel.topic_memory.status === "blocked" ? "status-warning" : undefined
+          }>
+            {formatStatusLabel(funnel.topic_memory.status)}
+            {` · ${funnel.topic_memory.trusted ? "trusted" : "not trusted"}`}
+          </dd>
+        </div>
+        <div>
+          <dt>Memory decisions</dt>
+          <dd>
+            {funnel.topic_memory.record_count} records · {funnel.topic_memory.blocked_candidate_count} blocked · {funnel.topic_memory.reentry_required_count} reentry required · {funnel.topic_memory.reentry_allowed_count} allowed
+          </dd>
+        </div>
+        <div>
+          <dt>Evidence chain</dt>
+          <dd>{formatStatusLabel(gapEvidenceAudit.status)}</dd>
+        </div>
+        <div>
+          <dt>Grounded scientific evidence</dt>
+          <dd>{gapEvidenceAudit.grounded_scientific_evidence_count}/{gapEvidenceAudit.scientific_evidence_count}</dd>
+        </div>
+        <div>
+          <dt>Synthesis eligible</dt>
+          <dd>{gapEvidenceAudit.synthesis_eligible_evidence_count}/{gapEvidenceAudit.total_evidence_count}</dd>
+        </div>
+        <div>
+          <dt>Accepted gap clusters</dt>
+          <dd>{gapEvidenceAudit.accepted_cluster_count}</dd>
+        </div>
+        {gapEvidenceAudit.analysis_coverage ? (
+          <div>
+            <dt>Analysis coverage</dt>
+            <dd>{gapEvidenceAudit.analysis_coverage.completed_paper_count}/{gapEvidenceAudit.analysis_coverage.selected_paper_count}</dd>
+          </div>
+        ) : null}
+        <div>
+          <dt>Probe candidates</dt>
+          <dd>{funnel.probe_candidate_count}</dd>
+        </div>
+        <div>
+          <dt>Pre-probe authorization</dt>
+          <dd className={
+            isResearchFunnelProbeAuthorized(funnel)
+            || funnel.integrity_status === "unmeasured"
+            || funnel.authorization_disposition === "unmeasured"
+              ? undefined
+              : "status-warning"
+          }>
+            {formatProbeAuthorization(funnel)}
+          </dd>
+        </div>
+        <div>
+          <dt>Authority</dt>
+          <dd>{funnel.authorization_trusted ? "Trusted" : "Not authoritative"}</dd>
+        </div>
+      </dl>
+      {funnel.topic_memory.ledger_sha256
+      || funnel.topic_memory.audit_artifact_ref
+      || funnel.topic_memory.update_artifact_ref ? (
+        <div className="research-funnel-memory" aria-label="Topic memory provenance">
+          <span className="stat-label">Topic memory provenance</span>
+          {funnel.topic_memory.ledger_sha256 ? (
+            <span>Ledger <code>{funnel.topic_memory.ledger_sha256}</code></span>
+          ) : null}
+          {funnel.topic_memory.audit_artifact_ref ? (
+            <span>Audit <code>{funnel.topic_memory.audit_artifact_ref.path}</code></span>
+          ) : null}
+          {funnel.topic_memory.update_artifact_ref ? (
+            <span>Update <code>{funnel.topic_memory.update_artifact_ref.path}</code></span>
+          ) : null}
+        </div>
+      ) : null}
+      {funnel.candidate_prior_search.plan_sha256
+      || funnel.candidate_prior_search.receipt_sha256
+      || funnel.candidate_prior_search.artifact_refs.length > 0 ? (
+        <div className="research-funnel-memory" aria-label="Candidate direct-prior provenance">
+          <span className="stat-label">Candidate direct-prior provenance</span>
+          {funnel.candidate_prior_search.plan_sha256 ? (
+            <span>Plan <code>{funnel.candidate_prior_search.plan_sha256}</code></span>
+          ) : null}
+          {funnel.candidate_prior_search.receipt_sha256 ? (
+            <span>Receipt <code>{funnel.candidate_prior_search.receipt_sha256}</code></span>
+          ) : null}
+          {funnel.candidate_prior_search.artifact_refs.map((ref) => (
+            <span key={ref.path}>{ref.label} <code>{ref.path}</code></span>
+          ))}
+        </div>
+      ) : null}
+      <div className="research-funnel-context" aria-label="Topic probe persisted lifecycle">
+        {activeProbe ? (
+          <div className="research-funnel-scope">
+            <span className="stat-label">Research chain hashes</span>
+            <p>
+              Gap <code>{funnel.hashes.gap_map || "unmeasured"}</code>
+              {" · Portfolio "}<code>{funnel.hashes.topic_portfolio || "unmeasured"}</code>
+              {" · Decision "}<code>{funnel.hashes.topic_decision || "unmeasured"}</code>
+              {" · Active "}<code>{activeProbe.contractHash}</code>
+            </p>
+          </div>
+        ) : null}
+        <div className="research-funnel-scope">
+          <span className="stat-label">Estimator contract</span>
+          <p>
+            <code>{funnel.estimator_feasibility.estimand_type || "unmeasured"}</code>
+            {" · "}
+            <code>{funnel.estimator_feasibility.estimator_family || "unmeasured"}</code>
+            {` · clusters=${funnel.estimator_feasibility.independent_cluster_count ?? "unmeasured"}`}
+            {` · denominator=${funnel.estimator_feasibility.primary_denominator ?? "unmeasured"}`}
+          </p>
+        </div>
+        <div className="research-funnel-scope">
+          <span className="stat-label">Estimator artifacts</span>
+          <p>
+            {funnel.estimator_feasibility.artifact_refs.length > 0
+              ? funnel.estimator_feasibility.artifact_refs.map((ref) => ref.path).join(" · ")
+              : "Unmeasured"}
+          </p>
+        </div>
+        <div className="research-funnel-scope">
+          <span className="stat-label">Outcome gate</span>
+          <p>
+            <code>{funnel.outcome_gate.status}</code>
+            {` · ${funnel.outcome_gate.trusted ? "trusted" : "not trusted"}`}
+            {funnel.outcome_gate.artifact_ref ? <> · <code>{funnel.outcome_gate.artifact_ref.path}</code></> : null}
+          </p>
+        </div>
+        <div className="research-funnel-scope">
+          <span className="stat-label">Follow-up handoff</span>
+          <p>
+            <code>{funnel.followup_handoff.status}</code>
+            {` · ${funnel.followup_handoff.trusted ? "trusted" : "not trusted"}`}
+            {funnel.followup_handoff.recommended_followup_mode ? <> · <code>{funnel.followup_handoff.recommended_followup_mode}</code></> : null}
+            {funnel.followup_handoff.evidence_stage ? <> · <code>{funnel.followup_handoff.evidence_stage}</code></> : null}
+            {funnel.followup_handoff.artifact_ref ? <> · <code>{funnel.followup_handoff.artifact_ref.path}</code></> : null}
+          </p>
+        </div>
+        <div className="research-funnel-scope">
+          <span className="stat-label">Topic-probe review gate</span>
+          <p>
+            <code>{funnel.review_gate.status}</code>
+            {` · ${funnel.review_gate.trusted ? "trusted" : "not trusted"}`}
+            {` · paper_drafting_allowed=${String(funnel.review_gate.paper_drafting_allowed)}`}
+            {funnel.review_gate.artifact_ref ? <> · <code>{funnel.review_gate.artifact_ref.path}</code></> : null}
+          </p>
+        </div>
+      </div>
+      <div className="research-funnel-context">
+        <div className="research-funnel-scope">
+          <span className="stat-label">Run scope</span>
+          <p>{runScope}</p>
+        </div>
+        {funnel.probe_candidate_statements.length > 0 ? (
+          <div className="research-funnel-topics">
+            <span className="stat-label">Bounded probe candidates</span>
+            <ul>
+              {funnel.probe_candidate_statements.map((statement, index) => (
+                <li key={`${funnel.probe_candidate_ids[index] || "topic"}:${index}`}>{statement}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+      {portfolioCandidates.length > 0 ? (
+        <ResearchTopicPortfolio candidates={portfolioCandidates} />
+      ) : null}
+      {activeProbe ? (
+        <div className="research-funnel-active-probe" role="region" aria-label="Verified active bounded probe">
+          <div className="research-funnel-active-heading">
+            <span className="stat-label">Active bounded probe</span>
+            <span className="research-funnel-evidence-boundary">Bounded probe only; not paper evidence</span>
+          </div>
+          <dl className="research-funnel-active-details">
+            <div>
+              <dt>Candidate ID</dt>
+              <dd><code>{activeProbe.candidateId}</code></dd>
+            </div>
+            <div>
+              <dt>Candidate SHA-256</dt>
+              <dd><code>{activeProbe.candidateHash}</code></dd>
+            </div>
+            <div>
+              <dt>Metric / unit / scale / direction</dt>
+              <dd><code>{activeProbe.primaryMetric}</code> · <code>{activeProbe.metricUnit}</code> · <code>{activeProbe.metricScale}</code> · <code>{activeProbe.metricDirection}</code></dd>
+            </div>
+            <div>
+              <dt>Effect criterion</dt>
+              <dd><code>{formatEffectCriterion(activeProbe.effectCriterion, activeProbe.metricDirection)}</code></dd>
+            </div>
+            {activeProbe.meaningfulEffect ? (
+              <div>
+                <dt>Effect note</dt>
+                <dd>{activeProbe.meaningfulEffect}</dd>
+              </div>
+            ) : null}
+            <div>
+              <dt>Objective binding</dt>
+              <dd><code>{activeProbe.objectiveRaw}</code></dd>
+            </div>
+            <div>
+              <dt>Deferred candidates</dt>
+              <dd>{activeProbe.deferredCandidateIds.length > 0
+                ? activeProbe.deferredCandidateIds.map((candidateId) => <code key={candidateId}>{candidateId}</code>)
+                : "None"}</dd>
+            </div>
+            <div>
+              <dt>Evidence stage</dt>
+              <dd><code>{activeProbe.evidenceStage}</code></dd>
+            </div>
+            <div>
+              <dt>Contract artifact</dt>
+              <dd><code>{activeProbe.contractArtifactPath}</code></dd>
+            </div>
+            <div className="research-funnel-contract-hash">
+              <dt>Contract SHA-256</dt>
+              <dd><code>{activeProbe.contractHash}</code></dd>
+            </div>
+          </dl>
+        </div>
+      ) : null}
+      {funnel.literature_queries.length > 0 ? (
+        <div className="research-funnel-reasons">
+          <span className="stat-label">Literature query provenance</span>
+          <ul>
+            {funnel.literature_queries.map((query, index) => (
+              <li key={`${query.query}:${index}`}>
+                <code>{query.source}</code> · {query.source_reason} · {query.fallback ? "fallback" : "planned"} · retrieved {query.fetched ?? "unmeasured"} · relevant {query.relevant_fetched ?? "unmeasured"} · selected {query.selected ?? "unmeasured"}
+                <p>{query.query}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {blockedGates.length > 0 ? (
+        <div className="research-funnel-reasons">
+          <span className="stat-label">Blocking gates</span>
+          <ul>
+            {blockedGates.map((gate, index) => (
+              <li key={`${gate.scope}:${gate.code}:${index}`}>
+                <code>{gate.code}</code> · {gate.scope} · {gate.trusted ? "trusted" : "diagnostic only"}
+                <p>{gate.message}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {reviewerDissent.length > 0 ? (
+        <div className="research-funnel-reasons">
+          <span className="stat-label">Reviewer dissent</span>
+          <ul>
+            {reviewerDissent.map((finding, index) => (
+              <li key={`${finding.source}:${finding.candidate_id}:${finding.reviewer_id || index}`}>
+                <code>{finding.reviewer_label || finding.reviewer_id || finding.source}</code> · <code>{finding.candidate_id}</code> · {finding.hard_block ? "hard block" : "objection"} · {finding.trusted ? "trusted" : "diagnostic only"}
+                <p>{finding.summary}</p>
+                {finding.findings.map((detail) => <p key={detail}>{detail}</p>)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {funnel.invalid_chain_blockers.length > 0 ? (
+        <div className="research-funnel-reasons" role="alert">
+          <span className="stat-label">Invalid-chain blockers</span>
+          <div className="research-funnel-reason-list">
+            {funnel.invalid_chain_blockers.map((blocker, index) => (
+              <code className="research-funnel-reason" key={`${blocker}:${index}`}>{blocker}</code>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {visibleReasonCodes.length > 0 ? (
+        <div className="research-funnel-reasons">
+          <span className="stat-label">Reason codes</span>
+          <div className="research-funnel-reason-list">
+            {visibleReasonCodes.map((reasonCode, index) => (
+              <code className="research-funnel-reason" key={`${reasonCode}:${index}`}>{reasonCode}</code>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function ResearchTopicPortfolio({
+  candidates
+}: {
+  candidates: NonNullable<RunJobProjection["research_funnel"]>["portfolio_candidates"];
+}) {
+  return (
+    <div className="research-funnel-candidates" aria-label="Topic candidate audit portfolio">
+      <div className="research-funnel-candidates-heading">
+        <span className="stat-label">Candidate audit portfolio</span>
+        <span>{candidates.length} bounded candidates</span>
+      </div>
+      <ol>
+        {candidates.map((candidate) => {
+          const priorDispositions = candidate.prior_absorption_comparisons
+            .map((comparison) => `${comparison.prior_paper_id}: ${formatStatusLabel(comparison.disposition)}`);
+          return (
+            <li key={candidate.candidate_id}>
+              <div className="research-funnel-candidate-heading">
+                <div>
+                  <span className="stat-label">Candidate {candidate.rank}</span>
+                  <code>{candidate.candidate_id}</code>
+                </div>
+                <div className="research-funnel-candidate-status">
+                  <span className="chip">{formatStatusLabel(candidate.review_status)}</span>
+                  <span className="chip">{formatStatusLabel(candidate.probe_status)}</span>
+                  <span className="chip">{candidate.trusted ? "Trusted" : "Diagnostic only"}</span>
+                </div>
+              </div>
+              <p className="research-funnel-candidate-statement">{candidate.statement}</p>
+              <dl className="research-funnel-candidate-facts">
+                <div>
+                  <dt>Scorecard</dt>
+                  <dd>
+                    N {candidate.scores.novelty} · F {candidate.scores.feasibility} · T {candidate.scores.testability} · C {candidate.scores.cost} · G {candidate.scores.expected_gain}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Probe state</dt>
+                  <dd>{candidate.probe_eligible ? "Eligible" : "Blocked"}</dd>
+                </div>
+                <div>
+                  <dt>Comparator</dt>
+                  <dd>{candidate.comparator || "Unmeasured"}</dd>
+                </div>
+                <div>
+                  <dt>Task / metric</dt>
+                  <dd>{candidate.dataset_task_bench || "Unmeasured"} · {candidate.primary_metric || "Unmeasured"}</dd>
+                </div>
+                <div>
+                  <dt>Closest-prior evidence</dt>
+                  <dd>{candidate.closest_prior_full_text_paper_ids.length}/{candidate.closest_prior_paper_ids.length} full text</dd>
+                </div>
+                <div>
+                  <dt>Topic memory</dt>
+                  <dd>
+                    {candidate.topic_memory_disposition
+                      ? formatStatusLabel(candidate.topic_memory_disposition)
+                      : "Unmeasured"}
+                    {candidate.topic_memory_maximum_lineage_similarity !== undefined
+                      ? ` · similarity ${candidate.topic_memory_maximum_lineage_similarity.toFixed(3)}`
+                      : ""}
+                  </dd>
+                </div>
+              </dl>
+              <div className="research-funnel-candidate-evidence">
+                <p><strong>Prior absorption</strong> {priorDispositions.join(" · ") || "Unmeasured"}</p>
+                {candidate.reviewer_absorption_objection ? (
+                  <p><strong>Reviewer objection</strong> {candidate.reviewer_absorption_objection}</p>
+                ) : null}
+                {candidate.closest_prior_non_overlap ? (
+                  <p><strong>Defended non-overlap</strong> {candidate.closest_prior_non_overlap}</p>
+                ) : null}
+                {candidate.kill_signal ? (
+                  <p><strong>Kill signal</strong> {candidate.kill_signal}</p>
+                ) : null}
+                {candidate.minimum_publishable_evidence ? (
+                  <p><strong>Minimum evidence</strong> {candidate.minimum_publishable_evidence}</p>
+                ) : null}
+                {candidate.contribution_claim ? (
+                  <p><strong>Contribution ceiling</strong> {candidate.contribution_claim}</p>
+                ) : null}
+                {candidate.local_budget ? (
+                  <p><strong>Local budget</strong> {candidate.local_budget}</p>
+                ) : null}
+                {candidate.review_summary ? (
+                  <p><strong>Review summary</strong> {candidate.review_summary}</p>
+                ) : null}
+                {candidate.blocked_gate_codes.length > 0 ? (
+                  <p><strong>Blocking gates</strong> {candidate.blocked_gate_codes.join(" · ")}</p>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 
@@ -1345,6 +1946,32 @@ function TransitionPanel(props: ResearchWorkbenchProps) {
         ) : null}
       </div>
     </article>
+  );
+}
+
+function AppliedTransitionNotice({ run }: { run: RunRecord }) {
+  const transition = [...(run.graph.transitionHistory || [])]
+    .reverse()
+    .find((entry) => entry.action.startsWith("backtrack_to_"))
+    ?? (run.graph.lastAppliedTransition?.action.startsWith("backtrack_to_")
+      ? run.graph.lastAppliedTransition
+      : undefined);
+  if (!transition) {
+    return null;
+  }
+  return (
+    <div className="research-funnel-context" role="status" aria-label="Last applied backtrack">
+      <div className="research-funnel-scope">
+        <span className="stat-label">Last applied backtrack</span>
+        <p>
+          <code>{transition.fromNode}</code>
+          {" -> "}
+          <code>{transition.toNode || "unmeasured"}</code>
+          {" · "}
+          {transition.reason}
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1592,7 +2219,7 @@ function WorkbenchInspector(props: ResearchWorkbenchProps) {
         </div>
         <label className="field-label">
           Prompt
-          <textarea value={props.commandInput} onChange={(event) => props.onSetCommandInput(event.target.value)} placeholder="collect 100 papers from the last 5 years by relevance" rows={3} disabled={props.isBusy || !props.isSelectedRunActive} />
+          <textarea value={props.commandInput} onChange={(event) => props.onSetCommandInput(event.target.value)} placeholder="collect papers using the run's declared literature scope" rows={3} disabled={props.isBusy || !props.isSelectedRunActive} />
         </label>
         <div className="composer-actions">
           <button className="button button-primary" type="submit" disabled={props.isBusy || !props.isSelectedRunActive}>{props.isBusy ? "Running..." : "Send"}</button>
@@ -1847,6 +2474,85 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
   const isCodexMode = props.form.llmMode === "codex_chatgpt_only";
   const isOpenAiMode = props.form.llmMode === "openai_api";
   const isOllamaMode = props.form.llmMode === "ollama";
+  const [ollamaDiscovery, setOllamaDiscovery] = useState<OllamaDiscoveryState>({
+    status: "idle",
+    models: []
+  });
+
+  async function refreshOllamaModels(signal?: AbortSignal) {
+    const baseUrl = props.form.ollamaBaseUrl.trim();
+    if (!baseUrl) {
+      setOllamaDiscovery({
+        status: "unreachable",
+        models: [],
+        error: "Ollama base URL is required."
+      });
+      return;
+    }
+
+    setOllamaDiscovery({ status: "loading", models: [] });
+    try {
+      const discovered = await api<OllamaDiscoveryResponse>(
+        "/api/ollama/models?baseUrl=" + encodeURIComponent(baseUrl),
+        { signal }
+      );
+      if (signal?.aborted) return;
+      const models = Array.from(
+        new Set(discovered.models.map((model) => model.trim()).filter(Boolean))
+      ).sort((left, right) => left.localeCompare(right));
+      if (!discovered.reachable) {
+        setOllamaDiscovery({
+          status: "unreachable",
+          models: [],
+          error: discovered.error || "Ollama server is unreachable."
+        });
+        return;
+      }
+      setOllamaDiscovery({
+        status: models.length > 0 ? "ready" : "empty",
+        models
+      });
+    } catch (error) {
+      if (signal?.aborted) return;
+      setOllamaDiscovery({
+        status: "unreachable",
+        models: [],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  useEffect(() => {
+    if (!isOllamaMode) {
+      setOllamaDiscovery({ status: "idle", models: [] });
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void refreshOllamaModels(controller.signal);
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [isOllamaMode, props.form.ollamaBaseUrl]);
+
+  const ollamaChatModels = buildOllamaModelChoices(
+    [...props.options.ollamaChatModels, ...ollamaDiscovery.models],
+    props.form.ollamaChatModel
+  );
+  const ollamaResearchModels = buildOllamaModelChoices(
+    [...props.options.ollamaResearchModels, ...ollamaDiscovery.models],
+    props.form.ollamaResearchModel
+  );
+  const ollamaExperimentModels = buildOllamaModelChoices(
+    [...props.options.ollamaExperimentModels, ...ollamaDiscovery.models],
+    props.form.ollamaExperimentModel
+  );
+  const ollamaVisionModels = buildOllamaModelChoices(
+    [...props.options.ollamaVisionModels, ...ollamaDiscovery.models],
+    props.form.ollamaVisionModel
+  );
 
   return (
     <form className={props.className} onSubmit={props.onSubmit}>
@@ -1952,8 +2658,8 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
         </div>
       </div>
       <p className="form-help">
-        Pick the model and reasoning effort independently for chat, research, and experiment. PDF flows reuse the
-        research backend model and reasoning automatically.
+        Pick each provider's chat, research, and experiment slots independently. Provider-specific PDF controls are
+        shown when a separate vision model is required.
       </p>
 
       {isCodexMode ? (
@@ -2042,46 +2748,82 @@ function ConfigEditorForm(props: ConfigEditorFormProps) {
             Ollama base URL
             <input
               disabled={props.disabled}
+              required
               value={props.form.ollamaBaseUrl}
               onChange={(event) => patchSetupForm(props.onChange, { ollamaBaseUrl: event.target.value })}
             />
           </label>
-          <p className="form-help">The web setup will use this local Ollama endpoint for chat, research backend, experiment, and vision flows.</p>
+          <div className="form-actions">
+            <button
+              className="button button-secondary"
+              type="button"
+              disabled={props.disabled || ollamaDiscovery.status === "loading"}
+              onClick={() => void refreshOllamaModels()}
+            >
+              {ollamaDiscovery.status === "loading" ? "Checking Ollama..." : "Refresh installed models"}
+            </button>
+          </div>
+          {ollamaDiscovery.status === "ready" ? (
+            <p className="form-help" role="status" aria-live="polite">
+              {ollamaDiscovery.models.length} installed model(s) discovered.
+            </p>
+          ) : null}
+          {ollamaDiscovery.status === "empty" ? (
+            <div className="operator-error" role="status" aria-live="polite">
+              Ollama is reachable, but no installed models were found. Install a model or enter installed model identifiers before saving.
+            </div>
+          ) : null}
+          {ollamaDiscovery.status === "unreachable" ? (
+            <div className="operator-error" role="status" aria-live="polite">
+              Ollama is unreachable: {ollamaDiscovery.error || "Connection failed."} Update the base URL or enter installed model identifiers before saving.
+            </div>
+          ) : null}
           <ConfigModelSection
             title="Ollama chat"
-            description="Fast local chat model for interactive turns and lightweight assistance."
+            description="Local model for interactive turns and lightweight assistance."
             disabled={props.disabled}
+            required
+            allowCustomModel
+            modelListId="ollama-chat-models"
             modelValue={props.form.ollamaChatModel}
-            modelOptions={props.options.ollamaChatModels}
+            modelOptions={ollamaChatModels}
             onModelChange={(value) => patchSetupForm(props.onChange, { ollamaChatModel: value })}
           />
           <ConfigModelSection
             title="Ollama research backend"
-            description="Primary local model for research backend, analysis, and planning tasks."
+            description="Local model for research analysis and planning tasks."
             disabled={props.disabled}
+            required
+            allowCustomModel
+            modelListId="ollama-research-models"
             modelValue={props.form.ollamaResearchModel}
-            modelOptions={props.options.ollamaResearchModels}
+            modelOptions={ollamaResearchModels}
             onModelChange={(value) => patchSetupForm(props.onChange, { ollamaResearchModel: value })}
           />
           <ConfigModelSection
             title="Ollama experiment"
-            description="Local model used for experiment implementation and code-oriented execution work."
+            description="Local model for experiment implementation and code-oriented execution work."
             disabled={props.disabled}
+            required
+            allowCustomModel
+            modelListId="ollama-experiment-models"
             modelValue={props.form.ollamaExperimentModel}
-            modelOptions={props.options.ollamaExperimentModels}
+            modelOptions={ollamaExperimentModels}
             onModelChange={(value) => patchSetupForm(props.onChange, { ollamaExperimentModel: value })}
           />
           <ConfigModelSection
             title="Ollama vision"
-            description="Vision/PDF model used when the pipeline analyzes page images locally."
+            description="Local vision/PDF model for page-image analysis."
             disabled={props.disabled}
+            required
+            allowCustomModel
+            modelListId="ollama-vision-models"
             modelValue={props.form.ollamaVisionModel}
-            modelOptions={props.options.ollamaVisionModels}
+            modelOptions={ollamaVisionModels}
             onModelChange={(value) => patchSetupForm(props.onChange, { ollamaVisionModel: value })}
           />
         </>
       ) : null}
-
       <label>
         Semantic Scholar API key
         <input disabled={props.disabled} type="password" value={props.form.semanticScholarApiKey} onChange={(event) => patchSetupForm(props.onChange, { semanticScholarApiKey: event.target.value })} />
@@ -2107,6 +2849,9 @@ interface ConfigModelSectionProps {
   disabled?: boolean;
   modelValue: string;
   modelOptions: string[];
+  allowCustomModel?: boolean;
+  modelListId?: string;
+  required?: boolean;
   effortValue?: string;
   effortOptions?: string[];
   onModelChange: (value: string) => void;
@@ -2123,11 +2868,34 @@ function ConfigModelSection(props: ConfigModelSectionProps) {
       <div className="inline-fields">
         <label>
           Model
-          <select disabled={props.disabled} value={props.modelValue} onChange={(event) => props.onModelChange(event.target.value)}>
-            {props.modelOptions.map((option) => (
-              <option key={option} value={option}>{option}</option>
-            ))}
-          </select>
+          {props.allowCustomModel ? (
+            <>
+              <input
+                disabled={props.disabled}
+                required={props.required}
+                list={props.modelListId}
+                value={props.modelValue}
+                onChange={(event) => props.onModelChange(event.target.value)}
+                placeholder="Enter or select an installed model identifier"
+              />
+              <datalist id={props.modelListId}>
+                {props.modelOptions.map((option) => (
+                  <option key={option} value={option} />
+                ))}
+              </datalist>
+            </>
+          ) : (
+            <select
+              disabled={props.disabled}
+              required={props.required}
+              value={props.modelValue}
+              onChange={(event) => props.onModelChange(event.target.value)}
+            >
+              {props.modelOptions.map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+            </select>
+          )}
         </label>
         {props.effortOptions && props.onEffortChange ? (
           <label>
@@ -2187,10 +2955,10 @@ function createDefaultConfigForm(): WebConfigFormData {
     openAiExperimentModel: "gpt-5.4",
     openAiExperimentReasoningEffort: "medium",
     ollamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
-    ollamaChatModel: DEFAULT_OLLAMA_CHAT_MODEL,
-    ollamaResearchModel: DEFAULT_OLLAMA_RESEARCH_MODEL,
-    ollamaExperimentModel: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-    ollamaVisionModel: DEFAULT_OLLAMA_VISION_MODEL,
+    ollamaChatModel: "",
+    ollamaResearchModel: "",
+    ollamaExperimentModel: "",
+    ollamaVisionModel: "",
     networkPolicy: "blocked",
     networkPurpose: ""
   };
@@ -2235,10 +3003,10 @@ function createDefaultConfigOptions(): WebConfigOptions {
       "gpt-4o": ["medium"],
       "gpt-4o-mini": ["medium"]
     },
-    ollamaChatModels: buildOllamaChatModelChoices(),
-    ollamaResearchModels: buildOllamaResearchModelChoices(),
-    ollamaExperimentModels: buildOllamaExperimentModelChoices(),
-    ollamaVisionModels: buildOllamaVisionModelChoices()
+    ollamaChatModels: [],
+    ollamaResearchModels: [],
+    ollamaExperimentModels: [],
+    ollamaVisionModels: []
   };
 }
 
@@ -2696,6 +3464,23 @@ function formatReadinessTriple(input: {
   return `${input.analysis_ready ? "yes" : "no"}/${input.review_ready ? "yes" : "no"}/${input.paper_ready ? "yes" : "no"}`;
 }
 
+function formatEvidenceReadiness(
+  input: NonNullable<RunJobProjection["evidence_readiness"]>
+): string {
+  if (input.status === "unmeasured") {
+    return "Unmeasured";
+  }
+  if (input.status === "invalid") {
+    return "Invalid artifact";
+  }
+  if (input.status === "missing") {
+    return "Comparison missing";
+  }
+  return input.evidence_ready && input.trusted
+    ? "Comparison ready"
+    : "Available, not authoritative";
+}
+
 function renderJobBucket(
   label: string,
   jobs: Array<{
@@ -2973,6 +3758,431 @@ function statusToneClass(status?: string): string {
       return "is-neutral";
     default:
       return "is-neutral";
+  }
+}
+
+function normalizeResearchGapEvidenceAudit(
+  audit: NonNullable<RunJobProjection["research_funnel"]>["gap_evidence_audit"]
+): NonNullable<NonNullable<RunJobProjection["research_funnel"]>["gap_evidence_audit"]> {
+  return audit ?? {
+    status: "unmeasured",
+    total_evidence_count: 0,
+    scientific_evidence_count: 0,
+    grounded_scientific_evidence_count: 0,
+    synthesis_eligible_evidence_count: 0,
+    synthesis_excluded_evidence_count: 0,
+    accepted_cluster_count: 0,
+    malformed_evidence_row_count: 0,
+    source_scope_counts: {
+      abstract: 0,
+      full_text_excerpt: 0,
+      full_document: 0,
+      unknown: 0
+    },
+    grounding_status_counts: {
+      grounded_span: 0,
+      ungrounded_span: 0,
+      fallback: 0,
+      unknown: 0
+    }
+  };
+}
+
+type CollectionFailureClassView =
+  | "query_quality_failure"
+  | "semantic_review_operational_failure"
+  | "semantic_review_incomplete";
+
+type CollectionHintView = NonNullable<
+  ResearchFunnelProjection["collection_reformulation_hint"]
+> & {
+  active?: boolean;
+  failure_class?: CollectionFailureClassView;
+  feedback_applied?: boolean;
+  semantic_review_status?: "complete" | "partial" | "operational_failure";
+};
+
+function readCollectionHintView(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): CollectionHintView | undefined {
+  return funnel.collection_reformulation_hint as CollectionHintView | undefined;
+}
+
+function readCollectionFailureClass(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>,
+  hint = readCollectionHintView(funnel)
+): CollectionFailureClassView | undefined {
+  if (isCollectionFailureClassView(hint?.failure_class)) {
+    return hint.failure_class;
+  }
+  const reasonCode = funnel.reason_codes.find(isCollectionFailureClassView);
+  if (reasonCode) {
+    return reasonCode;
+  }
+  const qualityReason = funnel.collection_quality_failure_reasons.join(" ");
+  if (/semantic review failed operationally/iu.test(qualityReason)) {
+    return "semantic_review_operational_failure";
+  }
+  if (/semantic review (?:was incomplete|is incomplete)/iu.test(qualityReason)) {
+    return "semantic_review_incomplete";
+  }
+  return hint ? "query_quality_failure" : undefined;
+}
+
+function isCollectionFailureClassView(
+  value: unknown
+): value is CollectionFailureClassView {
+  return value === "query_quality_failure"
+    || value === "semantic_review_operational_failure"
+    || value === "semantic_review_incomplete";
+}
+
+function formatCollectionAttempt(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  if (funnel.collection_node_attempt === undefined) {
+    return "";
+  }
+  const attempt = funnel.collection_node_max_attempts === undefined
+    ? funnel.collection_node_attempt
+    : Math.min(
+        funnel.collection_node_attempt,
+        funnel.collection_node_max_attempts
+      );
+  return funnel.collection_node_max_attempts === undefined
+    ? ` · attempt ${attempt}`
+    : ` · attempt ${attempt}/${funnel.collection_node_max_attempts}`;
+}
+
+function collectionStateStatusClass(
+  state: NonNullable<RunJobProjection["research_funnel"]>["collection_state"]
+): string | undefined {
+  if (state === "quality_gate_passed") {
+    return "status-success";
+  }
+  return state === "unmeasured" ? undefined : "status-warning";
+}
+
+function formatCollectionFailureSummary(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string | undefined {
+  if (
+    funnel.collection_state === "unmeasured"
+    || funnel.collection_state === "quality_gate_passed"
+  ) {
+    return undefined;
+  }
+  if (
+    funnel.collection_state === "collecting"
+    && funnel.reason_codes.includes("collect_artifact_generation_mismatch")
+  ) {
+    return "Generation mismatch · collecting the current retry generation";
+  }
+  const failureClass = readCollectionFailureClass(funnel);
+  const reason = funnel.collection_quality_failure_reasons[0]
+    ?.replace(/\s+/gu, " ")
+    .trim();
+  const prefix = failureClass === "semantic_review_operational_failure"
+    ? "Reviewer operational failure"
+    : failureClass === "semantic_review_incomplete"
+      ? "Reviewer incomplete"
+      : failureClass === "query_quality_failure"
+        ? "Query quality"
+        : "Quality gate";
+  return reason ? `${prefix} · ${reason}` : prefix;
+}
+
+function isActiveQueryReformulationHint(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>,
+  hint: CollectionHintView
+): boolean {
+  return hint.active !== false
+    && readCollectionFailureClass(funnel, hint) === "query_quality_failure";
+}
+
+function formatQueryReformulationSummary(hint: CollectionHintView): string {
+  const axis = hint.axes[0]?.axis_terms.join(" ").trim();
+  const title = hint.candidate_titles[0]?.replace(/\s+/gu, " ").trim();
+  return [axis, title].filter(Boolean).join(" · ") || "Query feedback available";
+}
+
+function researchFunnelToneClass(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  const executionAuthorization = readExecutionAuthorization(funnel);
+  if (funnel.lifecycle_stage === "invalid_chain") {
+    return "is-danger";
+  }
+  if (executionAuthorization.status === "invalid") {
+    return "is-danger";
+  }
+  if (
+    funnel.collection_state === "failed"
+    || funnel.collection_state === "quality_gate_exhausted"
+  ) {
+    return "is-danger";
+  }
+  if (
+    executionAuthorization.status === "blocked"
+    || funnel.candidate_prior_search.status === "blocked"
+    || funnel.candidate_prior_search.status === "exhausted"
+    || funnel.candidate_prior_search.status === "search_required"
+    ||
+    funnel.collection_state === "collecting"
+    || funnel.collection_state === "quality_gate_failed"
+    || (
+      funnel.collection_state !== "quality_gate_passed"
+      && (
+        funnel.authorization_disposition === "probe_authorized"
+        || funnel.lifecycle_stage !== "discovery"
+      )
+    )
+  ) {
+    return "is-warning";
+  }
+  if (funnel.lifecycle_stage === "reviewed" || funnel.lifecycle_stage === "followup_required") {
+    return "is-warning";
+  }
+  if (funnel.lifecycle_stage === "outcome_decided") {
+    return "is-active";
+  }
+  if (funnel.lifecycle_stage === "probe_authorized") {
+    return isResearchFunnelProbeAuthorized(funnel) ? "is-active" : "is-warning";
+  }
+  if (
+    funnel.integrity_status === "partial"
+    || funnel.authorization_disposition === "backtrack_to_hypotheses"
+  ) {
+    return "is-warning";
+  }
+  return "is-neutral";
+}
+
+interface VerifiedActiveTopicProbeView {
+  candidateId: string;
+  candidateHash: string;
+  primaryMetric: string;
+  metricUnit: string;
+  metricScale: "raw" | "proportion" | "percent" | "percentage_point";
+  metricDirection: "maximize" | "minimize";
+  effectCriterion: NonNullable<ResearchFunnelProjection["active_effect_criterion"]>;
+  objectiveRaw: string;
+  meaningfulEffect?: string;
+  evidenceStage: "bounded_probe";
+  deferredCandidateIds: string[];
+  contractArtifactPath: string;
+  contractHash: string;
+}
+
+function readVerifiedActiveTopicProbe(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): VerifiedActiveTopicProbeView | undefined {
+  const contractArtifact = funnel.artifact_refs.find(
+    (ref) =>
+      ref.path.endsWith("/active_topic_probe_contract.json")
+      || ref.path === "active_topic_probe_contract.json"
+  );
+  const contractHash = funnel.hashes.active_topic_probe_contract;
+  if (
+    funnel.collection_state !== "quality_gate_passed"
+    || funnel.integrity_status !== "complete"
+    || !funnel.authorization_trusted
+    || funnel.authorization_disposition !== "probe_authorized"
+    || !funnel.authorization_probe_allowed
+    || !contractArtifact
+    || !isSha256(contractHash)
+    || !hasDisplayText(funnel.active_candidate_id)
+    || !hasDisplayText(funnel.active_topic_id)
+    || !isSha256(funnel.active_candidate_hash)
+    || !hasDisplayText(funnel.active_primary_metric)
+    || !hasDisplayText(funnel.active_metric_unit)
+    || !isMetricScale(funnel.active_metric_scale)
+    || !isEffectCriterionProjection(funnel.active_effect_criterion)
+    || !hasDisplayText(funnel.active_objective_raw)
+    || (funnel.active_metric_direction !== "maximize" && funnel.active_metric_direction !== "minimize")
+    || funnel.active_evidence_stage !== "bounded_probe"
+    || !Array.isArray(funnel.active_deferred_candidate_ids)
+  ) {
+    return undefined;
+  }
+  return {
+    candidateId: funnel.active_candidate_id,
+    candidateHash: funnel.active_candidate_hash,
+    primaryMetric: funnel.active_primary_metric,
+    metricUnit: funnel.active_metric_unit,
+    metricScale: funnel.active_metric_scale,
+    metricDirection: funnel.active_metric_direction,
+    effectCriterion: { ...funnel.active_effect_criterion },
+    objectiveRaw: funnel.active_objective_raw,
+    meaningfulEffect: funnel.active_meaningful_effect,
+    evidenceStage: funnel.active_evidence_stage,
+    deferredCandidateIds: [...funnel.active_deferred_candidate_ids],
+    contractArtifactPath: contractArtifact.path,
+    contractHash
+  };
+}
+
+function hasDisplayText(value: string | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSha256(value: string | undefined): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function isEffectCriterionProjection(
+  value: unknown
+): value is NonNullable<ResearchFunnelProjection["active_effect_criterion"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const criterion = value as Record<string, unknown>;
+  return criterion.basis === "delta_vs_reference"
+    && typeof criterion.magnitude === "number"
+    && Number.isFinite(criterion.magnitude)
+    && criterion.magnitude >= 0
+    && (
+      criterion.scale === "raw"
+      || criterion.scale === "proportion"
+      || criterion.scale === "percent"
+      || criterion.scale === "percentage_point"
+    )
+    && typeof criterion.inclusive === "boolean";
+}
+
+function formatEffectCriterion(
+  criterion: NonNullable<ResearchFunnelProjection["active_effect_criterion"]>,
+  direction: "maximize" | "minimize"
+): string {
+  const comparator = direction === "minimize"
+    ? criterion.inclusive ? "<=" : "<"
+    : criterion.inclusive ? ">=" : ">";
+  const target = direction === "minimize" ? -criterion.magnitude : criterion.magnitude;
+  return `${comparator}${target} ${criterion.scale} ${criterion.basis}`;
+}
+
+function isMetricScale(
+  value: unknown
+): value is "raw" | "proportion" | "percent" | "percentage_point" {
+  return value === "raw"
+    || value === "proportion"
+    || value === "percent"
+    || value === "percentage_point";
+}
+
+function formatResearchFunnelStatus(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  switch (funnel.lifecycle_stage) {
+    case "invalid_chain":
+      return "Invalid artifact chain";
+    case "reviewed":
+      return "Reviewed, follow-up required";
+    case "followup_required":
+      return "Follow-up required";
+    case "outcome_decided":
+      return "Outcome decided";
+    case "probe_authorized": {
+      const executionAuthorization = readExecutionAuthorization(funnel);
+      if (executionAuthorization.status === "authorized") {
+        return "Execution authorized";
+      }
+      if (executionAuthorization.status === "invalid") {
+        return "Execution chain invalid";
+      }
+      if (executionAuthorization.status === "blocked") {
+        return "Execution blocked";
+      }
+      return isResearchFunnelProbeAuthorized(funnel)
+        ? "Execution preflight pending"
+        : "Probe blocked";
+    }
+    case "discovery":
+      if (funnel.authorization_disposition === "backtrack_to_hypotheses") {
+        return "Backtrack required";
+      }
+      if (funnel.integrity_status === "partial") {
+        return "Discovery in progress";
+      }
+      return "Discovery";
+  }
+}
+
+function formatProbeAuthorization(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  if (
+    funnel.integrity_status === "unmeasured"
+    || funnel.authorization_disposition === "unmeasured"
+  ) {
+    return "Unmeasured";
+  }
+  return isResearchFunnelProbeAuthorized(funnel) ? "Authorized" : "Blocked";
+}
+
+function isResearchFunnelProbeAuthorized(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): boolean {
+  return funnel.collection_state === "quality_gate_passed"
+    && funnel.authorization_trusted
+    && funnel.integrity_status === "complete"
+    && funnel.authorization_disposition === "probe_authorized"
+    && funnel.authorization_probe_allowed;
+}
+
+function formatResearchFunnelLifecycle(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  const executionAuthorization = readExecutionAuthorization(funnel);
+  if (
+    funnel.lifecycle_stage === "probe_authorized"
+    && executionAuthorization.status === "blocked"
+  ) {
+    return "Probe selected; execution blocked";
+  }
+  if (
+    funnel.lifecycle_stage === "probe_authorized"
+    && executionAuthorization.status === "pending"
+  ) {
+    return "Probe selected; execution preflight pending";
+  }
+  if (
+    funnel.lifecycle_stage === "probe_authorized"
+    && !isResearchFunnelProbeAuthorized(funnel)
+  ) {
+    return "Probe Blocked";
+  }
+  return formatStatusLabel(funnel.lifecycle_stage);
+}
+
+function readExecutionAuthorization(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): NonNullable<RunJobProjection["research_funnel"]>["execution_authorization"] {
+  return funnel.execution_authorization ?? {
+    status: "unmeasured",
+    trusted: false,
+    authorized: false,
+    base_funnel_authorized: false,
+    candidate_prior_search_authorized: false,
+    estimator_authorized: false,
+    required_candidate_ids: [],
+    covered_candidate_ids: [],
+    reason_codes: []
+  };
+}
+
+function formatResearchFunnelDisposition(
+  funnel: NonNullable<RunJobProjection["research_funnel"]>
+): string {
+  switch (funnel.authorization_disposition) {
+    case "probe_authorized":
+      return isResearchFunnelProbeAuthorized(funnel)
+        ? "Probe authorized"
+        : "Probe decision blocked";
+    case "backtrack_to_hypotheses":
+      return "Backtrack to hypotheses";
+    case "unmeasured":
+      return "Unmeasured";
   }
 }
 

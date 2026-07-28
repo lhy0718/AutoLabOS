@@ -32,12 +32,19 @@ describe("modelPricing", () => {
     }
   });
 
-  it("keeps local Ollama models at zero dollars", () => {
+  it("uses provider context rather than a static model catalog for Ollama billing", () => {
+    const model = "local-model-a:latest";
+    expect(resolveModelBilling(model)).toBeUndefined();
+    expect(resolveModelBilling(model, { provider: "ollama" })).toMatchObject({
+      modelId: model,
+      billing: { kind: "local" }
+    });
     expect(
-      computeModelUsageCostUsd("qwen3.5:35b-a3b", {
-        inputTokens: 100_000,
-        outputTokens: 50_000
-      })
+      computeModelUsageCostUsd(
+        model,
+        { inputTokens: 100_000, outputTokens: 50_000 },
+        { provider: "ollama" }
+      )
     ).toBe(0);
   });
 

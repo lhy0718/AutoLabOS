@@ -138,6 +138,7 @@ export interface StoredCorpusRow {
   paper_id: string;
   title: string;
   abstract: string;
+  query_families?: string[];
   year?: number;
   venue?: string;
   url?: string;

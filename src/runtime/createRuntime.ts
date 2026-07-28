@@ -37,7 +37,11 @@ import { OpenAiResponsesTextClient } from "../integrations/openai/responsesTextC
 import { CodexOAuthResponsesTextClient } from "../integrations/codex/oauthResponsesTextClient.js";
 import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import { OllamaPdfAnalysisClient } from "../integrations/ollama/ollamaPdfAnalysisClient.js";
-import { DEFAULT_OLLAMA_BASE_URL } from "../integrations/ollama/modelCatalog.js";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  requireOllamaModel,
+  type OllamaModelRole
+} from "../integrations/ollama/modelCatalog.js";
 import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
 import { detectExecutionProfile } from "./executionProfile.js";
 import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
@@ -173,25 +177,26 @@ export async function createAutoLabOSRuntime(
     reasoningEffort: config.providers.openai.reasoning_effort
   });
 
-  // Ollama clients
-  const ollamaConfig = config.providers.ollama;
-  const ollamaBaseUrl = ollamaConfig?.base_url || DEFAULT_OLLAMA_BASE_URL;
-  const ollamaHttpClient = new OllamaClient(ollamaBaseUrl);
-  const ollamaTaskLlm = new OllamaLLMClient(ollamaHttpClient, {
-    model: ollamaConfig?.research_model || "qwen3.5:35b-a3b"
-  });
-  const ollamaChatLlm = new OllamaLLMClient(ollamaHttpClient, {
-    model: ollamaConfig?.chat_model || "qwen3.5:27b"
-  });
-  const ollamaExperimentLlm = new OllamaLLMClient(ollamaHttpClient, {
-    model: ollamaConfig?.experiment_model || ollamaConfig?.research_model || "qwen3.5:35b-a3b"
-  });
-  const ollamaPdfLlm = new OllamaLLMClient(ollamaHttpClient, {
-    model: ollamaConfig?.vision_model || "qwen3.5:35b-a3b"
-  });
+  const createOllamaHttpClient = () =>
+    new OllamaClient(config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL);
+  const resolveOllamaRoleModel = (role: OllamaModelRole): string => {
+    const ollama = config.providers.ollama;
+    const configured = role === "chat"
+      ? ollama?.chat_model
+      : role === "research"
+        ? ollama?.research_model
+        : role === "experiment"
+          ? ollama?.experiment_model || ollama?.research_model
+          : ollama?.vision_model;
+    return requireOllamaModel(configured, role);
+  };
+  const createOllamaRoleLlm = (role: OllamaModelRole) =>
+    new OllamaLLMClient(createOllamaHttpClient(), {
+      model: resolveOllamaRoleModel(role)
+    });
   const ollamaPdfAnalysis = new OllamaPdfAnalysisClient(
-    ollamaHttpClient,
-    ollamaConfig?.vision_model || "qwen3.5:35b-a3b"
+    createOllamaHttpClient,
+    () => resolveOllamaRoleModel("vision")
   );
 
   const titleGenerator = new TitleGenerator(() => {
@@ -212,7 +217,7 @@ export async function createAutoLabOSRuntime(
     if (config.providers.llm_mode === "ollama") {
       return {
         runForText: async ({ prompt, systemPrompt, abortSignal }) =>
-          (await ollamaChatLlm.complete(prompt, { systemPrompt, abortSignal })).text
+          (await createOllamaRoleLlm("chat").complete(prompt, { systemPrompt, abortSignal })).text
       };
     }
     return {
@@ -234,17 +239,17 @@ export async function createAutoLabOSRuntime(
   const eventStream = new PersistedEventStream(paths.runsDir);
   const llm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiTaskLlm;
-    if (config.providers.llm_mode === "ollama") return ollamaTaskLlm;
+    if (config.providers.llm_mode === "ollama") return createOllamaRoleLlm("research");
     return codexOAuthTaskLlm;
   });
   const pdfTextLlm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiPdfLlm;
-    if (config.providers.llm_mode === "ollama") return ollamaPdfLlm;
+    if (config.providers.llm_mode === "ollama") return createOllamaRoleLlm("vision");
     return codexOAuthTaskLlm;
   });
   const experimentLlm = new RoutedLLMClient(() => {
     if (config.providers.llm_mode === "openai_api") return openAiExperimentLlm;
-    if (config.providers.llm_mode === "ollama") return ollamaExperimentLlm;
+    if (config.providers.llm_mode === "ollama") return createOllamaRoleLlm("experiment");
     return codexOAuthExperimentLlm;
   });
   const aci = new LocalAciAdapter();

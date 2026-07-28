@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
+  buildPaperAnalysisFilePrompt,
+  buildPaperAnalysisFileReviewPrompt,
+  buildPaperAnalysisPrompt,
+  buildPaperAnalysisReviewPrompt,
   normalizePaperAnalysis,
   parsePaperAnalysisJson,
   shouldFallbackResponsesPdfToLocalText
@@ -247,6 +251,28 @@ afterEach(() => {
 });
 
 describe("paperAnalyzer", () => {
+  it("requires contiguous verbatim evidence spans in extraction and review prompts", () => {
+    const plan = {
+      focus_sections: ["limitations"],
+      target_claims: ["primary limitation"],
+      extraction_priorities: ["grounded evidence"],
+      verification_checks: ["exact source span"],
+      risk_flags: []
+    };
+    const prompts = [
+      buildPaperAnalysisPrompt(paper, source, plan),
+      buildPaperAnalysisFilePrompt(paper, plan),
+      buildPaperAnalysisReviewPrompt(paper, source, plan, {}),
+      buildPaperAnalysisFileReviewPrompt(paper, plan, {})
+    ];
+
+    for (const prompt of prompts) {
+      expect(prompt).toContain("contiguous verbatim excerpt");
+      expect(prompt).toContain("Never paraphrase evidence_span");
+      expect(prompt).not.toContain("quoted or paraphrased");
+    }
+  });
+
   it("parses fenced JSON responses", () => {
     const parsed = parsePaperAnalysisJson('```json\n{"summary":"ok","evidence_items":[]}\n```');
     expect(parsed.summary).toBe("ok");
@@ -700,7 +726,11 @@ describe("paperAnalyzer", () => {
           metrics: ["PDF metric"],
           novelty: "PDF novelty",
           reproducibility_notes: ["PDF repro"],
-          evidence_items: [{ claim: "PDF claim", confidence: 0.9 }]
+          evidence_items: [{
+            claim: "PDF claim",
+            evidence_span: "Full text with extracted content.",
+            confidence: 0.9
+          }]
         })
       })
     } as unknown as ResponsesPdfAnalysisClient;
@@ -708,6 +738,7 @@ describe("paperAnalyzer", () => {
     const result = await analyzePaperWithResponsesPdf({
       client,
       paper,
+      source: fullTextSource,
       pdfUrl: "https://example.com/paper.pdf",
       model: "gpt-5.4"
     });
@@ -715,6 +746,85 @@ describe("paperAnalyzer", () => {
     expect(result.summaryRow.summary).toBe("PDF summary");
     expect(result.summaryRow.source_type).toBe("full_text");
     expect(result.evidenceRows[0].claim).toBe("PDF claim");
+    expect(result.evidenceRows[0].grounding_status).toBe("grounded_span");
+    expect(result.evidenceRows[0].confidence).toBe(0.9);
+  });
+
+  it("grounds Responses PDF evidence against lossless local text outside the prompt excerpt", async () => {
+    const exactMiddleSentence =
+      "Finally, the authors state that this assumption may not hold in practice.";
+    const client = {
+      analyzePdf: async () => ({
+        text: JSON.stringify({
+          summary: "PDF summary",
+          limitations: [exactMiddleSentence],
+          evidence_items: [{
+            claim: "The paper identifies a bounded assumption.",
+            limitation_slot: exactMiddleSentence,
+            limitation_kind: "scientific",
+            evidence_span: exactMiddleSentence,
+            confidence: 0.9
+          }]
+        })
+      })
+    } as unknown as ResponsesPdfAnalysisClient;
+
+    const result = await analyzePaperWithResponsesPdf({
+      client,
+      paper,
+      source: {
+        sourceType: "full_text",
+        text: "[PAGE 1]\nOpening excerpt only.\n[SECTION-AWARE EXCERPT: 1/1 PAGES]",
+        groundingText: `[PAGE 1]\nOpening context. ${exactMiddleSentence} Closing context.`,
+        analysisScope: "full_text_excerpt",
+        fullTextAvailable: true
+      },
+      pdfUrl: "https://example.com/paper.pdf",
+      model: "gpt-5.4"
+    });
+
+    expect(result.evidenceRows[0]).toMatchObject({
+      source_scope: "full_document",
+      grounding_status: "grounded_span",
+      confidence: 0.9
+    });
+  });
+
+  it("does not report full-document verification when only a bounded local excerpt is available", async () => {
+    const exactExcerptSentence = "The bounded excerpt contains this reported limitation.";
+    const client = {
+      analyzePdf: async () => ({
+        text: JSON.stringify({
+          summary: "PDF summary",
+          evidence_items: [{
+            claim: "The paper identifies a limitation.",
+            limitation_slot: exactExcerptSentence,
+            limitation_kind: "scientific",
+            evidence_span: exactExcerptSentence,
+            confidence: 0.9
+          }]
+        })
+      })
+    } as unknown as ResponsesPdfAnalysisClient;
+
+    const result = await analyzePaperWithResponsesPdf({
+      client,
+      paper,
+      source: {
+        sourceType: "full_text",
+        text: `[PAGE 1]\n${exactExcerptSentence}\n[SECTION-AWARE EXCERPT: 1/8 PAGES]`,
+        analysisScope: "full_text_excerpt",
+        fullTextAvailable: true
+      },
+      pdfUrl: "https://example.com/paper.pdf",
+      model: "gpt-5.4"
+    });
+
+    expect(result.evidenceRows[0]).toMatchObject({
+      source_scope: "full_text_excerpt",
+      grounding_status: "grounded_span",
+      confidence: 0.9
+    });
   });
 
   it("does not retry the remote Responses PDF path after an extractor timeout", async () => {
@@ -790,6 +900,35 @@ describe("paperAnalyzer", () => {
 
     expect(normalized.evidenceRows[0].confidence).toBe(0.45);
     expect(normalized.evidenceRows[0].confidence_reason).toContain("could not be grounded");
+  });
+
+  it("never treats an evidence span as grounded when source text is empty", () => {
+    const normalized = normalizePaperAnalysis(
+      paper,
+      {
+        sourceType: "full_text",
+        text: "",
+        fullTextAvailable: true
+      },
+      {
+        summary: "A concise summary",
+        evidence_items: [{
+          claim: "Agents improve performance.",
+          limitation_slot: "Only tested on one benchmark.",
+          limitation_kind: "scientific",
+          evidence_span: "A span that cannot be checked.",
+          confidence: 0.95
+        }]
+      }
+    );
+
+    expect(normalized.evidenceRows[0]).toMatchObject({
+      limitation_kind: "scientific",
+      source_scope: "full_document",
+      grounding_status: "ungrounded_span",
+      confidence: 0.35
+    });
+    expect(normalized.evidenceRows[0].confidence_reason).toContain("no source text was available");
   });
 
   it("propagates abort during text LLM analysis", async () => {

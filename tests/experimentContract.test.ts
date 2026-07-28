@@ -11,6 +11,7 @@ import {
   loadExperimentContract,
   type ExperimentContract
 } from "../src/core/experiments/experimentContract.js";
+import type { ResultsPlanV2 } from "../src/core/analysis/resultsTableSchema.js";
 import {
   FailureMemory,
   buildErrorFingerprint
@@ -53,6 +54,39 @@ function makeMinimalRun(id: string): RunRecord {
   };
 }
 
+function makeResultsPlan(
+  metricId = "metric-primary",
+  direction: "higher_better" | "lower_better" = "higher_better"
+): ResultsPlanV2 {
+  return {
+    schema_version: "2.0",
+    required_metrics: [
+      {
+        id: metricId,
+        label: "Primary metric",
+        direction,
+        unit: "points"
+      }
+    ],
+    minimum_series_count: 2,
+    minimum_comparison_count: 1,
+    required_series: [
+      { id: "series-reference", role: "baseline" },
+      { id: "series-subject", role: "primary" }
+    ],
+      required_comparisons: [
+      {
+        id: "comparison-primary",
+        subject_series_id: "series-subject",
+        reference_series_id: "series-reference",
+        metric_id: metricId,
+          scope: { partition: "evaluation" }
+        }
+    ],
+    primary_comparison_id: "comparison-primary"
+  };
+}
+
 let tempDir: string;
 
 beforeEach(async () => {
@@ -76,23 +110,16 @@ describe("ExperimentContract", () => {
       expectedMetricEffect: "Improve macro-F1 by at least +0.5 points",
       abortCondition: "Abort if F1 drops below baseline by more than 1 point",
       keepOrDiscardRule: "Keep if macro-F1 improves; discard if no improvement",
-      metrics: ["macro-F1"],
-      resultsTableDirection: "higher_better"
+      resultsPlan: makeResultsPlan("metric-coordination")
     });
 
-    expect(contract.version).toBe(1);
+    expect(contract.version).toBe(2);
     expect(contract.run_id).toBe("test-run-1");
     expect(contract.hypothesis).toContain("Shared state schema");
     expect(contract.confounded).toBe(false);
     expect(contract.additional_changes).toBeUndefined();
-    expect(contract.results_table_schema).toEqual([
-      {
-        metric: "macro-F1",
-        baseline: null,
-        comparator: null,
-        delta: null,
-        direction: "higher_better"
-      }
+    expect(contract.results_plan.required_metrics).toEqual([
+      expect.objectContaining({ id: "metric-coordination", direction: "higher_better" })
     ]);
   });
 
@@ -107,8 +134,7 @@ describe("ExperimentContract", () => {
       expectedMetricEffect: "Improve metric",
       abortCondition: "None",
       keepOrDiscardRule: "Keep if improved",
-      metrics: ["accuracy"],
-      resultsTableDirection: "higher_better"
+      resultsPlan: makeResultsPlan()
     });
 
     expect(contract.confounded).toBe(true);
@@ -125,15 +151,14 @@ describe("ExperimentContract", () => {
       expectedMetricEffect: "Identify whether a confirmatory rerun is justified",
       abortCondition: "Abort if cells are incomplete",
       keepOrDiscardRule: "Keep only as a pilot signal",
-      metrics: ["accuracy_delta_vs_baseline"],
+      resultsPlan: makeResultsPlan("metric-effect"),
       selectedDesign: {
         id: "plan_2",
         title: "Replicated condition-grid pilot with explicit claim ceiling",
         summary: "Pilot only; not sufficient for a paper-ready causal claim."
       },
       evidenceCeiling: "Pilot evidence only; do not make a paper-ready causal claim.",
-      paperCeiling: "Workshop/pilot note ceiling until confirmatory evidence exists.",
-      resultsTableDirection: "higher_better"
+      paperCeiling: "Workshop/pilot note ceiling until confirmatory evidence exists."
     });
 
     expect(contract.selected_design).toEqual({
@@ -145,9 +170,42 @@ describe("ExperimentContract", () => {
     expect(contract.paper_ceiling).toBe("Workshop/pilot note ceiling until confirmatory evidence exists.");
   });
 
+  it("preserves the primary effect criterion in the frozen results plan", () => {
+    const run = makeMinimalRun("test-run-1");
+    const resultsPlan = makeResultsPlan("metric-effect");
+    resultsPlan.primary_effect_criterion = {
+      comparison_id: "comparison-primary",
+      metric_id: "metric-effect",
+      metric_scale: "raw",
+      direction: "maximize",
+      effect_criterion: { operator: ">=", magnitude: 0.5 }
+    };
+
+    const contract = buildExperimentContract({
+      run,
+      hypothesis: "A bounded intervention exceeds its frozen effect threshold",
+      causalMechanism: "The intervention changes the measured outcome",
+      singleChange: "Enable the bounded intervention",
+      expectedMetricEffect: "Increase the primary metric by at least 0.5 points",
+      abortCondition: "Abort on incomplete paired evidence",
+      keepOrDiscardRule: "Keep only if the frozen effect criterion is met",
+      resultsPlan
+    });
+
+    expect(contract.results_plan.primary_effect_criterion).toEqual(
+      resultsPlan.primary_effect_criterion
+    );
+    expect(contract.results_plan.primary_effect_criterion).not.toBe(
+      resultsPlan.primary_effect_criterion
+    );
+    expect(contract.results_plan.primary_effect_criterion?.effect_criterion).not.toBe(
+      resultsPlan.primary_effect_criterion.effect_criterion
+    );
+  });
+
   it("validates a complete contract as valid", () => {
     const contract: ExperimentContract = {
-      version: 1,
+      version: 2,
       run_id: "test",
       created_at: new Date().toISOString(),
       hypothesis: "Real hypothesis",
@@ -158,15 +216,7 @@ describe("ExperimentContract", () => {
       abort_condition: "Abort if degraded",
       keep_or_discard_rule: "Keep if improved",
       baselines: ["current-system"],
-      results_table_schema: [
-        {
-          metric: "accuracy",
-          baseline: null,
-          comparator: null,
-          delta: null,
-          direction: "higher_better"
-        }
-      ]
+      results_plan: makeResultsPlan()
     };
 
     const result = validateExperimentContract(contract);
@@ -176,7 +226,7 @@ describe("ExperimentContract", () => {
 
   it("validates an incomplete contract with issues", () => {
     const contract: ExperimentContract = {
-      version: 1,
+      version: 2,
       run_id: "test",
       created_at: new Date().toISOString(),
       hypothesis: "(not specified)",
@@ -186,7 +236,8 @@ describe("ExperimentContract", () => {
       additional_changes: ["extra change"],
       expected_metric_effect: "Some effect",
       abort_condition: "None",
-      keep_or_discard_rule: "Default"
+      keep_or_discard_rule: "Default",
+      results_plan: makeResultsPlan()
     };
 
     const result = validateExperimentContract(contract);
@@ -204,15 +255,51 @@ describe("ExperimentContract", () => {
       expectedMetricEffect: "Effect",
       abortCondition: "Abort",
       keepOrDiscardRule: "Keep",
-      metrics: ["accuracy"],
-      resultsTableDirection: "higher_better"
+      resultsPlan: makeResultsPlan()
     });
 
     await writeExperimentContract(run, contract);
     const loaded = await loadExperimentContract("test-run-1");
     expect(loaded).toBeDefined();
     expect(loaded!.hypothesis).toBe("Test round-trip");
-    expect(loaded!.version).toBe(1);
+    expect(loaded!.version).toBe(2);
+  });
+
+  it("adapts an old contract only when reading persisted state", async () => {
+    const historical = {
+      version: 1,
+      run_id: "test-run-1",
+      created_at: new Date().toISOString(),
+      hypothesis: "Historical hypothesis",
+      causal_mechanism: "Historical mechanism",
+      single_change: "Historical change",
+      confounded: false,
+      expected_metric_effect: "Historical effect",
+      abort_condition: "Abort",
+      keep_or_discard_rule: "Keep",
+      baselines: ["reference-series"],
+      results_table_schema: [
+        {
+          metric: "metric-historical",
+          baseline: null,
+          comparator: null,
+          delta: null,
+          direction: "lower_better"
+        }
+      ]
+    };
+    await fs.writeFile(
+      path.join(tempDir, ".autolabos", "runs", "test-run-1", "experiment_contract.json"),
+      `${JSON.stringify(historical, null, 2)}\n`,
+      "utf8"
+    );
+
+    const loaded = await loadExperimentContract("test-run-1");
+
+    expect(loaded).toMatchObject({ version: 2, adapted_from_version: 1 });
+    expect(loaded?.results_plan.required_metrics).toEqual([
+      expect.objectContaining({ id: "metric-historical", direction: "lower_better" })
+    ]);
   });
 
   it("returns undefined when contract file does not exist", async () => {
@@ -220,9 +307,9 @@ describe("ExperimentContract", () => {
     expect(loaded).toBeUndefined();
   });
 
-  it("rejects a contract without results_table_schema", () => {
+  it("rejects a contract without an explicit results plan", () => {
     const contract: ExperimentContract = {
-      version: 1,
+      version: 2,
       run_id: "test",
       created_at: new Date().toISOString(),
       hypothesis: "Real hypothesis",
@@ -233,12 +320,12 @@ describe("ExperimentContract", () => {
       abort_condition: "Abort if degraded",
       keep_or_discard_rule: "Keep if improved",
       baselines: ["current-system"]
-    };
+    } as ExperimentContract;
 
     const result = validateExperimentContract(contract);
 
     expect(result.valid).toBe(false);
-    expect(result.issues.some((issue) => issue.includes("results_table_schema"))).toBe(true);
+    expect(result.issues.some((issue) => issue.includes("results_plan"))).toBe(true);
   });
 });
 

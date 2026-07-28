@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   existsSync,
   mkdtempSync,
@@ -47,6 +47,70 @@ import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/cor
 import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { LocalAciAdapter } from "../src/tools/aciLocalAdapter.js";
 import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
+import {
+  buildActiveTopicProbeContract,
+  type ActiveTopicProbeContract
+} from "../src/core/activeTopicProbeContract.js";
+import { buildCandidateObjectiveRaw } from "../src/core/effectCriterion.js";
+import {
+  hashCanonical,
+  type TopicPortfolioCandidate
+} from "../src/core/researchFunnel.js";
+import {
+  TOPIC_PROBE_DECISION_RELATIVE_PATH,
+  TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
+} from "../src/core/topicProbeOutcomeArtifacts.js";
+import { buildTopicProbeLineageFixture } from "./support/topicProbePortfolioFixture.js";
+
+vi.mock("../src/core/runs/topicProbeExecutionAuthorizationGate.js", async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import("../src/core/runs/topicProbeExecutionAuthorizationGate.js")
+  >();
+  return {
+    ...original,
+    loadTopicProbeExecutionAuthorizationGate: vi.fn(async ({
+      runId,
+      expectedResearchCycle
+    }: {
+      runId: string;
+      expectedResearchCycle: number;
+    }) => ({
+      schema_version: 1 as const,
+      artifact_kind: "topic_probe_execution_authorization_gate" as const,
+      run_id: runId,
+      research_cycle: expectedResearchCycle,
+      status: "authorized" as const,
+      effective_execution_authorized: true,
+      authorization: {
+        status: "authorized" as const,
+        trusted: true,
+        authorized: true,
+        base_funnel_authorized: true,
+        candidate_prior_search_authorized: true,
+        estimator_authorized: true,
+        required_candidate_ids: ["candidate_reference_1"],
+        covered_candidate_ids: ["candidate_reference_1"],
+        reason_codes: []
+      },
+      content_sha256: "0".repeat(64)
+    }))
+  };
+});
+
+vi.mock("../src/core/estimatorFeasibilityGate.js", async (importOriginal) => {
+  const original = await importOriginal<
+    typeof import("../src/core/estimatorFeasibilityGate.js")
+  >();
+  return {
+    ...original,
+    validatePersistedEstimatorFeasibilityGate: vi.fn(async () => ({
+      measured: true,
+      valid: true,
+      status: "pass" as const,
+      reasons: []
+    }))
+  };
+});
 
 const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
@@ -99,10 +163,10 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
     providers: {
       llm_mode: "codex_chatgpt_only" as const,
       codex: {
-        model: "gpt-5.4",
-        chat_model: "gpt-5.4",
-        experiment_model: "gpt-5.4",
-        pdf_model: "gpt-5.4",
+        model: "configured-model",
+        chat_model: "configured-model",
+        experiment_model: "configured-model",
+        pdf_model: "configured-model",
         reasoning_effort: "xhigh" as const,
         chat_reasoning_effort: "low" as const,
         experiment_reasoning_effort: "xhigh" as const,
@@ -114,10 +178,10 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
         auth_required: true
       },
       openai: {
-        model: "gpt-5.4",
-        chat_model: "gpt-5.4",
-        experiment_model: "gpt-5.4",
-        pdf_model: "gpt-5.4",
+        model: "configured-model",
+        chat_model: "configured-model",
+        experiment_model: "configured-model",
+        pdf_model: "configured-model",
         reasoning_effort: "medium" as const,
         chat_reasoning_effort: "low" as const,
         experiment_reasoning_effort: "medium" as const,
@@ -126,12 +190,12 @@ function createTestConfig(candidateIsolation: "attempt_snapshot_restore" | "atte
       }
     },
     analysis: {
-      responses_model: "gpt-5.4",
+      responses_model: "configured-model",
       responses_reasoning_effort: "xhigh" as const
     },
     papers: { max_results: 200, per_second_limit: 1 },
     research: {
-      default_topic: "Multi-agent collaboration",
+      default_topic: "configured research topic",
       default_constraints: ["recent papers"],
       default_objective_metric: "reproducibility"
     },
@@ -152,7 +216,7 @@ const MINIMAL_METRICS_RUNNER_SOURCE = [
   "",
   "def write_metrics(metrics_path):",
   "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
-  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+  "        handle.write('{\"status\":\"completed\",\"primary_score\":1.0}')",
   "",
   "def main():",
   "    parser = argparse.ArgumentParser()",
@@ -172,7 +236,7 @@ const MINIMAL_METRICS_RUNNER_FOOTER = [
   "",
   "def write_metrics(metrics_path):",
   "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
-  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+  "        handle.write('{\"status\":\"completed\",\"primary_score\":1.0}')",
   "",
   "def main():",
   "    write_metrics('metrics.json')",
@@ -181,6 +245,85 @@ const MINIMAL_METRICS_RUNNER_FOOTER = [
   "    main()",
   ""
 ].join("\n");
+
+function buildImplementTopicProbeContract(runId: string): ActiveTopicProbeContract {
+  const objectiveContract = {
+    primary_metric: "quality_index",
+    metric_unit: "unitless",
+    metric_scale: "raw" as const,
+    metric_direction: "maximize" as const,
+    comparator: "reference_series",
+    effect_criterion: {
+      basis: "delta_vs_reference" as const,
+      magnitude: 0.02,
+      scale: "raw" as const,
+      inclusive: true
+    }
+  };
+  const payload: Omit<TopicPortfolioCandidate, "content_sha256"> = {
+    topic_id: "topic_bounded_comparison",
+    source_candidate_id: "candidate_bounded_comparison",
+    statement: "A bounded comparison reports an auditable primary measure.",
+    cluster_ids: ["cluster_bounded_comparison"],
+    supported_gap_ids: ["gap_bounded_comparison"],
+    evidence_links: ["evidence_bounded_comparison"],
+    unresolved_evidence_links: [],
+    closest_prior_paper_ids: ["paper_reference", "paper_adjacent"],
+    closest_prior_full_text_paper_ids: ["paper_reference", "paper_adjacent"],
+    ...objectiveContract,
+    objective_raw: buildCandidateObjectiveRaw(objectiveContract),
+    dataset_task_bench: "declared_evaluation_scope",
+    falsifier: "The declared effect boundary is not reached.",
+    local_budget: JSON.stringify({
+      bounded_probe: {
+        max_gpu_hours: 2,
+        max_concurrent_gpus: 1,
+        max_trials: 10
+      },
+      confirmatory: {
+        max_gpu_hours: 9,
+        max_concurrent_gpus: 1,
+        max_trials: 20
+      }
+    }),
+    brief_compute_budget_ceiling: {
+      bounded_probe: {
+        max_gpu_hours: 2,
+        max_concurrent_gpus: 1,
+        max_trials: 10
+      },
+      confirmatory: {
+        max_gpu_hours: 9,
+        max_concurrent_gpus: 1,
+        max_trials: 20
+      }
+    },
+    kill_signal: "Stop when matched execution is unavailable.",
+    review_status: "kept",
+    probe_status: "shortlisted",
+    scores: {
+      novelty: 4,
+      feasibility: 4,
+      testability: 4,
+      cost: 4,
+      expected_gain: 4
+    },
+    gates: [],
+    probe_eligible: true
+  };
+  const candidate: TopicPortfolioCandidate = {
+    ...payload,
+    content_sha256: hashCanonical(payload)
+  };
+  return buildActiveTopicProbeContract({
+    runId,
+    researchCycle: 0,
+    researchMode: "topic_discovery",
+    portfolioContentSha256: "a".repeat(64),
+    candidate,
+    generatedAt: "2026-01-01T00:00:00.000Z"
+  });
+}
 
 function initGitWorkspace(workspace: string, trackedFiles: string[]): void {
   execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
@@ -219,18 +362,18 @@ describe("ImplementSessionManager", () => {
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "cache", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "hf_home", "hub", "datasets--provider--task"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "node_modules", "pkg"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "model_artifacts", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_artifacts", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_runs", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "condition_runs", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "conditions", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "checkpoints", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "evaluations", "candidate_condition_a"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "run_artifacts", "candidate_condition_a"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "model_artifacts", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_artifacts", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "training_runs", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "condition_runs", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "conditions", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "checkpoints", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "evaluations", "candidate_condition"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "run_artifacts", "candidate_condition"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "analysis_cache", "page_images", "paper_a"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "analysis_cache", "pdfs", "paper_a.pdf"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "seed_1", "metrics.json"))).toBe(true);
-    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "candidate_condition_a", "weights.safetensors"))).toBe(true);
+    expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "candidate_condition", "weights.safetensors"))).toBe(true);
     expect(shouldSkipAttemptSnapshotPath(path.join("workspace", "experiment", "runner.py"))).toBe(false);
   });
 
@@ -259,7 +402,7 @@ describe("ImplementSessionManager", () => {
   it("does not treat shell output redirection targets as required verification artifacts", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-redirection-paths-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "outputs", "experiment", "run_parameterized_study.py");
+    const scriptPath = path.join(workspace, "outputs", "experiment", "run_experiment.py");
     const stderrPath = path.join(workspace, "outputs", "experiment", "stderr.txt");
     const helpPath = path.join(workspace, "outputs", "experiment", "help.txt");
     mkdirSync(path.dirname(scriptPath), { recursive: true });
@@ -283,7 +426,7 @@ describe("ImplementSessionManager", () => {
   it("does not treat runtime output option targets as required verification artifacts", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-output-option-paths-"));
     tempDirs.push(workspace);
-    const scriptPath = path.join(workspace, "outputs", "experiment", "run_parameterized_study.py");
+    const scriptPath = path.join(workspace, "outputs", "experiment", "run_experiment.py");
     const smokeDir = path.join(workspace, "outputs", "experiment", "smoke_results");
     const attachedResultsDir = path.join(workspace, "outputs", "experiment", "attached_results");
     const inputConfigPath = path.join(workspace, "inputs", "config.yaml");
@@ -310,8 +453,8 @@ describe("ImplementSessionManager", () => {
   it("extracts workspace paths from nested bash -lc verification commands without treating the command string as an artifact", () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-shell-c-paths-"));
     tempDirs.push(workspace);
-    const runnerPath = path.join(workspace, "outputs", "experiment", "run_condition_sweep_experiment.py");
-    const wrapperPath = path.join(workspace, "outputs", "experiment", "run_condition_grid_study.py");
+    const runnerPath = path.join(workspace, "outputs", "experiment", "run_experiment.py");
+    const wrapperPath = path.join(workspace, "outputs", "experiment", "run_experiment.py");
     const shellPath = path.join(workspace, "outputs", "experiment", "run_command.sh");
     mkdirSync(path.dirname(runnerPath), { recursive: true });
     writeFileSync(runnerPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
@@ -342,9 +485,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -380,7 +523,7 @@ describe("ImplementSessionManager", () => {
       selectedDesign: {
         id: "plan_impl",
         hypothesis_ids: ["h_1"],
-        baselines: ["baseline_runner"]
+        baselines: ["reference_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
       managedBundleSupported: false
@@ -396,10 +539,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -411,10 +554,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -423,12 +566,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -510,9 +653,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation Progress Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -586,9 +729,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Workspace Manifest Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -626,10 +769,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -641,10 +784,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -653,12 +796,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -707,18 +850,18 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Materialize Verification Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
         writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
@@ -764,8 +907,8 @@ describe("ImplementSessionManager", () => {
     expect(result.scriptPath).toBe(publicScriptPath);
     expect(result.publicArtifacts).toContain(publicScriptPath);
     expect(existsSync(publicScriptPath)).toBe(true);
-    expect(publicManifest.generated_files).toContain("experiment/run_tabular_baselines.py");
-    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/run_tabular_baselines.py");
+    expect(publicManifest.generated_files).toContain("experiment/run_experiment.py");
+    expect(publicManifest.sections?.experiment?.generated_files).toContain("experiment/run_experiment.py");
   });
 
   it("fails before local verification when the claimed artifact was never materialized", async () => {
@@ -778,9 +921,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Missing Artifact Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -788,7 +931,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const eventStream = new InMemoryEventStream();
     const codex = {
       runTurnStream: async () => ({
@@ -831,9 +974,9 @@ describe("ImplementSessionManager", () => {
       status: "fail",
       failure_type: "spec"
     });
-    expect(verifyReport?.summary).toContain("run_tabular_baselines.py");
+    expect(verifyReport?.summary).toContain("run_experiment.py");
     expect(await memory.get<string[]>("implement_experiments.public_artifacts")).not.toContain(publicScriptPath);
-    expect(publicManifest.generated_files).not.toContain("experiment/run_tabular_baselines.py");
+    expect(publicManifest.generated_files).not.toContain("experiment/run_experiment.py");
     expect(publicManifest.workspace_changed_files).toEqual([]);
     expect(eventStream.history().some((event) => event.type === "PATCH_APPLIED")).toBe(false);
   });
@@ -848,19 +991,19 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Missing Supplemental Artifact Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const missingConfigPath = path.join(runDir, "baseline_config.json");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const eventStream = new InMemoryEventStream();
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
@@ -927,19 +1070,19 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Deferred Metrics Artifact Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const metricsPath = path.join(runDir, "metrics.json");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
         writeFileSync(privateScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
@@ -996,18 +1139,18 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Deferred Public Results Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const deferredSummaryPath = path.join(publicDir, "results", "summary.json");
     const deferredConditionsPath = path.join(publicDir, "results", "condition_results.json");
     const deferredReportPath = path.join(publicDir, "results", "report.md");
@@ -1077,18 +1220,18 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Deferred Root Public Result Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_parameterized_study.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_parameterized_study.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     const deferredRootResultPath = path.join(publicDir, "condition_results.json");
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
@@ -1144,19 +1287,19 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Deferred Verification Metrics Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
-    const privateScriptPath = path.join(runDir, "run_tabular_baselines.py");
+    const privateScriptPath = path.join(runDir, "run_experiment.py");
     const metricsPath = path.join(runDir, "metrics.json");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const publicScriptPath = path.join(publicDir, "run_tabular_baselines.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
 
     const codex = {
       runTurnStream: async ({ onEvent }: { onEvent?: (event: Record<string, unknown>) => void }) => {
@@ -1214,9 +1357,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Design Contract Drift Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1314,9 +1457,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Verification Contract Drift Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1409,9 +1552,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Verification Syntax Normalization Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1492,9 +1635,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation Stream",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: [],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1544,10 +1687,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -1559,10 +1702,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -1571,12 +1714,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -1612,9 +1755,157 @@ describe("ImplementSessionManager", () => {
     expect(capturedSystemPrompt).toContain(
       "must not populate completed_run_count"
     );
-    expect(capturedSystemPrompt).toContain("Configured real-execution LLM: provider=codex, model=gpt-5.4, reasoning=xhigh");
+    expect(capturedSystemPrompt).toContain("Configured real-execution LLM: provider=codex, model=configured-model, reasoning=xhigh");
   });
 
+  it("passes the active topic-probe compute schema and stage limit to the generated runner", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-topic-probe-contract-"));
+    tempDirs.push(workspace);
+    process.chdir(workspace);
+    const paths = resolveAppPaths(workspace);
+    await ensureScaffold(paths);
+
+    const runStore = new RunStore(paths);
+    const run = await runStore.createRun({
+      title: "Bounded Comparison Implementation",
+      topic: "bounded comparison implementation",
+      constraints: [],
+      objectiveMetric: "quality_index"
+    });
+    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
+    mkdirSync(path.join(runDir, "memory"), { recursive: true });
+    mkdirSync(path.join(runDir, "design_experiments_panel"), { recursive: true });
+    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - bounded_comparison\n", "utf8");
+    const topicProbeLineage = buildTopicProbeLineageFixture({
+      runId: run.id,
+      researchCycle: run.graph.researchCycle,
+      computeBudgetLimits: {
+        bounded_probe: {
+          max_gpu_hours: 2,
+          max_concurrent_gpus: 1,
+          max_trials: 10
+        },
+        confirmatory: {
+          max_gpu_hours: 9,
+          max_concurrent_gpus: 1,
+          max_trials: 20
+        }
+      }
+    });
+    const topicPortfolioPath = path.join(
+      runDir,
+      TOPIC_PROBE_PORTFOLIO_RELATIVE_PATH
+    );
+    mkdirSync(path.dirname(topicPortfolioPath), { recursive: true });
+    writeFileSync(
+      topicPortfolioPath,
+      `${JSON.stringify(topicProbeLineage.portfolio, null, 2)}\n`,
+      "utf8"
+    );
+    writeFileSync(
+      path.join(runDir, TOPIC_PROBE_DECISION_RELATIVE_PATH),
+      `${JSON.stringify(topicProbeLineage.decision, null, 2)}\n`,
+      "utf8"
+    );
+    writeFileSync(
+      path.join(runDir, "design_experiments_panel", "active_topic_probe_contract.json"),
+      `${JSON.stringify(topicProbeLineage.activeContract, null, 2)}\n`,
+      "utf8"
+    );
+    const memory = new RunContextMemory(path.join(runDir, "memory", "run_context.json"));
+    await memory.put(
+      "run_brief.raw",
+      [
+        "# Research Brief",
+        "",
+        "## Research Mode",
+        "topic_discovery",
+        "",
+        "## Topic",
+        "A bounded comparison with auditable compute usage."
+      ].join("\n")
+    );
+
+    const scriptPath = path.join(runDir, "experiment.py");
+    let capturedPrompt = "";
+    let capturedSystemPrompt = "";
+    const codex = {
+      runTurnStream: async ({
+        prompt,
+        systemPrompt
+      }: {
+        prompt?: string;
+        systemPrompt?: string;
+      }) => {
+        capturedPrompt = prompt || "";
+        capturedSystemPrompt = systemPrompt || "";
+        writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
+        return {
+          threadId: "thread-topic-probe-contract",
+          finalText: JSON.stringify({
+            summary: "Implemented the bounded comparison runner.",
+            experiment_mode: "real_execution",
+            run_command: `python3 ${JSON.stringify(scriptPath)}`,
+            test_command: `python3 -m py_compile ${JSON.stringify(scriptPath)}`,
+            requested_gpu_count: 1,
+            changed_files: [scriptPath],
+            artifacts: [scriptPath],
+            public_artifacts: [scriptPath],
+            script_path: scriptPath,
+            metrics_path: path.join(runDir, "metrics.json")
+          }),
+          events: []
+        };
+      }
+    } as unknown as CodexNativeClient;
+
+    const manager = new ImplementSessionManager({
+      config: createTestConfig(),
+      codex,
+      aci: new LocalAciAdapter(),
+      eventStream: new InMemoryEventStream(),
+      runStore,
+      workspaceRoot: workspace
+    });
+
+    const result = await manager.run(run);
+    const taskSpec = JSON.parse(
+      readFileSync(path.join(runDir, "implement_task_spec.json"), "utf8")
+    ) as any;
+
+    expect(result.verifyReport).toMatchObject({ status: "pass" });
+    expect(result.requestedGpuCount).toBe(1);
+    expect(result.testCommand).toBeUndefined();
+    expect(await memory.get("implement_experiments.requested_gpu_count")).toBe(1);
+    expect(await memory.get("implement_experiments.test_command")).toBeUndefined();
+    expect(taskSpec.context.topic_probe_compute_contract).toMatchObject({
+      stage: "bounded_probe",
+      active_limit: {
+        max_gpu_hours: 2,
+        max_concurrent_gpus: 1,
+        max_trials: 10
+      },
+      compute_usage_schema: {
+        type: "object",
+        additionalProperties: false,
+        required: [
+          "schema_version",
+          "execution_kind",
+          "actual_gpu_count",
+          "fresh_executed_trials",
+          "cached_trials"
+        ]
+      }
+    });
+    expect(capturedPrompt).toContain('"topic_probe_compute_contract": {');
+    expect(capturedPrompt).toContain('"additionalProperties": false');
+    expect(capturedPrompt).toContain('"max_trials": 10');
+    expect(capturedPrompt).toContain('"requested_gpu_count"');
+    expect(capturedSystemPrompt).toContain("## Topic-Probe Compute Contract");
+    expect(capturedSystemPrompt).toContain("Active stage: bounded_probe");
+    expect(capturedSystemPrompt).toContain('"additionalProperties":false');
+    expect(capturedSystemPrompt).toContain('"max_trials":10');
+  });
   it("collects an execution environment snapshot before implement_experiments and prepends it to the system prompt", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-env-snapshot-"));
     tempDirs.push(workspace);
@@ -1625,9 +1916,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation Environment Snapshot",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: [],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1706,9 +1997,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Public Script Focus",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: [],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -1717,7 +2008,7 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     mkdirSync(publicDir, { recursive: true });
-    const publicScriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const publicScriptPath = path.join(publicDir, "run_experiment.py");
     writeFileSync(publicScriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
     let capturedPrompt = "";
@@ -1765,9 +2056,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Long Term Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     tempDirs.push(path.resolve(".autolabos", "runs", run.id));
 
@@ -1782,8 +2073,8 @@ describe("ImplementSessionManager", () => {
         id: "lt_seed_1",
         runId: run.id,
         category: "implementation",
-        text: "Prefer the prior accuracy runner from generated_tradeoff_experiment.py with Vendor/Model-3B and a numeric condition marker while keeping py_compile first.",
-        tags: ["implement_experiments", "agent reasoning", "accuracy", "generated_tradeoff_experiment.py", "Vendor/Model-3B"],
+        text: "Prefer the prior primary_score runner from run_experiment.py with private-provider/private-checkpoint and a numeric condition marker while keeping py_compile first.",
+        tags: ["implement_experiments", "configured research topic", "primary_score", "run_experiment.py", "private-provider/private-checkpoint"],
         createdAt: "2026-03-01T00:00:00.000Z"
       })}\n`,
       "utf8"
@@ -1819,10 +2110,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -1834,10 +2125,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -1846,12 +2137,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -1881,14 +2172,14 @@ describe("ImplementSessionManager", () => {
       .map((line) => JSON.parse(line) as { category: string; text: string; tags: string[] });
 
     expect(capturedPrompt).toContain("Long-term implementation memory:");
-    expect(capturedPrompt).toContain("Prefer the prior accuracy runner");
+    expect(capturedPrompt).toContain("Prefer the prior primary_score runner");
     expect(capturedPrompt).toContain("generated_script");
     expect(capturedPrompt).toContain("configured_model");
-    expect(capturedPrompt).not.toContain("generated_tradeoff_experiment.py");
-    expect(capturedPrompt).not.toContain("Vendor/Model-3B");
-    expect(longTermMemory?.retrieved[0]?.text).toContain("Prefer the prior accuracy runner");
-    expect(longTermMemory?.retrieved[0]?.text).not.toContain("generated_tradeoff_experiment.py");
-    expect(longTermMemory?.retrieved[0]?.tags).not.toContain("generated_tradeoff_experiment.py");
+    expect(capturedPrompt).not.toContain("run_experiment.py");
+    expect(capturedPrompt).not.toContain("private-provider/private-checkpoint");
+    expect(longTermMemory?.retrieved[0]?.text).toContain("Prefer the prior primary_score runner");
+    expect(longTermMemory?.retrieved[0]?.text).not.toContain("run_experiment.py");
+    expect(longTermMemory?.retrieved[0]?.tags).not.toContain("run_experiment.py");
     expect(longTermMemory?.saved?.id).toBeTruthy();
     expect(longTermEntries).toHaveLength(2);
     expect(longTermEntries.at(-1)?.category).toBe("implementation");
@@ -1911,7 +2202,7 @@ describe("ImplementSessionManager", () => {
       title: "Runner Feedback Run",
       topic: "metrics runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -1960,7 +2251,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ prompt }: { prompt?: string }) => {
         capturedPrompt = prompt || "";
-        writeFileSync(targetScript, "def main():\n    return {'accuracy': 1.0}\n", "utf8");
+        writeFileSync(targetScript, "def main():\n    return {'primary_score': 1.0}\n", "utf8");
         return {
           threadId: "thread-impl-runner-feedback",
           finalText: JSON.stringify({
@@ -1985,10 +2276,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -2000,10 +2291,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -2012,12 +2303,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -2053,7 +2344,7 @@ describe("ImplementSessionManager", () => {
     const workspace = "/tmp/autolabos-localization-guard";
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const paperEvidence = path.join(workspace, "outputs", "study", "paper", "evidence_links.json");
-    const runner = path.join(publicDir, "run_condition_grid_study.py");
+    const runner = path.join(publicDir, "run_experiment.py");
     const guarded = applyRunnerFeedbackLocalizationGuard(
       {
         context: {
@@ -2062,7 +2353,7 @@ describe("ImplementSessionManager", () => {
             status: "fail",
             trigger: "auto_handoff",
             stage: "metrics",
-            summary: 'Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json.',
+            summary: 'Experiment metrics contract failed: Objective metric "primary_score_delta_vs_baseline" was not found in metrics.json.',
             command: `python3 ${JSON.stringify(runner)} --metrics-path ${JSON.stringify(path.join(workspace, ".autolabos", "runs", "r1", "metrics.json"))}`,
             suggested_next_action:
               "Repair the experiment implementation so completed metrics include the configured objective metric.",
@@ -2101,7 +2392,7 @@ describe("ImplementSessionManager", () => {
         runner_feedback: {
           status: "fail",
           summary:
-            'Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Metrics evidence: condition_state_reasons=no usable normalized training texts:2.'
+            'Experiment metrics contract failed: Objective metric "primary_score_delta_vs_baseline" was not found in metrics.json. Metrics evidence: condition_state_reasons=no usable normalized training texts:2.'
         }
       }
     } as never;
@@ -2162,7 +2453,7 @@ describe("ImplementSessionManager", () => {
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     const helper = path.join(publicDir, "experiment.py");
     const command = path.join(publicDir, "run_command.sh");
-    const runner = path.join(publicDir, "run_condition_grid_study.py");
+    const runner = path.join(publicDir, "run_experiment.py");
     const guarded = applyRunnerFeedbackLocalizationGuard(
       {
         context: {
@@ -2171,7 +2462,7 @@ describe("ImplementSessionManager", () => {
             status: "fail",
             trigger: "auto_handoff",
             stage: "runtime",
-            summary: `Traceback (most recent call last): File "${runner}", line 4231, in run_locked_condition_study TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'`,
+            summary: `Traceback (most recent call last): File "${runner}", line 4231, in run_experiment TypeError: _build_model_load_kwargs() missing 1 required positional argument: 'local_files_only'`,
             command: `bash ${JSON.stringify(command)}`,
             suggested_next_action: "Repair the experiment runner traceback.",
             recorded_at: "2026-05-17T20:49:56.189Z"
@@ -2210,7 +2501,7 @@ describe("ImplementSessionManager", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     writeFileSync(scriptPath, "print('runner')\n", "utf8");
     writeFileSync(
@@ -2219,7 +2510,7 @@ describe("ImplementSessionManager", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'RUNNER="${SCRIPT_DIR}/run_condition_sweep_experiment.py"',
+        'RUNNER="${SCRIPT_DIR}/run_experiment.py"',
         'exec "${PYTHON_BIN:-python3}" "$RUNNER" --metrics-path "$1"'
       ].join("\n"),
       "utf8"
@@ -2233,7 +2524,7 @@ describe("ImplementSessionManager", () => {
     tempDirs.push(workspace);
     const publicDir = path.join(workspace, "outputs", "study", "experiment");
     mkdirSync(publicDir, { recursive: true });
-    const scriptPath = path.join(publicDir, "run_condition_sweep_experiment.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const wrapperPath = path.join(publicDir, "run_command.sh");
     writeFileSync(scriptPath, "print('runner')\n", "utf8");
     writeFileSync(
@@ -2242,7 +2533,7 @@ describe("ImplementSessionManager", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         'SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
-        'RUNNER_SCRIPT="${RUNNER_SCRIPT:-${SCRIPT_DIR}/run_condition_sweep_experiment.py}"',
+        'RUNNER_SCRIPT="${RUNNER_SCRIPT:-${SCRIPT_DIR}/run_experiment.py}"',
         'PYTHON_RUNNER_CMD=( "${PYTHON_BIN:-python3}" "${RUNNER_SCRIPT}" --condition-axis-a 2 4 --condition-axis-b 0 1 )',
         '"${PYTHON_RUNNER_CMD[@]}"'
       ].join("\n"),
@@ -2260,8 +2551,8 @@ describe("ImplementSessionManager", () => {
       entries: [
         "experiment.py",
         "run_command.sh",
-        "run_condition_grid_study.py",
-        "run_condition_sweep_experiment.py"
+        "run_experiment.py",
+        "run_experiment.py"
       ],
       runnerFeedback: {
         source: "run_experiments",
@@ -2269,16 +2560,16 @@ describe("ImplementSessionManager", () => {
         trigger: "auto_handoff",
         stage: "command",
         summary:
-          "Local verification failed because run_condition_sweep_experiment.py reported unrecognized arguments: --experiment-dir.",
+          "Local verification failed because run_experiment.py reported unrecognized arguments: --experiment-dir.",
         command: "bash run_command.sh --experiment-dir outputs/study/experiment",
         stderr_excerpt:
-          "run_condition_sweep_experiment.py: error: unrecognized arguments: --experiment-dir",
+          "run_experiment.py: error: unrecognized arguments: --experiment-dir",
         suggested_next_action: "Repair the public wrapper without replacing the canonical runner.",
         recorded_at: "2026-05-20T00:00:00.000Z"
       }
     });
 
-    expect(selected).toBe(path.join(publicDir, "run_condition_sweep_experiment.py"));
+    expect(selected).toBe(path.join(publicDir, "run_experiment.py"));
   });
 
             it("ignores stale runner feedback after design_experiments reruns", async () => {
@@ -2293,7 +2584,7 @@ describe("ImplementSessionManager", () => {
       title: "Stale Runner Feedback Run",
       topic: "metrics runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "design_experiments";
     run.graph.currentNode = "design_experiments";
@@ -2332,7 +2623,7 @@ describe("ImplementSessionManager", () => {
     const codex = {
       runTurnStream: async ({ prompt }: { prompt?: string }) => {
         capturedPrompt = prompt || "";
-        writeFileSync(targetScript, "def main():\n    return {'accuracy': 1.0}\n", "utf8");
+        writeFileSync(targetScript, "def main():\n    return {'primary_score': 1.0}\n", "utf8");
         return {
           threadId: "thread-stale-runner-feedback",
           finalText: JSON.stringify({
@@ -2357,10 +2648,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -2372,10 +2663,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -2384,12 +2675,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -2417,231 +2708,6 @@ describe("ImplementSessionManager", () => {
     expect(await memory.get("run_experiments.feedback_for_implementer")).toBeNull();
   });
 
-  it("promotes synthetic reproducibility runs to the reusable real_execution bundle", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-promote-"));
-    tempDirs.push(workspace);
-    process.chdir(workspace);
-    const paths = resolveAppPaths(workspace);
-    await ensureScaffold(paths);
-
-    const runStore = new RunStore(paths);
-    const run = await runStore.createRun({
-      title: "Reproducibility Promotion",
-      topic: "Multi-agent collaboration",
-      constraints: ["recent papers", "last five years"],
-      objectiveMetric: "state-of-the-art reproducibility"
-    });
-
-    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - shared-state schema\n", "utf8");
-
-    const syntheticScriptPath = path.join(runDir, "experiment.py");
-    const publicDir = buildPublicExperimentDir(workspace, run);
-    const codex = {
-      runTurnStream: async () => {
-        writeFileSync(syntheticScriptPath, "print('synthetic')\n", "utf8");
-        return {
-          threadId: "thread-impl-promote",
-          finalText: JSON.stringify({
-            summary: "Implemented a synthetic validation harness because a real benchmark path was not obvious.",
-            run_command: `python3 ${JSON.stringify(syntheticScriptPath)}`,
-            changed_files: [syntheticScriptPath],
-            artifacts: [syntheticScriptPath],
-            script_path: syntheticScriptPath,
-            metrics_path: path.join(runDir, "metrics.json"),
-            experiment_mode: "synthetic_validation"
-          }),
-          events: []
-        };
-      }
-    } as unknown as CodexNativeClient;
-
-    const eventStream = new InMemoryEventStream();
-    const manager = new ImplementSessionManager({
-      config: {
-        version: 1,
-        project_name: "test",
-        providers: {
-          llm_mode: "codex_chatgpt_only",
-          codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
-            reasoning_effort: "xhigh",
-            chat_reasoning_effort: "low",
-            experiment_reasoning_effort: "xhigh",
-            command_reasoning_effort: "low",
-            fast_mode: false,
-            chat_fast_mode: false,
-            experiment_fast_mode: false,
-            pdf_fast_mode: false,
-            auth_required: true
-          },
-          openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
-            reasoning_effort: "medium",
-            chat_reasoning_effort: "low",
-            experiment_reasoning_effort: "medium",
-            command_reasoning_effort: "low",
-            api_key_required: true
-          }
-        },
-        analysis: {
-          responses_model: "gpt-5.4",
-          responses_reasoning_effort: "xhigh"
-        },
-        papers: { max_results: 200, per_second_limit: 1 },
-        research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers"],
-          default_objective_metric: "reproducibility"
-        },
-        workflow: { mode: "agent_approval", wizard_enabled: true },
-        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: true },
-        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
-      },
-      codex,
-      aci: new LocalAciAdapter(),
-      eventStream,
-      runStore,
-      workspaceRoot: workspace
-    });
-
-    const result = await manager.run(run);
-    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
-
-    expect(result.experimentMode).toBe("real_execution");
-    expect(result.scriptPath).toBe(path.join(publicDir, "run_experiment.py"));
-    expect(result.runCommand).toContain(path.join(publicDir, "run_experiment.py"));
-    expect(await memory.get("implement_experiments.mode")).toBe("real_execution");
-
-    const publicConfig = JSON.parse(readFileSync(path.join(publicDir, "experiment_config.json"), "utf8")) as Record<
-      string,
-      unknown
-    >;
-    expect(publicConfig.llm_profile).toMatchObject({
-      provider: "codex",
-      model: "gpt-5.4",
-      reasoning_effort: "xhigh"
-    });
-    expect(result.publicArtifacts).toContain(path.join(publicDir, "README.md"));
-  }, 15000);
-
-  it("replaces incompatible real_execution commands with the managed public bundle", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-managed-real-"));
-    tempDirs.push(workspace);
-    process.chdir(workspace);
-    const paths = resolveAppPaths(workspace);
-    await ensureScaffold(paths);
-
-    const runStore = new RunStore(paths);
-    const run = await runStore.createRun({
-      title: "Managed Real Execution",
-      topic: "Multi-agent collaboration",
-      constraints: ["recent papers", "last five years"],
-      objectiveMetric: "state-of-the-art reproducibility"
-    });
-
-    const runDir = path.join(workspace, ".autolabos", "runs", run.id);
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - shared-state schema\n", "utf8");
-
-    const publicDir = buildPublicExperimentDir(workspace, run);
-    const incompatibleScriptPath = path.join(publicDir, "run_experiment.py");
-    const codex = {
-      runTurnStream: async () => {
-        mkdirSync(publicDir, { recursive: true });
-        writeFileSync(incompatibleScriptPath, "print('custom real execution')\n", "utf8");
-        return {
-          threadId: "thread-impl-managed-real",
-          finalText: JSON.stringify({
-            summary: "Implemented a real execution runner.",
-            run_command: `python3 ${JSON.stringify(incompatibleScriptPath)} --metadata-dir ${JSON.stringify(runDir)} --metrics-out ${JSON.stringify(path.join(runDir, "metrics.json"))}`,
-            changed_files: [incompatibleScriptPath],
-            artifacts: [incompatibleScriptPath],
-            public_dir: publicDir,
-            public_artifacts: [incompatibleScriptPath],
-            script_path: incompatibleScriptPath,
-            metrics_path: path.join(runDir, "metrics.json"),
-            experiment_mode: "real_execution"
-          }),
-          events: []
-        };
-      }
-    } as unknown as CodexNativeClient;
-
-    const eventStream = new InMemoryEventStream();
-    const manager = new ImplementSessionManager({
-      config: {
-        version: 1,
-        project_name: "test",
-        providers: {
-          llm_mode: "codex_chatgpt_only",
-          codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
-            reasoning_effort: "xhigh",
-            chat_reasoning_effort: "low",
-            experiment_reasoning_effort: "xhigh",
-            command_reasoning_effort: "low",
-            fast_mode: false,
-            chat_fast_mode: false,
-            experiment_fast_mode: false,
-            pdf_fast_mode: false,
-            auth_required: true
-          },
-          openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
-            reasoning_effort: "medium",
-            chat_reasoning_effort: "low",
-            experiment_reasoning_effort: "medium",
-            command_reasoning_effort: "low",
-            api_key_required: true
-          }
-        },
-        analysis: {
-          responses_model: "gpt-5.4",
-          responses_reasoning_effort: "xhigh"
-        },
-        papers: { max_results: 200, per_second_limit: 1 },
-        research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers"],
-          default_objective_metric: "reproducibility"
-        },
-        workflow: { mode: "agent_approval", wizard_enabled: true },
-        experiments: { runner: "local_python", timeout_sec: 3600, allow_network: true },
-        paper: { template: "acl", build_pdf: true, latex_engine: "auto_install" },
-        paths: { runs_dir: ".autolabos/runs", logs_dir: ".autolabos/logs" }
-      },
-      codex,
-      aci: new LocalAciAdapter(),
-      eventStream,
-      runStore,
-      workspaceRoot: workspace
-    });
-
-    const result = await manager.run(run);
-
-    expect(result.experimentMode).toBe("real_execution");
-    expect(result.scriptPath).toBe(path.join(publicDir, "run_experiment.py"));
-    expect(result.runCommand).toContain(path.join(publicDir, "run_experiment.py"));
-    expect(result.runCommand).not.toContain("--metadata-dir");
-    expect(result.testCommand).toContain("py_compile");
-    expect(readFileSync(path.join(publicDir, "README.md"), "utf8")).toContain("Shared-State Schema vs Free-Form Chat");
-  });
-
   it("retries after local verification fails and records attempt artifacts", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-retry-"));
     tempDirs.push(workspace);
@@ -2652,9 +2718,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Retry Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -2720,10 +2786,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -2735,10 +2801,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -2747,12 +2813,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -2811,19 +2877,19 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Branch Run",
-      topic: "accuracy runner",
+      topic: "primary_score runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - runner swap\n", "utf8");
 
-    const primaryCandidate = path.join(workspace, "src", "accuracy_primary.py");
-    const alternateCandidate = path.join(workspace, "src", "accuracy_alternate.py");
+    const primaryCandidate = path.join(workspace, "src", "candidate_runner.py");
+    const alternateCandidate = path.join(workspace, "src", "alternate_runner.py");
     mkdirSync(path.dirname(primaryCandidate), { recursive: true });
-    writeFileSync(primaryCandidate, "def accuracy_primary():\n    return 0\n", "utf8");
+    writeFileSync(primaryCandidate, "def primary_score_entrypoint():\n    return 0\n", "utf8");
     writeFileSync(alternateCandidate, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
     const prompts: string[] = [];
@@ -2833,11 +2899,11 @@ describe("ImplementSessionManager", () => {
         prompts.push(prompt || "");
         callCount += 1;
         if (callCount === 1) {
-          writeFileSync(primaryCandidate, "def accuracy_primary():\n    print(\n", "utf8");
+          writeFileSync(primaryCandidate, "def primary_score_entrypoint():\n    print(\n", "utf8");
           return {
             threadId: "thread-impl-branch",
             finalText: JSON.stringify({
-              summary: "Patched the primary accuracy runner.",
+              summary: "Patched the primary primary_score runner.",
               run_command: `python3 ${JSON.stringify(primaryCandidate)}`,
               changed_files: [primaryCandidate],
               artifacts: [primaryCandidate],
@@ -2856,7 +2922,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-impl-branch",
           finalText: JSON.stringify({
-            summary: "Patched the alternate accuracy runner.",
+            summary: "Patched the alternate primary_score runner.",
             run_command: `python3 ${JSON.stringify(alternateCandidate)}`,
             changed_files: [alternateCandidate],
             artifacts: [alternateCandidate],
@@ -2881,10 +2947,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -2896,10 +2962,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -2908,12 +2974,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -2935,7 +3001,7 @@ describe("ImplementSessionManager", () => {
     expect(prompts[0]).toContain('"branch_id": "branch_primary"');
     expect(prompts[1]).toContain('"branch_id": "branch_alternate_2"');
     expect(prompts[1]).toContain(path.basename(alternateCandidate));
-    expect(readFileSync(primaryCandidate, "utf8")).toBe("def accuracy_primary():\n    return 0\n");
+    expect(readFileSync(primaryCandidate, "utf8")).toBe("def primary_score_entrypoint():\n    return 0\n");
   }, 15000);
 
   it("keeps planned condition contract retries pinned to the canonical runner branch", async () => {
@@ -2948,9 +3014,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Contract Branch Lock Run",
-      topic: "condition grid execution",
+      topic: "configured comparison",
       constraints: ["complete planned schedule"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -2960,18 +3026,18 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  id: "plan_complete_grid"',
-        '  summary: "Run 8 approved condition markers as 8 factorial cells x 3 seeds = 24 completed runs."',
+        '  summary: "Run 8 approved condition markers across 3 declared seeds = 24 completed runs."',
         "  implementation_notes:",
-        '    - "Paper-scale evidence floor: 8 factorial cells x 3 seeds = 24 completed runs; use seeds [1, 2, 3]."',
-        '    - "Baseline condition marker: baseline_condition."'
+        '    - "Paper-scale evidence floor: 8 declared conditions x 3 seeds = 24 completed runs; use seeds [1, 2, 3]."',
+        '    - "Baseline condition marker: reference_condition."'
       ].join("\n"),
       "utf8"
     );
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     mkdirSync(publicDir, { recursive: true });
-    const canonicalRunner = path.join(publicDir, "run_condition_sweep_experiment.py");
-    const secondaryRunner = path.join(publicDir, "run_condition_grid_study.py");
+    const canonicalRunner = path.join(publicDir, "run_experiment.py");
+    const secondaryRunner = path.join(publicDir, "run_experiment.py");
     writeFileSync(canonicalRunner, "def run():\n    return {'status': 'old'}\n", "utf8");
     writeFileSync(secondaryRunner, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
 
@@ -3011,8 +3077,8 @@ describe("ImplementSessionManager", () => {
           canonicalRunner,
           [
             "PLANNED_CONDITION_MARKERS = (",
-            "    'baseline_condition', 'candidate_condition_a', 'candidate_condition_b', 'candidate_condition_c',",
-            "    'candidate_condition_d', 'candidate_condition_e', 'candidate_condition_f', 'candidate_condition_g',",
+            "    'reference_condition', 'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+            "    'ablation_condition', 'robustness_condition', 'replication_condition', 'stress_condition',",
             ")",
             "REQUIRED_CONDITION_COUNT = 8",
             "REQUIRED_RUN_COUNT = 24",
@@ -3079,7 +3145,7 @@ describe("ImplementSessionManager", () => {
       title: "Worktree Isolation Run",
       topic: "git-backed retry isolation",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -3203,7 +3269,7 @@ describe("ImplementSessionManager", () => {
       title: "Worktree Fallback Run",
       topic: "snapshot fallback",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -3300,7 +3366,7 @@ describe("ImplementSessionManager", () => {
       title: "Dirty Worktree Fallback Run",
       topic: "dirty git fallback",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -3363,9 +3429,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Manual Handoff Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -3393,10 +3459,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -3408,10 +3474,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -3420,12 +3486,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -3463,16 +3529,16 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Recovered Bundle Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const baselinePath = path.join(publicDir, "baseline_summary.json");
@@ -3495,7 +3561,7 @@ describe("ImplementSessionManager", () => {
               success: true,
               completed_run_count: 1,
               condition_metrics: {
-                baseline_condition: { status: "completed", accuracy: 0.5 }
+                reference_condition: { status: "completed", primary_score: 0.5 }
               }
             },
             null,
@@ -3552,9 +3618,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Retry Scope Gate Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
 
@@ -3562,7 +3628,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - revised_design_v2\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -3599,7 +3665,7 @@ describe("ImplementSessionManager", () => {
     );
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
-    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(artifactPath, "{\"primary_score\":0.5}\n", "utf8");
     writeFileSync(
       readmePath,
       [
@@ -3694,9 +3760,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Dry Run Bundle Gate Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
 
@@ -3704,7 +3770,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - fresh_real_run\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -3798,7 +3864,7 @@ describe("ImplementSessionManager", () => {
       title: "Runner Feedback Reuse Gate",
       topic: "repair broken python runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -3809,7 +3875,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_invalid_python_literal\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -3822,7 +3888,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
-    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(artifactPath, "{\"primary_score\":0.5}\n", "utf8");
     writeFileSync(
       readmePath,
       [
@@ -3901,7 +3967,7 @@ describe("ImplementSessionManager", () => {
       title: "Command Runtime Reuse Gate",
       topic: "repair runtime failure after command handoff",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -3912,7 +3978,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - repair_runtime_csv_mismatch\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -3925,7 +3991,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(configPath, "{\"pilot_size\": 16}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
-    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(artifactPath, "{\"primary_score\":0.5}\n", "utf8");
     writeFileSync(
       readmePath,
       [
@@ -4021,7 +4087,7 @@ describe("ImplementSessionManager", () => {
       title: "Paper Critique Reuse Gate",
       topic: "strengthen experimental evidence",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     mkdirSync(path.dirname(run.memoryRefs.episodePath), { recursive: true });
 
@@ -4029,7 +4095,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - add confirmatory repeats\n", "utf8");
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -4042,7 +4108,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(configPath, "{\"pilot_size\": 16, \"repeats\": 1}\n", "utf8");
     writeFileSync(baselinePath, "{\"baseline\":\"greedy\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
-    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(artifactPath, "{\"primary_score\":0.5}\n", "utf8");
     writeFileSync(
       readmePath,
       [
@@ -4120,9 +4186,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation Stop Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4197,9 +4263,9 @@ describe("ImplementSessionManager", () => {
       const runStore = new RunStore(paths);
       const run = await runStore.createRun({
         title: "Implementation OpenAI Timeout Run",
-        topic: "small model reasoning",
+        topic: "configured research topic",
         constraints: ["recent"],
-        objectiveMetric: "accuracy"
+        objectiveMetric: "primary_score"
       });
 
       const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4281,9 +4347,9 @@ describe("ImplementSessionManager", () => {
       const runStore = new RunStore(paths);
       const run = await runStore.createRun({
         title: "Implementation OpenAI Timeout Partial Run",
-        topic: "small model reasoning",
+        topic: "configured research topic",
         constraints: ["recent"],
-        objectiveMetric: "accuracy"
+        objectiveMetric: "primary_score"
       });
 
       const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4371,9 +4437,9 @@ describe("ImplementSessionManager", () => {
       const runStore = new RunStore(paths);
       const run = await runStore.createRun({
         title: "Implementation OpenAI Stall Run",
-        topic: "small model reasoning",
+        topic: "configured research topic",
         constraints: ["recent"],
-        objectiveMetric: "accuracy"
+        objectiveMetric: "primary_score"
       });
 
       const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4460,7 +4526,7 @@ describe("ImplementSessionManager", () => {
   it("applies a bounded staged_llm timeout by default", () => {
     const config = createTestConfig();
     config.providers.llm_mode = "openai_api";
-    config.providers.openai.experiment_model = "gpt-5.4";
+    config.providers.openai.experiment_model = "configured-model";
     config.providers.openai.experiment_reasoning_effort = "high";
 
     const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
@@ -4507,7 +4573,7 @@ describe("ImplementSessionManager", () => {
   it("allows explicitly disabling the staged_llm timeout with zero", () => {
     const config = createTestConfig();
     config.providers.llm_mode = "openai_api";
-    config.providers.openai.experiment_model = "gpt-5.4";
+    config.providers.openai.experiment_model = "configured-model";
     config.providers.openai.experiment_reasoning_effort = "high";
 
     const originalTimeout = process.env.AUTOLABOS_IMPLEMENT_LLM_TIMEOUT_MS;
@@ -4533,9 +4599,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation OpenAI Mode Run",
-      topic: "small model reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4612,9 +4678,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation OpenAI Compact Prompt Run",
-      topic: "small model reasoning under strict budget",
+      topic: "configured research topic",
       constraints: ["recent", "budgeted"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4623,8 +4689,10 @@ describe("ImplementSessionManager", () => {
       "hypotheses:",
       "  - baseline",
       "selected_design:",
+      "  conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition]",
+      "  baseline: reference_condition",
       "  implementation_notes:",
-      "    - Conditions: C0 unmodified base no-tune evaluation only; C1 standard tuned baseline; C2 candidate condition c; C3 candidate condition b.",
+      "    - Preserve the four named conditions in the declared order.",
       `notes: ${"plan-token ".repeat(900)}`
     ].join("\n");
     const longHypotheses = `${"hypothesis-token ".repeat(900)}\n`;
@@ -4657,7 +4725,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['unmodified_base', 'standard_tuned_baseline', 'candidate_condition_c', 'candidate_condition_b']",
+                  "PLANNED_CONDITIONS = ['reference_condition', 'candidate_condition', 'alternative_condition', 'confirmatory_condition']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   MINIMAL_METRICS_RUNNER_SOURCE
                 ].join("\n\n")
@@ -4686,17 +4754,17 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"plan_excerpt":');
     expect(capturedPrompt).toContain('"planned_condition_contract":');
     expect(capturedPrompt).toContain('"required_condition_count": 4');
-    expect(capturedPrompt).toContain('"standard_tuned_baseline"');
-    expect(capturedPrompt).toContain('"candidate_condition_c"');
-    expect(capturedPrompt).toContain('"candidate_condition_b"');
-    expect(capturedPrompt).toContain('"primary_metric_key": "accuracy_delta_vs_baseline"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"confirmatory_condition"');
+    expect(capturedPrompt).toContain('"alternative_condition"');
+    expect(capturedPrompt).toContain('"primary_metric_key": "primary_score_delta_vs_baseline"');
     expect(capturedPrompt).toContain("do not collapse named condition families into generic variants");
     expect(capturedPrompt).toContain("...<truncated>");
     expect(capturedPrompt).not.toContain('"repo_listing":');
     expect(capturedPrompt).not.toContain('"resolved_constraint_profile":');
   });
 
-  it("preserves repeated condition-parameter seed contracts in compact implement prompts", async () => {
+  it("preserves repeated named-condition seed contracts in compact implement prompts", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-repeat-contract-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -4707,8 +4775,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Repeated configuration Contract Run",
       topic: "Configuration parameter stability",
-      constraints: ["2x RTX 4090", "condition grid: repeated condition-parameter cells crossed with regularization settings"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["bounded compute", "repeat every named condition across the approved seeds"],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4717,11 +4785,11 @@ describe("ImplementSessionManager", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  conditions: baseline_condition; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
+        "  conditions: reference_condition; ablation_condition; robustness_condition; replication_condition; stress_condition",
         '  title: "5-seed selected-condition stability against locked baseline"',
         '  summary: "Run repeated-seed training for the locked baseline and selected higher-capacity regularized cells."',
         "  evaluation_steps:",
-        '    - "Execute 25 train-plus-eval runs total: 5 repeated cells x 5 seeds where repeated cells are baseline_condition, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5."',
+        '    - "Execute 25 train-plus-eval runs total: 5 repeated cells x 5 seeds where repeated cells are reference_condition, ablation_condition, robustness_condition, replication_condition, and stress_condition."',
         '    - "Use training seeds [42,43,44,45,46] and report seed standard deviation plus bootstrap 95 percent CI width."'
       ].join("\n"),
       "utf8"
@@ -4754,7 +4822,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5']",
+                  "PLANNED_CONDITIONS = ['reference_condition', 'ablation_condition', 'robustness_condition', 'replication_condition', 'stress_condition']",
                   "REQUIRED_CONDITION_COUNT = 5",
                   "REQUIRED_RUN_COUNT = 25",
                   "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
@@ -4785,9 +4853,9 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 5');
     expect(capturedPrompt).toContain('"required_run_count": 25');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 5');
-    expect(capturedPrompt).toContain('"baseline_condition"');
-    expect(capturedPrompt).toContain('"candidate_condition_d5"');
-    expect(capturedPrompt).toContain('"candidate_condition_f5"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"robustness_condition"');
+    expect(capturedPrompt).toContain('"stress_condition"');
     expect(capturedPrompt).toContain("Do not compress repeated cells");
     expect(capturedPrompt).not.toContain('"required_condition_count": 2');
   });
@@ -4804,8 +4872,8 @@ describe("ImplementSessionManager", () => {
       [
         "# Original Brief",
         "",
-        "configured conditions: a four-by-two condition-parameter grid.",
-        "Baseline condition: locked baseline cell."
+        "conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, stress_condition]",
+        "baseline: reference_condition"
       ].join("\n"),
       "utf8"
     );
@@ -4814,8 +4882,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Redesigned configuration Contract Run",
       topic: "Configuration parameter fixed budget",
-      constraints: ["Original brief used a full condition-parameter grid."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["Original brief declared a broader condition set."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4827,18 +4895,18 @@ describe("ImplementSessionManager", () => {
         '  previous_objective_status: "not_met"',
         "constraints:",
         "  raw:",
-        '    - "condition grid: a four-by-two condition-parameter grid."',
-        '    - "Baseline condition: locked baseline cell."',
+        '    - "The prior design declared eight named conditions."',
+        '    - "The control condition was locked before execution."',
         "selected_design:",
         '  id: "plan_2"',
-        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_d; candidate_condition_f",
-        '  title: "5-seed narrowed condition-parameter confirmatory sweep"',
-        '  summary: "Run a narrower single-axis condition sweep; this design cannot support an interaction claim."',
+        "  conditions: reference_condition; candidate_condition; ablation_condition; replication_condition",
+        '  title: "Repeated-seed narrowed named-condition confirmation"',
+        '  summary: "Run a narrower named-condition comparison; this design cannot support the broader joint-condition claim."',
         "  implementation_notes:",
-        '    - "Run baseline_condition, candidate_condition_a, candidate_condition_d, and candidate_condition_f at a fixed regularization setting for seeds {42,43,44,45,46}."',
-        '    - "Paper-scale evidence floor for the narrowed claim: 4 repeated condition cells x 5 seeds = 20 fine-tune runs, plus 2 exact baseline reruns."',
+        '    - "Run reference_condition, candidate_condition, ablation_condition, and replication_condition at a fixed declared setting for seeds {42,43,44,45,46}."',
+        '    - "Paper-scale evidence floor for the narrowed claim: 4 repeated conditions x 5 seeds = 20 experiment runs, plus 2 exact reference reruns."',
         "  evaluation_steps:",
-        '    - "Run the planned fixed-parameter condition set for seeds {42,43,44,45,46}, then rerun the locked baseline condition two additional times."',
+        '    - "Run the planned named-condition set for seeds {42,43,44,45,46}, then rerun the locked baseline condition two additional times."',
         "  resource_notes:",
         '    - "22 runs total including exact baseline repeats."'
       ].join("\n"),
@@ -4859,7 +4927,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented the redesigned parameter x-only contract runner.",
+            summary: "Implemented the redesigned named-condition contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -4872,7 +4940,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_a', 'candidate_condition_d', 'candidate_condition_f']",
+                  "PLANNED_CONDITIONS = ['reference_condition', 'candidate_condition', 'ablation_condition', 'replication_condition']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   "REQUIRED_RUN_COUNT = 22",
                   "SEED_SCHEDULE = [42, 43, 44, 45, 46]",
@@ -4903,13 +4971,13 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 4');
     expect(capturedPrompt).toContain('"required_run_count": 22');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 5');
-    expect(capturedPrompt).toContain('"candidate_condition_a"');
-    expect(capturedPrompt).toContain('"baseline_condition"');
-    expect(capturedPrompt).toContain('"candidate_condition_d"');
-    expect(capturedPrompt).toContain('"candidate_condition_f"');
+    expect(capturedPrompt).toContain('"candidate_condition"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"ablation_condition"');
+    expect(capturedPrompt).toContain('"replication_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 8');
-    expect(capturedPrompt).not.toContain('"candidate_condition_a5"');
-    expect(capturedPrompt).not.toContain('"candidate_condition_f5"');
+    expect(capturedPrompt).not.toContain('"alternative_condition"');
+    expect(capturedPrompt).not.toContain('"stress_condition"');
   });
 
   it("prioritizes frozen run brief condition contracts over stale expanded selected designs", async () => {
@@ -4924,7 +4992,7 @@ describe("ImplementSessionManager", () => {
       title: "Frozen Brief Contract Run",
       topic: "Budgeted condition sweep",
       constraints: ["Primary run follows the frozen brief."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -4939,14 +5007,14 @@ describe("ImplementSessionManager", () => {
         "## Minimum Acceptable Evidence",
         "- All 4 planned conditions must execute successfully.",
         "## Minimum Experiment Plan",
-        "- conditions: baseline_condition; candidate_condition_a; candidate_condition_b; candidate_condition_c"
+        "- conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition"
       ].join("\n")
     );
     writeFileSync(
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_b; candidate_condition_c; candidate_condition_d",
+        "  conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition; ablation_condition",
         '  title: "Expanded stale condition sweep"',
         "  evaluation_steps:",
         '    - "Run five condition cells with seeds {7,8,9}."'
@@ -4981,7 +5049,7 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "PLANNED_CONDITIONS = ['baseline_condition', 'candidate_condition_a', 'candidate_condition_b', 'candidate_condition_c']",
+                  "PLANNED_CONDITIONS = ['reference_condition', 'candidate_condition', 'alternative_condition', 'confirmatory_condition']",
                   "REQUIRED_CONDITION_COUNT = 4",
                   MINIMAL_METRICS_RUNNER_SOURCE
                 ].join("\n\n")
@@ -5008,10 +5076,10 @@ describe("ImplementSessionManager", () => {
 
     expect(capturedPrompt).toContain('"planned_condition_contract":');
     expect(capturedPrompt).toContain('"required_condition_count": 4');
-    expect(capturedPrompt).toContain('"baseline_condition"');
-    expect(capturedPrompt).toContain('"candidate_condition_c"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"confirmatory_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
-    expect(capturedPrompt).not.toContain('"candidate_condition_d"');
+    expect(capturedPrompt).not.toContain('"ablation_condition"');
     expect(capturedPrompt).not.toContain('"minimum_seeds_per_condition": 3');
   });
 
@@ -5027,7 +5095,7 @@ describe("ImplementSessionManager", () => {
       title: "Retry Plan Contract Run",
       topic: "Budgeted condition sweep",
       constraints: ["Primary run follows the latest selected design after backtracking."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5038,7 +5106,7 @@ describe("ImplementSessionManager", () => {
       [
         "# Frozen Brief",
         "## Minimum Experiment Plan",
-        "- conditions: baseline_condition; candidate_condition_a; candidate_condition_b; candidate_condition_c"
+        "- conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition"
       ].join("\n")
     );
     writeFileSync(
@@ -5049,12 +5117,12 @@ describe("ImplementSessionManager", () => {
         '  transition_action: "backtrack_to_design"',
         "selected_design:",
         '  id: "plan_1"',
-        '  title: "Full replicated 4x3 condition-parameter interaction grid"',
-        "  baselines:",
-        '    - "Locked primary comparator: factor x=2, factor y=0.0, same seeds {11, 12, 13}."',
+        "  conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, stress_condition, calibration_condition, transfer_condition, held_out_condition, sensitivity_condition]",
+        "  baseline_condition_marker: reference_condition",
+        '  title: "Full replicated named-condition comparison"',
         "  implementation_notes:",
         '    - "Run 12 cells x 3 seeds = 36 training runs; seeds are {11, 12, 13}."',
-        '    - "Use a fixed grid factor x {1, 2, 3, 4} x factor y {0.0, 0.05, 0.1}; vary only the condition parameters."',
+        '    - "Execute every declared condition with the same data and evaluation settings."',
         "  evaluation_steps:",
         '    - "Pre-register the full 12-cell grid, seeds {11, 12, 13}, and the locked baseline before training."'
       ].join("\n"),
@@ -5089,11 +5157,11 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITIONS = [",
-                  "  'condition_2_parameter_0_0',",
-                  "  'condition_1_parameter_0_0', 'condition_1_parameter_0_05', 'condition_1_parameter_0_1',",
-                  "  'condition_2_parameter_0_05', 'condition_2_parameter_0_1',",
-                  "  'condition_3_parameter_0_0', 'condition_3_parameter_0_05', 'condition_3_parameter_0_1',",
-                  "  'condition_4_parameter_0_0', 'condition_4_parameter_0_05', 'condition_4_parameter_0_1',",
+                  "  'reference_condition',",
+                  "  'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+                  "  'ablation_condition', 'robustness_condition', 'replication_condition',",
+                  "  'stress_condition', 'calibration_condition', 'transfer_condition',",
+                  "  'held_out_condition', 'sensitivity_condition',",
                   "]",
                   "REQUIRED_CONDITION_COUNT = 12",
                   "REQUIRED_RUN_COUNT = 36",
@@ -5127,8 +5195,8 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).not.toContain('"required_condition_count": 4');
   });
 
-  it("preserves full-grid condition and seed contracts from governed plan prose", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-full-grid-contract-"));
+  it("preserves full named-condition and seed contracts from governed plan prose", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-full-condition-contract-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -5138,8 +5206,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Governed Full Grid Contract Run",
       topic: "Configuration parameter fixed budget",
-      constraints: ["condition grid: a four-by-two condition-parameter grid."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["eight explicitly named conditions."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5148,17 +5216,17 @@ describe("ImplementSessionManager", () => {
       path.join(runDir, "experiment_plan.yaml"),
       [
         "selected_design:",
-        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
-        '  title: "Full-grid 8-cell x 4-seed confirmatory small-model factorial"',
-        '  summary: "Run the full condition-parameter grid on the local target with seeds {42,43,44,45}."',
+        "  conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition; ablation_condition; robustness_condition; replication_condition; stress_condition",
+        '  title: "Full declared-condition repeated-seed confirmatory design"',
+        '  summary: "Run the full named-condition set on the local target with seeds {42,43,44,45}."',
         "  implementation_notes:",
         '    - "Baseline condition: locked baseline cell."',
-        '    - "Use baseline_condition, candidate_condition_a, candidate_condition_a5, baseline_condition5, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5; total training conditions per seed = 8"',
+        '    - "Use reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, and stress_condition; total declared conditions per seed = 8"',
         '    - "Use seeds {42,43,44,45}; do not alter condition order."',
         "  evaluation_steps:",
-        '    - "Evaluate every completed checkpoint on the full Benchmark Task A validation split (n=299) and full Benchmark Task B validation split (n=10042)."',
+        '    - "Evaluate every completed artifact on the full validation_partition evaluation (n=299) and full held_out_partition evaluation (n=10042)."',
         "  resource_notes:",
-        '    - "Total planned train/eval jobs: 32"'
+        '    - "Total planned experiment/evaluation jobs: 32"'
       ].join("\n"),
       "utf8"
     );
@@ -5167,7 +5235,7 @@ describe("ImplementSessionManager", () => {
     await memory.put(
       "run_brief.raw",
       [
-        "Conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5.",
+        "Conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition; ablation_condition; robustness_condition; replication_condition; stress_condition.",
         "Seeds: [42, 43, 44, 45]."
       ].join("\n")
     );
@@ -5182,10 +5250,10 @@ describe("ImplementSessionManager", () => {
     } as unknown as CodexNativeClient;
     const fullGridSource = [
       "PLANNED_CONDITIONS = [",
-      "  'baseline_condition',",
-      "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
-      "  'candidate_condition_d', 'candidate_condition_d5',",
-      "  'candidate_condition_f', 'candidate_condition_f5',",
+      "  'reference_condition',",
+      "  'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+      "  'ablation_condition', 'robustness_condition',",
+      "  'replication_condition', 'stress_condition',",
       "]",
       "REQUIRED_CONDITION_COUNT = 8",
       "REQUIRED_RUN_COUNT = 32",
@@ -5197,7 +5265,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented a full-grid configuration contract runner.",
+            summary: "Implemented a full named-condition contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -5237,20 +5305,20 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"seed_schedule":');
     expect(capturedPrompt).toContain('"full_evaluation_required": true');
     expect(capturedPrompt).toContain('"minimum_eval_examples_per_task":');
-    expect(capturedPrompt).toContain('"benchmark_task_a": 299');
-    expect(capturedPrompt).toContain('"benchmark_task_b": 10042');
+    expect(capturedPrompt).toContain('"validation_partition": 299');
+    expect(capturedPrompt).toContain('"held_out_partition": 10042');
     expect(capturedPrompt).toContain("42");
     expect(capturedPrompt).toContain("43");
     expect(capturedPrompt).toContain("44");
     expect(capturedPrompt).toContain("45");
-    expect(capturedPrompt).toContain('"candidate_condition_a"');
-    expect(capturedPrompt).toContain('"candidate_condition_a5"');
-    expect(capturedPrompt).toContain('"candidate_condition_f5"');
+    expect(capturedPrompt).toContain('"candidate_condition"');
+    expect(capturedPrompt).toContain('"alternative_condition"');
+    expect(capturedPrompt).toContain('"stress_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 5');
   });
 
-  it("keeps fixed-parameter repeated-run totals from inflating condition count", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-fixed-parameter-run-count-"));
+  it("keeps named-condition repeated-run totals from inflating condition count", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-named-condition-run-count-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -5260,8 +5328,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Fixed Parameter Repeated Run Contract",
       topic: "Condition parameter fixed budget",
-      constraints: ["Use the latest selected fixed-parameter repeated-run design."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["Use the latest selected named-condition repeated-run design."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5271,13 +5339,15 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  id: "plan_2"',
-        '  title: "Fixed-parameter dose response with 8 paired seeds"',
-        '  summary: "Run a tighter condition-parameter ablation that holds parameter_y fixed and increases repeated-run evidence to 8 paired seeds."',
+        "  conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition]",
+        "  baseline: reference_condition",
+        '  title: "Named-condition comparison with 8 paired seeds"',
+        '  summary: "Increase repeated-run evidence for the four declared conditions."',
         "  implementation_notes:",
         '    - "Use seeds [42, 43, 44, 45, 46, 47, 48, 49] for paired runs."',
-        '    - "Run parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each of 8 seeds."',
+        '    - "Run all four declared conditions for each of 8 seeds."',
         "  evaluation_steps:",
-        '    - "Train parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each seed, then evaluate every completed condition."',
+        '    - "Train and evaluate every declared condition for each seed."',
         "  resource_notes:",
         '    - "Main workload: 32 training runs plus repeated unmodified-base evaluations."'
       ].join("\n"),
@@ -5287,8 +5357,7 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
-    const numericMarker = (parameterX: number, parameterYCode: string): string =>
-      `condition_${parameterX}_parameter_${parameterYCode}`;
+
     let capturedPrompt = "";
     const codex = {
       runTurnStream: async () => {
@@ -5300,7 +5369,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented the fixed-parameter repeated-run contract runner.",
+            summary: "Implemented the named-condition repeated-run contract runner.",
             run_command: "python3 " + JSON.stringify(publicScriptPath),
             test_command: "python3 -m py_compile " + JSON.stringify(publicScriptPath),
             changed_files: [publicScriptPath],
@@ -5314,8 +5383,8 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITION_MARKERS = (",
-                  "  '" + numericMarker(4, "0_0") + "', '" + numericMarker(8, "0_0") + "',",
-                  "  '" + numericMarker(16, "0_0") + "', '" + numericMarker(32, "0_0") + "',",
+                  "  'reference_condition', 'candidate_condition',",
+                  "  'alternative_condition', 'confirmatory_condition',",
                   ")",
                   "REQUIRED_CONDITION_COUNT = 4",
                   "REQUIRED_RUN_COUNT = 32",
@@ -5346,13 +5415,13 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 4');
     expect(capturedPrompt).toContain('"required_run_count": 32');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 8');
-    expect(capturedPrompt).toContain('"' + numericMarker(4, "0_0") + '"');
-    expect(capturedPrompt).toContain('"' + numericMarker(32, "0_0") + '"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"confirmatory_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 32');
     expect(capturedPrompt).not.toContain('"required_run_count": 256');
   });
 
-  it("does not read scalar condition parameter values as condition-count declarations", async () => {
+  it("does not read unrelated scalar values as condition-count declarations", async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-scalar-condition-count-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
@@ -5363,8 +5432,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Fixed Parameter Scalar Condition Contract",
       topic: "Condition parameter fixed budget",
-      constraints: ["Use the selected fixed-parameter repeated-seed design."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["Use the selected named-condition repeated-seed design."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5374,13 +5443,16 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  id: "plan_2"',
-        '  title: "Fixed-parameter repeated-seed sweep"',
-        '  summary: "Run a parameter x-neutral condition-parameter ablation with repeated paired seeds."',
+        "  conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition]",
+        "  baseline_condition_id: reference_condition",
+        "  batch_size: 32",
+        '  title: "Named-condition repeated-seed sweep"',
+        '  summary: "Run the declared conditions with repeated paired seeds."',
         "  implementation_notes:",
         '    - "Use seeds [42, 43, 44, 45, 46, 47, 48, 49] for paired runs."',
-        '    - "Choose the common microbatch during preflight using the highest-memory parameter_x=32 condition; apply the same batch construction to all conditions."',
+        '    - "Apply the same batch construction to every declared condition."',
         "  evaluation_steps:",
-        '    - "Train parameter_x values 4, 8, 16, and 32 with parameter_y fixed at 0.0 for each of 8 seeds."',
+        '    - "Train and evaluate all four conditions for each of 8 seeds."',
         '    - "Evaluate every completed condition with the same benchmark harness."'
       ].join("\n"),
       "utf8"
@@ -5389,8 +5461,7 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
-    const numericMarker = (parameterX: number, parameterYCode: string): string =>
-      `condition_${parameterX}_parameter_${parameterYCode}`;
+
     let capturedPrompt = "";
     const codex = {
       runTurnStream: async () => {
@@ -5416,8 +5487,8 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITION_MARKERS = (",
-                  "  '" + numericMarker(4, "0_0") + "', '" + numericMarker(8, "0_0") + "',",
-                  "  '" + numericMarker(16, "0_0") + "', '" + numericMarker(32, "0_0") + "',",
+                  "  'reference_condition', 'candidate_condition',",
+                  "  'alternative_condition', 'confirmatory_condition',",
                   ")",
                   "REQUIRED_CONDITION_COUNT = 4",
                   "REQUIRED_RUN_COUNT = 32",
@@ -5448,14 +5519,14 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 4');
     expect(capturedPrompt).toContain('"required_run_count": 32');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 8');
-    expect(capturedPrompt).toContain('"' + numericMarker(4, "0_0") + '"');
-    expect(capturedPrompt).toContain('"' + numericMarker(32, "0_0") + '"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"confirmatory_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 32');
     expect(capturedPrompt).not.toContain('"required_run_count": 256');
   });
 
-  it("supplements selected-design count contracts with concrete condition-parameter grids from plan constraints", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-full-grid-constraint-supplement-"));
+  it("supplements selected-design count contracts with concrete named conditions", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-list-supplement-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -5465,8 +5536,8 @@ describe("ImplementSessionManager", () => {
     const run = await runStore.createRun({
       title: "Full Grid Constraint Supplement Run",
       topic: "Configuration parameter fixed budget",
-      constraints: ["configured conditions: a four-by-two condition-parameter grid."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      constraints: ["the selected design must retain all declared conditions"],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5476,15 +5547,15 @@ describe("ImplementSessionManager", () => {
       [
         "constraints:",
         "  raw:",
-        '    - "condition grid: a four-by-two condition-parameter grid."',
+        '    - "The approved design contains eight named conditions."',
         '    - "Baseline condition: locked baseline cell."',
         "selected_design:",
         '  id: "plan_2"',
-        "  conditions: baseline_condition; candidate_condition_a; candidate_condition_a5; baseline_condition5; candidate_condition_d; candidate_condition_d5; candidate_condition_f; candidate_condition_f5",
-        '  title: "Interaction-first analysis with planned mid-grid contrast"',
-        '  summary: "Use the same full 4x2 grid and three-seed evidence floor, but make the primary analysis a planned mid-grid contrast."',
+        "  conditions: reference_condition; candidate_condition; alternative_condition; confirmatory_condition; ablation_condition; robustness_condition; replication_condition; stress_condition",
+        '  title: "Joint-condition analysis with a declared primary contrast"',
+        '  summary: "Use the same eight-condition set and three-seed evidence floor, but make the primary analysis the declared comparison."',
         "  implementation_notes:",
-        '    - "Paper-scale evidence floor for the local-scope interaction claim: 8 cells x 3 seeds = 24 completed finetune runs covering baseline_condition, candidate_condition_a, candidate_condition_a5, baseline_condition5, candidate_condition_d, candidate_condition_d5, candidate_condition_f, and candidate_condition_f5."',
+        '    - "Paper-scale evidence floor for the local joint-condition claim: 8 conditions x 3 seeds = 24 completed experiment runs covering reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, and stress_condition."',
         '    - "Pre-register the primary comparison before running the implementation."'
       ].join("\n"),
       "utf8"
@@ -5504,7 +5575,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented a full-grid configuration contract runner.",
+            summary: "Implemented a full named-condition contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -5518,10 +5589,10 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITIONS = [",
-                  "  'baseline_condition',",
-                  "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition5',",
-                  "  'candidate_condition_d', 'candidate_condition_d5',",
-                  "  'candidate_condition_f', 'candidate_condition_f5',",
+                  "  'reference_condition',",
+                  "  'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+                  "  'ablation_condition', 'robustness_condition',",
+                  "  'replication_condition', 'stress_condition',",
                   "]",
                   "REQUIRED_CONDITION_COUNT = 8",
                   "REQUIRED_RUN_COUNT = 24",
@@ -5551,19 +5622,19 @@ describe("ImplementSessionManager", () => {
 
     expect(capturedPrompt).toContain('"required_condition_count": 8');
     expect(capturedPrompt).toContain('"required_run_count": 24');
-    expect(capturedPrompt).toContain('"candidate_condition_a"');
-    expect(capturedPrompt).toContain('"candidate_condition_a5"');
-    expect(capturedPrompt).toContain('"baseline_condition"');
-    expect(capturedPrompt).toContain('"baseline_condition5"');
-    expect(capturedPrompt).toContain('"candidate_condition_d"');
-    expect(capturedPrompt).toContain('"candidate_condition_d5"');
-    expect(capturedPrompt).toContain('"candidate_condition_f"');
-    expect(capturedPrompt).toContain('"candidate_condition_f5"');
-    expect(capturedPrompt).not.toContain('"candidate_condition_j"');
+    expect(capturedPrompt).toContain('"candidate_condition"');
+    expect(capturedPrompt).toContain('"alternative_condition"');
+    expect(capturedPrompt).toContain('"reference_condition"');
+    expect(capturedPrompt).toContain('"confirmatory_condition"');
+    expect(capturedPrompt).toContain('"ablation_condition"');
+    expect(capturedPrompt).toContain('"robustness_condition"');
+    expect(capturedPrompt).toContain('"replication_condition"');
+    expect(capturedPrompt).toContain('"stress_condition"');
+    expect(capturedPrompt).not.toContain('"unplanned_condition"');
   });
 
-  it("does not lock out-of-scope illustrative parameter values into the approved condition contract", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-out-of-scope-grid-"));
+  it("extracts condition IDs from YAML objects and orders the declared baseline first", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-condition-objects-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -5571,10 +5642,10 @@ describe("ImplementSessionManager", () => {
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Out Of Scope Parameter Contract Run",
-      topic: "Condition parameter fixed budget",
-      constraints: ["Approved grid excludes the third regularization value."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      title: "Condition Object Contract Run",
+      topic: "Named condition comparison",
+      constraints: ["Only explicitly selected condition objects may execute."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5584,16 +5655,22 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  id: "plan_2"',
-        '  title: "Selected condition-parameter factorial"',
-        '  summary: "Run the complete approved grid with repeated seeds. Any statement about parameter_y 0.1 is explicitly out of scope."',
-        '  baselines:',
-        '    - "Primary baseline: parameter_x=8, parameter_y=0.0, same seed schedule."',
+        "  conditions:",
+        "    - condition_id: Candidate Condition",
+        "    - id: Reference Condition",
+        "    - condition_id: Alternative Condition",
+        "    - id: Confirmatory Condition",
+        "    - condition_id: Ablation Condition",
+        "    - id: Robustness Condition",
+        "    - condition_id: Replication Condition",
+        "    - id: Stress Condition",
+        "  baseline_condition_id: Reference Condition",
+        '  title: "Selected named-condition comparison"',
         "  implementation_notes:",
-        '    - "Paper-scale evidence floor: 8 factorial cells x 3 seeds = 24 completed training runs; use seeds [42, 43, 44]."',
-        '    - "Use parameter_x values in `{4, 8, 16, 32}` x parameter_y values in `{0.0, 0.05}`; hold all other variables fixed."',
-        '    - "Instrumentation should support future complete factorial grids, for example parameter_x values in `{4, 8, 16, 32}` crossed with parameter_y values in `{0.0, 0.05, 0.1}`."',
+        '    - "Evidence floor: 8 conditions x 3 seeds = 24 completed training runs; use seeds [42, 43, 44]."',
+        '    - "A future condition may be discussed but is not part of the selected conditions list."',
         "  evaluation_steps:",
-        '    - "Train all 8 cells for seeds [42, 43, 44] and force claim downgrade if any raw counts are absent."'
+        '    - "Train all 8 declared conditions for seeds [42, 43, 44] and downgrade the claim if any raw counts are absent."'
       ].join("\n"),
       "utf8"
     );
@@ -5601,9 +5678,7 @@ describe("ImplementSessionManager", () => {
 
     const publicDir = buildPublicExperimentDir(workspace, run);
     const publicScriptPath = path.join(publicDir, "experiment.py");
-    const numericMarker = (parameterX: number, parameterYCode: string): string =>
-      `condition_${parameterX}_parameter_${parameterYCode}`;
-    const lockedBaselineMarker = numericMarker(8, "0_0");
+
     let capturedPrompt = "";
     const codex = {
       runTurnStream: async () => {
@@ -5615,7 +5690,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented the selected condition-parameter runner.",
+            summary: "Implemented the selected named-condition runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -5629,10 +5704,10 @@ describe("ImplementSessionManager", () => {
                 path: publicScriptPath,
                 content: [
                   "PLANNED_CONDITION_MARKERS = (",
-                  `  '${lockedBaselineMarker}', '${numericMarker(4, "0_0")}',`,
-                  `  '${numericMarker(4, "0_05")}', '${numericMarker(8, "0_05")}',`,
-                  `  '${numericMarker(16, "0_0")}', '${numericMarker(16, "0_05")}',`,
-                  `  '${numericMarker(32, "0_0")}', '${numericMarker(32, "0_05")}',`,
+                  "  'reference_condition', 'candidate_condition',",
+                  "  'alternative_condition', 'confirmatory_condition',",
+                  "  'ablation_condition', 'robustness_condition',",
+                  "  'replication_condition', 'stress_condition',",
                   ")",
                   "REQUIRED_CONDITION_COUNT = 8",
                   "REQUIRED_RUN_COUNT = 24",
@@ -5663,15 +5738,19 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 8');
     expect(capturedPrompt).toContain('"required_run_count": 24');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
-    expect(capturedPrompt).toContain(`"baseline_condition_marker": "${lockedBaselineMarker}"`);
-    expect(capturedPrompt).toContain(`"${numericMarker(32, "0_05")}"`);
+    expect(capturedPrompt).toContain('"baseline_condition_marker": "reference_condition"');
+    const markerListIndex = capturedPrompt.indexOf('"required_condition_markers": [');
+    expect(markerListIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedPrompt.indexOf('"reference_condition"', markerListIndex)).toBeLessThan(
+      capturedPrompt.indexOf('"candidate_condition"', markerListIndex)
+    );
+    expect(capturedPrompt).toContain('"stress_condition"');
+    expect(capturedPrompt).not.toContain('"unplanned_condition"');
     expect(capturedPrompt).not.toContain('"required_condition_count": 12');
-    expect(capturedPrompt).not.toContain(`"${numericMarker(4, "0_1")}"`);
-    expect(capturedPrompt).not.toContain(`"${numericMarker(32, "0_1")}"`);
   });
 
-  it("prioritizes a selected 4x3 condition-parameter grid over a stale 4x2 brief grid", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-selected-4x3-contract-"));
+  it("prioritizes a selected YAML condition list over a stale brief list", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-implement-selected-condition-list-"));
     tempDirs.push(workspace);
     process.chdir(workspace);
     const paths = resolveAppPaths(workspace);
@@ -5682,18 +5761,18 @@ describe("ImplementSessionManager", () => {
       [
         "# Original Brief",
         "",
-        "Use a four-by-two condition-parameter grid as the initial pilot.",
-        "Baseline condition: baseline_condition."
+        "conditions: reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, stress_condition",
+        "baseline: reference_condition"
       ].join("\n"),
       "utf8"
     );
 
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
-      title: "Selected 4x3 Contract Run",
-      topic: "Condition parameter fixed budget",
-      constraints: ["The original pilot had only two regularization settings."],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      title: "Selected Condition List Contract Run",
+      topic: "Named condition comparison",
+      constraints: ["The selected plan supersedes the earlier condition list."],
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5703,19 +5782,30 @@ describe("ImplementSessionManager", () => {
       [
         "selected_design:",
         '  id: "plan_1"',
-        '  title: "Full replicated 4x3 condition-parameter interaction grid"',
-        '  summary: "Run a paper-floor factorial experiment with 12 cells and 3 seeds per cell."',
-        "  baselines:",
-        '    - "Locked primary comparator: factor x=2, factor y=0.0, same seeds {11, 12, 13}."',
+        "  conditions:",
+        "    - candidate_condition",
+        "    - reference_condition",
+        "    - alternative_condition",
+        "    - confirmatory_condition",
+        "    - ablation_condition",
+        "    - robustness_condition",
+        "    - replication_condition",
+        "    - stress_condition",
+        "    - calibration_condition",
+        "    - transfer_condition",
+        "    - held_out_condition",
+        "    - sensitivity_condition",
+        '  title: "Full replicated named-condition comparison"',
+        '  summary: "Run 12 declared conditions with 3 seeds per condition."',
         "  implementation_notes:",
-        '    - "Run 12 cells x 3 seeds = 36 training runs; seeds are {11, 12, 13}."',
-        '    - "Use a fixed grid factor x {1, 2, 3, 4} x factor y {0.0, 0.05, 0.1}; vary only the condition parameters."',
+        '    - "Run 12 conditions x 3 seeds = 36 training runs; seeds are {11, 12, 13}."',
+        '    - "Apply the same data and evaluation settings to every condition."',
         "  evaluation_steps:",
-        '    - "Pre-register the full 12-cell grid, seeds {11, 12, 13}, and the locked baseline before training."',
+        '    - "Pre-register the selected condition list, seeds {11, 12, 13}, and the reference condition before training."',
         '    - "Repeat each condition across multiple seeded runs and report run-to-run variance."',
         "shortlisted_designs:",
         '  - id: "plan_1"',
-        '    title: "Full replicated 4x3 condition-parameter interaction grid"'
+        '    title: "Full replicated named-condition comparison"'
       ].join("\n"),
       "utf8"
     );
@@ -5734,7 +5824,7 @@ describe("ImplementSessionManager", () => {
         capturedPrompt = prompt;
         return {
           text: JSON.stringify({
-            summary: "Implemented the selected 4x3 condition-parameter contract runner.",
+            summary: "Implemented the selected YAML condition-list contract runner.",
             run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
             test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
             changed_files: [publicScriptPath],
@@ -5747,13 +5837,13 @@ describe("ImplementSessionManager", () => {
               {
                 path: publicScriptPath,
                 content: [
-                  "BASELINE_CONDITION_MARKER = 'condition_2_parameter_0_0'",
+                  "BASELINE_CONDITION_MARKER = 'reference_condition'",
                   "PLANNED_CONDITIONS = [",
-                  "  'condition_2_parameter_0_0',",
-                  "  'condition_1_parameter_0_0', 'condition_1_parameter_0_05', 'condition_1_parameter_0_1',",
-                  "  'condition_2_parameter_0_05', 'condition_2_parameter_0_1',",
-                  "  'condition_3_parameter_0_0', 'condition_3_parameter_0_05', 'condition_3_parameter_0_1',",
-                  "  'condition_4_parameter_0_0', 'condition_4_parameter_0_05', 'condition_4_parameter_0_1',",
+                  "  'reference_condition',",
+                  "  'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+                  "  'ablation_condition', 'robustness_condition', 'replication_condition',",
+                  "  'stress_condition', 'calibration_condition', 'transfer_condition',",
+                  "  'held_out_condition', 'sensitivity_condition',",
                   "]",
                   "REQUIRED_CONDITION_COUNT = 12",
                   "REQUIRED_RUN_COUNT = 36",
@@ -5784,6 +5874,12 @@ describe("ImplementSessionManager", () => {
     expect(capturedPrompt).toContain('"required_condition_count": 12');
     expect(capturedPrompt).toContain('"required_run_count": 36');
     expect(capturedPrompt).toContain('"minimum_seeds_per_condition": 3');
+    expect(capturedPrompt).toContain('"baseline_condition_marker": "reference_condition"');
+    const markerListIndex = capturedPrompt.indexOf('"required_condition_markers": [');
+    expect(markerListIndex).toBeGreaterThanOrEqual(0);
+    expect(capturedPrompt.indexOf('"reference_condition"', markerListIndex)).toBeLessThan(
+      capturedPrompt.indexOf('"candidate_condition"', markerListIndex)
+    );
     expect(capturedPrompt).not.toContain('"required_condition_count": 8');
     expect(capturedPrompt).not.toContain('"required_run_count": 24');
   });
@@ -5800,7 +5896,7 @@ describe("ImplementSessionManager", () => {
       title: "Codex Implement Fallback Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -5987,7 +6083,7 @@ describe("ImplementSessionManager", () => {
       title: "Known Filesystem Blocker Rerun",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6106,7 +6202,7 @@ describe("ImplementSessionManager", () => {
       title: "Decomposition Repair Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6242,7 +6338,7 @@ describe("ImplementSessionManager", () => {
       title: "Decomposition Plan Required Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6318,7 +6414,7 @@ describe("ImplementSessionManager", () => {
       title: "Materializable Unit Repair Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6453,7 +6549,7 @@ describe("ImplementSessionManager", () => {
       title: "Materialization Plan Required Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6545,7 +6641,7 @@ describe("ImplementSessionManager", () => {
       title: "Resume Manifest Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6798,7 +6894,7 @@ describe("ImplementSessionManager", () => {
       title: "Objective Feedback Resume Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -6816,7 +6912,7 @@ describe("ImplementSessionManager", () => {
       trigger: "auto_handoff",
       stage: "metrics",
       summary:
-        'Experiment metrics contract failed: Objective metric "accuracy_delta_vs_baseline" was not found in metrics.json. Metrics evidence: condition_state_reasons=no usable normalized training texts:2.',
+        'Experiment metrics contract failed: Objective metric "primary_score_delta_vs_baseline" was not found in metrics.json. Metrics evidence: condition_state_reasons=no usable normalized training texts:2.',
       suggested_next_action:
         "Repair the experiment implementation so completed metrics include the configured objective metric and successful baseline/comparator results."
     });
@@ -7002,9 +7098,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Bootstrap Timeout Fallback Run",
-      topic: "language model benchmark implementation",
+      topic: "configured evaluation implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -7033,7 +7129,7 @@ describe("ImplementSessionManager", () => {
           if (prompt.includes("scaffold-first contract")) {
             return {
               text: JSON.stringify({
-                summary: "Runner scaffold with one bounded text unit for a language model benchmark.",
+                summary: "Runner scaffold with one bounded text unit and one configured dependency.",
                 run_command: `python3 ${JSON.stringify(publicScriptPath)}`,
                 test_command: `python3 -m py_compile ${JSON.stringify(publicScriptPath)}`,
                 changed_files: [publicScriptPath],
@@ -7124,7 +7220,7 @@ describe("ImplementSessionManager", () => {
       title: "Bootstrap Contract Block Run",
       topic: "parameterized method baseline study",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -7184,29 +7280,29 @@ describe("ImplementSessionManager", () => {
           return {
             text: JSON.stringify({
               version: 1,
-              strategy: "hf_bootstrap_contract",
-              summary: "The planned configured baseline requires a Hugging Face model and tokenizer bootstrap.",
+              strategy: "model_bootstrap_contract",
+              summary: "The planned reference condition requires a configured model and tokenizer bootstrap.",
               requires_network: true,
               requires_warm_cache: true,
               blocking_reason:
-                "No known non-network blocker at bootstrap. If network access is unavailable, the Hugging Face model, tokenizer, Benchmark Task A, Benchmark Task B, and instruction-tuning dataset must already be present in the local cache; otherwise execution will fail despite valid code.",
-              remediation: ["Prewarm the Hugging Face cache or allow network access for bootstrap."],
+                "No known non-network blocker at bootstrap. If network access is unavailable, the configured model, tokenizer, validation partition, held-out partition, and declared training dataset must already be present in the local cache; otherwise execution will fail despite valid code.",
+              remediation: ["Prewarm the configured dependency cache or allow network access for bootstrap."],
               requirements: [
                 {
-                  id: "hf_base_model",
+                  id: "configured_model_asset",
                   kind: "model",
-                  source: "huggingface",
-                  required_for: ["baseline_evaluation", "tuned_runs"],
+                  source: "other",
+                  required_for: ["reference_evaluation", "candidate_runs"],
                   availability: "unknown",
-                  summary: "Compact public causal LM"
+                  summary: "Configured model asset"
                 },
                 {
-                  id: "hf_tokenizer",
+                  id: "configured_tokenizer_asset",
                   kind: "tokenizer",
-                  source: "huggingface",
-                  required_for: ["baseline_evaluation", "tuned_runs"],
+                  source: "other",
+                  required_for: ["reference_evaluation", "candidate_runs"],
                   availability: "unknown",
-                  summary: "Tokenizer matching the compact public LM"
+                  summary: "Tokenizer matching the configured model"
                 }
               ],
               checks: []
@@ -7242,7 +7338,7 @@ describe("ImplementSessionManager", () => {
     expect(bootstrapContract).toMatchObject({
       blocking_reason: expect.stringContaining("No known non-network blocker")
     });
-    expect(bootstrapContract.summary).toContain("Hugging Face model and tokenizer bootstrap");
+    expect(bootstrapContract.summary).toContain("configured model and tokenizer bootstrap");
   });
 
   it("prioritizes current data dependency feedback over stale model repair context", async () => {
@@ -7257,7 +7353,7 @@ describe("ImplementSessionManager", () => {
       title: "Dependency Repair Bootstrap Run",
       topic: "dependency-gated local experiment",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -7395,7 +7491,7 @@ describe("ImplementSessionManager", () => {
       title: "Noisy Bootstrap Contract Run",
       topic: "parameterized method baseline study",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -7427,7 +7523,7 @@ describe("ImplementSessionManager", () => {
     let llmCalls = 0;
     const bootstrapPayload = {
       version: 1,
-      strategy: "hf_bootstrap_contract",
+      strategy: "model_bootstrap_contract",
       summary: "Recovered bootstrap contract after a noisy leading JSON object.",
       requires_network: true,
       requires_warm_cache: false,
@@ -7435,12 +7531,12 @@ describe("ImplementSessionManager", () => {
       remediation: ["Continue because no concrete non-network blocker is known."],
       requirements: [
         {
-          id: "hf_model",
+          id: "configured_model_asset",
           kind: "model",
-          source: "huggingface",
-          required_for: ["baseline_evaluation"],
+          source: "other",
+          required_for: ["reference_evaluation"],
           availability: "download_required",
-          summary: "Compact public causal LM"
+          summary: "Configured model asset"
         }
       ],
       checks: [
@@ -7509,7 +7605,7 @@ describe("ImplementSessionManager", () => {
     ) as { summary?: string; requires_network?: boolean };
 
     expect(raw).toContain("\"cmd\"");
-    expect(raw).toContain("\"hf_bootstrap_contract\"");
+    expect(raw).toContain("\"model_bootstrap_contract\"");
     expect(parsedContract.requires_network).toBe(true);
     expect(parsedContract.summary).toContain("Recovered bootstrap contract");
   });
@@ -7517,7 +7613,7 @@ describe("ImplementSessionManager", () => {
   it("recovers bootstrap contracts after noisy tool transcripts leave dangling quote state", () => {
     const payload = {
       version: "1.0",
-      strategy: "hf_bootstrap_contract",
+      strategy: "model_bootstrap_contract",
       summary: "Recovered bootstrap contract after transcript noise.",
       requires_network: true,
       requires_warm_cache: false,
@@ -7529,12 +7625,12 @@ describe("ImplementSessionManager", () => {
       },
       requirements: [
         {
-          id: "hf_model_tiny",
+          id: "alternate_model_asset",
           kind: "model",
-          source: "huggingface",
-          required_for: ["baseline_condition"],
+          source: "other",
+          required_for: ["reference_condition"],
           availability: "download_required",
-          summary: "Tiny model"
+          summary: "Alternate model asset"
         }
       ],
       checks: [
@@ -7565,26 +7661,28 @@ describe("ImplementSessionManager", () => {
     expect(contract?.checks).toHaveLength(1);
   });
 
-  it("preserves fixed-factor cells and comma-formatted task floors from a selected design", () => {
-    const expectedConditionMarkers = [4, 8, 16, 32].map((parameterX) =>
-      `condition_${parameterX}_parameter_0_0`
-    );
+  it("extracts YAML condition objects while preserving seed and full-evaluation contracts", () => {
     const contract = derivePlannedConditionContract({
       plan: [
         "retry_context:",
         '  transition_action: "backtrack_to_design"',
         "selected_design:",
-        '  summary: "Four trained parameter conditions x 7 completed seeds form the confirmation design."',
+        "  conditions:",
+        "    - condition_id: Candidate Condition",
+        "    - id: Reference Condition",
+        "    - condition_id: Alternative Condition",
+        "    - id: Confirmatory Condition",
+        "  baseline_condition_id: Reference Condition",
+        '  summary: "Four declared conditions x 7 completed seeds form the confirmation design."',
         "  implementation_notes:",
         '    - "The seed schedule must be exactly [42, 43, 44, 45, 46, 47, 48]."',
         "  evaluation_steps:",
-        '    - "Evaluate parameter_x {4, 8, 16, 32} across all seeds with parameter_y=0.0."',
-        '    - "Evaluation: Benchmark Task Alpha full approved split with raw total fixed at n=1,172 examples per run."',
-        '    - "Evaluation: Benchmark Task Beta validation split with raw total fixed at n=10,042 examples per run."',
+        '    - "Evaluation: Task Alpha full approved split with raw total fixed at n=1,172 examples per run."',
+        '    - "Evaluation: Task Beta full validation split with raw total fixed at n=10,042 examples per run."',
         "  resource_notes:",
         '    - "Evidence floor requires every planned condition and seed."'
       ].join("\n"),
-      objectiveMetric: "score_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     expect(contract).toMatchObject({
@@ -7592,12 +7690,84 @@ describe("ImplementSessionManager", () => {
       required_run_count: 28,
       seed_schedule: [42, 43, 44, 45, 46, 47, 48],
       minimum_seeds_per_condition: 7,
-      required_condition_markers: expectedConditionMarkers,
+      baseline_condition_marker: "reference_condition",
+      required_condition_markers: [
+        "reference_condition",
+        "candidate_condition",
+        "alternative_condition",
+        "confirmatory_condition"
+      ],
       full_evaluation_required: true,
       minimum_eval_examples_per_task: {
-        benchmark_task_alpha: 1172,
-        benchmark_task_beta: 10042
+        task_alpha: 1172,
+        task_beta: 10042
       }
+    });
+  });
+
+  it.each([
+    [
+      "semicolon scalar",
+      "conditions: Candidate Condition; Reference Condition; Alternative Condition",
+      "baseline_condition_marker"
+    ],
+    [
+      "comma scalar",
+      "conditions: Candidate Condition, Reference Condition, Alternative Condition",
+      "baseline_condition_id"
+    ],
+    [
+      "JSON-like inline list",
+      'conditions: ["Candidate Condition", {"condition_id": "Reference Condition"}, {"id": "Alternative Condition"}]',
+      "baseline"
+    ]
+  ])("normalizes %s condition input and honors its explicit baseline key", (_label, conditionsLine, baselineKey) => {
+    const contract = derivePlannedConditionContract({
+      plan: [
+        "selected_design:",
+        "  " + conditionsLine,
+        "  " + baselineKey + ": Reference Condition"
+      ].join("\n"),
+      objectiveMetric: "primary_score_delta_vs_baseline"
+    });
+
+    expect(contract).toMatchObject({
+      required_condition_count: 3,
+      baseline_condition_marker: "reference_condition",
+      required_condition_markers: [
+        "reference_condition",
+        "candidate_condition",
+        "alternative_condition"
+      ]
+    });
+  });
+
+  it("uses the text fallback for a Markdown YAML-style list and infers reference-first ordering", () => {
+    const contract = derivePlannedConditionContract({
+      brief: [
+        "# Governed Brief",
+        "A prose line keeps this input outside a standalone YAML document.",
+        "conditions:",
+        "  - Candidate Condition",
+        "  - Reference Condition",
+        "  - Alternative Condition",
+        "seeds: [3, 5]"
+      ].join("\n"),
+      preferBriefContract: true,
+      objectiveMetric: "primary_score_delta_vs_baseline"
+    });
+
+    expect(contract).toMatchObject({
+      required_condition_count: 3,
+      required_run_count: 6,
+      seed_schedule: [3, 5],
+      minimum_seeds_per_condition: 2,
+      baseline_condition_marker: "reference_condition",
+      required_condition_markers: [
+        "reference_condition",
+        "candidate_condition",
+        "alternative_condition"
+      ]
     });
   });
 
@@ -7702,15 +7872,15 @@ describe("ImplementSessionManager", () => {
     expect(result.missing).toEqual([]);
   });
 
-  it("does not hard-block staged bootstrap planning on sklearn when only accuracy scoring needs it", async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-sklearn-accuracy-"));
+  it("does not hard-block staged bootstrap planning on sklearn when only outcome scoring needs it", async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), "autolabos-bootstrap-sklearn-scoring-"));
     tempDirs.push(workspace);
 
     const result = await evaluateImplementBootstrapContract({
       workspaceRoot: workspace,
       contract: {
         version: 1,
-        summary: "Accuracy scoring can be implemented without an external metric helper.",
+        summary: "Primary outcome scoring can be implemented without an external metric helper.",
         requires_network: false,
         requires_warm_cache: false,
         blocking_reason: "",
@@ -7722,7 +7892,7 @@ describe("ImplementSessionManager", () => {
             source: "python",
             required_for: ["evaluation_metrics"],
             availability: "unknown",
-            summary: "scikit-learn is used for accuracy scoring."
+            summary: "scikit-learn is used for primary outcome scoring."
           }
         ],
         checks: [
@@ -7730,7 +7900,7 @@ describe("ImplementSessionManager", () => {
             id: "module-sklearn",
             check_type: "python_module_available",
             target: "sklearn",
-            reason: "Required for accuracy computation."
+            reason: "Required for primary outcome scoring."
           }
         ]
       }
@@ -7864,9 +8034,9 @@ describe("ImplementSessionManager", () => {
             id: "sentencepiece",
             kind: "library",
             source: "python",
-            required_for: ["Llama-family tokenizer support"],
+            required_for: ["configured-checkpoint tokenizer support"],
             availability: "unknown",
-            summary: "Tokenizer backend commonly needed for Llama-family checkpoints such as the configured fallback backbone."
+            summary: "Tokenizer backend conditionally needed for the configured fallback checkpoint."
           }
         ],
         checks: [
@@ -7874,7 +8044,7 @@ describe("ImplementSessionManager", () => {
             id: "check-python-module-sentencepiece",
             check_type: "python_module_available",
             target: "autolabos_missing_conditional_tokenizer_module_for_test",
-            reason: "Needed for tokenizer support if the selected checkpoint is the configured fallback backbone or another Llama-family model."
+            reason: "Needed for tokenizer support if the selected checkpoint uses the configured fallback tokenizer family."
           }
         ]
       }
@@ -7896,7 +8066,7 @@ describe("ImplementSessionManager", () => {
       title: "Generated Output Bootstrap Contract Run",
       topic: "parameterized method baseline study",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -8036,7 +8206,7 @@ describe("ImplementSessionManager", () => {
       title: "Chunk Subdivision Plan Required Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -8155,7 +8325,7 @@ describe("ImplementSessionManager", () => {
       title: "Subchunked Runner Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -8463,7 +8633,7 @@ describe("ImplementSessionManager", () => {
       title: "Single Python Chunk Runner",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -8574,7 +8744,7 @@ describe("ImplementSessionManager", () => {
                   "import json",
                   "",
                   "def main():",
-                  "    print(json.dumps({'accuracy': 1.0}))",
+                  "    print(json.dumps({'primary_score': 1.0}))",
                   "",
                   "if __name__ == '__main__':",
                   "    main()"
@@ -8613,7 +8783,7 @@ describe("ImplementSessionManager", () => {
       title: "Recursive Subchunk Runner Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -8804,7 +8974,7 @@ describe("ImplementSessionManager", () => {
                 content: [
                   "def write_metrics(metrics_path):",
                   "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
-                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+                  "        handle.write('{\"status\":\"completed\",\"primary_score\":1.0}')",
                   "",
                   "def main():",
                   "    load_config()",
@@ -8883,7 +9053,7 @@ describe("ImplementSessionManager", () => {
       title: "Canonical Skeleton Runner",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9044,7 +9214,7 @@ describe("ImplementSessionManager", () => {
                 content: [
                   "def write_metrics(metrics_path):",
                   "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
-                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0}')",
+                  "        handle.write('{\"status\":\"completed\",\"primary_score\":1.0}')",
                   "",
                   "def main():",
                   "    load_config()",
@@ -9111,7 +9281,7 @@ describe("ImplementSessionManager", () => {
       title: "Single Section Skeleton Runner",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9244,7 +9414,7 @@ describe("ImplementSessionManager", () => {
       title: "Syntax Resubchunk Runner",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9448,7 +9618,7 @@ describe("ImplementSessionManager", () => {
                   "def write_metrics(metrics_path):",
                   "    prediction = select_prediction(build_score_rows([0.4, 0.9]))",
                   "    with open(metrics_path, 'w', encoding='utf-8') as handle:",
-                  "        handle.write('{\"status\":\"completed\",\"accuracy\":1.0,\"prediction_index\":%d}' % prediction['index'])",
+                  "        handle.write('{\"status\":\"completed\",\"primary_score\":1.0,\"prediction_index\":%d}' % prediction['index'])",
                   "",
                   "def main():",
                   "    write_metrics('metrics.json')",
@@ -9501,7 +9671,7 @@ describe("ImplementSessionManager", () => {
       title: "Comment Only Chunk Run",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9658,7 +9828,7 @@ describe("ImplementSessionManager", () => {
       title: "Reject Unfilled Section Runner",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9744,7 +9914,7 @@ describe("ImplementSessionManager", () => {
       title: "Reject Adjacent Unfilled Section Backend",
       topic: "bounded experiment implementation",
       constraints: ["real artifacts"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9881,9 +10051,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Implementation OpenAI Retry Run",
-      topic: "small model reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -9990,13 +10160,13 @@ describe("ImplementSessionManager", () => {
       title: "Stale Bundle Run",
       topic: "plan-aware rerun",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
     mkdirSync(runDir, { recursive: true });
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_gsm8k_budget_reasoning.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const configPath = path.join(publicDir, "frozen_config.json");
     const readmePath = path.join(publicDir, "README.md");
     const metricsPath = path.join(runDir, "metrics.json");
@@ -10007,9 +10177,9 @@ describe("ImplementSessionManager", () => {
     mkdirSync(publicDir, { recursive: true });
     writeFileSync(scriptPath, MINIMAL_METRICS_RUNNER_SOURCE, "utf8");
     writeFileSync(configPath, "{\"pilot_size\":8,\"repeats\":1}\n", "utf8");
-    writeFileSync(baselinePath, "{\"baseline\":\"fixed_cot_256\"}\n", "utf8");
+    writeFileSync(baselinePath, "{\"baseline\":\"reference_condition\"}\n", "utf8");
     writeFileSync(metricsPath, "{\"status\":\"ok\"}\n", "utf8");
-    writeFileSync(artifactPath, "{\"accuracy\":0.5}\n", "utf8");
+    writeFileSync(artifactPath, "{\"primary_score\":0.5}\n", "utf8");
     writeFileSync(
       readmePath,
       [
@@ -10043,7 +10213,7 @@ describe("ImplementSessionManager", () => {
       selectedDesign: {
         id: "plan_new",
         hypothesis_ids: ["h_1"],
-        baselines: ["fixed_cot_256"]
+        baselines: ["reference_condition"]
       },
       objectiveProfile: buildHeuristicObjectiveMetricProfile(run.objectiveMetric),
       managedBundleSupported: false
@@ -10110,9 +10280,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Invalid Implementer Response",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10138,10 +10308,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -10153,10 +10323,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -10165,12 +10335,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -10210,7 +10380,7 @@ describe("ImplementSessionManager", () => {
       title: "Nonstandard Runner Name",
       topic: "Configuration parameter sweep",
       constraints: ["single workstation"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10218,7 +10388,7 @@ describe("ImplementSessionManager", () => {
     writeFileSync(path.join(runDir, "experiment_plan.yaml"), "hypotheses:\n  - baseline\n", "utf8");
 
     const publicDir = buildPublicExperimentDir(workspace, run);
-    const scriptPath = path.join(publicDir, "run_condition_grid_study.py");
+    const scriptPath = path.join(publicDir, "run_experiment.py");
     const metricsPath = path.join(runDir, "metrics.json");
     let callCount = 0;
     const codex = {
@@ -10287,9 +10457,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Path Guard Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10334,10 +10504,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -10349,10 +10519,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -10361,12 +10531,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -10410,9 +10580,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Tmp Alias Run",
-      topic: "tabular baselines",
+      topic: "configured comparison",
       constraints: ["cpu only"],
-      objectiveMetric: "macro_f1"
+      objectiveMetric: "secondary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10499,9 +10669,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Policy Block Run",
-      topic: "agent reasoning",
+      topic: "configured research topic",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10538,10 +10708,10 @@ describe("ImplementSessionManager", () => {
         providers: {
           llm_mode: "codex_chatgpt_only",
           codex: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "xhigh",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "xhigh",
@@ -10553,10 +10723,10 @@ describe("ImplementSessionManager", () => {
             auth_required: true
           },
           openai: {
-            model: "gpt-5.4",
-            chat_model: "gpt-5.4",
-            experiment_model: "gpt-5.4",
-            pdf_model: "gpt-5.4",
+            model: "configured-model",
+            chat_model: "configured-model",
+            experiment_model: "configured-model",
+            pdf_model: "configured-model",
             reasoning_effort: "medium",
             chat_reasoning_effort: "low",
             experiment_reasoning_effort: "medium",
@@ -10565,12 +10735,12 @@ describe("ImplementSessionManager", () => {
           }
         },
         analysis: {
-          responses_model: "gpt-5.4",
+          responses_model: "configured-model",
           responses_reasoning_effort: "xhigh"
         },
         papers: { max_results: 200, per_second_limit: 1 },
         research: {
-          default_topic: "Multi-agent collaboration",
+          default_topic: "configured research topic",
           default_constraints: ["recent papers"],
           default_objective_metric: "reproducibility"
         },
@@ -10612,7 +10782,7 @@ describe("ImplementSessionManager", () => {
       title: "Plan Drift Run",
       topic: "plan drift detection",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10693,7 +10863,7 @@ describe("ImplementSessionManager", () => {
       title: "Fresh Thread After Plan Change",
       topic: "plan drift detection",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
 
     const runDir = path.join(workspace, ".autolabos", "runs", run.id);
@@ -10774,7 +10944,7 @@ describe("ImplementSessionManager", () => {
       title: "Fresh Thread After Runner Feedback",
       topic: "repair broken experiment runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -10865,9 +11035,9 @@ describe("ImplementSessionManager", () => {
     const runStore = new RunStore(paths);
     const run = await runStore.createRun({
       title: "Fresh Thread After Contract Feedback",
-      topic: "repair condition grid",
+      topic: "repair named condition contract",
       constraints: ["recent"],
-      objectiveMetric: "accuracy_delta_vs_baseline"
+      objectiveMetric: "primary_score_delta_vs_baseline"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -10877,7 +11047,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(
       path.join(runDir, "experiment_plan.yaml"),
-      "condition_parameter_x_values: [4, 8, 16, 32]\ncondition_parameter_y_values: [0.0, 0.05]\nseeds: [1, 2, 3]\n",
+      "conditions: [reference_condition, candidate_condition, alternative_condition, confirmatory_condition, ablation_condition, robustness_condition, replication_condition, stress_condition]\nbaseline: reference_condition\nseeds: [1, 2, 3]\n",
       "utf8"
     );
 
@@ -10938,8 +11108,8 @@ describe("ImplementSessionManager", () => {
           scriptPath,
           [
             "PLANNED_CONDITION_MARKERS = (",
-            "  'candidate_condition_a', 'candidate_condition_a5', 'baseline_condition', 'baseline_condition5',",
-            "  'candidate_condition_d', 'candidate_condition_d5', 'candidate_condition_f', 'candidate_condition_f5',",
+            "  'reference_condition', 'candidate_condition', 'alternative_condition', 'confirmatory_condition',",
+            "  'ablation_condition', 'robustness_condition', 'replication_condition', 'stress_condition',",
             ")",
             "REQUIRED_CONDITION_COUNT = 8",
             "REQUIRED_RUN_COUNT = 24",
@@ -10954,7 +11124,7 @@ describe("ImplementSessionManager", () => {
         return {
           threadId: "thread-fresh-after-contract",
           finalText: JSON.stringify({
-            summary: "Reimplemented the condition-grid runner from contract feedback.",
+            summary: "Reimplemented the named-condition runner from contract feedback.",
             run_command: `python3 ${JSON.stringify(scriptPath)}`,
             changed_files: [scriptPath],
             artifacts: [scriptPath],
@@ -10998,7 +11168,7 @@ describe("ImplementSessionManager", () => {
       title: "Fresh Thread After Local Verification Feedback",
       topic: "repair generated experiment runner",
       constraints: ["recent"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -11099,7 +11269,7 @@ describe("ImplementSessionManager", () => {
       title: "Budget Guard Handoff",
       topic: "validate a repeated condition runner",
       constraints: ["bounded execution"],
-      objectiveMetric: "accuracy"
+      objectiveMetric: "primary_score"
     });
     run.currentNode = "implement_experiments";
     run.graph.currentNode = "implement_experiments";
@@ -11107,7 +11277,7 @@ describe("ImplementSessionManager", () => {
     mkdirSync(runDir, { recursive: true });
     writeFileSync(
       path.join(runDir, "experiment_plan.yaml"),
-      "conditions:\n  - baseline_condition\n  - candidate_condition_a\nseeds: [1, 2, 3, 4, 5, 6, 7, 8]\n",
+      "conditions:\n  - reference_condition\n  - candidate_condition\nbaseline: reference_condition\nseeds: [1, 2, 3, 4, 5, 6, 7, 8]\n",
       "utf8"
     );
 
@@ -11121,22 +11291,17 @@ describe("ImplementSessionManager", () => {
           [
             "import argparse",
             "",
-            "PLANNED_CONDITION_MARKERS = ('baseline_condition',)",
+            "PLANNED_CONDITION_MARKERS = ('reference_condition', 'candidate_condition')",
+            "REQUIRED_CONDITION_COUNT = 2",
             "SEED_SCHEDULE = [1, 2, 3, 4, 5, 6, 7, 8]",
-            "REQUIRED_RUN_COUNT = 8",
+            "REQUIRED_RUN_COUNT = 16",
             "",
-            "class Optimizer:",
-            "    def step(self):",
-            "        return None",
-            "",
-            "def from_pretrained():",
-            "    return object()",
+            "def execute_work_unit():",
+            "    return None",
             "",
             "def execute_planned_runs(timeout_sec):",
-            "    optimizer = Optimizer()",
             "    for _run_index in range(REQUIRED_RUN_COUNT):",
-            "        from_pretrained()",
-            "        optimizer.step()",
+            "        execute_work_unit()",
             "    return {'completed_run_count': REQUIRED_RUN_COUNT}",
             "",
             "def main():",
@@ -11178,14 +11343,14 @@ describe("ImplementSessionManager", () => {
     });
 
     await expect(manager.run(run)).rejects.toThrow(
-      "no executable training or evaluation loop consumes a deadline"
+      "no executable planned-work loop consumes a deadline"
     );
     expect(generationCount).toBeGreaterThan(1);
     const verifyReport = JSON.parse(
       readFileSync(path.join(runDir, "verify_report.json"), "utf8")
     ) as { status: string; failure_type?: string; summary: string };
     expect(verifyReport).toMatchObject({ status: "fail", failure_type: "implementation" });
-    expect(verifyReport.summary).toContain("required_run_count=8");
+    expect(verifyReport.summary).toContain("required_run_count=16");
   });
 
 });

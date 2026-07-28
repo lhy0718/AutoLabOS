@@ -6,9 +6,16 @@ import { GraphNodeHandler } from "../stateGraph/types.js";
 import { appendJsonl, appendJsonlItems, runArtifactsDir, safeRead, syncRunLiteratureIndex, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { recordLiteratureQueryPlanRejection } from "../literatureQueryGeneration.js";
+import {
+  parseReusableResearchGapSynthesisArtifact,
+  synthesizeResearchGapClusters
+} from "../analysis/researchGapSynthesis.js";
+import { buildResearchGapMap } from "../researchFunnel.js";
 import { readJsonFile, writeJsonFile } from "../../utils/fs.js";
 import {
   ANALYSIS_SYSTEM_PROMPT,
+  PAPER_ANALYSIS_EVIDENCE_SEMANTICS_VERSION,
   analyzePaperWithLlm,
   analyzePaperWithResponsesPdf,
   buildPaperAnalysisPrompt,
@@ -30,17 +37,46 @@ import {
   resolvePaperTextSource
 } from "../analysis/paperText.js";
 import {
+  ANALYSIS_SELECTION_SEMANTICS_VERSION,
   AnalysisSelectionRequest,
+  applyTopicFamilyCoverageFloor,
   buildSelectionFingerprint,
   buildSelectionRequestFingerprint,
   DeterministicScoreBreakdown,
   normalizeAnalysisSelectionRequest,
   PaperSelectionResult,
   RankedPaperCandidate,
-  selectPapersForAnalysis
+  selectPapersForAnalysis,
+  TopicFamilyCoverageAudit
 } from "../analysis/paperSelection.js";
-import { CollectEnrichmentLogEntry } from "../collection/types.js";
+import { CollectEnrichmentLogEntry, StoredCorpusRow } from "../collection/types.js";
+import {
+  assessTopicDiscoveryPaperRelevance,
+  buildTopicDiscoveryCorpusRelevanceProfile,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_STRATEGY,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
+} from "../collection/topicDiscoveryCorpusQuality.js";
+import {
+  TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY,
+  TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
+} from "../collection/topicDiscoverySemanticAudit.js";
+import {
+  buildTopicDiscoveryCandidateFamilySignature,
+  TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+  TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
+} from "../topicDiscoveryScientificTerms.js";
+import {
+  isCurrentTopicDiscoveryCollectQueryPlanArtifact,
+  TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION
+} from "../collection/topicDiscoveryArtifactVersions.js";
 import { DoctorCheck, RunRecord, TransitionRecommendation } from "../../types.js";
+import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
+import { validateTopicDiscoverySemanticLineage } from "../runs/topicDiscoverySemanticLineage.js";
+import {
+  validateCandidatePriorSearchPlanIntegrity,
+  validateCandidatePriorSearchReceipt
+} from "../candidatePriorSearch.js";
+import { auditCollectAttemptArchiveIntegrity } from "../collection/collectAttemptArchive.js";
 import { RECOMMENDED_CODEX_MODEL } from "../../integrations/codex/modelCatalog.js";
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
@@ -52,9 +88,10 @@ import { resolveCodexOAuthCredentials } from "../../integrations/codex/oauthAuth
 import { CodexOAuthResponsesTextClient } from "../../integrations/codex/oauthResponsesTextClient.js";
 
 interface AnalysisManifest {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   updatedAt: string;
   request: AnalysisSelectionRequest;
+  selectionSemanticsVersion?: number;
   selectionFingerprint: string;
   selectionRequestFingerprint?: string;
   analysisFingerprint?: string;
@@ -63,6 +100,7 @@ interface AnalysisManifest {
   candidatePoolSize: number;
   rerankApplied?: boolean;
   rerankFallbackReason?: string;
+  topicFamilyCoverage?: TopicFamilyCoverageAudit;
   selectedPaperIds: string[];
   rerankedPaperIds: string[];
   deterministicRankingPreview: Array<{
@@ -77,6 +115,7 @@ interface AnalysisManifest {
 interface AnalysisManifestEntry {
   paper_id: string;
   title: string;
+  query_families?: string[];
   status: "pending" | "running" | "completed" | "failed" | "skipped";
   selected: boolean;
   rank?: number;
@@ -120,6 +159,20 @@ const SMALL_SELECTION_SERIAL_WARM_START_MAX = 4;
 const COLLECT_ENRICHMENT_SELECTED_WAIT_MS = 5_000;
 const COLLECT_ENRICHMENT_EXTENDED_WAIT_MS = 15_000;
 const COLLECT_ENRICHMENT_POLL_INTERVAL_MS = 250;
+const TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS = 8;
+const TOPIC_DISCOVERY_MINIMUM_COVERED_QUERY_FAMILIES = 2;
+const TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY = 2;
+const TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY = 0.5;
+
+function countDistinctQueryFamilies(rows: AnalysisCorpusRow[]): number {
+  return new Set(
+    rows.flatMap((row) =>
+      (row.query_families ?? [])
+        .map((queryFamily) => queryFamily.trim())
+        .filter(Boolean)
+    )
+  ).size;
+}
 
 function createSelectionRerankLlm(deps: NodeExecutionDeps): NodeExecutionDeps["llm"] {
   const providerConfig = deps.config?.providers;
@@ -298,6 +351,7 @@ interface SelectionQualityGuardResult {
   applied: boolean;
   droppedPaperIds: string[];
   addedPaperIds: string[];
+  eligiblePaperIds?: string[];
   reason?: string;
 }
 
@@ -308,6 +362,1861 @@ interface SelectionRetargetResult {
   preservedCompletedPaperIds: string[];
   droppedPaperIds: string[];
   logMessage: string;
+}
+
+interface CollectAnalysisLineageAudit {
+  modern: boolean;
+  valid: boolean;
+  expectedAttemptId?: string;
+  requiredQueryFamilies?: string[];
+  queryFamilies?: Array<{
+    queryFamily: string;
+    query: string;
+    axisTerms: string[];
+    lens: string;
+    contributionIntent: string;
+    canonicalFamilySignature: string;
+    lexicalRelevantPaperCount: number;
+    semanticReviewedPaperCount: number;
+    providerRecallPaperCount: number;
+    directSupportPaperCount: number;
+    applicationOnlyPaperCount: number;
+    uncertainPaperCount: number;
+    retainedPaperCount: number;
+    relevantPaperCount: number;
+    semanticPrecision: number;
+  }>;
+  sharedAnchorTerms?: string[];
+  reasons: string[];
+}
+
+interface ParsedTopicDiscoveryPlanFamilies {
+  malformed: boolean;
+  sharedAnchorTerms?: string[];
+  families: Map<string, {
+    query: string;
+    sharedAnchorTerms: string[];
+    axisTerms: string[];
+    lens: string;
+    contributionIntent: string;
+  }>;
+}
+
+interface ParsedSemanticFamilyContracts {
+  malformed: boolean;
+  families: Map<string, {
+    query: string;
+    sharedAnchorTerms?: string[];
+    axisTerms: string[];
+    lens: string;
+    contributionIntent: string;
+  }>;
+}
+
+interface ParsedSemanticJudgments {
+  malformed: boolean;
+  judgments: Map<string, {
+    paperId: string;
+    familyId: string;
+    verdict: "direct_support" | "application_only" | "uncertain";
+    reason: string;
+    evidenceSpan?: string;
+  }>;
+}
+
+interface ParsedTopicDiscoveryCandidatePool {
+  malformed: boolean;
+  candidates: Map<string, {
+    paperId: string;
+    title: string;
+    abstract: string;
+    queryFamilies: string[];
+    declaredLexicalFamilies: string[];
+    familyRanks: Map<string, number>;
+    canonicalSearchSource: string;
+    searchProviders: string[];
+    semanticReviewRequestedFamilies: string[];
+    semanticReviewSelections: Array<{
+      familyId: string;
+      selectionSource: "lexical_match" | "provider_provenance_floor";
+    }>;
+    semanticReviewRequested: boolean;
+  }>;
+}
+
+function parseTopicDiscoveryPlanFamilies(value: unknown): ParsedTopicDiscoveryPlanFamilies {
+  const families = new Map<string, {
+    query: string;
+    sharedAnchorTerms: string[];
+    axisTerms: string[];
+    lens: string;
+    contributionIntent: string;
+  }>();
+  let malformed = !Array.isArray(value) || value.length === 0;
+  for (const raw of Array.isArray(value) ? value : []) {
+    const selected = objectValue(raw);
+    const contract = objectValue(selected?.topic_discovery_family);
+    const queryFamily = stringValue(selected?.query_family);
+    const familyId = stringValue(contract?.familyId);
+    const query = stringValue(selected?.query);
+    const sharedAnchorTerms = exactStringArrayValue(contract?.sharedAnchorTerms);
+    const axisTerms = exactStringArrayValue(contract?.axisTerms);
+    const lens = stringValue(contract?.lens);
+    const contributionIntent = stringValue(contract?.contributionIntent);
+    if (
+      !queryFamily
+      || familyId !== queryFamily
+      || !query
+      || !sharedAnchorTerms
+      || !axisTerms
+      || !lens
+      || !contributionIntent
+      || families.has(queryFamily)
+    ) {
+      malformed = true;
+      continue;
+    }
+    families.set(queryFamily, {
+      query,
+      sharedAnchorTerms,
+      axisTerms,
+      lens,
+      contributionIntent
+    });
+  }
+  const sharedAnchorTerms = families.values().next().value?.sharedAnchorTerms;
+  if (
+    !sharedAnchorTerms
+    || Array.from(families.values()).some(
+      (family) => !sameStringArray(family.sharedAnchorTerms, sharedAnchorTerms)
+    )
+  ) {
+    malformed = true;
+  }
+  return { malformed, sharedAnchorTerms, families };
+}
+
+function parseSemanticFamilyContracts(value: unknown): ParsedSemanticFamilyContracts {
+  const families: ParsedSemanticFamilyContracts["families"] = new Map();
+  let malformed = !Array.isArray(value) || value.length === 0;
+  for (const raw of Array.isArray(value) ? value : []) {
+    const contract = objectValue(raw);
+    const familyId = stringValue(contract?.family_id);
+    const query = stringValue(contract?.query);
+    const rawSharedAnchorTerms = contract?.shared_anchor_terms;
+    const sharedAnchorTerms = rawSharedAnchorTerms === undefined
+      ? undefined
+      : exactStringArrayValue(rawSharedAnchorTerms);
+    const axisTerms = exactStringArrayValue(contract?.axis_terms);
+    const lens = stringValue(contract?.lens);
+    const contributionIntent = stringValue(contract?.contribution_intent);
+    if (
+      !familyId
+      || !query
+      || (rawSharedAnchorTerms !== undefined && !sharedAnchorTerms)
+      || !axisTerms
+      || !lens
+      || !contributionIntent
+      || families.has(familyId)
+    ) {
+      malformed = true;
+      continue;
+    }
+    families.set(familyId, {
+      query,
+      ...(sharedAnchorTerms ? { sharedAnchorTerms } : {}),
+      axisTerms,
+      lens,
+      contributionIntent
+    });
+  }
+  return { malformed, families };
+}
+
+function parseSemanticJudgments(value: unknown): ParsedSemanticJudgments {
+  const judgments = new Map<string, {
+    paperId: string;
+    familyId: string;
+    verdict: "direct_support" | "application_only" | "uncertain";
+    reason: string;
+    evidenceSpan?: string;
+  }>();
+  let malformed = !Array.isArray(value);
+  for (const raw of Array.isArray(value) ? value : []) {
+    const judgment = objectValue(raw);
+    const paperId = stringValue(judgment?.paper_id);
+    const familyId = stringValue(judgment?.family_id);
+    const verdict = judgment?.verdict;
+    const reason = stringValue(judgment?.reason);
+    if (
+      !paperId
+      || !familyId
+      || !reason
+      || (verdict !== "direct_support"
+        && verdict !== "application_only"
+        && verdict !== "uncertain")
+    ) {
+      malformed = true;
+      continue;
+    }
+    const key = semanticPairKey(paperId, familyId);
+    if (judgments.has(key)) {
+      malformed = true;
+      continue;
+    }
+    const evidenceSpan = stringValue(judgment?.evidence_span);
+    judgments.set(key, {
+      paperId,
+      familyId,
+      verdict,
+      reason,
+      ...(evidenceSpan ? { evidenceSpan } : {})
+    });
+  }
+  return { malformed, judgments };
+}
+
+function parseSemanticRequestedPairKeys(value: unknown): {
+  malformed: boolean;
+  keys: Set<string>;
+  selectionSources: Map<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >;
+} {
+  const keys = new Set<string>();
+  const selectionSources = new Map<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >();
+  let malformed = !Array.isArray(value);
+  for (const raw of Array.isArray(value) ? value : []) {
+    const pair = objectValue(raw);
+    const paperId = stringValue(pair?.paper_id);
+    const familyId = stringValue(pair?.family_id);
+    const selectionSource = pair?.selection_source;
+    if (
+      !paperId
+      || !familyId
+      || (selectionSource !== "lexical_match"
+        && selectionSource !== "provider_provenance_floor")
+    ) {
+      malformed = true;
+      continue;
+    }
+    const key = semanticPairKey(paperId, familyId);
+    if (keys.has(key)) {
+      malformed = true;
+    }
+    keys.add(key);
+    selectionSources.set(key, selectionSource);
+  }
+  return { malformed, keys, selectionSources };
+}
+
+function semanticPairKey(paperId: string, familyId: string): string {
+  return JSON.stringify([paperId, familyId]);
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+function sameKeySet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  return left.size === right.size && Array.from(left).every((key) => right.has(key));
+}
+
+function sameSelectionSourceMap(
+  left: ReadonlyMap<string, "lexical_match" | "provider_provenance_floor">,
+  right: ReadonlyMap<string, "lexical_match" | "provider_provenance_floor">
+): boolean {
+  return left.size === right.size
+    && Array.from(left.entries()).every(([key, source]) => right.get(key) === source);
+}
+
+function semanticRecallMatchesSelectionSources(
+  value: unknown,
+  sources: ReadonlyMap<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >
+): boolean {
+  const recall = objectValue(value);
+  const lexicalCount = Array.from(sources.values()).filter(
+    (source) => source === "lexical_match"
+  ).length;
+  const providerCount = sources.size - lexicalCount;
+  return numberValue(recall?.provider_recall_floor_per_family)
+      === TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY
+    && numberValue(recall?.lexical_requested_pairs) === lexicalCount
+    && numberValue(recall?.provider_provenance_requested_pairs) === providerCount;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function exactStringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) {
+    return undefined;
+  }
+  const values = value.map(stringValue);
+  if (
+    values.some((item) => !item)
+    || new Set(values).size !== values.length
+  ) {
+    return undefined;
+  }
+  return values as string[];
+}
+
+function hashJsonValue(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+}
+
+interface SemanticJudgmentCounts {
+  directSupport: number;
+  applicationOnly: number;
+  uncertain: number;
+}
+
+function countSemanticJudgments(
+  judgments: Iterable<{
+    verdict: "direct_support" | "application_only" | "uncertain";
+  }>
+): SemanticJudgmentCounts {
+  const counts: SemanticJudgmentCounts = {
+    directSupport: 0,
+    applicationOnly: 0,
+    uncertain: 0
+  };
+  for (const judgment of judgments) {
+    if (judgment.verdict === "direct_support") {
+      counts.directSupport += 1;
+    } else if (judgment.verdict === "application_only") {
+      counts.applicationOnly += 1;
+    } else {
+      counts.uncertain += 1;
+    }
+  }
+  return counts;
+}
+
+function semanticReviewCountsMatch(
+  value: unknown,
+  expectedPairCount: number,
+  verdictCounts: SemanticJudgmentCounts
+): boolean {
+  const counts = objectValue(value);
+  return Boolean(counts)
+    && numberValue(counts?.requested_pairs) === expectedPairCount
+    && numberValue(counts?.reviewed_pairs) === expectedPairCount
+    && numberValue(counts?.budget_excluded_pairs) === 0
+    && numberValue(counts?.returned_judgments) === expectedPairCount
+    && numberValue(counts?.direct_support) === verdictCounts.directSupport
+    && numberValue(counts?.application_only) === verdictCounts.applicationOnly
+    && numberValue(counts?.uncertain) === verdictCounts.uncertain
+    && numberValue(counts?.omitted_judgments) === 0
+    && numberValue(counts?.duplicate_judgments) === 0
+    && numberValue(counts?.conflicting_judgments) === 0
+    && numberValue(counts?.invented_judgments) === 0
+    && numberValue(counts?.malformed_judgments) === 0
+    && numberValue(counts?.protocol_violations) === 0;
+}
+
+async function auditCollectAttemptArchive(input: {
+  run: RunRecord;
+  manifestValue: unknown;
+  expectedAttemptId?: string;
+  requiredLiveArtifacts?: ReadonlyMap<string, string>;
+}): Promise<string[]> {
+  if (!input.expectedAttemptId) {
+    return ["collect_lineage_manifest_contract_invalid"];
+  }
+  return auditCollectAttemptArchiveIntegrity({
+    runDir: runArtifactsDir(input.run),
+    expectedRunId: input.run.id,
+    expectedAttemptId: input.expectedAttemptId,
+    manifestValue: input.manifestValue,
+    requiredArtifacts: input.requiredLiveArtifacts
+  });
+}
+
+function exactPossiblyEmptyStringArrayValue(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+  const values = value.map(stringValue);
+  if (values.some((item) => !item) || new Set(values).size !== values.length) {
+    return undefined;
+  }
+  return values as string[];
+}
+
+function parseTopicDiscoverySemanticReviewSelections(value: unknown): {
+  malformed: boolean;
+  values: Array<{
+    familyId: string;
+    selectionSource: "lexical_match" | "provider_provenance_floor";
+  }>;
+} {
+  const values: Array<{
+    familyId: string;
+    selectionSource: "lexical_match" | "provider_provenance_floor";
+  }> = [];
+  const familyIds = new Set<string>();
+  let malformed = !Array.isArray(value);
+  for (const raw of Array.isArray(value) ? value : []) {
+    const selection = objectValue(raw);
+    const familyId = stringValue(selection?.family_id);
+    const selectionSource = selection?.selection_source;
+    if (
+      !familyId
+      || familyIds.has(familyId)
+      || (selectionSource !== "lexical_match"
+        && selectionSource !== "provider_provenance_floor")
+    ) {
+      malformed = true;
+      continue;
+    }
+    familyIds.add(familyId);
+    values.push({ familyId, selectionSource });
+  }
+  return { malformed, values };
+}
+
+function parseTopicDiscoveryFamilyRanks(value: unknown): {
+  malformed: boolean;
+  values: Map<string, number>;
+} {
+  const values = new Map<string, number>();
+  let malformed = !Array.isArray(value);
+  for (const raw of Array.isArray(value) ? value : []) {
+    const entry = objectValue(raw);
+    const familyId = stringValue(entry?.family_id);
+    const rank = numberValue(entry?.rank);
+    if (!familyId || !rank || !Number.isInteger(rank) || values.has(familyId)) {
+      malformed = true;
+      continue;
+    }
+    values.set(familyId, rank);
+  }
+  return { malformed, values };
+}
+
+function topicDiscoveryPaperSearchProvider(value: unknown): string | undefined {
+  return value === "semantic_scholar"
+    || value === "openalex"
+    || value === "crossref"
+    || value === "arxiv"
+    ? value
+    : undefined;
+}
+
+function parseTopicDiscoveryCandidatePool(input: {
+  raw: string;
+  expectedAttemptId?: string;
+}): ParsedTopicDiscoveryCandidatePool {
+  const candidates: ParsedTopicDiscoveryCandidatePool["candidates"] = new Map();
+  let malformed = !input.raw.trim();
+  const lines = input.raw.split(/\r?\n/u).filter((line) => line.trim());
+  for (const line of lines) {
+    let candidate: Record<string, unknown> | undefined;
+    try {
+      candidate = objectValue(JSON.parse(line) as unknown);
+    } catch {
+      malformed = true;
+      continue;
+    }
+    const paperId = stringValue(candidate?.paper_id);
+    const queryFamilies = exactStringArrayValue(candidate?.query_families);
+    const declaredLexicalFamilies = exactPossiblyEmptyStringArrayValue(
+      candidate?.lexical_matched_query_families
+    );
+    const semanticReviewRequestedFamilies = exactPossiblyEmptyStringArrayValue(
+      candidate?.semantic_review_requested_query_families
+    );
+    const familyRanks = parseTopicDiscoveryFamilyRanks(
+      candidate?.family_retrieval_ranks
+    );
+    const canonicalSearchSource = topicDiscoveryPaperSearchProvider(
+      candidate?.canonical_search_source
+    );
+    const searchProviders = exactStringArrayValue(candidate?.search_providers);
+    const semanticReviewSelections = parseTopicDiscoverySemanticReviewSelections(
+      candidate?.semantic_review_selections
+    );
+    if (
+      !paperId
+      || candidate?.schema_version !== TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION
+      || typeof candidate?.title !== "string"
+      || typeof candidate.abstract !== "string"
+      || !queryFamilies
+      || !declaredLexicalFamilies
+      || !semanticReviewRequestedFamilies
+      || familyRanks.malformed
+      || !sameKeySet(new Set(familyRanks.values.keys()), new Set(queryFamilies))
+      || !canonicalSearchSource
+      || !searchProviders
+      || searchProviders.some((provider) => !topicDiscoveryPaperSearchProvider(provider))
+      || !searchProviders.includes(canonicalSearchSource)
+      || semanticReviewSelections.malformed
+      || !sameStringArray(
+        semanticReviewRequestedFamilies,
+        semanticReviewSelections.values.map((selection) => selection.familyId)
+      )
+      || stringValue(candidate.collect_attempt_id) !== input.expectedAttemptId
+      || candidate.evidence_status !== "semantic_screening_candidate_only"
+      || candidate.paper_evidence_allowed !== false
+      || candidate.retrieval_status !== "retrieved_governance_usable"
+      || typeof candidate.semantic_review_requested !== "boolean"
+      || typeof candidate.selected_by_semantic_quality !== "boolean"
+      || typeof candidate.published_in_corpus !== "boolean"
+      || candidates.has(paperId)
+    ) {
+      malformed = true;
+      continue;
+    }
+    candidates.set(paperId, {
+      paperId,
+      title: candidate.title,
+      abstract: candidate.abstract,
+      queryFamilies,
+      declaredLexicalFamilies,
+      familyRanks: familyRanks.values,
+      canonicalSearchSource,
+      searchProviders,
+      semanticReviewRequestedFamilies,
+      semanticReviewSelections: semanticReviewSelections.values,
+      semanticReviewRequested: candidate.semantic_review_requested
+    });
+  }
+  const ranksByFamily = new Map<string, number[]>();
+  for (const candidate of candidates.values()) {
+    for (const [familyId, rank] of candidate.familyRanks) {
+      const ranks = ranksByFamily.get(familyId) ?? [];
+      ranks.push(rank);
+      ranksByFamily.set(familyId, ranks);
+    }
+  }
+  if (Array.from(ranksByFamily.values()).some((ranks) => {
+    const sorted = [...ranks].sort((left, right) => left - right);
+    return new Set(sorted).size !== sorted.length
+      || sorted.some((rank, index) => rank !== index + 1);
+  })) {
+    malformed = true;
+  }
+  return { malformed, candidates };
+}
+
+function reconstructTopicDiscoverySemanticPairUniverse(input: {
+  candidates: ParsedTopicDiscoveryCandidatePool;
+  plannedFamilies: ParsedTopicDiscoveryPlanFamilies;
+}): {
+  malformed: boolean;
+  keys: Set<string>;
+  paperIds: Set<string>;
+  lexicalPaperIds: Set<string>;
+  selectionSources: Map<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >;
+} {
+  const profile = buildTopicDiscoveryCorpusRelevanceProfile(
+    Array.from(input.plannedFamilies.families.entries()).map(([familyId, family]) => ({
+      queryFamily: familyId,
+      query: family.query,
+      source: "llm_query_planner",
+      sharedAnchorTerms: family.sharedAnchorTerms,
+      axisTerms: family.axisTerms,
+      lens: family.lens,
+      contributionIntent: family.contributionIntent,
+      contractSource: "planner_declared"
+    }))
+  );
+  const keys = new Set<string>();
+  const paperIds = new Set<string>();
+  const lexicalPaperIds = new Set<string>();
+  const selectionSources = new Map<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >();
+  let malformed = input.candidates.malformed || input.plannedFamilies.malformed;
+  for (const candidate of input.candidates.candidates.values()) {
+    if (candidate.queryFamilies.some(
+      (familyId) => !input.plannedFamilies.families.has(familyId)
+    )) {
+      malformed = true;
+    }
+    const relevance = assessTopicDiscoveryPaperRelevance({
+      row: {
+        paper_id: candidate.paperId,
+        title: candidate.title,
+        abstract: candidate.abstract,
+        authors: []
+      } satisfies StoredCorpusRow,
+      profile,
+      eligibleQueryFamilies: new Set(candidate.queryFamilies)
+    });
+    const matchedFamilies = new Set(relevance.matchedQueryFamilies);
+    if (matchedFamilies.size > 0) {
+      lexicalPaperIds.add(candidate.paperId);
+    }
+    const selectedLexicalFamilies = new Set(
+      candidate.semanticReviewSelections
+        .filter((selection) => selection.selectionSource === "lexical_match")
+        .map((selection) => selection.familyId)
+    );
+    if (
+      !sameKeySet(matchedFamilies, new Set(candidate.declaredLexicalFamilies))
+      || !sameKeySet(matchedFamilies, selectedLexicalFamilies)
+      || candidate.semanticReviewRequested
+        !== (candidate.semanticReviewSelections.length > 0)
+      || !sameStringArray(
+        candidate.semanticReviewRequestedFamilies,
+        candidate.semanticReviewSelections.map((selection) => selection.familyId)
+      )
+    ) {
+      malformed = true;
+    }
+    for (const selection of candidate.semanticReviewSelections) {
+      const familyId = selection.familyId;
+      if (
+        !candidate.queryFamilies.includes(familyId)
+        || !input.plannedFamilies.families.has(familyId)
+        || (selection.selectionSource === "lexical_match") !== matchedFamilies.has(familyId)
+      ) {
+        malformed = true;
+      }
+      const key = semanticPairKey(candidate.paperId, familyId);
+      if (keys.has(key)) {
+        malformed = true;
+      }
+      keys.add(key);
+      selectionSources.set(key, selection.selectionSource);
+      paperIds.add(candidate.paperId);
+    }
+  }
+  const expectedSelectionSources = new Map<
+    string,
+    "lexical_match" | "provider_provenance_floor"
+  >();
+  for (const familyId of input.plannedFamilies.families.keys()) {
+    const rankedCandidates = Array.from(input.candidates.candidates.values())
+      .filter((candidate) => candidate.familyRanks.has(familyId))
+      .sort((left, right) =>
+        left.familyRanks.get(familyId)! - right.familyRanks.get(familyId)!
+        || left.paperId.localeCompare(right.paperId)
+      );
+    const selectedPaperIds = new Set<string>();
+    for (const candidate of rankedCandidates) {
+      if (!candidate.declaredLexicalFamilies.includes(familyId)) continue;
+      expectedSelectionSources.set(
+        semanticPairKey(candidate.paperId, familyId),
+        "lexical_match"
+      );
+      selectedPaperIds.add(candidate.paperId);
+    }
+    if (selectedPaperIds.size < TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY) {
+      for (const candidate of rankedCandidates) {
+        if (
+          selectedPaperIds.size >= TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY
+        ) {
+          break;
+        }
+        if (selectedPaperIds.has(candidate.paperId)) continue;
+        expectedSelectionSources.set(
+          semanticPairKey(candidate.paperId, familyId),
+          "provider_provenance_floor"
+        );
+        selectedPaperIds.add(candidate.paperId);
+      }
+    }
+  }
+  if (
+    expectedSelectionSources.size !== selectionSources.size
+    || Array.from(expectedSelectionSources).some(
+      ([key, source]) => selectionSources.get(key) !== source
+    )
+  ) {
+    malformed = true;
+  }
+  return { malformed, keys, paperIds, lexicalPaperIds, selectionSources };
+}
+
+const MAX_CANDIDATE_PRIOR_PARENT_DEPTH = 3;
+
+async function auditCandidatePriorParentLineage(input: {
+  run: RunRecord;
+  runRoot: string;
+  expectedAttemptId?: string;
+  queryPlan: Record<string, unknown> | undefined;
+  planArtifact: Record<string, unknown> | undefined;
+  receiptArtifact: Record<string, unknown> | undefined;
+  currentCorpusRaw: string;
+  depth?: number;
+  visitedAttemptIds?: Set<string>;
+}): Promise<{
+  reasons: string[];
+  requiredQueryFamilies?: string[];
+  queryFamilies?: CollectAnalysisLineageAudit["queryFamilies"];
+  sharedAnchorTerms?: string[];
+}> {
+  const reasons: string[] = [];
+  const expectedAttemptId = input.expectedAttemptId;
+  const depth = input.depth ?? 0;
+  const visitedAttemptIds = new Set(input.visitedAttemptIds ?? []);
+  if (depth > MAX_CANDIDATE_PRIOR_PARENT_DEPTH) {
+    reasons.push("collect_lineage_candidate_prior_depth_exceeded");
+    return { reasons };
+  }
+  if (expectedAttemptId && visitedAttemptIds.has(expectedAttemptId)) {
+    reasons.push("collect_lineage_candidate_prior_cycle_detected");
+    return { reasons };
+  }
+  if (expectedAttemptId) {
+    visitedAttemptIds.add(expectedAttemptId);
+  }
+  if (
+    input.queryPlan?.research_mode !== "topic_discovery"
+    || input.queryPlan.strategy !== "candidate_prior_portfolio"
+    || !expectedAttemptId
+    || stringValue(input.queryPlan.collect_attempt_id) !== expectedAttemptId
+  ) {
+    reasons.push("collect_lineage_candidate_prior_query_plan_invalid");
+  }
+  const planValidation = validateCandidatePriorSearchPlanIntegrity(
+    input.planArtifact
+  );
+  const embeddedPlanValidation = validateCandidatePriorSearchPlanIntegrity(
+    input.queryPlan?.candidate_prior_search_plan
+  );
+  reasons.push(...planValidation.reasons, ...embeddedPlanValidation.reasons);
+  const plan = planValidation.plan;
+  if (
+    !plan
+    || !embeddedPlanValidation.plan
+    || plan.content_sha256 !== embeddedPlanValidation.plan.content_sha256
+  ) {
+    reasons.push("collect_lineage_candidate_prior_plan_projection_mismatch");
+  }
+  if (!plan || !expectedAttemptId) {
+    return { reasons: Array.from(new Set(reasons)) };
+  }
+
+  const parentAttemptId = plan.source_corpus.collect_attempt_id;
+  const parentRoot = `${input.runRoot}/collect_attempts/${parentAttemptId}`;
+  const [
+    parentManifestRaw,
+    parentQueryPlanRaw,
+    parentQualityRaw,
+    parentSemanticInputRaw,
+    parentSemanticReviewRaw,
+    parentCandidatesRaw,
+    parentCorpusRaw,
+    parentCandidatePlanRaw,
+    parentCandidateReceiptRaw
+  ] = await Promise.all([
+    safeRead(`${parentRoot}/manifest.json`),
+    safeRead(`${parentRoot}/collect_query_plan.json`),
+    safeRead(`${parentRoot}/collect_corpus_quality.json`),
+    safeRead(`${parentRoot}/collect_semantic_review_input.json`),
+    safeRead(`${parentRoot}/collect_semantic_review.json`),
+    safeRead(`${parentRoot}/collect_topic_discovery_candidates.jsonl`),
+    safeRead(`${parentRoot}/corpus.jsonl`),
+    safeRead(`${parentRoot}/collect_candidate_prior_search_plan.json`),
+    safeRead(`${parentRoot}/collect_candidate_prior_search_receipt.json`)
+  ]);
+  const parentManifest = parseJsonRecordValue(parentManifestRaw);
+  const parentQueryPlan = parseJsonRecordValue(parentQueryPlanRaw);
+  const parentCandidatePlan = parseJsonRecordValue(parentCandidatePlanRaw);
+  const parentCandidateReceipt = parseJsonRecordValue(
+    parentCandidateReceiptRaw
+  );
+  const receiptValidation = validateCandidatePriorSearchReceipt(
+    input.receiptArtifact,
+    {
+      plan,
+      expectedCollectAttemptId: expectedAttemptId,
+      sourceCorpusRaw: parentCorpusRaw,
+      resultCorpusRaw: input.currentCorpusRaw
+    }
+  );
+  reasons.push(...receiptValidation.reasons);
+  if (parentQueryPlan?.strategy === "candidate_prior_portfolio") {
+    reasons.push(...await auditCollectAttemptArchive({
+      run: input.run,
+      manifestValue: parentManifest,
+      expectedAttemptId: parentAttemptId,
+      requiredLiveArtifacts: new Map<string, string>([
+        ["collect_query_plan.json", parentQueryPlanRaw],
+        ["collect_candidate_prior_search_plan.json", parentCandidatePlanRaw],
+        [
+          "collect_candidate_prior_search_receipt.json",
+          parentCandidateReceiptRaw
+        ],
+        ["corpus.jsonl", parentCorpusRaw]
+      ])
+    }));
+    if (depth >= MAX_CANDIDATE_PRIOR_PARENT_DEPTH) {
+      reasons.push("collect_lineage_candidate_prior_depth_exceeded");
+      return { reasons: Array.from(new Set(reasons)) };
+    }
+    const parentAudit = await auditCandidatePriorParentLineage({
+      run: input.run,
+      runRoot: input.runRoot,
+      expectedAttemptId: parentAttemptId,
+      queryPlan: parentQueryPlan,
+      planArtifact: parentCandidatePlan,
+      receiptArtifact: parentCandidateReceipt,
+      currentCorpusRaw: parentCorpusRaw,
+      depth: depth + 1,
+      visitedAttemptIds
+    });
+    return {
+      reasons: Array.from(new Set([
+        ...reasons,
+        ...parentAudit.reasons
+      ])),
+      requiredQueryFamilies: parentAudit.requiredQueryFamilies,
+      queryFamilies: parentAudit.queryFamilies,
+      sharedAnchorTerms: parentAudit.sharedAnchorTerms
+    };
+  }
+  const parentSemanticLineage = validateTopicDiscoverySemanticLineage({
+    expectedAttemptId: parentAttemptId,
+    qualityRaw: parentQualityRaw,
+    semanticReviewInputRaw: parentSemanticInputRaw,
+    semanticReviewRaw: parentSemanticReviewRaw,
+    candidatesRaw: parentCandidatesRaw,
+    queryPlanRaw: parentQueryPlanRaw,
+    corpusRaw: parentCorpusRaw
+  });
+  if (!parentSemanticLineage.trusted) {
+    reasons.push(...parentSemanticLineage.reasonCodes);
+  }
+  reasons.push(...await auditCollectAttemptArchive({
+    run: input.run,
+    manifestValue: parentManifest,
+    expectedAttemptId: parentAttemptId,
+    requiredLiveArtifacts: new Map<string, string>([
+      ["collect_query_plan.json", parentQueryPlanRaw],
+      ["collect_corpus_quality.json", parentQualityRaw],
+      ["collect_semantic_review_input.json", parentSemanticInputRaw],
+      ["collect_semantic_review.json", parentSemanticReviewRaw],
+      ["collect_topic_discovery_candidates.jsonl", parentCandidatesRaw],
+      ["corpus.jsonl", parentCorpusRaw]
+    ])
+  }));
+
+  const projection = projectTrustedTopicQuality(parentQualityRaw);
+  reasons.push(...projection.reasons);
+  return {
+    reasons: Array.from(new Set(reasons)),
+    requiredQueryFamilies: projection.requiredQueryFamilies,
+    queryFamilies: projection.queryFamilies,
+    sharedAnchorTerms: projection.sharedAnchorTerms
+  };
+}
+
+function parseJsonRecordValue(
+  raw: string
+): Record<string, unknown> | undefined {
+  if (!raw.trim()) {
+    return undefined;
+  }
+  try {
+    return objectValue(JSON.parse(raw) as unknown);
+  } catch {
+    return undefined;
+  }
+}
+
+function projectTrustedTopicQuality(raw: string): {
+  reasons: string[];
+  requiredQueryFamilies?: string[];
+  queryFamilies?: CollectAnalysisLineageAudit["queryFamilies"];
+  sharedAnchorTerms?: string[];
+} {
+  const reasons: string[] = [];
+  let quality: Record<string, unknown> | undefined;
+  try {
+    quality = raw.trim() ? JSON.parse(raw) as Record<string, unknown> : undefined;
+  } catch {
+    quality = undefined;
+  }
+  const rawFamilies = Array.isArray(quality?.query_families)
+    ? quality.query_families
+    : [];
+  const queryFamilies: NonNullable<CollectAnalysisLineageAudit["queryFamilies"]> = [];
+  for (const rawFamily of rawFamilies) {
+    const family = objectValue(rawFamily);
+    const queryFamily = stringValue(family?.query_family);
+    const query = stringValue(family?.query);
+    const axisTerms = exactStringArrayValue(family?.axis_terms);
+    const lens = stringValue(family?.lens);
+    const contributionIntent = stringValue(family?.contribution_intent);
+    const canonicalFamilySignature = stringValue(
+      family?.canonical_family_signature
+    );
+    const counts = {
+      lexicalRelevantPaperCount: numberValue(
+        family?.lexical_relevant_paper_count
+      ),
+      semanticReviewedPaperCount: numberValue(
+        family?.semantic_reviewed_paper_count
+      ),
+      providerRecallPaperCount: numberValue(
+        family?.provider_recall_paper_count
+      ),
+      directSupportPaperCount: numberValue(
+        family?.direct_support_paper_count
+      ),
+      applicationOnlyPaperCount: numberValue(
+        family?.application_only_paper_count
+      ),
+      uncertainPaperCount: numberValue(family?.uncertain_paper_count),
+      retainedPaperCount: numberValue(family?.retained_paper_count),
+      relevantPaperCount: numberValue(family?.relevant_paper_count),
+      semanticPrecision: numberValue(family?.semantic_precision)
+    };
+    if (
+      !queryFamily
+      || !query
+      || !axisTerms
+      || !lens
+      || !contributionIntent
+      || !canonicalFamilySignature
+      || Object.values(counts).some((value) => value === undefined)
+    ) {
+      reasons.push("collect_lineage_candidate_prior_parent_quality_projection_invalid");
+      continue;
+    }
+    queryFamilies.push({
+      queryFamily,
+      query,
+      axisTerms,
+      lens,
+      contributionIntent,
+      canonicalFamilySignature,
+      lexicalRelevantPaperCount: counts.lexicalRelevantPaperCount!,
+      semanticReviewedPaperCount: counts.semanticReviewedPaperCount!,
+      providerRecallPaperCount: counts.providerRecallPaperCount!,
+      directSupportPaperCount: counts.directSupportPaperCount!,
+      applicationOnlyPaperCount: counts.applicationOnlyPaperCount!,
+      uncertainPaperCount: counts.uncertainPaperCount!,
+      retainedPaperCount: counts.retainedPaperCount!,
+      relevantPaperCount: counts.relevantPaperCount!,
+      semanticPrecision: counts.semanticPrecision!
+    });
+  }
+  const sharedAnchorTerms = exactStringArrayValue(
+    objectValue(quality?.observed)?.shared_anchor_terms
+  );
+  if (queryFamilies.length === 0 || !sharedAnchorTerms) {
+    reasons.push("collect_lineage_candidate_prior_parent_quality_projection_missing");
+  }
+  return {
+    reasons,
+    requiredQueryFamilies: queryFamilies
+      .filter((family) => family.retainedPaperCount > 0)
+      .map((family) => family.queryFamily)
+      .sort(),
+    queryFamilies: queryFamilies.sort((left, right) =>
+      left.queryFamily.localeCompare(right.queryFamily)
+    ),
+    sharedAnchorTerms
+  };
+}
+
+async function auditCollectAnalysisLineage(input: {
+  run: RunRecord;
+  runContextMemory: RunContextMemory;
+  corpusRows: AnalysisCorpusRow[];
+  topicDiscoveryRequired: boolean;
+}): Promise<CollectAnalysisLineageAudit> {
+  const runRoot = `.autolabos/runs/${input.run.id}`;
+  const [
+    generationRaw,
+    resultRaw,
+    manifestRaw,
+    backgroundJobRaw,
+    corpusQualityRaw,
+    queryPlanRaw,
+    semanticReviewRaw,
+    semanticReviewInputRaw,
+    topicDiscoveryCandidatesRaw,
+    corpusRaw,
+    candidatePriorPlanRaw,
+    candidatePriorReceiptRaw
+  ] = await Promise.all([
+    safeRead(`${runRoot}/collect_generation.json`),
+    safeRead(`${runRoot}/collect_result.json`),
+    safeRead(`${runRoot}/collect_attempt_manifest.json`),
+    safeRead(`${runRoot}/collect_background_job.json`),
+    safeRead(`${runRoot}/collect_corpus_quality.json`),
+    safeRead(`${runRoot}/collect_query_plan.json`),
+    safeRead(`${runRoot}/collect_semantic_review.json`),
+    safeRead(`${runRoot}/collect_semantic_review_input.json`),
+    safeRead(`${runRoot}/collect_topic_discovery_candidates.jsonl`),
+    safeRead(`${runRoot}/corpus.jsonl`),
+    safeRead(`${runRoot}/collect_candidate_prior_search_plan.json`),
+    safeRead(`${runRoot}/collect_candidate_prior_search_receipt.json`)
+  ]);
+  const parseObject = (raw: string): Record<string, unknown> | undefined => {
+    if (!raw.trim()) {
+      return undefined;
+    }
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      return parsed && typeof parsed === "object"
+        ? parsed as Record<string, unknown>
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  const generation = parseObject(generationRaw);
+  const result = parseObject(resultRaw);
+  const manifest = parseObject(manifestRaw);
+  const backgroundJob = parseObject(backgroundJobRaw);
+  const corpusQualityArtifact = parseObject(corpusQualityRaw);
+  const queryPlan = parseObject(queryPlanRaw);
+  const semanticReviewArtifact = parseObject(semanticReviewRaw);
+  const semanticReviewInputArtifact = parseObject(semanticReviewInputRaw);
+  const candidatePriorPlanArtifact = parseObject(candidatePriorPlanRaw);
+  const candidatePriorReceiptArtifact = parseObject(candidatePriorReceiptRaw);
+  const candidatePriorLineage =
+    queryPlan?.strategy === "candidate_prior_portfolio";
+  const generationAttemptId = stringValue(generation?.collect_attempt_id);
+  const resultAttemptId = stringValue(result?.collect_attempt_id);
+  const manifestAttemptId = stringValue(manifest?.collect_attempt_id);
+  const modern = Boolean(
+    generationAttemptId
+    || resultAttemptId
+    || manifestAttemptId
+    || input.topicDiscoveryRequired
+  );
+  if (!modern) {
+    return { modern: false, valid: true, reasons: [] };
+  }
+
+  const reasons: string[] = [];
+  if (!generationAttemptId) {
+    reasons.push("collect_lineage_missing_generation");
+  }
+  const expectedAttemptId = generationAttemptId;
+  if (!expectedAttemptId || resultAttemptId !== expectedAttemptId) {
+    reasons.push("collect_lineage_result_attempt_mismatch");
+  }
+  if (!expectedAttemptId || manifestAttemptId !== expectedAttemptId) {
+    reasons.push("collect_lineage_manifest_attempt_mismatch");
+  }
+  const activeAttemptId = await input.runContextMemory.get<unknown>(
+    "collect_papers.active_attempt_id"
+  );
+  if (typeof activeAttemptId === "string" && activeAttemptId.trim()) {
+    reasons.push("collect_lineage_attempt_still_active");
+  }
+  const contextGenerationId = await input.runContextMemory.get<unknown>(
+    "collect_papers.current_generation_id"
+  );
+  if (contextGenerationId !== expectedAttemptId) {
+    reasons.push("collect_lineage_context_generation_mismatch");
+  }
+  if (result?.completed !== true) {
+    reasons.push("collect_lineage_result_incomplete");
+  }
+  if (typeof result?.fetchError === "string" && result.fetchError.trim()) {
+    reasons.push("collect_lineage_result_failed");
+  }
+  if (manifest?.status !== "quality_gate_passed") {
+    reasons.push("collect_lineage_quality_gate_not_passed");
+  }
+  if (input.topicDiscoveryRequired && !candidatePriorLineage) {
+    const sharedSemanticLineage = validateTopicDiscoverySemanticLineage({
+      expectedAttemptId,
+      qualityRaw: corpusQualityRaw,
+      semanticReviewInputRaw,
+      semanticReviewRaw,
+      candidatesRaw: topicDiscoveryCandidatesRaw,
+      queryPlanRaw,
+      corpusRaw: input.corpusRows.length > 0
+        ? `${input.corpusRows.map((row) => JSON.stringify(row)).join("\n")}\n`
+        : ""
+    });
+    if (!sharedSemanticLineage.trusted) {
+      reasons.push(...sharedSemanticLineage.reasonCodes);
+    }
+  }
+  const corpusQuality = result?.corpusQuality;
+  if (
+    corpusQuality
+    && typeof corpusQuality === "object"
+    && (corpusQuality as Record<string, unknown>).passed === false
+  ) {
+    reasons.push("collect_lineage_corpus_quality_failed");
+  }
+  const storedCount = numberValue(result?.stored);
+  if (storedCount === undefined || storedCount !== input.corpusRows.length) {
+    reasons.push("collect_lineage_corpus_count_mismatch");
+  }
+  const backgroundAttemptId = stringValue(backgroundJob?.collectAttemptId);
+  if (backgroundAttemptId && backgroundAttemptId !== expectedAttemptId) {
+    reasons.push("collect_lineage_background_attempt_mismatch");
+  }
+  const embeddedCorpusQuality =
+    result?.corpusQuality && typeof result.corpusQuality === "object"
+      ? result.corpusQuality as Record<string, unknown>
+      : undefined;
+  const queryPlanDeclaresTopicDiscovery =
+    queryPlan?.research_mode === "topic_discovery";
+  const qualityDeclaresTopicDiscovery =
+    corpusQualityArtifact?.research_mode === "topic_discovery" ||
+    embeddedCorpusQuality?.research_mode === "topic_discovery";
+  const topicDiscoveryLineage =
+    !candidatePriorLineage
+    && (
+      input.topicDiscoveryRequired
+      || queryPlanDeclaresTopicDiscovery
+      || qualityDeclaresTopicDiscovery
+    );
+  reasons.push(...await auditCollectAttemptArchive({
+    run: input.run,
+    manifestValue: manifest,
+    expectedAttemptId,
+    ...(topicDiscoveryLineage
+      ? {
+          requiredLiveArtifacts: new Map<string, string>([
+            ["collect_query_plan.json", queryPlanRaw],
+            ["collect_corpus_quality.json", corpusQualityRaw],
+            ["collect_semantic_review_input.json", semanticReviewInputRaw],
+            ["collect_semantic_review.json", semanticReviewRaw],
+            ["collect_topic_discovery_candidates.jsonl", topicDiscoveryCandidatesRaw]
+          ])
+        }
+      : candidatePriorLineage
+        ? {
+            requiredLiveArtifacts: new Map<string, string>([
+              ["collect_query_plan.json", queryPlanRaw],
+              ["collect_candidate_prior_search_plan.json", candidatePriorPlanRaw],
+              ["collect_candidate_prior_search_receipt.json", candidatePriorReceiptRaw],
+              ["corpus.jsonl", corpusRaw]
+            ])
+          }
+        : {})
+  }));
+  if (candidatePriorLineage) {
+    if (!input.topicDiscoveryRequired) {
+      reasons.push("collect_lineage_candidate_prior_mode_mismatch");
+    }
+    const parentAudit = await auditCandidatePriorParentLineage({
+      run: input.run,
+      runRoot,
+      expectedAttemptId,
+      queryPlan,
+      planArtifact: candidatePriorPlanArtifact,
+      receiptArtifact: candidatePriorReceiptArtifact,
+      currentCorpusRaw: corpusRaw
+    });
+    reasons.push(...parentAudit.reasons);
+    return {
+      modern: true,
+      valid: reasons.length === 0,
+      expectedAttemptId,
+      requiredQueryFamilies: parentAudit.requiredQueryFamilies,
+      queryFamilies: parentAudit.queryFamilies,
+      sharedAnchorTerms: parentAudit.sharedAnchorTerms,
+      reasons: Array.from(new Set(reasons))
+    };
+  }
+  let requiredQueryFamilies: string[] | undefined;
+  let queryFamilies: CollectAnalysisLineageAudit["queryFamilies"];
+  let sharedAnchorTerms: string[] | undefined;
+  if (topicDiscoveryLineage) {
+    if (!semanticReviewInputArtifact) {
+      reasons.push("collect_lineage_topic_semantic_review_input_invalid");
+    }
+    if (!semanticReviewArtifact) {
+      reasons.push("collect_lineage_topic_semantic_review_not_complete");
+    }
+    if (!queryPlanDeclaresTopicDiscovery) {
+      reasons.push("collect_lineage_topic_query_plan_mode_mismatch");
+    }
+    if (
+      !isCurrentTopicDiscoveryCollectQueryPlanArtifact(queryPlan)
+      || queryPlan?.strategy !== "topic_portfolio"
+    ) {
+      reasons.push("collect_lineage_topic_query_plan_semantics_unsupported");
+    }
+    if (
+      !expectedAttemptId
+      || stringValue(queryPlan?.collect_attempt_id) !== expectedAttemptId
+    ) {
+      reasons.push("collect_lineage_topic_query_plan_attempt_mismatch");
+    }
+    const plannedFamilies = parseTopicDiscoveryPlanFamilies(
+      queryPlan?.selected_families
+    );
+    if (plannedFamilies.malformed) {
+      reasons.push("collect_lineage_topic_query_plan_family_contract_invalid");
+    }
+    const candidatePool = parseTopicDiscoveryCandidatePool({
+      raw: topicDiscoveryCandidatesRaw,
+      expectedAttemptId
+    });
+    const semanticPairUniverse = reconstructTopicDiscoverySemanticPairUniverse({
+      candidates: candidatePool,
+      plannedFamilies
+    });
+    if (candidatePool.malformed || semanticPairUniverse.malformed) {
+      reasons.push("collect_lineage_topic_candidate_pool_invalid");
+    }
+    if (!corpusQualityArtifact || corpusQualityArtifact.research_mode !== "topic_discovery") {
+      reasons.push("collect_lineage_topic_family_quality_missing");
+    } else {
+      if (
+        corpusQualityArtifact.version !== TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
+        || corpusQualityArtifact.strategy !== TOPIC_DISCOVERY_CORPUS_QUALITY_STRATEGY
+        || corpusQualityArtifact.term_normalization_version
+          !== TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
+        || corpusQualityArtifact.candidate_recall_semantics_version
+          !== TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION
+      ) {
+        reasons.push("collect_lineage_topic_family_quality_semantics_unsupported");
+      }
+      const qualityAttemptId = stringValue(corpusQualityArtifact.collect_attempt_id);
+      if (!expectedAttemptId || qualityAttemptId !== expectedAttemptId) {
+        reasons.push("collect_lineage_topic_family_quality_attempt_mismatch");
+      }
+      if (corpusQualityArtifact.passed !== true) {
+        reasons.push("collect_lineage_topic_family_quality_not_passed");
+      }
+
+      const familyCounts = new Map<string, number>();
+      const parsedQueryFamilies: NonNullable<CollectAnalysisLineageAudit["queryFamilies"]> = [];
+      const rawFamilies = Array.isArray(corpusQualityArtifact.query_families)
+        ? corpusQualityArtifact.query_families
+        : [];
+      let malformedFamily = rawFamilies.length === 0;
+      for (const rawFamily of rawFamilies) {
+        if (!rawFamily || typeof rawFamily !== "object") {
+          malformedFamily = true;
+          continue;
+        }
+        const family = rawFamily as Record<string, unknown>;
+        const queryFamily = stringValue(family.query_family);
+        const query = stringValue(family.query);
+        const axisTerms = exactStringArrayValue(family.axis_terms);
+        const lens = stringValue(family.lens);
+        const contributionIntent = stringValue(family.contribution_intent);
+        const canonicalFamilySignature = stringValue(
+          family.canonical_family_signature
+        );
+        const lexicalRelevantCount = numberValue(family.lexical_relevant_paper_count);
+        const semanticReviewedCount = numberValue(family.semantic_reviewed_paper_count);
+        const providerRecallCount = numberValue(family.provider_recall_paper_count);
+        const directSupportCount = numberValue(family.direct_support_paper_count);
+        const applicationOnlyCount = numberValue(family.application_only_paper_count);
+        const uncertainCount = numberValue(family.uncertain_paper_count);
+        const retainedPaperCount = numberValue(family.retained_paper_count);
+        const relevantPaperCount = numberValue(family.relevant_paper_count);
+        const semanticPrecision = numberValue(family.semantic_precision);
+        const allCounts = [
+          lexicalRelevantCount,
+          semanticReviewedCount,
+          providerRecallCount,
+          directSupportCount,
+          applicationOnlyCount,
+          uncertainCount,
+          retainedPaperCount,
+          relevantPaperCount
+        ];
+        const expectedPrecision = semanticReviewedCount && directSupportCount !== undefined
+          ? directSupportCount / semanticReviewedCount
+          : 0;
+        if (
+          !queryFamily ||
+          !query ||
+          !axisTerms ||
+          !lens ||
+          !contributionIntent ||
+          !canonicalFamilySignature ||
+          allCounts.some((count) =>
+            count === undefined || !Number.isInteger(count) || count < 0
+          ) ||
+          relevantPaperCount !== retainedPaperCount ||
+          retainedPaperCount! > directSupportCount! ||
+          semanticReviewedCount !==
+            directSupportCount! + applicationOnlyCount! + uncertainCount! ||
+          providerRecallCount! > semanticReviewedCount! ||
+          lexicalRelevantCount! + providerRecallCount! !== semanticReviewedCount! ||
+          semanticPrecision === undefined ||
+          semanticPrecision < 0 ||
+          semanticPrecision > 1 ||
+          semanticPrecision !== expectedPrecision ||
+          familyCounts.has(queryFamily)
+        ) {
+          malformedFamily = true;
+          continue;
+        }
+        familyCounts.set(queryFamily, retainedPaperCount!);
+        const plannedFamily = plannedFamilies.families.get(queryFamily);
+        const expectedCanonicalFamilySignature = plannedFamily
+          ? buildTopicDiscoveryCandidateFamilySignature({
+              sharedAnchorTerms: plannedFamily.sharedAnchorTerms,
+              axisTerms
+            })
+          : undefined;
+        if (
+          !plannedFamily
+          || plannedFamily.query !== query
+          || !sameStringArray(plannedFamily.axisTerms, axisTerms)
+          || plannedFamily.lens !== lens
+          || plannedFamily.contributionIntent !== contributionIntent
+          || canonicalFamilySignature !== expectedCanonicalFamilySignature
+        ) {
+          reasons.push("collect_lineage_topic_family_plan_contract_mismatch");
+        }
+        parsedQueryFamilies.push({
+          queryFamily,
+          query,
+          axisTerms,
+          lens,
+          contributionIntent,
+          canonicalFamilySignature,
+          lexicalRelevantPaperCount: lexicalRelevantCount!,
+          semanticReviewedPaperCount: semanticReviewedCount!,
+          providerRecallPaperCount: providerRecallCount!,
+          directSupportPaperCount: directSupportCount!,
+          applicationOnlyPaperCount: applicationOnlyCount!,
+          uncertainPaperCount: uncertainCount!,
+          retainedPaperCount: retainedPaperCount!,
+          relevantPaperCount: relevantPaperCount!,
+          semanticPrecision
+        });
+      }
+      if (plannedFamilies.families.size !== familyCounts.size) {
+        reasons.push("collect_lineage_topic_family_plan_contract_mismatch");
+      }
+      queryFamilies = parsedQueryFamilies.sort((left, right) =>
+        left.queryFamily.localeCompare(right.queryFamily)
+      );
+      const qualityThresholds = objectValue(corpusQualityArtifact.thresholds);
+      if (
+        numberValue(qualityThresholds?.minimum_relevant_papers)
+          !== TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS
+        || numberValue(qualityThresholds?.minimum_covered_query_families)
+          !== TOPIC_DISCOVERY_MINIMUM_COVERED_QUERY_FAMILIES
+        || numberValue(qualityThresholds?.minimum_relevant_papers_per_family)
+          !== TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+        || numberValue(qualityThresholds?.minimum_direct_support_per_family)
+          !== TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+        || numberValue(qualityThresholds?.minimum_semantic_precision_per_family)
+          !== TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY
+      ) {
+        reasons.push("collect_lineage_topic_family_quality_thresholds_invalid");
+      }
+      if (parsedQueryFamilies.some((family) =>
+        family.directSupportPaperCount
+          < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+        || family.semanticPrecision
+          < TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY
+      )) {
+        reasons.push("collect_lineage_topic_family_quality_floor_not_met");
+      }
+      const observed =
+        corpusQualityArtifact.observed && typeof corpusQualityArtifact.observed === "object"
+          ? corpusQualityArtifact.observed as Record<string, unknown>
+          : undefined;
+      sharedAnchorTerms = exactStringArrayValue(observed?.shared_anchor_terms);
+      if (
+        !sharedAnchorTerms
+        || !plannedFamilies.sharedAnchorTerms
+        || !sameStringArray(sharedAnchorTerms, plannedFamilies.sharedAnchorTerms)
+      ) {
+        reasons.push("collect_lineage_topic_family_quality_observed_mismatch");
+      }
+      requiredQueryFamilies = Array.from(familyCounts.entries())
+        .filter(([, count]) => count > 0)
+        .map(([queryFamily]) => queryFamily)
+        .sort();
+      if (malformedFamily || requiredQueryFamilies.length === 0) {
+        reasons.push("collect_lineage_topic_family_required_set_missing");
+      }
+
+      const qualitySemanticReview = objectValue(
+        corpusQualityArtifact.semantic_review
+      );
+      const semanticReviewInputPayload = objectValue(
+        semanticReviewInputArtifact?.payload
+      );
+      const semanticReviewInputHash = semanticReviewInputPayload
+        ? hashJsonValue(semanticReviewInputPayload)
+        : undefined;
+      const semanticReviewInputBytes = semanticReviewInputPayload
+        ? Buffer.byteLength(JSON.stringify(semanticReviewInputPayload), "utf8")
+        : undefined;
+      if (
+        !semanticReviewInputArtifact
+        || semanticReviewInputArtifact.paper_evidence_allowed !== false
+        || !expectedAttemptId
+        || stringValue(semanticReviewInputArtifact.collect_attempt_id)
+          !== expectedAttemptId
+        || !semanticReviewInputPayload
+        || semanticReviewInputPayload.version !== TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
+        || semanticReviewInputPayload.term_normalization_version
+          !== TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
+        || semanticReviewInputPayload.candidate_recall_semantics_version
+          !== TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION
+        || stringValue(semanticReviewInputArtifact.payload_sha256)
+          !== semanticReviewInputHash
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_input_invalid");
+      }
+      if (
+        !semanticReviewArtifact
+        || semanticReviewArtifact.version !== TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
+        || semanticReviewArtifact.paper_evidence_allowed !== false
+        || !expectedAttemptId
+        || stringValue(semanticReviewArtifact.collect_attempt_id)
+          !== expectedAttemptId
+        || semanticReviewArtifact.status !== "complete"
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_not_complete");
+      }
+      if (
+        !qualitySemanticReview
+        || qualitySemanticReview.version !== TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
+        || qualitySemanticReview.status !== "complete"
+        || stringValue(qualitySemanticReview.reviewer_input_sha256)
+          !== semanticReviewInputHash
+        || stringValue(semanticReviewArtifact?.reviewer_input_sha256)
+          !== semanticReviewInputHash
+        || stringValue(qualitySemanticReview.prompt_sha256)
+          !== stringValue(semanticReviewArtifact?.prompt_sha256)
+        || stringValue(qualitySemanticReview.response_sha256)
+          !== stringValue(semanticReviewArtifact?.response_sha256)
+        || numberValue(qualitySemanticReview.reviewer_input_bytes)
+          !== semanticReviewInputBytes
+        || numberValue(semanticReviewArtifact?.reviewer_input_bytes)
+          !== semanticReviewInputBytes
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_hash_mismatch");
+      }
+      const semanticFamilyContracts = parseSemanticFamilyContracts(
+        semanticReviewInputPayload?.family_contracts
+      );
+      if (
+        semanticFamilyContracts.malformed
+        || semanticFamilyContracts.families.size !== plannedFamilies.families.size
+        || Array.from(plannedFamilies.families.entries()).some(
+          ([familyId, plannedFamily]) => {
+            const semanticFamily = semanticFamilyContracts.families.get(familyId);
+            return !semanticFamily
+              || semanticFamily.query !== plannedFamily.query
+              || (semanticFamily.sharedAnchorTerms !== undefined
+                && !sameStringArray(
+                  semanticFamily.sharedAnchorTerms,
+                  plannedFamily.sharedAnchorTerms
+                ))
+              || !sameStringArray(semanticFamily.axisTerms, plannedFamily.axisTerms)
+              || semanticFamily.lens !== plannedFamily.lens
+              || semanticFamily.contributionIntent !== plannedFamily.contributionIntent;
+          }
+        )
+      ) {
+        reasons.push("collect_lineage_topic_semantic_family_contract_mismatch");
+      }
+      const requestedPairs = parseSemanticRequestedPairKeys(
+        semanticReviewInputPayload?.requested_pairs
+      );
+      if (
+        !semanticRecallMatchesSelectionSources(
+          semanticReviewArtifact?.recall,
+          requestedPairs.selectionSources
+        )
+        || !semanticRecallMatchesSelectionSources(
+          qualitySemanticReview?.recall,
+          requestedPairs.selectionSources
+        )
+      ) {
+        reasons.push("collect_lineage_topic_semantic_recall_mismatch");
+      }
+      const reviewJudgments = parseSemanticJudgments(
+        semanticReviewArtifact?.judgments
+      );
+      const qualityJudgments = parseSemanticJudgments(
+        corpusQualityArtifact.semantic_judgments
+      );
+      const reviewPairKeys = new Set(reviewJudgments.judgments.keys());
+      const qualityPairKeys = new Set(qualityJudgments.judgments.keys());
+      if (
+        requestedPairs.malformed
+        || reviewJudgments.malformed
+        || qualityJudgments.malformed
+        || !sameKeySet(semanticPairUniverse.keys, requestedPairs.keys)
+        || !sameKeySet(semanticPairUniverse.keys, reviewPairKeys)
+        || !sameKeySet(semanticPairUniverse.keys, qualityPairKeys)
+        || !sameSelectionSourceMap(
+          semanticPairUniverse.selectionSources,
+          requestedPairs.selectionSources
+        )
+        || !sameKeySet(requestedPairs.keys, reviewPairKeys)
+        || !sameKeySet(requestedPairs.keys, qualityPairKeys)
+        || Array.from(reviewJudgments.judgments.entries()).some(
+          ([key, judgment]) => {
+            const qualityJudgment = qualityJudgments.judgments.get(key);
+            return !qualityJudgment
+              || qualityJudgment.verdict !== judgment.verdict
+              || qualityJudgment.reason !== judgment.reason
+              || qualityJudgment.evidenceSpan !== judgment.evidenceSpan;
+          }
+        )
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_pair_mismatch");
+      }
+      if (
+        semanticPairUniverse.malformed
+        || !sameKeySet(semanticPairUniverse.keys, requestedPairs.keys)
+        || !sameKeySet(semanticPairUniverse.keys, qualityPairKeys)
+      ) {
+        reasons.push("collect_lineage_topic_semantic_pair_universe_mismatch");
+      }
+      const verdictCounts = countSemanticJudgments(reviewJudgments.judgments.values());
+      if (
+        !semanticReviewCountsMatch(
+          semanticReviewArtifact?.counts,
+          requestedPairs.keys.size,
+          verdictCounts
+        )
+        || !semanticReviewCountsMatch(
+          qualitySemanticReview?.counts,
+          requestedPairs.keys.size,
+          verdictCounts
+        )
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_count_mismatch");
+      }
+
+      const judgmentCountsByFamily = new Map<string, SemanticJudgmentCounts>(
+        Array.from(plannedFamilies.families.keys()).map((familyId) => [
+          familyId,
+          { directSupport: 0, applicationOnly: 0, uncertain: 0 }
+        ])
+      );
+      let unknownJudgmentFamily = false;
+      const directSupportPaperIds = new Set<string>();
+      for (const judgment of reviewJudgments.judgments.values()) {
+        const familyJudgmentCounts = judgmentCountsByFamily.get(judgment.familyId);
+        if (!familyJudgmentCounts) {
+          unknownJudgmentFamily = true;
+          continue;
+        }
+        if (judgment.verdict === "direct_support") {
+          familyJudgmentCounts.directSupport += 1;
+          directSupportPaperIds.add(judgment.paperId);
+        } else if (judgment.verdict === "application_only") {
+          familyJudgmentCounts.applicationOnly += 1;
+        } else {
+          familyJudgmentCounts.uncertain += 1;
+        }
+      }
+      const coveredCanonicalFamilySignatures = new Set<string>();
+      for (const [familyId, counts] of judgmentCountsByFamily) {
+          const reviewedCount = counts.directSupport
+            + counts.applicationOnly
+            + counts.uncertain;
+          const precision = reviewedCount > 0 ? counts.directSupport / reviewedCount : 0;
+          if (counts.directSupport
+              >= TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+            && precision >= TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY) {
+            const signature = parsedQueryFamilies.find(
+              (family) => family.queryFamily === familyId
+            )?.canonicalFamilySignature;
+            if (signature) {
+              coveredCanonicalFamilySignatures.add(signature);
+            }
+          }
+      }
+      const coveredQueryFamilyCount = coveredCanonicalFamilySignatures.size;
+      const qualityFamilyJudgmentsMismatch = unknownJudgmentFamily
+        || parsedQueryFamilies.some((family) => {
+          const counts = judgmentCountsByFamily.get(family.queryFamily);
+          if (!counts) {
+            return true;
+          }
+          const reviewedCount = counts.directSupport
+            + counts.applicationOnly
+            + counts.uncertain;
+          const precision = reviewedCount > 0 ? counts.directSupport / reviewedCount : 0;
+          return family.semanticReviewedPaperCount !== reviewedCount
+            || family.directSupportPaperCount !== counts.directSupport
+            || family.applicationOnlyPaperCount !== counts.applicationOnly
+            || family.uncertainPaperCount !== counts.uncertain
+            || family.semanticPrecision !== precision;
+        });
+      if (qualityFamilyJudgmentsMismatch) {
+        reasons.push("collect_lineage_topic_family_quality_judgment_mismatch");
+      }
+      if (
+        directSupportPaperIds.size < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS
+        || coveredQueryFamilyCount < TOPIC_DISCOVERY_MINIMUM_COVERED_QUERY_FAMILIES
+        || Array.from(judgmentCountsByFamily.values()).some((counts) => {
+          const reviewedCount = counts.directSupport
+            + counts.applicationOnly
+            + counts.uncertain;
+          const precision = reviewedCount > 0 ? counts.directSupport / reviewedCount : 0;
+          return counts.directSupport
+              < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+            || precision < TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY;
+        })
+      ) {
+        reasons.push("collect_lineage_topic_family_quality_floor_not_met");
+      }
+
+      const retainedPaperIds = Array.isArray(corpusQualityArtifact.retained_paper_ids)
+        ? corpusQualityArtifact.retained_paper_ids
+            .map((paperId) => stringValue(paperId))
+            .filter((paperId): paperId is string => Boolean(paperId))
+        : [];
+      const excludedPaperIds = Array.isArray(corpusQualityArtifact.excluded_paper_ids)
+        ? corpusQualityArtifact.excluded_paper_ids
+            .map((paperId) => stringValue(paperId))
+            .filter((paperId): paperId is string => Boolean(paperId))
+        : [];
+      const retainedPaperIdSet = new Set(retainedPaperIds);
+      const excludedPaperIdSet = new Set(excludedPaperIds);
+      const qualityPaperInventory = new Set([
+        ...retainedPaperIdSet,
+        ...excludedPaperIdSet
+      ]);
+      const candidatePaperIdSet = new Set(candidatePool.candidates.keys());
+      const corpusPaperIdSet = new Set(input.corpusRows.map((row) => row.paper_id));
+      if (
+        retainedPaperIds.length !== retainedPaperIdSet.size ||
+        excludedPaperIds.length !== excludedPaperIdSet.size ||
+        Array.from(retainedPaperIdSet).some((paperId) => excludedPaperIdSet.has(paperId)) ||
+        corpusPaperIdSet.size !== input.corpusRows.length ||
+        retainedPaperIdSet.size !== corpusPaperIdSet.size ||
+        Array.from(retainedPaperIdSet).some((paperId) => !corpusPaperIdSet.has(paperId)) ||
+        Array.from(retainedPaperIdSet).some(
+          (paperId) => !directSupportPaperIds.has(paperId)
+        ) ||
+        Array.from(directSupportPaperIds).some(
+          (paperId) => !qualityPaperInventory.has(paperId)
+        ) ||
+        !sameKeySet(qualityPaperInventory, candidatePaperIdSet)
+      ) {
+        reasons.push("collect_lineage_topic_family_retained_set_mismatch");
+      }
+
+      const observedFamilyCounts = new Map<string, number>(
+        Array.from(familyCounts.keys()).map((queryFamily) => [queryFamily, 0] as const)
+      );
+      const corpusDirectPairKeys = new Set<string>();
+      let missingFamily = false;
+      let unknownFamily = false;
+      for (const row of input.corpusRows) {
+        const rawQueryFamilies = Array.isArray(row.query_families) ? row.query_families : [];
+        const normalizedQueryFamilies = Array.from(
+          new Set(
+            rawQueryFamilies
+              .map((queryFamily) => stringValue(queryFamily))
+              .filter((queryFamily): queryFamily is string => Boolean(queryFamily))
+          )
+        );
+        if (
+          normalizedQueryFamilies.length === 0 ||
+          normalizedQueryFamilies.length !== rawQueryFamilies.length
+        ) {
+          missingFamily = true;
+        }
+        for (const queryFamily of normalizedQueryFamilies) {
+          if (!familyCounts.has(queryFamily)) {
+            unknownFamily = true;
+            continue;
+          }
+          observedFamilyCounts.set(queryFamily, (observedFamilyCounts.get(queryFamily) ?? 0) + 1);
+          corpusDirectPairKeys.add(semanticPairKey(row.paper_id, queryFamily));
+        }
+      }
+      if (missingFamily) {
+        reasons.push("collect_lineage_topic_family_missing");
+      }
+      if (unknownFamily) {
+        reasons.push("collect_lineage_topic_family_unknown");
+      }
+      if (
+        Array.from(familyCounts.entries()).some(
+          ([queryFamily, expectedCount]) => observedFamilyCounts.get(queryFamily) !== expectedCount
+        )
+      ) {
+        reasons.push("collect_lineage_topic_family_count_mismatch");
+      }
+      const retainedDirectReviewPairKeys = new Set(
+        Array.from(reviewJudgments.judgments.entries())
+          .filter(([, judgment]) =>
+            judgment.verdict === "direct_support"
+            && retainedPaperIdSet.has(judgment.paperId)
+          )
+          .map(([key]) => key)
+      );
+      const semanticInputPapers = new Map<string, { title: string; abstract: string }>();
+      const rawSemanticInputPapers = Array.isArray(semanticReviewInputPayload?.papers)
+        ? semanticReviewInputPayload.papers
+        : [];
+      let malformedSemanticInputPaper = !Array.isArray(
+        semanticReviewInputPayload?.papers
+      );
+      for (const rawPaper of rawSemanticInputPapers) {
+        const paper = objectValue(rawPaper);
+        const paperId = stringValue(paper?.paper_id);
+        if (
+          !paperId
+          || typeof paper?.title !== "string"
+          || typeof paper?.abstract !== "string"
+          || semanticInputPapers.has(paperId)
+        ) {
+          malformedSemanticInputPaper = true;
+          continue;
+        }
+        semanticInputPapers.set(paperId, {
+          title: paper.title,
+          abstract: paper.abstract
+        });
+      }
+      const reviewedPaperIds = new Set(
+        Array.from(reviewJudgments.judgments.values()).map(
+          (judgment) => judgment.paperId
+        )
+      );
+      const semanticReviewLimits = objectValue(semanticReviewArtifact?.limits);
+      const semanticAbstractChars = numberValue(semanticReviewLimits?.abstract_chars);
+      const semanticMaxPairs = numberValue(semanticReviewLimits?.max_pairs);
+      const semanticPayloadProjectionMismatch =
+        semanticAbstractChars === undefined
+        || !Number.isInteger(semanticAbstractChars)
+        || semanticAbstractChars <= 0
+        || semanticMaxPairs === undefined
+        || !Number.isInteger(semanticMaxPairs)
+        || semanticMaxPairs < semanticPairUniverse.keys.size
+        || semanticInputPapers.size !== semanticPairUniverse.paperIds.size
+        || Array.from(semanticPairUniverse.paperIds).some((paperId) => {
+          const candidate = candidatePool.candidates.get(paperId);
+          const semanticPaper = semanticInputPapers.get(paperId);
+          return !candidate
+            || !semanticPaper
+            || semanticPaper.title !== candidate.title
+            || semanticPaper.abstract !== Array.from(candidate.abstract)
+              .slice(0, semanticAbstractChars)
+              .join("");
+        });
+      if (
+        malformedSemanticInputPaper
+        || semanticPayloadProjectionMismatch
+        || semanticInputPapers.size !== reviewedPaperIds.size
+        || Array.from(reviewedPaperIds).some(
+          (paperId) => !semanticInputPapers.has(paperId)
+        )
+      ) {
+        reasons.push("collect_lineage_topic_semantic_review_input_invalid");
+      }
+      const observedTotalPapers = numberValue(observed?.total_papers);
+      const observedRelevantPapers = numberValue(observed?.relevant_papers);
+      const observedRelevantShare = numberValue(observed?.relevant_share);
+      const observedLexicalRelevantPapers = numberValue(
+        observed?.lexical_relevant_papers
+      );
+      const observedSemanticRequestedPapers = numberValue(
+        observed?.semantic_requested_papers
+      );
+      const observedDirectSupportPapers = numberValue(
+        observed?.direct_support_papers
+      );
+      const observedApplicationOnlyPairs = numberValue(
+        observed?.application_only_pairs
+      );
+      const observedUncertainPairs = numberValue(observed?.uncertain_pairs);
+      const observedRequiredAnchorMatches = numberValue(
+        observed?.required_anchor_matches_per_paper
+      );
+      const observedAnchorProximatePapers = numberValue(
+        observed?.anchor_proximate_papers
+      );
+      const observedAnchorAxisProximatePapers = numberValue(
+        observed?.anchor_axis_proximate_papers
+      );
+      const observedCoveredQueryFamilies = numberValue(
+        observed?.covered_query_families
+      );
+      const expectedRelevantShare = observedTotalPapers && observedTotalPapers > 0
+        ? directSupportPaperIds.size / observedTotalPapers
+        : 0;
+      if (
+        observedTotalPapers === undefined
+        || !Number.isInteger(observedTotalPapers)
+        || observedTotalPapers !== qualityPaperInventory.size
+        || observedRelevantPapers !== retainedPaperIdSet.size
+        || observedRelevantShare !== expectedRelevantShare
+        || observedLexicalRelevantPapers !== semanticPairUniverse.lexicalPaperIds.size
+        || observedSemanticRequestedPapers !== semanticInputPapers.size
+        || observedDirectSupportPapers !== directSupportPaperIds.size
+        || observedApplicationOnlyPairs !== verdictCounts.applicationOnly
+        || observedUncertainPairs !== verdictCounts.uncertain
+        || observedRequiredAnchorMatches !== plannedFamilies.sharedAnchorTerms?.length
+        || observedAnchorProximatePapers === undefined
+        || !Number.isInteger(observedAnchorProximatePapers)
+        || observedAnchorProximatePapers < 0
+        || observedAnchorProximatePapers > observedTotalPapers
+        || observedAnchorAxisProximatePapers === undefined
+        || !Number.isInteger(observedAnchorAxisProximatePapers)
+        || observedAnchorAxisProximatePapers < 0
+        || observedAnchorAxisProximatePapers > observedAnchorProximatePapers
+        || observedCoveredQueryFamilies !== coveredQueryFamilyCount
+        || Array.from(semanticInputPapers.keys()).some(
+          (paperId) => !qualityPaperInventory.has(paperId)
+        )
+      ) {
+        reasons.push("collect_lineage_topic_family_quality_observed_mismatch");
+      }
+      const invalidDirectEvidence = Array.from(reviewJudgments.judgments.values())
+        .filter((judgment) => judgment.verdict === "direct_support")
+        .some((judgment) => {
+          const paper = semanticInputPapers.get(judgment.paperId);
+          return !paper
+            || !judgment.evidenceSpan
+            || (!paper.title.includes(judgment.evidenceSpan)
+              && !paper.abstract.includes(judgment.evidenceSpan));
+        });
+      if (
+        !sameKeySet(corpusDirectPairKeys, retainedDirectReviewPairKeys)
+        || invalidDirectEvidence
+      ) {
+        reasons.push("collect_lineage_topic_semantic_direct_support_mismatch");
+      }
+    }
+  }
+  return {
+    modern: true,
+    valid: reasons.length === 0,
+    expectedAttemptId,
+    requiredQueryFamilies,
+    queryFamilies,
+    sharedAnchorTerms,
+    reasons: Array.from(new Set(reasons))
+  };
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -325,7 +2234,62 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         });
       };
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const memoryRawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief: memoryRawBrief,
+        run
+      });
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "analyze_papers blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        emitLog(error);
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
       const corpusRows = await readCorpusRows(run.id);
+      const collectLineageAudit = await auditCollectAnalysisLineage({
+        run,
+        runContextMemory,
+        corpusRows,
+        topicDiscoveryRequired: researchModeGuard.effectiveMode === "topic_discovery"
+      });
+      await writeRunArtifact(
+        run,
+        "analysis/collect_lineage_gate.json",
+        `${JSON.stringify({
+          version: 1,
+          kind: "analyze_collect_lineage_gate",
+          valid: collectLineageAudit.valid,
+          collect_attempt_id: collectLineageAudit.expectedAttemptId,
+          reasons: collectLineageAudit.reasons,
+          checked_at: new Date().toISOString()
+        }, null, 2)}\n`
+      );
+      if (!collectLineageAudit.valid) {
+        const error =
+          "analyze_papers blocked because the latest collect_papers lineage is not internally consistent: "
+          + collectLineageAudit.reasons.join(", ");
+        emitLog(error);
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
       const corpusFingerprint = buildCorpusFingerprint(corpusRows);
       const analysisMode = getPdfAnalysisModeForConfig(deps.config);
       const artifactsRoot = runArtifactsDir(run);
@@ -342,6 +2306,26 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       let request = loadedRequest.request;
       if (loadedRequest.autoDefaultReason) {
         emitLog(loadedRequest.autoDefaultReason);
+      }
+      const topicFamilyCount = collectLineageAudit.requiredQueryFamilies?.length
+        ?? countDistinctQueryFamilies(corpusRows);
+      if (
+        request.selectionMode === "top_n" &&
+        request.topN &&
+        request.topN < topicFamilyCount
+      ) {
+        const expandedTopN = Math.min(
+          corpusRows.length,
+          DEFAULT_SAFE_ANALYSIS_TOP_N,
+          topicFamilyCount
+        );
+        if (expandedTopN > request.topN) {
+          emitLog(
+            `Auto-expanded analysis selection from top ${request.topN} to top ${expandedTopN} ` +
+            `so ${topicFamilyCount} nonempty topic-discovery query families can each be represented.`
+          );
+          request = normalizeAnalysisSelectionRequest(expandedTopN);
+        }
       }
       if (corpusRows.length === 0) {
         const suggestedLimit = Math.max(1, deps.config.papers?.max_results ?? 200);
@@ -375,14 +2359,12 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               reason:
                 "analyze_papers preserved the previous partial analysis because corpus.jsonl is now empty even though prior evidence already exists.",
               confidence: 0.98,
-              targetNode: "generate_hypotheses",
               evidence: [
                 `${existingSummaryRows.length} summary row(s) and ${existingEvidenceRows.length} evidence item(s) already exist on disk.`,
                 `The previous selection covered ${preservedSelectedCount}/${preservedTotalCandidates} candidates.`,
                 "corpus.jsonl is currently empty, so a fresh analyze_papers run would have no shortlist to execute."
               ],
               suggestedCommands: [
-                `/agent run generate_hypotheses ${run.id}`,
                 `/agent collect --limit ${suggestedLimit} --run ${run.id}`
               ]
             })
@@ -409,6 +2391,17 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             ]
           })
         };
+      }
+      const corpusChangedFromInitialManifest = Boolean(
+        initialManifest?.corpusFingerprint &&
+          initialManifest.corpusFingerprint !== corpusFingerprint
+      );
+      if (corpusChangedFromInitialManifest) {
+        await fs.rm(manifestPath, { force: true });
+        await resetAnalysisOutputs(run, summaryPath, evidencePath);
+        emitLog(
+          "Collected corpus fingerprint changed. Discarding the previous analysis manifest, summaries, and evidence before selecting and analyzing the new corpus."
+        );
       }
       const includePageImages =
         deps.config.providers?.llm_mode === "codex" ||
@@ -462,7 +2455,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       });
       let autoExpansionCount = 0;
       let autoExpansionReason: string | undefined;
-      const startedWithExistingManifest = Boolean(initialManifest);
+      const startedWithExistingManifest = Boolean(initialManifest) && !corpusChangedFromInitialManifest;
 
       while (true) {
         await runContextMemory.put("analyze_papers.request", request);
@@ -472,7 +2465,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           existingManifest,
           request,
           selectionRequestFingerprint,
-          analysisFingerprint,
           corpusFingerprint,
           corpusRows
         );
@@ -501,7 +2493,15 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           runTitle: run.title,
           runTopic: run.topic
         });
-        const selection = selectionGuard.selection;
+        const selection = applyTopicFamilyCoverageFloor({
+          selection: selectionGuard.selection,
+          runTitle: run.title,
+          runTopic: run.topic,
+          requiredQueryFamilies: collectLineageAudit.requiredQueryFamilies,
+          eligiblePaperIds: selectionGuard.eligiblePaperIds
+            ? new Set(selectionGuard.eligiblePaperIds)
+            : undefined
+        });
 
         if (existingManifest && reuseCachedSelection) {
           emitLog(
@@ -512,6 +2512,130 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
         if (selectionGuard.applied && selectionGuard.reason) {
           emitLog(selectionGuard.reason);
+        }
+        if (selection.topicFamilyCoverage) {
+          const coverage = selection.topicFamilyCoverage;
+          emitLog(
+            `Topic-family coverage selected ${coverage.selectedFamilies.length}/${coverage.availableFamilies.length} ` +
+            `nonempty family/families with ${coverage.reservedPaperIds.length} reserved representative(s)` +
+            `${coverage.applied ? `; promoted ${coverage.addedPaperIds.length} and dropped ${coverage.droppedPaperIds.length}` : ""}.`
+          );
+          if (!coverage.coverageComplete) {
+            const uncoveredFamilySet = new Set(coverage.uncoveredFamilies);
+            const eligiblePaperIdSet = new Set(
+              selectionGuard.eligiblePaperIds ??
+              rawSelection.rankedCandidates.map((candidate) => candidate.paper.paper_id)
+            );
+            const queryFamilyFeedback = collectLineageAudit.queryFamilies ?? [];
+            const rejectedQueries = queryFamilyFeedback
+              .filter((family) => uncoveredFamilySet.has(family.queryFamily))
+              .map((family) => family.query);
+            const queryPlanFeedback = rejectedQueries.length > 0
+              ? await recordLiteratureQueryPlanRejection(runContextMemory, {
+                  rejectedQueries,
+                  qualityReasons: coverage.uncoveredFamilies.map(
+                    (queryFamily) =>
+                      `analysis_topic_family_uncovered_after_quality_filter:${queryFamily}`
+                  ),
+                  sharedAnchorTerms: collectLineageAudit.sharedAnchorTerms ?? [],
+                  candidateTitles: rawSelection.rankedCandidates
+                    .filter((candidate) => eligiblePaperIdSet.has(candidate.paper.paper_id))
+                    .map((candidate) => candidate.paper.title),
+                  queryFamilies: queryFamilyFeedback.map((family) => ({
+                    queryFamily: family.queryFamily,
+                    query: family.query,
+                    axisTerms: family.axisTerms,
+                    relevantPaperCount: family.relevantPaperCount
+                  })),
+                  supportedQueryFamilies: queryFamilyFeedback
+                    .filter(
+                      (family) =>
+                        family.relevantPaperCount > 0 &&
+                        !uncoveredFamilySet.has(family.queryFamily)
+                    )
+                    .map((family) => ({
+                      queryFamily: family.queryFamily,
+                      query: family.query,
+                      axisTerms: family.axisTerms,
+                      relevantPaperCount: family.relevantPaperCount
+                    }))
+                })
+              : undefined;
+            const gateArtifactPath = "analysis/topic_family_coverage_gate.json";
+            await writeRunArtifact(
+              run,
+              gateArtifactPath,
+              `${JSON.stringify({
+                version: 1,
+                kind: "topic_family_analysis_coverage_gate",
+                status: "blocked",
+                collect_attempt_id: collectLineageAudit.expectedAttemptId,
+                corpus_fingerprint: corpusFingerprint,
+                selection_semantics_version: ANALYSIS_SELECTION_SEMANTICS_VERSION,
+                selection_request: request,
+                selection_quality_guard: {
+                  applied: selectionGuard.applied,
+                  reason: selectionGuard.reason,
+                  dropped_paper_ids: selectionGuard.droppedPaperIds,
+                  added_paper_ids: selectionGuard.addedPaperIds,
+                  eligible_paper_ids: Array.from(eligiblePaperIdSet).sort()
+                },
+                topic_family_coverage: coverage,
+                family_candidates: coverage.availableFamilies.map((family) => ({
+                  query_family: family.queryFamily,
+                  candidate_count: family.candidateCount,
+                  candidates: rawSelection.rankedCandidates
+                    .filter((candidate) =>
+                      candidate.paper.query_families?.includes(family.queryFamily)
+                    )
+                    .map((candidate) => ({
+                      paper_id: candidate.paper.paper_id,
+                      title: candidate.paper.title,
+                      eligible_after_quality_guard: eligiblePaperIdSet.has(candidate.paper.paper_id),
+                      selected: selection.selectedPaperIds.includes(candidate.paper.paper_id),
+                      deterministic_score: candidate.deterministicScore,
+                      selection_score: candidate.selectionScore,
+                      abstract_available: Boolean(candidate.paper.abstract?.trim()),
+                      pdf_locator_available: Boolean(candidate.paper.pdf_url?.trim())
+                    }))
+                })),
+                query_plan_feedback: queryPlanFeedback,
+                checked_at: new Date().toISOString()
+              }, null, 2)}\n`
+            );
+            await runContextMemory.put("analyze_papers.topic_family_coverage_status", "blocked");
+            await runContextMemory.put(
+              "analyze_papers.uncovered_query_families",
+              coverage.uncoveredFamilies
+            );
+            return {
+              status: "success",
+              summary:
+                "analyze_papers paused because the bounded shortlist could not represent every nonempty topic-discovery query family.",
+              needsApproval: true,
+              toolCallsUsed: 0,
+              transitionRecommendation: {
+                action: "backtrack_to_collection",
+                sourceNode: "analyze_papers",
+                targetNode: "collect_papers",
+                reason:
+                  "One or more nonempty topic-discovery query families had no analysis-eligible representative; replace the failed literature query family before hypothesis generation.",
+                confidence: 0.97,
+                autoExecutable: true,
+                evidence: [
+                  `${coverage.selectedFamilies.length}/${coverage.availableFamilies.length} nonempty query families are represented.`,
+                  `Uncovered families: ${coverage.uncoveredFamilies.join(", ") || "none"}.`,
+                  `Selection target: ${coverage.targetCount} paper(s).`,
+                  `Diagnostic: ${gateArtifactPath}`
+                ],
+                suggestedCommands: [
+                  "/agent apply",
+                  `/agent run collect_papers ${run.id}`
+                ],
+                generatedAt: new Date().toISOString()
+              }
+            };
+          }
         }
         if (
           selection.request.selectionMode === "top_n" &&
@@ -635,7 +2759,13 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
 
         const canExtendExistingManifest = Boolean(
-          existingManifest && canExtendManifestForExpandedSelection(existingManifest, selection, analysisFingerprint)
+          existingManifest &&
+            canExtendManifestForExpandedSelection(
+              existingManifest,
+              selection,
+              analysisFingerprint,
+              corpusFingerprint
+            )
         );
         const canRetargetExistingManifest = Boolean(
           existingManifest &&
@@ -650,53 +2780,17 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let existingSummaryRows = await readSummaryRows(summaryPath);
         let existingEvidenceRows = await readEvidenceRows(evidencePath);
         const resetReason =
-          existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
-            ? "selection_changed"
-            : existingManifest && !existingManifest.analysisFingerprint
-              ? "compatibility_manifest"
-              : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
-                ? "analysis_config_changed"
-                : undefined;
-        const preservedSelectionRegression = shouldPreservePartialArtifactsOnSelectionRegression({
-          runId: run.id,
-          existingManifest,
-          selection,
-          resetReason,
-          selectionRequestFingerprint,
-          analysisFingerprint,
-          corpusFingerprint,
-          existingSummaryRows,
-          existingEvidenceRows
-        });
-        if (preservedSelectionRegression) {
-          emitLog(preservedSelectionRegression.logMessage);
-          const progress = buildAnalysisProgress(existingSummaryRows, existingEvidenceRows);
-          await syncAnalysisProgress(runContextMemory, {
-            runContextPath: run.memoryRefs.runContextPath,
-            summaryRows: existingSummaryRows,
-            evidenceRows: existingEvidenceRows,
-            selectedCount: existingManifest?.selectedPaperIds.length ?? progress.summaryRows.length,
-            totalCandidates: existingManifest?.totalCandidates ?? selection.totalCandidates,
-            selectionFingerprint: existingManifest?.selectionFingerprint ?? selection.selectionFingerprint
-          });
-          await runContextMemory.put("analyze_papers.auto_expand_count", autoExpansionCount);
-          await runContextMemory.put("analyze_papers.auto_expand_reason", autoExpansionReason || null);
-          emitLog(
-            `Analysis totals: summaries=${progress.summaryRows.length}, evidence=${progress.evidenceRows.length}, full_text=${progress.fullTextCount}, abstract_fallback=${progress.abstractFallbackCount}.`
-          );
-          await writeRunArtifact(
-            run,
-            "analyze_papers_richness_summary.json",
-            JSON.stringify(buildRichnessSummary(progress), null, 2)
-          );
-          return {
-            status: "success",
-            summary: preservedSelectionRegression.summary,
-            needsApproval: true,
-            toolCallsUsed: 0,
-            transitionRecommendation: preservedSelectionRegression.transitionRecommendation
-          };
-        }
+          existingManifest &&
+          existingManifest.corpusFingerprint &&
+          existingManifest.corpusFingerprint !== corpusFingerprint
+            ? "corpus_changed"
+            : existingManifest && existingManifest.selectionFingerprint !== selection.selectionFingerprint
+              ? "selection_changed"
+              : existingManifest && (!existingManifest.analysisFingerprint || !existingManifest.corpusFingerprint)
+                ? "compatibility_manifest"
+                : existingManifest && existingManifest.analysisFingerprint !== analysisFingerprint
+                  ? "analysis_config_changed"
+                  : undefined;
         const retargetedSelection =
           canRetargetExistingManifest && existingManifest
             ? retargetManifestForSelectionChange(
@@ -716,7 +2810,8 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let manifest: AnalysisManifest | undefined =
           existingManifest &&
           existingManifest.selectionFingerprint === selection.selectionFingerprint &&
-          existingManifest.analysisFingerprint === analysisFingerprint
+          existingManifest.analysisFingerprint === analysisFingerprint &&
+          existingManifest.corpusFingerprint === corpusFingerprint
             ? existingManifest
             : canExtendExistingManifest && existingManifest
               ? extendManifestForExpandedSelection(
@@ -741,7 +2836,9 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
 
         if (!manifest) {
-          if (resetReason === "selection_changed") {
+          if (resetReason === "corpus_changed") {
+            emitLog("Collected corpus changed since the previous analysis. Resetting summaries/evidence and re-analyzing the new paper set.");
+          } else if (resetReason === "selection_changed") {
             emitLog("Analysis selection changed since the previous run. Resetting summaries/evidence for the new paper set.");
           } else if (resetReason === "compatibility_manifest") {
             emitLog("Existing analysis manifest lacks configuration fingerprint metadata. Resetting summaries/evidence to rebuild a consistent analysis state.");
@@ -867,20 +2964,22 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
             const pdfUrl = resolvePaperPdfUrl(row);
             const useResponsesPdf = analysisMode === "responses_api_pdf" && Boolean(pdfUrl);
-            let source = useResponsesPdf
+            const resolvedSource = await resolvePaperTextSource({
+              runId: run.id,
+              paper: row,
+              includePageImages: useResponsesPdf ? false : includePageImages,
+              abortSignal,
+              onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
+            });
+            let source = useResponsesPdf && resolvedSource.sourceType !== "full_text"
               ? {
+                  ...resolvedSource,
                   sourceType: "full_text" as const,
-                  text: row.abstract || row.title,
                   fullTextAvailable: true,
-                  pdfUrl
+                  pdfUrl,
+                  fallbackReason: "responses_pdf_local_verification_abstract_only"
                 }
-              : await resolvePaperTextSource({
-                  runId: run.id,
-                  paper: row,
-                  includePageImages,
-                  abortSignal,
-                  onProgress: (text) => emitLog(`[${row.paper_id}] ${text}`)
-                });
+              : resolvedSource;
 
             let analysisModeUsed: "responses_api_pdf" | "codex_text_image_hybrid" | "ollama_vision" = useResponsesPdf
               ? "responses_api_pdf"
@@ -960,6 +3059,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   analysis = await analyzePaperWithResponsesPdf({
                     client: deps.responsesPdfAnalysis,
                     paper: row,
+                    source,
                     pdfUrl,
                     model: deps.config.providers?.openai?.model || DEFAULT_OPENAI_RESPONSES_MODEL,
                     reasoningEffort:
@@ -1254,7 +3354,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         await persistQueue.onIdle();
 
         const progress = buildAnalysisProgress(summaryRowsState, evidenceRowsState);
-        const analysisToolCallsUsed = pendingRows.length > 0 ? Math.max(1, attemptedRows) : 0;
+        let analysisToolCallsUsed = pendingRows.length > 0 ? Math.max(1, attemptedRows) : 0;
         await syncAnalysisProgress(runContextMemory, {
           runContextPath: run.memoryRefs.runContextPath,
           summaryRows: summaryRowsState,
@@ -1270,6 +3370,118 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           run,
           "analyze_papers_richness_summary.json",
           JSON.stringify(buildRichnessSummary(progress), null, 2)
+        );
+        const [corpusRaw, evidenceRaw] = await Promise.all([
+          safeRead(path.join(artifactsRoot, "corpus.jsonl")),
+          safeRead(evidencePath)
+        ]);
+        const corpusSha256 = createHash("sha256").update(corpusRaw, "utf8").digest("hex");
+        const evidenceSha256 = createHash("sha256").update(evidenceRaw, "utf8").digest("hex");
+        const selectedPaperIdSet = new Set(selection.selectedPaperIds);
+        const completedPaperIds = Object.values(manifestState.papers)
+          .filter((entry) =>
+            entry.selected &&
+            entry.status === "completed" &&
+            selectedPaperIdSet.has(entry.paper_id)
+          )
+          .map((entry) => entry.paper_id)
+          .sort();
+        const selectedFailedPaperIds = [...getSelectedFailedPaperIds(manifestState)]
+          .filter((paperId) => selectedPaperIdSet.has(paperId))
+          .sort();
+        const analysisCoverage = {
+          selected_paper_count: selection.selectedPaperIds.length,
+          completed_paper_count: completedPaperIds.length,
+          failed_paper_ids: selectedFailedPaperIds,
+          complete:
+            selectedFailedPaperIds.length === 0 &&
+            completedPaperIds.length === selection.selectedPaperIds.length
+        };
+        const gapSynthesisContext = {
+          runId: run.id,
+          researchCycle: run.graph.researchCycle,
+          collectAttemptId: collectLineageAudit.expectedAttemptId ?? "",
+          corpusSha256,
+          evidenceSha256
+        };
+        const gapSynthesisPath = path.join(artifactsRoot, "analysis", "gap_synthesis.json");
+        const cachedGapSynthesis = collectLineageAudit.queryFamilies?.length
+          ? parseReusableResearchGapSynthesisArtifact(
+              await safeRead(gapSynthesisPath),
+              gapSynthesisContext
+            )
+          : undefined;
+        const gapSynthesis = collectLineageAudit.queryFamilies?.length
+          ? cachedGapSynthesis?.status === "completed"
+            ? { artifact: cachedGapSynthesis, toolCallsUsed: 0 }
+            : await synthesizeResearchGapClusters({
+                llm: deps.llm,
+                evidence: progress.evidenceRows,
+                context: gapSynthesisContext,
+                runTitle: run.title,
+                runTopic: run.topic,
+                abortSignal,
+                allowModelCalls: analysisCoverage.complete,
+                onProgress: (message) => emitLog(message)
+              })
+          : undefined;
+        if (gapSynthesis) {
+          analysisToolCallsUsed += gapSynthesis.toolCallsUsed;
+          if (cachedGapSynthesis?.status === "completed") {
+            emitLog("Reusing hash-bound research-gap semantic synthesis for the unchanged evidence set.");
+          } else {
+            await writeRunArtifact(
+              run,
+              "analysis/gap_synthesis.json",
+              `${JSON.stringify(gapSynthesis.artifact, null, 2)}\n`
+            );
+          }
+        }
+        const gapMap = buildResearchGapMap({
+          evidence: progress.evidenceRows,
+          semanticClusters: gapSynthesis?.artifact.accepted_clusters.map((cluster) => ({
+            opportunity_type: cluster.opportunity_type,
+            statement: cluster.statement,
+            evidence_ids: cluster.evidence_ids
+          })),
+          excludedEvidenceIds: gapSynthesis?.artifact.excluded_evidence.map(
+            (item) => item.evidence_id
+          ),
+          constructionMode: !analysisCoverage.complete
+            ? "deferred_partial_analysis"
+            : gapSynthesis?.artifact.status === "completed"
+              ? "reviewed_semantic_synthesis"
+              : gapSynthesis
+                ? "deterministic_safe_fallback"
+                : "legacy_exact_grouping",
+          synthesisBinding: gapSynthesis
+            ? {
+                content_sha256: gapSynthesis.artifact.content_sha256,
+                semantics_version: gapSynthesis.artifact.semantics_version,
+                status: gapSynthesis.artifact.status
+              }
+            : undefined,
+          analysisCoverage,
+          runId: run.id,
+          researchCycle: run.graph.researchCycle,
+          collectAttemptId: collectLineageAudit.expectedAttemptId,
+          corpusSha256,
+          corpusByteLength: Buffer.byteLength(corpusRaw, "utf8"),
+          evidenceSha256,
+          evidenceByteLength: Buffer.byteLength(evidenceRaw, "utf8"),
+          sourceArtifacts: gapSynthesis
+            ? ["paper_summaries.jsonl", "evidence_store.jsonl", "analysis/gap_synthesis.json"]
+            : undefined
+        });
+        await writeRunArtifact(
+          run,
+          "analysis/gap_map.json",
+          `${JSON.stringify(gapMap, null, 2)}\n`
+        );
+        await runContextMemory.put("analyze_papers.gap_candidate_count", gapMap.gaps.length);
+        await runContextMemory.put(
+          "analyze_papers.independently_supported_gap_count",
+          gapMap.gaps.filter((gap) => gap.epistemic_status === "supported_candidate").length
         );
 
         if (failedCount > 0) {
@@ -1302,7 +3514,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 reason:
                   "analyze_papers is blocked by a model usage limit, so retrying immediately would churn without producing new outputs.",
                 confidence: 0.98,
-                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
                 evidence: [
                   `${blockedCount} selected paper(s) reported a model usage-limit failure.`,
                   progress.evidenceRows.length > 0
@@ -1312,7 +3523,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 ],
                 suggestedCommands:
                   progress.evidenceRows.length > 0
-                    ? [`/agent run generate_hypotheses ${run.id}`, `/model`, `/agent run analyze_papers ${run.id}`]
+                    ? ["/model", `/agent run analyze_papers ${run.id}`]
                     : ["/model", `/agent run analyze_papers ${run.id}`]
               })
             };
@@ -1344,7 +3555,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 reason:
                   "analyze_papers quarantined one or more paper analyses because the resolved source content did not match the requested paper identity, so auto-retrying would likely repeat the same contamination.",
                 confidence: 0.97,
-                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
                 evidence: [
                   `${blockedCount} selected paper(s) failed source-identity validation.`,
                   progress.evidenceRows.length > 0
@@ -1354,7 +3564,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 ],
                 suggestedCommands:
                   progress.evidenceRows.length > 0
-                    ? [`/agent run generate_hypotheses ${run.id}`, `/agent run analyze_papers ${run.id}`]
+                    ? [`/agent run analyze_papers ${run.id}`]
                     : [`/agent run analyze_papers ${run.id}`, "/model"]
               })
             };
@@ -1387,7 +3597,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 reason:
                   "analyze_papers is blocked by environment or permission errors, so another automatic retry would likely fail the same way.",
                 confidence: 0.96,
-                targetNode: progress.evidenceRows.length > 0 ? "generate_hypotheses" : undefined,
                 evidence: [
                   `${blockedCount} selected paper(s) failed with environment or permission errors.`,
                   progress.evidenceRows.length > 0
@@ -1397,7 +3606,7 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 ],
                 suggestedCommands:
                   progress.evidenceRows.length > 0
-                    ? [`/agent run generate_hypotheses ${run.id}`, "/doctor", "/model", `/agent run analyze_papers ${run.id}`]
+                    ? ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
                     : ["/doctor", "/model", `/agent run analyze_papers ${run.id}`]
               })
             };
@@ -1462,7 +3671,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                     ? "analyze_papers preserved partial evidence because retrying again did not shrink the failed-paper subset."
                     : "analyze_papers preserved partial evidence after some selected papers failed, so the workflow paused instead of auto-retrying away a usable evidence set.",
                 confidence: 0.92,
-                targetNode: "generate_hypotheses",
                 evidence: [
                   `${progress.summaryRows.length} summary row(s) and ${progress.evidenceRows.length} evidence item(s) are already persisted.`,
                   stalledFailures
@@ -1533,7 +3741,6 @@ export function createAnalyzePapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           emitLog(expansionDecision.reason);
           continue;
         }
-
         const abstractOnlyExhaustionPause = shouldPauseForAbstractOnlySelectionExhaustion({
           request,
           selection,
@@ -1787,7 +3994,23 @@ async function readCorpusRows(runId: string): Promise<AnalysisCorpusRow[]> {
     .filter(Boolean)
     .map((line) => {
       try {
-        return JSON.parse(line) as AnalysisCorpusRow;
+        const parsed = objectValue(JSON.parse(line) as unknown);
+        const paperId = stringValue(parsed?.paper_id);
+        if (!parsed || !paperId) {
+          return undefined;
+        }
+        return {
+          ...parsed,
+          paper_id: paperId,
+          title: stringValue(parsed.title) || "",
+          abstract: stringValue(parsed.abstract) || "",
+          authors: Array.isArray(parsed.authors)
+            ? parsed.authors.flatMap((author) => {
+                const value = stringValue(author);
+                return value ? [value] : [];
+              })
+            : []
+        } as AnalysisCorpusRow;
       } catch {
         return undefined;
       }
@@ -1830,13 +4053,15 @@ function mergeCorpusRowWithEnrichment(
 }
 
 function mergeCorpusRow(base: AnalysisCorpusRow, latest: AnalysisCorpusRow): AnalysisCorpusRow {
+  const latestAuthors = Array.isArray(latest.authors) ? latest.authors : [];
+  const baseAuthors = Array.isArray(base.authors) ? base.authors : [];
   return {
     ...base,
     ...latest,
     abstract: latest.abstract || base.abstract,
     url: latest.url || base.url,
     pdf_url: latest.pdf_url || base.pdf_url,
-    authors: latest.authors.length > 0 ? latest.authors : base.authors,
+    authors: latestAuthors.length > 0 ? latestAuthors : baseAuthors,
     venue: latest.venue || base.venue,
     year: latest.year ?? base.year,
     citation_count: latest.citation_count ?? base.citation_count,
@@ -2060,7 +4285,11 @@ function hydrateSelectedManifestEntriesFromRows(
 async function readExistingManifest(manifestPath: string): Promise<AnalysisManifest | undefined> {
   try {
     const manifest = await readJsonFile<AnalysisManifest>(manifestPath);
-    if ((manifest?.version === 2 || manifest?.version === 3) && manifest.papers && typeof manifest.papers === "object") {
+    if (
+      (manifest?.version === 2 || manifest?.version === 3 || manifest?.version === 4) &&
+      manifest.papers &&
+      typeof manifest.papers === "object"
+    ) {
       return manifest;
     }
   } catch {
@@ -2080,7 +4309,10 @@ function buildCorpusFingerprint(corpusRows: AnalysisCorpusRow[]): string {
           year: row.year ?? null,
           venue: row.venue ?? null,
           citation_count: row.citation_count ?? 0,
-          pdf_url: resolvePaperPdfUrl(row) ?? null
+          pdf_url: resolvePaperPdfUrl(row) ?? null,
+          query_families: Array.from(
+            new Set((row.query_families ?? []).map((queryFamily) => queryFamily.trim()).filter(Boolean))
+          ).sort()
         }))
       )
     )
@@ -2091,14 +4323,13 @@ function canReuseManifestSelection(
   manifest: AnalysisManifest | undefined,
   request: AnalysisSelectionRequest,
   selectionRequestFingerprint: string,
-  analysisFingerprint: string,
   corpusFingerprint: string,
   corpusRows: AnalysisCorpusRow[]
 ): manifest is AnalysisManifest {
   if (!manifest) {
     return false;
   }
-  if (manifest.analysisFingerprint !== analysisFingerprint) {
+  if (manifest.selectionSemanticsVersion !== ANALYSIS_SELECTION_SEMANTICS_VERSION) {
     return false;
   }
   if (manifest.selectionRequestFingerprint !== selectionRequestFingerprint) {
@@ -2174,6 +4405,7 @@ function restoreSelectionFromManifest(
     selectionFingerprint: manifest.selectionFingerprint,
     rerankApplied: manifest.rerankApplied ?? manifest.rerankedPaperIds.length > 0,
     rerankFallbackReason: manifest.rerankFallbackReason,
+    topicFamilyCoverage: manifest.topicFamilyCoverage,
     rankedCandidates
   };
 }
@@ -2181,10 +4413,12 @@ function restoreSelectionFromManifest(
 function canExtendManifestForExpandedSelection(
   existingManifest: AnalysisManifest,
   selection: PaperSelectionResult,
-  analysisFingerprint: string
+  analysisFingerprint: string,
+  corpusFingerprint: string
 ): boolean {
   if (
     existingManifest.analysisFingerprint !== analysisFingerprint ||
+    existingManifest.corpusFingerprint !== corpusFingerprint ||
     existingManifest.request.selectionMode !== "top_n" ||
     selection.request.selectionMode !== "top_n"
   ) {
@@ -2318,9 +4552,10 @@ function createFreshManifest(
 ): AnalysisManifest {
   const now = new Date().toISOString();
   return {
-    version: 3,
+    version: 4,
     updatedAt: now,
     request: selection.request,
+    selectionSemanticsVersion: ANALYSIS_SELECTION_SEMANTICS_VERSION,
     selectionFingerprint: selection.selectionFingerprint,
     selectionRequestFingerprint,
     analysisFingerprint,
@@ -2329,6 +4564,7 @@ function createFreshManifest(
     candidatePoolSize: selection.candidatePoolSize,
     rerankApplied: selection.rerankApplied,
     rerankFallbackReason: selection.rerankFallbackReason,
+    topicFamilyCoverage: selection.topicFamilyCoverage,
     selectedPaperIds: selection.selectedPaperIds,
     rerankedPaperIds: selection.rerankedPaperIds,
     deterministicRankingPreview: selection.deterministicRankingPreview,
@@ -2338,6 +4574,7 @@ function createFreshManifest(
         {
           paper_id: candidate.paper.paper_id,
           title: candidate.paper.title,
+          query_families: candidate.paper.query_families,
           status: candidate.selected ? "pending" : "skipped",
           selected: candidate.selected,
           rank: candidate.rank,
@@ -2435,6 +4672,7 @@ function buildAnalysisFingerprint(args: {
           includePageImages: args.includePageImages
         };
   return JSON.stringify({
+    evidenceSemanticsVersion: PAPER_ANALYSIS_EVIDENCE_SEMANTICS_VERSION,
     analysisMode: args.analysisMode,
     ...modeSpecificConfig
   });
@@ -2857,79 +5095,6 @@ function isAnalysisTimeoutError(message: string): boolean {
   );
 }
 
-function shouldPreservePartialArtifactsOnSelectionRegression(input: {
-  runId: string;
-  existingManifest?: AnalysisManifest;
-  selection: PaperSelectionResult;
-  resetReason?: "selection_changed" | "compatibility_manifest" | "analysis_config_changed";
-  selectionRequestFingerprint: string;
-  analysisFingerprint: string;
-  corpusFingerprint: string;
-  existingSummaryRows: PaperSummaryRow[];
-  existingEvidenceRows: PaperEvidenceRow[];
-}):
-  | {
-      logMessage: string;
-      summary: string;
-      transitionRecommendation: TransitionRecommendation;
-    }
-  | undefined {
-  if (
-    input.resetReason !== "selection_changed" ||
-    !input.existingManifest ||
-    input.existingSummaryRows.length === 0 ||
-    input.existingEvidenceRows.length === 0
-  ) {
-    return undefined;
-  }
-  if (
-    input.existingManifest.selectionRequestFingerprint !== input.selectionRequestFingerprint ||
-    input.existingManifest.analysisFingerprint !== input.analysisFingerprint ||
-    !input.existingManifest.corpusFingerprint ||
-    input.existingManifest.corpusFingerprint === input.corpusFingerprint
-  ) {
-    return undefined;
-  }
-
-  const previousCompletedCount = countCompletedSelectedEntries(input.existingManifest);
-  const previousSelectedCount = input.existingManifest.selectedPaperIds.length;
-  const nextSelectedCount = input.selection.selectedPaperIds.length;
-  const suspiciousRegression =
-    input.selection.totalCandidates === 0 ||
-    nextSelectedCount === 0 ||
-    nextSelectedCount < Math.min(previousSelectedCount, previousCompletedCount);
-  if (!suspiciousRegression || previousCompletedCount === 0) {
-    return undefined;
-  }
-
-  const reason =
-    `Preserving ${input.existingSummaryRows.length} summary row(s) and ${input.existingEvidenceRows.length} evidence row(s) ` +
-    `after the analysis selection regressed from ${previousSelectedCount} paper(s) to ${nextSelectedCount} ` +
-    `without any selection-request change.`;
-  return {
-    logMessage:
-      `${reason} Manual review is required before replacing the recovered artifacts because the corpus fingerprint changed.`,
-    summary:
-      `${reason} Approval can continue with the preserved partial analysis, or you can re-run collection/analysis after reviewing the corpus regression.`,
-    transitionRecommendation: createAnalyzePapersManualReviewRecommendation({
-      runId: input.runId,
-      reason:
-        "analyze_papers detected a corpus regression with the same selection request and preserved the previous partial analysis instead of deleting it.",
-      confidence: 0.97,
-      targetNode: "generate_hypotheses",
-      evidence: [
-        `${input.existingSummaryRows.length} summary row(s) and ${input.existingEvidenceRows.length} evidence item(s) already exist on disk.`,
-        `Selected papers regressed from ${previousSelectedCount} to ${nextSelectedCount}.`,
-        `Corpus fingerprint changed while the selection request fingerprint stayed the same.`
-      ]
-    })
-  };
-}
-
-function countCompletedSelectedEntries(manifest: AnalysisManifest): number {
-  return Object.values(manifest.papers).filter((entry) => entry.selected && entry.status === "completed").length;
-}
-
 function createAnalyzePapersManualReviewRecommendation(input: {
   runId: string;
   reason: string;
@@ -2949,7 +5114,7 @@ function createAnalyzePapersManualReviewRecommendation(input: {
     suggestedCommands:
       input.suggestedCommands && input.suggestedCommands.length > 0
         ? input.suggestedCommands.slice(0, 4)
-        : [`/agent run generate_hypotheses ${input.runId}`, `/agent run analyze_papers ${input.runId}`],
+        : [`/agent run analyze_papers ${input.runId}`],
     generatedAt: new Date().toISOString()
   };
 }
@@ -3003,19 +5168,15 @@ function applySelectionQualitySafeguards(input: {
           )
           .map((candidate) => candidate.paper.paper_id);
   const targetCount = input.selection.selectedPaperIds.length;
-  const nextSelectedPaperIds: string[] = [];
-
-  for (const paperId of orderedPaperIds) {
+  const eligiblePaperIds = orderedPaperIds.filter((paperId) => {
     const candidate = input.selection.rankedCandidates.find((item) => item.paper.paper_id === paperId);
     const signals = candidateSignalsById.get(paperId);
     if (!candidate || !signals || !passesSelectionQualityGuard(candidate, signals, strictMode)) {
-      continue;
+      return false;
     }
-    nextSelectedPaperIds.push(paperId);
-    if (nextSelectedPaperIds.length >= targetCount) {
-      break;
-    }
-  }
+    return true;
+  });
+  const nextSelectedPaperIds = eligiblePaperIds.slice(0, targetCount);
 
   const previousSelection = input.selection.selectedPaperIds;
   if (!strictMode && nextSelectedPaperIds.length < targetCount) {
@@ -3031,7 +5192,8 @@ function applySelectionQualitySafeguards(input: {
       selection: input.selection,
       applied: false,
       droppedPaperIds: [],
-      addedPaperIds: []
+      addedPaperIds: [],
+      eligiblePaperIds
     };
   }
 
@@ -3062,6 +5224,7 @@ function applySelectionQualitySafeguards(input: {
     applied: true,
     droppedPaperIds,
     addedPaperIds,
+    eligiblePaperIds,
     reason:
       `Selection quality safeguard ${strictMode ? "tightened the rerank-fallback shortlist" : "filtered weakly grounded shortlist items"} ` +
       `using research anchors [${referenceAnchors.join(", ")}]. ` +
@@ -3377,7 +5540,7 @@ function validateResolvedSourceIdentity(paper: AnalysisCorpusRow, source: Resolv
     return undefined;
   }
 
-  const sourceText = source.text.trim();
+  const sourceText = (source.groundingText ?? source.text).trim();
   if (!sourceText) {
     return undefined;
   }
@@ -3457,9 +5620,8 @@ function validateAnalysisBeforePersist(
 
   const mismatchPatterns = [
     /(supplied|provided)\s+source\s+(text|document|paper).*(unrelated|different paper|another paper)/i,
-    /source\s+(text|document|paper).*(does not match|did not match|mismatch)/i,
-    /(document|paper).*(appears|seems)\s+to\s+be.*instead of/i,
-    /metadata.*(does not match|did not match|mismatch)/i
+    /(supplied|provided|resolved|input)\s+source\s+(text|document|paper).*(does not match|did not match|mismatch)/i,
+    /(supplied|provided|resolved|input)\s+(document|paper).*(appears|seems)\s+to\s+be.*instead of/i
   ];
   if (mismatchPatterns.some((pattern) => pattern.test(analysisTexts))) {
     return (

@@ -12,8 +12,10 @@ import {
   filterPaperSearchCandidates,
   parseYear,
   resolveDateBounds,
-  resolvePerQueryLimit
+  resolvePerQueryLimit,
+  toPhrasePreservingSearchQuery
 } from "./paperSearchCommon.js";
+import { compileTopicDiscoveryPlainQuery } from "./topicDiscoveryProviderQuery.js";
 
 interface OpenAlexLocation {
   landing_page_url?: string | null;
@@ -68,7 +70,14 @@ export class OpenAlexClient {
     abortSignal?: AbortSignal
   ): Promise<PaperSearchCandidate[]> {
     const queryPlan = buildSearchQueryPlan(request.query);
-    const queryVariants = queryPlan.variantClauses.map((clause) => clause.text).filter(Boolean);
+    const topicDiscoveryQuery = compileTopicDiscoveryPlainQuery(
+      request.topicDiscoveryFamily
+    );
+    const queryVariants = topicDiscoveryQuery
+      ? [topicDiscoveryQuery]
+      : queryPlan.variantClauses
+          .map((clause) => toPhrasePreservingSearchQuery(clause))
+          .filter(Boolean);
     const filterApplications = buildOpenAlexFilterApplications(request);
     const filterValues = buildOpenAlexFilterValues(request, filterApplications);
     const providerLimit = resolvePerQueryLimit(request.limit, OPENALEX_MAX_RESULTS, queryVariants.length);
@@ -81,7 +90,9 @@ export class OpenAlexClient {
       queryTransformation: {
         original: request.query,
         transformed: queryVariants.join(" OR ") || request.query,
-        strategy: describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
+        strategy: topicDiscoveryQuery
+          ? "topic_discovery_plain_relevance"
+          : describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
         variants: queryVariants
       },
       filterApplications

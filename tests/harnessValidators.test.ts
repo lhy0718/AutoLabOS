@@ -425,7 +425,7 @@ describe("harness validators", () => {
       path.join(runDir, "paper", "main.tex"),
       [
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\noindent\\textbf{Keywords:} method, regularization",
         "\\section{Related Work}",
@@ -469,11 +469,10 @@ describe("harness validators", () => {
       path.join(runDir, "paper", "main.tex"),
       [
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\section{Related Work}",
         "Prior work supports the framing. \\cite{paperA}",
-        "\\bibliographystyle{acl_natbib}",
         "\\bibliography{references}",
         "\\end{document}"
       ].join("\n"),

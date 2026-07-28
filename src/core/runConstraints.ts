@@ -38,12 +38,112 @@ export interface LiteratureQueryCandidate {
     | "llm_generated"
     | "brief_topic"
     | "run_topic"
-    | "constraint_stripped"
     | "keyword_anchor";
+}
+
+export interface TopicDiscoveryLiteratureQueryStructure {
+  query: string;
+  sharedAnchorTerms: string[];
+  axisTerms: string[];
 }
 
 const YEAR_SPEC_RE = /^(\d{4}|(\d{4}-\d{4})|(\d{4}-)|(-\d{4}))$/u;
 const DATE_PART_RE = /^\d{4}(-\d{2}(-\d{2})?)?$/u;
+const LITERATURE_QUERY_FAMILY_STOPWORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "approach",
+  "approaches",
+  "article",
+  "articles",
+  "as",
+  "at",
+  "by",
+  "for",
+  "from",
+  "in",
+  "into",
+  "is",
+  "literature",
+  "method",
+  "methods",
+  "of",
+  "on",
+  "or",
+  "paper",
+  "papers",
+  "research",
+  "review",
+  "reviews",
+  "studies",
+  "study",
+  "survey",
+  "surveys",
+  "the",
+  "to",
+  "using",
+  "with",
+  "without"
+]);
+const LITERATURE_QUERY_FAMILY_JACCARD_THRESHOLD = 0.72;
+const TOPIC_DISCOVERY_MIN_ANCHOR_TERMS = 2;
+const TOPIC_DISCOVERY_MAX_ANCHOR_TERMS = 3;
+const TOPIC_DISCOVERY_MIN_ANCHOR_MATCH_RATIO = 2 / 3;
+const TOPIC_DISCOVERY_MIN_AXIS_TERMS = 2;
+const TOPIC_DISCOVERY_MAX_AXIS_TERMS = 3;
+const TOPIC_DISCOVERY_MAX_TOTAL_TERMS = 6;
+const TOPIC_DISCOVERY_NON_SUBSTANTIVE_AXIS_TOKEN_KEYS = new Set(
+  [
+    "bounded",
+    "benchmark",
+    "benchmarks",
+    "budget",
+    "budgets",
+    "cheap",
+    "compute",
+    "comparison",
+    "comparisons",
+    "comparative",
+    "claim",
+    "claims",
+    "contribution",
+    "contributions",
+    "cpu",
+    "empirical",
+    "evaluation",
+    "evaluations",
+    "execution",
+    "fast",
+    "gpu",
+    "hardware",
+    "lightweight",
+    "limited",
+    "local",
+    "memory",
+    "open",
+    "paper",
+    "pipeline",
+    "portable",
+    "performance",
+    "metric",
+    "metrics",
+    "protocol",
+    "protocols",
+    "public",
+    "publicly",
+    "reproducibility",
+    "reproducible",
+    "resource",
+    "resources",
+    "runtime",
+    "small",
+    "study",
+    "studies",
+    "submission",
+    "workshop"
+  ].map(normalizeLiteratureQueryFamilyToken)
+);
 
 export function buildHeuristicConstraintProfile(constraints: string[]): ConstraintProfile {
   const raw = constraints.map((constraint) => constraint.trim()).filter(Boolean);
@@ -173,7 +273,7 @@ export function normalizeConstraintProfile(input: Partial<ConstraintProfile> | u
       dateRange: normalizeCollectDateRange(collect.dateRange),
       year: normalizeCollectYear(collect.year),
       lastYears: normalizePositiveInteger(collect.lastYears),
-      fieldsOfStudy: normalizeStringArray(collect.fieldsOfStudy),
+      fieldsOfStudy: normalizeExplicitFieldsOfStudy(collect.fieldsOfStudy, raw),
       venues: normalizeStringArray(collect.venues),
       publicationTypes: normalizePublicationTypes(collect.publicationTypes),
       minCitationCount: normalizePositiveInteger(collect.minCitationCount),
@@ -251,7 +351,6 @@ export function buildLiteratureQueryCandidates(input: {
     : input.extractedBriefTopic
       ? "brief_topic"
       : "run_topic";
-  const strippedTopic = stripLiteratureConstraintPhrases(topicSeed);
 
   pushCandidate(requested, "requested_query");
   if (requested) {
@@ -265,22 +364,13 @@ export function buildLiteratureQueryCandidates(input: {
     pushCandidate(query, topicReason);
   }
 
-  if (strippedTopic && strippedTopic !== topicSeed) {
-    for (const query of buildDeterministicPhraseBundleQueries(strippedTopic)) {
-      pushCandidate(query, "constraint_stripped");
-    }
-  }
-
-  const keywordAnchor = buildKeywordAnchorQuery(strippedTopic || topicSeed);
+  const keywordAnchor = buildKeywordAnchorQuery(topicSeed);
   if (isSpecificKeywordAnchorQuery(keywordAnchor)) {
     pushCandidate(keywordAnchor, "keyword_anchor");
   }
 
   if (candidates.length === 0) {
     pushCandidate(topicSeed, topicReason);
-    if (strippedTopic && strippedTopic !== topicSeed) {
-      pushCandidate(strippedTopic, "constraint_stripped");
-    }
   }
 
   return candidates;
@@ -375,43 +465,238 @@ export function hasSemanticScholarSpecialSyntax(query: string | undefined): bool
   return /[|+()"]/u.test(query) || /\b(?:AND|OR|NOT)\b/u.test(query);
 }
 
-function stripLiteratureConstraintPhrases(value: string | undefined): string | undefined {
-  const text = normalizeLiteratureQuery(value);
-  if (!text) {
+export function extractLiteratureQueryPositiveTerms(query: string | undefined): string[] {
+  const sanitized = sanitizeSemanticScholarFreeTextQuery(query);
+  if (!sanitized) {
+    return [];
+  }
+
+  const positiveOnly = sanitized.replace(
+    /(^|\s)-(?:(?:"[^"]+")|(?:'[^']+')|(?:\([^)]*\))|(?:[^\s]+))/gu,
+    "$1"
+  );
+  return [...new Set(extractLiteratureTermSequence(positiveOnly))].sort();
+}
+
+export function extractLiteratureTermSequence(value: string | undefined): string[] {
+  if (!value?.trim()) {
+    return [];
+  }
+  const tokens = value
+    .replace(/[+|()"]+/gu, " ")
+    .replace(/-/gu, " ")
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+
+  return tokens
+    .filter((token) => token.length > 1 && !LITERATURE_QUERY_FAMILY_STOPWORDS.has(token))
+    .map(normalizeLiteratureQueryFamilyToken)
+    .filter(Boolean);
+}
+
+export function buildLiteratureQueryFamilySignature(query: string | undefined): string | undefined {
+  const terms = extractLiteratureQueryPositiveTerms(query);
+  return terms.length > 0 ? terms.join("::") : undefined;
+}
+
+export function buildTopicDiscoveryLiteratureQuery(
+  sharedAnchor: string | undefined,
+  axis: string | undefined
+): string | undefined {
+  const anchorTerms = extractTopicDiscoveryQueryTokens(sharedAnchor);
+  const anchorKeys = new Set(anchorTerms.map((term) => normalizeLiteratureQueryFamilyToken(term)));
+  const axisTerms = extractTopicDiscoveryQueryTokens(axis).filter(
+    (term) => !anchorKeys.has(normalizeLiteratureQueryFamilyToken(term))
+  );
+
+  if (
+    anchorTerms.length < TOPIC_DISCOVERY_MIN_ANCHOR_TERMS ||
+    anchorTerms.length > TOPIC_DISCOVERY_MAX_ANCHOR_TERMS ||
+    axisTerms.length < TOPIC_DISCOVERY_MIN_AXIS_TERMS ||
+    axisTerms.length > TOPIC_DISCOVERY_MAX_AXIS_TERMS ||
+    anchorTerms.length + axisTerms.length > TOPIC_DISCOVERY_MAX_TOTAL_TERMS ||
+    !hasSubstantiveTopicDiscoveryAxis(axisTerms)
+  ) {
     return undefined;
   }
 
-  let next = ` ${text} `;
-  const phrasePatterns = [
-    /\b(?:resource-aware|resource constrained|resource-constrained|resource efficient|resource-efficient)\b/giu,
-    /\b(?:cpu[-\s]?only|cpu[-\s]?safe|gpu[-\s]?free|laptop[-\s]?safe|consumer[-\s]?hardware)\b/giu,
-    /\b(?:locally reproducible|reproducible|seeded|seed[-\s]?controlled|lightweight)\b/giu,
-    /\b(?:small|compact)\s+public\s+(?:datasets?|benchmarks?)\b/giu,
-    /\bon\s+(?:small|compact)\s+public\s+(?:tabular\s+)?(?:datasets?|benchmarks?)\b/giu,
-    /\bfor\s+ordinary\s+local\s+iteration(?:\s+on\s+consumer\s+hardware)?\b/giu,
-    /\bwith\s+(?:fixed|seed[-\s]?controlled)\s+(?:train\/validation\/test|train validation test)\s+protocol\b/giu,
-    /\b(?:runtime|memory|macro[-\s]?f1|wall[-\s]?clock)\b/giu
-  ];
+  return `"${anchorTerms.join(" ")}" ${axisTerms.join(" ")}`;
+}
 
-  for (const pattern of phrasePatterns) {
-    next = next.replace(pattern, " ");
-  }
-
-  next = next
-    .replace(/\b(?:on|with|under)\s+(?:consumer|ordinary|local)\s+(?:hardware|execution|iteration)\b/giu, " ")
-    .replace(/\s+/g, " ")
-    .replace(/\b(?:for|on|with)\s*$/iu, "")
-    .trim();
-
-  if (!next) {
+export function normalizeTopicDiscoveryLiteratureQuery(
+  query: string | undefined
+): string | undefined {
+  const sanitized = sanitizeSemanticScholarFreeTextQuery(query);
+  if (!sanitized) {
     return undefined;
   }
-  return normalizeLiteratureQuery(next);
+  const positiveOnly = stripNegativeLiteratureQueryClauses(sanitized);
+  const anchorMatch = positiveOnly.match(/"([^"]+)"/u);
+  if (!anchorMatch?.[1]) {
+    return undefined;
+  }
+  const axis = positiveOnly
+    .replace(anchorMatch[0], " ")
+    .replace(/\b(?:AND|OR|NOT)\b/giu, " ")
+    .replace(/[+|()"']/gu, " ");
+  return buildTopicDiscoveryLiteratureQuery(anchorMatch[1], axis);
+}
+
+export function parseTopicDiscoveryLiteratureQuery(
+  query: string | undefined
+): TopicDiscoveryLiteratureQueryStructure | undefined {
+  const normalized = normalizeTopicDiscoveryLiteratureQuery(query);
+  if (!normalized) {
+    return undefined;
+  }
+  const anchorMatch = normalized.match(/^"([^"]+)"\s+(.+)$/u);
+  if (!anchorMatch?.[1] || !anchorMatch[2]) {
+    return undefined;
+  }
+  const sharedAnchorTerms = extractTopicDiscoveryQueryTokens(anchorMatch[1]);
+  const anchorKeys = new Set(sharedAnchorTerms.map(normalizeLiteratureQueryFamilyToken));
+  const axisTerms = extractTopicDiscoveryQueryTokens(anchorMatch[2]).filter(
+    (term) => !anchorKeys.has(normalizeLiteratureQueryFamilyToken(term))
+  );
+  if (
+    sharedAnchorTerms.length < TOPIC_DISCOVERY_MIN_ANCHOR_TERMS ||
+    axisTerms.length < TOPIC_DISCOVERY_MIN_AXIS_TERMS
+  ) {
+    return undefined;
+  }
+  return {
+    query: normalized,
+    sharedAnchorTerms,
+    axisTerms
+  };
+}
+
+export function resolveTopicDiscoveryRetrievalAnchorMatches(
+  sharedAnchorTerms: readonly string[]
+): number {
+  if (sharedAnchorTerms.length === 0) {
+    return 0;
+  }
+  return Math.min(
+    sharedAnchorTerms.length,
+    Math.max(
+      TOPIC_DISCOVERY_MIN_ANCHOR_TERMS,
+      Math.ceil(sharedAnchorTerms.length * TOPIC_DISCOVERY_MIN_ANCHOR_MATCH_RATIO)
+    )
+  );
+}
+
+export function selectIndependentLiteratureQueries(
+  queries: string[],
+  maximum = 4
+): string[] {
+  return selectIndependentLiteratureQueryCandidates(
+    queries.map((query) => ({ query })),
+    maximum
+  ).map((candidate) => candidate.query);
+}
+
+export function selectIndependentLiteratureQueryCandidates<T extends { query: string }>(
+  candidates: T[],
+  maximum = 4
+): T[] {
+  const selected: T[] = [];
+  for (const candidate of candidates) {
+    if (!candidate.query.trim()) {
+      continue;
+    }
+    if (selected.some((existing) => areLiteratureQueriesInSameFamily(existing.query, candidate.query))) {
+      continue;
+    }
+    selected.push(candidate);
+    if (selected.length >= Math.max(1, maximum)) {
+      break;
+    }
+  }
+  return selected;
+}
+
+function areLiteratureQueriesInSameFamily(leftQuery: string, rightQuery: string): boolean {
+  const left = new Set(extractLiteratureQueryPositiveTerms(leftQuery));
+  const right = new Set(extractLiteratureQueryPositiveTerms(rightQuery));
+  if (left.size === 0 || right.size === 0) {
+    return leftQuery.trim().toLowerCase() === rightQuery.trim().toLowerCase();
+  }
+
+  const intersectionSize = [...left].filter((term) => right.has(term)).length;
+  const unionSize = new Set([...left, ...right]).size;
+  const smallerFamilySize = Math.min(left.size, right.size);
+  const jaccardSimilarity = unionSize > 0 ? intersectionSize / unionSize : 0;
+  const containmentSimilarity = smallerFamilySize > 0 ? intersectionSize / smallerFamilySize : 0;
+  return jaccardSimilarity >= LITERATURE_QUERY_FAMILY_JACCARD_THRESHOLD || containmentSimilarity >= 0.85;
+}
+
+function normalizeLiteratureQueryFamilyToken(token: string): string {
+  let normalized = token.normalize("NFKC").toLowerCase();
+  if (/^[a-z]+$/u.test(normalized) && normalized.length > 7 && normalized.endsWith("ies")) {
+    normalized = `${normalized.slice(0, -3)}y`;
+  } else if (/^[a-z]+$/u.test(normalized) && normalized.length > 7 && normalized.endsWith("ing")) {
+    normalized = normalized.slice(0, -3);
+  } else if (/^[a-z]+$/u.test(normalized) && normalized.length > 6 && normalized.endsWith("ed")) {
+    normalized = normalized.slice(0, -2);
+  } else if (
+    /^[a-z]+$/u.test(normalized) &&
+    normalized.length > 5 &&
+    normalized.endsWith("s") &&
+    !normalized.endsWith("ss")
+  ) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function stripNegativeLiteratureQueryClauses(value: string): string {
+  return value.replace(
+    /(^|\s)-(?:(?:"[^"]+")|(?:'[^']+')|(?:\([^)]*\))|(?:[^\s]+))/gu,
+    "$1"
+  );
+}
+
+function extractTopicDiscoveryQueryTokens(value: string | undefined): string[] {
+  const sanitized = sanitizeSemanticScholarFreeTextQuery(value);
+  if (!sanitized) {
+    return [];
+  }
+  const tokens = stripNegativeLiteratureQueryClauses(sanitized)
+    .replace(/\b(?:AND|OR|NOT)\b/giu, " ")
+    .replace(/[+|()"']/gu, " ")
+    .replace(/(?<=\p{L})-(?=\p{L})/gu, " ")
+    .toLowerCase()
+    .match(/[\p{L}\p{N}]+/gu) ?? [];
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (const token of tokens) {
+    if (token.length <= 1 || LITERATURE_QUERY_FAMILY_STOPWORDS.has(token)) {
+      continue;
+    }
+    const key = normalizeLiteratureQueryFamilyToken(token);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    selected.push(token);
+  }
+  return selected;
+}
+
+function hasSubstantiveTopicDiscoveryAxis(axisTerms: string[]): boolean {
+  return axisTerms.some(isSubstantiveTopicDiscoveryAxisTerm);
+}
+
+export function isSubstantiveTopicDiscoveryAxisTerm(term: string): boolean {
+  return !TOPIC_DISCOVERY_NON_SUBSTANTIVE_AXIS_TOKEN_KEYS.has(
+    normalizeLiteratureQueryFamilyToken(term)
+  );
 }
 
 function buildKeywordAnchorQuery(value: string | undefined): string | undefined {
-  const text = normalizeLiteratureQuery(value);
-  if (!text) {
+  const phrases = collectDeterministicResearchPhrases(value);
+  if (phrases.length === 0) {
     return undefined;
   }
 
@@ -429,52 +714,23 @@ function buildKeywordAnchorQuery(value: string | undefined): string | undefined 
     "using",
     "with"
   ]);
-  const genericMetaTokens = new Set([
-    "agenda",
-    "benchmark",
-    "benchmarking",
-    "future",
-    "grade",
-    "literature",
-    "plan",
-    "plans",
-    "research",
-    "review",
-    "reviews",
-    "survey",
-    "systematic"
-  ]);
-  const keywords = text
+  const keywords = phrases
+    .join(" ")
     .toLowerCase()
-    .split(/[^a-z0-9]+/iu)
-    .map((token) => token.trim())
+    .match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu)
+    ?.map((token) => token.trim())
     .filter(Boolean)
     .filter((token) => !stopwords.has(token))
-    .filter((token) => token.length > 2)
-    .filter((token) => !genericMetaTokens.has(token))
-    .filter(
-      (token) =>
-        ![
-          "resource",
-          "aware",
-          "small",
-          "public",
-          "local",
-          "consumer",
-          "runtime",
-          "memory",
-          "macro",
-          "seeded",
-          "reproducible",
-          "lightweight"
-        ].includes(token)
-    );
+    .filter((token) => token.length > 2) || [];
+  const uniqueKeywords = keywords.filter(
+    (token, index) => keywords.indexOf(token) === index
+  );
 
-  if (keywords.length === 0) {
+  if (uniqueKeywords.length === 0) {
     return undefined;
   }
 
-  const limited = keywords.slice(0, 6);
+  const limited = uniqueKeywords.slice(0, 6);
   if (limited.length < 2) {
     return undefined;
   }
@@ -500,32 +756,40 @@ function buildDeterministicPhraseBundleQueries(value: string | undefined): strin
     }
   };
 
-  if (phrases.length === 1) {
-    pushQuery("+" + quoted(phrases[0]));
-  } else {
+  if (phrases.length > 1) {
     for (const phrase of phrases.slice(1, 5)) {
       pushQuery("+" + quoted(phrases[0]) + " +" + quoted(phrase));
     }
+  }
+
+  if (queries.length < 2) {
+    for (const phrase of phrases) {
+      pushQuery("+" + quoted(phrase));
+      if (queries.length >= 2) {
+        break;
+      }
+    }
+  }
+
+  if (queries.length < 2 && phrases.length === 1) {
+    pushQuery(phrases[0]);
   }
   return queries.slice(0, 4);
 }
 
 function collectDeterministicResearchPhrases(value: string | undefined): string[] {
-  const text = normalizeLiteratureQuery(value)?.toLowerCase();
+  const text = extractDeterministicTopicScope(value)?.toLowerCase();
   if (!text) {
     return [];
   }
 
   const stopwords = new Set([
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "for", "from", "how", "in", "into",
-    "investigate", "measure", "of", "on", "or", "study", "the", "through", "to", "under", "using", "with"
+    "of", "on", "or", "the", "through", "to", "under", "using", "with"
   ]);
-  const tokens = text
-    .match(/[a-z0-9]+(?:-[a-z0-9]+)*/gu)
-    ?.filter((token) => token.length > 1 && !stopwords.has(token)) || [];
   const phrases: string[] = [];
   const pushPhrase = (phrase: string) => {
-    const normalized = normalizeLiteratureQuery(phrase)?.toLowerCase();
+    const normalized = normalizeDeterministicConceptPhrase(phrase, stopwords);
     if (normalized && !phrases.includes(normalized)) {
       phrases.push(normalized);
     }
@@ -533,15 +797,114 @@ function collectDeterministicResearchPhrases(value: string | undefined): string[
 
   const quotedPhrases = Array.from(text.matchAll(/["']([^"']{2,80})["']/gu));
   for (const match of quotedPhrases) {
-    pushPhrase(match[1]);
+    if (!isExecutionQualifierClause(match[1])) {
+      pushPhrase(match[1]);
+    }
   }
-  for (let index = 0; index < tokens.length && phrases.length < 6; index += 3) {
-    pushPhrase(tokens.slice(index, index + 3).join(" "));
+
+  const clauses = text.split(/\s*[,;]\s*/u);
+  for (const rawClause of clauses) {
+    const clause = rawClause
+      .replace(/^(?:and|or|plus)\s+/iu, "")
+      .replace(/\b(?:behave|behaves|perform|performs)\s*$/iu, "")
+      .trim();
+    if (!clause || isExecutionQualifierClause(clause)) {
+      continue;
+    }
+    const conceptParts = clause.split(/\s+(?:for|under|using|via|with|within)\s+/iu);
+    for (const conceptPart of conceptParts) {
+      const tokens = (conceptPart.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) || [])
+        .map((token) => token.trim())
+        .filter(Boolean)
+        .filter((token) => !stopwords.has(token))
+        .filter((token) => token.length > 1);
+      if (tokens.length === 0) {
+        continue;
+      }
+      if (tokens.length <= 4) {
+        pushPhrase(tokens.join(" "));
+        continue;
+      }
+      for (let index = 0; index < tokens.length && phrases.length < 6; index += 3) {
+        const chunk = tokens.slice(index, index + 3);
+        if (chunk.length === 1 && index > 0) {
+          break;
+        }
+        pushPhrase(chunk.join(" "));
+      }
+    }
   }
-  if (phrases.length === 0 && tokens.length > 0) {
-    pushPhrase(tokens.slice(0, 3).join(" "));
+
+  if (phrases.length === 0) {
+    pushPhrase(text);
   }
   return phrases.slice(0, 6);
+}
+
+function extractDeterministicTopicScope(value: string | undefined): string | undefined {
+  let text = normalizeLiteratureQuery(value);
+  if (!text) {
+    return undefined;
+  }
+
+  text = text
+    .replace(
+      /(?:[.!?;]\s+|\s+-\s+)(?:exclude|avoid|omit|do not include|without including)\b[\s\S]*$/iu,
+      " "
+    )
+    .trim();
+
+  const leadingDirectivePatterns = [
+    /^(?:please\s+)?(?:search|look)\s+for\s+/iu,
+    /^(?:please\s+)?(?:find|identify|discover|explore)\s+/iu,
+    /^(?:investigate|measure|assess|analyze|evaluate|compare)\s+(?:how|whether)\s+/iu,
+    /^(?:investigate|assess|analyze|evaluate|compare)\s+/iu,
+    /^(?:an?|the)\s+(?:(?:workshop|paper|pilot|study)[-\s]?scale\s+)?(?:(?:empirical|research)\s+)?(?:questions?|topics?|directions?|ideas?)\s+(?:at|in|on)\s+(?:the\s+)?(?:intersection|interface|crossroads)\s+of\s+/iu,
+    /^(?:an?|the)\s+(?:(?:workshop|paper|pilot|study)[-\s]?scale\s+)?(?:(?:empirical|research)\s+)?(?:questions?|topics?|directions?|ideas?)\s+(?:about|for|on)\s+/iu,
+    /^(?:at|in)\s+(?:the\s+)?(?:intersection|interface|crossroads)\s+of\s+/iu,
+    /^(?:the\s+)?(?:question|topic|problem)\s+of\s+/iu
+  ];
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    const previous: string = text;
+    for (const pattern of leadingDirectivePatterns) {
+      text = text.replace(pattern, "").trim();
+    }
+    if (text === previous) {
+      break;
+    }
+  }
+
+  return normalizeLiteratureQuery(text);
+}
+
+function normalizeDeterministicConceptPhrase(phrase: string, stopwords: Set<string>): string | undefined {
+  const tokens = (phrase.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) || [])
+    .map((token) => token.toLowerCase().trim())
+    .filter(Boolean)
+    .filter((token) => !stopwords.has(token))
+    .filter((token) => token.length > 1);
+  const normalized = normalizeLiteratureQuery(tokens.join(" "));
+  if (!normalized || isExecutionQualifierClause(normalized)) {
+    return undefined;
+  }
+  if (/^(?:(?:empirical|research)\s+)?(?:questions?|topics?|directions?|ideas?)$/iu.test(normalized)) {
+    return undefined;
+  }
+  return normalized.toLowerCase();
+}
+
+function isExecutionQualifierClause(value: string): boolean {
+  const normalized = normalizeLiteratureQuery(value)?.toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    /^(?:(?:fully|readily)\s+)?(?:reproducible|repeatable)(?:\s+(?:local|offline|on-device))?\s+(?:execution|implementation|experiments?|workflow|setup)$/iu.test(normalized) ||
+    /^(?:local|offline|on-device)\s+(?:execution|implementation|experiments?|workflow|setup)$/iu.test(normalized) ||
+    /^(?:workshop|paper|pilot|small)[-\s]?scale(?:\s+(?:study|experiment|execution))?$/iu.test(normalized) ||
+    /^(?:bounded|lightweight|resource[-\s]?aware)\s+(?:compute|execution|hardware|implementation)$/iu.test(normalized)
+  );
 }
 
 function isSpecificKeywordAnchorQuery(value: string | undefined): boolean {
@@ -550,15 +913,9 @@ function isSpecificKeywordAnchorQuery(value: string | undefined): boolean {
     return false;
   }
 
-  const groups =
-    Number(/\blanguage\s+models?\b|\bllms?\b/u.test(text)) +
-    Number(/\btest\b|\btest-time\b/u.test(text)) +
-    Number(/\breason(?:ing|er|ers)?\b/u.test(text)) +
-    Number(/\badaptive\b|\bstructured\b|\bgated\b|\breflection\b|\brevise\b/u.test(text)) +
-    Number(/\bbudget\b|\binference\b|\bcost\b|\blatency\b|\btokens?\b/u.test(text)) +
-    Number(/\bgsm8k\b|\bmath\b/u.test(text));
-
-  return groups >= 2;
+  const tokens = text.match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) || [];
+  const uniqueTokens = new Set(tokens);
+  return uniqueTokens.size >= 3;
 }
 
 function detectToneHint(text: string): string | undefined {
@@ -620,6 +977,26 @@ function normalizeStringArray(value: unknown): string[] {
   return value
     .map((item) => cleanString(item))
     .filter((item): item is string => Boolean(item));
+}
+
+function normalizeExplicitFieldsOfStudy(value: unknown, rawConstraints: string[]): string[] {
+  const normalizedRaw = ` ${normalizeConstraintEvidence(rawConstraints.join(" "))} `;
+  if (!normalizedRaw.trim()) {
+    return [];
+  }
+  return normalizeStringArray(value).filter((item) => {
+    const normalizedItem = normalizeConstraintEvidence(item);
+    return normalizedItem.length > 0 && normalizedRaw.includes(` ${normalizedItem} `);
+  });
+}
+
+function normalizeConstraintEvidence(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function normalizePublicationTypes(value: unknown): string[] {

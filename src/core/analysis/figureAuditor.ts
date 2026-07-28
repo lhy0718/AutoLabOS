@@ -206,7 +206,7 @@ export async function checkFigureEvidenceScale(input: FigureAuditInput): Promise
 
   const issues: FigureAuditIssue[] = [];
   for (const spec of report.figure_specs ?? []) {
-    if (!spec.metric_keys?.some(isComparativePerformanceMetric)) {
+    if (!spec.metric_keys?.some((metricKey) => metricKey.trim().length > 0)) {
       continue;
     }
     const caveatText = [spec.title, spec.summary].filter(Boolean).join(" ");
@@ -434,10 +434,6 @@ async function loadResultAnalysisReport(resultAnalysisPath: string | null): Prom
   } catch {
     return null;
   }
-}
-
-function isComparativePerformanceMetric(metricKey: string): boolean {
-  return /(?:accuracy|score|delta|improvement|f1|bleu|rouge|perplexity|loss|performance)/iu.test(metricKey);
 }
 
 async function runVisionCritiqueWithTimeout(input: {

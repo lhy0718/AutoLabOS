@@ -92,38 +92,72 @@ describe("researchBriefFiles", () => {
 
   it("builds a substantive guided brief draft from interview answers", () => {
     const markdown = buildGuidedResearchBriefMarkdown({
-      topic: "Compare lightweight instruction-tuning recipe choices for compact language models.",
-      primaryMetric: "Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B.",
-      secondaryMetrics: "Runtime; peak GPU memory.",
-      meaningfulImprovement: "+1.0 point over the tuned baseline.",
-      constraints: "2x RTX 4090 only; public datasets only; seed=42 everywhere.",
-      researchQuestion: "Which lightweight recipe choice improves benchmark accuracy most reliably under the local budget?",
-      whySmallExperiment: "Public benchmarks exist; four-condition comparison is feasible; a named baseline is available.",
-      baselineComparator: "Baseline name: tuned configured baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.",
-      datasetTaskBench: "Datasets: public instruction subset; Task type: instruction tuning and zero-shot evaluation; Validation discipline: fixed seed and fixed prompts.",
-      targetComparison: "Proposed method: strongest alternative recipe; Comparator: tuned baseline; Dimension: benchmark accuracy delta.",
-      minimumAcceptableEvidence: "At least +1.0 point over baseline; all planned conditions must execute; bootstrap CI required.",
-      disallowedShortcuts: "No fabricated metrics; no skipped baseline; no checkpoint carry-over.",
+      topic: "Compare a candidate condition with a declared reference under a bounded protocol.",
+      primaryMetric: "Primary score over the declared evaluation collection.",
+      secondaryMetrics: "Secondary score; resource use.",
+      meaningfulImprovement: "A preregistered practical-effect boundary over the reference condition.",
+      constraints: "Single workstation only; licensed public data only; fixed declared seed.",
+      researchQuestion: "Does the candidate condition improve the primary score over the reference condition?",
+      whySmallExperiment: "Public evaluation units exist; the matched comparison is feasible; a named reference is available.",
+      baselineComparator: "Baseline name: reference condition; Why relevant: declared comparator; Comparison dimension: primary score and resource use.",
+      datasetTaskBench: "Dataset: public evaluation collection; Task type: configured evaluation; Validation discipline: fixed seed and split.",
+      targetComparison: "Proposed method: candidate condition; Comparator: reference condition; Dimension: primary-score delta.",
+      minimumAcceptableEvidence: "The practical-effect boundary is met; all conditions execute; an interval estimate is required.",
+      disallowedShortcuts: "No fabricated metrics; no skipped reference; no checkpoint carry-over.",
       allowedBudgetedPasses: "One bounded repair pass; rerun only failed conditions.",
       paperCeiling: "research_memo",
-      minimumExperimentPlan: "One tuned baseline; three alternatives; one result table; one limitations note.",
-      failureConditions: "Baseline fails; metrics missing; no defensible quantitative comparison.",
+      minimumExperimentPlan: "One reference run; one candidate run; one result table; one limitations note.",
+      failureConditions: "Reference execution fails; metrics are missing; no defensible quantitative comparison.",
       manuscriptTemplate: "template.tex",
-      appendixPrefer: "hyperparameter_grids; environment_dump",
-      appendixKeepMain: "main_result_tables; primary_recipe_ablation",
+      appendixPrefer: "environment_manifest; extended_error_analysis",
+      appendixKeepMain: "main_result_table; primary_comparison",
       notes: "Stay within local workstation limits.",
-      questionsRisks: "Will the compact model provide enough signal?"
+      questionsRisks: "Will the candidate provide enough signal?"
     });
 
     expect(markdown).toContain("# Research Brief");
     expect(markdown).toContain("## Topic");
-    expect(markdown).toContain("Compare lightweight instruction-tuning recipe choices");
+    expect(markdown).toContain("Compare a candidate condition with a declared reference");
     expect(markdown).toContain("## Manuscript Template");
     expect(markdown).toContain("template.tex");
     expect(markdown).toContain("Prefer appendix for:");
-    expect(markdown).toContain("- hyperparameter_grids");
+    expect(markdown).toContain("- environment_manifest");
     expect(markdown).toContain("Keep in main body:");
-    expect(markdown).toContain("- main_result_tables");
+    expect(markdown).toContain("- main_result_table");
     expect(markdown).toContain("## Failure Conditions");
+  });
+
+  it("builds a topic-discovery plan without pre-committing the final experiment", () => {
+    const markdown = buildGuidedResearchBriefMarkdown({
+      researchMode: "topic_discovery",
+      topic: "Reliability methods for bounded automated research workflows.",
+      scientificObject: "automated research evaluation",
+      empiricalProblems: "decision stability under finite evidence; uncertainty calibration under dependent tasks",
+      priorWorkProbes: "whether adaptive evaluation already subsumes the proposed scope",
+      primaryMetric: "Every candidate must declare one judge-independent primary metric.",
+      meaningfulImprovement: "Every candidate must declare a practical-effect boundary.",
+      constraints: "Licensed public data only; bounded local compute.",
+      researchQuestion: "Which under-studied failure supports a falsifiable local study?",
+      whySmallExperiment: "Only candidates with a bounded real probe may be promoted.",
+      baselineComparator: "Each candidate must name a strong comparator.",
+      datasetTaskBench: "Each candidate must bind a licensed source and frozen split.",
+      targetComparison: "Each candidate must declare an intervention, direction, and falsifier.",
+      minimumAcceptableEvidence: "Two closest priors, real probe evidence, uncertainty, and a kill decision.",
+      disallowedShortcuts: "No outcome-driven gate changes.",
+      allowedBudgetedPasses: "One bounded repair pass before outcomes are opened.",
+      paperCeiling: "research_memo",
+      minimumExperimentPlan: "One frozen candidate contract; one comparator; one bounded probe.",
+      failureConditions: "No licensed data; no deterministic endpoint; prior work absorbs the claim."
+    });
+
+    expect(markdown).toContain("## Research Mode\ntopic_discovery");
+    expect(markdown).toContain("## Scientific Scope");
+    expect(markdown).toContain("### Scientific Object\n- automated research evaluation");
+    expect(markdown).toContain("### Empirical Problems");
+    expect(markdown).toContain("generate five to seven candidate-owned contracts");
+    expect(markdown).toContain("metric, explicit unit and numeric scale, direction, structured effect criterion");
+    expect(markdown).toContain("authorize exactly one bounded probe");
+    expect(markdown).not.toContain("lock a named baseline");
+    expect(markdown).not.toContain("implement and run the baseline plus alternative condition(s)");
   });
 });

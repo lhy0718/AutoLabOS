@@ -43,9 +43,9 @@ function makeRun(runId: string, currentNode: RunRecord["currentNode"]): RunRecor
     workflowVersion: 3,
     id: runId,
     title: "Figure audit run",
-    topic: "AI agent automation",
+    topic: "Configured comparison study",
     constraints: [],
-    objectiveMetric: "accuracy >= 0.9",
+    objectiveMetric: "primary_score >= 0.9",
     status: "running",
     currentNode,
     latestSummary: undefined,
@@ -61,12 +61,67 @@ function makeRun(runId: string, currentNode: RunRecord["currentNode"]): RunRecor
   };
 }
 
+function buildExplicitResultsArtifact(referenceValue: number, subjectValue: number) {
+  return {
+    schema_version: "2.0" as const,
+    metrics: [
+      {
+        id: "primary_score",
+        label: "Primary score",
+        direction: "higher_better" as const,
+        unit: "unitless"
+      }
+    ],
+    series: [
+      {
+        id: "series_reference",
+        label: "Declared reference",
+        role: "baseline" as const,
+        dimensions: { partition: "evaluation" }
+      },
+      {
+        id: "series_subject",
+        label: "Configured subject",
+        role: "primary" as const,
+        dimensions: { partition: "evaluation" }
+      }
+    ],
+    observations: [
+      {
+        id: "observation_reference",
+        series_id: "series_reference",
+        metric_id: "primary_score",
+        scope: { partition: "evaluation" },
+        value: referenceValue,
+        evidence_refs: ["result_payload:reference"]
+      },
+      {
+        id: "observation_subject",
+        series_id: "series_subject",
+        metric_id: "primary_score",
+        scope: { partition: "evaluation" },
+        value: subjectValue,
+        evidence_refs: ["result_payload:subject"]
+      }
+    ],
+    comparisons: [
+      {
+        id: "comparison_subject_reference",
+        subject_observation_id: "observation_subject",
+        reference_observation_id: "observation_reference",
+        delta: subjectValue - referenceValue,
+        evidence_refs: ["result_payload:comparison"]
+      }
+    ]
+  };
+}
+
 async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> {
   const runDir = path.join(root, ".autolabos", "runs", run.id);
   await mkdir(path.join(runDir, "memory"), { recursive: true });
   await mkdir(path.join(runDir, "figures"), { recursive: true });
   await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
-  await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.91 }, null, 2), "utf8");
+  await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_score: 0.91 }, null, 2), "utf8");
   await writeFile(path.join(runDir, "figures", "performance.svg"), "<svg><text>acc</text></svg>\n", "utf8");
   await writeFile(
     path.join(runDir, "corpus.jsonl"),
@@ -80,12 +135,12 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
   );
   await writeFile(
     path.join(runDir, "evidence_store.jsonl"),
-    `${JSON.stringify({ evidence_id: "ev_1", paper_id: "paper_1", claim: "Improves accuracy." })}\n`,
+    `${JSON.stringify({ evidence_id: "ev_1", paper_id: "paper_1", claim: "Improves the primary score." })}\n`,
     "utf8"
   );
   await writeFile(
     path.join(runDir, "hypotheses.jsonl"),
-    `${JSON.stringify({ hypothesis_id: "h_1", text: "Improves accuracy.", evidence_links: ["ev_1"] })}\n`,
+    `${JSON.stringify({ hypothesis_id: "h_1", text: "The configured subject improves the primary score.", evidence_links: ["ev_1"] })}\n`,
     "utf8"
   );
   await writeFile(
@@ -93,10 +148,10 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
     ['selected_design:', '  title: "Review plan"', '  summary: "Validate review path."'].join("\n"),
     "utf8"
   );
-  await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "base", accuracy: 0.87 }), "utf8");
+  await writeFile(path.join(runDir, "baseline_summary.json"), JSON.stringify({ baseline: "declared_reference", primary_score: 0.87 }), "utf8");
   await writeFile(
     path.join(runDir, "result_table.json"),
-    JSON.stringify({ rows: [{ method: "baseline", accuracy: 0.87 }, { method: "candidate", accuracy: 0.91 }] }),
+    JSON.stringify({ rows: [{ series: "reference", primary_score: 0.87 }, { series: "subject", primary_score: 0.91 }] }),
     "utf8"
   );
   await writeFile(path.join(runDir, "analyze_papers_richness_summary.json"), JSON.stringify({ readiness: "adequate" }), "utf8");
@@ -107,11 +162,17 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
         analysis_version: 1,
         generated_at: new Date().toISOString(),
         mean_score: 0.91,
-        metrics: { accuracy: 0.91 },
+        metrics: {
+          run_config: { seed: 11, max_steps: 40 },
+          condition_results: [
+            { condition_marker: "reference_condition", seeds: [11, 12, 13], seed_count: 3 },
+            { condition_marker: "subject_condition", seeds: [11, 12, 13], seed_count: 3 }
+          ]
+        },
         objective_metric: {
-          raw: "accuracy >= 0.9",
+          raw: "primary_score >= 0.9",
           evaluation: { status: "met", summary: "Objective met." },
-          profile: { source: "default", preferred_metric_keys: ["accuracy"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
+          profile: { source: "default", preferred_metric_keys: ["primary_score"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
         },
         overview: {
           objective_status: "met",
@@ -124,8 +185,8 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
             title: "Review plan",
             summary: "Validate review path.",
             selected_hypothesis_ids: ["h_1"],
-            metrics: ["accuracy"],
-            baselines: ["base"],
+            metrics: ["primary_score"],
+            baselines: ["declared_reference"],
             evaluation_steps: ["run trials"],
             risks: [],
             resource_notes: []
@@ -139,7 +200,7 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
         metric_table: [],
         results_table: [
           {
-            metric: "accuracy",
+            metric: "primary_score",
             baseline: 0.87,
             comparator: 0.91,
             delta: 0.04,
@@ -153,47 +214,81 @@ async function seedReviewArtifacts(root: string, run: RunRecord): Promise<void> 
             source: "metrics.comparison",
             metrics: [],
             hypothesis_supported: true,
-            summary: "Candidate improves accuracy."
+            summary: "The configured subject improves the primary score."
           }
         ],
         primary_findings: [
           {
             id: "finding_1",
             title: "Main gain",
-            finding: "Candidate improves accuracy.",
+            finding: "The configured subject improves the primary score.",
             confidence: 0.9,
             source: "analysis"
           }
         ],
         paper_claims: [
           {
-            claim: "Candidate improves accuracy.",
-            evidence: [{ type: "metric", reference: "accuracy", detail: "+0.04" }]
+            claim: "The configured subject improves the primary score.",
+            evidence: [{ type: "metric", reference: "primary_score", detail: "+0.04" }]
           }
         ],
         figure_specs: [
           {
-            title: "Accuracy comparison",
+            title: "Primary-score comparison",
             path: "figures/performance.svg",
-            metric_keys: ["accuracy"]
+            metric_keys: ["primary_score"]
           }
         ],
+        results_artifact: buildExplicitResultsArtifact(0.87, 0.91),
+        primary_comparison_id: "comparison_subject_reference",
         statistical_summary: {
-          total_trials: 2,
-          executed_trials: 2,
+          total_trials: 3,
+          executed_trials: 3,
           cached_trials: 0,
-          confidence_intervals: [],
-          stability_metrics: [],
-          effect_estimates: [],
+          confidence_intervals: [
+            {
+              metric_key: "primary_score",
+              label: "Primary score interval",
+              lower: 0.88,
+              upper: 0.94,
+              level: 0.95,
+              sample_size: 200,
+              source: "metrics",
+              summary: "The declared evaluation interval was computed from the held-out partition."
+            }
+          ],
+          stability_metrics: [
+            { key: "evidence.distinct_seed_count", value: 3 }
+          ],
+          effect_estimates: [
+            {
+              comparison_id: "comparison_subject_reference",
+              metric_key: "primary_score",
+              delta: 0.04,
+              direction: "positive",
+              summary: "The configured subject exceeds the declared reference by 0.04."
+            }
+          ],
           notes: []
         },
         execution_summary: {
-          observation_count: 2,
-          repeated_trial_count: 2,
+          observation_count: 3,
+          repeated_trial_count: 3,
           synthetic_result_count: 0,
           dominant_sources: ["executed_run"]
         },
         failure_taxonomy: [],
+        synthesis: {
+          source: "fallback",
+          discussion_points: [
+            "The primary comparison supports the bounded claim under the declared protocol."
+          ],
+          failure_analysis: [],
+          follow_up_actions: [
+            "Repair any severe figure mismatch before manuscript promotion."
+          ],
+          confidence_statement: "Confidence is bounded by the declared evaluation protocol."
+        },
         limitations: [],
         warnings: [],
         recommendations: [],
@@ -306,7 +401,7 @@ describe("figure_audit node integration", () => {
           ]
         },
         objective_metric: {
-          raw: "accuracy_delta_vs_baseline >= 0.01",
+          raw: "primary_score_delta_vs_reference >= 0.01",
           evaluation: { status: "not_met", summary: "Observed gain stays below the target." },
           profile: { source: "default", preferred_metric_keys: ["accuracy_delta_vs_baseline"], analysis_focus: [], paper_emphasis: [], assumptions: [] }
         },
@@ -323,8 +418,8 @@ describe("figure_audit node integration", () => {
             title: "Paired condition comparison",
             summary: "Use 600 training examples for each run.",
             selected_hypothesis_ids: ["hypothesis_a"],
-            metrics: ["accuracy_delta_vs_baseline"],
-            baselines: ["baseline_condition"],
+            metrics: ["primary_score"],
+            baselines: ["reference_condition"],
             implementation_notes: ["Keep 600 training examples fixed across conditions."],
             evaluation_steps: ["Execute all 6 planned training runs."],
             risks: [],
@@ -341,7 +436,7 @@ describe("figure_audit node integration", () => {
             id: "candidate_vs_baseline",
             label: "candidate vs baseline",
             source: "metrics.condition_results",
-            metrics: [{ key: "accuracy_delta_vs_baseline", value: 0.004, primary_value: 0.704, baseline_value: 0.7 }],
+            metrics: [{ key: "primary_score", value: 0.004, primary_value: 0.704, baseline_value: 0.7 }],
             hypothesis_supported: true,
             summary: "The candidate has a small positive delta."
           }
@@ -353,10 +448,12 @@ describe("figure_audit node integration", () => {
             id: "performance",
             title: "Performance comparison",
             path: "figures/performance.svg",
-            metric_keys: ["accuracy_delta_vs_baseline"],
+            metric_keys: ["primary_score"],
             summary: "Compares candidate and baseline accuracy."
           }
         ],
+        results_artifact: buildExplicitResultsArtifact(0.7, 0.704),
+        primary_comparison_id: "comparison_subject_reference",
         statistical_summary: {
           total_trials: 2,
           executed_trials: 2,
@@ -449,7 +546,7 @@ describe("figure_audit node integration", () => {
     expect(summary.issues).toEqual([]);
   });
 
-  it("escalates review accept to an upstream backtrack when figure audit requires a block", async () => {
+  it("downgrades review acceptance to revision when figure audit requires a block", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-figure-audit-"));
     process.chdir(root);
 
@@ -541,7 +638,7 @@ describe("figure_audit node integration", () => {
     expect(result.status).toBe("success");
     expect(decision.figure_audit_block_required).toBe(true);
     expect(decision.figure_audit_severe_count).toBe(1);
-    expect(decision.outcome).toBe("backtrack_to_implement");
+    expect(decision.outcome, JSON.stringify(decision, null, 2)).toBe("revise_in_place");
   });
 
   it("registers analyze_results -> figure_audit -> review in graph order", () => {
@@ -574,22 +671,24 @@ describe("figure_audit node integration", () => {
         metrics: {
           run_config: { seed: 11, max_steps: 40 },
           condition_results: [
-            { condition_marker: "baseline_condition", seeds: [11, 12], seed_count: 2 },
-            { condition_marker: "candidate_condition_a", seeds: [11, 12], seed_count: 2 }
+            { condition_marker: "reference_condition", seeds: [11, 12, 13], seed_count: 3 },
+            { condition_marker: "subject_condition", seeds: [11, 12, 13], seed_count: 3 }
           ]
         },
         condition_comparisons: [{ id: "cmp", label: "cmp", source: "metrics.comparison", metrics: [], hypothesis_supported: true, summary: "ok" }],
         primary_findings: [{ id: "f1", title: "Finding", finding: "Finding", confidence: 0.9, source: "analysis" }],
-        paper_claims: [{ claim: "Claim", evidence: [{ type: "metric", reference: "accuracy", detail: "+0.04" }] }],
-        results_table: [{ metric: "accuracy", baseline: 0.87, comparator: 0.91, delta: 0.04, direction: "higher_better" }],
+        paper_claims: [{ claim: "Claim", evidence: [{ type: "metric", reference: "primary_score", detail: "+0.04" }] }],
+        results_table: [{ metric: "primary_score", baseline: 0.87, comparator: 0.91, delta: 0.04, direction: "higher_better" }],
+        results_artifact: buildExplicitResultsArtifact(0.87, 0.91),
+        primary_comparison_id: "comparison_subject_reference",
         limitations: [],
         warnings: [],
-        statistical_summary: { total_trials: 2, executed_trials: 2, cached_trials: 0, confidence_intervals: [], stability_metrics: [], effect_estimates: [], notes: [] },
+        statistical_summary: { total_trials: 3, executed_trials: 3, cached_trials: 0, confidence_intervals: [], stability_metrics: [], effect_estimates: [], notes: [] },
         shortlisted_designs: [],
         recommendations: []
       } as any,
-      topic: "topic",
-      objectiveMetric: "accuracy",
+      topic: "Configured comparison study",
+      objectiveMetric: "primary_score",
       figureAuditSummaryArtifact: {
         audited_at: new Date().toISOString(),
         figure_count: 1,

@@ -1,0 +1,136 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_bounded_development_manifest",
+  "behavioral_outcomes_observed_before_freeze": true,
+  "development_after_initial_outcomes": true,
+  "confirmatory_use_authorized": false,
+  "initial_preregistered_probe_count": 3,
+  "development_probe_count": 11,
+  "probe_count": 14,
+  "provenance": [
+    {
+      "role": "initial_preregistered_manifest",
+      "reference": "studies/grader-conform/probes/probes.v1.json",
+      "sha256": "0ca780e3d8daa8cbc4a3dcbd4d451fa863cbca55aae3b319781cac4608caafc9",
+      "probe_count": 3
+    },
+    {
+      "role": "post_outcome_development_fragment",
+      "reference": "studies/grader-conform/probes/fragments/source_a.json",
+      "sha256": "b719458ded8a6482996aa4044e20b73cbdc5ec0501da536aab1adb8761b2f8db",
+      "probe_count": 5
+    },
+    {
+      "role": "post_outcome_development_fragment",
+      "reference": "studies/grader-conform/probes/fragments/source_b.json",
+      "sha256": "0d487619a20055191689444f0a7cd4015109cfab7960fc73e2c00586ae7a1d7a",
+      "probe_count": 3
+    },
+    {
+      "role": "post_outcome_development_fragment",
+      "reference": "studies/grader-conform/probes/fragments/source_c.json",
+      "sha256": "daf3ca6b0fc9ee51720e9a60afbfb2be6370e5f2a2ae35f1d7398fd43a50bb1e",
+      "probe_count": 3
+    }
+  ],
+  "probes": [
+    {
+      "lineage_id": "lineage_001",
+      "relation_family": "live_replay_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_replay_noop_relation.py",
+      "contract_source": "The public environment contract treats an unknown tool call as an error response with no state mutation; replay must preserve the same terminal state.",
+      "transformation_target": "execution trace"
+    },
+    {
+      "lineage_id": "lineage_007",
+      "relation_family": "cardinality_consistency",
+      "adapter": "studies/grader-conform/probes/python/bfcl_cardinality_relation.py",
+      "contract_source": "Every result marked exact_match must be compared by value regardless of the number of calls in the graded response.",
+      "transformation_target": "graded response"
+    },
+    {
+      "lineage_id": "lineage_014",
+      "relation_family": "irrelevant_state_invariance",
+      "adapter": "studies/grader-conform/probes/python/osworld_freeze_relation.py",
+      "contract_source": "Spreadsheet freeze semantics are defined by the frozen row and column split; scrolling changes the visible top-left cell but not the freeze operation.",
+      "transformation_target": "graded artifact"
+    },
+    {
+      "lineage_id": "lineage_002",
+      "relation_family": "entrypoint_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_reward_basis_entrypoint_relation.py",
+      "contract_source": "A task's declared reward basis defines the components that the comprehensive evaluator must score; selecting the default comprehensive entry point must not omit a declared component.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_003",
+      "relation_family": "benign_action_invariance",
+      "adapter": "studies/grader-conform/probes/python/tau_readonly_state_relation.py",
+      "contract_source": "A tool declared read-only may return information but must not change the database state used for environment grading.",
+      "transformation_target": "graded state"
+    },
+    {
+      "lineage_id": "lineage_004",
+      "relation_family": "representation_invariance",
+      "adapter": "studies/grader-conform/probes/python/tau_numeric_representation_relation.py",
+      "contract_source": "JSON integer and whole-valued floating-point spellings denote the same documented numeric amount and therefore must produce the same deterministic graded state.",
+      "transformation_target": "graded tool-call trace"
+    },
+    {
+      "lineage_id": "lineage_005",
+      "relation_family": "entrypoint_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_duplex_rescore_relation.py",
+      "contract_source": "A stored full-duplex simulation is represented by ticks and a full-duplex mode marker; offline rescoring must evaluate that representation under the same communication mode as live grading.",
+      "transformation_target": "stored trajectory invocation context"
+    },
+    {
+      "lineage_id": "lineage_006",
+      "relation_family": "live_replay_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_historical_replay_relation.py",
+      "contract_source": "Offline rescoring of a historical trajectory must preserve its tool-induced terminal state when only the recorded tool-result rendering has drifted.",
+      "transformation_target": "execution trace"
+    },
+    {
+      "lineage_id": "lineage_008",
+      "relation_family": "representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "A JSON Schema number admits both integer and fractional JSON number encodings, so replacing a whole-valued float with its numerically equal integer spelling must not change the verdict for an already produced float argument.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_numeric_representation_relation.py"
+    },
+    {
+      "lineage_id": "lineage_009",
+      "relation_family": "invalid_input_rejection",
+      "transformation_target": "graded response",
+      "contract_source": "A function-calling evaluator must preserve a model-produced argument type until validation; it must not turn a numeric argument into a contract-valid string and thereby create a false accept.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_invalid_type_rejection_relation.py"
+    },
+    {
+      "lineage_id": "lineage_012",
+      "relation_family": "parser_representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "Single- and double-quoted JavaScript string literals denote the same string value, so parsing either valid surface form into a function call must yield the same semantic parameter.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_parser_string_quote_relation.py"
+    },
+    {
+      "lineage_id": "lineage_013",
+      "relation_family": "environment_context_invariance",
+      "adapter": "studies/grader-conform/probes/python/osworld_vm_time_relation.py",
+      "contract_source": "Relative time in an evaluated desktop environment is anchored to that environment's local clock unless the task explicitly supplies another timezone.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_015",
+      "relation_family": "sequential_state_isolation",
+      "adapter": "studies/grader-conform/probes/python/osworld_sequential_import_relation.py",
+      "contract_source": "Two task suites evaluated sequentially in one worker must resolve imports from their own task directories and receive the same verdicts as isolated execution.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_016",
+      "relation_family": "equivalent_state_recovery",
+      "adapter": "studies/grader-conform/probes/python/osworld_workspace_recovery_relation.py",
+      "contract_source": "An absent optional helper artifact must not force failure when the same open-workspace state is available through the environment's persistent workspace metadata.",
+      "transformation_target": "terminal state"
+    }
+  ]
+}

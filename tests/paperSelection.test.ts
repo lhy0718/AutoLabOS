@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { MockLLMClient } from "../src/core/llm/client.js";
 import {
+  applyTopicFamilyCoverageFloor,
   buildSelectionFingerprint,
   normalizeAnalysisSelectionRequest,
   selectPapersForAnalysis
@@ -61,6 +62,129 @@ afterEach(() => {
 });
 
 describe("paperSelection", () => {
+  it("reserves a representative from each nonempty topic-discovery family before rank fill", async () => {
+    const runTitle = "Evidence-grounded evaluation";
+    const runTopic = "Reliable evaluation under bounded resources";
+    const rawSelection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["p1","p2","p3","p4"]}'),
+      runTitle,
+      runTopic,
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        {
+          paper_id: "p1",
+          title: "Evidence-grounded evaluation with established protocols",
+          abstract: "A widely used evaluation protocol.",
+          authors: [],
+          citation_count: 100,
+          year: 2025,
+          query_families: ["topic_family_common"]
+        },
+        {
+          paper_id: "p2",
+          title: "Reliable evaluation with repeated measurements",
+          abstract: "A common measurement design.",
+          authors: [],
+          citation_count: 80,
+          year: 2025,
+          query_families: ["topic_family_common"]
+        },
+        {
+          paper_id: "p3",
+          title: "Bounded-resource evaluation failure analysis",
+          abstract: "A rare failure axis under limited resources.",
+          authors: [],
+          citation_count: 1,
+          year: 2024,
+          query_families: ["topic_family_rare"]
+        },
+        {
+          paper_id: "p4",
+          title: "Evaluation protocol replication",
+          abstract: "Another common protocol.",
+          authors: [],
+          citation_count: 40,
+          year: 2023,
+          query_families: ["topic_family_common"]
+        }
+      ]
+    });
+
+    expect(rawSelection.selectedPaperIds).toEqual(["p1", "p2"]);
+    const selection = applyTopicFamilyCoverageFloor({
+      selection: rawSelection,
+      runTitle,
+      runTopic
+    });
+
+    expect(selection.selectedPaperIds).toEqual(["p1", "p3"]);
+    expect(selection.topicFamilyCoverage).toMatchObject({
+      selectedFamilies: ["topic_family_common", "topic_family_rare"],
+      uncoveredFamilies: [],
+      addedPaperIds: ["p3"],
+      droppedPaperIds: ["p2"],
+      applied: true,
+      coverageComplete: true
+    });
+  });
+
+  it("does not restore a family representative excluded by an upstream quality guard", async () => {
+    const runTitle = "Evidence-grounded evaluation";
+    const runTopic = "Reliable evaluation under bounded resources";
+    const rawSelection = await selectPapersForAnalysis({
+      llm: new FixedResponseLlm('{"ordered_paper_ids":["p1","p2","p3"]}'),
+      runTitle,
+      runTopic,
+      request: normalizeAnalysisSelectionRequest(2),
+      corpusRows: [
+        {
+          paper_id: "p1",
+          title: "Evidence-grounded evaluation protocol",
+          abstract: "A common evaluation protocol.",
+          authors: [],
+          citation_count: 50,
+          year: 2025,
+          query_families: ["topic_family_common"]
+        },
+        {
+          paper_id: "p2",
+          title: "Reliable repeated evaluation",
+          abstract: "A second common evaluation protocol.",
+          authors: [],
+          citation_count: 40,
+          year: 2025,
+          query_families: ["topic_family_common"]
+        },
+        {
+          paper_id: "p3",
+          title: "Bounded-resource failure analysis",
+          abstract: "A rare evaluation failure axis.",
+          authors: [],
+          citation_count: 1,
+          year: 2024,
+          query_families: ["topic_family_rare"]
+        }
+      ]
+    });
+
+    const selection = applyTopicFamilyCoverageFloor({
+      selection: rawSelection,
+      runTitle,
+      runTopic,
+      requiredQueryFamilies: ["topic_family_common", "topic_family_rare"],
+      eligiblePaperIds: new Set(["p1", "p2"])
+    });
+
+    expect(selection.selectedPaperIds).toEqual(["p1", "p2"]);
+    expect(selection.selectedPaperIds).not.toContain("p3");
+    expect(selection.topicFamilyCoverage).toMatchObject({
+      selectedFamilies: ["topic_family_common"],
+      uncoveredFamilies: ["topic_family_rare"],
+      coverageComplete: false,
+      applied: false
+    });
+  });
+
   it("deterministically favors title similarity, citations, and recency", async () => {
     const selection = await selectPapersForAnalysis({
       llm: new FixedResponseLlm('{"ordered_paper_ids":["p1","p2","p3"]}'),
@@ -339,13 +463,13 @@ describe("paperSelection", () => {
     expect(selection.rerankApplied).toBe(true);
     expect(rerankLlm.prompts).toHaveLength(1);
     expect(rerankLlm.prompts[0]).not.toContain("abstract=");
-    expect(rerankLlm.prompts[0]).toContain("application-specific prediction");
+    expect(rerankLlm.prompts[0]).toContain("application-specific work as relevant only");
     expect(rerankLlm.prompts[0]).toContain("modality_fit=");
     expect(rerankLlm.prompts[0]).toContain("task_fit=");
     expect(rerankLlm.prompts[0]).toContain("study_scope=");
   });
 
-  it("adds single-domain application demotion guidance to rerank prompts", async () => {
+  it("adds research-context transfer guidance without imposing a domain preference", async () => {
     const rerankLlm = new CapturePromptLlm();
 
     await selectPapersForAnalysis({
@@ -361,7 +485,8 @@ describe("paperSelection", () => {
     });
 
     expect(rerankLlm.prompts).toHaveLength(1);
-    expect(rerankLlm.prompts[0]).toContain("Strongly demote papers whose main contribution is an application-specific prediction");
+    expect(rerankLlm.prompts[0]).toContain("application-specific work as relevant only");
+    expect(rerankLlm.prompts[0]).toContain("Do not introduce a modality, task family, benchmark, or method preference");
   });
 
   it("keeps only the substantive rerank failure when benign cleanup warnings are mixed in", async () => {

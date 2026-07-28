@@ -45,6 +45,7 @@ import {
 import {
   buildBriefCompletenessArtifact,
   parseManuscriptFormatFromBrief,
+  snapshotResearchBriefContentToRun,
   snapshotResearchBriefToRun
 } from "../core/runs/researchBriefFiles.js";
 import {
@@ -95,8 +96,11 @@ import {
   COLLECT_USAGE,
   parseCollectArgs
 } from "../core/commands/collectOptions.js";
-import { resolveOpenAiApiKey } from "../config.js";
-import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_CHAT_MODEL } from "../integrations/ollama/modelCatalog.js";
+import { normalizeResearchRunInputs, resolveOpenAiApiKey } from "../config.js";
+import {
+  DEFAULT_OLLAMA_BASE_URL,
+  requireOllamaModel
+} from "../integrations/ollama/modelCatalog.js";
 
 interface PendingNaturalCommandState {
   command: string;
@@ -282,16 +286,17 @@ export class InteractionSession {
   }
 
   async createRun(input: CreateRunRequest): Promise<RunRecord> {
+    const normalized = normalizeResearchRunInputs(input);
     const title = await this.titleGenerator.generateTitle(
-      input.topic,
-      input.constraints,
-      input.objectiveMetric
+      normalized.topic,
+      normalized.constraints,
+      normalized.objectiveMetric
     );
     const run = await this.runStore.createRun({
       title,
-      topic: input.topic,
-      constraints: input.constraints,
-      objectiveMetric: input.objectiveMetric
+      topic: normalized.topic,
+      constraints: normalized.constraints,
+      objectiveMetric: normalized.objectiveMetric
     });
     await this.refreshRunIndex();
     await this.setActiveRunId(run.id);
@@ -326,6 +331,11 @@ export class InteractionSession {
     await runContextMemory.put("run_brief.raw", input.brief);
     await runContextMemory.put("run_brief.extracted", extracted);
     await runContextMemory.put("run_brief.plan_summary", extracted.planSummary || null);
+    let snapshotPath = await snapshotResearchBriefContentToRun(
+      this.workspaceRoot,
+      run.id,
+      input.brief
+    );
     const manuscriptFormat = parseManuscriptFormatFromBrief(input.brief);
     if (manuscriptFormat) {
       await runContextMemory.put("run_brief.manuscript_format", manuscriptFormat);
@@ -334,13 +344,13 @@ export class InteractionSession {
       const resolvedSourcePath = path.isAbsolute(input.sourcePath)
         ? input.sourcePath
         : path.join(this.workspaceRoot, input.sourcePath);
-      const snapshotPath = await snapshotResearchBriefToRun(this.workspaceRoot, run.id, resolvedSourcePath);
+      snapshotPath = await snapshotResearchBriefToRun(this.workspaceRoot, run.id, resolvedSourcePath);
       await runContextMemory.put("run_brief.source_path", resolvedSourcePath);
-      await runContextMemory.put(
-        "run_brief.snapshot_path",
-        path.relative(this.workspaceRoot, snapshotPath).replace(/\\/g, "/")
-      );
     }
+    await runContextMemory.put(
+      "run_brief.snapshot_path",
+      path.relative(this.workspaceRoot, snapshotPath).replace(/\\/g, "/")
+    );
     const briefCompleteness = buildBriefCompletenessArtifact(input.brief);
     await runContextMemory.put("run_brief.completeness", briefCompleteness);
     if (briefCompleteness.grade === "minimal") {
@@ -349,6 +359,10 @@ export class InteractionSession {
       this.pushLog(`Brief completeness: ${briefCompleteness.grade} — paper-scale sections partially filled.`);
     }
     if (!input.autoStart) {
+      return run;
+    }
+    if (briefCompleteness.grade !== "complete") {
+      this.pushLog("Research auto-start blocked until every required brief section is substantive.");
       return run;
     }
     return this.startRun(run.id, input.abortSignal);
@@ -367,6 +381,19 @@ export class InteractionSession {
       this.pushLog(`Research start error: ${response.result.error}`);
     }
     return response.run;
+  }
+
+  startRunInBackground(runId: string): boolean {
+    if (this.busy) {
+      return false;
+    }
+    void this.runBusyAction(
+      async (abortSignal) => {
+        await this.startRun(runId, abortSignal);
+      },
+      `Starting research for ${runId}`
+    );
+    return true;
   }
 
   async submitInput(text: string): Promise<WebSessionState> {
@@ -704,7 +731,7 @@ export class InteractionSession {
         autoStart: true,
         abortSignal
       });
-      this.pushLog(`Created run ${run.id} from the natural-language brief and started research.`);
+      this.pushLog("Created run " + run.id + " from the natural-language brief.");
       return true;
     }
 
@@ -1214,11 +1241,11 @@ export class InteractionSession {
       return { ok: false, reason: "target run not found" };
     }
 
-    await this.setActiveRunId(run.id);
     if (!parsed.relativePath) {
+      const insight = run.id === this.activeRunId ? this.activeRunInsight : await this.loadRunInsight(run);
       const refs = [
-        ...(this.activeRunInsight?.manuscriptQuality?.artifactRefs || []),
-        ...(this.activeRunInsight?.readinessRisks?.artifactRefs || [])
+        ...(insight?.manuscriptQuality?.artifactRefs || []),
+        ...(insight?.readinessRisks?.artifactRefs || [])
       ];
       if (refs.length === 0) {
         this.pushLog(`No insight artifact refs are available for ${run.id}.`);
@@ -1408,7 +1435,6 @@ export class InteractionSession {
       networkPurpose: this.config.experiments?.network_purpose
     });
 
-    await this.setActiveRunId(run.id);
     for (const line of summary.lines) {
       this.pushLog(line);
     }
@@ -2188,10 +2214,7 @@ export class InteractionSession {
         this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
       );
       const ollamaLlm = new OllamaLLMClient(ollamaClient, {
-        model:
-          this.config.providers.ollama?.chat_model ||
-          this.config.providers.ollama?.research_model ||
-          DEFAULT_OLLAMA_CHAT_MODEL
+        model: requireOllamaModel(this.config.providers.ollama?.chat_model, "chat")
       });
       return {
         runForText: async (opts) =>
@@ -2258,10 +2281,7 @@ export class InteractionSession {
         this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
       );
       const ollamaLlm = new OllamaLLMClient(ollamaClient, {
-        model:
-          this.config.providers.ollama?.chat_model ||
-          this.config.providers.ollama?.research_model ||
-          DEFAULT_OLLAMA_CHAT_MODEL
+        model: requireOllamaModel(this.config.providers.ollama?.chat_model, "chat")
       });
       return {
         runForText: async (opts) =>
@@ -2437,43 +2457,44 @@ export class InteractionSession {
     return true;
   }
 
+  private async loadRunInsight(run: RunRecord): Promise<RunInsightCard | undefined> {
+    const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", run.id);
+    if (run.currentNode === "write_paper") {
+      const manuscriptQualityInsight = await loadManuscriptQualityInsightCard({
+        runDir,
+        readText: safeRead
+      });
+      if (manuscriptQualityInsight) {
+        return manuscriptQualityInsight;
+      }
+    }
+
+    const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
+    const reviewReadinessRisks = parseReadinessRiskArtifact(
+      await safeRead(path.join(runDir, "review", "readiness_risks.json"))
+    );
+    if (shouldSurfaceReviewInsight(run.currentNode) && reviewPacket) {
+      return buildReviewInsightCard(reviewPacket, reviewReadinessRisks);
+    }
+
+    const report = shouldSurfaceAnalyzeResultsInsight(run.currentNode)
+      ? parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")))
+      : undefined;
+    if (report) {
+      return buildAnalyzeResultsInsightCard(report);
+    }
+    return undefined;
+  }
+
   private async refreshActiveRunInsight(): Promise<void> {
     if (!this.activeRunId) {
       this.activeRunInsight = undefined;
       return;
     }
 
-    const runDir = path.join(this.workspaceRoot, ".autolabos", "runs", this.activeRunId);
     try {
       const run = await this.runStore.getRun(this.activeRunId);
-      if (run?.currentNode === "write_paper") {
-        const manuscriptQualityInsight = await loadManuscriptQualityInsightCard({
-          runDir,
-          readText: safeRead
-        });
-        if (manuscriptQualityInsight) {
-          this.activeRunInsight = manuscriptQualityInsight;
-          return;
-        }
-      }
-      const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
-      const reviewReadinessRisks = parseReadinessRiskArtifact(
-        await safeRead(path.join(runDir, "review", "readiness_risks.json"))
-      );
-      if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
-        this.activeRunInsight = buildReviewInsightCard(reviewPacket, reviewReadinessRisks);
-        return;
-      }
-      const report = shouldSurfaceAnalyzeResultsInsight(run?.currentNode)
-        ? parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")))
-        : undefined;
-      if (report) {
-        this.activeRunInsight = buildAnalyzeResultsInsightCard(report);
-        return;
-      }
-      this.activeRunInsight = shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
-        ? buildReviewInsightCard(reviewPacket, reviewReadinessRisks)
-        : undefined;
+      this.activeRunInsight = run ? await this.loadRunInsight(run) : undefined;
     } catch {
       this.activeRunInsight = undefined;
     }

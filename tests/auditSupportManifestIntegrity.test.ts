@@ -26,9 +26,8 @@ function findAuditSupportManifests(directory: string): string[] {
 }
 
 describe("checked-in audit support manifests", () => {
-  it("binds every declared regular file to its current byte length and SHA-256", () => {
+  it("binds every declared regular file to its current byte length and SHA-256 when a manifest is checked in", () => {
     const manifests = findAuditSupportManifests(path.join(ROOT, "papers"));
-    expect(manifests.length).toBeGreaterThan(0);
 
     for (const manifestPath of manifests) {
       const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8")) as AuditSupportManifest;

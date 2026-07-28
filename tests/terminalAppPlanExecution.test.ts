@@ -73,7 +73,7 @@ function makeRun(id = "run-1"): any {
   };
 }
 
-function makeValidResearchBriefMarkdown(topic = "Multi-agent code repair on SWE-bench"): string {
+function makeValidResearchBriefMarkdown(topic = "Candidate evaluation on a public dataset"): string {
   return [
     "# Research Brief",
     "",
@@ -83,60 +83,60 @@ function makeValidResearchBriefMarkdown(topic = "Multi-agent code repair on SWE-
     "",
     "## Objective Metric",
     "",
-    "- Primary metric: pass@1.",
-    "- Secondary metrics (if any): latency, cost.",
-    "- What counts as meaningful improvement: pass@1 >= 0.4 with acceptable runtime.",
+    "- Primary metric: primary_score.",
+    "- Secondary metrics (if any): secondary_score.",
+    "- What counts as meaningful improvement: primary_score >= 0.4 under the declared budget.",
     "",
     "## Constraints",
     "",
     "- compute/time budget: 6 hour time limit.",
-    "- dataset or environment limits: public SWE-bench subset only.",
+    "- dataset or environment limits: declared public dataset only.",
     "- provider/tooling constraints: local runner only.",
     "- reproducibility constraints: persist scripts and result tables.",
     "- forbidden shortcuts: no fabricated results.",
     "",
     "## Plan",
     "",
-    "Run baseline, ablation, and confirmatory evaluations.",
+    "Run the reference, candidate, and confirmatory evaluations.",
     "",
     "## Research Question",
     "",
-    "Can a multi-agent repair strategy improve SWE-bench pass@1 over a single-agent baseline within the same budget?",
+    "Can the candidate condition improve primary_score over the reference condition within the same budget?",
     "",
     "## Why This Can Be Tested With A Small Real Experiment",
     "",
-    "- accessible dataset/task: SWE-bench has a public subset.",
-    "- feasible implementation scope: compare one baseline and one proposal.",
-    "- feasible baseline: single-agent repair.",
+    "- accessible dataset/task: the declared evaluation dataset is public.",
+    "- feasible implementation scope: compare one reference and one candidate condition.",
+    "- feasible baseline: the reference condition is executable locally.",
     "- realistic run budget: bounded local evaluation.",
-    "- expected signal size or decision rule: stop if pass@1 gains disappear under cost control.",
+    "- expected signal size or decision rule: stop if the primary_score gain disappears under the budget control.",
     "",
     "## Baseline / Comparator",
     "",
-    "- baseline name: single-agent repair.",
-    "- why it is relevant: it is the simplest competitive baseline.",
-    "- expected comparison dimension: pass@1 versus runtime cost.",
+    "- baseline name: reference_condition.",
+    "- why it is relevant: it is the declared reference for the comparison.",
+    "- expected comparison dimension: primary_score versus secondary_score.",
     "",
     "## Dataset / Task / Bench",
     "",
-    "- dataset(s): SWE-bench-lite.",
-    "- task type: code repair.",
-    "- train/eval protocol: fixed benchmark evaluation.",
+    "- dataset(s): public_evaluation_dataset.",
+    "- task type: configured evaluation task.",
+    "- train/eval protocol: fixed declared evaluation protocol.",
     "- split or validation discipline: one held-out evaluation slice.",
-    "- known limitations: subset scale is smaller than a paper-ready full benchmark run.",
+    "- known limitations: the evaluation slice is smaller than a paper-ready full run.",
     "",
     "## Target Comparison",
     "",
-    "- proposed method or condition: multi-agent repair.",
-    "- comparator or baseline: single-agent repair.",
-    "- comparison dimension: pass@1 and runtime cost.",
-    "- direction of expected improvement: higher pass@1 with bounded overhead.",
+    "- proposed method or condition: candidate_condition.",
+    "- comparator or baseline: reference_condition.",
+    "- comparison dimension: primary_score and secondary_score.",
+    "- direction of expected improvement: higher primary_score within the declared budget.",
     "",
     "## Minimum Acceptable Evidence",
     "",
-    "- minimum effect size or decision boundary: +0.05 pass@1.",
-    "- minimum number of runs or folds: one full baseline run and one proposal run.",
-    "- what counts as no signal vs weak signal: no signal if pass@1 is flat; weak signal if cost dominates gains.",
+    "- minimum effect size or decision boundary: +0.05 primary_score.",
+    "- minimum number of runs or folds: one full reference run and one candidate run.",
+    "- what counts as no signal vs weak signal: no signal if primary_score is flat; weak signal if secondary_score dominates the gain.",
     "",
     "## Disallowed Shortcuts",
     "",
@@ -156,10 +156,10 @@ function makeValidResearchBriefMarkdown(topic = "Multi-agent code repair on SWE-
     "",
     "## Minimum Experiment Plan",
     "",
-    "- one baseline run: single-agent repair on SWE-bench-lite.",
-    "- one proposed or alternative condition: multi-agent repair on the same task slice.",
-    "- one result table: pass@1 and runtime by condition.",
-    "- one limitation note: benchmark slice is smaller than a paper-ready full run.",
+    "- one baseline run: reference_condition on the declared evaluation slice.",
+    "- one proposed or alternative condition: candidate_condition on the same evaluation slice.",
+    "- one result table: primary_score and secondary_score by condition.",
+    "- one limitation note: the evaluation slice is smaller than a paper-ready full run.",
     "- one claim->evidence mapping: link every conclusion to the result table or cited paper.",
     "",
     "## Paper-worthiness Gate",
@@ -196,9 +196,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -283,9 +283,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -357,9 +357,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -431,9 +431,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -532,9 +532,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -607,9 +607,9 @@ describe("TerminalApp pending natural plan execution", () => {
           responses_model: "gpt-5.4"
         },
         research: {
-          default_topic: "Multi-agent collaboration",
-          default_constraints: ["recent papers", "last 5 years"],
-          default_objective_metric: "state-of-the-art reproducibility"
+          default_topic: "configured research topic",
+          default_constraints: ["declared literature scope", "configured time window"],
+          default_objective_metric: "configured evaluation metric"
         }
       } as any,
       runStore: {} as any,
@@ -1087,10 +1087,10 @@ describe("TerminalApp pending natural plan execution", () => {
         openai: { model: "gpt-5.4", reasoning_effort: "medium" },
         ollama: {
           base_url: "http://localhost:11434",
-          chat_model: "qwen2.5:7b",
-          research_model: "qwen3.5:35b-a3b",
-          experiment_model: "qwen2.5-coder:14b",
-          vision_model: "llava:13b"
+          chat_model: "local-model-a:latest",
+          research_model: "local-model-b:latest",
+          experiment_model: "local-model-c:latest",
+          vision_model: "local-model-d:latest"
         }
       }
     } as any);
@@ -1098,11 +1098,52 @@ describe("TerminalApp pending natural plan execution", () => {
     app.render = () => {};
     app.updateSuggestions = () => {};
     app.drainQueuedInputs = async () => {};
-    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("qwen3.5:35b-a3b");
+    app.openSelectionMenu = vi.fn().mockResolvedValueOnce("local-model-b:latest");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        models: [
+          { name: "local-model-a:latest" },
+          { name: "local-model-b:latest" },
+          { name: "local-model-c:latest" },
+          { name: "local-model-d:latest" }
+        ]
+      }), { status: 200, headers: { "Content-Type": "application/json" } })
+    );
 
-    await app.handleOllamaModelSelection("task");
+    try {
+      await app.handleOllamaModelSelection("task");
+      expectNthMenuPrompt(app.openSelectionMenu, 1, "Select Ollama research backend model");
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
 
-    expectNthMenuPrompt(app.openSelectionMenu, 1, "Select Ollama research backend model");
+  it("falls back to required manual Ollama model input when discovery is unreachable", async () => {
+    const app = makeApp({
+      providers: {
+        llm_mode: "ollama",
+        codex: { model: "gpt-5.3-codex", reasoning_effort: "xhigh", fast_mode: false },
+        openai: { model: "gpt-5.4", reasoning_effort: "medium" },
+        ollama: {
+          base_url: "http://127.0.0.1:11434",
+          chat_model: "",
+          research_model: "",
+          experiment_model: "",
+          vision_model: ""
+        }
+      }
+    } as any);
+    app.askWithinTui = vi.fn().mockResolvedValue("local-model-a:latest");
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("connection refused"));
+
+    try {
+      await expect(app.selectOllamaSlot("chat")).resolves.toBe("local-model-a:latest");
+      expect(app.askWithinTui).toHaveBeenCalledWith("Ollama general chat model (required)", "");
+      expectLogContaining(app.logs, "Could not reach Ollama");
+      expectLogContaining(app.logs, "Enter an installed model identifier for general chat");
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 
   it("routes /agent review through figure_audit before review", async () => {
@@ -1195,13 +1236,13 @@ describe("TerminalApp pending natural plan execution", () => {
                 manual_checks: 1
               },
               objective_status: "met",
-              objective_summary: "Objective metric met: accuracy=0.91 >= 0.9.",
+              objective_summary: "Objective metric met: primary_score=0.91 >= 0.9.",
               recommendation: {
                 action: "advance",
                 target: "review",
                 confidence_pct: 88,
                 reason: "The run can proceed to manual review before paper writing.",
-                evidence: ["accuracy reached the configured target."]
+                evidence: ["primary_score reached the configured target."]
               },
               checks: [
                 {
@@ -1731,7 +1772,7 @@ describe("TerminalApp pending natural plan execution", () => {
         runId: run.id,
         node: "collect_papers",
         payload: {
-          text: 'Searching Semantic Scholar for "AI agent automation" (requested_query).'
+          text: 'Searching Semantic Scholar for "configured research topic" (requested_query).'
         }
       });
 
@@ -1762,7 +1803,7 @@ describe("TerminalApp pending natural plan execution", () => {
       await app.loadHistoryForRun(run.id);
 
       expect(app.logs).toContain("Replay: Node collect_papers started.");
-      expect(app.logs).toContain('Replay: Searching Semantic Scholar for "AI agent automation" (requested_query).');
+      expect(app.logs).toContain('Replay: Searching Semantic Scholar for "configured research topic" (requested_query).');
       expect(app.logs).not.toContain("Node collect_papers started.");
     } finally {
       process.chdir(originalCwd);
@@ -1800,7 +1841,7 @@ describe("TerminalApp pending natural plan execution", () => {
       await mkdir(path.join(runDir, "review"), { recursive: true });
       await mkdir(path.join(runDir, "paper"), { recursive: true });
       await writeFile(path.join(runDir, "experiment.py"), "print('ok')\n", "utf8");
-      await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ accuracy: 0.1 }, null, 2), "utf8");
+      await writeFile(path.join(runDir, "metrics.json"), JSON.stringify({ primary_score: 0.1 }, null, 2), "utf8");
       await writeFile(path.join(runDir, "result_analysis.json"), JSON.stringify({ overview: {} }, null, 2), "utf8");
       await writeFile(path.join(runDir, "review", "decision.json"), JSON.stringify({ outcome: "advance" }, null, 2), "utf8");
       await writeFile(path.join(runDir, "paper", "main.tex"), "stale paper\n", "utf8");
@@ -2228,6 +2269,50 @@ describe("TerminalApp pending natural plan execution", () => {
       await app.refreshRunProjectionHints(run.id);
 
       expect(app.runProjectionHints.has(run.id)).toBe(false);
+    } finally {
+      process.chdir(originalCwd);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("loads persisted topic-discovery funnel hints in the production TUI path", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "autolabos-tui-funnel-loader-"));
+    const originalCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const app = makeApp();
+      const discoveryRun = makeRun("run-discovery-projection");
+      const hypothesisRun = makeRun("run-hypothesis-projection");
+      app.runIndex = [discoveryRun, hypothesisRun];
+      for (const [run, mode] of [
+        [discoveryRun, "topic_discovery"],
+        [hypothesisRun, "hypothesis_test"]
+      ] as const) {
+        const briefDir = path.join(cwd, ".autolabos", "runs", run.id, "brief");
+        await mkdir(briefDir, { recursive: true });
+        await writeFile(
+          path.join(briefDir, "source_brief.md"),
+          `# Research Brief\n\n## Research Mode\n${mode}\n`,
+          "utf8"
+        );
+      }
+
+      await app.refreshRunProjectionHints(discoveryRun.id);
+      await app.refreshRunProjectionHints(hypothesisRun.id);
+
+      expect(app.runProjectionHints.get(discoveryRun.id)?.researchFunnel).toMatchObject({
+        research_mode: "topic_discovery",
+        integrity_status: "unmeasured",
+        lifecycle_stage: "discovery",
+        bounded_probe_paper_evidence_allowed: false,
+        authorization_disposition: "unmeasured",
+        authorization_probe_allowed: false,
+        outcome_gate: {
+          status: "unmeasured",
+          trusted: false
+        }
+      });
+      expect(app.runProjectionHints.has(hypothesisRun.id)).toBe(false);
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });
@@ -2922,15 +3007,15 @@ describe("TerminalApp pending natural plan execution", () => {
     const app = makeApp();
     app.runIndex = [makeRun("run-1")];
     app.activeRunId = "run-1";
-    app.runIndex[0].title = "Multi-Agent Collaboration";
-    app.runIndex[0].topic = "Multi-Agent Collaboration";
+    app.runIndex[0].title = "Configured Research Topic";
+    app.runIndex[0].topic = "Configured Research Topic";
     app.semanticScholarApiKeyConfigured = true;
     app.codex = {
       runForText: vi.fn()
     };
     app.pendingNaturalCommand = {
-      command: '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 300 --open-access --run run-1',
-      commands: ['/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 300 --open-access --run run-1'],
+      command: '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 300 --open-access --run run-1',
+      commands: ['/agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 300 --open-access --run run-1'],
       sourceInput: "collect papers",
       createdAt: new Date().toISOString(),
       stepIndex: 0,
@@ -2940,7 +3025,7 @@ describe("TerminalApp pending natural plan execution", () => {
     app.executeParsedSlash = vi.fn().mockResolvedValueOnce({
       ok: false,
       reason:
-        'Semantic Scholar rate limited "Multi-Agent Collaboration": Semantic Scholar request failed: 429 (rate limited).'
+        'Semantic Scholar rate limited "Configured Research Topic": Semantic Scholar request failed: 429 (rate limited).'
     });
 
     await app.handlePendingNaturalConfirmation("y");
@@ -2954,16 +3039,16 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).not.toContain("Execution plan detected. Pending 6-step plan:");
     expect(
       app.logs.some((line: string) =>
-        line.includes('- [1/6] /agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1')
+        line.includes('- [1/6] /agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 50 --open-access --run run-1')
       )
     ).toBe(false);
     expect(app.pendingNaturalCommand?.commands).toEqual([
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
-      '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1',
+      '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
     ]);
     expect(app.pendingNaturalCommand?.presentation).toBe("collect_replan_summary");
   });
@@ -2971,10 +3056,10 @@ describe("TerminalApp pending natural plan execution", () => {
   it("keeps deterministic collect replans summarized during reminders and continuations", async () => {
     const app = makeApp();
     app.pendingNaturalCommand = {
-      command: '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+      command: '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
       commands: [
-        '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
-        '/agent collect "Multi-Agent Collaboration" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
+        '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --limit 50 --open-access --run run-1',
+        '/agent collect "Configured Research Topic" --last-years 5 --sort relevance --additional 50 --open-access --run run-1'
       ],
       sourceInput: "collect papers",
       createdAt: new Date().toISOString(),
@@ -2991,7 +3076,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(app.logs).toContain("Pending recovery collect plan from step 1/2.");
     expect(app.logs).toContain("Next recovery collect step ready (2/2).");
     expect(
-      app.logs.some((line: string) => line.includes('Pending plan from step 1/2: /agent collect "Multi-Agent Collaboration"'))
+      app.logs.some((line: string) => line.includes('Pending plan from step 1/2: /agent collect "Configured Research Topic"'))
     ).toBe(false);
     expect(
       app.logs.some((line: string) => line.includes('Remaining plan steps (2-2/2):'))
@@ -3057,8 +3142,8 @@ describe("TerminalApp pending natural plan execution", () => {
         summaryCount: 0,
         evidenceCount: 0,
         rerankApplied: false,
-        rerankFallbackReason: "You've hit your usage limit for GPT-5.3-Codex-Spark.",
-        selectedPaperLastError: "You've hit your usage limit for GPT-5.3-Codex-Spark."
+        rerankFallbackReason: "You've hit your usage limit for the configured research model.",
+        selectedPaperLastError: "You've hit your usage limit for the configured research model."
       }
     });
 
@@ -3067,7 +3152,7 @@ describe("TerminalApp pending natural plan execution", () => {
     expect(lines[0]).toBe("Status: analyze_papers is paused after retry 1/3 because a model usage limit blocked progress.");
     expect(lines[1]).toContain("Selected 1/200 paper(s) for analysis.");
     expect(lines[1]).toContain("LLM rerank failed before a top-N shortlist was accepted.");
-    expect(lines[1]).toContain("GPT-5.3-Codex-Spark usage limit");
+    expect(lines[1]).toContain("the usage limit; switch models or wait for quota reset");
     expect(lines[1]).toContain("Ignoring stale top-level summary");
   });
 
@@ -3250,53 +3335,73 @@ describe("TerminalApp pending natural plan execution", () => {
       const paths = resolveAppPaths(cwd);
       await ensureScaffold(paths);
       const app = makeApp();
-      app.openSelectionMenu = vi.fn().mockResolvedValue("en");
+      app.openSelectionMenu = vi
+        .fn()
+        .mockResolvedValueOnce("en")
+        .mockResolvedValueOnce("topic_discovery");
       app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
       app.askWithinTui = vi
         .fn()
-        .mockResolvedValueOnce("Evaluate compact-model instruction-tuning recipe choices under a local budget.")
-        .mockResolvedValueOnce("Mean zero-shot accuracy across Benchmark Task A and Benchmark Task B.")
-        .mockResolvedValueOnce("+1.0 point over the tuned baseline.")
-        .mockResolvedValueOnce("2x RTX 4090 only; public datasets only; seed=42.")
-        .mockResolvedValueOnce("Which lightweight recipe choice improves benchmark accuracy most reliably?")
-        .mockResolvedValueOnce("Public benchmarks exist; four-condition comparison is feasible; a named baseline is available.")
-        .mockResolvedValueOnce("Baseline name: tuned configured baseline; Why relevant: standard compact-model comparator; Comparison dimension: accuracy and runtime.")
-        .mockResolvedValueOnce("Datasets: public instruction subset; Task type: instruction tuning and zero-shot evaluation; Validation discipline: fixed seed and prompts.")
-        .mockResolvedValueOnce("Proposed method: strongest alternative recipe; Comparator: tuned baseline; Dimension: benchmark accuracy delta.")
-        .mockResolvedValueOnce("At least +1.0 point over baseline; all planned conditions execute; bootstrap CI required.")
-        .mockResolvedValueOnce("No fabricated metrics; no skipped baseline; no checkpoint carry-over.")
+        .mockResolvedValueOnce("Reliability methods for bounded automated research workflows.")
+        .mockResolvedValueOnce("Each candidate must declare one judge-independent primary metric.")
+        .mockResolvedValueOnce("Each candidate must declare a practically meaningful effect boundary.")
+        .mockResolvedValueOnce("Single workstation only; licensed public data only; fixed declared budgets.")
+        .mockResolvedValueOnce("Which unaddressed reliability failure can support a falsifiable local study?")
+        .mockResolvedValueOnce("Only candidates with licensed data and a bounded probe may be promoted.")
+        .mockResolvedValueOnce("Each candidate must name a strong comparator and the controlled comparison dimension.")
+        .mockResolvedValueOnce("Permitted sources: licensed public data with a frozen split and independent units.")
+        .mockResolvedValueOnce("Each candidate must define its intervention, comparator, metric direction, and falsifier.")
+        .mockResolvedValueOnce("Two verified closest priors, a real probe, uncertainty, and an explicit kill decision are required.")
+        .mockResolvedValueOnce("No fabricated metrics; no single-source convergence; no outcome-driven gate changes.")
         .mockResolvedValueOnce("One bounded repair pass; rerun only failed conditions.")
         .mockResolvedValueOnce("research_memo")
-        .mockResolvedValueOnce("One tuned baseline; three alternatives; one result table; one limitations note.")
-        .mockResolvedValueOnce("Baseline fails; metrics missing; no defensible quantitative comparison.")
+        .mockResolvedValueOnce("One frozen candidate contract; one strong comparator; one bounded probe; one decision receipt.")
+        .mockResolvedValueOnce("No licensed data; no deterministic endpoint; no viable comparator; or the closest prior absorbs the claim.")
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce("template.tex")
-        .mockResolvedValueOnce("hyperparameter_grids; environment_dump")
-        .mockResolvedValueOnce("main_result_tables; primary_recipe_ablation")
+        .mockResolvedValueOnce("environment_manifest; execution_receipts")
+        .mockResolvedValueOnce("main_result_table; candidate_vs_reference_comparison")
         .mockResolvedValueOnce("Stay within local workstation limits.")
-        .mockResolvedValueOnce("Will the compact model provide enough signal?")
+        .mockResolvedValueOnce("Will any candidate survive both novelty and execution gates?")
         .mockResolvedValueOnce("n");
 
       await app.handleNewRun();
 
       const raw = await readFile(path.join(cwd, "Brief.md"), "utf8");
       expect(raw).toContain("# Research Brief");
+      expect(raw).toContain("## Research Mode\ntopic_discovery");
       expect(raw).toContain("## Topic");
       expect(raw).toContain("## Research Question");
       expect(raw).toContain("## Baseline / Comparator");
       expect(raw).toContain("## Dataset / Task / Bench");
       expect(raw).toContain("## Minimum Experiment Plan");
       expect(raw).toContain("## Failure Conditions");
-      expect(raw).toContain("Evaluate compact-model instruction-tuning recipe choices under a local budget.");
+      expect(raw).toContain("Reliability methods for bounded automated research workflows.");
+      expect(raw).toContain("generate five to seven candidate-owned contracts");
+      expect(raw).not.toContain("lock a named baseline");
       expect(raw).toContain("template.tex");
       expect(app.logs.some((line: string) => line.includes("Created guided research brief:"))).toBe(true);
-      expect(app.logs).toContain("Guided brief step 1/21: Topic");
-      expect(app.logs).toContain("Guided brief step 21/21: Questions / risks (optional)");
+      expect(app.logs).toContain("Guided brief step 1/25: Select research mode");
+      expect(app.logs).toContain("Guided brief step 2/25: Topic search scope");
+      expect(app.logs).toContain("Guided brief step 25/25: Questions / risks (optional)");
       expect(app.logs).toContain("Guided brief draft written to Brief.md.");
       expect(app.openSelectionMenu).toHaveBeenCalledWith(
         "Select guided brief interview language",
         expect.any(Array),
         "en"
+      );
+      expect(app.openSelectionMenu).toHaveBeenCalledWith(
+        "Select research mode",
+        expect.arrayContaining([
+          expect.objectContaining({
+            value: "hypothesis_test"
+          }),
+          expect.objectContaining({
+            value: "topic_discovery",
+            description: expect.stringContaining("without pre-committing the final topic or metric")
+          })
+        ]),
+        "hypothesis_test"
       );
     } finally {
       process.chdir(originalCwd);
@@ -3312,20 +3417,23 @@ describe("TerminalApp pending natural plan execution", () => {
       const paths = resolveAppPaths(cwd);
       await ensureScaffold(paths);
       const app = makeApp();
-      app.openSelectionMenu = vi.fn().mockResolvedValue("en");
+      app.openSelectionMenu = vi
+        .fn()
+        .mockResolvedValueOnce("en")
+        .mockResolvedValueOnce("hypothesis_test");
       app.askWithinTui = vi
         .fn()
-        .mockResolvedValueOnce("Budget-aware test-time reasoning for small language models.")
-        .mockResolvedValueOnce("Pass@1.")
-        .mockResolvedValueOnce("+0.05 pass@1.")
-        .mockResolvedValueOnce("6 hour limit; public benchmark only.")
-        .mockResolvedValueOnce("Can bounded test-time reasoning improve benchmark pass@1?")
-        .mockResolvedValueOnce("The benchmark is public; one baseline and one proposal are feasible.")
-        .mockResolvedValueOnce("Baseline name: single-agent baseline; Why relevant: simplest comparator; Comparison dimension: pass@1.")
-        .mockResolvedValueOnce("Dataset: public reasoning benchmark; Task: inference-time strategy comparison; Validation discipline: fixed prompts.")
-        .mockResolvedValueOnce("Proposed method: adaptive reasoning; Comparator: single-agent baseline; Dimension: pass@1 delta.")
-        .mockResolvedValueOnce("At least +0.05 pass@1; one baseline and one proposal run.")
-        .mockResolvedValueOnce("No fabricated metrics; no skipped baseline.")
+        .mockResolvedValueOnce("Candidate evaluation under a bounded protocol.")
+        .mockResolvedValueOnce("primary_score.")
+        .mockResolvedValueOnce("+0.05 primary_score.")
+        .mockResolvedValueOnce("6 hour limit; declared public dataset only.")
+        .mockResolvedValueOnce("Can the candidate condition improve primary_score?")
+        .mockResolvedValueOnce("The dataset is public; one reference and one candidate run are feasible.")
+        .mockResolvedValueOnce("Baseline name: reference_condition; Why relevant: declared comparator; Comparison dimension: primary_score.")
+        .mockResolvedValueOnce("Dataset: public_evaluation_dataset; Task: configured evaluation task; Validation discipline: fixed split.")
+        .mockResolvedValueOnce("Proposed method: candidate_condition; Comparator: reference_condition; Dimension: primary_score delta.")
+        .mockResolvedValueOnce("At least +0.05 primary_score; one reference and one candidate run.")
+        .mockResolvedValueOnce("No fabricated metrics; no skipped reference condition.")
         .mockResolvedValueOnce("One bounded repair pass.")
         .mockResolvedValueOnce("research_memo")
         .mockResolvedValueOnce("One baseline run; one proposal run; one result table.")
@@ -3343,7 +3451,7 @@ describe("TerminalApp pending natural plan execution", () => {
             "",
             "## Topic",
             "",
-            "Budget-aware test-time reasoning for small language models."
+            "Candidate evaluation under a bounded protocol."
           ].join("\n"),
           "utf8"
         );
@@ -3376,25 +3484,28 @@ describe("TerminalApp pending natural plan execution", () => {
       const paths = resolveAppPaths(cwd);
       await ensureScaffold(paths);
       const app = makeApp();
-      app.openSelectionMenu = vi.fn().mockResolvedValue("ko");
+      app.openSelectionMenu = vi
+        .fn()
+        .mockResolvedValueOnce("ko")
+        .mockResolvedValueOnce("hypothesis_test");
       app.openResearchBriefInEditor = vi.fn().mockResolvedValue(false);
       app.askWithinTui = vi
         .fn()
-        .mockResolvedValueOnce("작은 언어 모델의 추론 비용 대비 성능을 비교합니다.")
-        .mockResolvedValueOnce("평균 정확도")
-        .mockResolvedValueOnce("+1.0pp")
+        .mockResolvedValueOnce("후보 조건과 기준 조건을 제한된 절차로 비교합니다.")
+        .mockResolvedValueOnce("primary_score")
+        .mockResolvedValueOnce("primary_score +0.05")
         .mockResolvedValueOnce("공개 데이터만 사용; 로컬 예산만 사용")
-        .mockResolvedValueOnce("어떤 경량 전략이 가장 일관된 개선을 주는가?")
+        .mockResolvedValueOnce("후보 조건이 기준 조건보다 primary_score를 개선하는가?")
         .mockResolvedValueOnce("작은 비교 실험으로 충분히 검증 가능함")
-        .mockResolvedValueOnce("튜닝된 단일 베이스라인")
-        .mockResolvedValueOnce("공개 벤치마크; 추론 전략 비교")
-        .mockResolvedValueOnce("베이스라인 대비 정확도 차이")
-        .mockResolvedValueOnce("모든 조건이 실행되고 기준보다 +1.0pp 이상")
-        .mockResolvedValueOnce("지표 조작 금지; 베이스라인 생략 금지")
+        .mockResolvedValueOnce("reference_condition")
+        .mockResolvedValueOnce("공개 데이터셋; 선언된 조건 비교")
+        .mockResolvedValueOnce("기준 조건 대비 primary_score 차이")
+        .mockResolvedValueOnce("모든 선언 조건이 실행되고 기준보다 +0.05 이상")
+        .mockResolvedValueOnce("지표 조작 금지; 기준 조건 생략 금지")
         .mockResolvedValueOnce("한 번의 제한된 수정 패스")
         .mockResolvedValueOnce("research_memo")
-        .mockResolvedValueOnce("베이스라인 1회; 대안 1회; 결과표 1개")
-        .mockResolvedValueOnce("베이스라인 실패; 비교 불가")
+        .mockResolvedValueOnce("기준 조건 1회; 후보 조건 1회; 결과표 1개")
+        .mockResolvedValueOnce("기준 조건 실패; 비교 불가")
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce("")
         .mockResolvedValueOnce("")
@@ -3408,7 +3519,18 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(app.askWithinTui).toHaveBeenNthCalledWith(1, "주제", "");
       expect(app.askWithinTui).toHaveBeenNthCalledWith(2, "주요 평가 지표", "");
       expect(app.logs).toContain("가이드형 Research Brief 인터뷰를 시작합니다.");
-      expect(app.logs).toContain("Guided brief step 1/21: 주제");
+      expect(app.logs).toContain("Guided brief step 1/22: 연구 모드 선택");
+      expect(app.logs).toContain("Guided brief step 2/22: 주제");
+      expect(app.openSelectionMenu).toHaveBeenCalledWith(
+        "연구 모드 선택",
+        expect.arrayContaining([
+          expect.objectContaining({
+            value: "topic_discovery",
+            description: "넓은 탐색 범위와 선정 규칙을 정하며 최종 주제나 지표를 미리 확정하지 않습니다."
+          })
+        ]),
+        "hypothesis_test"
+      );
     } finally {
       process.chdir(originalCwd);
       await rm(cwd, { recursive: true, force: true });
@@ -3429,28 +3551,32 @@ describe("TerminalApp pending natural plan execution", () => {
         JSON.stringify(
           {
             language: "en",
+            researchMode: "topic_discovery",
             answers: [
-              "Instruction tuning recipe comparisons for compact open models.",
-              "Average zero-shot accuracy across Benchmark Task A and Benchmark Task B.",
-              "+1.0 percentage point over the tuned baseline.",
-              "2x RTX 4090 maximum; public data only; seed=42.",
-              "Which lightweight recipe choice improves benchmark accuracy most reliably?",
-              "A four-condition comparison is feasible with a compact model and public evaluation tasks.",
-              "Baseline name: tuned configured baseline; Why relevant: standard comparator; Comparison dimension: accuracy and runtime.",
-              "Dataset: bounded instruction subset; Task: instruction tuning and zero-shot evaluation; Validation discipline: fixed prompts and seed.",
-              "Proposed method: strongest lightweight alternative; Comparator: tuned baseline; Dimension: benchmark accuracy delta.",
-              "Executed experiments, baseline comparison, result table, and explicit claim-to-evidence mapping.",
-              "No fabricated metrics; no skipped baseline; no checkpoint carry-over.",
+              "Reliability methods for bounded automated research workflows.",
+              "automated research evaluation",
+              "decision stability under finite evidence; uncertainty calibration under dependent tasks",
+              "whether adaptive evaluation already subsumes the proposed scope",
+              "Each candidate must declare one judge-independent primary metric.",
+              "Each candidate must declare a practically meaningful effect boundary.",
+              "Single workstation maximum; licensed public data only; fixed declared budgets.",
+              "Which unaddressed reliability failure can support a falsifiable local study?",
+              "Only candidates with licensed data and a bounded probe may be promoted.",
+              "Each candidate must name a strong comparator and controlled comparison dimension.",
+              "Permitted sources: licensed public data with a frozen split and independent units.",
+              "Each candidate must define its intervention, comparator, metric direction, and falsifier.",
+              "Two verified closest priors, a real probe, uncertainty, and an explicit kill decision are required.",
+              "No fabricated metrics; no single-source convergence; no outcome-driven gate changes.",
               "One bounded repair pass; rerun only failed conditions.",
               "research_memo",
-              "One tuned baseline; three alternatives; one result table; one limitations note.",
-              "Baseline fails; metrics missing; no defensible quantitative comparison.",
+              "One frozen candidate contract; one strong comparator; one bounded probe; one decision receipt.",
+              "No licensed data; no deterministic endpoint; no viable comparator; or the closest prior absorbs the claim.",
               "",
               "template.tex",
-              "hyperparameter_grids; extended_error_analysis",
-              "main_result_tables; best_vs_baseline_comparison",
+              "environment_manifest; extended_error_analysis",
+              "main_result_table; candidate_vs_reference_comparison",
               "Keep claims evidence-bounded.",
-              "Will the compact model produce enough signal?"
+              "Will any candidate survive both novelty and execution gates?"
             ],
             autoStartAnswer: "n"
           },
@@ -3467,12 +3593,18 @@ describe("TerminalApp pending natural plan execution", () => {
       await app.handleNewRun();
 
       const raw = await readFile(path.join(cwd, "Brief.md"), "utf8");
-      expect(raw).toContain("Instruction tuning recipe comparisons for compact open models.");
+      expect(raw).toContain("Reliability methods for bounded automated research workflows.");
+      expect(raw).toContain("## Research Mode\ntopic_discovery");
+      expect(raw).toContain("## Scientific Scope");
+      expect(raw).toContain("### Scientific Object\n- automated research evaluation");
+      expect(raw).toContain("generate five to seven candidate-owned contracts");
       expect(raw).toContain("template.tex");
       expect(raw).toContain("## Appendix Preferences");
       expect(app.logs).toContain(`Guided brief automation loaded from ${automationPath}.`);
       expect(app.logs).toContain("Guided brief automation selected language: en");
-      expect(app.logs).toContain("Guided brief step 21/21: Questions / risks (optional)");
+      expect(app.logs).toContain("Guided brief automation selected research mode: topic_discovery");
+      expect(app.logs).toContain("Guided brief step 1/25: Select research mode");
+      expect(app.logs).toContain("Guided brief step 25/25: Questions / risks (optional)");
       expect(app.logs).toContain("Guided brief draft written to Brief.md.");
       expect(app.logs).not.toContain("Starting research from latest brief...");
     } finally {
@@ -3599,8 +3731,8 @@ describe("TerminalApp pending natural plan execution", () => {
             responses_model: "gpt-5.4"
           },
           research: {
-            default_topic: "Multi-agent collaboration",
-            default_constraints: ["recent papers"],
+            default_topic: "configured research topic",
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "reproducibility"
           }
         } as any,
@@ -3626,7 +3758,7 @@ describe("TerminalApp pending natural plan execution", () => {
 
       const briefDir = path.join(cwd, ".autolabos", "briefs");
       await mkdir(briefDir, { recursive: true });
-      const briefPath = path.join(briefDir, "20260311-190000-agent-study.md");
+      const briefPath = path.join(briefDir, "20260311-190000-research-brief.md");
       await writeFile(
         briefPath,
         makeValidResearchBriefMarkdown(),
@@ -3641,7 +3773,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(run.title).toBe("Brief-driven run");
       expect(app.startRun).toHaveBeenCalledWith(run.id, undefined);
       const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"), "utf8");
-      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      expect(snapshot).toContain("Candidate evaluation on a public dataset");
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
       expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
       expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
@@ -3678,8 +3810,8 @@ describe("TerminalApp pending natural plan execution", () => {
             responses_model: "gpt-5.4"
           },
           research: {
-            default_topic: "Multi-agent collaboration",
-            default_constraints: ["recent papers"],
+            default_topic: "configured research topic",
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "reproducibility"
           }
         } as any,
@@ -3773,8 +3905,8 @@ describe("TerminalApp pending natural plan execution", () => {
             responses_model: "gpt-5.4"
           },
           research: {
-            default_topic: "Multi-agent collaboration",
-            default_constraints: ["recent papers"],
+            default_topic: "configured research topic",
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "reproducibility"
           }
         } as any,
@@ -3800,7 +3932,7 @@ describe("TerminalApp pending natural plan execution", () => {
 
       const briefDir = path.join(cwd, ".autolabos", "briefs");
       await mkdir(briefDir, { recursive: true });
-      const briefPath = path.join(briefDir, "20260311-190500-agent-study.md");
+      const briefPath = path.join(briefDir, "20260311-190500-research-brief.md");
       await writeFile(
         briefPath,
         makeValidResearchBriefMarkdown(),
@@ -3815,7 +3947,7 @@ describe("TerminalApp pending natural plan execution", () => {
       expect(run.title).toBe("Brief alias run");
       expect(app.startRun).toHaveBeenCalledWith(run.id, undefined);
       const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"), "utf8");
-      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      expect(snapshot).toContain("Candidate evaluation on a public dataset");
       const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
       expect(await runContext.get("run_brief.source_path")).toBe(await realpath(briefPath));
       expect(await runContext.get("run_brief.snapshot_path")).toBe(`.autolabos/runs/${run.id}/brief/source_brief.md`);
@@ -3888,8 +4020,8 @@ describe("TerminalApp pending natural plan execution", () => {
             responses_model: "gpt-5.4"
           },
           research: {
-            default_topic: "Multi-agent collaboration",
-            default_constraints: ["recent papers"],
+            default_topic: "configured research topic",
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "reproducibility"
           }
         } as any,
@@ -3924,7 +4056,7 @@ describe("TerminalApp pending natural plan execution", () => {
 
       const briefDir = path.join(cwd, ".autolabos", "briefs");
       await mkdir(briefDir, { recursive: true });
-      const briefPath = path.join(briefDir, "20260313-190000-agent-study.md");
+      const briefPath = path.join(briefDir, "20260313-190000-research-brief.md");
       await writeFile(
         briefPath,
         makeValidResearchBriefMarkdown(),
@@ -3956,7 +4088,7 @@ describe("TerminalApp pending natural plan execution", () => {
       );
       expect(app.activeRunId).toBe(run?.id);
       const snapshot = await readFile(path.join(cwd, ".autolabos", "runs", run!.id, "brief", "source_brief.md"), "utf8");
-      expect(snapshot).toContain("Multi-agent code repair on SWE-bench");
+      expect(snapshot).toContain("Candidate evaluation on a public dataset");
       expect(app.logs.some((line: string) => line.includes(`Created run ${run?.id}`))).toBe(true);
       expect(app.logs.some((line: string) => line.includes("Auto-starting research"))).toBe(true);
       const runContext = new RunContextMemory(path.join(cwd, run!.memoryRefs.runContextPath));
@@ -3990,7 +4122,7 @@ describe("TerminalApp pending natural plan execution", () => {
       const briefDir = path.join(cwd, ".autolabos", "briefs");
       await mkdir(briefDir, { recursive: true });
       await writeFile(
-        path.join(briefDir, "20260313-191500-agent-study.md"),
+        path.join(briefDir, "20260313-191500-research-brief.md"),
         makeValidResearchBriefMarkdown(),
         "utf8"
       );
@@ -4019,8 +4151,8 @@ describe("TerminalApp pending natural plan execution", () => {
             responses_model: "gpt-5.4"
           },
           research: {
-            default_topic: "Multi-agent collaboration",
-            default_constraints: ["recent papers"],
+            default_topic: "configured research topic",
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "reproducibility"
           }
         } as any,
@@ -4121,7 +4253,7 @@ describe("TerminalApp pending natural plan execution", () => {
         kind: "objective_metric_clarification",
         title: "Clarify the objective metric",
         question: "Which metric should count as the objective?",
-        context: ["Available metrics: accuracy, pass_at_1."],
+        context: ["Available metrics: primary_score, secondary_score."],
         inputMode: "free_text",
         resumeAction: "retry_current",
         createdAt: new Date().toISOString()
@@ -4140,7 +4272,7 @@ describe("TerminalApp pending natural plan execution", () => {
           },
           research: {
             default_topic: "topic",
-            default_constraints: ["recent papers"],
+            default_constraints: ["declared literature scope"],
             default_objective_metric: "metric"
           }
         } as any,

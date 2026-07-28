@@ -13,55 +13,55 @@ function fullBrief(): string {
     "# Research Brief",
     "",
     "## Topic",
-    "Efficient test-time reasoning for small language models under constrained inference budgets.",
+    "Controlled intervention comparison on a public evaluation collection under a bounded runtime.",
     "",
     "## Objective Metric",
-    "- Primary metric: GSM8K accuracy.",
-    "- Secondary metrics (if any): decoded tokens per answer, wall-clock latency.",
-    "- What counts as meaningful improvement: at least +2 accuracy points over greedy decoding without more than 2x latency.",
+    "- Primary metric: primary_score.",
+    "- Secondary metrics (if any): uncertainty interval, wall-clock runtime.",
+    "- What counts as meaningful improvement: at least 0.03 absolute improvement over the reference condition without more than 2x runtime.",
     "",
     "## Constraints",
     "- compute/time budget: keep the full experiment runnable on a single workstation in under 6 hours.",
-    "- dataset or environment limits: use public benchmarks with a reproducible split.",
+    "- dataset or environment limits: use a public evaluation collection with a reproducible split.",
     "- provider/tooling constraints: local Python runner only.",
     "- reproducibility constraints: persist scripts, configs, and result tables under outputs/ within the active workspace.",
     "- forbidden shortcuts: no fabricated metrics or workflow-only evidence.",
     "",
     "## Plan",
-    "1. collect related work on adaptive test-time reasoning 2. lock a greedy baseline 3. implement an adaptive reasoning condition 4. run both conditions on GSM8K 5. analyze accuracy, cost, and latency 6. draft only if evidence clears the gate.",
+    "1. collect related work on the intervention 2. lock a reference condition 3. implement one candidate condition 4. run matched comparisons 5. analyze primary_score, uncertainty, and runtime 6. draft only if evidence clears the gate.",
     "",
     "## Research Question",
-    "Can adaptive test-time reasoning improve GSM8K accuracy for a 3B-scale language model under a fixed inference budget compared with greedy decoding?",
+    "Can the candidate intervention improve primary_score under a fixed execution budget compared with the declared reference condition?",
     "",
     "## Why This Can Be Tested With A Small Real Experiment",
-    "- accessible dataset/task: GSM8K has a standard, public evaluation set.",
-    "- feasible implementation scope: both conditions can share the same model and differ only at inference time.",
-    "- feasible baseline: greedy decoding is already supported.",
+    "- accessible dataset/task: the evaluation collection is public and has a stable split.",
+    "- feasible implementation scope: both conditions share the same inputs and differ in one declared intervention.",
+    "- feasible baseline: the reference procedure is already supported.",
     "- realistic run budget: evaluate a bounded sample before scaling to the full split.",
-    "- expected signal size or decision rule: stop if accuracy gains vanish once token cost is normalized.",
+    "- expected signal size or decision rule: stop if the effect stays below the practical boundary after runtime normalization.",
     "",
     "## Baseline / Comparator",
-    "- baseline name: greedy decoding.",
-    "- why it is relevant: it is the simplest default inference policy for small language models.",
-    "- expected comparison dimension: answer accuracy versus inference cost.",
+    "- baseline name: reference_condition.",
+    "- why it is relevant: it is the simplest supported procedure without the candidate intervention.",
+    "- expected comparison dimension: primary_score versus execution cost.",
     "",
     "## Dataset / Task / Bench",
-    "- dataset(s): GSM8K.",
-    "- task type: grade-school math word problem solving.",
-    "- train/eval protocol: no training; compare inference-time conditions on a held-out evaluation set.",
+    "- dataset(s): public_evaluation_collection.",
+    "- task type: deterministic prediction over held-out records.",
+    "- train/eval protocol: compare matched conditions on a held-out evaluation set.",
     "- split or validation discipline: fixed evaluation subset first, then full evaluation if promising.",
     "- known limitations: one dataset is not enough for a paper-ready general claim.",
     "",
     "## Target Comparison",
-    "- proposed method or condition: adaptive gated reasoning.",
-    "- comparator or baseline: greedy decoding.",
-    "- comparison dimension: accuracy, token count, and latency.",
-    "- direction of expected improvement: higher accuracy at similar or moderately higher cost.",
+    "- proposed method or condition: candidate_condition.",
+    "- comparator or baseline: reference_condition.",
+    "- comparison dimension: primary_score, uncertainty, and runtime.",
+    "- direction of expected improvement: higher primary_score at similar or moderately higher cost.",
     "",
     "## Minimum Acceptable Evidence",
-    "- minimum effect size or decision boundary: at least +2 accuracy points or a clear cost-accuracy tradeoff win.",
+    "- minimum effect size or decision boundary: at least 0.03 absolute primary_score improvement or a clear score-cost tradeoff win.",
     "- minimum number of runs or folds: run the baseline and proposal on the same evaluation slice, then repeat on the full slice if promising.",
-    "- what counts as no signal vs weak signal: no signal if accuracy is flat; weak signal if gains vanish after accounting for token cost.",
+    "- what counts as no signal vs weak signal: no signal if primary_score is flat; weak signal if gains vanish after accounting for runtime.",
     "",
     "## Disallowed Shortcuts",
     "- Do not use workflow smoke artifacts as experimental evidence.",
@@ -70,17 +70,17 @@ function fullBrief(): string {
     "- Do not claim statistical significance without running the test.",
     "",
     "## Allowed Budgeted Passes",
-    "- permitted extra pass(es) within budget: one verifier pass for ambiguous answers.",
+    "- permitted extra pass(es) within budget: one adjudication pass for ambiguous records.",
     "- total budget guardrail: keep the full comparison within the stated workstation budget.",
     "",
     "## Paper Ceiling If Evidence Remains Weak",
     "Cap the output at research_memo if the comparator set or quantitative evidence remains too weak.",
     "",
     "## Minimum Experiment Plan",
-    "- one baseline run: greedy decoding on GSM8K.",
-    "- one proposed or alternative condition: adaptive gated reasoning on the same prompts.",
-    "- one result table: accuracy, latency, and token count by condition.",
-    "- one limitation note: single-model and single-dataset scope.",
+    "- one baseline run: reference_condition on the held-out records.",
+    "- one proposed or alternative condition: candidate_condition on the same records.",
+    "- one result table: primary_score, uncertainty, and runtime by condition.",
+    "- one limitation note: single-collection scope.",
     "- one claim->evidence mapping: link each conclusion to the result table or cited literature.",
     "",
     "## Paper-worthiness Gate",
@@ -108,7 +108,7 @@ function fullBrief(): string {
     "Keep the broad topic fixed while allowing the hypothesis to evolve.",
     "",
     "## Questions / Risks",
-    "- Will a simpler self-consistency baseline dominate the proposed policy?"
+    "- Will a simpler reference procedure dominate the candidate intervention?"
   ].join("\n");
 }
 
@@ -129,30 +129,30 @@ function partialBrief(): string {
     "# Research Brief",
     "",
     "## Topic",
-    "Adaptive inference policies for small language models.",
+    "Controlled intervention comparison on a public evaluation collection.",
     "",
     "## Objective Metric",
-    "- Primary metric: exact-match accuracy.",
-    "- What counts as meaningful improvement: +1 point over baseline.",
+    "- Primary metric: primary_score.",
+    "- What counts as meaningful improvement: +0.02 over the reference condition.",
     "",
     "## Constraints",
     "- compute/time budget: keep evaluation within one workstation session.",
     "",
     "## Plan",
-    "Compare a greedy baseline against one adaptive policy on a small public benchmark.",
+    "Compare a reference condition against one candidate condition on a small public collection.",
     "",
     "## Research Question",
-    "Can adaptive reasoning outperform greedy decoding under a fixed budget?",
+    "Can the candidate condition outperform the reference condition under a fixed budget?",
     "",
     "## Baseline / Comparator",
-    "- baseline name: greedy decoding.",
+    "- baseline name: reference_condition.",
     "",
     "## Dataset / Task / Bench",
-    "- dataset(s): GSM8K.",
+    "- dataset(s): public_evaluation_collection.",
     "",
     "## Target Comparison",
-    "- proposed method or condition: adaptive reasoning.",
-    "- comparator or baseline: greedy decoding.",
+    "- proposed method or condition: candidate_condition.",
+    "- comparator or baseline: reference_condition.",
     "",
     "## Minimum Acceptable Evidence",
     "- minimum effect size or decision boundary: +1 point.",
@@ -172,7 +172,7 @@ describe("validateResearchBriefDraftMarkdown", () => {
       "# Research Brief",
       "",
       "## Topic",
-      "Budget-aware test-time reasoning for small language models."
+    "A bounded comparison between a reference and candidate procedure."
     ].join("\n"));
     expect(result.errors).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
@@ -191,6 +191,66 @@ describe("validateResearchBriefMarkdown", () => {
     const result = validateResearchBriefMarkdown(fullBrief());
     expect(result.errors).toHaveLength(0);
     expect(result.warnings).toHaveLength(0);
+  });
+
+  it("rejects an explicitly unsupported research mode instead of silently changing modes", () => {
+    const brief = fullBrief().replace(
+      "## Topic",
+      "## Research Mode\nautomatic selection\n\n## Topic"
+    );
+
+    const result = validateResearchBriefMarkdown(brief);
+
+    expect(result.errors).toContain(
+      'Set "## Research Mode" to either "hypothesis_test" or "topic_discovery".'
+    );
+  });
+
+  it("blocks topic discovery when the explicit scientific scope is missing", () => {
+    const brief = fullBrief().replace(
+      "## Topic",
+      "## Research Mode\ntopic_discovery\n\n## Topic"
+    );
+
+    const result = validateResearchBriefMarkdown(brief);
+    const completeness = buildBriefCompletenessArtifact(brief);
+
+    expect(result.errors).toContain(
+      'Fill in the "## Scientific Scope" section before starting a topic-discovery run.'
+    );
+    expect(completeness.missing_sections).toContain("Scientific Scope");
+    expect(completeness.contract_ready).toBe(false);
+  });
+
+  it("accepts a role-valid explicit scientific scope for topic discovery", () => {
+    const brief = fullBrief().replace(
+      "## Topic",
+      [
+        "## Research Mode",
+        "topic_discovery",
+        "",
+        "## Scientific Scope",
+        "### Scientific Object",
+        "- configured evaluation decisions",
+        "",
+        "### Empirical Problems",
+        "- decision stability under finite evidence",
+        "- uncertainty calibration under dependent units",
+        "",
+        "### Prior-Work Probes",
+        "- whether adaptive evaluation already subsumes the question",
+        "",
+        "## Topic"
+      ].join("\n")
+    );
+
+    const result = validateResearchBriefMarkdown(brief);
+    const completeness = buildBriefCompletenessArtifact(brief);
+
+    expect(result.errors).toHaveLength(0);
+    expect(completeness.sections.scientificScope.substantive).toBe(true);
+    expect(completeness.missing_sections).not.toContain("Scientific Scope");
+    expect(completeness.contract_ready).toBe(true);
   });
 
   it("blocks a minimal brief that omits required paper-scale sections", () => {
@@ -238,13 +298,13 @@ describe("validateResearchBriefMarkdown", () => {
       "The task is public and the comparison is small.",
       "",
       "## Baseline Comparator",
-      "Greedy decoding versus one adaptive policy.",
+      "Reference condition versus one candidate condition.",
       "",
       "## Dataset / Task / Benchmark",
-      "GSM8K exact-match evaluation.",
+      "A public held-out evaluation collection.",
       "",
       "## Comparison",
-      "Proposal versus baseline on accuracy.",
+      "Candidate versus reference on primary_score.",
       "",
       "## Minimum Evidence",
       "One shared evaluation slice plus a quantitative threshold.",
@@ -277,11 +337,11 @@ describe("parseMarkdownRunBriefSections", () => {
   it("parses the full paper-scale section set", () => {
     const sections = parseMarkdownRunBriefSections(fullBrief());
     expect(sections).toBeDefined();
-    expect(sections!.researchQuestion).toContain("adaptive test-time reasoning");
-    expect(sections!.whySmallExperiment).toContain("GSM8K");
-    expect(sections!.baselineComparator).toContain("greedy decoding");
-    expect(sections!.datasetTaskBench).toContain("GSM8K");
-    expect(sections!.targetComparison).toContain("adaptive gated reasoning");
+    expect(sections!.researchQuestion).toContain("candidate intervention");
+    expect(sections!.whySmallExperiment).toContain("evaluation collection");
+    expect(sections!.baselineComparator).toContain("reference_condition");
+    expect(sections!.datasetTaskBench).toContain("public_evaluation_collection");
+    expect(sections!.targetComparison).toContain("candidate_condition");
     expect(sections!.minimumExperimentPlan).toContain("one baseline run");
     expect(sections!.paperWorthinessGate).toContain("quantitative comparison");
     expect(sections!.failureConditions).toContain("pipeline runs");

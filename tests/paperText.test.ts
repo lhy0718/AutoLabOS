@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   AnalysisCorpusRow,
+  buildFullPdfGroundingText,
+  buildSectionAwarePdfText,
   isLikelyVisualPdfThumbnail,
   resolvePaperTextSource,
   sanitizePdfText,
@@ -64,7 +66,7 @@ describe("paperText", () => {
       "run-1",
       "analysis_cache",
       "texts",
-      "paper-1.txt"
+      "paper-1.v2.txt"
     );
     await mkdir(path.dirname(textPath), { recursive: true });
     await writeFile(textPath, "Full text from cache", "utf8");
@@ -89,7 +91,7 @@ describe("paperText", () => {
       "run-1",
       "analysis_cache",
       "texts",
-      "paper-1.txt"
+      "paper-1.v2.txt"
     );
     const imageDir = path.join(
       ".autolabos",
@@ -210,6 +212,44 @@ describe("paperText", () => {
 
     expect(pages.length).toBeLessThanOrEqual(6);
     expect(pages).toEqual(expect.arrayContaining([1, 2, 10, 11, 19, 20]));
+  });
+
+  it("builds a bounded section-aware excerpt that preserves late results and limitations", () => {
+    const pageTexts = Array.from(
+      { length: 20 },
+      (_, index) => `Background filler for page ${index + 1}. ${"context ".repeat(180)}`
+    );
+    pageTexts[0] = `Title and abstract. ${"introduction ".repeat(180)}`;
+    pageTexts[4] = `Methods and experimental setup. ${"method detail ".repeat(180)}`;
+    pageTexts[11] = `Results with Table 4 and quantitative evaluation. ${"result detail ".repeat(180)}`;
+    pageTexts[18] = `Limitations: transfer across domains remains untested. ${"limitation detail ".repeat(180)}`;
+    pageTexts[19] = `References. ${"citation ".repeat(180)}`;
+
+    const excerpt = buildSectionAwarePdfText(pageTexts, 8_000);
+
+    expect(excerpt.length).toBeLessThanOrEqual(8_000);
+    expect(excerpt).toContain("[PAGE 1]");
+    expect(excerpt).toContain("Methods and experimental setup");
+    expect(excerpt).toContain("Results with Table 4");
+    expect(excerpt).toContain("Limitations: transfer across domains remains untested");
+    expect(excerpt).toContain("[SECTION-AWARE EXCERPT:");
+  });
+
+  it("keeps page-interior evidence in lossless grounding text when the prompt excerpt omits it", () => {
+    const exactMiddleSentence =
+      "Finally, the authors state that this assumption may not hold in practice.";
+    const pageText = [
+      "Opening context. ".repeat(160),
+      exactMiddleSentence,
+      "Closing context. ".repeat(160)
+    ].join(" ");
+
+    const excerpt = buildSectionAwarePdfText([pageText], 1_000);
+    const groundingText = buildFullPdfGroundingText([pageText]);
+
+    expect(excerpt).not.toContain(exactMiddleSentence);
+    expect(groundingText).toContain(exactMiddleSentence);
+    expect(groundingText).not.toContain("[PAGE EXCERPT]");
   });
 
   it("returns a single page when page count is unavailable", () => {

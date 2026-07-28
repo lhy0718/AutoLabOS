@@ -91,6 +91,7 @@ Always produce these sections:
 - Do not jump straight into editing before writing down the validation record.
 - Do not assume persisted state is correct just because the file exists.
 - Do not assume one working mode implies all modes work.
+- Before classifying a Web layout overlap, compare sibling `getBoundingClientRect()` edges and record `clientHeight`, `scrollHeight`, and computed `overflow`. A large `scrollHeight` or intrinsic grid-track size is expected inside a bounded scroll container and does not by itself prove overlap.
 - If the user explicitly asks you to test the behavior yourself, do not substitute deterministic smoke fixtures, fake providers, or replay-only evidence for that request. Use a real live flow when possible, or state the environment limitation plainly.
 - If a fresh reopen fixes the symptom, explicitly suspect in-memory projection, refresh wiring, resume handling, or session-local cache before blaming persistence.
 - Separate observations from hypotheses.

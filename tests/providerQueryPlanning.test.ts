@@ -4,6 +4,7 @@ import { buildSearchQueryPlan } from "../src/tools/paperSearchCommon.js";
 import { OpenAlexClient } from "../src/tools/openAlex.js";
 import { CrossrefClient } from "../src/tools/crossref.js";
 import { ArxivClient } from "../src/tools/arxiv.js";
+import { SemanticScholarClient } from "../src/tools/semanticScholar.js";
 
 describe("provider query planning", () => {
   afterEach(() => {
@@ -84,7 +85,7 @@ describe("provider query planning", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
     const firstUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
-    expect(firstUrl.searchParams.get("search")).toBe("agent collaboration benchmark");
+    expect(firstUrl.searchParams.get("search")).toBe('"agent collaboration" benchmark');
     expect(firstUrl.searchParams.get("per-page")).toBe("2");
     expect(firstUrl.searchParams.get("sort")).toBe("cited_by_count:desc");
     expect(firstUrl.searchParams.get("filter")).toContain("from_publication_date:2024-01-01");
@@ -98,16 +99,108 @@ describe("provider query planning", () => {
     expect(papers).toHaveLength(1);
     expect(papers[0]?.title).toBe("Agent collaboration benchmark");
     expect(client.getLastSearchDiagnostics()).toMatchObject({
-      query: 'agent collaboration benchmark OR orchestration benchmark',
+      query: '"agent collaboration" benchmark OR orchestration benchmark',
       originalQuery: '("agent collaboration" OR orchestration) +benchmark -survey',
       fetched: 1,
       attemptCount: 2,
       providerLimit: 50,
       queryTransformation: {
         strategy: "split_or_and_exclude_terms",
-        variants: ["agent collaboration benchmark", "orchestration benchmark"]
+        variants: ['"agent collaboration" benchmark', "orchestration benchmark"]
       }
     });
+  });
+
+  it("uses relevance search for topic discovery while preserving the phrase query for other providers", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: [
+          {
+            paperId: "paper-1",
+            title: "Document retrieval under calibration shift",
+            authors: []
+          }
+        ]
+      })
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new SemanticScholarClient({ perSecondLimit: 100, maxRetries: 1 });
+    const papers = await client.searchPapers({
+      query: '"document retrieval" calibration shift',
+      limit: 1,
+      retrievalIntent: "topic_discovery",
+      sort: { field: "relevance", order: "desc" }
+    });
+
+    expect(papers).toHaveLength(1);
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.pathname).toBe("/graph/v1/paper/search");
+    expect(url.searchParams.get("query")).toBe("document retrieval calibration shift");
+  });
+
+  it("compiles one topic family with provider-specific relevance semantics", async () => {
+    const fetchMock = vi.fn(async (input: URL | RequestInfo) => {
+      const url = new URL(String(input));
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          url.hostname.includes("semanticscholar")
+            ? { data: [] }
+            : url.hostname.includes("openalex")
+              ? { results: [] }
+              : { message: { items: [] } },
+        text: async () => '<?xml version="1.0" encoding="UTF-8"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const request = {
+      query: '"document retrieval evaluation" ranking stability',
+      limit: 1,
+      retrievalIntent: "topic_discovery" as const,
+      topicDiscoveryFamily: {
+        familyId: "ranking_stability",
+        sharedAnchorTerms: ["document", "retrieval", "evaluation"],
+        axisTerms: ["ranking", "stability"]
+      },
+      sort: { field: "relevance" as const, order: "desc" as const }
+    };
+
+    await new SemanticScholarClient({ perSecondLimit: 100, maxRetries: 1 }).searchPapers(request);
+    const openAlexClient = new OpenAlexClient();
+    await openAlexClient.searchPapers(request);
+    await new CrossrefClient().searchPapers(request);
+    await new ArxivClient().searchPapers(request);
+
+    const urls = fetchMock.mock.calls.map((call) => new URL(String(call[0])));
+    const semanticScholarUrl = urls.find((url) => url.hostname.includes("semanticscholar"));
+    const openAlexUrl = urls.find((url) => url.hostname.includes("openalex"));
+    const crossrefUrl = urls.find((url) => url.hostname.includes("crossref"));
+    const arxivUrl = urls.find((url) => url.hostname.includes("arxiv"));
+
+    expect(semanticScholarUrl?.searchParams.get("query")).toBe(
+      "document retrieval evaluation ranking stability"
+    );
+    expect(openAlexUrl?.searchParams.get("search")).toBe(
+      "document retrieval evaluation ranking stability"
+    );
+    expect(openAlexUrl?.searchParams.get("search")).not.toMatch(/\b(?:AND|OR)\b/u);
+    expect(openAlexClient.getLastSearchDiagnostics()).toMatchObject({
+      queryTransformation: {
+        transformed: "document retrieval evaluation ranking stability",
+        strategy: "topic_discovery_plain_relevance",
+        variants: ["document retrieval evaluation ranking stability"]
+      }
+    });
+    expect(crossrefUrl?.searchParams.get("query.bibliographic")).toBe(
+      "document retrieval evaluation ranking stability"
+    );
+    expect(arxivUrl?.searchParams.get("search_query")).toBe(
+      "((all:document AND all:retrieval) OR (all:document AND all:evaluation) OR (all:retrieval AND all:evaluation)) AND (all:ranking OR all:stability)"
+    );
   });
 
   it("pushes Crossref date, venue, and type filters into the request", async () => {

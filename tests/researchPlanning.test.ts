@@ -5,6 +5,7 @@ import {
   generateHypothesesFromEvidence
 } from "../src/core/analysis/researchPlanning.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { makeTopicProbeComputeBudgetDeclaration } from "./support/topicProbeComputeBudget.js";
 
 class QueueJsonLLMClient extends MockLLMClient {
   private index = 0;
@@ -81,6 +82,34 @@ class AbortAwareHangingLLMClient extends MockLLMClient {
   }
 }
 
+function topicMeasurementContract() {
+  return {
+    primary_metric: "primary_score",
+    metric_unit: "unitless",
+    metric_scale: "raw" as const,
+    metric_direction: "maximize" as const,
+    effect_criterion: {
+      basis: "delta_vs_reference" as const,
+      magnitude: 0.05,
+      scale: "raw" as const,
+      inclusive: true
+    },
+    meaningful_effect: "At least 0.05 over the declared comparator.",
+    measurement_signals: ["primary_score", "uncertainty_interval"],
+    measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+    gap_statement: "Prior evaluations omit an independently matched context.",
+    closest_prior_non_overlap: "The candidate measures a boundary absent from the linked prior work.",
+    reviewer_absorption_objection: "A reviewer may absorb the candidate into the strongest matched comparator.",
+    comparator: "Matched-budget comparator",
+    dataset_task_bench: "evaluation_fixture",
+    falsifier: "The prespecified interval includes the null margin.",
+    local_budget: makeTopicProbeComputeBudgetDeclaration(),
+    kill_signal: "Stop if the comparator cannot execute or the effect misses the prespecified floor.",
+    contribution_claim: "The comparison identifies a prespecified boundary absent from the closest priors.",
+    minimum_publishable_evidence: "Repeated comparisons with uncertainty intervals and failure analysis."
+  };
+}
+
 describe("researchPlanning helpers", () => {
   it("generates structured hypothesis candidates from LLM JSON", async () => {
     const llm = new QueueJsonLLMClient([
@@ -120,7 +149,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "This isolates communication structure as the intervention."
+            rationale: "This isolates communication structure as the intervention.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -137,7 +167,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 4,
             evidence_links: ["ev_2"],
             axis_ids: ["ax_2"],
-            rationale: "Task dependence should be exposed directly as a boundary condition."
+            rationale: "Task dependence should be exposed directly as a boundary condition.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -154,7 +185,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1", "ev_2"],
             axis_ids: ["ax_2"],
-            rationale: "The intervention is explicit and directly testable."
+            rationale: "The intervention is explicit and directly testable.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -168,8 +200,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
             measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -184,8 +216,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 3,
             falsifiability: 3,
             experimentability: 2,
-            reproducibility_specificity: 2,
-            reproducibility_signals: [],
+            measurement_specificity: 2,
+            measurement_signals: [],
             limitation_reflection: 2,
             measurement_readiness: 1,
             strengths: ["Interesting task boundary."],
@@ -199,8 +231,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["failure_mode_stability", "run_to_run_variance"],
             measurement_hint: "Measure failure-mode stability and repeated-run variance.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -216,7 +248,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "accuracy >= 0.9",
+      objectiveMetric: "primary_score >= 0.9",
       evidenceSeeds: [
         { evidence_id: "ev_1", claim: "Planning matters." },
         { evidence_id: "ev_2", claim: "Memory matters." }
@@ -233,8 +265,247 @@ describe("researchPlanning helpers", () => {
     expect(result.artifacts.llm_trace.drafts).toHaveLength(3);
     expect(result.artifacts.llm_trace.review?.completion).toContain("Selected the most falsifiable drafts.");
     expect(result.candidates).toHaveLength(2);
-    expect(result.selected.map((item) => item.id)).toEqual(["intervention_1", "mechanism_1"]);
-    expect(new Set(result.selected.map((item) => item.id)).size).toBe(result.selected.length);
+    expect(result.probe_candidates.map((item) => item.id)).toEqual(["intervention_1", "mechanism_1"]);
+    expect(new Set(result.probe_candidates.map((item) => item.id)).size).toBe(result.probe_candidates.length);
+  });
+
+  it.each([
+    "primary_metric",
+    "metric_unit",
+    "metric_scale",
+    "metric_direction",
+    "effect_criterion",
+    "measurement_signals",
+    "measurement_hint"
+  ] as const)("fails closed when a generated probe candidate omits %s", async (missingField) => {
+    const draft: Record<string, unknown> = {
+      id: "candidate_input",
+      text: "A bounded intervention changes the primary score relative to the declared comparator.",
+      novelty: 4,
+      feasibility: 4,
+      testability: 5,
+      cost: 2,
+      expected_gain: 4,
+      evidence_links: ["ev_1"],
+      axis_ids: ["axis_measurement"],
+      rationale: "The intervention and comparison are explicit.",
+      ...topicMeasurementContract()
+    };
+    const singlePassDraft = { ...draft };
+    const reviewRecord: Record<string, unknown> = {
+      candidate_id: "mechanism_1",
+      keep: true,
+      groundedness: 5,
+      causal_clarity: 5,
+      falsifiability: 5,
+      experimentability: 5,
+      measurement_specificity: 5,
+      measurement_signals: ["primary_score", "uncertainty_interval"],
+      measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+      limitation_reflection: 4,
+      measurement_readiness: 5,
+      strengths: ["The measurement contract is otherwise complete."],
+      weaknesses: ["One required field is deliberately absent."]
+    };
+    delete draft[missingField];
+    delete singlePassDraft[missingField];
+    if (missingField === "measurement_signals" || missingField === "measurement_hint") {
+      delete reviewRecord[missingField];
+    }
+
+    const llm = new QueueJsonLLMClient([
+      JSON.stringify({
+        summary: "Mapped one bounded measurement axis.",
+        axes: [{
+          id: "axis_measurement",
+          label: "Bounded comparison",
+          mechanism: "The intervention changes the declared outcome.",
+          intervention: "Compare the intervention with the declared comparator.",
+          evidence_links: ["ev_1"]
+        }]
+      }),
+      JSON.stringify({ summary: "Generated one mechanism draft.", candidates: [draft] }),
+      JSON.stringify({ summary: "No contradiction draft.", candidates: [] }),
+      JSON.stringify({ summary: "No additional intervention draft.", candidates: [] }),
+      JSON.stringify({ summary: "Reviewed the mechanism draft.", reviews: [reviewRecord] }),
+      JSON.stringify({ summary: "Retried the incomplete draft.", candidates: [singlePassDraft] })
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_score >= 0.50",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "A bounded comparison was reported." }],
+      branchCount: 2,
+      topK: 1
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.artifacts.pipeline).toBe("fallback");
+    expect(result.fallbackReason).toContain("no_probe_candidates");
+    expect(result.fallbackReason).toContain("No valid hypothesis candidates were returned");
+  });
+
+  it.each([
+    {
+      label: "omits evidence links",
+      draftEvidenceLinks: undefined,
+      expectedReason: "too_few_evidence_links:0<1"
+    },
+    {
+      label: "references an unknown evidence id",
+      draftEvidenceLinks: ["ev_unknown"],
+      expectedReason: "unresolved_evidence_links:ev_unknown"
+    }
+  ])("fails closed when a generated probe candidate $label", async ({ draftEvidenceLinks, expectedReason }) => {
+    const draft: Record<string, unknown> = {
+      id: "candidate_input",
+      text: "A bounded intervention changes the primary score relative to the declared comparator.",
+      novelty: 4,
+      feasibility: 4,
+      testability: 5,
+      cost: 2,
+      expected_gain: 4,
+      axis_ids: ["axis_measurement"],
+      rationale: "The intervention and comparison are explicit.",
+      ...topicMeasurementContract()
+    };
+    if (draftEvidenceLinks) {
+      draft.evidence_links = draftEvidenceLinks;
+    }
+
+    const llm = new QueueJsonLLMClient([
+      JSON.stringify({
+        summary: "Mapped one bounded measurement axis.",
+        axes: [{
+          id: "axis_measurement",
+          label: "Bounded comparison",
+          mechanism: "The intervention changes the declared outcome.",
+          intervention: "Compare the intervention with the declared comparator.",
+          evidence_links: ["ev_1"]
+        }]
+      }),
+      JSON.stringify({ summary: "Generated one mechanism draft.", candidates: [draft] }),
+      JSON.stringify({ summary: "No contradiction draft.", candidates: [] }),
+      JSON.stringify({ summary: "No additional intervention draft.", candidates: [] }),
+      JSON.stringify({
+        summary: "Reviewed the mechanism draft.",
+        reviews: [{
+          candidate_id: "mechanism_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          measurement_specificity: 5,
+          measurement_signals: ["primary_score", "uncertainty_interval"],
+          measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["The measurement contract is otherwise complete."],
+          weaknesses: ["The evidence provenance is deliberately invalid."]
+        }]
+      }),
+      JSON.stringify({ summary: "Retried the invalid draft.", candidates: [draft] })
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_score >= 0.50",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "A bounded comparison was reported." }],
+      branchCount: 2,
+      topK: 1
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.artifacts.pipeline).toBe("fallback");
+    expect(result.fallbackReason).toContain("no_probe_candidates");
+    expect(result.fallbackReason).toContain("No valid hypothesis candidates were returned");
+    expect(result.artifacts.hard_gate_rejections).toHaveLength(2);
+    expect(result.artifacts.hard_gate_rejections.map((item) => item.generation_path)).toEqual([
+      "staged",
+      "single_pass"
+    ]);
+    expect(
+      result.artifacts.hard_gate_rejections.every((item) => item.reasons.includes(expectedReason))
+    ).toBe(true);
+  });
+
+  it("fails closed when a topic-discovery candidate references an unknown evidence axis", async () => {
+    const draft = {
+      id: "candidate_input",
+      text: "A bounded intervention changes the primary score relative to the declared comparator.",
+      novelty: 4,
+      feasibility: 4,
+      testability: 5,
+      cost: 2,
+      expected_gain: 4,
+      evidence_links: ["ev_1"],
+      axis_ids: ["axis_unknown"],
+      rationale: "The intervention and comparison are explicit.",
+      ...topicMeasurementContract()
+    };
+    const llm = new QueueJsonLLMClient([
+      JSON.stringify({
+        summary: "Mapped one bounded measurement axis.",
+        axes: [{
+          id: "axis_measurement",
+          label: "Bounded comparison",
+          mechanism: "The intervention changes the declared outcome.",
+          intervention: "Compare the intervention with the declared comparator.",
+          evidence_links: ["ev_1"]
+        }]
+      }),
+      JSON.stringify({ summary: "Generated one mechanism draft.", candidates: [draft] }),
+      JSON.stringify({ summary: "No contradiction draft.", candidates: [] }),
+      JSON.stringify({ summary: "No additional intervention draft.", candidates: [] }),
+      JSON.stringify({
+        summary: "Reviewed the mechanism draft.",
+        reviews: [{
+          candidate_id: "mechanism_1",
+          keep: true,
+          groundedness: 5,
+          causal_clarity: 5,
+          falsifiability: 5,
+          experimentability: 5,
+          measurement_specificity: 5,
+          measurement_signals: ["primary_score", "uncertainty_interval"],
+          measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+          limitation_reflection: 4,
+          measurement_readiness: 5,
+          strengths: ["The measurement contract is otherwise complete."],
+          weaknesses: ["The evidence-axis provenance is deliberately invalid."]
+        }]
+      }),
+      JSON.stringify({ summary: "Retried the invalid draft.", candidates: [draft] })
+    ]);
+
+    const result = await generateHypothesesFromEvidence({
+      llm,
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_score >= 0.50",
+      evidenceSeeds: [{ evidence_id: "ev_1", claim: "A bounded comparison was reported." }],
+      branchCount: 2,
+      topK: 1,
+      governance: {
+        researchMode: "topic_discovery",
+        constraints: []
+      }
+    });
+
+    expect(result.source).toBe("fallback");
+    expect(result.artifacts.pipeline).toBe("fallback");
+    expect(result.artifacts.hard_gate_rejections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        generation_path: "staged",
+        candidate_id: "mechanism_1",
+        reasons: expect.arrayContaining(["unresolved_axis_ids:axis_unknown"])
+      })
+    ]));
   });
 
   it("falls back deterministically when hypothesis JSON is invalid", async () => {
@@ -244,7 +515,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "accuracy >= 0.9",
+      objectiveMetric: "primary_score >= 0.9",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
       branchCount: 4,
       topK: 2
@@ -252,7 +523,7 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("fallback");
     expect(result.candidates.length).toBeGreaterThanOrEqual(2);
-    expect(result.selected).toHaveLength(2);
+    expect(result.probe_candidates).toHaveLength(2);
     expect(result.artifacts.pipeline).toBe("fallback");
   });
 
@@ -266,7 +537,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "accuracy >= 0.9",
+      objectiveMetric: "primary_score >= 0.9",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
       branchCount: 4,
       topK: 2,
@@ -288,7 +559,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "accuracy >= 0.9",
+      objectiveMetric: "primary_score >= 0.9",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
       branchCount: 4,
       topK: 2,
@@ -316,7 +587,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "This isolates communication structure as the intervention."
+            rationale: "This isolates communication structure as the intervention.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -338,8 +610,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
             measurement_hint: "Measure run-to-run variance across repeated seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -355,7 +627,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "accuracy >= 0.9",
+      objectiveMetric: "primary_score >= 0.9",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Planning matters." }],
       branchCount: 4,
       topK: 1
@@ -364,8 +636,8 @@ describe("researchPlanning helpers", () => {
     expect(result.source).toBe("llm");
     expect(result.artifacts.pipeline).toBe("staged");
     expect(result.artifacts.evidence_axes).toHaveLength(1);
-    expect(result.selected).toHaveLength(1);
-    expect(result.selected[0]?.id).toBe("mechanism_1");
+    expect(result.probe_candidates).toHaveLength(1);
+    expect(result.probe_candidates[0]?.id).toBe("mechanism_1");
   });
 
   it("does not reselect review-rejected hypotheses when fewer than top-k survive review", async () => {
@@ -395,7 +667,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Directly tests structured handoff."
+            rationale: "Directly tests structured handoff.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -412,7 +685,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Combines several changes."
+            rationale: "Combines several changes.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -429,7 +703,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Covers multiple interventions at once."
+            rationale: "Covers multiple interventions at once.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -443,8 +718,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
             measurement_hint: "Measure variance over repeated seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -459,8 +734,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 3,
             falsifiability: 3,
             experimentability: 2,
-            reproducibility_specificity: 2,
-            reproducibility_signals: [],
+            measurement_specificity: 2,
+            measurement_signals: [],
             limitation_reflection: 2,
             measurement_readiness: 1,
             strengths: ["Ambitious."],
@@ -474,8 +749,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 3,
             falsifiability: 3,
             experimentability: 2,
-            reproducibility_specificity: 2,
-            reproducibility_signals: [],
+            measurement_specificity: 2,
+            measurement_signals: [],
             limitation_reflection: 2,
             measurement_readiness: 1,
             strengths: ["Potentially strong effect."],
@@ -490,15 +765,15 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Structured handoff reduces ambiguity." }],
       branchCount: 6,
       topK: 2
     });
 
     expect(result.artifacts.pipeline).toBe("staged");
-    expect(result.selected.map((item) => item.id)).toEqual(["mechanism_1"]);
-    expect(result.artifacts.selection.ranked_ids).toEqual(["mechanism_1"]);
+    expect(result.probe_candidates.map((item) => item.id)).toEqual(["mechanism_1"]);
+    expect(result.artifacts.probe_shortlist.ranked_candidate_ids).toEqual(["mechanism_1"]);
   });
 
   it("falls back to single-pass generation when staged review coverage is incomplete", async () => {
@@ -528,7 +803,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Directly testable."
+            rationale: "Directly testable.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -545,7 +821,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 4,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "A boundary-condition hypothesis."
+            rationale: "A boundary-condition hypothesis.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -562,7 +839,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Intervention-first hypothesis."
+            rationale: "Intervention-first hypothesis.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -576,14 +854,45 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
             measurement_hint: "Compare repeated seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
             strengths: ["Clear intervention."],
             weaknesses: ["Needs more task diversity."],
             critique_summary: "Keep."
+          },
+          {
+            candidate_id: "contradiction_1",
+            keep: false,
+            groundedness: 4,
+            causal_clarity: 4,
+            falsifiability: 4,
+            experimentability: 4,
+            measurement_specificity: 4,
+            measurement_signals: ["run_to_run_variance"],
+            measurement_hint: "Compare repeated seeded runs.",
+            limitation_reflection: 4,
+            measurement_readiness: 4,
+            strengths: ["The boundary condition is explicit."],
+            weaknesses: ["The contribution is absorbed by the comparator."],
+            critique_summary: "Reject."
+          },
+          {
+            candidate_id: "intervention_1",
+            groundedness: 5,
+            causal_clarity: 5,
+            falsifiability: 5,
+            experimentability: 5,
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
+            measurement_hint: "Compare repeated seeded runs.",
+            limitation_reflection: 5,
+            measurement_readiness: 5,
+            strengths: ["The intervention is executable."],
+            weaknesses: ["The required keep disposition is missing."],
+            critique_summary: "Malformed review."
           }
         ]
       }),
@@ -600,7 +909,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             rationale: "Recovered after incomplete staged review.",
-            reproducibility_signals: ["failure_mode_stability", "run_to_run_variance"],
+            ...topicMeasurementContract(),
+            measurement_signals: ["failure_mode_stability", "run_to_run_variance"],
             measurement_hint: "Measure failure-mode variance across repeated seeded runs.",
             boundary_condition: "Benefits may shrink when validators are unreliable."
           }
@@ -613,17 +923,51 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Execution feedback improves correction." }],
       branchCount: 6,
-      topK: 2
+      topK: 2,
+      governance: {
+        researchMode: "topic_discovery",
+        constraints: [
+          "Bound the probe and confirmatory stages with explicit aggregate compute ceilings."
+        ]
+      }
     });
 
     expect(result.source).toBe("llm");
     expect(result.artifacts.pipeline).toBe("single_pass");
-    expect(result.fallbackReason).toContain("incomplete_hypothesis_reviews:2");
-    expect(result.selected.map((item) => item.id)).toEqual(["single_pass_1"]);
+    expect(result.fallbackReason).toContain("incomplete_hypothesis_reviews:1");
+    expect(result.probe_candidates.map((item) => item.id)).toEqual(["single_pass_1"]);
+    const reviewPrompt = llm.prompts.find((prompt) =>
+      prompt.includes("Review the hypothesis drafts skeptically")
+    ) ?? "";
+    for (const field of [
+      "gap_statement=",
+      "closest_prior_non_overlap=",
+      "reviewer_absorption_objection=",
+      "comparator=",
+      "dataset_task_bench=",
+      "primary_metric=",
+      "metric_unit=",
+      "metric_scale=",
+      "metric_direction=",
+      "effect_criterion=",
+      "falsifier=",
+      "local_budget=",
+      "kill_signal=",
+      "contribution_claim=",
+      "minimum_publishable_evidence="
+    ]) {
+      expect(reviewPrompt).toContain(field);
+    }
     const singlePassPrompt = llm.prompts.at(-1) ?? "";
+    expect(singlePassPrompt).toContain(
+      "local_budget must be a JSON-encoded object with bounded_probe and confirmatory objects"
+    );
+    expect(singlePassPrompt).toContain(
+      "values must not exceed the research brief"
+    );
     expect((singlePassPrompt.match(/evidence_id=/g) ?? []).length).toBeLessThanOrEqual(6);
     expect(singlePassPrompt).not.toContain("paper_id=");
     expect(singlePassPrompt).not.toContain("confidence_reason=");
@@ -656,7 +1000,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       evidenceSeeds: Array.from({ length: 20 }, (_, index) => ({
         evidence_id: `ev_${index + 1}`,
         paper_id: `paper_${index + 1}`,
@@ -674,9 +1018,14 @@ describe("researchPlanning helpers", () => {
     });
 
     const axesPrompt = llm.prompts[0] ?? "";
+    const draftPrompt = llm.prompts.find((prompt) => prompt.includes('"candidates"')) ?? "";
     expect((axesPrompt.match(/evidence_id=/g) ?? []).length).toBeLessThanOrEqual(8);
     expect(axesPrompt).not.toContain("paper_id=");
     expect(axesPrompt).not.toContain("confidence_reason=");
+    expect(draftPrompt).toContain('"metric_unit"');
+    expect(draftPrompt).toContain('"metric_scale"');
+    expect(draftPrompt).toContain('"effect_criterion"');
+    expect(draftPrompt).toContain("meaningful_effect prose");
   });
 
   it("hard-gates weakly grounded hypotheses on evidence count, limitation handling, and measurement readiness", async () => {
@@ -719,7 +1068,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Grounded in a single schema paper."
+            rationale: "Grounded in a single schema paper.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -736,7 +1086,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 4,
             evidence_links: ["ev_2", "ev_3"],
             axis_ids: ["ax_2"],
-            rationale: "Boundary condition implied by the evidence."
+            rationale: "Boundary condition implied by the evidence.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -753,7 +1104,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1", "ev_2"],
             axis_ids: ["ax_1", "ax_2"],
-            rationale: "Both intervention and measurement are explicit."
+            rationale: "Both intervention and measurement are explicit.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -767,8 +1119,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance"],
             measurement_hint: "Measure repeated-run variance across seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -783,8 +1135,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 4,
             falsifiability: 4,
             experimentability: 4,
-            reproducibility_specificity: 4,
-            reproducibility_signals: ["failure_mode_stability"],
+            measurement_specificity: 4,
+            measurement_signals: ["failure_mode_stability"],
             limitation_reflection: 1,
             measurement_readiness: 1,
             strengths: ["Interesting boundary condition."],
@@ -798,8 +1150,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 5,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance", "failure_mode_stability"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance", "failure_mode_stability"],
             measurement_hint: "Track run-to-run variance and failure-mode stability across repeated seeded runs.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -815,7 +1167,7 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       evidenceSeeds: [
         { evidence_id: "ev_1", claim: "Structured handoff reduces ambiguity.", limitation_slot: "Effects shrink on deterministic APIs." },
         { evidence_id: "ev_2", claim: "Execution feedback improves correction.", limitation_slot: "Validator quality matters." },
@@ -827,8 +1179,8 @@ describe("researchPlanning helpers", () => {
 
     expect(result.artifacts.pipeline).toBe("staged");
     expect(result.candidates.map((item) => item.id)).toEqual(["intervention_1"]);
-    expect(result.selected.map((item) => item.id)).toEqual(["intervention_1"]);
-    expect(result.artifacts.selection.ranked_ids).toEqual(["intervention_1"]);
+    expect(result.probe_candidates.map((item) => item.id)).toEqual(["intervention_1"]);
+    expect(result.artifacts.probe_shortlist.ranked_candidate_ids).toEqual(["intervention_1"]);
   });
 
   it("prefers cleaner, more implementable hypotheses over broader bundled ones", async () => {
@@ -860,7 +1212,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "This is an inference-time intervention with a direct control."
+            rationale: "This is an inference-time intervention with a direct control.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -877,7 +1230,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 5,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "This is a broader but more ambitious training hypothesis."
+            rationale: "This is a broader but more ambitious training hypothesis.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -894,7 +1248,8 @@ describe("researchPlanning helpers", () => {
             expected_gain: 4,
             evidence_links: ["ev_1"],
             axis_ids: ["ax_1"],
-            rationale: "Concrete but less central than the state-handoff hypothesis."
+            rationale: "Concrete but less central than the state-handoff hypothesis.",
+            ...topicMeasurementContract()
           }
         ]
       }),
@@ -908,8 +1263,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 5,
             falsifiability: 5,
             experimentability: 4,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance", "state_agreement"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance", "state_agreement"],
             measurement_hint: "Run 20 seeds and compare trajectory variance and state disagreement.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -924,8 +1279,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 4,
             falsifiability: 5,
             experimentability: 3,
-            reproducibility_specificity: 5,
-            reproducibility_signals: ["run_to_run_variance", "checkpoint_stability"],
+            measurement_specificity: 5,
+            measurement_signals: ["run_to_run_variance", "checkpoint_stability"],
             measurement_hint:
               "Train each regime with multiple seeds, evaluate several checkpoints, and sweep interaction-data size across downstream tasks.",
             limitation_reflection: 4,
@@ -945,8 +1300,8 @@ describe("researchPlanning helpers", () => {
             causal_clarity: 4,
             falsifiability: 4,
             experimentability: 4,
-            reproducibility_specificity: 4,
-            reproducibility_signals: ["failure_mode_stability"],
+            measurement_specificity: 4,
+            measurement_signals: ["failure_mode_stability"],
             measurement_hint: "Repeat identical tasks across seeds and compare failure-mode frequencies.",
             limitation_reflection: 4,
             measurement_readiness: 5,
@@ -962,14 +1317,14 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       evidenceSeeds: [{ evidence_id: "ev_1", claim: "Structured handoff reduces ambiguity." }],
       branchCount: 6,
       topK: 1
     });
 
-    expect(result.selected.map((item) => item.id)).toEqual(["mechanism_1"]);
-    const broadCandidateScore = result.artifacts.selection.scores.find((item) => item.candidate_id === "contradiction_1");
+    expect(result.probe_candidates.map((item) => item.id)).toEqual(["mechanism_1"]);
+    const broadCandidateScore = result.artifacts.probe_shortlist.scores.find((item) => item.candidate_id === "contradiction_1");
     expect(broadCandidateScore?.implementation_bonus).toBeGreaterThan(0);
     expect(broadCandidateScore?.bundling_penalty).toBeGreaterThan(0);
     expect(broadCandidateScore?.scope_penalty).toBeGreaterThan(0);
@@ -1005,14 +1360,14 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       hypotheses: [
         {
           hypothesis_id: "h_1",
           text: "Typed message schemas will reduce run-to-run variance relative to free-form chat.",
-          reproducibility_specificity: 5,
-          reproducibility_signals: ["run_to_run_variance", "artifact_consistency"],
-          measurement_hint: "Measure pass@1 variance and artifact consistency across repeated runs."
+          measurement_specificity: 5,
+          measurement_signals: ["run_to_run_variance", "artifact_consistency"],
+          measurement_hint: "Measure primary-score uncertainty and artifact consistency across repeated runs."
         }
       ],
       constraintProfile: {
@@ -1028,9 +1383,9 @@ describe("researchPlanning helpers", () => {
       },
       objectiveProfile: {
         source: "heuristic_fallback",
-        raw: "state-of-the-art reproducibility",
-        primaryMetric: "reproducibility",
-        preferredMetricKeys: ["reproducibility", "reproducibility_score"],
+        raw: "primary_score",
+        primaryMetric: "primary_score",
+        preferredMetricKeys: ["primary_score"],
         analysisFocus: [],
         paperEmphasis: [],
         assumptions: []
@@ -1040,12 +1395,12 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("llm");
     expect(result.selected.id).toBe("plan_1");
-    expect(result.selected.metrics).toContain("reproducibility");
+    expect(result.selected.metrics).toContain("primary_score");
     expect(result.selected.metrics).toContain("latency");
     expect(result.selected.metrics).not.toContain("Primary metric: task success. Secondary metrics: runtime and memory.");
     expect(result.selected.metrics).toContain("run_to_run_variance");
-    expect(result.selected.metrics).toContain("artifact_consistency_rate");
-    expect(result.selected.baselines).toContain("free_form_chat_baseline");
+    expect(result.selected.metrics).toContain("artifact_consistency");
+    expect(result.selected.baselines).toEqual(["current_best_baseline"]);
     expect(result.selected.evaluation_steps.some((step) => step.includes("repeated runs"))).toBe(true);
     expect(result.selected.implementation_notes.some((step) => step.includes("Measurement"))).toBe(false);
     expect(result.selected.implementation_notes.some((step) => step.includes("Instrumentation should support"))).toBe(true);
@@ -1078,13 +1433,13 @@ describe("researchPlanning helpers", () => {
       llm,
       runTitle: "Multi-Agent Collaboration",
       runTopic: "Multi-Agent Collaboration",
-      objectiveMetric: "state-of-the-art reproducibility",
+      objectiveMetric: "primary_score",
       hypotheses: [
         {
           hypothesis_id: "h_1",
           text: "Typed message schemas will reduce run-to-run variance relative to free-form chat.",
-          reproducibility_specificity: 5,
-          reproducibility_signals: ["run_to_run_variance"],
+          measurement_specificity: 5,
+          measurement_signals: ["run_to_run_variance"],
           measurement_hint: "Measure run-to-run variance across repeated runs."
         }
       ],
@@ -1101,9 +1456,9 @@ describe("researchPlanning helpers", () => {
       },
       objectiveProfile: {
         source: "heuristic_fallback",
-        raw: "state-of-the-art reproducibility",
-        primaryMetric: "reproducibility",
-        preferredMetricKeys: ["reproducibility", "reproducibility_score"],
+        raw: "primary_score",
+        primaryMetric: "primary_score",
+        preferredMetricKeys: ["primary_score"],
         analysisFocus: [],
         paperEmphasis: [],
         assumptions: []
@@ -1113,22 +1468,22 @@ describe("researchPlanning helpers", () => {
 
     expect(result.selected.hypothesis_ids).toEqual(["h_1"]);
     expect(result.selected.metrics).toContain("run_to_run_variance");
-    expect(result.selected.baselines).toContain("free_form_chat_baseline");
+    expect(result.selected.baselines).toEqual(["current_best_baseline"]);
     expect(result.selected.evaluation_steps.some((step) => step.includes("repeated runs"))).toBe(true);
   });
 
   it("falls back deterministically when experiment design llm exceeds the timeout", async () => {
     const result = await designExperimentsFromHypotheses({
       llm: new HangingLLMClient(),
-      runTitle: "Budget-aware reasoning",
-      runTopic: "Budget-aware reasoning",
-      objectiveMetric: "accuracy_delta_vs_baseline",
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_outcome_delta",
       hypotheses: [
         {
           hypothesis_id: "h_1",
-          text: "Adaptive stopping improves budget-aware reasoning quality.",
-          reproducibility_signals: ["run_to_run_variance"],
-          measurement_hint: "Compare accuracy_delta_vs_baseline across repeated bounded runs."
+          text: "A bounded intervention improves the primary outcome.",
+          measurement_signals: ["run_to_run_variance"],
+          measurement_hint: "Compare primary_outcome_delta across repeated bounded runs."
         }
       ],
       constraintProfile: {
@@ -1144,9 +1499,9 @@ describe("researchPlanning helpers", () => {
       },
       objectiveProfile: {
         source: "heuristic_fallback",
-        raw: "accuracy_delta_vs_baseline",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        raw: "primary_outcome_delta",
+        primaryMetric: "primary_outcome_delta",
+        preferredMetricKeys: ["primary_outcome_delta"],
         analysisFocus: [],
         paperEmphasis: [],
         assumptions: []
@@ -1156,14 +1511,14 @@ describe("researchPlanning helpers", () => {
         previous_repeats: 1,
         registered_pilot_size: 200,
         registered_repeats: 5,
-        previous_primary_metric_name: "accuracy_delta_vs_baseline",
+        previous_primary_metric_name: "primary_outcome_delta",
         previous_primary_metric_value: -0.125,
-        previous_baseline_name: "fixed_cot_256",
+        previous_baseline_name: "reference_system",
         previous_objective_status: "not_met",
         transition_action: "backtrack_to_design",
         retry_directives: [
           "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable.",
-          "Revise the treatment or stopping policy because the previous accuracy_delta_vs_baseline did not improve over fixed_cot_256."
+          "Revise the intervention or stopping policy because the previous primary_outcome_delta did not improve over reference_system."
         ]
       },
       timeoutMs: 5
@@ -1171,10 +1526,10 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("fallback");
     expect(result.fallbackReason).toContain("experiment_design_timeout:5ms");
-    expect(result.selected.title).toContain("Condition-sweep factor under fixed execution budget");
-    expect(result.selected.single_change).toBe("Condition-sweep factor under fixed execution budget");
-    expect(result.selected.title).not.toContain("Adaptive stopping improves budget-aware reasoning quality");
-    expect(result.selected.plan_summary).toContain("did not improve accuracy_delta_vs_baseline");
+    expect(result.selected.title).toContain("Compare primary_outcome_delta across repeated bounded runs.");
+    expect(result.selected.single_change).toBe("Compare primary_outcome_delta across repeated bounded runs.");
+    expect(result.selected.title).not.toContain("A bounded intervention improves the primary outcome");
+    expect(result.selected.plan_summary).toContain("did not improve primary_outcome_delta");
     expect(result.selected.evaluation_steps).toContain(
       "Move the next bounded local branch materially closer to the registered pilot scope while keeping the run locally executable."
     );
@@ -1183,13 +1538,13 @@ describe("researchPlanning helpers", () => {
   it("keeps fallback experiment designs executable after implementation handoff failures", async () => {
     const result = await designExperimentsFromHypotheses({
       llm: new HangingLLMClient(),
-      runTitle: "Budget-aware reasoning",
-      runTopic: "Budget-aware reasoning",
-      objectiveMetric: "accuracy_delta_vs_baseline",
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_outcome_delta",
       hypotheses: [
         {
           hypothesis_id: "h_1",
-          text: "A compact condition sweep improves budget-aware reasoning quality.",
+          text: "A compact condition sweep improves the primary outcome.",
           measurement_hint: "Compare treatment and baseline across repeated bounded runs."
         }
       ],
@@ -1207,15 +1562,15 @@ describe("researchPlanning helpers", () => {
       },
       objectiveProfile: {
         source: "heuristic_fallback",
-        raw: "accuracy_delta_vs_baseline",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        raw: "primary_outcome_delta",
+        primaryMetric: "primary_outcome_delta",
+        preferredMetricKeys: ["primary_outcome_delta"],
         analysisFocus: [],
         paperEmphasis: [],
         assumptions: []
       },
       retryContext: {
-        previous_primary_metric_name: "accuracy_delta_vs_baseline",
+        previous_primary_metric_name: "primary_outcome_delta",
         previous_baseline_name: "locked_control",
         previous_objective_status: "not_met",
         implementation_failure: "Implementation execution failed before any runnable implementation was produced: terminated",
@@ -1229,7 +1584,7 @@ describe("researchPlanning helpers", () => {
 
     expect(result.source).toBe("fallback");
     expect(result.selected.datasets).toEqual(["configured_task_or_dataset"]);
-    expect(result.selected.baselines).toEqual(["locked_control", "locked_baseline", "unmodified_system_baseline"]);
+    expect(result.selected.baselines).toEqual(["locked_control"]);
     expect(result.selected.implementation_notes).toContain(
       "Repair the implementation contract before expanding scope: produce one runnable minimal branch, verify artifacts, then add repeated conditions."
     );
@@ -1244,13 +1599,13 @@ describe("researchPlanning helpers", () => {
 
     const result = await designExperimentsFromHypotheses({
       llm,
-      runTitle: "Budget-aware reasoning",
-      runTopic: "Budget-aware reasoning",
-      objectiveMetric: "accuracy_delta_vs_baseline",
+      runTitle: "Bounded comparative study",
+      runTopic: "Bounded comparative study",
+      objectiveMetric: "primary_outcome_delta",
       hypotheses: [
         {
           hypothesis_id: "h_1",
-          text: "Adaptive stopping improves budget-aware reasoning quality."
+          text: "A bounded intervention improves the primary outcome."
         }
       ],
       constraintProfile: {
@@ -1266,9 +1621,9 @@ describe("researchPlanning helpers", () => {
       },
       objectiveProfile: {
         source: "heuristic_fallback",
-        raw: "accuracy_delta_vs_baseline",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline"],
+        raw: "primary_outcome_delta",
+        primaryMetric: "primary_outcome_delta",
+        preferredMetricKeys: ["primary_outcome_delta"],
         analysisFocus: [],
         paperEmphasis: [],
         assumptions: []

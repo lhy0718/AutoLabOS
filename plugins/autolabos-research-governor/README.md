@@ -46,7 +46,8 @@ npm run plugin:sync-cache
 npm run plugin:release-check
 ```
 
-`npm run plugin:contract` prints the public artifact and intent contract.
+`npm run plugin:contract` prints the public artifact contract and separates
+executable CLI intents from workflow-native intents.
 `npm run plugin:dogfood` checks the plugin manifest, skill, marketplace entry,
 README, helper scripts, and package wiring as an untrusted artifact bundle.
 `npm run plugin:doctor` reports whether the installed Codex plugin cache is
@@ -64,7 +65,7 @@ contract, dogfood, strict doctor, pack, and public-surface hygiene checks.
 After changing plugin files, reinstall the plugin or restart the Codex thread so
 cached skill text cannot drift from the repo-local contract.
 
-## Executable Intents
+## Executable CLI Intents
 
 The bundled bridge delegates deterministic work to the installed AutoLabOS CLI:
 
@@ -84,7 +85,53 @@ The bridge emits a blocking `PluginDependencyReport`, not a research `GateReport
 It never substitutes a fabricated audit result. A blocked or downgraded research
 verdict is a valid governance outcome and is preserved through packaging.
 
-## Command Intents
+## Workflow-Native Topic Discovery
+
+`research:discover` is a workflow-native intent, not a CLI-backed command. It
+starts from a complete discovery-scoped `ResearchBrief` whose `Research Mode`
+is `topic_discovery`, then runs inside the first four nodes of the existing
+10-node reference workflow:
+
+`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments`
+
+- The brief declares broad search scope, resource limits, evidence floor, and
+  disallowed shortcuts. It does not require the user to preselect the final
+  topic, primary metric, metric direction, meaningful-effect boundary,
+  comparator, or dataset/task.
+- Brief-level metric, comparison, and dataset/task entries are candidate
+  selection rules or admissibility boundaries, not a final experiment contract.
+- `collect_papers` gathers literature within those declared boundaries.
+- `analyze_papers` emits `ResearchGapMap`, an evidence-linked literature gap
+  map whose entries retain their epistemic status.
+- `generate_hypotheses` emits `TopicPortfolio` with 5-7 candidates spanning at
+  least 3 distinct nonempty evidence-axis clusters.
+- Every candidate owns `primary_metric`, explicit `metric_unit` and
+  `metric_scale`, `metric_direction`, structured `effect_criterion`, comparator, dataset/task,
+  falsifier, kill signal, and local budget, plus closest-prior non-overlap, the
+  strongest-baseline absorption objection, and minimum publishable evidence.
+  Optional `meaningful_effect` prose may explain the boundary but cannot replace
+  the machine-readable criterion.
+- `design_experiments` validates the portfolio, emits `TopicProbeDecision`,
+  and selects exactly one candidate into `active_topic_probe_contract.json`.
+  The resulting `ActiveTopicProbeContract` binds the validated portfolio and
+  active candidate by SHA-256. Every other authorized candidate remains
+  explicitly `deferred`.
+- The active candidate's measurement contract is then frozen into
+  `ResultsPlanV2.primary_comparison_id` and
+  `ResultsPlanV2.primary_effect_criterion`. The latter binds the same
+  comparison to the raw metric, unit/scale semantics, direction, and
+  inclusive/exclusive threshold; a favorable but sub-threshold delta is not a
+  successful probe.
+
+Closed-chain probe authorization allows only a `bounded_probe` to enter the
+existing downstream workflow. Its outputs are screening evidence, not paper
+claim evidence. It is not topic selection, research completion, or paper
+readiness. A blocked authorization backtracks to
+`generate_hypotheses`; it does not add a top-level node. Do not invoke
+`research:discover` through `run-research-intent.mjs` or expose an
+`autolabos research discover` command.
+
+## Executable CLI Intent Contract
 
 - `research:new`: create or repair a governed research brief.
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
@@ -101,18 +148,36 @@ long-running objective. It rechecks declared artifact hashes and JSON
 assertions, groups unmet requirements by their owning workflow node, and exits
 nonzero until every required item passes.
 
-## Artifact Contract
+## Governance Artifact Contract
 
 - `ResearchBrief`
 - `EvidenceBundle`
 - `GateReport`
 - `ReviewReport`
-- `ModelReviewBundle`
 - `MetaHarnessPatchPlan`
 - `PaperReadinessBundle`
 
-Operational failures use a separate `PluginDependencyReport`. It is not a
-research artifact and cannot stand in for a `GateReport`.
+## Workflow Artifact Contract
+
+- `ResearchGapMap`: evidence-linked literature gaps emitted inside
+  `analyze_papers`, with explicit support and epistemic status.
+- `TopicPortfolio`: the bounded 5-7 candidate, 3-or-more-cluster portfolio
+  emitted inside `generate_hypotheses`, including each candidate's prior-work,
+  baseline-objection, measurement, comparator, dataset/task, budget, falsifier,
+  kill-signal, and evidence-floor contract.
+- `TopicProbeDecision`: the `design_experiments` decision bound to the
+  validated portfolio. Its maximum authority is closed-chain probe
+  authorization, never final topic selection or paper readiness.
+- `ActiveTopicProbeContract`: the `active_topic_probe_contract.json` handoff
+  that binds exactly one active candidate and its portfolio by SHA-256, records
+  all remaining authorized candidates as `deferred`, and marks execution as a
+  `bounded_probe` whose output is not paper claim evidence.
+
+## Sidecar And Operational Artifacts
+
+- `ModelReviewBundle` is the exact-gate-bound model-review sidecar.
+- `PluginDependencyReport` records operational dependency failures. It is not
+  a research artifact and cannot stand in for a `GateReport`.
 
 ## Model Review Authority
 

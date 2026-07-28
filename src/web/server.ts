@@ -1,4 +1,6 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import http, { IncomingMessage, ServerResponse } from "node:http";
+import { BlockList, isIP } from "node:net";
 import path from "node:path";
 import { promises as fs } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -15,20 +17,22 @@ import {
 } from "../integrations/openai/modelCatalog.js";
 import {
   DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL,
+  OllamaModelConfigurationError,
   buildOllamaChatModelChoices,
   buildOllamaResearchModelChoices,
   buildOllamaExperimentModelChoices,
-  buildOllamaVisionModelChoices
+  buildOllamaVisionModelChoices,
+  getMissingOllamaModelRoles
 } from "../integrations/ollama/modelCatalog.js";
+import { OllamaClient } from "../integrations/ollama/ollamaClient.js";
 import {
   DEFAULT_CODEX_CHAT_SETUP_MODEL,
   DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
   DEFAULT_PRIMARY_LLM_MODE,
+  ResearchRunInputError,
   getPdfAnalysisModeForConfig,
+  normalizeResearchRunInputs,
+  type ResearchRunInputs,
   ensureScaffold,
   hasOpenAiApiKey,
   resolveOpenAiApiKey,
@@ -43,6 +47,10 @@ import { readRepositoryKnowledgeIndex } from "../core/repositoryKnowledge.js";
 import { readEvalHarnessHistoryEntries } from "../core/evaluation/evalHarness.js";
 import { buildRunQueueSnapshot } from "../core/runs/jobQueue.js";
 import { buildRunJobsSnapshot } from "../core/runs/jobsProjection.js";
+import {
+  buildBriefCompletenessArtifact,
+  validateResearchBriefMarkdown
+} from "../core/runs/researchBriefFiles.js";
 import { buildExplorationStatusSnapshot } from "../core/exploration/status.js";
 import { bootstrapAutoLabOSRuntime, AutoLabOSRuntime } from "../runtime/createRuntime.js";
 import { detectExecutionProfile, executionProfileToDependencyMode } from "../runtime/executionProfile.js";
@@ -50,6 +58,7 @@ import { GraphNodeId, PendingPlan, RunJobsSnapshot, RunQueueSnapshot, RunRecord,
 import type { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 import { InteractionSession } from "../interaction/InteractionSession.js";
 import { listRunArtifacts, readRunArtifact } from "./artifacts.js";
+import { projectDoctorReadinessForApi } from "./doctorProjection.js";
 import {
   BootstrapResponse,
   ConfigSummary,
@@ -67,6 +76,13 @@ import {
 
 const PACKAGE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const WEB_DIST_DIR = path.join(PACKAGE_ROOT, "web", "dist");
+export const WEB_AUTH_SECRET_ENV = "AUTOLABOS_WEB_AUTH_SECRET";
+export const WEB_AUTH_USERNAME = "autolabos";
+const WEB_AUTH_MIN_SECRET_BYTES = 16;
+const WEB_AUTH_MAX_HEADER_BYTES = 8 * 1024;
+const LOOPBACK_ADDRESSES = new BlockList();
+LOOPBACK_ADDRESSES.addSubnet("127.0.0.0", 8, "ipv4");
+LOOPBACK_ADDRESSES.addAddress("::1", "ipv6");
 
 interface WebServerOptions {
   cwd?: string;
@@ -108,6 +124,192 @@ interface JsonBody {
   [key: string]: unknown;
 }
 
+export interface WebAuthenticationBoundary {
+  enabled: boolean;
+  isAuthorized(req: IncomingMessage): boolean;
+}
+
+type WebRequestHandler = (
+  req: IncomingMessage,
+  res: ServerResponse
+) => void | Promise<void>;
+
+export function isLoopbackWebHost(host: string): boolean {
+  const normalized = host.trim().replace(/^\[|\]$/gu, "").toLowerCase();
+  if (normalized === "localhost") {
+    return true;
+  }
+
+  const family = isIP(normalized);
+  return family === 4
+    ? LOOPBACK_ADDRESSES.check(normalized, "ipv4")
+    : family === 6
+      ? LOOPBACK_ADDRESSES.check(normalized, "ipv6")
+      : false;
+}
+
+export function resolveWebAuthentication(
+  host: string,
+  environment: NodeJS.ProcessEnv = process.env
+): WebAuthenticationBoundary {
+  const secret = environment[WEB_AUTH_SECRET_ENV];
+  const remoteBind = !isLoopbackWebHost(host);
+
+  if (!secret) {
+    if (remoteBind) {
+      throw new Error(
+        `Refusing to bind the AutoLabOS web UI to non-loopback host ${JSON.stringify(host)} without authentication. `
+        + `Set ${WEB_AUTH_SECRET_ENV} to a secret of at least ${WEB_AUTH_MIN_SECRET_BYTES} UTF-8 bytes, `
+        + `then sign in through the browser as ${WEB_AUTH_USERNAME}.`
+      );
+    }
+    return Object.freeze({
+      enabled: false,
+      isAuthorized: () => true
+    });
+  }
+
+  if (
+    Buffer.byteLength(secret, "utf8") < WEB_AUTH_MIN_SECRET_BYTES
+    || secret.trim().length === 0
+    || /[\u0000-\u001f\u007f]/u.test(secret)
+  ) {
+    throw new Error(
+      `${WEB_AUTH_SECRET_ENV} must contain at least ${WEB_AUTH_MIN_SECRET_BYTES} UTF-8 bytes `
+      + "and must not contain control characters."
+    );
+  }
+
+  return createEnabledWebAuthentication(createCredentialDigest(WEB_AUTH_USERNAME, secret));
+}
+
+export function createAuthenticatedWebRequestListener(
+  authentication: WebAuthenticationBoundary,
+  next: WebRequestHandler
+): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
+    if (!authentication.isAuthorized(req)) {
+      writeAuthenticationRequired(res);
+      return;
+    }
+    void next(req, res);
+  };
+}
+
+function createEnabledWebAuthentication(expectedDigest: Buffer): WebAuthenticationBoundary {
+  return Object.freeze({
+    enabled: true,
+    isAuthorized(req: IncomingMessage): boolean {
+      const credentials = parseBasicAuthorization(req.headers.authorization);
+      if (!credentials) {
+        return false;
+      }
+      const suppliedDigest = createCredentialDigest(credentials.username, credentials.password);
+      return timingSafeEqual(expectedDigest, suppliedDigest);
+    }
+  });
+}
+
+function parseBasicAuthorization(
+  authorization: string | undefined
+): { username: string; password: string } | undefined {
+  if (!authorization || Buffer.byteLength(authorization, "utf8") > WEB_AUTH_MAX_HEADER_BYTES) {
+    return undefined;
+  }
+  const match = /^Basic ([A-Za-z0-9+/]+={0,2})$/iu.exec(authorization);
+  const encoded = match?.[1];
+  if (!encoded) {
+    return undefined;
+  }
+
+  const decodedBytes = Buffer.from(encoded, "base64");
+  const canonical = decodedBytes.toString("base64").replace(/=+$/u, "");
+  if (canonical !== encoded.replace(/=+$/u, "")) {
+    return undefined;
+  }
+  const decoded = decodedBytes.toString("utf8");
+  const separator = decoded.indexOf(":");
+  if (separator < 1) {
+    return undefined;
+  }
+  return {
+    username: decoded.slice(0, separator),
+    password: decoded.slice(separator + 1)
+  };
+}
+
+function createCredentialDigest(username: string, password: string): Buffer {
+  return createHash("sha256")
+    .update(username, "utf8")
+    .update("\0", "utf8")
+    .update(password, "utf8")
+    .digest();
+}
+
+function writeAuthenticationRequired(res: ServerResponse): void {
+  res.setHeader("WWW-Authenticate", 'Basic realm="AutoLabOS", charset="UTF-8"');
+  jsonResponse(res, 401, { error: "Authentication required." });
+}
+
+function formatWebServerOrigin(host: string, port: number): string {
+  const normalizedHost = host.trim().replace(/^\[|\]$/gu, "");
+  const displayHost = isIP(normalizedHost) === 6 ? `[${normalizedHost}]` : normalizedHost;
+  return `http://${displayHost}:${port}`;
+}
+
+export interface WebResearchBriefStartGate {
+  requested: boolean;
+  canStart: boolean;
+  blocked: boolean;
+  effectiveAutoStart: boolean;
+  missingFields: string[];
+  validationErrors: string[];
+  validationWarnings: string[];
+}
+
+export function buildWebResearchBriefStartGate(
+  brief: string | undefined,
+  requestedAutoStart: boolean
+): WebResearchBriefStartGate {
+  const markdown = brief?.trim() || "";
+  const validation = validateResearchBriefMarkdown(markdown);
+  const completeness = buildBriefCompletenessArtifact(markdown);
+  const canStart = validation.errors.length === 0;
+  return {
+    requested: requestedAutoStart,
+    canStart,
+    blocked: requestedAutoStart && !canStart,
+    effectiveAutoStart: requestedAutoStart && canStart,
+    missingFields: completeness.missing_sections,
+    validationErrors: validation.errors,
+    validationWarnings: validation.warnings
+  };
+}
+
+export function buildWebDirectRunInputGate(
+  input: ResearchRunInputs,
+  requestedAutoStart: boolean
+): {
+  topic: string;
+  constraints: string[];
+  objectiveMetric: string;
+  startGate: WebResearchBriefStartGate;
+} {
+  const normalized = normalizeResearchRunInputs(input);
+  return {
+    ...normalized,
+    startGate: {
+      requested: requestedAutoStart,
+      canStart: true,
+      blocked: false,
+      effectiveAutoStart: requestedAutoStart,
+      missingFields: [],
+      validationErrors: [],
+      validationWarnings: []
+    }
+  };
+}
+
 export async function runAutoLabOSWebServer(opts?: WebServerOptions): Promise<void> {
   const controller = new AutoLabOSWebController(opts);
   await controller.start();
@@ -117,6 +319,7 @@ class AutoLabOSWebController {
   private readonly cwd: string;
   private readonly host: string;
   private readonly port: number;
+  private readonly authentication: WebAuthenticationBoundary;
   private readonly benchmarkCondition?: GovernanceBenchmarkConditionName;
   private readonly paths;
   private runtime?: AutoLabOSRuntime;
@@ -127,8 +330,11 @@ class AutoLabOSWebController {
 
   constructor(opts?: WebServerOptions) {
     this.cwd = opts?.cwd || process.cwd();
-    this.host = opts?.host || "127.0.0.1";
+    this.host = opts?.host?.trim() || "127.0.0.1";
     this.port = opts?.port || 4317;
+    this.authentication = resolveWebAuthentication(this.host);
+    // Do not propagate the web credential into runtime or experiment child processes.
+    delete process.env[WEB_AUTH_SECRET_ENV];
     this.benchmarkCondition = opts?.benchmarkCondition;
     this.paths = resolveAppPaths(this.cwd);
   }
@@ -143,9 +349,12 @@ class AutoLabOSWebController {
       await this.attachRuntime(bootstrap.runtime);
     }
 
-    const server = http.createServer((req, res) => {
-      void this.handleRequest(req, res);
-    });
+    const server = http.createServer(
+      createAuthenticatedWebRequestListener(
+        this.authentication,
+        (req, res) => this.handleRequest(req, res)
+      )
+    );
 
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
@@ -155,7 +364,13 @@ class AutoLabOSWebController {
       });
     });
 
-    process.stdout.write(`AutoLabOS web UI: http://${this.host}:${this.port}\n`);
+    process.stdout.write(`AutoLabOS web UI: ${formatWebServerOrigin(this.host, this.port)}\n`);
+    if (this.authentication.enabled) {
+      process.stdout.write(
+        `Web authentication: HTTP Basic (username: ${WEB_AUTH_USERNAME}; secret: ${WEB_AUTH_SECRET_ENV}). `
+        + "Use TLS or a trusted tunnel outside a trusted local network.\n"
+      );
+    }
     await new Promise<void>(() => undefined);
   }
 
@@ -196,6 +411,13 @@ class AutoLabOSWebController {
 
       if (pathname === "/api/bootstrap" && method === "GET") {
         return jsonResponse(res, 200, await this.buildBootstrapResponse());
+      }
+
+      if (pathname === "/api/ollama/models" && method === "GET") {
+        const baseUrl = url.searchParams.get("baseUrl")?.trim()
+          || this.runtime?.config.providers.ollama?.base_url
+          || DEFAULT_OLLAMA_BASE_URL;
+        return jsonResponse(res, 200, await discoverOllamaModels(baseUrl));
       }
 
       if (pathname === "/api/jobs" && method === "GET") {
@@ -242,6 +464,21 @@ class AutoLabOSWebController {
         }
         if (body.llmMode === "openai_api" && !openAiApiKey) {
           return jsonResponse(res, 400, { error: "openAiApiKey is required for the selected provider/mode." });
+        }
+        if (body.llmMode === "ollama") {
+          const missingRoles = getMissingOllamaModelRoles({
+            chat: body.ollamaChatModel,
+            research: body.ollamaResearchModel,
+            experiment: body.ollamaExperimentModel,
+            vision: body.ollamaVisionModel
+          });
+          if (missingRoles.length > 0) {
+            return jsonResponse(res, 400, {
+              error:
+                "Ollama model configuration is incomplete: " + missingRoles.join(", ") + ". "
+                + "Select installed models or enter model identifiers for every role."
+            });
+          }
         }
         if (
           (body.networkPolicy === "declared" || body.networkPolicy === "required")
@@ -324,19 +561,7 @@ class AutoLabOSWebController {
               status: getDoctorAggregateStatus({ checks: report.checks, harness: report.harness }),
               checks: report.checks.map((check) => mapDoctorCheckForApi(check)),
               harness: report.harness,
-              readiness: {
-                blocked: report.readiness.blocked,
-                approvalMode: report.readiness.approvalMode,
-                executionApprovalMode: report.readiness.executionApprovalMode,
-                dependencyMode: report.readiness.dependencyMode,
-                sessionMode: report.readiness.sessionMode,
-                networkPolicy: report.readiness.networkPolicy,
-                networkPurpose: report.readiness.networkPurpose,
-                networkDeclarationPresent: report.readiness.networkDeclarationPresent,
-                networkApprovalSatisfied: report.readiness.networkApprovalSatisfied,
-                warningChecks: report.readiness.warningChecks,
-                failedChecks: report.readiness.failedChecks
-              }
+              readiness: projectDoctorReadinessForApi(report.readiness)
             } satisfies DoctorResponse
           );
         }
@@ -370,19 +595,7 @@ class AutoLabOSWebController {
             status: getDoctorAggregateStatus({ checks: report.checks, harness: report.harness }),
             checks: report.checks.map((check) => mapDoctorCheckForApi(check)),
             harness: report.harness,
-            readiness: {
-              blocked: report.readiness.blocked,
-              approvalMode: report.readiness.approvalMode,
-              executionApprovalMode: report.readiness.executionApprovalMode,
-              dependencyMode: report.readiness.dependencyMode,
-              sessionMode: report.readiness.sessionMode,
-              networkPolicy: report.readiness.networkPolicy,
-              networkPurpose: report.readiness.networkPurpose,
-              networkDeclarationPresent: report.readiness.networkDeclarationPresent,
-              networkApprovalSatisfied: report.readiness.networkApprovalSatisfied,
-              warningChecks: report.readiness.warningChecks,
-              failedChecks: report.readiness.failedChecks
-            }
+            readiness: projectDoctorReadinessForApi(report.readiness)
           } satisfies DoctorResponse
         );
       }
@@ -414,38 +627,54 @@ class AutoLabOSWebController {
         }
         const body = (await readJsonBody(req)) as JsonBody;
         const brief = asTrimmedString(body.brief);
-        const autoStart = body.autoStart === true;
-        const topic = asTrimmedString(body.topic) || runtime.config.research.default_topic;
-        const objectiveMetric =
+        let topic = asTrimmedString(body.topic) || runtime.config.research.default_topic;
+        let objectiveMetric =
           asTrimmedString(body.objectiveMetric) || runtime.config.research.default_objective_metric;
-        const constraints = Array.isArray(body.constraints)
+        let constraints = Array.isArray(body.constraints)
           ? body.constraints.map((item) => String(item).trim()).filter(Boolean)
           : runtime.config.research.default_constraints;
+        const requestedAutoStart = body.autoStart === true;
+        let briefStartGate: WebResearchBriefStartGate;
+        if (brief) {
+          briefStartGate = buildWebResearchBriefStartGate(brief, requestedAutoStart);
+        } else {
+          const directInput = buildWebDirectRunInputGate(
+            { topic, constraints, objectiveMetric },
+            requestedAutoStart
+          );
+          topic = directInput.topic;
+          constraints = directInput.constraints;
+          objectiveMetric = directInput.objectiveMetric;
+          briefStartGate = directInput.startGate;
+        }
+        const autoStart = briefStartGate.effectiveAutoStart;
         const run = brief
           ? await session.createRunFromBrief({
               brief,
               topic,
               constraints,
               objectiveMetric,
-              autoStart
+              autoStart: false
             })
-          : autoStart
-            ? await session
-                .createRun({
-                  topic,
-                  constraints,
-                  objectiveMetric
-                })
-                .then((created) => session.startRun(created.id))
-            : await session.createRun({
-                topic,
-                constraints,
-                objectiveMetric
-              });
+          : await session.createRun({
+              topic,
+              constraints,
+              objectiveMetric
+            });
+        if (autoStart && !session.startRunInBackground(run.id)) {
+          return jsonResponse(res, 409, {
+            error: "Another session operation is already active; the run was created but not started.",
+            run,
+            session: session.snapshot(),
+            runs: session.runs(),
+            briefStartGate
+          });
+        }
         return jsonResponse(res, 200, {
           run,
           session: session.snapshot(),
-          runs: session.runs()
+          runs: session.runs(),
+          briefStartGate
         });
       }
 
@@ -537,8 +766,15 @@ class AutoLabOSWebController {
         }
         const runId = decodeURIComponent(actionMatch[1] || "");
         const action = decodeURIComponent(actionMatch[2] || "");
+        const activeRunId = session.getActiveRunId();
+        if (activeRunId !== runId) {
+          return jsonResponse(res, 409, {
+            error: "Activate the target run before applying a workflow action.",
+            activeRunId,
+            targetRunId: runId
+          });
+        }
         const body = (await readJsonBody(req)) as JsonBody;
-        await session.selectRun(runId);
         if (action === "run-node") {
           const node = asTrimmedString(body.node);
           if (!node) {
@@ -636,7 +872,10 @@ class AutoLabOSWebController {
       return this.serveStatic(pathname, res);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      jsonResponse(res, 500, { error: message });
+      const status = error instanceof ResearchRunInputError || error instanceof OllamaModelConfigurationError
+        ? 400
+        : 500;
+      jsonResponse(res, status, { error: message });
     }
   }
 
@@ -663,10 +902,9 @@ class AutoLabOSWebController {
       execution_profile: this.runtime?.executionProfile || (await detectExecutionProfile()),
       setupDefaults: {
         projectName: path.basename(this.cwd),
-        defaultTopic: config?.research.default_topic || "Multi-agent collaboration",
-        defaultConstraints: config?.research.default_constraints || ["recent papers", "last 5 years"],
-        defaultObjectiveMetric:
-          config?.research.default_objective_metric || "state-of-the-art reproducibility"
+        defaultTopic: config?.research.default_topic || "",
+        defaultConstraints: config?.research.default_constraints || [],
+        defaultObjectiveMetric: config?.research.default_objective_metric || ""
       },
       session: this.session?.snapshot() || emptySessionState(),
       runs,
@@ -754,6 +992,35 @@ class AutoLabOSWebController {
   }
 }
 
+export interface OllamaModelDiscoveryResult {
+  baseUrl: string;
+  reachable: boolean;
+  models: string[];
+  error?: string;
+}
+
+export async function discoverOllamaModels(
+  baseUrl: string,
+  createClient: (url: string) => Pick<OllamaClient, "listModels"> = (url) => new OllamaClient(url)
+): Promise<OllamaModelDiscoveryResult> {
+  const normalizedBaseUrl = baseUrl.trim() || DEFAULT_OLLAMA_BASE_URL;
+  try {
+    const models = (await createClient(normalizedBaseUrl).listModels()).map((model) => model.name);
+    return {
+      baseUrl: normalizedBaseUrl,
+      reachable: true,
+      models
+    };
+  } catch (error) {
+    return {
+      baseUrl: normalizedBaseUrl,
+      reachable: false,
+      models: [],
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+
 function buildSessionInputResponse(
   session: WebSessionState,
   activeRunId?: string
@@ -771,7 +1038,7 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
     config.providers.llm_mode === "openai_api"
       ? config.providers.openai.model
       : config.providers.llm_mode === "ollama"
-        ? config.providers.ollama?.research_model || config.providers.ollama?.chat_model || "ollama"
+        ? config.providers.ollama?.research_model || "(not configured)"
         : config.providers.codex.model;
   const researchBackendReasoning =
     config.providers.llm_mode === "openai_api"
@@ -791,13 +1058,13 @@ function summarizeConfig(config: AutoLabOSRuntime["config"]): ConfigSummary {
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.chat_model || config.providers.openai.model
         : config.providers.llm_mode === "ollama"
-          ? config.providers.ollama?.chat_model || "ollama"
+          ? config.providers.ollama?.chat_model || "(not configured)"
           : config.providers.codex.chat_model || config.providers.codex.model,
     experimentModel:
       config.providers.llm_mode === "openai_api"
         ? config.providers.openai.experiment_model || config.providers.openai.model
         : config.providers.llm_mode === "ollama"
-          ? config.providers.ollama?.experiment_model || config.providers.ollama?.research_model || "ollama"
+          ? config.providers.ollama?.experiment_model || "(not configured)"
           : config.providers.codex.experiment_model || config.providers.codex.model,
     researchBackendReasoning,
     chatReasoning:
@@ -830,9 +1097,9 @@ function buildConfigFormData(
 
   return {
     projectName: config?.project_name || path.basename(cwd),
-    defaultTopic: config?.research.default_topic || "Multi-agent collaboration",
-    defaultConstraints: (config?.research.default_constraints || ["recent papers", "last 5 years"]).join(", "),
-    defaultObjectiveMetric: config?.research.default_objective_metric || "state-of-the-art reproducibility",
+    defaultTopic: config?.research.default_topic || "",
+    defaultConstraints: (config?.research.default_constraints || []).join(", "),
+    defaultObjectiveMetric: config?.research.default_objective_metric || "",
     llmMode: config?.providers.llm_mode || DEFAULT_PRIMARY_LLM_MODE,
     codexChatModelChoice: getCurrentCodexModelSelectionValue(codexChatModel, config?.providers.codex.chat_fast_mode),
     codexChatReasoningEffort:
@@ -859,10 +1126,10 @@ function buildConfigFormData(
     openAiExperimentReasoningEffort:
       config?.providers.openai.experiment_reasoning_effort || config?.providers.openai.reasoning_effort || "medium",
     ollamaBaseUrl: config?.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL,
-    ollamaChatModel: config?.providers.ollama?.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
-    ollamaResearchModel: config?.providers.ollama?.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
-    ollamaExperimentModel: config?.providers.ollama?.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-    ollamaVisionModel: config?.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL,
+    ollamaChatModel: config?.providers.ollama?.chat_model || "",
+    ollamaResearchModel: config?.providers.ollama?.research_model || "",
+    ollamaExperimentModel: config?.providers.ollama?.experiment_model || "",
+    ollamaVisionModel: config?.providers.ollama?.vision_model || "",
     networkPolicy:
       config?.experiments.network_policy || "blocked",
     networkPurpose: config?.experiments.network_purpose || ""
@@ -886,10 +1153,10 @@ function buildConfigOptions(config?: AutoLabOSRuntime["config"]): WebConfigOptio
     codexReasoningByModel,
     openAiModels,
     openAiReasoningByModel,
-    ollamaChatModels: buildOllamaChatModelChoices(),
-    ollamaResearchModels: buildOllamaResearchModelChoices(),
-    ollamaExperimentModels: buildOllamaExperimentModelChoices(),
-    ollamaVisionModels: buildOllamaVisionModelChoices()
+    ollamaChatModels: buildOllamaChatModelChoices([], config?.providers.ollama?.chat_model),
+    ollamaResearchModels: buildOllamaResearchModelChoices([], config?.providers.ollama?.research_model),
+    ollamaExperimentModels: buildOllamaExperimentModelChoices([], config?.providers.ollama?.experiment_model),
+    ollamaVisionModels: buildOllamaVisionModelChoices([], config?.providers.ollama?.vision_model)
   };
 }
 

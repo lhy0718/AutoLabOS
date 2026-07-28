@@ -53,6 +53,7 @@ function makeRun(id: string): RunRecord {
   const now = new Date().toISOString();
   const graph = createDefaultGraphState();
   graph.currentNode = "write_paper";
+  graph.nodeStates.write_paper.status = "completed";
   return {
     version: 3,
     workflowVersion: 3,

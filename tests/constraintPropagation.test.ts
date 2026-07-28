@@ -6,6 +6,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import YAML from "yaml";
 
 import { createDesignExperimentsNode } from "../src/core/nodes/designExperiments.js";
+import {
+  RESEARCH_FUNNEL_SOURCE_ARTIFACT_PATHS,
+  buildResearchFunnelArtifactBinding,
+  buildResearchGapMap,
+  buildTopicPortfolio,
+  resolveSupportedGapIds
+} from "../src/core/researchFunnel.js";
+import type {
+  HypothesisCandidate,
+  HypothesisEvidenceAxis,
+  HypothesisEvidenceSeed,
+  HypothesisReview
+} from "../src/core/analysis/researchPlanning.js";
 import { EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT } from "../src/core/experimentGovernance.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { InMemoryEventStream } from "../src/core/events.js";
@@ -14,19 +27,23 @@ import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { buildPublicExperimentDir, buildPublicRunManifestPath } from "../src/core/publicArtifacts.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
+import { buildPassingPriorAbsorptionMatrixFixture } from "./support/priorAbsorptionFixture.js";
+import { makeTopicProbeComputeBudgetDeclaration } from "./support/topicProbeComputeBudget.js";
 
 const ORIGINAL_CWD = process.cwd();
 
 class CountingJsonLLMClient extends MockLLMClient {
   calls = 0;
+  readonly prompts: string[] = [];
   private index = 0;
 
   constructor(private readonly responses: string[]) {
     super();
   }
 
-  override async complete(_prompt: string): Promise<{ text: string }> {
+  override async complete(prompt: string): Promise<{ text: string }> {
     this.calls += 1;
+    this.prompts.push(prompt);
     const response = this.responses[Math.min(this.index, this.responses.length - 1)] ?? "";
     this.index += 1;
     return { text: response };
@@ -47,15 +64,15 @@ afterEach(() => {
   process.chdir(ORIGINAL_CWD);
 });
 
-function makeRun(root: string, runId: string): RunRecord {
-  return {
+function makeRun(_root: string, runId: string): RunRecord {
+  const run: RunRecord = {
     version: 3,
     workflowVersion: 3,
     id: runId,
     title: "Multi-Agent Collaboration",
     topic: "AI agent automation",
     constraints: ["last 5 years", "open access", "ACL style", "short paper", "formal tone"],
-    objectiveMetric: "state-of-the-art reproducibility",
+    objectiveMetric: "primary_score >= 0 unitless",
     status: "running",
     currentNode: "design_experiments",
     latestSummary: undefined,
@@ -69,6 +86,332 @@ function makeRun(root: string, runId: string): RunRecord {
       episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
     }
   };
+  return run;
+}
+
+async function seedProbeAuthorizationChain(
+  root: string,
+  run: RunRecord,
+  options: {
+    omitHypothesisPrimaryMetric?: boolean;
+    topicDiscoveryArtifacts?: boolean;
+  } = {}
+): Promise<void> {
+  const runDir = path.join(root, ".autolabos", "runs", run.id);
+  const hypothesesPath = path.join(runDir, "hypotheses.jsonl");
+  const sourceHypotheses = (await readFile(hypothesesPath, "utf8"))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  if (sourceHypotheses.length === 0) {
+    throw new Error("seedProbeAuthorizationChain requires at least one hypothesis record");
+  }
+  const evidence: HypothesisEvidenceSeed[] = [
+    {
+      evidence_id: "ev_method_a",
+      paper_id: "prior_method_a",
+      claim: "The evaluation reports a bounded comparison.",
+      limitation_slot: "The evaluation omits an independent comparison context.",
+      dataset_slot: "evaluation_fixture",
+      metric_slot: "primary_score",
+      method_slot: "The prior evaluates a bounded comparison protocol.",
+      result_slot: "The prior reports a measured primary outcome.",
+      evidence_span: "Exact full-text evidence for the first comparison prior.",
+      source_type: "full_text",
+      confidence: 0.9
+    },
+    {
+      evidence_id: "ev_method_b",
+      paper_id: "prior_method_b",
+      claim: "The evaluation reports repeated measurements.",
+      limitation_slot: "The evaluation omits an independent comparison context.",
+      dataset_slot: "evaluation_fixture",
+      metric_slot: "primary_score",
+      method_slot: "The prior evaluates repeated measurements.",
+      result_slot: "The prior reports repeated primary outcomes.",
+      evidence_span: "Exact full-text evidence for the repeated-measurement prior.",
+      source_type: "full_text",
+      confidence: 0.9
+    }
+  ];
+  const candidates: HypothesisCandidate[] = Array.from({ length: 5 }, (_, index) => {
+    const sourceHypothesis = sourceHypotheses[index];
+    const sourceStatement =
+      typeof sourceHypothesis?.text === "string" && sourceHypothesis.text.trim()
+        ? sourceHypothesis.text
+        : `A bounded intervention changes the primary outcome for route ${index + 1}.`;
+    return {
+      id: `probe_candidate_${index + 1}`,
+      text: sourceStatement,
+      novelty: 4,
+      feasibility: 4,
+      testability: 5,
+      cost: 2,
+      expected_gain: 3,
+      evidence_links: evidence.map((item) => item.evidence_id),
+      axis_ids: [`axis_${(index % 3) + 1}`],
+      gap_statement: "Existing evaluations omit an independent comparison context.",
+      closest_prior_non_overlap:
+        "The probe measures a prespecified boundary condition absent from the closest priors.",
+      reviewer_absorption_objection:
+        "A reviewer may absorb the intervention into the strongest matched comparator.",
+      comparator: "Matched-budget comparator",
+      dataset_task_bench: "evaluation_fixture",
+      primary_metric: "primary_score",
+      metric_unit: "unitless",
+      metric_scale: "raw",
+      metric_direction: "maximize",
+      effect_criterion: {
+        basis: "delta_vs_reference",
+        magnitude: 0.05,
+        scale: "raw",
+        inclusive: true
+      },
+      meaningful_effect: "At least 0.05 over the declared comparator.",
+      measurement_signals: ["primary_score", "uncertainty_interval"],
+      measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+      falsifier: "The prespecified interval includes the null margin.",
+      local_budget: makeTopicProbeComputeBudgetDeclaration(),
+      kill_signal: "Stop if the comparator cannot execute or the effect misses the prespecified floor.",
+      contribution_claim:
+        "The comparison identifies a prespecified boundary condition not tested by the closest priors.",
+      minimum_publishable_evidence:
+        "Repeated confirmatory comparisons with uncertainty intervals and a prespecified failure analysis."
+    };
+  });
+  const reviews: HypothesisReview[] = candidates.map((candidate) => ({
+    candidate_id: candidate.id,
+    keep: true,
+    groundedness: 4,
+    causal_clarity: 4,
+    falsifiability: 4,
+    experimentability: 4,
+    measurement_specificity: 4,
+    measurement_signals: ["repeated_campaign_variance"],
+    measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+    limitation_reflection: 4,
+    measurement_readiness: 4,
+    strengths: ["The bounded comparison is explicit."],
+    weaknesses: ["The claim is limited to controlled campaigns."]
+  }));
+  const gapMap = buildResearchGapMap({
+    evidence,
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    generatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  const drafts = candidates.map((candidate) => ({
+    ...candidate,
+    run_id: run.id,
+    research_cycle: run.graph.researchCycle,
+    supported_gap_ids: resolveSupportedGapIds(candidate.evidence_links, gapMap)
+  }));
+  const boundReviews = reviews.map((review) => ({
+    ...review,
+    run_id: run.id,
+    research_cycle: run.graph.researchCycle
+  }));
+  const normalizedHypotheses = sourceHypotheses.slice(0, candidates.length).map((hypothesis, index) => {
+    const candidate = candidates[index]!;
+    const candidateReview = reviews[index]!;
+    const sourceHasStructuredReview = [
+      hypothesis.groundedness,
+      hypothesis.causal_clarity,
+      hypothesis.falsifiability,
+      hypothesis.experimentability,
+      hypothesis.measurement_specificity,
+      hypothesis.limitation_reflection,
+      hypothesis.measurement_readiness
+    ].some((value) => typeof value === "number");
+    return {
+      ...hypothesis,
+      hypothesis_id:
+        typeof hypothesis.hypothesis_id === "string" && hypothesis.hypothesis_id.trim()
+          ? hypothesis.hypothesis_id
+          : `h_${index + 1}`,
+      candidate_id: candidate.id,
+      run_id: run.id,
+      research_cycle: run.graph.researchCycle,
+      supported_gap_ids: drafts[index]!.supported_gap_ids,
+      text:
+        typeof hypothesis.text === "string" && hypothesis.text.trim()
+          ? hypothesis.text
+          : candidate.text,
+      evidence_links: Array.isArray(hypothesis.evidence_links) ? hypothesis.evidence_links : candidate.evidence_links,
+      axis_ids: Array.isArray(hypothesis.axis_ids) ? hypothesis.axis_ids : candidate.axis_ids,
+      groundedness:
+        typeof hypothesis.groundedness === "number"
+          ? hypothesis.groundedness
+          : sourceHasStructuredReview ? undefined : candidateReview.groundedness,
+      causal_clarity:
+        typeof hypothesis.causal_clarity === "number"
+          ? hypothesis.causal_clarity
+          : sourceHasStructuredReview ? undefined : candidateReview.causal_clarity,
+      falsifiability:
+        typeof hypothesis.falsifiability === "number"
+          ? hypothesis.falsifiability
+          : sourceHasStructuredReview ? undefined : candidateReview.falsifiability,
+      experimentability:
+        typeof hypothesis.experimentability === "number"
+          ? hypothesis.experimentability
+          : sourceHasStructuredReview ? undefined : candidateReview.experimentability,
+      measurement_specificity:
+        typeof hypothesis.measurement_specificity === "number"
+          ? hypothesis.measurement_specificity
+          : sourceHasStructuredReview ? undefined : candidateReview.measurement_specificity,
+      measurement_signals: Array.isArray(hypothesis.measurement_signals)
+        ? hypothesis.measurement_signals
+        : candidate.measurement_signals,
+      measurement_hint:
+        typeof hypothesis.measurement_hint === "string"
+          ? hypothesis.measurement_hint
+          : sourceHasStructuredReview ? undefined : candidate.measurement_hint,
+      limitation_reflection:
+        typeof hypothesis.limitation_reflection === "number"
+          ? hypothesis.limitation_reflection
+          : sourceHasStructuredReview ? undefined : candidateReview.limitation_reflection,
+      measurement_readiness:
+        typeof hypothesis.measurement_readiness === "number"
+          ? hypothesis.measurement_readiness
+          : sourceHasStructuredReview ? undefined : candidateReview.measurement_readiness,
+      gap_statement: candidate.gap_statement,
+      closest_prior_non_overlap: candidate.closest_prior_non_overlap,
+      reviewer_absorption_objection: candidate.reviewer_absorption_objection,
+      comparator: candidate.comparator,
+      dataset_task_bench: candidate.dataset_task_bench,
+      primary_metric:
+        typeof hypothesis.primary_metric === "string" && hypothesis.primary_metric.trim()
+          ? hypothesis.primary_metric
+          : candidate.primary_metric,
+      metric_unit: candidate.metric_unit,
+      metric_scale: candidate.metric_scale,
+      metric_direction: candidate.metric_direction,
+      effect_criterion: candidate.effect_criterion,
+      meaningful_effect: candidate.meaningful_effect,
+      falsifier: candidate.falsifier,
+      local_budget: candidate.local_budget,
+      kill_signal: candidate.kill_signal,
+      contribution_claim: candidate.contribution_claim,
+      minimum_publishable_evidence: candidate.minimum_publishable_evidence
+    };
+  });
+  if (options.omitHypothesisPrimaryMetric) {
+    delete normalizedHypotheses[0]?.primary_metric;
+  }
+  if (options.topicDiscoveryArtifacts === false) {
+    await writeFixtureArtifact(
+      runDir,
+      "hypotheses.jsonl",
+      serializeJsonl(normalizedHypotheses)
+    );
+    return;
+  }
+  const evidenceAxes: HypothesisEvidenceAxis[] = Array.from({ length: 3 }, (_, index) => ({
+    id: `axis_${index + 1}`,
+    label: `Bounded comparison axis ${index + 1}`,
+    mechanism: `A prespecified comparison mechanism for route family ${index + 1}.`,
+    intervention: `Vary the bounded intervention for route family ${index + 1}.`,
+    boundary_condition: "The matched comparator and local compute budget remain fixed.",
+    evaluation_hint: "Measure the primary score with repeated matched runs.",
+    evidence_links: evidence.map((item) => item.evidence_id)
+  }));
+  const priorAbsorptionMatrix = buildPassingPriorAbsorptionMatrixFixture({
+    candidates: drafts,
+    evidence,
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    generatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  const probeCandidateIds = normalizedHypotheses.map((hypothesis) => hypothesis.candidate_id);
+  const preliminaryPortfolio = buildTopicPortfolio({
+    candidates: drafts,
+    reviews: boundReviews,
+    probeCandidateIds,
+    evidence,
+    evidenceAxes,
+    gapMap,
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    priorAbsorptionMatrix
+  });
+  const shortlist = {
+    run_id: run.id,
+    research_cycle: run.graph.researchCycle,
+    probe_candidate_ids: preliminaryPortfolio.probe_candidate_ids,
+    probe_topic_ids: preliminaryPortfolio.probe_topic_ids,
+    ranked_candidate_ids: candidates.map((candidate) => candidate.id),
+    scores: candidates.map((candidate) => ({ candidate_id: candidate.id }))
+  };
+  const gapMapRaw = JSON.stringify(gapMap, null, 2);
+  const evidenceAxesRaw = `${JSON.stringify(evidenceAxes, null, 2)}\n`;
+  const priorAbsorptionMatrixRaw = `${JSON.stringify(priorAbsorptionMatrix, null, 2)}\n`;
+  const hypothesesRaw = serializeJsonl(normalizedHypotheses);
+  const draftsRaw = serializeJsonl(drafts);
+  const reviewsRaw = serializeJsonl(boundReviews);
+  const shortlistRaw = JSON.stringify(shortlist, null, 2);
+  const sourceContents = {
+    "analysis/gap_map.json": gapMapRaw,
+    "hypothesis_generation/evidence_axes.json": evidenceAxesRaw,
+    "hypothesis_generation/prior_absorption_matrix.json": priorAbsorptionMatrixRaw,
+    "hypotheses.jsonl": hypothesesRaw,
+    "hypothesis_generation/drafts.jsonl": draftsRaw,
+    "hypothesis_generation/reviews.jsonl": reviewsRaw,
+    "hypothesis_generation/probe_shortlist.json": shortlistRaw
+  } as const;
+  const portfolio = buildTopicPortfolio({
+    candidates: drafts,
+    reviews: boundReviews,
+    probeCandidateIds,
+    evidence,
+    evidenceAxes,
+    gapMap,
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    generatedAt: "2026-01-01T00:00:00.000Z",
+    priorAbsorptionMatrix,
+    sourceArtifactBindings: RESEARCH_FUNNEL_SOURCE_ARTIFACT_PATHS.map((artifactPath) =>
+      buildResearchFunnelArtifactBinding(artifactPath, sourceContents[artifactPath])
+    )
+  });
+
+  await Promise.all([
+    writeFixtureArtifact(runDir, "analysis/gap_map.json", gapMapRaw),
+    writeFixtureArtifact(runDir, "hypothesis_generation/evidence_axes.json", evidenceAxesRaw),
+    writeFixtureArtifact(
+      runDir,
+      "hypothesis_generation/prior_absorption_matrix.json",
+      priorAbsorptionMatrixRaw
+    ),
+    writeFixtureArtifact(runDir, "hypotheses.jsonl", hypothesesRaw),
+    writeFixtureArtifact(runDir, "hypothesis_generation/drafts.jsonl", draftsRaw),
+    writeFixtureArtifact(runDir, "hypothesis_generation/reviews.jsonl", reviewsRaw),
+    writeFixtureArtifact(runDir, "hypothesis_generation/probe_shortlist.json", shortlistRaw),
+    writeFixtureArtifact(
+      runDir,
+      "hypothesis_generation/topic_portfolio.json",
+      JSON.stringify(portfolio, null, 2)
+    )
+  ]);
+}
+
+async function writeFixtureArtifact(runDir: string, relativePath: string, content: string): Promise<void> {
+  const artifactPath = path.join(runDir, relativePath);
+  await mkdir(path.dirname(artifactPath), { recursive: true });
+  await writeFile(artifactPath, content, "utf8");
+}
+
+function serializeJsonl(items: unknown[]): string {
+  return items.length > 0 ? `${items.map((item) => JSON.stringify(item)).join("\n")}\n` : "";
+}
+
+async function declareTopicDiscoveryMode(run: RunRecord): Promise<void> {
+  const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+  await runContext.put(
+    "run_brief.raw",
+    "# Research Brief\n\n## Research Mode\ntopic_discovery\n"
+  );
 }
 
 async function seedWritePaperInputs(runDir: string): Promise<void> {
@@ -83,8 +426,8 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
       summary: "Structured coordination improves reproducibility.",
       key_findings: ["Structured coordination improves reproducibility."],
       limitations: ["Benchmark coverage is limited."],
-      datasets: ["AgentBench-mini"],
-      metrics: ["reproducibility_score"],
+      datasets: ["evaluation_fixture"],
+      metrics: ["primary_score"],
       novelty: "Constraint-aware coordination",
       reproducibility_notes: ["Repeated runs are included."]
     })}\n`,
@@ -97,11 +440,11 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
       paper_id: "paper_1",
       claim: "Structured coordination improves reproducibility.",
       method_slot: "shared state schema",
-      result_slot: "higher reproducibility_score",
+      result_slot: "higher primary_score",
       limitation_slot: "limited benchmark coverage",
-      dataset_slot: "AgentBench-mini",
-      metric_slot: "reproducibility_score",
-      evidence_span: "Repeated runs improved reproducibility_score.",
+      dataset_slot: "evaluation_fixture",
+      metric_slot: "primary_score",
+      evidence_span: "Repeated runs improved primary_score.",
       source_type: "full_text",
       confidence: 0.9
     })}\n`,
@@ -144,6 +487,68 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
         overview: {
           objective_status: "observed",
           selected_design_title: "Constraint propagation benchmark"
+        },
+        results_table: [
+          {
+            metric: "primary_score",
+            baseline: 0.8,
+            comparator: 0.88,
+            delta: 0.08,
+            direction: "higher_better"
+          }
+        ],
+        primary_comparison_id: "comparison-primary-reference",
+        results_artifact: {
+          schema_version: "2.0",
+          metrics: [
+            {
+              id: "primary_score",
+              label: "Reproducibility score",
+              direction: "higher_better",
+              unit: "score"
+            }
+          ],
+          series: [
+            {
+              id: "series_primary",
+              label: "Configured subject",
+              role: "primary",
+              dimensions: {}
+            },
+            {
+              id: "series_reference",
+              label: "Declared reference",
+              role: "baseline",
+              dimensions: {}
+            }
+          ],
+          observations: [
+            {
+              id: "observation_primary",
+              series_id: "series_primary",
+              metric_id: "primary_score",
+              scope: {},
+              value: 0.88,
+              evidence_refs: ["result_payload:primary"]
+            },
+            {
+              id: "observation_reference",
+              series_id: "series_reference",
+              metric_id: "primary_score",
+              scope: {},
+              value: 0.8,
+              evidence_refs: ["result_payload:reference"]
+            }
+          ],
+          comparisons: [
+            {
+              id: "comparison-primary-reference",
+              subject_observation_id: "observation_primary",
+              reference_observation_id: "observation_reference",
+              delta: 0.08,
+              evidence_refs: ["result_payload:comparison"]
+            }
+          ]
         }
       },
       null,
@@ -154,6 +559,165 @@ async function seedWritePaperInputs(runDir: string): Promise<void> {
 }
 
 describe("constraint propagation", () => {
+  it("backtracks before design when probe authorization fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-topic-gate-"));
+    process.chdir(root);
+
+    const runId = "run-topic-gate";
+    const run = makeRun(root, runId);
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "hypothesis_generation"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    await declareTopicDiscoveryMode(run);
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "A bounded intervention changes the primary outcome." })}\n`,
+      "utf8"
+    );
+
+    const evidence: HypothesisEvidenceSeed[] = [
+      {
+        evidence_id: "ev_1",
+        paper_id: "paper_1",
+        claim: "A prior evaluation reports the primary outcome.",
+        limitation_slot: "The prior evaluation omits an independent comparator.",
+        dataset_slot: "evaluation_fixture",
+        metric_slot: "primary_score",
+        source_type: "full_text",
+        confidence: 0.9
+      },
+      {
+        evidence_id: "ev_2",
+        paper_id: "paper_2",
+        claim: "A second evaluation reports the primary outcome.",
+        limitation_slot: "The prior evaluation omits an independent comparator.",
+        dataset_slot: "evaluation_fixture",
+        metric_slot: "primary_score",
+        source_type: "full_text",
+        confidence: 0.9
+      }
+    ];
+    const candidates: HypothesisCandidate[] = Array.from({ length: 5 }, (_, index) => ({
+      id: `candidate_${index + 1}`,
+      text: `Candidate ${index + 1} changes the primary outcome.`,
+      novelty: 4,
+      feasibility: 4,
+      testability: 4,
+      cost: 2,
+      expected_gain: 3,
+      evidence_links: evidence.map((item) => item.evidence_id),
+      axis_ids: [`axis_${(index % 3) + 1}`],
+      gap_statement: "The prior evaluation omits an independent comparator.",
+      closest_prior_non_overlap: "The bounded methodology outcome is not measured by the closest comparators.",
+      reviewer_absorption_objection: "A reviewer may absorb this candidate into a standard holdout control.",
+      comparator: index === 0 ? undefined : "Matched-budget comparator",
+      dataset_task_bench: "evaluation_fixture",
+      primary_metric: "primary_score",
+      metric_unit: "unitless",
+      metric_scale: "raw",
+      metric_direction: "maximize",
+      effect_criterion: {
+        basis: "delta_vs_reference",
+        magnitude: 0.05,
+        scale: "raw",
+        inclusive: true
+      },
+      meaningful_effect: "At least 0.05 over the declared comparator.",
+      measurement_signals: ["primary_score", "uncertainty_interval"],
+      measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+      falsifier: "The prespecified interval includes the null margin.",
+      local_budget: makeTopicProbeComputeBudgetDeclaration(),
+      kill_signal: "Stop if the comparator cannot execute.",
+      contribution_claim:
+        "The comparison identifies a prespecified boundary condition not tested by the closest priors.",
+      minimum_publishable_evidence:
+        "Repeated confirmatory comparisons with uncertainty intervals and a prespecified failure analysis."
+    }));
+    const reviews: HypothesisReview[] = candidates.map((candidate) => ({
+      candidate_id: candidate.id,
+      keep: true,
+      groundedness: 4,
+      causal_clarity: 4,
+      falsifiability: 4,
+      experimentability: 4,
+      measurement_specificity: 4,
+      measurement_signals: ["repeated_run_variance"],
+      measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+      limitation_reflection: 4,
+      measurement_readiness: 4,
+      strengths: ["The comparison is bounded."],
+      weaknesses: ["The scope is narrow."]
+    }));
+    const evidenceAxes: HypothesisEvidenceAxis[] = Array.from({ length: 3 }, (_, index) => ({
+      id: `axis_${index + 1}`,
+      label: `Comparison axis ${index + 1}`,
+      mechanism: `A bounded comparison mechanism for route ${index + 1}.`,
+      intervention: `Vary the intervention for route ${index + 1}.`,
+      evidence_links: evidence.map((item) => item.evidence_id)
+    }));
+    const portfolio = buildTopicPortfolio({
+      candidates,
+      reviews,
+      probeCandidateIds: [candidates[0]!.id],
+      evidence,
+      evidenceAxes,
+      generatedAt: "2026-01-01T00:00:00.000Z",
+      sourceGapMapSha256: "a".repeat(64)
+    });
+    await writeFile(
+      path.join(runDir, "hypothesis_generation", "topic_portfolio.json"),
+      `${JSON.stringify(portfolio, null, 2)}\n`,
+      "utf8"
+    );
+
+    const llm = new CountingJsonLLMClient([]);
+    const eventStream = new InMemoryEventStream();
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status, JSON.stringify(result)).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.toolCallsUsed).toBe(0);
+    expect(llm.calls).toBe(0);
+    expect(result.summary).toContain("Probe authorization blocked experiment-design entry");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_hypotheses",
+      sourceNode: "design_experiments",
+      targetNode: "analyze_papers",
+      autoExecutable: true
+    });
+    const decision = JSON.parse(
+      await readFile(path.join(runDir, "design_experiments_panel", "topic_decision.json"), "utf8")
+    ) as {
+      disposition: string;
+      portfolio_content_sha256?: string;
+      reason_codes: string[];
+    };
+    expect(decision.disposition).toBe("backtrack_to_hypotheses");
+    expect(decision.portfolio_content_sha256).toBe(portfolio.content_sha256);
+    expect(decision.reason_codes).toContain("probe_candidate_contract_complete");
+    expect(decision.reason_codes).toContain("comparator_present");
+    await expect(readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")).rejects.toThrow();
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    expect(await memory.get("design_experiments.probe_authorization_status")).toBe("backtrack_to_hypotheses");
+    expect(await memory.get("design_experiments.probe_authorization_blocked")).toBe(true);
+  });
+
   it("writes run constraints into experiment_plan.yaml", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-constraints-"));
     process.chdir(root);
@@ -171,7 +735,6 @@ describe("constraint propagation", () => {
       ].join("\n") + "\n",
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: { experiments: { timeout_sec: 7200 } } as any,
       runStore: {} as any,
@@ -184,7 +747,7 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain('    - "last 5 years"');
     expect(plan).toContain("    last_years: 5");
@@ -196,9 +759,51 @@ describe("constraint propagation", () => {
 
     const comparisonContract = JSON.parse(
       await readFile(path.join(runDir, EXPERIMENT_GOVERNANCE_CONTRACT_ARTIFACT), "utf8")
-    ) as { budget_profile?: { timeout_sec?: number } };
+    ) as {
+      plan_id?: string;
+      baseline_candidate_ids?: string[];
+      budget_profile?: { timeout_sec?: number };
+    };
     expect(comparisonContract.budget_profile?.timeout_sec).toBe(7200);
 
+    const experimentContract = JSON.parse(
+      await readFile(path.join(runDir, "experiment_contract.json"), "utf8")
+    ) as {
+      version?: number;
+      results_plan?: {
+        required_metrics?: Array<{ id?: string; direction?: string; unit?: string }>;
+        required_series?: Array<{ id?: string; role?: string }>;
+        required_comparisons?: Array<{
+          id?: string;
+          subject_series_id?: string;
+          reference_series_id?: string;
+          metric_id?: string;
+        }>;
+        primary_comparison_id?: string;
+      };
+    };
+    expect(experimentContract.version).toBe(2);
+    expect(experimentContract.results_plan?.required_metrics?.[0]).toMatchObject({
+      direction: "higher_better"
+    });
+    expect(experimentContract.results_plan?.required_series).toEqual(
+      expect.arrayContaining([
+        { id: `${comparisonContract.plan_id}:primary`, role: "primary" },
+        { id: comparisonContract.baseline_candidate_ids?.[0], role: "baseline" }
+      ])
+    );
+    expect(experimentContract.results_plan?.required_comparisons?.[0]).toMatchObject({
+      subject_series_id: `${comparisonContract.plan_id}:primary`,
+      reference_series_id: comparisonContract.baseline_candidate_ids?.[0],
+      metric_id: experimentContract.results_plan?.required_metrics?.[0]?.id
+    });
+    expect(experimentContract.results_plan?.primary_comparison_id).toBe(
+      experimentContract.results_plan?.required_comparisons?.[0]?.id
+    );
+    expect(experimentContract.results_plan?.required_metrics?.[0]).toMatchObject({
+      id: "primary_score",
+      unit: "unitless"
+    });
     const publicPlanPath = path.join(buildPublicExperimentDir(root, run), "experiment_plan.yaml");
     expect(await readFile(publicPlanPath, "utf8")).toBe(plan);
 
@@ -219,7 +824,7 @@ describe("constraint propagation", () => {
     expect(manifest.sections?.experiment?.generated_files).toContain("experiment/experiment_plan.yaml");
   });
 
-  it("fails fast when no hypotheses artifact is available for design", async () => {
+  it("fails closed before design when no hypothesis chain is available", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-missing-hypotheses-"));
     process.chdir(root);
 
@@ -230,6 +835,7 @@ describe("constraint propagation", () => {
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
+    await declareTopicDiscoveryMode(run);
 
     const node = createDesignExperimentsNode({
       config: {} as any,
@@ -243,11 +849,57 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
-    expect(result.error).toContain("No valid hypotheses were found");
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.toolCallsUsed).toBe(0);
+    expect(result.summary).toContain("Probe authorization blocked experiment-design entry");
+    expect(result.summary).toContain("research_gap_map_missing");
     await expect(readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")).rejects.toThrow();
   });
 
+
+  it("fails closed before probe authorization when the objective metric contract is missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-results-plan-"));
+    process.chdir(root);
+
+    const runId = "run-design-results-plan";
+    const run = makeRun(root, runId);
+    run.constraints = [];
+    run.objectiveMetric = "";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    await declareTopicDiscoveryMode(run);
+    await writeFile(
+      path.join(runDir, "hypotheses.jsonl"),
+      `${JSON.stringify({ hypothesis_id: "h_1", text: "A bounded intervention changes the outcome." })}\n`,
+      "utf8"
+    );
+    await seedProbeAuthorizationChain(root, run, { omitHypothesisPrimaryMetric: true });
+
+    const node = createDesignExperimentsNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    expect(result.summary).toContain("Probe authorization blocked experiment-design entry");
+    expect(result.summary).toContain(
+      "research_funnel_hypothesis_contract_mismatch:probe_candidate_1:primary_metric"
+    );
+    await expect(readFile(path.join(runDir, "experiment_contract.json"), "utf8")).rejects.toThrow();
+  });
   it("writes YAML-safe experiment plans when llm text spans multiple lines", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-yaml-safe-"));
     process.chdir(root);
@@ -255,7 +907,7 @@ describe("constraint propagation", () => {
     const runId = "run-design-yaml-safe";
     const run = makeRun(root, runId);
     run.constraints = [];
-    run.objectiveMetric = "";
+    run.objectiveMetric = "quality_score >= 0 unitless";
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
     await writeFile(path.join(runDir, "memory", "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
@@ -264,7 +916,6 @@ describe("constraint propagation", () => {
       `${JSON.stringify({ hypothesis_id: "h_1", text: "A hypothesis with multiline plan output." })}\n`,
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -279,7 +930,8 @@ describe("constraint propagation", () => {
               hypothesis_ids: ["h_1"],
               plan_summary: "Summary line 1\nSummary line 2",
               datasets: ["Benchmark-A"],
-              metrics: ["accuracy"],
+              primary_metric: "quality_score",
+              metrics: ["quality_score"],
               baselines: ["baseline"],
               implementation_notes: ["Step 1\nStep 2"],
               evaluation_steps: ["Measure line 1\nMeasure line 2"],
@@ -297,7 +949,7 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     const parsed = YAML.parse(plan) as {
       selected_design?: { title?: string; summary?: string; implementation_notes?: string[]; evaluation_steps?: string[] };
@@ -315,7 +967,7 @@ describe("constraint propagation", () => {
     const runId = "run-design-threshold-normalization";
     const run = makeRun(root, runId);
     run.topic = "Classical machine learning baselines for tabular classification on small public datasets.";
-    run.objectiveMetric = "";
+    run.objectiveMetric = "primary_score_delta >= 0 unitless";
     run.constraints = [];
     const runDir = path.join(root, ".autolabos", "runs", runId);
     await mkdir(path.join(runDir, "memory"), { recursive: true });
@@ -324,11 +976,10 @@ describe("constraint propagation", () => {
       path.join(runDir, "hypotheses.jsonl"),
       `${JSON.stringify({
         hypothesis_id: "h_1",
-        text: "Strict fold-local nesting reduces macro-F1 variance without hurting lightweight CPU execution."
+        text: "Strict partition-local nesting reduces primary-score variance within the declared execution budget."
       })}\n`,
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -344,11 +995,12 @@ describe("constraint propagation", () => {
               plan_summary:
                 "Compare nested and non-nested pipelines while keeping runtime within a predefined practical threshold such as 25 percent.",
               datasets: ["adult sample"],
-              metrics: ["macro_f1_delta_vs_logreg", "runtime_seconds"],
-              baselines: ["logistic regression", "non-nested pipeline"],
+              primary_metric: "primary_score_delta",
+              metrics: ["primary_score_delta", "runtime_seconds"],
+              baselines: ["non-nested pipeline"],
               implementation_notes: ["Use compact sklearn-compatible datasets only."],
               evaluation_steps: [
-                "Declare support if macro-F1 improves without increasing runtime or memory by more than a predefined practical threshold such as 25 percent."
+                "Declare support if the primary score improves without increasing runtime or memory by more than a predefined practical threshold such as 25 percent."
               ],
               risks: [
                 "A practical threshold on runtime increase must be specified before analysis to avoid post hoc interpretation."
@@ -366,7 +1018,7 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("25% relative to the matched baseline");
     expect(plan).not.toContain("must be specified before analysis");
@@ -387,7 +1039,6 @@ describe("constraint propagation", () => {
       `${JSON.stringify({ hypothesis_id: "h_1", text: "Structured schemas improve reproducibility." })}\n`,
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -402,10 +1053,11 @@ describe("constraint propagation", () => {
               hypothesis_ids: ["h_1"],
               plan_summary: "Missing datasets makes this plan weak.",
               datasets: [],
-              metrics: ["reproducibility_score"],
+              primary_metric: "primary_score",
+              metrics: ["primary_score"],
               baselines: [],
               implementation_notes: ["Implement the structured schema arm."],
-              evaluation_steps: ["Measure reproducibility_score."],
+              evaluation_steps: ["Measure primary_score."],
               risks: ["Needs a concrete dataset."],
               resource_notes: ["Small execution limit."]
             },
@@ -414,11 +1066,12 @@ describe("constraint propagation", () => {
               title: "Balanced plan",
               hypothesis_ids: ["h_1"],
               plan_summary: "Compare structured schemas against a free-form baseline.",
-              datasets: ["AgentBench-mini"],
-              metrics: ["reproducibility_score"],
+              datasets: ["evaluation_fixture"],
+              primary_metric: "primary_score",
+              metrics: ["primary_score"],
               baselines: ["free_form_chat"],
               implementation_notes: ["Implement both schema and free-form coordination."],
-              evaluation_steps: ["Measure reproducibility_score across repeated runs."],
+              evaluation_steps: ["Measure primary_score across repeated runs."],
               risks: ["Small benchmark coverage."],
               resource_notes: ["Fits the managed execution limits."]
             }
@@ -471,7 +1124,6 @@ describe("constraint propagation", () => {
       `${JSON.stringify({ hypothesis_id: "h_1", text: "Structured schemas improve reproducibility." })}\n`,
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -486,10 +1138,11 @@ describe("constraint propagation", () => {
               hypothesis_ids: ["h_1"],
               plan_summary: "Usable except for the missing dataset.",
               datasets: [],
-              metrics: ["reproducibility_score"],
+              primary_metric: "primary_score",
+              metrics: ["primary_score"],
               baselines: [],
               implementation_notes: ["Implement the schema arm."],
-              evaluation_steps: ["Measure reproducibility_score."],
+              evaluation_steps: ["Measure primary_score."],
               risks: ["No dataset is wired yet."],
               resource_notes: ["Small execution limit."]
             },
@@ -499,6 +1152,7 @@ describe("constraint propagation", () => {
               hypothesis_ids: ["h_1"],
               plan_summary: "Too incomplete to execute cleanly.",
               datasets: [],
+              primary_metric: "primary_score",
               metrics: [],
               baselines: [],
               implementation_notes: [],
@@ -516,15 +1170,17 @@ describe("constraint propagation", () => {
     });
 
     const result = await node.execute({ run, graph: run.graph });
-    expect(result.status).toBe("failure");
-    expect(result.error).toContain("Experiment design panel blocked progression");
-    expect(result.error).toContain("all 2 candidate(s) were hard-blocked");
-    expect(result.error).toContain("Least-bad blocked plan");
-
-    const plan = YAML.parse(await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")) as {
-      selected_design?: { title?: string };
-    };
-    expect(plan.selected_design?.title).toBe("Least-bad blocked plan");
+    expect(result.status).toBe("success");
+    expect(result.needsApproval).toBe(true);
+    expect(result.summary).toContain("Experiment design panel blocked progression");
+    expect(result.summary).toContain("all 2 candidate(s) were hard-blocked");
+    expect(result.summary).toContain("Least-bad candidate");
+    expect(result.transitionRecommendation).toMatchObject({
+      action: "backtrack_to_hypotheses",
+      targetNode: "generate_hypotheses",
+      autoExecutable: true
+    });
+    await expect(readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")).rejects.toThrow();
 
     const selection = JSON.parse(
       await readFile(path.join(runDir, "design_experiments_panel", "selection.json"), "utf8")
@@ -561,9 +1217,9 @@ describe("constraint propagation", () => {
       path.join(runDir, "hypotheses.jsonl"),
       `${JSON.stringify({
         hypothesis_id: "h_1",
-        text: "Adaptive stopping improves budget-aware reasoning quality.",
-        reproducibility_signals: ["run_to_run_variance"],
-        measurement_hint: "Compare accuracy_delta_vs_baseline across repeated bounded runs."
+        text: "A bounded intervention changes the declared primary outcome.",
+        measurement_signals: ["primary_score", "uncertainty_interval"],
+        measurement_hint: "Compare the primary score with uncertainty across repeated matched runs."
       })}\n`,
       "utf8"
     );
@@ -579,14 +1235,14 @@ describe("constraint propagation", () => {
               registered_repeats: 5
             },
             primary_metric: {
-              name: "accuracy_delta_vs_baseline",
-              value: -1,
-              baseline_name: "fixed_cot_256"
+              name: "primary_score",
+              value: -0.05,
+              baseline_name: "Matched-budget comparator"
             }
           },
           plan_context: {
             selected_design: {
-              title: "Adaptive stopping budget frontier"
+              title: "Bounded comparison retry"
             }
           }
         },
@@ -603,7 +1259,7 @@ describe("constraint propagation", () => {
           targetNode: "design_experiments",
           reason: "Objective not met under the bounded local pilot.",
           evidence: [
-            "Objective metric not met: accuracy_delta_vs_baseline=-1.",
+            "Objective metric not met: primary_score=-0.05.",
             "Total recorded trials: 1."
           ]
         },
@@ -631,7 +1287,9 @@ describe("constraint propagation", () => {
       ),
       "utf8"
     );
-
+    await seedProbeAuthorizationChain(root, run, {
+      topicDiscoveryArtifacts: false
+    });
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -644,7 +1302,7 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const retryContext = JSON.parse(
       await readFile(path.join(runDir, "design_experiments_panel", "retry_context.json"), "utf8")
     ) as {
@@ -739,7 +1397,9 @@ describe("constraint propagation", () => {
       ),
       "utf8"
     );
-
+    await seedProbeAuthorizationChain(root, run, {
+      topicDiscoveryArtifacts: false
+    });
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -812,14 +1472,14 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("\\title{Constraint Propagation Benchmark: A Reproducibility Study of AI Agent Automation}");
+    expect(tex).toContain("\\title{Constraint Propagation Benchmark: An Empirical Study of AI Agent Automation}");
     expect(tex).not.toContain("\\title{Multi-Agent Collaboration}");
     expect(tex).not.toContain("\\section{Writing Constraints}");
     expect(tex).not.toContain("\\section{Results Overview}");
     const manuscript = await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8");
-    expect(manuscript).toContain('"title": "Constraint Propagation Benchmark: A Reproducibility Study of AI Agent Automation"');
+    expect(manuscript).toContain('"title": "Constraint Propagation Benchmark: An Empirical Study of AI Agent Automation"');
     expect(manuscript).toContain('"heading": "Introduction"');
     expect(manuscript).toContain("configured writing constraints");
     const traceability = await readFile(path.join(runDir, "paper", "traceability.json"), "utf8");
@@ -864,7 +1524,7 @@ describe("constraint propagation", () => {
     expect(inputValidation).toContain('"artifact": "result_analysis.json"');
   });
 
-  it("drops weak reproducibility hypotheses before experiment design", async () => {
+  it("drops weakly measured hypotheses before experiment design", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-design-filter-"));
     process.chdir(root);
 
@@ -878,14 +1538,14 @@ describe("constraint propagation", () => {
       [
         JSON.stringify({
           hypothesis_id: "h_1",
-          text: "Typed message schemas will reduce run-to-run variance relative to free-form chat.",
+          text: "A bounded intervention changes the primary outcome relative to the declared comparator.",
           groundedness: 5,
           causal_clarity: 5,
           falsifiability: 5,
           experimentability: 5,
-          reproducibility_specificity: 5,
-          reproducibility_signals: ["run_to_run_variance", "failure_mode_stability"],
-          measurement_hint: "Measure pass@1 variance and stable failure categories across repeated runs."
+          measurement_specificity: 5,
+          measurement_signals: ["primary_score", "uncertainty_interval"],
+          measurement_hint: "Estimate primary-score uncertainty across repeated matched runs."
         }),
         JSON.stringify({
           hypothesis_id: "h_2",
@@ -894,13 +1554,12 @@ describe("constraint propagation", () => {
           causal_clarity: 2,
           falsifiability: 1,
           experimentability: 2,
-          reproducibility_specificity: 1,
-          reproducibility_signals: []
+          measurement_specificity: 1,
+          measurement_signals: []
         })
       ].join("\n") + "\n",
       "utf8"
     );
-
     const node = createDesignExperimentsNode({
       config: {} as any,
       runStore: {} as any,
@@ -913,48 +1572,32 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, JSON.stringify(result)).toBe("success");
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain('  retained_count: 1');
     expect(plan).toContain('  dropped_count: 1');
     expect(plan).toContain('    text: "More agent discussion will improve results."');
-    expect(plan).toContain('    reason: "low groundedness; weak falsifiability; weak experimentability; reproducibility outcome is underspecified; no reproducibility signal; no reproducibility measurement hint; overall design quality below threshold"');
-    expect(plan).toContain('  - "Typed message schemas will reduce run-to-run variance relative to free-form chat."');
+    expect(plan).toContain('    reason: "low groundedness; weak falsifiability; weak experimentability; candidate outcome is underspecified; no measurement signal; no executable measurement hint; overall design quality below threshold"');
+    expect(plan).toContain('  - "A bounded intervention changes the primary outcome relative to the declared comparator."');
     expect(plan).not.toContain('  - "More agent discussion will improve results."');
-    expect(plan).toContain("  executable_design:");
-    expect(plan).toContain('    runner: "managed_real_execution_bundle"');
-    expect(plan).toContain("      total_trials: 48");
-    expect(plan).toContain('      - "reproducibility_score"');
-    expect(plan).toContain('      - "Prompt phrasing / coordination-style variation via neutral vs compressed collaboration instructions."');
-    expect(plan).toContain("  confirmatory_extension:");
-    expect(plan).toContain("        total_trials: 72");
+    expect(plan).toContain("  datasets:");
+    expect(plan).toContain("  metrics:");
+    expect(plan).toContain("  baselines:");
+    expect(plan).not.toContain("executable_design:");
     const portfolio = JSON.parse(await readFile(path.join(runDir, "experiment_portfolio.json"), "utf8")) as {
       execution_model: string;
       total_expected_trials?: number;
-      trial_groups: Array<{ id: string; profile?: string; expected_trials?: number; group_kind?: string }>;
+      trial_groups: Array<{ id: string; role?: string; dataset_scope?: string[] }>;
     };
-    expect(portfolio.execution_model).toBe("managed_bundle");
-    expect(portfolio.total_expected_trials).toBe(126);
-    expect(portfolio.trial_groups).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "primary_standard", profile: "standard", expected_trials: 48 }),
-      expect.objectContaining({ id: "quick_check", profile: "quick_check", expected_trials: 6 }),
-      expect.objectContaining({ id: "confirmatory", profile: "confirmatory", expected_trials: 72 }),
+    expect(portfolio.execution_model).toBe("single_run");
+    expect(portfolio.total_expected_trials).toBeUndefined();
+    expect(portfolio.trial_groups).toEqual([
       expect.objectContaining({
-        id: "primary_standard__hotpotqa_mini",
-        group_kind: "matrix_slice",
-        expected_trials: 16
-      }),
-      expect.objectContaining({
-        id: "quick_check__gsm8k_mini",
-        group_kind: "matrix_slice",
-        expected_trials: 2
-      }),
-      expect.objectContaining({
-        id: "confirmatory__humaneval_mini",
-        group_kind: "matrix_slice",
-        expected_trials: 24
+        id: "primary",
+        role: "primary",
+        dataset_scope: ["configured_task_or_dataset"]
       })
-    ]));
+    ]);
     const publicManifest = JSON.parse(await readFile(buildPublicRunManifestPath(root, run), "utf8")) as {
       sections?: { experiment?: { generated_files?: string[] } };
     };
@@ -1007,7 +1650,7 @@ describe("constraint propagation", () => {
             hypothesis_ids: ["h_1"],
             plan_summary: "Test robustness-oriented recovery strategies against a baseline.",
             datasets: ["Computer Science"],
-            metrics: ["state-of-the-art reproducibility"],
+            metrics: ["primary_score"],
             baselines: ["current_best_baseline"],
             implementation_notes: ["Keep browser task instrumentation explicit."],
             evaluation_steps: ["Measure recovery after tool or browser failures."],
@@ -1018,8 +1661,10 @@ describe("constraint propagation", () => {
         selected_id: "plan_1"
       }),
       JSON.stringify({
-        primaryMetric: "state-of-the-art reproducibility",
-        preferredMetricKeys: ["state-of-the-art reproducibility"],
+        primaryMetric: "primary_score",
+        preferredMetricKeys: ["primary_score"],
+        unit: "unitless",
+        scale: "raw",
         analysisFocus: ["Robustness and recovery"],
         paperEmphasis: ["Reproducibility improvements"],
         assumptions: ["Compare against the strongest available baseline."]
@@ -1137,8 +1782,12 @@ describe("constraint propagation", () => {
     const writeResult = await writeNode.execute({ run, graph: run.graph });
 
     expect(designResult.status).toBe("success");
-    expect(writeResult.status).toBe("success");
-    expect(llm.calls).toBe(10);
+    expect(writeResult.status, JSON.stringify(writeResult)).toBe("success");
+    expect(
+      llm.prompts.filter((prompt) =>
+        prompt.includes("Return one JSON object with this shape:") && prompt.includes("Raw constraints:")
+      )
+    ).toHaveLength(1);
 
     const plan = await readFile(path.join(runDir, "experiment_plan.yaml"), "utf8");
     expect(plan).toContain("last_years: 7");
@@ -1148,8 +1797,9 @@ describe("constraint propagation", () => {
     expect(plan).toContain('length_hint: "10-12 pages"');
     expect(plan).toContain('    - "Prefer robustness-oriented ablations."');
     expect(plan).toContain('    - "Measure recovery after tool or browser failures."');
-    expect(plan).toContain("  executable_design:");
-    expect(plan).toContain("  confirmatory_extension:");
+    expect(plan).toContain("selected_design:");
+    expect(plan).toContain("execution:");
+    expect(plan).not.toContain("executable_design:");
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Method}");
@@ -1192,8 +1842,8 @@ describe("constraint propagation", () => {
         summary: "The paper studies coordination baselines for multi-agent systems.",
         key_findings: ["Structured coordination reduces variance."],
         limitations: ["Limited benchmark coverage."],
-        datasets: ["AgentBench-mini"],
-        metrics: ["reproducibility_score"],
+        datasets: ["evaluation_fixture"],
+        metrics: ["primary_score"],
         novelty: "It introduces a structured coordination baseline.",
         reproducibility_notes: ["The paper reports repeated trials."]
       })}\n`,
@@ -1208,8 +1858,8 @@ describe("constraint propagation", () => {
         method_slot: "Shared state schema",
         result_slot: "Variance is reduced by 12 percent.",
         limitation_slot: "Benchmark count is small.",
-        dataset_slot: "AgentBench-mini",
-        metric_slot: "reproducibility_score",
+        dataset_slot: "evaluation_fixture",
+        metric_slot: "primary_score",
         evidence_span: "Repeated trials show a 12 percent variance reduction.",
         source_type: "full_text",
         confidence: 0.91
@@ -1241,7 +1891,7 @@ describe("constraint propagation", () => {
         mean_score: 0.88,
         objective_metric: {
           evaluation: {
-            summary: "Objective metric met: reproducibility_score=0.88 >= 0.8.",
+            summary: "Objective metric met: primary_score=0.88 >= 0.8.",
             status: "met"
           }
         },
@@ -1252,7 +1902,69 @@ describe("constraint propagation", () => {
         },
         primary_findings: ["Structured coordination improved reproducibility."],
         condition_comparisons: [{ summary: "schema vs baseline favors the schema condition" }],
-        figure_specs: [{ title: "Coordination performance", path: "figures/performance.svg" }]
+        figure_specs: [{ title: "Coordination performance", path: "figures/performance.svg" }],
+        results_table: [
+          {
+            metric: "primary_score",
+            baseline: 0.8,
+            comparator: 0.88,
+            delta: 0.08,
+            direction: "higher_better"
+          }
+        ],
+        primary_comparison_id: "comparison-primary-reference",
+        results_artifact: {
+          schema_version: "2.0",
+          metrics: [
+            {
+              id: "primary_score",
+              label: "Reproducibility score",
+              direction: "higher_better",
+              unit: "score"
+            }
+          ],
+          series: [
+            {
+              id: "series_primary",
+              label: "Configured subject",
+              role: "primary",
+              dimensions: {}
+            },
+            {
+              id: "series_reference",
+              label: "Declared reference",
+              role: "baseline",
+              dimensions: {}
+            }
+          ],
+          observations: [
+            {
+              id: "observation_primary",
+              series_id: "series_primary",
+              metric_id: "primary_score",
+              scope: {},
+              value: 0.88,
+              evidence_refs: ["result_payload:primary"]
+            },
+            {
+              id: "observation_reference",
+              series_id: "series_reference",
+              metric_id: "primary_score",
+              scope: {},
+              value: 0.8,
+              evidence_refs: ["result_payload:reference"]
+            }
+          ],
+          comparisons: [
+            {
+              id: "comparison-primary-reference",
+              subject_observation_id: "observation_primary",
+              reference_observation_id: "observation_reference",
+              delta: 0.08,
+              evidence_refs: ["result_payload:comparison"]
+            }
+          ]
+        }
       }, null, 2),
       "utf8"
     );
@@ -1272,8 +1984,10 @@ describe("constraint propagation", () => {
         assumptions: []
       }),
       JSON.stringify({
-        primaryMetric: "reproducibility_score",
-        preferredMetricKeys: ["reproducibility_score"],
+        primaryMetric: "primary_score",
+        preferredMetricKeys: ["primary_score"],
+        unit: "unitless",
+        scale: "raw",
         targetDescription: ">= 0.8",
         paperEmphasis: ["Highlight reproducibility improvements."],
         assumptions: []
@@ -1400,8 +2114,8 @@ describe("constraint propagation", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
-    expect(llm.calls).toBe(12);
+    expect(result.status, JSON.stringify(result)).toBe("success");
+    expect(llm.calls).toBe(9);
 
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\section{Introduction}");

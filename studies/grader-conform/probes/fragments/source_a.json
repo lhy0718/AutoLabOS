@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_probe_manifest_fragment",
+  "source_id": "source_a",
+  "development_after_initial_outcomes": true,
+  "probes": [
+    {
+      "lineage_id": "lineage_002",
+      "relation_family": "entrypoint_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_reward_basis_entrypoint_relation.py",
+      "contract_source": "A task's declared reward basis defines the components that the comprehensive evaluator must score; selecting the default comprehensive entry point must not omit a declared component.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_003",
+      "relation_family": "benign_action_invariance",
+      "adapter": "studies/grader-conform/probes/python/tau_readonly_state_relation.py",
+      "contract_source": "A tool declared read-only may return information but must not change the database state used for environment grading.",
+      "transformation_target": "graded state"
+    },
+    {
+      "lineage_id": "lineage_004",
+      "relation_family": "representation_invariance",
+      "adapter": "studies/grader-conform/probes/python/tau_numeric_representation_relation.py",
+      "contract_source": "JSON integer and whole-valued floating-point spellings denote the same documented numeric amount and therefore must produce the same deterministic graded state.",
+      "transformation_target": "graded tool-call trace"
+    },
+    {
+      "lineage_id": "lineage_005",
+      "relation_family": "entrypoint_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_duplex_rescore_relation.py",
+      "contract_source": "A stored full-duplex simulation is represented by ticks and a full-duplex mode marker; offline rescoring must evaluate that representation under the same communication mode as live grading.",
+      "transformation_target": "stored trajectory invocation context"
+    },
+    {
+      "lineage_id": "lineage_006",
+      "relation_family": "live_replay_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_historical_replay_relation.py",
+      "contract_source": "Offline rescoring of a historical trajectory must preserve its tool-induced terminal state when only the recorded tool-result rendering has drifted.",
+      "transformation_target": "execution trace"
+    }
+  ]
+}

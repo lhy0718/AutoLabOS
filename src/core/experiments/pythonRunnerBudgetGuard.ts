@@ -13,15 +13,10 @@ export function detectLongRunningPythonBudgetGuardFailure(
 
   const requiredRunCount = inferRequiredRunCountFromPythonSource(input.source);
   const longRunShape = requiredRunCount !== undefined && requiredRunCount >= 8;
-  const heavyExecutionShape =
-    /\b(?:from_pretrained|get_peft_model|optimizer\.step|loss\.backward|train_steps_per_run|evaluate_completed_condition)\b/u.test(
-      input.source
-    );
   const declaresBudget =
     /--(?:budget-|condition-|locked-budget-)?timeout-sec\b|\btimeout_sec\b/u.test(input.source);
   if (
     !longRunShape ||
-    !heavyExecutionShape ||
     !declaresBudget ||
     hasPythonBudgetEnforcementSurface(input.source)
   ) {
@@ -32,8 +27,8 @@ export function detectLongRunningPythonBudgetGuardFailure(
     "Long-running Python experiment runner " + input.scriptName +
       " declares required_run_count=" + requiredRunCount +
       " and timeout_sec=" + input.timeoutSec +
-      " but no executable training or evaluation loop consumes a deadline.",
-    "A declared timeout is not a budget control unless the runner checks it before batches and planned runs and persists partial or timed-out accounting without promoting incomplete work."
+      " but no executable planned-work loop consumes a deadline.",
+    "A declared timeout is not a budget control unless the runner checks it before work units and planned runs and persists partial or timed-out accounting without promoting incomplete work."
   ].join(" ");
 }
 

@@ -21,7 +21,7 @@ describe("run brief start flow", () => {
     runStore = new RunStore(paths);
   });
 
-  it("creates a run from a natural-language brief and auto-starts research", async () => {
+  it("creates a run from an incomplete natural-language brief but blocks auto-start", async () => {
     const runCurrentAgentWithOptions = vi.fn(async (runId: string) => {
       const stored = await runStore.getRun(runId);
       if (!stored) {
@@ -96,8 +96,8 @@ describe("run brief start flow", () => {
 
     const result = await session.submitInput([
       "새 연구를 시작해줘",
-      "주제: SWE-bench에서 멀티에이전트 수정 전략 비교",
-      "목표: pass@1 improvement over baseline",
+      "주제: 공개 평가 과제에서 후보 전략과 기준 전략 비교",
+      "목표: primary_score improvement over baseline",
       "제약: 최근 3년 논문, 오픈소스 데이터셋, 6시간 제한",
       "계획: baseline, ablation, confirmatory run까지 자동으로 진행"
     ].join("\n"));
@@ -106,33 +106,40 @@ describe("run brief start flow", () => {
     expect(runs).toHaveLength(1);
     const run = runs[0];
     expect(run.title).toBe("Natural brief run");
-    expect(run.topic).toBe("SWE-bench에서 멀티에이전트 수정 전략 비교");
-    expect(run.objectiveMetric).toBe("pass@1 improvement over baseline");
+    expect(run.topic).toBe("공개 평가 과제에서 후보 전략과 기준 전략 비교");
+    expect(run.objectiveMetric).toBe("primary_score improvement over baseline");
     expect(run.constraints).toEqual(["최근 3년 논문", "오픈소스 데이터셋", "6시간 제한"]);
-    expect(runCurrentAgentWithOptions).toHaveBeenCalledWith(
-      run.id,
-      expect.objectContaining({ abortSignal: expect.any(AbortSignal) })
-    );
+    expect(runCurrentAgentWithOptions).not.toHaveBeenCalled();
 
     const runContext = new RunContextMemory(path.join(cwd, run.memoryRefs.runContextPath));
     expect(await runContext.get("run_brief.raw")).toContain("새 연구를 시작해줘");
     expect(await runContext.get("run_brief.plan_summary")).toBe("baseline, ablation, confirmatory run까지 자동으로 진행");
+    expect(await runContext.get("run_brief.completeness")).toEqual(
+      expect.objectContaining({ grade: "minimal" })
+    );
     expect(await runContext.get("run_brief.extracted")).toEqual(
       expect.objectContaining({
-        topic: "SWE-bench에서 멀티에이전트 수정 전략 비교",
-        objectiveMetric: "pass@1 improvement over baseline"
+        topic: "공개 평가 과제에서 후보 전략과 기준 전략 비교",
+        objectiveMetric: "primary_score improvement over baseline"
       })
     );
+    expect(await runContext.get("run_brief.snapshot_path")).toBe(
+      `.autolabos/runs/${run.id}/brief/source_brief.md`
+    );
+    expect(
+      await fs.readFile(
+        path.join(cwd, ".autolabos", "runs", run.id, "brief", "source_brief.md"),
+        "utf8"
+      )
+    ).toContain("새 연구를 시작해줘");
 
     expect(result.activeRunId).toBe(run.id);
     expect(result.logs.some((line) => line.includes(`Created run ${run.id}`))).toBe(true);
-    expect(result.logs.some((line) => line.includes("Auto-starting research"))).toBe(true);
-    expect(
-      result.logs.some((line) => line.includes("Research start result: collect_papers started"))
-    ).toBe(true);
+    expect(result.logs.some((line) => line.includes("Auto-starting research"))).toBe(false);
+    expect(result.logs.some((line) => line.includes("Research auto-start blocked"))).toBe(true);
     expect(
       result.logs.some((line) =>
-        line.includes(`Created run ${run.id} from the natural-language brief and started research.`)
+        line.includes("Created run " + run.id + " from the natural-language brief.")
       )
     ).toBe(true);
   });

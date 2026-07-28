@@ -8,6 +8,7 @@ import { scoreGovernanceTask, type GovernanceTaskScore } from "../benchmark/gove
 import { scoreLiveValidationCase, type LiveValidationCaseScore } from "../benchmark/liveValidationScoring.js";
 import { scoreResultTableArtifact, type ResultTableScore } from "../benchmark/resultTableScoring.js";
 import { type GovernanceBenchmarkConditionName } from "../benchmark/governanceCondition.js";
+import { validateResultsPlanV2 } from "../analysis/resultsTableSchema.js";
 import type { FigureAuditSummary } from "../exploration/types.js";
 import {
   parseReferenceClaimsTsv,
@@ -791,6 +792,7 @@ function resolveComparisonClaimAuthorization(
   comparativeClaimAuthorized: boolean;
   superiorityClaimAuthorized: boolean;
   superiorityPrimaryMetrics: string[];
+  primaryComparisonId?: string;
 } {
   const comparativeDeclarations = payloads
     .map(({ payload }) => payload.comparative_claim_authorized)
@@ -810,12 +812,23 @@ function resolveComparisonClaimAuthorization(
     );
   const comparativeClaimAuthorized = comparativeDeclarations.length > 0
     && comparativeDeclarations.every((value) => value);
+  const primaryComparisonDeclarations = payloads
+    .map(({ payload }) => recordValue(payload.results_plan))
+    .filter((plan): plan is Record<string, unknown> => Boolean(plan))
+    .filter((plan) => validateResultsPlanV2(plan).valid)
+    .map((plan) => stringValue(plan.primary_comparison_id))
+    .filter((value): value is string => Boolean(value));
+  const primaryComparisonId = primaryComparisonDeclarations.length > 0
+    && primaryComparisonDeclarations.every((value) => value === primaryComparisonDeclarations[0])
+    ? primaryComparisonDeclarations[0]
+    : undefined;
   return {
     comparativeClaimAuthorized,
     superiorityClaimAuthorized: comparativeClaimAuthorized
       && superiorityDeclarations.length > 0
       && superiorityDeclarations.every((value) => value),
-    superiorityPrimaryMetrics: primaryMetricsAgree ? [...firstPrimaryMetrics] : []
+    superiorityPrimaryMetrics: primaryMetricsAgree ? [...firstPrimaryMetrics] : [],
+    ...(primaryComparisonId ? { primaryComparisonId } : {})
   };
 }
 
@@ -2040,7 +2053,7 @@ function containsQuantitativeResultClaim(manuscript: string | undefined): boolea
   )].map((match) => match[1] || "");
   const candidate = resultSections.join("\n");
   if (!candidate.trim()) return false;
-  return /\b\d+(?:\.\d+)?\s*(?:\\%|%)|(?<![A-Za-z0-9_])(?:0?\.\d+)(?![A-Za-z0-9_])|\b\d+\s*\/\s*\d+\b|\b(?:accuracy|precision|recall|f1|bleu|rouge|perplexity|p[- ]?value|confidence interval|effect size)\b[^\n.]{0,100}\d/iu
+  return /\b\d+(?:\.\d+)?\s*(?:\\%|%)|(?<![A-Za-z0-9_])(?:0?\.\d+)(?![A-Za-z0-9_])|\b\d+\s*\/\s*\d+\b|\b(?:metric|measure|outcome|estimate|effect|rate|score|value|interval|difference|change)\b[^\n.]{0,100}\d/iu
     .test(candidate);
 }
 
@@ -2071,6 +2084,7 @@ async function readFirstOptionalJson<T = unknown>(root: string, candidates: stri
 
 async function readDesignContractPayloads(runRoot: string): Promise<Array<{ path: string; payload: Record<string, unknown> }>> {
   const candidates = [
+    "experiment_contract.json",
     "design_contracts.json",
     path.join("audit", "design_contracts.json"),
     path.join("review", "design_contract_findings.json")

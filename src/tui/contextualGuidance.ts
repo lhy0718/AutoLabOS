@@ -71,6 +71,7 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
   const targetNode = projection.actionableNode;
   const targetNodeStatus = projection.actionableNodeStatus ?? run.graph.nodeStates[targetNode]?.status;
   const nodeStatus = run.graph.nodeStates[run.currentNode]?.status;
+  const pendingTransition = run.graph.pendingTransition;
 
   if (run.status === "completed") {
     return {
@@ -91,6 +92,26 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
   }
 
   const items: GuidanceItem[] = [];
+  if (
+    run.status === "paused"
+    && nodeStatus === "needs_approval"
+    && pendingTransition
+    && pendingTransition.action !== "advance"
+    && pendingTransition.action !== "pause_for_human"
+  ) {
+    items.push({
+      label: transitionGuidanceLabel(pendingTransition.action),
+      description: transitionGuidanceDescription(pendingTransition),
+      applyValue: "/approve"
+    });
+    items.push({
+      label: "steering",
+      description: steeringDescriptionForNode(
+        pendingTransition.targetNode ?? targetNode
+      )
+    });
+    return { title: "Stored transition", items };
+  }
   if (run.status === "paused" && nodeStatus === "needs_approval") {
     items.push({
       label: "approve",
@@ -109,6 +130,24 @@ export function buildContextualGuidance(input: ContextualGuidanceInput): Context
     title: items[0]?.label === "approve" ? "Approval" : "Next step",
     items
   };
+}
+
+function transitionGuidanceLabel(
+  action: NonNullable<RunRecord["graph"]["pendingTransition"]>["action"]
+): string {
+  if (action === "retry_same") return "apply retry";
+  if (action.startsWith("backtrack_to_")) return "apply backtrack";
+  if (action === "delegate_successor") return "apply delegation";
+  return "apply transition";
+}
+
+function transitionGuidanceDescription(
+  transition: NonNullable<RunRecord["graph"]["pendingTransition"]>
+): string {
+  const target = transition.targetNode
+    ? ` to ${transition.targetNode}`
+    : "";
+  return `Apply ${transition.action}${target}: ${transition.reason}`;
 }
 
 function buildHumanInterventionGuidance(

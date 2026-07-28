@@ -1,15 +1,256 @@
-import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
+import type {
+  ExperimentPortfolio,
+  ExperimentRunManifest
+} from "../src/core/experiments/experimentPortfolio.js";
+import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
 import {
   buildResultsTableValidation,
   selectAnalysisMetricsPath
 } from "../src/core/nodes/analyzeResults.js";
 import {
   buildAnalysisReport,
-  buildPersistedAnalysisMetricsProjection
+  buildPersistedAnalysisMetricsProjection,
+  parseAnalysisReport
 } from "../src/core/resultAnalysis.js";
 import { projectPortableArtifactValue } from "../src/utils/portableArtifact.js";
+
+interface ArtifactOptions {
+  metricId?: string;
+  metricLabel?: string;
+  direction?: "higher_better" | "lower_better";
+  subjectId?: string;
+  referenceId?: string;
+  subjectLabel?: string;
+  referenceLabel?: string;
+  subjectValue?: number;
+  referenceValue?: number;
+  judgement?: string;
+  includeComparison?: boolean;
+  reverseOrder?: boolean;
+  decoyValues?: [number, number];
+}
+
+function comparisonArtifact(options: ArtifactOptions = {}): ResultsArtifactV2 {
+  const metricId = options.metricId ?? "primary_score";
+  const subjectId = options.subjectId ?? "candidate_a";
+  const referenceId = options.referenceId ?? "reference";
+  const subjectObservationId = `${subjectId}_observation`;
+  const referenceObservationId = `${referenceId}_observation`;
+  const metrics: ResultsArtifactV2["metrics"] = [
+    {
+      id: metricId,
+      label: options.metricLabel ?? "Primary score",
+      direction: options.direction ?? "higher_better",
+      unit: "unitless"
+    }
+  ];
+  const series: ResultsArtifactV2["series"] = [
+    {
+      id: subjectId,
+      label: options.subjectLabel ?? "Candidate A",
+      role: "primary",
+      dimensions: { partition: "validation_partition" }
+    },
+    {
+      id: referenceId,
+      label: options.referenceLabel ?? "Reference",
+      role: "baseline",
+      dimensions: { partition: "validation_partition" }
+    }
+  ];
+  const observations: ResultsArtifactV2["observations"] = [
+    {
+      id: subjectObservationId,
+      series_id: subjectId,
+      metric_id: metricId,
+      scope: { partition: "validation_partition" },
+      value: options.subjectValue ?? 0.62
+    },
+    {
+      id: referenceObservationId,
+      series_id: referenceId,
+      metric_id: metricId,
+      scope: { partition: "validation_partition" },
+      value: options.referenceValue ?? 0.57
+    }
+  ];
+
+  if (options.decoyValues) {
+    metrics.push({
+      id: "secondary_score",
+      label: "Secondary score",
+      direction: "higher_better",
+      unit: "unitless"
+    });
+    observations.push(
+      {
+        id: `${subjectId}_decoy_observation`,
+        series_id: subjectId,
+        metric_id: "secondary_score",
+        scope: { partition: "validation_partition" },
+        value: options.decoyValues[0]
+      },
+      {
+        id: `${referenceId}_decoy_observation`,
+        series_id: referenceId,
+        metric_id: "secondary_score",
+        scope: { partition: "validation_partition" },
+        value: options.decoyValues[1]
+      }
+    );
+  }
+
+  const comparisons: ResultsArtifactV2["comparisons"] =
+    options.includeComparison === false
+      ? []
+      : [
+          {
+            id: "declared_comparison",
+            subject_observation_id: subjectObservationId,
+            reference_observation_id: referenceObservationId,
+            delta: Number(((options.subjectValue ?? 0.62) - (options.referenceValue ?? 0.57)).toFixed(6)),
+            ...(options.judgement ? { judgement: options.judgement } : {})
+          }
+        ];
+
+  return {
+    schema_version: "2.0",
+    metrics: options.reverseOrder ? [...metrics].reverse() : metrics,
+    series: options.reverseOrder ? [...series].reverse() : series,
+    observations: options.reverseOrder ? [...observations].reverse() : observations,
+    comparisons: options.reverseOrder ? [...comparisons].reverse() : comparisons
+  };
+}
+
+function multipleComparisonArtifact(): ResultsArtifactV2 {
+  const artifact = comparisonArtifact({ judgement: "supported" });
+  return {
+    ...artifact,
+    series: [
+      ...artifact.series,
+      {
+        id: "candidate_b",
+        label: "Candidate B",
+        role: "primary",
+        dimensions: { partition: "validation_partition" }
+      }
+    ],
+    observations: [
+      ...artifact.observations,
+      {
+        id: "candidate_b_observation",
+        series_id: "candidate_b",
+        metric_id: "primary_score",
+        scope: { partition: "validation_partition" },
+        value: 0.54,
+        evidence_refs: ["evidence-west"]
+      }
+    ],
+    comparisons: [
+      {
+        ...artifact.comparisons[0],
+        evidence_refs: ["evidence-declared"]
+      },
+      {
+        id: "declared_alternate",
+        subject_observation_id: "candidate_b_observation",
+        reference_observation_id: "reference_observation",
+        delta: -0.03,
+        judgement: "not_supported",
+        evidence_refs: ["evidence-alternate"]
+      }
+    ]
+  };
+}
+
+function reportFor(
+  artifact: ResultsArtifactV2,
+  options: {
+    primaryMetricId?: string;
+    primaryComparisonId?: string;
+    objectiveDirection?: "maximize" | "minimize";
+    rawMetrics?: Record<string, unknown>;
+    includeArtifact?: boolean;
+    experimentPlanRaw?: string;
+    experimentPortfolio?: ExperimentPortfolio;
+    runManifest?: ExperimentRunManifest;
+    supplementalMetrics?: Array<{
+      profile: string;
+      path?: string;
+      metrics: Record<string, unknown>;
+    }>;
+    supplementalExpectation?: {
+      applicable: boolean;
+      profiles: string[];
+      reason?: string;
+    };
+  } = {}
+) {
+  const primaryMetricId = options.primaryMetricId ?? "primary_score";
+  const observedValue = artifact.observations.find(
+    (observation) => observation.metric_id === primaryMetricId
+  )?.value;
+  const objectiveText = `Track ${primaryMetricId} exactly.`;
+  return buildAnalysisReport({
+    run: { objectiveMetric: objectiveText },
+    metrics: {
+      ...(options.rawMetrics ?? {}),
+      ...(options.includeArtifact === false ? {} : { results_artifact: artifact })
+    },
+    objectiveProfile: {
+      source: "llm",
+      raw: objectiveText,
+      primaryMetric: primaryMetricId,
+      preferredMetricKeys: [primaryMetricId],
+      direction: options.objectiveDirection ?? "maximize",
+      comparator: ">",
+      targetValue: 0,
+      targetDescription: `${primaryMetricId} is declared by exact ID.`,
+      analysisFocus: [],
+      paperEmphasis: [],
+      assumptions: []
+    },
+    objectiveEvaluation: {
+      rawObjectiveMetric: objectiveText,
+      profileSource: "llm",
+      primaryMetric: primaryMetricId,
+      preferredMetricKeys: [primaryMetricId],
+      matchedMetricKey: primaryMetricId,
+      direction: options.objectiveDirection ?? "maximize",
+      comparator: ">",
+      targetValue: 0,
+      observedValue,
+      status: observedValue === undefined ? "missing" : "observed",
+      summary:
+        observedValue === undefined
+          ? `No observation exists for exact metric ID ${primaryMetricId}.`
+          : `Observed ${primaryMetricId}=${observedValue}.`
+    },
+    experimentPlanRaw: options.experimentPlanRaw,
+    experimentPortfolio: options.experimentPortfolio,
+    runManifest: options.runManifest,
+    primaryComparisonId: options.primaryComparisonId,
+    supplementalMetrics: options.supplementalMetrics,
+    supplementalExpectation: options.supplementalExpectation
+  });
+}
+
+function comparisonSemantics(report: ReturnType<typeof reportFor>) {
+  const comparison = report.condition_comparisons[0];
+  const metric = comparison?.metrics[0];
+  return {
+    source: comparison?.source,
+    metric: metric?.key,
+    delta: metric?.value,
+    direction: metric?.direction,
+    subjectValue: metric?.subject_value,
+    referenceValue: metric?.reference_value,
+    hypothesisSupported: comparison?.hypothesis_supported
+  };
+}
 
 describe("resultAnalysis", () => {
   it("projects machine-local paths out of nested public artifact strings", () => {
@@ -53,1164 +294,462 @@ describe("resultAnalysis", () => {
     ).toBe(path.join(workspaceRoot, "outputs", "metrics.json"));
   });
 
-  it("persists a bounded metrics projection while retaining the raw metrics reference", () => {
-    const rawRows = Array.from({ length: 200 }, (_, index) => ({
+  it("bounds raw metrics generically while preserving the canonical top-level artifact", () => {
+    const records = Array.from({ length: 80 }, (_, index) => ({
       example_id: `example-${index}`,
-      prediction: "candidate",
+      prediction: "candidate_a",
       correct: index % 2 === 0
     }));
-    const predictions = rawRows.slice(0, 50);
+    const artifact = comparisonArtifact();
     const metrics = {
       status: "completed",
-      raw_condition_results: rawRows,
-      condition_results: [
-        {
-          condition_marker: "candidate_condition_a",
-          seed_count: 3,
-          correct_count: 25,
-          total_count: 50,
-          evaluation: {
-            benchmark_task_a: {
-              accuracy: 0.5,
-              correct_count: 25,
-              total_count: 50,
-              predictions
-            }
-          }
-        }
-      ]
+      results_artifact: artifact,
+      record_batch: records,
+      nested_bundle: {
+        entries: records.slice(0, 50)
+      },
+      long_note: "x".repeat(2_500)
     };
 
     const projected = buildPersistedAnalysisMetricsProjection(
       metrics,
       ".autolabos/runs/run-neutral/metrics.json"
     );
+    const report = reportFor(artifact, { rawMetrics: metrics });
 
-    expect(projected.raw_condition_results).toBeUndefined();
-    expect(projected.raw_condition_result_count).toBe(200);
-    expect((metrics.condition_results[0].evaluation.benchmark_task_a as any).predictions).toHaveLength(50);
-    expect((projected.condition_results as any[])[0].evaluation.benchmark_task_a).toMatchObject({
-      accuracy: 0.5,
-      correct_count: 25,
-      total_count: 50,
-      prediction_count: 50
-    });
-    expect((projected.condition_results as any[])[0].evaluation.benchmark_task_a.predictions).toBeUndefined();
+    expect(projected.results_artifact).toBeUndefined();
+    expect(projected.record_batch).toHaveLength(24);
+    expect((projected.nested_bundle as { entries: unknown[] }).entries).toHaveLength(24);
+    expect(projected.long_note).toBe(`${"x".repeat(2_000)}...`);
     expect(projected.analysis_artifact_projection).toMatchObject({
-      source_metrics_ref: ".autolabos/runs/run-neutral/metrics.json"
-    });
-    expect(JSON.stringify(projected).length).toBeLessThan(JSON.stringify(metrics).length / 2);
-  });
-
-  it("keeps mean_score focused on score metrics instead of resource counters", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve the candidate score over the locked baseline."
-      },
-      metrics: {
-        accuracy_delta_vs_baseline: 0,
-        baseline_mean_accuracy: 1,
-        best_mean_accuracy: 1,
-        total_max_memory_allocated_bytes: 9747127296,
-        completed_run_count: 27,
-        planned_run_count: 27,
-        wall_clock_seconds: 123.4
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve the candidate score over the locked baseline.",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve the candidate score over the locked baseline.",
-        profileSource: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
-        matchedMetricKey: "accuracy_delta_vs_baseline",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0,
-        status: "not_met",
-        summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01."
+      source_metrics_ref: ".autolabos/runs/run-neutral/metrics.json",
+      omitted_fields: expect.arrayContaining([
+        "long_note",
+        "nested_bundle.entries[24:]",
+        "record_batch[24:]",
+        "results_artifact"
+      ]),
+      limits: {
+        max_depth: 6,
+        max_array_items: 24,
+        max_object_entries: 64,
+        max_string_length: 2_000
       }
     });
-
-    expect(report.mean_score).toBe(0.6667);
-    expect(report.metric_table).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ key: "total_max_memory_allocated_bytes", value: 9747127296 }),
-        expect.objectContaining({ key: "wall_clock_seconds", value: 123.4 })
-      ])
-    );
+    expect(report.results_artifact).toEqual(artifact);
   });
 
-  it("projects node-owned metrics.results rows into baseline/comparator condition comparisons", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the configured baseline."
-      },
-      metrics: {
-        accuracy_delta_vs_baseline: 0,
-        baseline_mean_accuracy: 0.546875,
-        best_mean_accuracy: 0.546875,
-        best_recipe: "candidate_condition_a",
-        results: [
-          {
-            recipe: "baseline",
-            method_type: "none",
-            status: "completed",
-            mean_accuracy: 0.546875,
-            benchmark_task_a_accuracy: 0.53125,
-            benchmark_task_b_accuracy: 0.5625,
-            accuracy_delta_vs_baseline: 0,
-            wall_clock_seconds: 7.5
-          },
-          {
-            recipe: "candidate_condition_a",
-            method_type: "configuration",
-            status: "completed",
-            mean_accuracy: 0.546875,
-            benchmark_task_a_accuracy: 0.53125,
-            benchmark_task_b_accuracy: 0.5625,
-            accuracy_delta_vs_baseline: 0,
-            wall_clock_seconds: 24.0,
-            peak_gpu_memory_allocated_bytes: 4477727232
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve mean zero-shot accuracy over the configured baseline.",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the configured baseline.",
-        profileSource: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_accuracy"],
-        matchedMetricKey: "accuracy_delta_vs_baseline",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0,
-        status: "not_met",
-        summary: "Objective metric not met: accuracy_delta_vs_baseline=0 does not satisfy >= 0.01."
-      }
-    });
-
-    expect(report.condition_comparisons).toHaveLength(1);
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_a_vs_baseline",
-      source: "metrics.results"
-    });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_accuracy",
-          baseline_value: 0.546875,
-          primary_value: 0.546875,
-          value: 0
-        }),
-        expect.objectContaining({
-          key: "accuracy_delta_vs_baseline",
-          baseline_value: 0,
-          primary_value: 0,
-          value: 0
-        })
-      ])
+  it("keeps comparison semantics invariant to series renaming, array order, and unrelated scores", () => {
+    const first = reportFor(
+      comparisonArtifact({
+        subjectId: "candidate_a",
+        referenceId: "reference",
+        subjectLabel: "Candidate A",
+        referenceLabel: "Reference",
+        subjectValue: 0.62,
+        referenceValue: 0.57,
+        judgement: "supported",
+        decoyValues: [1000, -1000]
+      })
     );
+    const renamedAndReordered = reportFor(
+      comparisonArtifact({
+        subjectId: "candidate_b",
+        referenceId: "reference_b",
+        subjectLabel: "Candidate B",
+        referenceLabel: "Reference B",
+        subjectValue: 0.62,
+        referenceValue: 0.57,
+        judgement: "supported",
+        decoyValues: [-999999, 999999],
+        reverseOrder: true
+      })
+    );
+
+    expect(first.condition_comparisons).toHaveLength(1);
+    expect(renamedAndReordered.condition_comparisons).toHaveLength(1);
+    expect(comparisonSemantics(renamedAndReordered)).toEqual(comparisonSemantics(first));
+    expect(comparisonSemantics(first)).toEqual({
+      source: "results_artifact",
+      metric: "primary_score",
+      delta: 0.05,
+      direction: "higher_better",
+      subjectValue: 0.62,
+      referenceValue: 0.57,
+      hypothesisSupported: true
+    });
+    const comparisonClaim = first.paper_claims.find((claim) =>
+      claim.evidence.includes("result_analysis.json#/results_artifact/comparisons/0")
+    );
+    expect(comparisonClaim?.evidence).toEqual(expect.arrayContaining([
+      "result_analysis.json#/results_artifact/comparisons/0",
+      "result_analysis.json#/results_artifact/observations/0",
+      "result_analysis.json#/results_artifact/observations/1"
+    ]));
+    expect(comparisonClaim?.evidence.some((item) => item.includes("condition_comparisons"))).toBe(false);
   });
 
-  it("projects node-owned metrics.result_rows rows into locked-baseline comparisons", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the locked configured baseline."
-      },
-      metrics: {
-        best_tuned_condition_id: "candidate_condition_b",
-        result_rows: [
-          {
-            condition_id: "reference_base_model",
-            recipe_type: "reference",
-            is_baseline_reference: true,
-            mean_zero_shot_accuracy_benchmark_tasks: 0.27919,
-            benchmark_task_b_accuracy: 0.312286,
-            benchmark_task_a_accuracy: 0.246094
-          },
-          {
-            condition_id: "locked_baseline_condition",
-            recipe_type: "locked_baseline",
-            is_locked_tuned_baseline: true,
-            mean_zero_shot_accuracy_benchmark_tasks: 0.304353,
-            benchmark_task_b_accuracy: 0.332559,
-            benchmark_task_a_accuracy: 0.276147
-          },
-          {
-            condition_id: "candidate_condition_b",
-            recipe_type: "candidate",
-            mean_zero_shot_accuracy_benchmark_tasks: 0.313533,
-            benchmark_task_b_accuracy: 0.342223,
-            benchmark_task_a_accuracy: 0.284843
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve mean zero-shot accuracy over the locked configured baseline.",
-        primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
-        preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the locked configured baseline.",
-        profileSource: "llm",
-        primaryMetric: "mean_zero_shot_accuracy_benchmark_tasks",
-        preferredMetricKeys: ["mean_zero_shot_accuracy_benchmark_tasks"],
-        matchedMetricKey: "mean_zero_shot_accuracy_benchmark_tasks",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0.313533,
-        status: "met",
-        summary: "Objective metric met."
-      }
-    });
+  it("keeps compatibility comparisons non-authoritative when multiple explicit comparisons have no primary ID", () => {
+    const report = reportFor(multipleComparisonArtifact());
 
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_b_vs_locked_baseline_condition",
-      source: "metrics.result_rows"
-    });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_zero_shot_accuracy_benchmark_tasks",
-          baseline_value: 0.304353,
-          primary_value: 0.313533,
-          value: 0.0092
-        })
-      ])
-    );
+    expect(report.condition_comparisons).toHaveLength(2);
+    expect(report.primary_comparison_id).toBeUndefined();
+    expect(report.paper_claims.some((claim) =>
+      claim.evidence.some((item) => item.includes("#/results_artifact/comparisons/"))
+    )).toBe(false);
+    expect(report.primary_findings.some((finding) => finding.includes("Candidate A vs Reference"))).toBe(false);
+    expect(report.primary_findings.some((finding) => finding.includes("Candidate B vs Reference"))).toBe(false);
+    expect(report.statistical_summary.notes.some((note) => note.includes(" vs "))).toBe(false);
   });
 
-  it("groups task-level condition result rows with nested evidence into baseline comparisons", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve average accuracy over the locked baseline."
-      },
-      metrics: {
-        status: "completed",
-        best_condition_marker: "candidate_condition",
-        condition_results: [
-          {
-            condition_marker: "baseline_condition",
-            task: "task_alpha",
-            status: "completed",
-            accuracy: 0.25,
-            raw_evidence: {
-              raw_evidence: {
-                average_accuracy: 0.375,
-                condition: {
-                  condition_id: "baseline_condition",
-                  marker: "baseline_condition",
-                  is_baseline: true
-                },
-                task_metrics: {
-                  task_alpha: { accuracy: 0.25 },
-                  task_beta: { accuracy: 0.5 }
-                }
-              }
-            }
-          },
-          {
-            condition_marker: "baseline_condition",
-            task: "task_beta",
-            status: "completed",
-            accuracy: 0.5,
-            raw_evidence: {
-              raw_evidence: {
-                average_accuracy: 0.375,
-                condition: {
-                  condition_id: "baseline_condition",
-                  marker: "baseline_condition",
-                  is_baseline: true
-                },
-                task_metrics: {
-                  task_alpha: { accuracy: 0.25 },
-                  task_beta: { accuracy: 0.5 }
-                }
-              }
-            }
-          },
-          {
-            condition_marker: "candidate_condition",
-            task: "task_alpha",
-            status: "completed",
-            accuracy: 0.375,
-            raw_evidence: {
-              raw_evidence: {
-                average_accuracy: 0.4375,
-                condition: {
-                  condition_id: "candidate_condition",
-                  marker: "candidate_condition",
-                  is_baseline: false
-                },
-                task_metrics: {
-                  task_alpha: { accuracy: 0.375 },
-                  task_beta: { accuracy: 0.5 }
-                }
-              }
-            }
-          },
-          {
-            condition_marker: "candidate_condition",
-            task: "task_beta",
-            status: "completed",
-            accuracy: 0.5,
-            raw_evidence: {
-              raw_evidence: {
-                average_accuracy: 0.4375,
-                condition: {
-                  condition_id: "candidate_condition",
-                  marker: "candidate_condition",
-                  is_baseline: false
-                },
-                task_metrics: {
-                  task_alpha: { accuracy: 0.375 },
-                  task_beta: { accuracy: 0.5 }
-                }
-              }
-            }
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve average accuracy over the locked baseline.",
-        primaryMetric: "average_accuracy",
-        preferredMetricKeys: ["average_accuracy", "task_alpha_accuracy", "task_beta_accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Average accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve average accuracy over the locked baseline.",
-        profileSource: "llm",
-        primaryMetric: "average_accuracy",
-        preferredMetricKeys: ["average_accuracy", "task_alpha_accuracy", "task_beta_accuracy"],
-        matchedMetricKey: "average_accuracy",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0.4375,
-        status: "met",
-        summary: "Objective metric met."
-      }
+  it("uses only a validated exact primary comparison ID for claims and parse canonicalization", () => {
+    const report = reportFor(multipleComparisonArtifact(), {
+      primaryComparisonId: "declared_alternate"
     });
 
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_vs_baseline_condition",
-      source: "metrics.condition_results"
+    expect(report.primary_comparison_id).toBe("declared_alternate");
+    const comparisonClaim = report.paper_claims.find((claim) =>
+      claim.evidence.includes("result_analysis.json#/results_artifact/comparisons/1")
+    );
+    expect(comparisonClaim).toMatchObject({
+      claim: expect.stringContaining("Candidate B vs Reference")
     });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "average_accuracy",
-          baseline_value: 0.375,
-          primary_value: 0.4375,
-          value: 0.0625
-        }),
-        expect.objectContaining({
-          key: "task_alpha_accuracy",
-          baseline_value: 0.25,
-          primary_value: 0.375,
-          value: 0.125
-        })
-      ])
-    );
+    expect(comparisonClaim?.evidence).toEqual(expect.arrayContaining([
+      "result_analysis.json#/results_artifact/comparisons/1",
+      "result_analysis.json#/results_artifact/observations/2",
+      "result_analysis.json#/results_artifact/observations/1",
+      "evidence-alternate"
+    ]));
+    expect(comparisonClaim?.evidence.some((item) => item.includes("condition_comparisons"))).toBe(false);
 
-    const validation = buildResultsTableValidation({ report });
-    expect(validation.rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "average_accuracy",
-          direction: "higher_better"
-        })
-      ])
-    );
+    const parsed = parseAnalysisReport(JSON.stringify(report));
+    expect(parsed?.primary_comparison_id).toBe("declared_alternate");
+    expect(parsed?.paper_claims.some((claim) =>
+      claim.evidence.includes("result_analysis.json#/results_artifact/comparisons/1")
+    )).toBe(true);
+
+    const rejectedPrimary = parseAnalysisReport(JSON.stringify({
+      ...report,
+      primary_comparison_id: "missing_comparison"
+    }));
+    expect(rejectedPrimary?.primary_comparison_id).toBeUndefined();
+    expect(rejectedPrimary?.paper_claims.some((claim) =>
+      claim.evidence.some((item) => item.includes("#/results_artifact/comparisons/"))
+    )).toBe(false);
   });
 
-  it("keeps loss metrics lower-better when building structured result tables", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve average accuracy over the locked baseline."
-      },
-      metrics: {
-        best_condition_marker: "candidate_condition",
-        condition_results: [
-          {
-            condition_marker: "baseline_condition",
-            status: "completed",
-            average_accuracy: 0.4,
-            train_loss: 1.2,
-            is_baseline: true
-          },
-          {
-            condition_marker: "candidate_condition",
-            status: "completed",
-            average_accuracy: 0.45,
-            train_loss: 1.1
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve average accuracy over the locked baseline.",
-        primaryMetric: "average_accuracy",
-        preferredMetricKeys: ["average_accuracy", "train_loss"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Average accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve average accuracy over the locked baseline.",
-        profileSource: "llm",
-        primaryMetric: "average_accuracy",
-        preferredMetricKeys: ["average_accuracy", "train_loss"],
-        matchedMetricKey: "average_accuracy",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0.45,
-        status: "met",
-        summary: "Objective metric met."
-      }
-    });
-
-    const validation = buildResultsTableValidation({ report });
-    expect(validation.rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "train_loss",
-          baseline: 1.2,
-          comparator: 1.1,
-          delta: -0.1,
-          direction: "lower_better"
-        })
-      ])
-    );
-  });
-
-  it("projects node-owned metrics.recipes rows into baseline/comparator condition comparisons", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the configured baseline."
-      },
-      metrics: {
-        best_recipe: "baseline",
-        best_improvement_over_baseline: 0,
-        recipes: {
-          baseline: {
-            recipe: "baseline",
-            evaluation: {
-              mean_zero_shot_accuracy: 0.53125,
-              per_benchmark_accuracy: {
-                benchmark_task_a: 0.375,
-                benchmark_task_b: 0.6875
-              }
-            },
-            wall_time_sec: 1.4
-          },
-          condition_parameter_x4: {
-            recipe: "condition_parameter_x4",
-            evaluation: {
-              mean_zero_shot_accuracy: 0.53125,
-              per_benchmark_accuracy: {
-                benchmark_task_a: 0.375,
-                benchmark_task_b: 0.6875
-              }
-            },
-            wall_time_sec: 8.6
-          },
-          candidate_condition_a: {
-            recipe: "candidate_condition_a",
-            evaluation: {
-              mean_zero_shot_accuracy: 0.5,
-              per_benchmark_accuracy: {
-                benchmark_task_a: 0.3125,
-                benchmark_task_b: 0.6875
-              }
-            },
-            wall_time_sec: 17.4
-          }
-        }
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve mean zero-shot accuracy over the configured baseline.",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the configured baseline.",
-        profileSource: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_zero_shot_accuracy_benchmark_tasks", "accuracy"],
-        matchedMetricKey: "best_improvement_over_baseline",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0,
-        status: "not_met",
-        summary: "Objective metric not met: best_improvement_over_baseline=0 does not satisfy >= 0.01."
-      }
-    });
-
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "condition_parameter_x4_vs_baseline",
-      source: "metrics.recipes"
-    });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "evaluation.mean_zero_shot_accuracy",
-          baseline_value: 0.53125,
-          primary_value: 0.53125,
-          value: 0
-        })
-      ])
-    );
-  });
-
-  it("projects metrics.conditions plus condition_summaries into baseline/comparator comparisons", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve mean zero-shot accuracy over the unmodified baseline."
-      },
-      metrics: {
-        status: "completed",
-        best_condition: {
-          name: "base_unmodified",
-          benchmark_task_a_accuracy: 0.296875,
-          benchmark_task_b_accuracy: 0.5078125,
-          mean_zero_shot_accuracy: 0.40234375,
-          bootstrap_mean_ci: {
-            ci_low: 0.296875,
-            ci_high: 0.5078125,
-            mean: 0.40234375
-          }
+  it("does not synthesize a comparison when the explicit V2 comparison list is empty", () => {
+    const artifact = comparisonArtifact({ includeComparison: false });
+    const report = reportFor(artifact, {
+      rawMetrics: {
+        comparison: {
+          declared_pair: { delta: 0.9, hypothesis_supported: true }
         },
-        condition_summaries: [
+        condition_metrics: {
+          candidate_a: { primary_score: 0.9 },
+          reference: { primary_score: 0.1 }
+        },
+        results: [
+          { condition_id: "candidate_a", primary_score: 0.9 },
+          { condition_id: "reference", primary_score: 0.1 }
+        ],
+        result_rows: [
+          { condition_id: "candidate_a", primary_score: 0.9 },
+          { condition_id: "reference", primary_score: 0.1 }
+        ],
+        recipes: {
+          candidate_a: { primary_score: 0.9 },
+          reference: { primary_score: 0.1 }
+        },
+        conditions: [
+          { condition_id: "candidate_a", primary_score: 0.9 },
+          { condition_id: "reference", primary_score: 0.1 }
+        ],
+        condition_results: [
+          { condition_id: "candidate_a", primary_score: 0.9 },
+          { condition_id: "reference", primary_score: 0.1 }
+        ],
+        per_condition: [
+          { condition_id: "candidate_a", primary_score: 0.9 },
+          { condition_id: "reference", primary_score: 0.1 }
+        ]
+      }
+    });
+
+    expect(report.results_artifact).toEqual(artifact);
+    expect(report.condition_comparisons).toEqual([]);
+    expect(report.statistical_summary.effect_estimates).toEqual([]);
+  });
+
+  it("does not promote a generic metrics projection into the canonical artifact", () => {
+    const report = reportFor(comparisonArtifact({ includeComparison: false }), {
+      includeArtifact: false,
+      rawMetrics: {
+        baseline_condition: "reference",
+        metric_definitions: [
           {
-            name: "base_unmodified",
-            benchmark_task_a_accuracy: 0.296875,
-            benchmark_task_b_accuracy: 0.5078125,
-            mean_zero_shot_accuracy: 0.40234375,
-            bootstrap_mean_ci: {
-              ci_low: 0.296875,
-              ci_high: 0.5078125,
-              mean: 0.40234375
-            },
-            trainable_params: 0,
-            training_wall_time_sec: 0
-          },
-          {
-            name: "candidate_condition_a",
-            benchmark_task_a_accuracy: 0.2734375,
-            benchmark_task_b_accuracy: 0.5234375,
-            mean_zero_shot_accuracy: 0.3984375,
-            trainable_params: 6307840,
-            training_wall_time_sec: 431.3
+            id: "primary_score",
+            label: "Primary score",
+            direction: "higher_better",
+            unit: "unitless"
           }
         ],
-        conditions: [
+        condition_results: [
           {
-            name: "base_unmodified",
-            condition_type: "baseline_unmodified_checkpoint",
-            evaluation: {
-              benchmark_task_a: { accuracy: 0.296875 },
-              benchmark_task_b: { accuracy: 0.5078125 }
-            },
-            training: { trainable_params: 0, wall_time_sec: 0 }
+            condition_id: "candidate_a",
+            role: "primary",
+            dimensions: { partition: "validation_partition" },
+            scope: { partition: "validation_partition" },
+            metrics: { primary_score: 0.9 }
           },
           {
-            name: "candidate_condition_a",
-            condition_type: "parameterized_method",
-            evaluation: {
-              benchmark_task_a: { accuracy: 0.2734375 },
-              benchmark_task_b: { accuracy: 0.5234375 }
-            },
-            training: { trainable_params: 6307840, wall_time_sec: 431.3 }
+            condition_id: "reference",
+            dimensions: { partition: "validation_partition" },
+            scope: { partition: "validation_partition" },
+            metrics: { primary_score: 0.1 }
           }
         ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "Improve mean zero-shot accuracy over the unmodified baseline.",
-        primaryMetric: "mean_zero_shot_accuracy",
-        preferredMetricKeys: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Mean zero-shot accuracy should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve mean zero-shot accuracy over the unmodified baseline.",
-        profileSource: "llm",
-        primaryMetric: "mean_zero_shot_accuracy",
-        preferredMetricKeys: ["mean_zero_shot_accuracy", "benchmark_task_a_accuracy", "benchmark_task_b_accuracy"],
-        matchedMetricKey: "best_condition.benchmark_task_a_accuracy",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0.296875,
-        status: "met",
-        summary: "Objective metric met."
       }
     });
 
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_a_vs_base_unmodified",
-      source: "metrics.conditions",
-      hypothesis_supported: false
+    expect(report.results_artifact).toEqual({
+      schema_version: "2.0",
+      metrics: [],
+      series: [],
+      observations: [],
+      comparisons: []
     });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "mean_zero_shot_accuracy",
-          baseline_value: 0.402344,
-          primary_value: 0.398438,
-          value: -0.0039
-        })
-      ])
+    expect(report.condition_comparisons).toEqual([]);
+    expect(report.statistical_summary.effect_estimates).toEqual([]);
+    expect(report.warnings).toContain(
+      "No explicit ResultsArtifactV2 was available; generic metrics were retained without synthesizing canonical observations or comparisons."
     );
-    expect(
-      report.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "best_condition.mean_zero_shot_accuracy"
-      )
-    ).toBe(true);
-    expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
   });
 
-  it("projects repeated condition summaries with a top-level baseline marker", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "score_delta_vs_baseline >= 0.05"
-      },
-      experimentPlanRaw: [
-        "selected_design:",
-        "  title: repeated evaluation against a declared baseline",
-        "  risks:",
-        "    - The limited sample may make the observed effect unstable."
-      ].join("\n"),
-      metrics: {
-        status: "completed",
-        baseline_marker: "baseline_condition",
-        required_run_count: 9,
-        completed_run_count: 9,
-        score_delta_vs_baseline: 0.075,
-        condition_summaries: [
-          {
-            condition_marker: "baseline_condition",
-            status: "completed",
-            condition_parameter_x: 2,
-            condition_parameter_y: 0,
-            completed_seed_count: 3,
-            average_score_mean: 0.4,
-            average_score_ci95: 0.02,
-            average_score_count: 3,
-            score_delta_vs_baseline_mean: 0,
-            score_delta_vs_baseline_ci95: 0,
-            score_delta_vs_baseline_count: 3
-          },
-          {
-            condition_marker: "candidate_condition_a",
-            status: "completed",
-            condition_parameter_x: 4,
-            condition_parameter_y: 0,
-            completed_seed_count: 3,
-            average_score_mean: 0.45,
-            average_score_ci95: 0.03,
-            average_score_count: 3,
-            score_delta_vs_baseline_mean: 0.05,
-            score_delta_vs_baseline_ci95: 0.04,
-            score_delta_vs_baseline_count: 3
-          },
-          {
-            condition_marker: "candidate_condition_b",
-            status: "completed",
-            condition_parameter_x: 6,
-            condition_parameter_y: 0.1,
-            completed_seed_count: 3,
-            average_score_mean: 0.5,
-            average_score_ci95: 0.025,
-            average_score_count: 3,
-            score_delta_vs_baseline_mean: 0.1,
-            score_delta_vs_baseline_ci95: 0.035,
-            score_delta_vs_baseline_count: 3
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "score_delta_vs_baseline >= 0.05",
-        primaryMetric: "score_delta_vs_baseline",
-        preferredMetricKeys: ["score_delta_vs_baseline", "average_score"],
-        comparator: ">=",
-        targetValue: 0.05,
-        targetDescription: "The candidate score should improve over the declared baseline.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "score_delta_vs_baseline >= 0.05",
-        profileSource: "llm",
-        primaryMetric: "score_delta_vs_baseline",
-        preferredMetricKeys: ["score_delta_vs_baseline", "average_score"],
-        matchedMetricKey: "score_delta_vs_baseline",
-        comparator: ">=",
-        targetValue: 0.05,
-        observedValue: 0.075,
-        status: "met",
-        summary: "Objective metric met."
+  it("uses the explicit lower-better metric direction instead of the metric name or objective fallback", () => {
+    const artifact = comparisonArtifact({
+      metricId: "secondary_score",
+      metricLabel: "Secondary score",
+      direction: "lower_better",
+      subjectValue: 0.2,
+      referenceValue: 0.5,
+      judgement: "better"
+    });
+    const report = reportFor(artifact, {
+      primaryMetricId: "secondary_score",
+      objectiveDirection: "maximize"
+    });
+
+    expect(report.condition_comparisons[0]).toMatchObject({
+      source: "results_artifact",
+      metric_direction: "lower_better"
+    });
+    expect(report.condition_comparisons[0]?.hypothesis_supported).toBeUndefined();
+    expect(report.statistical_summary.effect_estimates).toEqual([
+      expect.objectContaining({
+        comparison_id: "declared_comparison",
+        metric_key: "secondary_score",
+        delta: -0.3,
+        direction: "positive"
+      })
+    ]);
+    expect(buildResultsTableValidation({ report }).rows).toEqual([
+      {
+        metric: "secondary_score",
+        baseline: 0.5,
+        comparator: 0.2,
+        delta: -0.3,
+        direction: "lower_better"
       }
-    });
-
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_b_vs_baseline_condition",
-      source: "metrics.condition_summaries",
-      hypothesis_supported: true
-    });
-    expect(report.condition_comparisons[0]?.metrics[0]?.key).toBe("score_delta_vs_baseline_mean");
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "score_delta_vs_baseline_mean",
-          baseline_value: 0,
-          primary_value: 0.1,
-          value: 0.1
-        }),
-        expect.objectContaining({
-          key: "average_score_mean",
-          baseline_value: 0.4,
-          primary_value: 0.5,
-          value: 0.1
-        })
-      ])
-    );
-    expect(report.overview.execution_runs).toBe(9);
-    expect(report.statistical_summary.total_trials).toBe(9);
-    expect(report.statistical_summary.executed_trials).toBe(9);
-    expect(report.primary_findings).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining("9 executed trial(s)")
-      ])
-    );
-    expect(
-      report.statistical_summary.confidence_intervals.some((item) =>
-        item.metric_key === "condition_summaries.candidate_condition_b.average_score"
-      )
-    ).toBe(true);
-    expect(report.failure_taxonomy.some((item) => item.id === "missing_confidence_intervals")).toBe(false);
-
-    const validation = buildResultsTableValidation({ report });
-    expect(validation.valid).toBe(true);
-    expect(validation.rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "score_delta_vs_baseline_mean",
-          baseline: 0,
-          comparator: 0.1,
-          delta: 0.1
-        })
-      ])
-    );
-  });
-  it("projects completed condition_aggregates into baseline/comparator tables", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "accuracy_delta_vs_baseline >= 0.01"
-      },
-      metrics: {
-        status: "completed",
-        baseline_condition_marker: "baseline_condition",
-        required_run_count: 10,
-        completed_run_count: 10,
-        condition_aggregates: [
-          {
-            condition_marker: "baseline_condition",
-            status: "completed",
-            completed_seed_count: 5,
-            mean_average_accuracy: 0.61,
-            accuracy_delta_vs_baseline: 0,
-            mean_task_a_accuracy: 0.75,
-            mean_task_b_accuracy: 0.47
-          },
-          {
-            condition_marker: "candidate_condition_a",
-            status: "completed",
-            completed_seed_count: 5,
-            mean_average_accuracy: 0.64,
-            accuracy_delta_vs_baseline: 0.03,
-            mean_task_a_accuracy: 0.77,
-            mean_task_b_accuracy: 0.51
-          }
-        ]
-      },
-      objectiveProfile: {
-        source: "llm",
-        raw: "accuracy_delta_vs_baseline >= 0.01",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_average_accuracy"],
-        comparator: ">=",
-        targetValue: 0.01,
-        targetDescription: "Accuracy delta should improve by at least one point.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "accuracy_delta_vs_baseline >= 0.01",
-        profileSource: "llm",
-        primaryMetric: "accuracy_delta_vs_baseline",
-        preferredMetricKeys: ["accuracy_delta_vs_baseline", "mean_average_accuracy"],
-        matchedMetricKey: "accuracy_delta_vs_baseline",
-        comparator: ">=",
-        targetValue: 0.01,
-        observedValue: 0.03,
-        status: "met",
-        summary: "Objective metric met."
-      }
-    });
-
-    expect(report.condition_comparisons[0]).toMatchObject({
-      id: "candidate_condition_a_vs_baseline_condition",
-      source: "metrics.condition_aggregates",
-      hypothesis_supported: true
-    });
-    expect(report.condition_comparisons[0]?.metrics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          key: "accuracy_delta_vs_baseline",
-          baseline_value: 0,
-          primary_value: 0.03,
-          value: 0.03
-        }),
-        expect.objectContaining({
-          key: "mean_average_accuracy",
-          baseline_value: 0.61,
-          primary_value: 0.64,
-          value: 0.03
-        })
-      ])
-    );
-
-    const validation = buildResultsTableValidation({ report });
-    expect(validation.valid).toBe(true);
-    expect(validation.rows).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          metric: "accuracy_delta_vs_baseline",
-          baseline: 0,
-          comparator: 0.03,
-          delta: 0.03
-        })
-      ])
-    );
+    ]);
   });
 
-  it("extracts a preset runtime guardrail from the experiment plan and removes the stale threshold warning", () => {
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve macro-F1 over a logistic regression baseline."
-      },
-      metrics: {
-        value: 0.02,
-        condition_metrics: {
-          nested: {
-            macro_f1_delta_vs_logreg: 0.02,
-            runtime_seconds_mean: 11.0
-          },
-          non_nested: {
-            macro_f1_delta_vs_logreg: 0.01,
-            runtime_seconds_mean: 10.0
-          }
+  it("maps only exact declared hypothesis judgements and never derives support from delta", () => {
+    const explicitlyUnsupported = reportFor(
+      comparisonArtifact({ judgement: "not_supported", subjectValue: 0.9, referenceValue: 0.1 })
+    );
+    const effectOnly = reportFor(
+      comparisonArtifact({ judgement: "better", subjectValue: 0.9, referenceValue: 0.1 })
+    );
+
+    expect(explicitlyUnsupported.condition_comparisons[0]?.hypothesis_supported).toBe(false);
+    expect(effectOnly.condition_comparisons[0]?.hypothesis_supported).toBeUndefined();
+  });
+
+  it("does not promote the first or partially matching metric when no exact objective metric ID exists", () => {
+    const report = reportFor(
+      comparisonArtifact({
+        metricId: "primary_score",
+        metricLabel: "Primary score",
+        decoyValues: [5000, -5000],
+        reverseOrder: true
+      }),
+      { primaryMetricId: "primary" }
+    );
+
+    expect(report.metric_table.length).toBeGreaterThan(0);
+    expect(report.overview.top_metric).toBeUndefined();
+    expect(report.mean_score).toBe(0);
+    expect(report.figure_specs).toEqual([]);
+  });
+
+  it("fails closed when historical V1 data has no explicit metric unit", () => {
+    const report = parseAnalysisReport(JSON.stringify({
+      results_table: [
+        {
+          metric: "primary_score",
+          baseline: 0.6,
+          comparator: 0.4,
+          delta: -0.2,
+          direction: "lower_better"
+        }
+      ],
+      condition_comparisons: [
+        {
+          id: "stale_comparison",
+          label: "Stale comparison",
+          source: "metrics.comparison",
+          metrics: [{ key: "other_measure", value: 99 }],
+          summary: "Stale comparison projection."
+        }
+      ],
+      objective_metric: {
+        evaluation: {
+          matchedMetricKey: "primary_score",
+          primaryMetric: "primary_score",
+          preferredMetricKeys: ["primary_score"]
+        },
+        profile: {
+          primary_metric: "primary_score",
+          preferred_metric_keys: ["primary_score"]
         }
       },
-      objectiveProfile: {
-        source: "heuristic_fallback",
-        raw: "Improve macro-F1 over a logistic regression baseline.",
-        primaryMetric: "macro_f1_delta_vs_logreg",
-        preferredMetricKeys: ["macro_f1_delta_vs_logreg", "value"],
-        comparator: ">",
-        targetValue: 0,
-        targetDescription: "Macro-F1 should improve over logistic regression.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve macro-F1 over a logistic regression baseline.",
-        profileSource: "heuristic_fallback",
-        primaryMetric: "macro_f1_delta_vs_logreg",
-        preferredMetricKeys: ["macro_f1_delta_vs_logreg", "value"],
-        matchedMetricKey: "value",
-        comparator: ">",
-        targetValue: 0,
-        observedValue: 0.02,
-        status: "met",
-        summary: "Objective metric met: value=0.02 > 0."
-      },
+      statistical_summary: {
+        confidence_intervals: [],
+        stability_metrics: [],
+        effect_estimates: [
+          {
+            comparison_id: "stale_comparison",
+            metric_key: "other_measure",
+            delta: 99,
+            direction: "negative",
+            summary: "Stale effect."
+          }
+        ],
+        notes: []
+      }
+    }));
+
+    expect(report?.results_artifact.metrics[0]?.unit).toBeUndefined();
+    expect(report?.condition_comparisons).toEqual([]);
+    expect(report?.statistical_summary.effect_estimates).toEqual([]);
+  });
+
+  it("extracts a preset runtime guardrail without raw condition inference", () => {
+    const report = reportFor(comparisonArtifact(), {
       experimentPlanRaw: `
 selected_design:
-  title: "Variance Reduction"
+  title: "Variance Control"
   evaluation_steps:
-    - "Declare support only if median runtime does not increase beyond a predefined practical threshold such as 25 percent."
+    - "Declare support only if runtime does not increase beyond a predefined practical threshold such as 25 percent."
   risks:
     - "A practical threshold on runtime increase must be specified before analysis to avoid post hoc interpretation."
 `
     });
 
     expect(report.plan_context.selected_design?.runtime_guardrail_pct).toBe(25);
-    expect(
-      report.limitations.some((line) => /must be specified before analysis/u.test(line))
-    ).toBe(false);
-    expect(
-      report.primary_findings.some((line) => line.includes("runtime-increase guardrail of 25"))
-    ).toBe(true);
+    expect(report.limitations.some((line) => /must be specified before analysis/u.test(line))).toBe(false);
+    expect(report.primary_findings.some((line) => line.includes("runtime-increase guardrail of 25"))).toBe(true);
   });
 
-  it("surfaces experiment portfolio trial groups and links supplemental runs back to the manifest", () => {
-    const experimentPortfolio = {
-      version: 1 as const,
+  it("surfaces neutral portfolio groups and links supplemental runs to the manifest", () => {
+    const experimentPortfolio: ExperimentPortfolio = {
+      version: 1,
       run_id: "run-portfolio",
-      created_at: "2026-03-25T00:00:00.000Z",
-      execution_model: "managed_bundle" as const,
-      comparison_axes: ["runner_profile", "dataset", "repeat", "prompt_variant", "baseline"],
+      created_at: "2026-07-26T00:00:00.000Z",
+      execution_model: "managed_bundle",
+      comparison_axes: ["runner_profile", "partition", "repeat"],
       primary_trial_group_id: "primary_standard",
-      total_expected_trials: 126,
+      total_expected_trials: 18,
       trial_groups: [
         {
           id: "primary_standard",
-          label: "Primary standard managed run",
-          role: "primary" as const,
+          label: "Primary standard run",
+          role: "primary",
           profile: "standard",
-          expected_trials: 48,
-          dataset_scope: ["hotpotqa_mini", "gsm8k_mini", "humaneval_mini"],
-          metrics: ["reproducibility_score"],
-          baselines: ["free_form_chat baseline"],
-          notes: ["Main comparison run."]
+          expected_trials: 12,
+          dataset_scope: ["validation_partition", "held_out_partition"],
+          metrics: ["primary_score"],
+          baselines: ["reference"],
+          notes: ["Main declared comparison."]
         },
         {
           id: "quick_check",
-          label: "Quick-check managed replication",
-          role: "supplemental" as const,
+          label: "Quick-check replication",
+          role: "supplemental",
           profile: "quick_check",
           expected_trials: 6,
-          dataset_scope: ["hotpotqa_mini", "gsm8k_mini", "humaneval_mini"],
-          metrics: ["reproducibility_score"],
-          baselines: ["free_form_chat baseline"],
-          notes: ["Low-cost validation run."]
-        },
-        {
-          id: "confirmatory",
-          label: "Confirmatory extension",
-          role: "supplemental" as const,
-          profile: "confirmatory",
-          expected_trials: 72,
-          dataset_scope: ["hotpotqa_mini", "gsm8k_mini", "humaneval_mini"],
-          metrics: ["reproducibility_score"],
-          baselines: ["free_form_chat baseline"],
-          notes: ["Higher-budget confirmatory run."]
-        },
-        {
-          id: "primary_standard__hotpotqa_mini",
-          label: "Primary standard managed run / hotpotqa_mini",
-          role: "supplemental" as const,
-          profile: "standard",
-          group_kind: "matrix_slice" as const,
-          source_trial_group_id: "primary_standard",
-          matrix_axes: { runner_profile: "standard", dataset: "hotpotqa_mini" },
-          expected_trials: 16,
-          dataset_scope: ["hotpotqa_mini"],
-          metrics: ["reproducibility_score"],
-          baselines: ["free_form_chat baseline"],
-          notes: ["Matrix slice for dataset hotpotqa_mini."]
-        },
-        {
-          id: "quick_check__hotpotqa_mini",
-          label: "Quick-check managed replication / hotpotqa_mini",
-          role: "supplemental" as const,
-          profile: "quick_check",
-          group_kind: "matrix_slice" as const,
-          source_trial_group_id: "quick_check",
-          matrix_axes: { runner_profile: "quick_check", dataset: "hotpotqa_mini" },
-          expected_trials: 2,
-          dataset_scope: ["hotpotqa_mini"],
-          metrics: ["reproducibility_score"],
-          baselines: ["free_form_chat baseline"],
-          notes: ["Matrix slice for dataset hotpotqa_mini."]
+          dataset_scope: ["validation_partition"],
+          metrics: ["primary_score"],
+          baselines: ["reference"],
+          notes: ["Bounded validation run."]
         }
       ]
     };
-    const report = buildAnalysisReport({
-      run: {
-        objectiveMetric: "Improve reproducibility score over the baseline."
-      },
-      metrics: {
-        value: 0.12,
-        sampling_profile: {
-          total_trials: 48,
-          executed_trials: 48,
-          cached_trials: 0
+    const runManifest: ExperimentRunManifest = {
+      version: 1,
+      run_id: "run-portfolio",
+      generated_at: "2026-07-26T00:01:00.000Z",
+      execution_model: "managed_bundle",
+      primary_command: "node run-configured-experiment.js --profile standard",
+      primary_metrics_path: ".autolabos/runs/run-portfolio/metrics.json",
+      total_expected_trials: 18,
+      executed_trials: 18,
+      cached_trials: 0,
+      portfolio: experimentPortfolio,
+      trial_groups: [
+        {
+          ...experimentPortfolio.trial_groups[0],
+          status: "pass",
+          metrics_path: ".autolabos/runs/run-portfolio/metrics.json",
+          summary: "Primary run passed.",
+          sampling_profile: {
+            name: "standard",
+            total_trials: 12,
+            executed_trials: 12,
+            cached_trials: 0
+          }
         },
-        condition_metrics: {
-          baseline: {
-            reproducibility_score: 0.72
-          },
-          treatment: {
-            reproducibility_score: 0.84
+        {
+          ...experimentPortfolio.trial_groups[1],
+          status: "pass",
+          metrics_path: "quick_check_metrics.json",
+          summary: "Quick-check passed.",
+          sampling_profile: {
+            name: "quick_check",
+            total_trials: 6,
+            executed_trials: 6,
+            cached_trials: 0
           }
         }
-      },
-      objectiveProfile: {
-        source: "heuristic_fallback",
-        raw: "Improve reproducibility score over the baseline.",
-        primaryMetric: "value",
-        preferredMetricKeys: ["value", "reproducibility_score"],
-        comparator: ">",
-        targetValue: 0,
-        targetDescription: "Reproducibility score should increase.",
-        analysisFocus: [],
-        paperEmphasis: [],
-        assumptions: []
-      },
-      objectiveEvaluation: {
-        rawObjectiveMetric: "Improve reproducibility score over the baseline.",
-        profileSource: "heuristic_fallback",
-        primaryMetric: "value",
-        preferredMetricKeys: ["value", "reproducibility_score"],
-        matchedMetricKey: "value",
-        comparator: ">",
-        targetValue: 0,
-        observedValue: 0.12,
-        status: "met",
-        summary: "Objective metric met: value=0.12 > 0."
+      ]
+    };
+    const report = reportFor(comparisonArtifact(), {
+      rawMetrics: {
+        sampling_profile: {
+          total_trials: 12,
+          executed_trials: 12,
+          cached_trials: 0
+        }
       },
       experimentPortfolio,
-      runManifest: {
-        version: 1,
-        run_id: "run-portfolio",
-        generated_at: "2026-03-25T00:01:00.000Z",
-        execution_model: "managed_bundle",
-        primary_command: "python3 run.py --profile standard",
-        primary_metrics_path: ".autolabos/runs/run-portfolio/metrics.json",
-        total_expected_trials: 126,
-        executed_trials: 54,
-        cached_trials: 0,
-        portfolio: experimentPortfolio,
-        trial_groups: [
-          {
-            ...experimentPortfolio.trial_groups[0],
-            status: "pass",
-            metrics_path: ".autolabos/runs/run-portfolio/metrics.json",
-            summary: "Primary run passed.",
-            objective_evaluation: {
-              rawObjectiveMetric: "Improve reproducibility score over the baseline.",
-              profileSource: "heuristic_fallback",
-              primaryMetric: "value",
-              preferredMetricKeys: ["value", "reproducibility_score"],
-              matchedMetricKey: "value",
-              comparator: ">",
-              targetValue: 0,
-              observedValue: 0.12,
-              status: "met",
-              summary: "Objective metric met: value=0.12 > 0."
-            },
-            sampling_profile: {
-              name: "standard",
-              total_trials: 48,
-              executed_trials: 48,
-              cached_trials: 0
-            }
-          },
-          {
-            ...experimentPortfolio.trial_groups[1],
-            status: "pass",
-            metrics_path: "quick_check_metrics.json",
-            summary: "Quick-check passed.",
-            sampling_profile: {
-              name: "quick_check",
-              total_trials: 6,
-              executed_trials: 6,
-              cached_trials: 0
-            }
-          },
-          {
-            ...experimentPortfolio.trial_groups[2],
-            status: "skipped",
-            metrics_path: "confirmatory_metrics.json",
-            summary: "Confirmatory run skipped because quick_check did not justify escalation."
-          },
-          {
-            ...experimentPortfolio.trial_groups[3],
-            status: "pass",
-            metrics_path: ".autolabos/runs/run-portfolio/trial_group_metrics/primary_standard__hotpotqa_mini.json",
-            summary: "Matrix slice hotpotqa_mini (profile=standard) from Primary standard managed run. mean_task_score_delta=0.1200.",
-            sampling_profile: {
-              name: "standard",
-              total_trials: 16,
-              executed_trials: 16,
-              cached_trials: 0
-            }
-          },
-          {
-            ...experimentPortfolio.trial_groups[4],
-            status: "pass",
-            metrics_path: ".autolabos/runs/run-portfolio/trial_group_metrics/quick_check__hotpotqa_mini.json",
-            summary: "Matrix slice hotpotqa_mini (profile=quick_check) from Quick-check managed replication. mean_task_score_delta=0.0800.",
-            sampling_profile: {
-              name: "quick_check",
-              total_trials: 2,
-              executed_trials: 2,
-              cached_trials: 0
-            }
-          }
-        ]
-      },
+      runManifest,
       supplementalMetrics: [
         {
           profile: "quick_check",
           path: "quick_check_metrics.json",
           metrics: {
-            value: 0.08,
+            primary_score: 0.08,
             sampling_profile: {
               name: "quick_check",
               total_trials: 6,
@@ -1222,36 +761,26 @@ selected_design:
       ],
       supplementalExpectation: {
         applicable: true,
-        profiles: ["quick_check", "confirmatory"]
+        profiles: ["quick_check"]
       }
     });
 
     expect(report.experiment_portfolio).toMatchObject({
       execution_model: "managed_bundle",
-      total_expected_trials: 126,
-      executed_trials: 54
+      total_expected_trials: 18,
+      executed_trials: 18
     });
     expect(report.experiment_portfolio?.trial_groups).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "primary_standard", status: "pass", executed_trials: 48 }),
-      expect.objectContaining({ id: "quick_check", status: "pass", executed_trials: 6 }),
-      expect.objectContaining({ id: "confirmatory", status: "skipped" }),
-      expect.objectContaining({
-        id: "primary_standard__hotpotqa_mini",
-        group_kind: "matrix_slice",
-        status: "pass",
-        executed_trials: 16
-      }),
-      expect.objectContaining({
-        id: "quick_check__hotpotqa_mini",
-        group_kind: "matrix_slice",
-        status: "pass",
-        executed_trials: 2
-      })
+      expect.objectContaining({ id: "primary_standard", status: "pass", executed_trials: 12 }),
+      expect.objectContaining({ id: "quick_check", status: "pass", executed_trials: 6 })
     ]));
-    expect(report.supplemental_runs[0]?.portfolio).toMatchObject({
-      trial_group_id: "quick_check",
-      trial_group_label: "Quick-check managed replication",
-      execution_model: "managed_bundle"
+    expect(report.supplemental_runs[0]).toMatchObject({
+      mean_score: 0.08,
+      portfolio: {
+        trial_group_id: "quick_check",
+        trial_group_label: "Quick-check replication",
+        execution_model: "managed_bundle"
+      }
     });
     expect(report.primary_findings.some((line) => line.includes("Execution portfolio"))).toBe(true);
   });

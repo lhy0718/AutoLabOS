@@ -1,0 +1,63 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "sealed_heldout_evidence_manifest",
+  "seal_plan_sha256": "c83f8666372bf766bec8fd7bd4d5a189fced320745d56643855c443b03196b43",
+  "frozen_before_probe_design": true,
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "closed_inventory": true,
+  "artifacts": [
+    {
+      "group_id": "heldout_group_01",
+      "path": "heldout_group_01.json",
+      "sha256": "372ad7101d7ea0a86e96ac7519589316b8c20da8ff55e96db563b50cbfebd703",
+      "bytes": 81472,
+      "candidate_accounting": {
+        "census_candidate_count": 7,
+        "admitted_candidate_count": 1,
+        "excluded_candidate_count": 6,
+        "search_exclusion_count": 81,
+        "every_candidate_adjudicated_exactly_once": true
+      }
+    },
+    {
+      "group_id": "heldout_group_02",
+      "path": "heldout_group_02.json",
+      "sha256": "a340eb0ba4421fc1ac5ab90b1e6842cf23c5a6e0cdd6a4efecccc3be85f1276a",
+      "bytes": 644034,
+      "candidate_accounting": {
+        "census_candidate_count": 80,
+        "admitted_candidate_count": 35,
+        "excluded_candidate_count": 45,
+        "search_exclusion_count": 708,
+        "every_candidate_adjudicated_exactly_once": true
+      }
+    },
+    {
+      "group_id": "heldout_group_03",
+      "path": "heldout_group_03.json",
+      "sha256": "23c1c1431e72019c01082d2eabf37602e1e6f94ffa6251819b7f8faeda598b47",
+      "bytes": 677641,
+      "candidate_accounting": {
+        "census_candidate_count": 16,
+        "admitted_candidate_count": 12,
+        "excluded_candidate_count": 4,
+        "search_exclusion_count": 590,
+        "every_candidate_adjudicated_exactly_once": true
+      }
+    },
+    {
+      "group_id": "heldout_group_04",
+      "path": "heldout_group_04.json",
+      "sha256": "4c4ef24b4cee572ce593babe655025545862725c59ab992203ad687b2959f332",
+      "bytes": 7482062,
+      "candidate_accounting": {
+        "census_candidate_count": 75,
+        "admitted_candidate_count": 61,
+        "excluded_candidate_count": 14,
+        "search_exclusion_count": 5413,
+        "every_candidate_adjudicated_exactly_once": true
+      }
+    }
+  ]
+}

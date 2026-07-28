@@ -41,15 +41,9 @@ import {
   supportsOpenAiResponsesReasoning
 } from "../integrations/openai/modelCatalog.js";
 import {
+  buildOllamaModelOptions,
   DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL,
-  OLLAMA_CHAT_MODEL_OPTIONS,
-  OLLAMA_RESEARCH_MODEL_OPTIONS,
-  OLLAMA_EXPERIMENT_MODEL_OPTIONS,
-  OLLAMA_VISION_MODEL_OPTIONS
+  requireOllamaModel
 } from "../integrations/ollama/modelCatalog.js";
 import { buildSuggestions } from "./commandPalette/suggest.js";
 import { SLASH_COMMANDS } from "./commandPalette/commands.js";
@@ -76,17 +70,17 @@ import {
   buildRunJobsSnapshot,
   formatFailureAggregateLines,
   formatRunJobProjectionLines,
-  parseJobsCommandArgs
+  parseJobsCommandArgs,
+  projectResearchFunnel
 } from "../core/runs/jobsProjection.js";
+import { loadResearchFunnelProjection } from "../core/runs/researchFunnelProjection.js";
 import { buildExplorationStatusSnapshot, formatExplorationStatusLines } from "../core/exploration/status.js";
 import { askLine } from "../utils/prompt.js";
 import { ensureDir, fileExists } from "../utils/fs.js";
 import {
-  DEFAULT_RESEARCH_CONSTRAINTS,
-  DEFAULT_RESEARCH_OBJECTIVE_METRIC,
-  DEFAULT_RESEARCH_TOPIC,
   getDefaultPdfAnalysisModeForLlmMode,
   getPdfAnalysisModeForConfig,
+  normalizeResearchRunInputs,
   resolveOpenAiApiKey,
   upsertEnvVar
 } from "../config.js";
@@ -105,12 +99,14 @@ import {
 import { InteractiveRunSupervisor } from "../core/runs/interactiveRunSupervisor.js";
 import { HumanInterventionRequest } from "../core/humanIntervention.js";
 import {
+  buildBriefCompletenessArtifact,
   buildGuidedResearchBriefMarkdown,
   createResearchBriefFile,
   findLatestResearchBrief,
   getWorkspaceResearchBriefPath,
   parseManuscriptFormatFromBrief,
   resolveResearchBriefPath,
+  snapshotResearchBriefContentToRun,
   snapshotResearchBriefToRun,
   summarizeBriefValidation,
   validateResearchBriefDraftMarkdown,
@@ -118,7 +114,9 @@ import {
 } from "../core/runs/researchBriefFiles.js";
 import {
   getGuidedBriefInterviewCopy,
+  getGuidedBriefResearchModePrompt,
   GuidedBriefInterviewLanguage,
+  GuidedBriefResearchMode,
   listGuidedBriefInterviewLanguages
 } from "../core/runs/guidedBriefInterview.js";
 import {
@@ -265,6 +263,7 @@ interface ActiveSelectionMenu {
 
 interface GuidedBriefAutomationConfig {
   language?: GuidedBriefInterviewLanguage;
+  researchMode?: GuidedBriefResearchMode;
   answers: string[];
   autoStartAnswer?: string;
 }
@@ -1446,7 +1445,7 @@ export class TerminalApp {
         autoStart: true,
         abortSignal
       });
-      this.pushLog(`Created run ${run.id} from the natural-language brief and started research.`);
+      this.pushLog("Created run " + run.id + " from the natural-language brief.");
       return true;
     }
 
@@ -2631,11 +2630,11 @@ export class TerminalApp {
       return { ok: false, reason: "target run not found" };
     }
 
-    await this.setActiveRunId(run.id);
     if (!parsed.relativePath) {
+      const insight = run.id === this.activeRunId ? this.activeRunInsight : await this.loadRunInsight(run.id);
       const refs = [
-        ...(this.activeRunInsight?.manuscriptQuality?.artifactRefs || []),
-        ...(this.activeRunInsight?.readinessRisks?.artifactRefs || [])
+        ...(insight?.manuscriptQuality?.artifactRefs || []),
+        ...(insight?.readinessRisks?.artifactRefs || [])
       ];
       if (refs.length === 0) {
         this.pushLog(`No insight artifact refs are available for ${run.id}.`);
@@ -2775,21 +2774,71 @@ export class TerminalApp {
       : defaultLanguage;
   }
 
+  private async selectGuidedBriefResearchMode(
+    language: GuidedBriefInterviewLanguage
+  ): Promise<GuidedBriefResearchMode> {
+    const automation = await this.getGuidedBriefAutomation();
+    if (automation) {
+      const researchMode = automation.researchMode ?? "hypothesis_test";
+      this.pushLog(`Guided brief automation selected research mode: ${researchMode}`);
+      return researchMode;
+    }
+    const prompt = getGuidedBriefResearchModePrompt(language);
+    const defaultMode: GuidedBriefResearchMode = "hypothesis_test";
+    const selected = await this.openSelectionMenu(prompt.title, prompt.options, defaultMode);
+    return prompt.options.some((option) => option.value === selected)
+      ? (selected as GuidedBriefResearchMode)
+      : defaultMode;
+  }
+
   private async runGuidedBriefInterview(workspaceRoot: string): Promise<string> {
     const interviewLanguage = await this.selectGuidedBriefInterviewLanguage();
-    const copy = getGuidedBriefInterviewCopy(interviewLanguage);
-    for (const line of copy.introLines) {
+    const languageCopy = getGuidedBriefInterviewCopy(interviewLanguage);
+    for (const line of languageCopy.introLines) {
       this.pushLog(line);
     }
-    const totalSteps = 21;
+    const templateDefault = (await fileExists(path.join(workspaceRoot, "template.tex"))) ? "template.tex" : "";
+    const researchModePrompt = getGuidedBriefResearchModePrompt(interviewLanguage);
+    const researchMode = await this.selectGuidedBriefResearchMode(interviewLanguage);
+    const totalSteps = researchMode === "topic_discovery" ? 25 : 22;
     let step = 0;
     const logStep = (label: string): void => {
       step += 1;
       this.logGuidedBriefStep(step, totalSteps, label);
     };
-    const templateDefault = (await fileExists(path.join(workspaceRoot, "template.tex"))) ? "template.tex" : "";
+    logStep(researchModePrompt.title);
+    const copy = getGuidedBriefInterviewCopy(interviewLanguage, researchMode);
     logStep(copy.questions.topic);
     const topic = await this.askRequiredGuidedBriefQuestion(copy.questions.topic, "", copy.requiredAnswerMessage);
+    let scientificObject: string | undefined;
+    let empiricalProblems: string | undefined;
+    let priorWorkProbes: string | undefined;
+    if (researchMode === "topic_discovery") {
+      const scientificObjectQuestion = copy.questions.scientificObject
+        ?? "Scientific object for literature search (2-5 core terms)";
+      const empiricalProblemsQuestion = copy.questions.empiricalProblems
+        ?? "At least two independent empirical problems to test (semicolon-separated)";
+      const priorWorkProbesQuestion = copy.questions.priorWorkProbes
+        ?? "Direct-prior or prior-absorption probes (semicolon-separated)";
+      logStep(scientificObjectQuestion);
+      scientificObject = await this.askRequiredGuidedBriefQuestion(
+        scientificObjectQuestion,
+        "",
+        copy.requiredAnswerMessage
+      );
+      logStep(empiricalProblemsQuestion);
+      empiricalProblems = await this.askRequiredGuidedBriefQuestion(
+        empiricalProblemsQuestion,
+        "",
+        copy.requiredAnswerMessage
+      );
+      logStep(priorWorkProbesQuestion);
+      priorWorkProbes = await this.askRequiredGuidedBriefQuestion(
+        priorWorkProbesQuestion,
+        "",
+        copy.requiredAnswerMessage
+      );
+    }
     logStep(copy.questions.primaryMetric);
     const primaryMetric = await this.askRequiredGuidedBriefQuestion(
       copy.questions.primaryMetric,
@@ -2887,7 +2936,11 @@ export class TerminalApp {
     const questionsRisks = await this.askGuidedBriefQuestion(copy.questions.questionsRisks, "");
 
     return buildGuidedResearchBriefMarkdown({
+      researchMode,
       topic,
+      scientificObject,
+      empiricalProblems,
+      priorWorkProbes,
       primaryMetric,
       secondaryMetrics,
       meaningfulImprovement,
@@ -2928,19 +2981,20 @@ export class TerminalApp {
       const extracted = await extractRunBrief({
         brief: input.brief,
         defaults: {
-          topic: input.topic?.trim() || this.config.research?.default_topic || DEFAULT_RESEARCH_TOPIC,
+          topic: input.topic?.trim() || this.config.research?.default_topic || "",
           constraints:
             input.constraints?.length
               ? input.constraints
-              : this.config.research?.default_constraints || [...DEFAULT_RESEARCH_CONSTRAINTS],
+              : this.config.research?.default_constraints || [],
           objectiveMetric:
             input.objectiveMetric?.trim()
             || this.config.research?.default_objective_metric
-            || DEFAULT_RESEARCH_OBJECTIVE_METRIC
+            || ""
         },
         llm: this.getCommandIntentClient(),
         abortSignal: input.abortSignal
       });
+      const normalized = normalizeResearchRunInputs(extracted);
       this.pushLog("Structured run brief extracted.");
       if (extracted.source === "heuristic_fallback") {
         this.pushLog("Run brief extraction fell back to heuristic parsing.");
@@ -2952,15 +3006,15 @@ export class TerminalApp {
       this.render();
 
       const title = await this.titleGenerator.generateTitle(
-        extracted.topic,
-        extracted.constraints,
-        extracted.objectiveMetric
+        normalized.topic,
+        normalized.constraints,
+        normalized.objectiveMetric
       );
       const run = await this.runStore.createRun({
         title,
-        topic: extracted.topic,
-        constraints: extracted.constraints,
-        objectiveMetric: extracted.objectiveMetric
+        topic: normalized.topic,
+        constraints: normalized.constraints,
+        objectiveMetric: normalized.objectiveMetric
       });
       this.pushLog("Created governed run record.");
       this.creatingRunTargetId = run.id;
@@ -2972,6 +3026,19 @@ export class TerminalApp {
       await runContext.put("run_brief.raw", input.brief);
       await runContext.put("run_brief.extracted", extracted);
       await runContext.put("run_brief.plan_summary", extracted.planSummary || null);
+      let snapshotPath = await snapshotResearchBriefContentToRun(
+        process.cwd(),
+        run.id,
+        input.brief
+      );
+      const briefCompleteness = buildBriefCompletenessArtifact(input.brief);
+      await runContext.put("run_brief.completeness", briefCompleteness);
+      if (briefCompleteness.grade !== "complete") {
+        this.pushLog(
+          "Brief completeness: " + briefCompleteness.grade +
+            " - missing: " + (briefCompleteness.missing_sections.join(", ") || "none") + "."
+        );
+      }
       const manuscriptFormat = parseManuscriptFormatFromBrief(input.brief);
       if (manuscriptFormat) {
         await runContext.put("run_brief.manuscript_format", manuscriptFormat);
@@ -2980,19 +3047,21 @@ export class TerminalApp {
         const resolvedSourcePath = path.isAbsolute(input.sourcePath)
           ? input.sourcePath
           : path.join(process.cwd(), input.sourcePath);
-        const snapshotPath = await snapshotResearchBriefToRun(process.cwd(), run.id, resolvedSourcePath);
+        snapshotPath = await snapshotResearchBriefToRun(process.cwd(), run.id, resolvedSourcePath);
         await runContext.put("run_brief.source_path", resolvedSourcePath);
-        await runContext.put(
-          "run_brief.snapshot_path",
-          path.relative(process.cwd(), snapshotPath).replace(/\\/g, "/")
-        );
       }
+      await runContext.put(
+        "run_brief.snapshot_path",
+        path.relative(process.cwd(), snapshotPath).replace(/\\/g, "/")
+      );
       this.creatingRunFromBrief = false;
       this.pushLog(`Created run ${run.id}`);
       this.pushLog(`Title: ${run.title}`);
       this.updateSuggestions();
       this.render();
-      if (input.autoStart) {
+      if (input.autoStart && briefCompleteness.grade !== "complete") {
+        this.pushLog("Research auto-start blocked until every required brief section is substantive.");
+      } else if (input.autoStart) {
         await this.startRun(run.id, input.abortSignal);
       }
       return run;
@@ -3363,7 +3432,6 @@ export class TerminalApp {
       networkPolicy: this.config.experiments?.network_policy,
       networkPurpose: this.config.experiments?.network_purpose
     });
-    await this.setActiveRunId(run.id);
     for (const line of summary.lines) {
       this.pushLog(line);
     }
@@ -3499,8 +3567,7 @@ export class TerminalApp {
         return { ok: false, reason: "target run not found" };
       }
 
-      await this.setActiveRunId(run.id);
-      this.pushLog(`Run ${run.id}: ${run.title}`);
+      this.pushLog("Run " + run.id + ": " + run.title);
       this.pushLog(`Current node: ${run.currentNode} | run status: ${run.status}`);
       for (const node of AGENT_ORDER) {
         const state = run.graph.nodeStates[node];
@@ -4315,7 +4382,7 @@ export class TerminalApp {
     const pdfAnalysisMode = getPdfAnalysisModeForConfig(this.config);
     const analysisSummary =
       pdfAnalysisMode === "ollama_vision"
-          ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.providers.ollama?.vision_model || DEFAULT_OLLAMA_VISION_MODEL})`
+          ? `${this.describePdfAnalysisMode(pdfAnalysisMode)} (${this.config.providers.ollama?.vision_model || "(not configured)"})`
           : this.describePdfAnalysisMode(pdfAnalysisMode);
     const approvalSummary = this.labelApprovalMode(this.config.workflow?.approval_mode || "minimal");
     this.pushLog(
@@ -4738,10 +4805,7 @@ export class TerminalApp {
         this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
       );
       const ollamaLlm = new OllamaLLMClient(ollamaClient, {
-        model:
-          this.config.providers.ollama?.chat_model ||
-          this.config.providers.ollama?.research_model ||
-          DEFAULT_OLLAMA_CHAT_MODEL
+        model: requireOllamaModel(this.config.providers.ollama?.chat_model, "chat")
       });
       return {
         runForText: async (opts) =>
@@ -4845,10 +4909,7 @@ export class TerminalApp {
         this.config.providers.ollama?.base_url || DEFAULT_OLLAMA_BASE_URL
       );
       const ollamaLlm = new OllamaLLMClient(ollamaClient, {
-        model:
-          this.config.providers.ollama?.chat_model ||
-          this.config.providers.ollama?.research_model ||
-          DEFAULT_OLLAMA_CHAT_MODEL
+        model: requireOllamaModel(this.config.providers.ollama?.chat_model, "chat")
       });
       return {
         runForText: async (opts) =>
@@ -5092,48 +5153,37 @@ export class TerminalApp {
 
   private getCurrentOllamaSlotModel(slot: "chat" | "task"): string {
     const ollama = this.config.providers.ollama;
-    if (!ollama) return "(not configured)";
-    if (slot === "chat") return ollama.chat_model || DEFAULT_OLLAMA_CHAT_MODEL;
-    return ollama.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL;
+    const configured = slot === "chat" ? ollama?.chat_model : ollama?.research_model;
+    return configured?.trim() || "(not configured)";
   }
 
-  private getRecommendedOllamaModel(slot: "chat" | "task"): string {
-    if (slot === "chat") return DEFAULT_OLLAMA_CHAT_MODEL;
-    return DEFAULT_OLLAMA_RESEARCH_MODEL;
+  private getRecommendedOllamaModel(_slot: "chat" | "task"): string {
+    return "select an installed model";
   }
 
   private ensureOllamaConfig(): void {
     if (!this.config.providers.ollama) {
       this.config.providers.ollama = {
         base_url: DEFAULT_OLLAMA_BASE_URL,
-        chat_model: DEFAULT_OLLAMA_CHAT_MODEL,
-        research_model: DEFAULT_OLLAMA_RESEARCH_MODEL,
-        experiment_model: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-        vision_model: DEFAULT_OLLAMA_VISION_MODEL
+        chat_model: "",
+        research_model: "",
+        experiment_model: "",
+        vision_model: ""
       };
+      return;
     }
+    this.config.providers.ollama.base_url =
+      this.config.providers.ollama.base_url?.trim() || DEFAULT_OLLAMA_BASE_URL;
   }
 
   private buildOllamaSlotOptions(
-    slotType: "chat" | "research" | "experiment" | "vision"
+    installedModels: string[],
+    currentModel: string
   ): SelectionMenuOption[] {
-    const catalogMap = {
-      chat: OLLAMA_CHAT_MODEL_OPTIONS,
-      research: OLLAMA_RESEARCH_MODEL_OPTIONS,
-      experiment: OLLAMA_EXPERIMENT_MODEL_OPTIONS,
-      vision: OLLAMA_VISION_MODEL_OPTIONS
-    };
-    const defaultMap = {
-      chat: DEFAULT_OLLAMA_CHAT_MODEL,
-      research: DEFAULT_OLLAMA_RESEARCH_MODEL,
-      experiment: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-      vision: DEFAULT_OLLAMA_VISION_MODEL
-    };
-    const recommended = defaultMap[slotType];
-    return catalogMap[slotType].map((o) => ({
-      value: o.value,
-      label: o.label,
-      description: this.annotateRecommendedDescription(o.description, o.value === recommended)
+    return buildOllamaModelOptions(installedModels, currentModel).map((option) => ({
+      value: option.value,
+      label: option.label,
+      description: option.description
     }));
   }
 
@@ -5142,23 +5192,54 @@ export class TerminalApp {
   ): Promise<string | undefined> {
     this.ensureOllamaConfig();
     const ollama = this.config.providers.ollama!;
-    const currentMap: Record<string, string> = {
-      chat: ollama.chat_model || DEFAULT_OLLAMA_CHAT_MODEL,
-      research: ollama.research_model || DEFAULT_OLLAMA_RESEARCH_MODEL,
-      experiment: ollama.experiment_model || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-      vision: ollama.vision_model || DEFAULT_OLLAMA_VISION_MODEL
+    const currentMap: Record<typeof slotType, string> = {
+      chat: ollama.chat_model?.trim() || "",
+      research: ollama.research_model?.trim() || "",
+      experiment: ollama.experiment_model?.trim() || "",
+      vision: ollama.vision_model?.trim() || ""
     };
     const label = slotType === "chat" ? "general chat"
       : slotType === "research" ? RESEARCH_BACKEND_SLOT_LABEL
       : slotType === "experiment" ? "experiment/code"
       : "vision/PDF";
-    return this.openSelectionMenu(
+    const baseUrl = ollama.base_url || DEFAULT_OLLAMA_BASE_URL;
+    let installedModels: string[] = [];
+    let discoveryFailed = false;
+    try {
+      installedModels = (await new OllamaClient(baseUrl).listModels()).map((model) => model.name);
+    } catch (error) {
+      discoveryFailed = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      this.pushLog(
+        `Could not reach Ollama at ${baseUrl}: ${detail}. Enter an installed model identifier for ${label}.`
+      );
+    }
+
+    if (installedModels.length === 0) {
+      if (!discoveryFailed) {
+        this.pushLog(
+          `No installed Ollama models were discovered at ${baseUrl}. Enter an installed model identifier for ${label}.`
+        );
+      }
+      const entered = await this.askWithinTui(
+        `Ollama ${label} model (required)`,
+        currentMap[slotType]
+      );
+      const normalized = entered.trim();
+      if (!normalized) {
+        this.pushLog(`Ollama ${label} model is required.`);
+        return undefined;
+      }
+      return normalized;
+    }
+
+    const selected = await this.openSelectionMenu(
       `Select Ollama ${label} model`,
-      this.buildOllamaSlotOptions(slotType),
+      this.buildOllamaSlotOptions(installedModels, currentMap[slotType]),
       currentMap[slotType]
     );
+    return selected?.trim() || undefined;
   }
-
   private async handleOllamaModelSelection(slot: "chat" | "task"): Promise<void> {
     this.pushCurrentModelDefaults();
     this.ensureOllamaConfig();
@@ -5606,22 +5687,24 @@ export class TerminalApp {
   }
 
   private async refreshActiveRunInsight(): Promise<void> {
-    if (!this.activeRunId) {
-      this.activeRunInsight = undefined;
-      return;
+    this.activeRunInsight = await this.loadRunInsight(this.activeRunId);
+  }
+
+  private async loadRunInsight(runId?: string): Promise<RunInsightCard | undefined> {
+    if (!runId) {
+      return undefined;
     }
 
-    const runDir = path.join(process.cwd(), ".autolabos", "runs", this.activeRunId);
+    const runDir = path.join(process.cwd(), ".autolabos", "runs", runId);
     try {
-      const run = await this.runStore.getRun?.(this.activeRunId);
+      const run = await this.runStore.getRun?.(runId);
       if (run?.currentNode === "write_paper") {
         const manuscriptQualityInsight = await loadManuscriptQualityInsightCard({
           runDir,
           readText: safeRead
         });
         if (manuscriptQualityInsight) {
-          this.activeRunInsight = manuscriptQualityInsight;
-          return;
+          return manuscriptQualityInsight;
         }
       }
       const reviewPacket = parseReviewPacket(await safeRead(path.join(runDir, "review", "review_packet.json")));
@@ -5629,21 +5712,19 @@ export class TerminalApp {
         await safeRead(path.join(runDir, "review", "readiness_risks.json"))
       );
       if (shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket) {
-        this.activeRunInsight = buildReviewInsightCard(reviewPacket, reviewReadinessRisks);
-        return;
+        return buildReviewInsightCard(reviewPacket, reviewReadinessRisks);
       }
       const report = shouldSurfaceAnalyzeResultsInsight(run?.currentNode)
         ? parseAnalysisReport(await safeRead(path.join(runDir, "result_analysis.json")))
         : undefined;
       if (report) {
-        this.activeRunInsight = buildAnalyzeResultsInsightCard(report);
-        return;
+        return buildAnalyzeResultsInsightCard(report);
       }
-      this.activeRunInsight = shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
+      return shouldSurfaceReviewInsight(run?.currentNode) && reviewPacket
         ? buildReviewInsightCard(reviewPacket, reviewReadinessRisks)
         : undefined;
     } catch {
-      this.activeRunInsight = undefined;
+      return undefined;
     }
   }
 
@@ -5819,6 +5900,10 @@ export class TerminalApp {
       const parsed = JSON.parse(raw) as Partial<GuidedBriefAutomationConfig>;
       this.guidedBriefAutomation = {
         language: parsed.language,
+        researchMode:
+          parsed.researchMode === "hypothesis_test" || parsed.researchMode === "topic_discovery"
+            ? parsed.researchMode
+            : undefined,
         answers: Array.isArray(parsed.answers)
           ? parsed.answers.filter((value): value is string => typeof value === "string")
           : [],
@@ -7180,6 +7265,10 @@ function formatEventLog(event: AutoLabOSEvent): string | undefined {
       return `Test failed: ${oneLine(String(event.payload.stderr || event.payload.error || event.payload.text || "unknown"))}`;
     case "NODE_STARTED":
       return event.node ? `Node ${event.node} started.` : "Node started.";
+    case "NODE_AWAITING_APPROVAL":
+      return event.node
+        ? `Node ${event.node} is awaiting approval: ${oneLine(String(event.payload.summary || "awaiting approval"))}`
+        : `Node is awaiting approval: ${oneLine(String(event.payload.summary || "awaiting approval"))}`;
     case "NODE_COMPLETED":
       return event.node
         ? `Node ${event.node} completed: ${oneLine(String(event.payload.summary || "completed"))}`
@@ -7983,11 +8072,15 @@ async function readAnalyzeSelectionCount(manifestPath: string): Promise<{ select
 
 async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Promise<RunProjectionHints | undefined> {
   const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
-  const [runContextRaw, analyzeManifestRaw, implementStatusRaw, checkpointHints] = await Promise.all([
+  const [runContextRaw, analyzeManifestRaw, implementStatusRaw, checkpointHints, researchFunnelSource] = await Promise.all([
     safeReadBounded(path.join(workspaceRoot, run.memoryRefs.runContextPath), MAX_PROJECTION_FILE_BYTES),
     safeReadBounded(path.join(runDir, "analysis_manifest.json"), MAX_PROJECTION_FILE_BYTES),
     safeReadBounded(path.join(runDir, "implement_experiments", "status.json"), MAX_PROJECTION_FILE_BYTES),
-    readCheckpointProjectionHints(runDir)
+    readCheckpointProjectionHints(runDir),
+    loadResearchFunnelProjection(runDir, {
+      runId: run.id,
+      researchCycle: run.graph.researchCycle ?? 0
+    })
   ]);
 
   const hints: RunProjectionHints = {};
@@ -8013,8 +8106,13 @@ async function readRunProjectionHints(workspaceRoot: string, run: RunRecord): Pr
   if (checkpointHints) {
     hints.checkpoint = checkpointHints;
   }
+  if (researchFunnelSource) {
+    hints.researchFunnel = projectResearchFunnel(researchFunnelSource);
+  }
 
-  return hints.collect || hints.analyze || hints.implement || hints.checkpoint ? hints : undefined;
+  return hints.collect || hints.analyze || hints.implement || hints.checkpoint || hints.researchFunnel
+    ? hints
+    : undefined;
 }
 
 async function readCheckpointProjectionHints(runDir: string): Promise<RunProjectionHints["checkpoint"] | undefined> {

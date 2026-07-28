@@ -35,9 +35,9 @@ function makeRun(root: string, runId: string): RunRecord {
     workflowVersion: 3,
     id: runId,
     title: "Exploration Manager",
-    topic: "AI agent automation",
+    topic: "Configured research workflow",
     constraints: [],
-    objectiveMetric: "accuracy",
+    objectiveMetric: "primary_score >= 0 unitless",
     status: "running",
     currentNode: "design_experiments",
     latestSummary: undefined,
@@ -188,7 +188,7 @@ describe("exploration manager", () => {
 
     manager.completeNode(parent!.node_id, {
       actualResultSummary: "Repeated failure.",
-      objectiveMetrics: { accuracy: 0.4 },
+      objectiveMetrics: { primary_score: 0.4 },
       evidenceManifest: {
         branch_id: parent!.node_id,
         executed_at: new Date().toISOString(),
@@ -282,7 +282,7 @@ describe("exploration manager", () => {
 
     expect(result.status).toBe("success");
     await expect(readFile(path.join(runDir, "experiment_plan.yaml"), "utf8")).resolves.toContain("selected_design:");
-    await expect(readFile(path.join(runDir, "experiment_contract.json"), "utf8")).resolves.toContain("results_table_schema");
+    await expect(readFile(path.join(runDir, "experiment_contract.json"), "utf8")).resolves.toContain("results_plan");
     await expect(stat(path.join(runDir, "experiment_tree", "tree.json"))).rejects.toThrow();
     await expect(stat(path.join(runDir, "experiment_tree", "manager_state.json"))).rejects.toThrow();
   });

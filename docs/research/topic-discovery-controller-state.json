@@ -1,0 +1,719 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "autonomous_topic_search_controller_state",
+  "updated_at": "2026-07-28",
+  "live_request_anchor": {
+    "latest_live_request": "Autonomously pursue one long goal: distrust and revalidate all existing AutoLabOS work and code structure, restart topic selection when necessary, make broad prior-work-driven topic exploration and generation a reusable AutoLabOS capability, use multi-agent review where useful, choose a study that can run quickly on this computer, and continue through a genuinely reviewed workshop-level paper.",
+    "compressed_summary_present": true,
+    "historical_summary_messages_quarantined": true,
+    "allowed_action": "Keep all previously killed studies quarantined, repair the topic-discovery controller's provenance and execution gates, independently verify the provisional structured-output and AgentUQ kill decisions, audit the five-cluster replacement portfolio, select only a surviving candidate through a current scorecard, and freeze a new outcome-blind protocol before any model or study-arm execution.",
+    "older_requests_override_latest": false
+  },
+  "research_program_anchor": {
+    "objective": "Audit the reusable system, make literature-grounded topic discovery an AutoLabOS capability, select a locally feasible workshop-paper topic, run real experiments, and produce a workshop-level manuscript with independent review where useful.",
+    "historical_artifacts_quarantined": true,
+    "allowed_actions": [
+      "audit reusable core, TUI, Web, and research artifacts",
+      "remove research-specific contamination from reusable runtime paths",
+      "build and validate an auditable topic-discovery portfolio",
+      "verify closest prior work and venue constraints from primary sources",
+      "run bounded local feasibility experiments",
+      "promote, revise, or kill candidates using explicit evidence gates",
+      "write and independently review a workshop manuscript only after experiment gates pass"
+    ]
+  },
+  "objective": "Produce a workshop-submission-level paper from a real, locally executable study while making evidence-grounded topic discovery a reusable AutoLabOS capability.",
+  "completion_condition": "One selected topic has verified closest-prior differentiation, a strong baseline, real repeated experiments, uncertainty and error analysis, claim-to-evidence mapping, a reproducibility bundle, an official template, independent review and meta-review, passing repository validation, and a reviewable commit.",
+  "non_completion_states": [
+    "repository audit completed",
+    "topic portfolio generated",
+    "multi-agent consensus reached",
+    "feasibility probe passed",
+    "workflow completed",
+    "PDF built",
+    "system conformance demonstrated"
+  ],
+  "archive_policy": {
+    "prior_topic_and_paper_artifacts": "quarantined_read_only",
+    "automatic_import_allowed": false,
+    "import_requirement": "A current evidence ticket must identify the exact claim, source, verification depth, and reason for reuse."
+  },
+  "portfolio_policy": {
+    "minimum_candidates_before_narrowing": 5,
+    "maximum_candidates_per_generation": 7,
+    "minimum_independent_clusters_before_narrowing": 3,
+    "single_candidate_convergence_allowed_without_scorecard": false,
+    "selection_is_provisional_until_execution_probe": true
+  },
+  "scorecard_axes": [
+    "problem_importance",
+    "closest_prior_non_overlap",
+    "falsifiability",
+    "strong_baseline_clarity",
+    "evaluation_validity",
+    "dataset_or_task_realism",
+    "local_compute_feasibility",
+    "failure_information_value",
+    "workshop_fit",
+    "reproducibility"
+  ],
+  "hard_gates": [
+    "two distinct verified full-text closest priors",
+    "explicit non-overlap and reviewer-absorption objection",
+    "real task or defensible controlled benchmark unit",
+    "strong baseline or comparator",
+    "metric and paired or clustered uncertainty plan",
+    "bounded local compute and storage estimate",
+    "predeclared kill signal",
+    "no empirical claim from codex_mock or synthetic fixtures",
+    "official venue scope and deadline basis"
+  ],
+  "multi_agent_review": {
+    "enabled": true,
+    "parallel_sidecar_task_count": 4,
+    "completed_outputs_inspected": 15,
+    "active_sidecar_task_count": 4,
+    "active_sidecar_roles": [
+      "topic_funnel_architecture_auditor",
+      "evidence_ceiling_writing_auditor",
+      "review_obligation_alignment_auditor",
+      "localized_source_repair_auditor"
+    ],
+    "consensus_is_evidence": false,
+    "subagent_outputs_bypass_evidence_gates": false,
+    "main_controller_retains_promotion_authority": true
+  },
+  "external_system_audit": {
+    "index": "worldbench/awesome-ai-auto-research",
+    "section": "Tools & GitHub Repos",
+    "repositories_listed": 24,
+    "repositories_baseline_inspected": 24,
+    "audit_receipt": "docs/research/open-auto-research-repository-audit-2026-07-26.md",
+    "performance_claims_reproduced": false,
+    "adoption_basis": "architecture_and_workflow_patterns_only"
+  },
+  "candidate_dispositions": {
+    "topic_null_contract": {
+      "title": "Agents Under Null Probe",
+      "status": "quarantined_not_executed",
+      "decision": "rejected",
+      "execution_allowed": false,
+      "reason": "Current literature absorbs protected hidden-holdout enforcement, adaptive validation controls, untouched holdout transfer, and prompt-versus-runtime comparisons; a broad research-method claim is therefore not defensible."
+    },
+    "topic_relation_serialization": {
+      "title": "Information-Equivalent Verdict Invariance Probe",
+      "status": "killed_pre_execution",
+      "decision": "KILL",
+      "execution_allowed": false,
+      "model_calls_completed": 0,
+      "research_question": "Under information-equivalent serializations of identical SCITAB canonical atoms, how often do scientific-table claim verdicts flip, and how much does single-format evaluation hide that vulnerability?",
+      "primary_dataset_snapshot": {
+        "repository": "XinyuanLu00/SciTab",
+        "commit": "217cfbd71ebf39ba26a0938f0d87a9fce560e0fe",
+        "artifact": "dataset/sci_tab.json",
+        "repository_license": "MIT",
+        "claims": 1224,
+        "unique_papers": 80,
+        "unique_tables": 213,
+        "label_counts": {
+          "supports": 457,
+          "refutes": 411,
+          "not_enough_info": 356
+        },
+        "canonical_fields": [
+          "table_column_names",
+          "table_content_values"
+        ],
+        "all_rows_structured_and_rectangular": true,
+        "papers_with_both_supports_and_refutes": 79,
+        "binary_sample_target": {
+          "paper_unique_units": 60,
+          "supports": 30,
+          "refutes": 30
+        },
+        "promotion_floor_paper_unique_units": 40
+      },
+      "secondary_external_validation_candidate": {
+        "repository": "alabnii/sciclaimeval-shared-task",
+        "revision": "efb3807399acec43854fdf7741c1bcfe605a72b9",
+        "split": "dev",
+        "task": 2,
+        "access": "public_non_gated",
+        "filter": {
+          "evi_type": "table",
+          "use_context": "no",
+          "license_name": "CC BY 4.0"
+        },
+        "eligible_rows": 134,
+        "unique_papers": 63,
+        "both_tex_rows": 104,
+        "both_tex_unique_papers": 49,
+        "strict_parser_unique_papers": 17,
+        "multicolumn_parser_unique_papers": 25,
+        "status": "secondary_external_validation_candidate_not_primary",
+        "test_split_allowed": false
+      },
+      "probe_requirements": [
+        "parser fails closed",
+        "freeze a 60-paper primary sample with 30 supports and 30 refutes after parser audits",
+        "no outcome-driven sample replacement and no promotion below 40 valid paper-unique units",
+        "not-enough-info examples are secondary and cannot promote the topic",
+        "gold labels may be used only by the frozen balancing and grading steps and are never exposed to renderers, prompts, retries, or models",
+        "natural row-statement and typed JSON variants use the exact same canonical cells",
+        "same-information audit passes before inference",
+        "token-ratio audit and its acceptance rule are frozen before inference",
+        "row and column permutations are matched across serialization conditions",
+        "claim-only control is included",
+        "three-way labels and permutation consistency are scored by an exact deterministic grader without a model judge",
+        "two local model families are evaluated",
+        "paired statistics use paper-level units and account for all matched conditions",
+        "per-format macro-F1 and any format-winner contrast are secondary and cannot promote the topic",
+        "claims are limited to the tested renderers, model families, and pinned SCITAB commit"
+      ],
+      "endpoint_policy": {
+        "primary": {
+          "paired_verdict_disagreement": "For the same paper-level item and matched permutation, whether natural row statements and typed JSON produce different exact verdicts.",
+          "paired_verdict_invariance": "One minus paired verdict disagreement, reported without selecting a preferred format.",
+          "worst_case_correctness": "A paper-level item is correct only when every tested renderer-by-permutation view receives the exact gold verdict.",
+          "single_format_hidden_vulnerability": "For each renderer separately, standalone exact correctness minus worst-case correctness; both gaps are reported without declaring a winner."
+        },
+        "secondary": [
+          "per-format macro-F1",
+          "per-format exact accuracy",
+          "format-winner contrasts",
+          "not-enough-info performance"
+        ],
+        "promotion_rule": "Promotion requires a bounded, replicated invariance or hidden-vulnerability result across both local model families; a format-winner result alone cannot promote."
+      },
+      "claim_ceiling": "Conclusions are limited to the tested deterministic natural row-statement and typed JSON renderers, matched permutation schedule, two local model families, and SCITAB commit 217cfbd71ebf39ba26a0938f0d87a9fce560e0fe. No general JSON-versus-natural-language superiority claim is allowed.",
+      "preregistration": {
+        "expected_path": "docs/research/relation-serialization-probe-preregistration-v1.json",
+        "present_when_state_updated": true,
+        "content_inspected": true,
+        "frozen": true,
+        "ready": false
+      },
+      "decision_receipt": "docs/research/relation-serialization-probe-decision-v1.json",
+      "binding_audit": {
+        "reviewer_id": "codex_semantic_b",
+        "human_attestation": false,
+        "audited_entries": 70,
+        "all_checks_passed": 31,
+        "failed_closed": 39
+      },
+      "kill_reason": "The frozen manual-audit contract requires every record in the fixed 70-row universe to pass. The binding audit failed 39 records. Replacement, expansion, threshold reduction, and model inference are forbidden."
+    },
+    "topic_review_backtracking": {
+      "title": "Artifact-Grounded Revision Closure",
+      "status": "independent_prior_and_source_reaudit_in_progress",
+      "decision": "UNSELECTED_REAUDIT",
+      "execution_allowed": false,
+      "research_question": "When a scientific revision requires code or experiment changes, can a typed obligation plus execution receipt distinguish a completed repair from an unsupported completion claim better than paper-only comparison, trace-only review, or file-diff presence?",
+      "closest_prior_ids": [
+        "src_faulty_reasoning_review",
+        "src_aries",
+        "src_revisebench",
+        "src_flaws",
+        "src_prismm",
+        "src_pat",
+        "src_hidden_pitfalls"
+      ],
+      "source_feasibility": {
+        "revisebench": {
+          "public_source_workspaces": 12,
+          "repository_license_detected": false,
+          "approved_as_experimental_dependency": false
+        },
+        "flaws": {
+          "paper_error_pairs": 713,
+          "dataset_license": "CC_BY_4_0",
+          "code_license": "MIT",
+          "small_archive_candidates": [
+            {
+              "name": "OPENAI_NON_ML.zip",
+              "examples": 48,
+              "bytes": 224811852
+            },
+            {
+              "name": "GEMINI_NON_ML.zip",
+              "examples": 67,
+              "bytes": 351406800
+            }
+          ],
+          "approved_for_probe": false
+        }
+      },
+      "remaining_hard_gates": [
+        "two full-text closest-prior non-overlap audits",
+        "licensed real unit with deterministic closure label",
+        "at least two meaningful obligation classes",
+        "paper-only, trace-only, and diff-only baselines",
+        "bounded local context and inference estimate",
+        "frozen pre-execution kill signal"
+      ]
+    },
+    "topic_grader_conform": {
+      "title": "Do Contract-Based Metamorphic Tests Find Historical Bugs in Agent Evaluators? A Blinded Cross-Repository Study",
+      "status": "v1_and_v2_killed_pre_execution",
+      "decision": "KILL_PRE_EXECUTION",
+      "execution_allowed": false,
+      "paper_scale_claim_authorized": false,
+      "topic_selected_for_paper": false,
+      "research_question": "Under equal information and execution budgets, how often do contract-based metamorphic tests produce executable reproducers for retained historical agent-evaluator faults compared with direct example regressions, free-form contract-aware property tests, and auditor-to-reproducer baselines?",
+      "absorbed_broad_claims": [
+        "generic benchmark auditing",
+        "benchmark-update defect meta-benchmarks",
+        "generic mutation or metamorphic testing",
+        "task specification and annotation auditing"
+      ],
+      "narrow_claim_boundary": "grader-local, contract-expressible false accepts and false rejects under deterministic artifact, response, trace, state, or invocation-context transformations",
+      "bounded_development": {
+        "lineages": 14,
+        "repositories": 3,
+        "stable_replays": 3,
+        "historical_faults_reproduced": 14,
+        "fixed_revision_false_alarms": 0,
+        "development_set_fit_only": true,
+        "decision_receipt": "docs/research/grader-conform-bounded-development-decision-v1.json"
+      },
+      "v1_kill_reasons": [
+        "eligibility was entangled with relation-template applicability",
+        "the old 109 admits cannot define the v2 denominator",
+        "baseline information and control independence were not symmetric enough for a confirmatory claim",
+        "the formulation overstated method novelty relative to established metamorphic and property-based testing"
+      ],
+      "v2_preflight_requirements": [
+        "re-adjudicate all 178 retained candidates without relation or template applicability",
+        "sample 24 eligible faults from at least 6 repositories or independent clusters by a public deterministic rule",
+        "freeze 12 normal, 12 unrelated-change, and 12 intentional-contract-change controls from at least 6 repositories",
+        "give every arm the same parent snapshot, contract evidence, schema, native tests, environment, and execution budget",
+        "freeze three strong baselines and an independent replay schema before any method outcome is observed",
+        "kill and switch topics if sampling independence, information symmetry, control validity, or budget parity fails bounded preflight"
+      ],
+      "v2_kill_decision": {
+        "path": "studies/grader-conform/v2/preflight/kill-decision.v2.json",
+        "reason": "The bounded preflight cannot close its isolated eligibility, global deduplication, negative-control, source-packet, and freeze requirements, while the broad claim is compositionally absorbed by direct prior work.",
+        "study_arm_outcomes_observed": false,
+        "model_calls_completed": 0
+      },
+      "frozen_relation_templates": "studies/grader-conform/method/relation-templates.v1.json",
+      "confirmatory_gate": {
+        "minimum_heldout_lineages": 24,
+        "minimum_new_repositories": 2,
+        "minimum_unique_gains_over_strongest_deterministic_baseline": 6,
+        "minimum_repositories_with_unique_gain": 3,
+        "maximum_fixed_control_false_alarms": 1
+      }
+    },
+    "topic_user_simulator_conditional_ranking_validity": {
+      "title": "Profile-Conditional Assistant Ranking with User Simulators",
+      "status": "killed_pre_execution",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "model_calls_completed": 0,
+      "research_question": "Do assistant rankings produced by user simulators remain valid within user-profile strata rather than only in aggregate?",
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://aclanthology.org/2025.emnlp-main.1786/",
+          "finding": "SimulatorArena derives high-level knowledge, preference, writing-style, interaction-style, and message-length attributes from the completed real human-LLM conversation used as the behavioral target."
+        },
+        {
+          "type": "repository",
+          "url": "https://github.com/microsoft/SimulatorArena",
+          "revision": "e9f677c4975496fdd37f28bb6343ec3c1c54c8b4",
+          "license": "MIT",
+          "finding": "The repository provides 459 document conversations, 450 redacted math conversations, and GPT-4o-extracted per-conversation profiles, but simulation and evaluator outputs are runtime directories rather than committed row-level results."
+        }
+      ],
+      "kill_reasons": [
+        "The proposed prospective profile-conditional validity claim would condition on attributes extracted from the complete target dialogue, introducing post-dialogue information leakage.",
+        "The public repository does not contain the row-level simulator and evaluator outputs needed to reanalyze assistant rankings without new model runs.",
+        "A leakage-safe version requires profiles available before interaction, newly executed simulator-assistant conversations, and profile-stratified human comparison data; the current public artifact alone cannot support the claim.",
+        "The required new multi-model, multi-turn simulator and evaluator runs are not a quick local-only study under the current no-paid-provider evidence boundary."
+      ],
+      "remaining_narrow_route": "A future study may test profile-conditional ranking only with pre-interaction profile fields, outcome-blind strata, newly generated simulator runs, and an independently held-out human comparison set.",
+      "claim_ceiling": "The current public data can support retrospective descriptive analyses of conversation-derived profiles, not prospective conditional-ranking validity."
+    },
+    "topic_temporal_selective_reobservation": {
+      "title": "Selective Reobservation for Time-Evolving Web Tasks",
+      "status": "killed_current_formulation",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2606.05342",
+          "finding": "SentinelBench already evaluates 100 time-evolving tasks across 10 web environments and measures completion, reaction time, and resource use."
+        },
+        {
+          "type": "paper_full_text",
+          "url": "https://arxiv.org/html/2606.05342v2",
+          "finding": "Its wait_for baseline captures page snapshots once per second, deduplicates diff blocks, adaptively rate-limits model checks, reloads periodically, and directly compares against sleep."
+        },
+        {
+          "type": "repository",
+          "url": "https://github.com/microsoft/sentinel_environments",
+          "license": "MIT",
+          "finding": "The public harness ships 100 scenarios, deterministic SQL evaluation, resumable runs, and a maximum four-times simulation speed."
+        }
+      ],
+      "kill_reason": "The broad time-aware selective-observation claim is compositionally absorbed by SentinelBench and its diff-driven wait_for baseline; reproducing it locally would be expensive and scientifically incremental.",
+      "remaining_narrow_route": "Select which currently unobserved page or functional region to sense next without first reading the full page state.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The route must prove a non-privileged acquisition boundary and functional non-equivalence to wait_for before any pilot."
+    },
+    "topic_multilingual_typed_tool_normalization": {
+      "title": "Schema-Selective Canonicalization for Multilingual Tool Arguments",
+      "status": "hold_data_and_taxonomy_audit",
+      "decision": "HOLD_DATA",
+      "broad_formulation_decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://aclanthology.org/2026.acl-long.2039/",
+          "finding": "MLCL directly identifies parameter-language mismatch and compares direct prompting, explicit parameter-language prompting, pre-translation, and post-translation."
+        },
+        {
+          "type": "dataset",
+          "url": "https://huggingface.co/datasets/LLaMAX/BenchMAX_Multiple_Functions",
+          "license": "CC_BY_4_0",
+          "finding": "BenchMAX provides 318 source tasks translated into 17 languages; language rows are repeated measurements rather than independent units."
+        },
+        {
+          "type": "repository",
+          "url": "https://github.com/CONE-MT/BenchMAX",
+          "license": "MIT",
+          "finding": "The evaluator performs exact function-and-argument comparison but loads API definitions from a separate Hugging Face dataset."
+        },
+        {
+          "type": "upstream_repository",
+          "url": "https://github.com/nexusflowai/NexusRaven-V2",
+          "finding": "The pinned repository README states that evaluation notebooks and evaluation data are Apache-2.0, and the notebooks embed API definitions, but the linked CODE_LICENSE file is absent from that commit."
+        }
+      ],
+      "outcome_blind_data_audit": {
+        "source_tasks": 318,
+        "languages": 17,
+        "alignment_mismatches": 0,
+        "unique_nonprompt_keys": 306,
+        "duplicate_rows": 12,
+        "normalizable_tasks_under_exploratory_heuristic": 79,
+        "preserve_tasks_under_exploratory_heuristic": 297,
+        "mixed_tasks_under_exploratory_heuristic": 66,
+        "taxonomy_is_frozen": false,
+        "warning": "Role counts are exploratory because the current census infers semantic types from field names and descriptions."
+      },
+      "hold_reasons": [
+        "The exact NexusRaven API evaluation dataset used by BenchMAX has no explicit license in its Hugging Face card metadata.",
+        "The current semantic-role census is heuristic and cannot serve as a preregistered taxonomy.",
+        "Only 79 source tasks are normalizable under the exploratory rule, below the independently proposed 100-task pilot floor."
+      ],
+      "remaining_narrow_route": "Test schema-selective canonicalization only after a source-grounded field taxonomy, an exact licensed schema manifest, and a power-aware independent-unit floor are frozen.",
+      "narrow_route_status": "HOLD_DATA"
+    },
+    "topic_scope_preserving_report_revision": {
+      "title": "Scope-Preserving Evidence-Grounded Revision",
+      "status": "killed_current_formulation",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://aclanthology.org/2026.acl-long.609/",
+          "finding": "MR DRE directly studies report revision under outside-feedback preservation constraints using localized edit plans and break-rate evaluation."
+        },
+        {
+          "type": "paper",
+          "url": "https://aclanthology.org/2026.acl-long.2147/",
+          "finding": "FactCorrector uses atomic claims and claim-evidence structure while measuring preservation of already-correct claims."
+        }
+      ],
+      "kill_reason": "Localized, evidence-grounded revision with preservation constraints is already a direct research object; changing the contract syntax alone would be incremental.",
+      "remaining_narrow_route": "Measure whether mechanically enforced source-ID and claim-ID patch binding adds benefit under information- and format-matched controls.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "A licensed gold conversion audit and evidence that direct baselines lack equivalent mechanical binding are required."
+    },
+    "topic_structured_output_boundary_attribution": {
+      "title": "Repair-Boundary Attribution for Structured-Output Failures",
+      "status": "narrow_route_audit",
+      "decision": "AUDIT",
+      "broad_formulation_decision": "KILL_CURRENT_BROAD_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2501.10868",
+          "finding": "JSONSchemaBench already evaluates real-world schemas, constrained-decoder coverage, efficiency, and output quality."
+        },
+        {
+          "type": "paper",
+          "url": "https://openreview.net/forum?id=e29unNZEhY",
+          "finding": "Recent failure-localization work already attributes pipeline failures using preserved intermediate artifacts and the first wrong commitment."
+        },
+        {
+          "type": "repair_study",
+          "url": "https://arxiv.org/abs/2606.30963",
+          "finding": "Loc2Repair directly separates localization from repair and measures held-out repair success under matched runtime conditions."
+        },
+        {
+          "type": "real_fault_lineage",
+          "url": "https://github.com/vllm-project/vllm/pull/45346",
+          "finding": "A merged structured-output fault includes parent failure, frontend repair, CPU regression tests, and a real-server survival check, demonstrating that usable public lineages exist."
+        }
+      ],
+      "remaining_narrow_route": "Build a licensed corpus of real bug-fix lineages with counterfactual replay to identify minimal sufficient repair-boundary sets, then test whether that attribution improves held-out patch success.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "At least 12 balanced, cleanly replayable faults are needed before a pilot; dependency recovery rather than GPU inference is the dominant three-day risk."
+    },
+    "topic_time_sliced_prior_absorption": {
+      "title": "Time-Sliced Direct-Prior Absorption Detection",
+      "status": "killed_current_formulation",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2603.10303",
+          "finding": "RINoBench already evaluates idea-to-literature comparison, known-versus-new aspects, scalar novelty, and literature-grounded explanations."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2510.16234",
+          "finding": "ScholarEval performs idea-level contribution assessment using only literature available before an idea-specific cutoff and proposes improvements."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2602.14367",
+          "finding": "InnoEval combines pre-time knowledge evaluation with post-time evidence for idea revision."
+        }
+      ],
+      "kill_reason": "Time slicing, direct-prior comparison, residual novelty assessment, and idea revision are already covered by direct prior work; the broad candidate does not define a distinct research object.",
+      "remaining_narrow_route": "A claim-level counterfactual absorption benchmark with evidence spans, typed residual facets, and prior-addition/removal monotonicity.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The route requires licensed claim-level gold, at least two independent annotators, lineage-level splits, and evidence that it is not merely a composition of RINoBench, ScholarEval, InnoEval, CitationR, and MasterSet."
+    },
+    "topic_tiny_pilot_promotion_policy": {
+      "title": "Evidence-Calibrated Promotion from Tiny Pilots",
+      "status": "killed_current_formulation",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://proceedings.mlr.press/v267/zecchin25a.html",
+          "finding": "aLTT already applies sequential multiple testing and early stopping to costly hyperparameter selection with finite-sample guarantees."
+        },
+        {
+          "type": "paper",
+          "url": "https://proceedings.neurips.cc/paper_files/paper/2025/hash/38853020527b0f84187870114ff7a686-Abstract-Conference.html",
+          "finding": "RG-PT jointly controls false discovery and resource cost for hyperparameter selection."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2603.12867",
+          "finding": "Recent Bayesian hybrid shrinkage work directly treats noisy winner selection and regret."
+        }
+      ],
+      "kill_reason": "The decision object, low-fidelity evidence, multiplicity, promotion policy, and regret endpoints are directly covered by multi-fidelity HPO, ranking-and-selection, and sequential risk-control research; no agent-specific independent unit or new policy remains.",
+      "remaining_narrow_route": "An offline diagnostic benchmark for joint low-fidelity, multiplicity, and seed noise using real research-agent project traces.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "Public HPO tables do not contain research-agent project units; reentry requires real agent traces or a policy or guarantee not absorbed by aLTT, RG-PT, OCBA, Hyperband, and shrinkage baselines."
+    },
+    "topic_artifact_aware_reviewer_defect_detection": {
+      "title": "Artifact-Aware Scientific Defect Review",
+      "status": "killed_current_formulation",
+      "decision": "KILL_CURRENT_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper_and_dataset",
+          "url": "https://aclanthology.org/2026.acl-long.1795/",
+          "finding": "SciCoQA already evaluates paper-code discrepancy detection with 92 real and 543 synthetic discrepancies and information-access conditions."
+        },
+        {
+          "type": "paper_and_repository",
+          "url": "https://arxiv.org/abs/2606.18237",
+          "finding": "ReproRepo statically audits 1,149 paper-repository pairs using real reproducibility issues."
+        },
+        {
+          "type": "paper",
+          "url": "https://aclanthology.org/2025.findings-acl.1210/",
+          "finding": "REPRO-Bench evaluates automated reproducibility assessment from papers and reproduction packages."
+        }
+      ],
+      "kill_reason": "The proposed manuscript-only versus artifact-aware contrast confounds reviewer ability with information access, context, tools, and compute; adjacent paper-code discrepancy and reproducibility benchmarks already cover the broad research object.",
+      "remaining_narrow_route": "Measure the incremental defect recall from active execution beyond static paper-code-trace auditing under matched information, tool, and compute budgets.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The route requires at least 24 licensed independent package lineages, deterministic non-equivalent mutations, a strong static baseline, and a blinded pilot showing at least 10 percentage points of active-execution recall gain without excessive clean-package false positives."
+    },
+    "topic_agent_resume_crash_consistency": {
+      "title": "Crash-Consistency Audit of Stateful Agent Resume Protocols",
+      "status": "narrow_route_audit",
+      "decision": "AUDIT",
+      "broad_formulation_decision": "KILL_CURRENT_BROAD_FORMULATION",
+      "execution_allowed": false,
+      "main_controller_verified": true,
+      "verified_primary_sources": [
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2602.14849",
+          "finding": "Atomix directly defines post-effect pre-return failures and compares checkpoint replay with transaction, persistent effect tracking, and idempotency mechanisms."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2603.20625",
+          "finding": "ACRFence directly demonstrates duplicate external effects after checkpoint restore and proposes an effect-log replay-or-fork gate."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2606.17573",
+          "finding": "Cordon provides task-scoped transactional isolation with effect outboxes, recovery logs, and idempotency metadata."
+        }
+      ],
+      "remaining_narrow_route": "Reproduce real SIGKILL crash windows and durable write ordering across AppWorld and tau task families while correcting the independent scientific unit.",
+      "narrow_route_status": "AUDIT_ONLY",
+      "narrow_route_blocker": "The route must reproduce the official Atomix Tx-Full baseline, preserve benchmark state across process death, expose at least 40 independent effectful units per benchmark, and find a new failure class or a material cost or validity difference rather than merely restating distributed-systems idempotency."
+    }
+  },
+  "recent_candidate_audit": {
+    "provisional_dispositions_pending_main_verification": [
+      {
+        "candidate_id": "topic_structured_output_composition_drift",
+        "decision": "KILL_CURRENT_BROAD_FORMULATION",
+        "remaining_narrow_route": "source-declaration to wire-schema to decoder to post-validator boundary attribution",
+        "execution_allowed": false
+      },
+      {
+        "candidate_id": "topic_action_conditioned_agent_uq_lodo",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "reason": "Direct priors absorb the central metric family and the public artifact lacks complete action-aligned uncertainty fields and repeated independent trials.",
+        "execution_allowed": false
+      }
+    ],
+    "verified_dispositions": [
+      {
+        "candidate_id": "topic_user_simulator_conditional_ranking_validity",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_temporal_selective_reobservation",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_multilingual_typed_tool_normalization",
+        "decision": "HOLD_DATA",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_scope_preserving_report_revision",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_structured_output_boundary_attribution",
+        "decision": "AUDIT",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_time_sliced_prior_absorption",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_tiny_pilot_promotion_policy",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_agent_resume_crash_consistency",
+        "decision": "AUDIT",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_artifact_aware_reviewer_defect_detection",
+        "decision": "KILL_CURRENT_FORMULATION",
+        "execution_allowed": false,
+        "verified_by_main_controller": true
+      }
+    ],
+    "alive_unselected_portfolio": [
+      "topic_multilingual_typed_tool_normalization",
+      "topic_structured_output_boundary_attribution"
+    ],
+    "selected_candidate_id": null,
+    "subagent_output_verified_by_main_controller": false,
+    "unverified_subagent_output_count": 4,
+    "requires_wide_resampling": true,
+    "multi_agent_consensus_used_as_evidence": false
+  },
+  "current_state": {
+    "research_specific_runtime_contamination_reproduced": true,
+    "high_risk_runtime_substitution_removed": true,
+    "topic_funnel_runtime_contract_implemented": true,
+    "topic_funnel_tui_web_projection_implemented": true,
+    "topic_refresh_semantic_divergence_contract_implemented": true,
+    "topic_refresh_semantic_divergence_contract_validated": true,
+    "generic_result_and_manuscript_schema_refactor_complete": false,
+    "collect_attempt_lineage_repair_implemented": true,
+    "collect_attempt_lineage_live_revalidated": true,
+    "compute_budget_p0_repair_in_progress": false,
+    "current_paper_ready": false,
+    "topic_portfolio_verified": true,
+    "portfolio_refresh_required": true,
+    "open_repository_audit_completed": true,
+    "open_repository_audit_count": 24,
+    "killed_topic_id": "topic_relation_serialization",
+    "killed_topic_decision_receipt": "docs/research/relation-serialization-probe-decision-v1.json",
+    "pilot_latent_topic_id": null,
+    "primary_probe_dataset": null,
+    "primary_probe_sample_target": null,
+    "promotion_floor_paper_unique_units": null,
+    "secondary_external_validation_candidate": null,
+    "leading_refresh_route": null,
+    "leading_refresh_route_selected": false,
+    "pilot_preregistration_expected_path": null,
+    "pilot_preregistration_present": false,
+    "pilot_preregistration_frozen": false,
+    "pilot_ready": false,
+    "topic_selected": false,
+    "real_feasibility_experiment_completed": false,
+    "bounded_development_evidence_only": false,
+    "research_model_calls_completed": 0,
+    "goal_complete": false
+  },
+  "post_no_pass_portfolio": {
+    "minimum_slots": 3,
+    "maximum_slots": 5,
+    "status": "five_cluster_audit_completed_no_pilot_ready_candidate",
+    "targets": [
+      "topic_user_simulator_conditional_ranking_validity",
+      "topic_temporal_selective_reobservation",
+      "topic_multilingual_typed_tool_normalization",
+      "topic_scope_preserving_report_revision",
+      "topic_structured_output_boundary_attribution"
+    ],
+    "leading_target_is_selected": false,
+    "next_action": "Wide resampling across a different research object, evidence modality, and evaluation unit; held narrow routes remain comparison points rather than default winners."
+  },
+  "next_allowed_state": "Run a wide topic resampling round that changes research object, evidence modality, and evaluation unit. Compare new candidates against the two held narrow routes, select only a candidate with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, then freeze a protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
+}

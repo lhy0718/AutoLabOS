@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "reviewer_evaluator_exploratory_analysis_correction",
+  "generated_at": "2026-07-28T15:55:52+09:00",
+  "status": "superseded_exploratory_condition",
+  "superseded_artifact": {
+    "path": "studies/reviewer-evaluator-audit/results/public-rescore.v1.json",
+    "file_sha256": "d4b0e7ef1d044161e404588969ea7d959cc295ed1c0dc22266b72fa77f7ad7a9",
+    "condition": "paper_specified_changed_truth_lexical",
+    "observed_broad_vs_changed_disagreement_count": 40
+  },
+  "failure": {
+    "reason_code": "official_localized_error_spans_dropped",
+    "explanation": "The superseded changed-only reference kept directly edited sentences but omitted official location_error excerpts that can identify unchanged passages made incorrect by the edit.",
+    "official_location_span_count": 192,
+    "official_location_spans_not_exactly_equal_to_changed_sentences": 178,
+    "consequence": "The 40-cell disagreement count is not admissible evidence and must not appear in manuscript claims or tables."
+  },
+  "replacement": {
+    "path": "studies/reviewer-evaluator-audit/results/public-rescore.v2.json",
+    "file_sha256": "2521658cb9659284866aca4c4195d0cb88e4b4abd8e7caa8234d1f9c3a6c558e",
+    "content_sha256": "30d51ee1cdf34bbeb88e9bf5e2fe0bc10ba07775d15817fc4344f0ec9e4bd988",
+    "condition": "paper_specified_focal_truth_lexical",
+    "definition": "Changed modified_text sentences plus every official location_error excerpt, normalized and deduplicated.",
+    "observed_broad_vs_focal_disagreement_count": 23
+  },
+  "confirmatory_integrity": {
+    "independent_judge_outputs_observed_before_correction": false,
+    "frozen_primary_hypotheses_changed": false,
+    "claim_ceiling_changed": false
+  }
+}

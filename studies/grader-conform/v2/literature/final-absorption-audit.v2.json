@@ -1,0 +1,131 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "grader_conform_v2_final_primary_source_absorption_audit",
+  "audited_at": "2026-07-28T12:59:38+09:00",
+  "outcome_blind": true,
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "old_v1_decisions_used": false,
+  "bound_prior_matrix": {
+    "path": "studies/grader-conform/v2/literature/residual-claim-matrix.v2.json",
+    "sha256": "4555332efb7a3169a7d158ff6973224865ec35205cf2f14a5e2253a62beddf98"
+  },
+  "additional_primary_sources": [
+    {
+      "source_id": "jrh2026",
+      "title": "Judge Reliability Harness",
+      "primary_url": "https://arxiv.org/pdf/2603.05399",
+      "verification_depth": "full paper method and results inspected",
+      "evidence_locations": [
+        "Sections 3.1-3.5: label flip, format invariance, paraphrase, verbosity, repetition, and agent-transcript perturbations",
+        "Section 4: empirical reliability results"
+      ],
+      "collision": "Meaning-preserving and meaning-changing perturbations already test evaluator reliability, although the units are synthetic judge inputs rather than historical evaluator implementation faults."
+    },
+    {
+      "source_id": "stureborg2024blindspots",
+      "title": "Finding Blind Spots in Evaluator LLMs with Interpretable Checklists",
+      "primary_url": "https://aclanthology.org/2024.emnlp-main.911.pdf",
+      "verification_depth": "official ACL Anthology full paper inspected",
+      "evidence_locations": [
+        "Section 3 and Tables 1-2: 22 perturbation categories and 2,400 perturbed responses"
+      ],
+      "collision": "Human-vetted output perturbations already expose evaluator blind spots, but they do not replay historical code defects."
+    },
+    {
+      "source_id": "reliabilitybench2026",
+      "title": "ReliabilityBench",
+      "primary_url": "https://arxiv.org/pdf/2601.06112",
+      "verification_depth": "full paper method and results inspected",
+      "evidence_locations": [
+        "Section 3.4 and Table 2: Action Metamorphic Relation",
+        "Section 5 and Table 5: 1,280 synthetic agent episodes"
+      ],
+      "collision": "Action-level metamorphic relations are already applied to agent evaluation, although not to historical evaluator implementation faults."
+    },
+    {
+      "source_id": "agent_reactive_bugs2026",
+      "title": "Agent-Reactive Bugs",
+      "primary_url": "https://arxiv.org/pdf/2607.15684",
+      "verification_depth": "full paper corpus construction and taxonomy inspected",
+      "evidence_locations": [
+        "Sections 1 and 3 and Table I: 255 manually annotated bugs from four agent projects"
+      ],
+      "collision": "A cross-project historical agent-bug corpus already exists, but the paper does not compare executable test-generation procedures."
+    },
+    {
+      "source_id": "blasi2021memo",
+      "title": "MeMo: Automatically Identifying Metamorphic Relations in Javadoc",
+      "primary_url": "https://software.imdea.org/~alessandra.gorla/papers/Blasi-Memo-JSS21.pdf",
+      "verification_depth": "full paper method and evaluation inspected",
+      "evidence_locations": [
+        "Section 4.4 and Figure 4: executable metamorphic assertions and mutation evaluation"
+      ],
+      "collision": "Contract-like documentation has already been converted into executable metamorphic assertions."
+    },
+    {
+      "source_id": "karlsson2020quickrest",
+      "title": "QuickREST: Property-based Test Generation of OpenAPI-Described RESTful APIs",
+      "primary_url": "https://www.es.mdu.se/pdf_publications/5980.pdf",
+      "verification_depth": "full paper method and evaluation inspected",
+      "evidence_locations": [
+        "Section V and Tables I-III: schema-derived generators and known GitLab defects"
+      ],
+      "collision": "Specification-derived property tests already reproduce a small set of real defects."
+    },
+    {
+      "source_id": "nl2contract2025",
+      "title": "NL2Contract",
+      "primary_url": "https://arxiv.org/pdf/2510.12702",
+      "verification_depth": "full paper method and real-bug evaluation inspected",
+      "evidence_locations": [
+        "Section 5.3 and Table 3: Python-by-Contract historical-defect results"
+      ],
+      "collision": "Natural-language-to-contract generation already supports historical real-bug detection outside the evaluator domain."
+    },
+    {
+      "source_id": "schuler2018provenance",
+      "title": "Test Provenance as a Precondition for Defect Evaluation",
+      "primary_url": "https://homes.cs.washington.edu/~mernst/pubs/test-provenance-issta2018.pdf",
+      "verification_depth": "full paper design and results inspected",
+      "evidence_locations": [
+        "Sections 3-5 and Table 5: post-fix developer-test leakage across 100 defects"
+      ],
+      "collision": "The study directly establishes that fix-associated tests can leak post-fix information and inflate defect-tool evaluation."
+    },
+    {
+      "source_id": "harness_evolution2026",
+      "title": "Rethinking Harness Evolution",
+      "primary_url": "https://arxiv.org/pdf/2607.12227",
+      "verification_depth": "full paper evaluation protocol and results inspected",
+      "evidence_locations": [
+        "Section 4 and Table 1: matched feedback and inference budgets with held-out evaluation"
+      ],
+      "collision": "Equal-budget and held-out evaluation are already explicit requirements for harness-method comparisons."
+    }
+  ],
+  "corrective_notes_to_bound_matrix": [
+    "MR-Coupler's 50 historical defects were selected from defects already detected by human-written metamorphic test cases; they are not an unselected historical-fault sample.",
+    "Task Verification Bench is the closest evidence-unit prior because it uses original task artifacts and update-derived root-cause ground truth.",
+    "The combination of Task Verification Bench, BenchGuard or ABA, Judge Reliability Harness or evaluator blind-spot perturbations, MR-Coupler or MeMo, and test-provenance controls absorbs the broad formulation even though no single paper matches all five axes."
+  ],
+  "five_axis_verdict": {
+    "research_object": "directly overlapped by benchmark-defect and evaluator-reliability studies",
+    "core_question": "directly overlapped by defect-detection and root-cause-recall studies",
+    "intervention_or_method": "composition of established structured audit, contract extraction, property-based testing, and metamorphic testing",
+    "evaluation_unit_and_evidence": "partly distinct only if pre-fix-blinded executable parent-fail/fix-pass replay is preserved",
+    "claim_scope": "too broad unless restricted to a held-out cross-repository empirical comparison",
+    "verdict": "not_strictly_subsumed_but_compositionally_absorbed"
+  },
+  "strongest_reviewer_absorption_objection": "The proposed study combines an update-derived benchmark-defect corpus, structured benchmark auditing, evaluator perturbation testing, contract-derived metamorphic testing, and executable bug reproduction. Each component and the necessary leakage and budget controls already have direct precedents. Without a fully blinded, unselected, cross-repository historical frame and valid negative controls, the work is a domain application rather than a new scientific result.",
+  "residual_question_if_reopened": "Under pre-fix blinding and equal information, reasoning, tool, retry, and execution budgets, do contract-derived executable metamorphic relations improve root-cause-matched historical agent-evaluator fault recall over prior-work-anchored auditing, non-contract metamorphic testing, and general test generation on an unselected cross-repository frame with intentional-change controls?",
+  "reopen_requirements": [
+    "A fully isolated pre-fix packet for every candidate",
+    "An unselected historical-fault frame with source-level ground truth",
+    "Global root-cause deduplication after eligibility adjudication",
+    "Valid normal, unrelated-change, and intentional-contract-change controls",
+    "Repository-level uncertainty and leave-one-repository-out analysis",
+    "Equal information, model, tool, retry, and execution budgets"
+  ],
+  "audit_decision": "literature_does_not_support_continuing_the_current_bounded_preflight"
+}

@@ -93,11 +93,14 @@ function buildEvaluatorSystemPrompt(): string {
     "Return one JSON object. Use only facts explicitly present in the payload.",
     "Be conservative: if evidence is incomplete, downgrade rather than assume.",
     "Negative results are acceptable if honestly framed.",
-    "Do NOT inflate scores to be encouraging — accuracy matters."
+    "Do not inflate scores to be encouraging; evidence-faithful scoring matters."
   ].join("\n");
 }
 
 function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
+  const promptComparisons = input.report
+    ? selectPromptComparisons(input.report, GATE_THRESHOLDS.llmPromptMaxComparisons)
+    : [];
   const payload = {
     run: {
       topic: input.topic,
@@ -111,7 +114,14 @@ function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
       primary_findings: input.report.primary_findings?.slice(0, GATE_THRESHOLDS.llmPromptMaxPrimaryFindings),
       limitations: input.report.limitations?.slice(0, GATE_THRESHOLDS.llmPromptMaxComparisons),
       warnings: input.report.warnings?.slice(0, GATE_THRESHOLDS.llmPromptMaxComparisons),
-      condition_comparisons: input.report.condition_comparisons?.slice(0, GATE_THRESHOLDS.llmPromptMaxComparisons).map(c => ({
+      primary_comparison_id: input.report.primary_comparison_id,
+      condition_comparisons: promptComparisons.map(c => ({
+        id: c.id,
+        is_primary: c.id === input.report?.primary_comparison_id,
+        subject_series_id: c.subject_series_id,
+        reference_series_id: c.reference_series_id,
+        metric_id: c.metric_id,
+        metric_direction: c.metric_direction,
         label: c.label,
         summary: c.summary,
         hypothesis_supported: c.hypothesis_supported
@@ -175,6 +185,7 @@ function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
     `- If no executed result exists, overall_score must be ≤ ${GATE_THRESHOLDS.llmNoExecutedResultScoreCeiling}.`,
     "- Treat tiny evaluation samples, one-example headline gains, missing repeated seeds, thin optimizer budgets, and missing canonical method citations as real paper-quality gaps.",
     "- If a positive result is explainable as one changed evaluation example, do not call it a stable interaction or tuning rule.",
+    "- Treat only a condition comparison with is_primary=true as primary. Never infer the primary comparison from array order, labels, metric names, or the largest value.",
     "- If paper_scale_diagnostics contains blocking items, recommend the target_node from those diagnostics unless a stronger upstream design problem is explicit.",
     "- Negative results are fine if framed honestly. Do not hide them.",
     `- evidence_gaps: list only gaps actually observed, max ${GATE_THRESHOLDS.llmMaxEvidenceGaps}.`,
@@ -183,6 +194,22 @@ function buildEvaluatorPrompt(input: LLMEvaluatorInput): string {
     "",
     JSON.stringify(payload, null, 2)
   ].join("\n");
+}
+
+function selectPromptComparisons(
+  report: AnalysisReport,
+  limit: number
+): AnalysisReport["condition_comparisons"] {
+  const explicitPrimary = report.primary_comparison_id
+    ? report.condition_comparisons.find((item) => item.id === report.primary_comparison_id)
+    : undefined;
+  const remaining = report.condition_comparisons.filter(
+    (item) => item.id !== explicitPrimary?.id
+  );
+  return [
+    ...(explicitPrimary ? [explicitPrimary] : []),
+    ...remaining
+  ].slice(0, limit);
 }
 
 // ---------------------------------------------------------------------------

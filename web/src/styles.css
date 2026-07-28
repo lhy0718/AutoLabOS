@@ -665,6 +665,299 @@ label,
   background: linear-gradient(180deg, var(--accent), var(--gold));
 }
 
+.research-funnel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-block: 1px solid var(--line);
+  border-left: 4px solid var(--line-strong);
+  background: rgba(255, 254, 250, 0.58);
+}
+
+.research-funnel.is-active {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.research-funnel.is-warning {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
+
+.research-funnel.is-danger {
+  border-left-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.research-funnel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.research-funnel-heading > div,
+.research-funnel-scope,
+.research-funnel-topics,
+.research-funnel-reasons {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.research-funnel-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  margin: 0;
+  border-block: 1px solid var(--line);
+}
+
+.research-funnel-metrics > div {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-left: 1px solid var(--line);
+}
+
+.research-funnel-metrics > div:first-child {
+  border-left: 0;
+}
+
+.research-funnel-metrics dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.research-funnel-metrics dd {
+  margin: 0;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.research-funnel-memory {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 14px;
+  min-width: 0;
+  padding-block: 2px;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.research-funnel-memory span,
+.research-funnel-memory code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.research-funnel-context {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.2fr);
+  gap: 18px;
+}
+
+.research-funnel-candidates {
+  display: grid;
+  gap: 9px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.research-funnel-candidates-heading,
+.research-funnel-candidate-heading,
+.research-funnel-candidate-status {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.research-funnel-candidates-heading > span:last-child {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.research-funnel-candidates ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.research-funnel-candidates li {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.research-funnel-candidates li:first-child {
+  border-top: 0;
+}
+
+.research-funnel-candidate-heading > div:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.research-funnel-candidate-heading code,
+.research-funnel-candidate-statement,
+.research-funnel-candidate-facts dd,
+.research-funnel-candidate-evidence p {
+  overflow-wrap: anywhere;
+}
+
+.research-funnel-candidate-status {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.research-funnel-candidate-statement {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.research-funnel-candidate-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 16px;
+  margin: 0;
+}
+
+.research-funnel-candidate-facts > div {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.research-funnel-candidate-facts dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.research-funnel-candidate-facts dd {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
+
+.research-funnel-candidate-evidence {
+  display: grid;
+  gap: 5px;
+  color: var(--ink-soft);
+}
+
+.research-funnel-candidate-evidence p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.research-funnel-active-probe {
+  display: grid;
+  gap: 10px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.research-funnel-active-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.research-funnel-active-details code {
+  overflow-wrap: anywhere;
+}
+
+.research-funnel-evidence-boundary {
+  color: var(--warning);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: right;
+}
+
+.research-funnel-active-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px 18px;
+  margin: 0;
+}
+
+.research-funnel-active-details > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.research-funnel-active-details dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.research-funnel-active-details dd {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.research-funnel-active-details .research-funnel-contract-hash {
+  grid-column: 1 / -1;
+}
+
+.research-funnel-scope p,
+.research-funnel-topics li {
+  color: var(--ink-soft);
+  line-height: 1.5;
+}
+
+.research-funnel-topics ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 20px;
+}
+
+.research-funnel-reasons {
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.research-funnel-reason-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.research-funnel-reason {
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  color: var(--ink-soft);
+  background: rgba(255, 254, 250, 0.72);
+  overflow-wrap: anywhere;
+}
+
 .sub-panel,
 .mini-finding,
 .checkpoint-item,
@@ -1470,5 +1763,42 @@ select,
 
   .run-hero h2 {
     font-size: 1.45rem;
+  }
+
+  .research-funnel-heading {
+    flex-direction: column;
+  }
+
+  .research-funnel-heading .status-pill {
+    align-self: flex-start;
+  }
+
+  .research-funnel-context {
+    grid-template-columns: 1fr;
+  }
+
+  .research-funnel-candidates-heading,
+  .research-funnel-candidate-heading {
+    display: grid;
+  }
+
+  .research-funnel-candidate-status {
+    justify-content: flex-start;
+  }
+
+  .research-funnel-active-heading {
+    display: grid;
+  }
+
+  .research-funnel-evidence-boundary {
+    text-align: left;
+  }
+
+  .research-funnel-active-details {
+    grid-template-columns: 1fr;
+  }
+
+  .research-funnel-active-details .research-funnel-contract-hash {
+    grid-column: auto;
   }
 }

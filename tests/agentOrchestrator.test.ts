@@ -277,6 +277,49 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(approved.graph.nodeStates.generate_hypotheses.status).toBe("needs_approval");
   });
 
+  it("preserves successor delegation across ordinary approval and transition commands", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Governed successor boundary",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    for (const node of GRAPH_NODE_ORDER.slice(0, GRAPH_NODE_ORDER.indexOf("review"))) {
+      run.graph.nodeStates[node].status = "completed";
+    }
+    run.graph.nodeStates.review.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "delegate_successor",
+      sourceNode: "review",
+      targetNode: "write_paper",
+      reason: "Continue in a separately governed successor run.",
+      confidence: 0.99,
+      autoExecutable: true,
+      evidence: ["The successor handoff is complete and independently auditable."],
+      suggestedCommands: ["/agent status"],
+      generatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const approved = await orchestrator.approveCurrent(run.id);
+    expect(approved.currentNode).toBe("review");
+    expect(approved.status).toBe("paused");
+    expect(approved.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(approved.graph.pendingTransition?.action).toBe("delegate_successor");
+    expect(approved.graph.transitionHistory).toEqual([]);
+
+    const applied = await orchestrator.applyPendingTransition(run.id);
+    expect(applied.currentNode).toBe("review");
+    expect(applied.status).toBe("paused");
+    expect(applied.graph.nodeStates.review.status).toBe("needs_approval");
+    expect(applied.graph.pendingTransition?.action).toBe("delegate_successor");
+    expect(applied.graph.transitionHistory).toEqual([]);
+  });
+
   it("auto advances from implement_experiments to run_experiments when approval is not required", async () => {
     const registry = new DeterministicRegistry({
       implement_experiments: {
@@ -613,6 +656,59 @@ describe("AgentOrchestrator (state graph)", () => {
     expect(jumped.currentNode).toBe("run_experiments");
     expect(jumped.graph.nodeStates.collect_papers.status).toBe("skipped");
     expect(jumped.graph.nodeStates.design_experiments.status).toBe("skipped");
+  });
+
+  it("fails closed for write, approval, transition, retry, and jump after parent delegation", async () => {
+    const { store, orchestrator } = await setup(new DeterministicRegistry({}));
+    const run = await store.createRun({
+      title: "Delegated parent",
+      topic: "verify a selected claim",
+      constraints: ["bounded execution"],
+      objectiveMetric: "declared primary measure"
+    });
+    const childRunId = "confirmatory-child";
+    run.currentNode = "review";
+    run.graph.currentNode = "review";
+    run.status = "paused";
+    run.graph.nodeStates.review.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "advance",
+      sourceNode: "review",
+      targetNode: "write_paper",
+      reason: "The review would otherwise advance.",
+      confidence: 0.99,
+      autoExecutable: false,
+      evidence: ["A successor now owns execution."],
+      suggestedCommands: ["/agent status"],
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    };
+    run.delegatedSuccessor = {
+      schemaVersion: 1,
+      state: "delegated",
+      relation: "topic_probe_confirmatory",
+      parentResearchCycle: run.graph.researchCycle,
+      childRunId,
+      outcomeContentSha256: "a".repeat(64),
+      receiptContentSha256: "b".repeat(64),
+      reservedAt: "2026-01-01T00:00:00.000Z"
+    };
+    await store.updateRun(run);
+
+    await expect(orchestrator.runAgent(run.id, "write_paper")).rejects.toThrow(
+      `run_delegated_to_successor:start:${childRunId}`
+    );
+    await expect(orchestrator.approveCurrent(run.id)).rejects.toThrow(
+      `run_delegated_to_successor:approve:${childRunId}`
+    );
+    await expect(orchestrator.applyPendingTransition(run.id)).rejects.toThrow(
+      `run_delegated_to_successor:apply_transition:${childRunId}`
+    );
+    await expect(orchestrator.retryCurrent(run.id)).rejects.toThrow(
+      `run_delegated_to_successor:retry:${childRunId}`
+    );
+    await expect(
+      orchestrator.jumpToNode(run.id, "write_paper", "force", "skip ahead")
+    ).rejects.toThrow(`run_delegated_to_successor:jump:${childRunId}`);
   });
 
   it("applies a pending transition recommendation from analyze_results", async () => {

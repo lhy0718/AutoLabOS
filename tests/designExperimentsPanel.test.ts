@@ -2,256 +2,289 @@ import { describe, expect, it } from "vitest";
 
 import { runDesignExperimentsPanel } from "../src/core/designExperimentsPanel.js";
 import type { ExperimentDesignCandidate } from "../src/core/analysis/researchPlanning.js";
+import type { EstimatorProtocolDeclaration } from "../src/core/estimatorProtocol.js";
 import type { ObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
 
 function candidate(overrides: Partial<ExperimentDesignCandidate>): ExperimentDesignCandidate {
   return {
     id: "candidate",
-    title: "Candidate",
-    hypothesis_ids: ["h1"],
-    plan_summary: "Compare the intervention against a baseline.",
-    datasets: ["benchmark_task_a"],
-    metrics: ["accuracy_delta_vs_baseline"],
-    baselines: ["baseline_condition"],
-    implementation_notes: ["Run the planned experiment."],
-    evaluation_steps: ["Report the objective metric with uncertainty."],
-    risks: ["Small local budget."],
-    resource_notes: ["Bounded local execution."],
+    title: "Controlled comparison",
+    hypothesis_ids: ["hypothesis_a"],
+    plan_summary: "Compare a candidate system against a declared reference system.",
+    datasets: ["evaluation_corpus"],
+    primary_metric: "primary_outcome_delta",
+    metrics: ["primary_outcome_delta", "uncertainty_interval"],
+    baselines: ["reference_system"],
+    implementation_notes: ["Run the declared protocol without changing the evaluation inputs."],
+    evaluation_steps: ["Report matched comparisons and uncertainty across repeated runs."],
+    risks: ["The bounded execution budget may limit precision."],
+    resource_notes: ["Execution is bounded by the governed brief."],
     ...overrides
   };
 }
 
-const accuracyObjective: ObjectiveMetricProfile = {
-  source: "heuristic_fallback",
-  raw: "accuracy_delta_vs_baseline >= 0.01",
-  primaryMetric: "accuracy_delta_vs_baseline",
-  preferredMetricKeys: ["accuracy_delta_vs_baseline"],
-  direction: "maximize",
-  analysisFocus: [],
-  paperEmphasis: [],
-  assumptions: []
-};
+function objective(primaryMetric = "primary_outcome_delta"): ObjectiveMetricProfile {
+  return {
+    source: "heuristic_fallback",
+    raw: `metric:${primaryMetric} >= 0.01`,
+    primaryMetric,
+    preferredMetricKeys: [primaryMetric],
+    direction: "maximize",
+    analysisFocus: [],
+    paperEmphasis: [],
+    assumptions: []
+  };
+}
+
+function estimatorProtocol(): EstimatorProtocolDeclaration {
+  return {
+    schema_version: 1,
+    units: {
+      execution_unit: "experimental unit",
+      exposure_unit: "assigned condition",
+      outcome_unit: "observed response",
+      analysis_unit: "matched comparison",
+      independent_cluster_key: "cluster_id"
+    },
+    arms: ["reference", "candidate"],
+    primary_contrast: ["candidate", "reference"],
+    pairing: {
+      mode: "paired",
+      independent_clusters: 40,
+      observations_per_arm_per_cluster: 1
+    },
+    outcome: {
+      type: "continuous",
+      attainable_resolution: 0.01
+    },
+    estimand: {
+      id: "primary_effect",
+      type: "paired_mean_difference",
+      scale: "mean"
+    },
+    estimator: {
+      family: "paired_mean_difference",
+      covariance: "cluster_bootstrap",
+      separation_policy: "not_applicable"
+    },
+    power: {
+      alpha: 0.05,
+      target_power: 0.8,
+      minimum_detectable_effect: 0.1,
+      assumed_standard_deviation: 0.15,
+      sidedness: "two_sided"
+    },
+    resampling: {
+      minimum_clusters: 30,
+      replicates: 2_000
+    },
+    multiplicity: {
+      primary_comparison_id: "primary_effect",
+      family: ["primary_effect"],
+      method: "none",
+      family_alpha: 0.05
+    }
+  };
+}
 
 describe("designExperimentsPanel", () => {
-  it("blocks reporting-integrity audits that drift away from a model-quality objective", () => {
-    const modelQuality = candidate({
-      id: "model_quality",
-      title: "Staged full factorial condition-parameter experiment",
-      metrics: ["accuracy_delta_vs_baseline", "avg_accuracy_ci_low", "avg_accuracy_ci_high"]
-    });
-    const reportingAudit = candidate({
-      id: "reporting_audit",
-      title: "Ungated-vs-gated reporting integrity audit",
-      plan_summary: "Freeze training outputs and audit report gating, claim downgrades, and mismatch visibility.",
-      metrics: [
-        "Primary audit metric: claim-table mismatch rate",
-        "Incorrect positive claim count and rate",
-        "accuracy_delta_vs_baseline"
-      ]
+  it("blocks a design whose explicit primary metric drifts from the governed objective", () => {
+    const aligned = candidate({ id: "aligned" });
+    const drifted = candidate({
+      id: "drifted",
+      primary_metric: "secondary_audit_rate",
+      metrics: ["secondary_audit_rate", "primary_outcome_delta"]
     });
 
     const result = runDesignExperimentsPanel({
-      candidates: [reportingAudit, modelQuality],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
+      candidates: [drifted, aligned],
+      objectiveProfile: objective()
     });
 
-    expect(result.selected.id).toBe("model_quality");
-    const auditScore = result.selection.scores.find((score) => score.candidate_id === "reporting_audit");
-    expect(auditScore?.blocked_by).toContain("statistical_reviewer");
+    expect(result.selected.id).toBe("aligned");
+    expect(result.selection.scores.find((score) => score.candidate_id === "drifted")?.blocked_by).toContain(
+      "statistical_reviewer"
+    );
     expect(
       result.reviews.find(
-        (review) => review.candidate_id === "reporting_audit" && review.reviewer_id === "statistical_reviewer"
+        (review) => review.candidate_id === "drifted" && review.reviewer_id === "statistical_reviewer"
       )?.summary
-    ).toContain("drifts from the objective");
+    ).toContain("does not match");
   });
 
-  it("blocks report-gating audits that explicitly say they are not model-quality experiments", () => {
-    const modelQuality = candidate({
-      id: "model_quality",
-      title: "Adaptive two-stage condition-parameter confirmation",
-      plan_summary: "Screen the full condition-parameter grid and confirm top cells with held-out seeds.",
-      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "avg_accuracy_ci_low"]
+  it("does not infer the primary metric from metric-array order", () => {
+    const first = candidate({
+      id: "first_order",
+      metrics: ["primary_outcome_delta", "uncertainty_interval"]
     });
-    const reportGateAudit = candidate({
-      id: "report_gate_audit",
-      title: "Paired report-gating audit on identical run outputs",
-      plan_summary:
-        "This is a reporting-quality experiment, not a model-quality experiment, and it targets claim mismatches and downgrade correctness.",
-      metrics: [
-        "Primary integrity metric: claim_table_mismatch_count",
-        "False-positive metric: incorrect_positive_claim_count",
-        "accuracy_delta_vs_baseline"
-      ],
-      evaluation_steps: [
-        "Compare gated and ungated reports on identical artifacts.",
-        "This design does not answer the model-quality hypothesis."
-      ]
+    const reversed = candidate({
+      id: "reversed_order",
+      metrics: ["uncertainty_interval", "primary_outcome_delta"]
     });
 
-    const result = runDesignExperimentsPanel({
-      candidates: [reportGateAudit, modelQuality],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
-    });
+    const firstResult = runDesignExperimentsPanel({ candidates: [first], objectiveProfile: objective() });
+    const reversedResult = runDesignExperimentsPanel({ candidates: [reversed], objectiveProfile: objective() });
 
-    expect(result.selected.id).toBe("model_quality");
-    expect(
-      result.selection.scores.find((score) => score.candidate_id === "report_gate_audit")?.blocked_by
-    ).toContain("statistical_reviewer");
+    expect(firstResult.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
+    expect(reversedResult.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
+    expect(firstResult.selection.scores[0]?.statistical_score).toBe(
+      reversedResult.selection.scores[0]?.statistical_score
+    );
   });
 
-  it("blocks report-gating audits even when they consume condition-parameter training outputs", () => {
+  it("allows an audit design when the audit outcome is the declared research objective", () => {
     const audit = candidate({
-      id: "audit",
-      title: "A/B audit of result-gating on identical run outputs",
-      plan_summary:
-        "Test whether a pre-registered claim gate improves report integrity without changing model outcomes.",
-      metrics: [
-        "claim_table_mismatch_count and mismatch_rate",
-        "unsupported_positive_claim_count",
-        "hidden_failed_or_incomplete_condition_count",
-        "accuracy_delta_vs_baseline"
-      ],
+      id: "interface_audit",
+      title: "Interface invariance audit",
+      plan_summary: "Audit whether two lossless evidence interfaces change reviewer verdicts.",
+      primary_metric: "interface_flip_rate",
+      metrics: ["interface_flip_rate", "paired_disagreement_interval"],
+      evaluation_steps: ["Compare matched verdicts across repeated, preregistered interface views."]
+    });
+
+    const result = runDesignExperimentsPanel({
+      candidates: [audit],
+      objectiveProfile: objective("interface_flip_rate")
+    });
+
+    expect(result.selected.id).toBe("interface_audit");
+    expect(result.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
+  });
+
+  it("prefers confirmatory repeated evidence over a single-run screening design", () => {
+    const confirmatory = candidate({
+      id: "confirmatory",
+      plan_summary: "Run matched comparisons over independent repetitions and report a confidence interval.",
       evaluation_steps: [
-        "Produce at least one completed source training batch covering the 8 parameter x x parameter_y conditions with real metrics.",
-        "Construct audit packets from those outputs without inventing new accuracy values."
+        "Evaluate every declared unit in each arm.",
+        "Report raw sample size, paired effects, uncertainty intervals, and failed runs."
       ]
     });
-    const factorial = candidate({
-      id: "factorial",
-      title: "Staged full 4x2 factorial with promotion gate to paper-ready evidence",
-      plan_summary: "Run the complete parameter x x parameter_y design under a staged evidence plan.",
-      metrics: ["Primary: avg_accuracy and delta_avg_accuracy_vs_baseline_pp", "benchmark_task_a_accuracy"]
+    const screening = candidate({
+      id: "screening",
+      title: "Single-run preflight",
+      plan_summary: "Use one run per arm as preflight evidence only; it cannot support the paper claim.",
+      evaluation_steps: ["Use the output only to decide whether a confirmatory run is feasible."],
+      resource_notes: ["Lowest-cost screening option."]
     });
 
     const result = runDesignExperimentsPanel({
-      candidates: [audit, factorial],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
+      candidates: [screening, confirmatory],
+      objectiveProfile: objective()
     });
 
-    expect(result.selected.id).toBe("factorial");
-    expect(result.selection.scores.find((score) => score.candidate_id === "audit")?.blocked_by).toContain(
+    expect(result.selected.id).toBe("confirmatory");
+    expect(result.selection.scores.find((score) => score.candidate_id === "screening")?.blocked_by).toContain(
       "statistical_reviewer"
+    );
+    expect(result.selection.scores.find((score) => score.candidate_id === "screening")?.evidence_strength_score).toBeLessThan(
+      result.selection.scores.find((score) => score.candidate_id === "confirmatory")?.evidence_strength_score || 0
     );
   });
 
-  it("breaks otherwise equal design ties toward stronger evidence and replication surfaces", () => {
-    const resourcePreservation = candidate({
-      id: "resource_preservation",
-      title: "Resource-reallocated preservation duel",
-      plan_summary:
-        "Test whether a lower-resource condition preserves model quality without losing accuracy under the same budget.",
-      evaluation_steps: ["Evaluate every completed run on the full validation split."],
-      risks: ["The resource-preservation framing may be uninformative for the primary quality objective."]
-    });
-    const evidenceFocused = candidate({
-      id: "evidence_focused",
-      title: "Condition interaction confirmation table",
-      plan_summary:
-        "Repeat the baseline and primary condition across seeds, report a complete condition table, raw N, and confidence intervals.",
-      evaluation_steps: [
-        "Evaluate every completed run on the full validation split.",
-        "Report raw N, per-condition metrics, and paired confidence intervals."
-      ],
-      risks: ["Repeated seeds are required to avoid a one-run artifact."]
+  it("allows screening-only evidence only for an explicitly bounded probe", () => {
+    const probe = candidate({
+      id: "bounded_probe",
+      title: "Bounded feasibility probe",
+      plan_summary: "Run one matched pass per arm as screening evidence only.",
+      evaluation_steps: ["Use the result only to decide whether a confirmatory comparison is warranted."],
+      resource_notes: ["This is a preflight-only stage under a fixed local budget."]
     });
 
-    const result = runDesignExperimentsPanel({
-      candidates: [resourcePreservation, evidenceFocused],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
+    const confirmatory = runDesignExperimentsPanel({
+      candidates: [probe],
+      objectiveProfile: objective()
+    });
+    const bounded = runDesignExperimentsPanel({
+      candidates: [probe],
+      objectiveProfile: objective(),
+      evidenceStage: "bounded_probe"
     });
 
-    expect(result.selected.id).toBe("evidence_focused");
-    expect(result.selection.scores.find((score) => score.candidate_id === "evidence_focused")?.evidence_strength_score).toBeGreaterThan(
-      result.selection.scores.find((score) => score.candidate_id === "resource_preservation")?.evidence_strength_score || 0
+    expect(confirmatory.evidence_stage).toBe("confirmatory");
+    expect(confirmatory.selection.scores[0]?.blocked_by).toContain("statistical_reviewer");
+    expect(bounded.evidence_stage).toBe("bounded_probe");
+    expect(bounded.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
+    expect(bounded.selection.mode).toBe("best_non_blocked");
+    expect(
+      bounded.reviews.find((review) => review.reviewer_id === "statistical_reviewer")?.findings
+    ).toContain(
+      "The candidate is explicitly screening-only; it may run as a bounded probe but cannot support paper-scale claims."
     );
   });
 
-  it("does not promote one-seed pilot designs over paper-scale repeated-seed alternatives", () => {
-    const repeatedSeedFactorial = candidate({
-      id: "repeated_seed_factorial",
-      title: "Paper-scale repeated-seed condition factorial",
-      plan_summary:
-        "Run a complete repeated-seed factorial sweep to estimate condition effects, interaction stability, completion failures, and compute tradeoffs without relying on one seed.",
-      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "seed_level_confidence_interval"],
-      baselines: ["baseline_condition", "unmodified_system_baseline", "current_best_baseline"],
-      implementation_notes: [
-        "Run all condition cells with at least three seeds per cell before making any directional model-quality claim."
-      ],
-      evaluation_steps: [
-        "Evaluate every completed condition on the full validation split.",
-        "Report raw counts, confidence intervals, seed variance, missing cells, runtime, and memory."
-      ],
-      risks: ["Fewer than three seeds per cell forces a downgrade to exploratory evidence."],
-      resource_notes: ["Higher workload, but it is the minimum paper-scale evidence package."]
-    });
-    const oneSeedPilot = candidate({
-      id: "one_seed_pilot",
-      title: "One-seed factorial audit pilot",
-      plan_summary:
-        "Run a one-seed audit pilot to validate local training, parseable tables, failure visibility, and claim-downgrade logic. The pilot ceiling is explicit: it cannot support paper-ready parameter x, parameter y, interaction, or model-quality claims because it has only one training seed per cell.",
-      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "failed_run_visibility_pass"],
-      implementation_notes: ["Use one seed per condition and label the output as pilot evidence only."],
-      evaluation_steps: ["If all cells complete, use this pilot to authorize repeated-seed design; do not use it as final evidence."],
-      risks: ["One seed cannot separate true condition effects from seed artifacts."],
-      resource_notes: ["Lowest-cost preflight option."]
+  it("blocks a design that declares a primary metric absent from its metric set", () => {
+    const incomplete = candidate({
+      id: "incomplete",
+      metrics: ["uncertainty_interval"]
     });
 
     const result = runDesignExperimentsPanel({
-      candidates: [oneSeedPilot, repeatedSeedFactorial],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
+      candidates: [incomplete],
+      objectiveProfile: objective()
     });
 
-    expect(result.selected.id).toBe("repeated_seed_factorial");
-    expect(result.selection.scores.find((score) => score.candidate_id === "one_seed_pilot")?.blocked_by).toContain(
-      "statistical_reviewer"
-    );
-    expect(result.selection.scores.find((score) => score.candidate_id === "one_seed_pilot")?.evidence_strength_score).toBeLessThan(
-      result.selection.scores.find((score) => score.candidate_id === "repeated_seed_factorial")?.evidence_strength_score || 0
-    );
+    expect(result.selection.scores[0]?.blocked_by).toContain("statistical_reviewer");
+    expect(
+      result.reviews.find((review) => review.reviewer_id === "statistical_reviewer")?.findings
+    ).toContain("The declared primary metric is absent from the metric set.");
   });
 
-  it("blocks easier designs that explicitly abandon the requested interaction claim", () => {
-    const regularizationAxis = "regularization";
-    const interactionFactorial = candidate({
-      id: "interaction_factorial",
-      title: "Repeated-seed condition-parameter interaction factorial",
-      hypothesis_ids: ["h1", "h2"],
-      plan_summary:
-        "Run a complete repeated-seed condition-parameter factorial with raw counts, confidence intervals, and interaction contrasts.",
-      metrics: ["accuracy_delta_vs_baseline", "interaction_contrast_ci", "average_accuracy"],
-      implementation_notes: ["Run every factorial cell with at least three seeds before making directional claims."],
-      evaluation_steps: ["Report every cell, seed, failed run, raw count, and interaction contrast."],
-      resource_notes: ["Higher workload, but aligned with the requested interaction claim."]
-    });
-    const easierCapacityOnly = candidate({
-      id: "capacity_only",
-      title: "Capacity-only reproducibility sweep",
-      hypothesis_ids: ["h1"],
-      plan_summary:
-        `Run a cheaper capacity sweep with repeated seeds. This design cannot support the ${regularizationAxis}-interaction claim in h2; any ${regularizationAxis} conclusion must be disallowed.`,
-      metrics: ["accuracy_delta_vs_baseline", "average_accuracy", "seed_level_ci"],
-      implementation_notes: ["Hold the regularization axis fixed for every condition."],
-      evaluation_steps: ["Report capacity-only deltas and explicitly omit interaction conclusions."],
-      resource_notes: ["Lower workload than the factorial design."]
+  it("falls back when every candidate lacks a valid executable estimator protocol", () => {
+    const missingProtocol = candidate({ id: "missing_protocol" });
+    const invalidProtocol = candidate({
+      id: "invalid_protocol",
+      estimator_protocol: {
+        schema_version: 1
+      } as unknown as EstimatorProtocolDeclaration
     });
 
     const result = runDesignExperimentsPanel({
-      candidates: [easierCapacityOnly, interactionFactorial],
-      objectiveProfile: accuracyObjective,
-      managedBundleSupported: false
+      candidates: [missingProtocol, invalidProtocol],
+      objectiveProfile: objective(),
+      requireExecutableEstimator: true
     });
 
-    expect(result.selected.id).toBe("interaction_factorial");
-    expect(result.selection.scores.find((score) => score.candidate_id === "capacity_only")?.blocked_by).toContain(
-      "statistical_reviewer"
-    );
-    expect(result.selection.scores.find((score) => score.candidate_id === "capacity_only")?.evidence_strength_score).toBeLessThan(
-      result.selection.scores.find((score) => score.candidate_id === "interaction_factorial")?.evidence_strength_score || 0
-    );
+    expect(result.selection.mode).toBe("all_blocked_fallback");
+    for (const candidateId of ["missing_protocol", "invalid_protocol"]) {
+      expect(
+        result.selection.scores.find((score) => score.candidate_id === candidateId)?.blocked_by
+      ).toContain("statistical_reviewer");
+      expect(
+        result.reviews.find(
+          (review) =>
+            review.candidate_id === candidateId
+            && review.reviewer_id === "statistical_reviewer"
+        )
+      ).toMatchObject({
+        hard_block: true,
+        summary:
+          "The plan has no valid executable estimator protocol, so its comparison cannot be identified before implementation."
+      });
+    }
+  });
+
+  it("does not block a candidate with a valid generic executable estimator protocol", () => {
+    const result = runDesignExperimentsPanel({
+      candidates: [
+        candidate({
+          id: "executable_protocol",
+          estimator_protocol: estimatorProtocol()
+        })
+      ],
+      objectiveProfile: objective(),
+      requireExecutableEstimator: true
+    });
+
+    expect(result.selection.mode).toBe("best_non_blocked");
+    expect(result.selection.scores[0]?.blocked_by).not.toContain("statistical_reviewer");
+    expect(
+      result.reviews.find((review) => review.reviewer_id === "statistical_reviewer")
+    ).toMatchObject({
+      hard_block: false,
+      findings: expect.arrayContaining([
+        "Executable estimator protocol passed structural validation."
+      ])
+    });
   });
 });

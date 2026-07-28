@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "heldout_registry_source_plan",
+  "frozen_at": "2026-07-28T11:19:39+09:00",
+  "frozen_before_probe_design": true,
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "candidate_details_observed_before_freeze": true,
+  "purpose": "Bind portable local-cache keys and bounded setup notes without publishing machine-local paths.",
+  "activated_reserve_source_ids": [],
+  "sources": [
+    {
+      "source_id": "toolsandbox",
+      "cache_key": "toolsandbox",
+      "bounded_environment_notes": [
+        "No admitted lineage may be published unless the source terms pass the pre-outcome license gate."
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "cache_key": "appworld",
+      "bounded_environment_notes": [
+        "Parent-declared dependencies may be prepared before network-disabled probe execution."
+      ]
+    },
+    {
+      "source_id": "browsergym",
+      "cache_key": "browsergym",
+      "bounded_environment_notes": [
+        "Browser services are not assumed; every executable relation must declare its local dependency boundary."
+      ]
+    },
+    {
+      "source_id": "terminal-bench-2",
+      "cache_key": "terminal_bench_2",
+      "bounded_environment_notes": [
+        "Container or virtual-machine tasks are inapplicable unless the frozen command can run inside the local budget."
+      ]
+    },
+    {
+      "source_id": "swe-bench",
+      "cache_key": "swe_bench",
+      "bounded_environment_notes": [
+        "Dataset downloads and model calls are forbidden during the deterministic evaluator probe."
+      ]
+    },
+    {
+      "source_id": "agentdojo",
+      "cache_key": "agentdojo",
+      "bounded_environment_notes": [
+        "Only deterministic local evaluator surfaces are eligible for execution."
+      ]
+    },
+    {
+      "source_id": "inspect_evals",
+      "cache_key": "inspect_evals",
+      "bounded_environment_notes": [
+        "External model providers and benchmark asset downloads are forbidden during probe execution."
+      ]
+    },
+    {
+      "source_id": "android_world",
+      "cache_key": "android_world",
+      "bounded_environment_notes": [
+        "Emulator-dependent relations must use a deterministic local substitute or be recorded as an execution failure."
+      ]
+    },
+    {
+      "source_id": "inspect_ai",
+      "cache_key": "inspect_ai",
+      "bounded_environment_notes": [
+        "External model providers are forbidden; only local scorer and transcript contracts are eligible."
+      ]
+    },
+    {
+      "source_id": "helm",
+      "cache_key": "helm",
+      "bounded_environment_notes": [
+        "Remote inference and large benchmark downloads are forbidden during deterministic probe execution."
+      ]
+    },
+    {
+      "source_id": "webarena",
+      "cache_key": "webarena",
+      "bounded_environment_notes": [
+        "Live websites are not assumed; only parent-visible deterministic evaluator contracts are eligible."
+      ]
+    }
+  ]
+}

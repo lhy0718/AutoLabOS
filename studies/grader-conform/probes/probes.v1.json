@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_probe_manifest",
+  "frozen_at": "2026-07-28T01:00:00+09:00",
+  "behavioral_outcomes_observed_before_freeze": false,
+  "probes": [
+    {
+      "lineage_id": "lineage_001",
+      "relation_family": "live_replay_equivalence",
+      "adapter": "studies/grader-conform/probes/python/tau_replay_noop_relation.py",
+      "contract_source": "The public environment contract treats an unknown tool call as an error response with no state mutation; replay must preserve the same terminal state.",
+      "transformation_target": "execution trace"
+    },
+    {
+      "lineage_id": "lineage_007",
+      "relation_family": "cardinality_consistency",
+      "adapter": "studies/grader-conform/probes/python/bfcl_cardinality_relation.py",
+      "contract_source": "Every result marked exact_match must be compared by value regardless of the number of calls in the graded response.",
+      "transformation_target": "graded response"
+    },
+    {
+      "lineage_id": "lineage_014",
+      "relation_family": "irrelevant_state_invariance",
+      "adapter": "studies/grader-conform/probes/python/osworld_freeze_relation.py",
+      "contract_source": "Spreadsheet freeze semantics are defined by the frozen row and column split; scrolling changes the visible top-left cell but not the freeze operation.",
+      "transformation_target": "graded artifact"
+    }
+  ]
+}

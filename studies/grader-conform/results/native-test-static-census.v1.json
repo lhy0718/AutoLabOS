@@ -1,0 +1,780 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "parent_native_test_static_census",
+  "registry_sha256": "6c71670be7ea6758fe2bc612f41792d1e857c7ccc2880284a1761ce10711c9e4",
+  "spec_sha256": "cb7b067b8ef7d3ed6b9ff9e5cf024bfe9949455b903d910d9006e4efab62bed8",
+  "lineage_count": 14,
+  "no_direct_contract_test_count": 14,
+  "execution_outcomes_included": false,
+  "paper_scale_baseline_complete": false,
+  "receipts": [
+    {
+      "lineage_id": "lineage_001",
+      "source_id": "source_a",
+      "parent_commit": "387c7753941362628710aeb74cf0bbc04e3a239a",
+      "test_file_count": 61,
+      "runnable_test_file_count": 44,
+      "implementation_match_count": 9,
+      "contract_match_count": 3,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [
+        {
+          "path": "tests/test_agent.py",
+          "line": 49,
+          "text": "def test_agent_set_state(agent: LLMAgent, first_user_message: UserMessage):"
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 286,
+          "text": "environment.set_state("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 334,
+          "text": "def test_environment_set_state_message_history("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 352,
+          "text": "environment.set_state("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 380,
+          "text": "def test_environment_set_state_initialization_data("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 399,
+          "text": "environment.set_state("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 428,
+          "text": "def test_environment_set_state_initialization_actions("
+        },
+        {
+          "path": "tests/test_environment.py",
+          "line": 448,
+          "text": "environment.set_state("
+        },
+        {
+          "path": "tests/test_user.py",
+          "line": 49,
+          "text": "def test_user_simulator_set_state("
+        }
+      ],
+      "contract_matches": [
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 670,
+          "text": "def test_give_unknown_tool(self, environment: Environment):"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 710,
+          "text": "def test_unlock_unknown_tool(self, environment: Environment):"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 739,
+          "text": "def test_call_unknown_tool(self, environment: Environment):"
+        }
+      ],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_002",
+      "source_id": "source_a",
+      "parent_commit": "8d4f52741b980e0ed167b387af305ba62f974bf6",
+      "test_file_count": 61,
+      "runnable_test_file_count": 44,
+      "implementation_match_count": 0,
+      "contract_match_count": 38,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [
+        {
+          "path": "tests/test_run.py",
+          "line": 274,
+          "text": "def test_run_tasks_nl_assertions(domain_name: str):"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 286,
+          "text": "evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 294,
+          "text": "assert len(simulation.reward_info.nl_assertions) == 2"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 295,
+          "text": "assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 296,
+          "text": "assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 298,
+          "text": "# Add an nl_assertion that will fail and test that the reward is 0.0"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 299,
+          "text": "task.evaluation_criteria.nl_assertions.append(\"The user is not complimented\")"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 309,
+          "text": "evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 313,
+          "text": "assert len(simulation.reward_info.nl_assertions) == 3"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 314,
+          "text": "assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 315,
+          "text": "assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_run.py",
+          "line": 316,
+          "text": "assert simulation.reward_info.nl_assertions[2].met is False"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 345,
+          "text": "def test_run_tasks_nl_assertions_audio_native("
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 350,
+          "text": "Equivalent of test_run_tasks_nl_assertions for full-duplex."
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 362,
+          "text": "evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 370,
+          "text": "assert len(simulation.reward_info.nl_assertions) == 2"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 371,
+          "text": "assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 372,
+          "text": "assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 374,
+          "text": "# Add an nl_assertion that will fail and test that the reward is 0.0"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 375,
+          "text": "task.evaluation_criteria.nl_assertions.append(\"The user is not complimented\")"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 385,
+          "text": "evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 389,
+          "text": "assert len(simulation.reward_info.nl_assertions) == 3"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 390,
+          "text": "assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 391,
+          "text": "assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_streaming/test_run_streaming.py",
+          "line": 392,
+          "text": "assert simulation.reward_info.nl_assertions[2].met is False"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 311,
+          "text": "# def test_run_tasks_nl_assertions_voice("
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 313,
+          "text": "#     task_with_nl_assertions: Task,"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 328,
+          "text": "#         evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 338,
+          "text": "#     assert len(simulation.reward_info.nl_assertions) == 2"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 339,
+          "text": "#     assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 340,
+          "text": "#     assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 342,
+          "text": "#     # Add an nl_assertion that will fail and test that the reward is 0.0"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 343,
+          "text": "#     task.evaluation_criteria.nl_assertions.append(\"The user is not complimented\")"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 353,
+          "text": "#         evaluation_type=EvaluationType.NL_ASSERTIONS,"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 357,
+          "text": "#     assert len(simulation.reward_info.nl_assertions) == 3"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 358,
+          "text": "#     assert simulation.reward_info.nl_assertions[0].met is True"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 359,
+          "text": "#     assert simulation.reward_info.nl_assertions[1].met is True"
+        },
+        {
+          "path": "tests/test_voice/test_run_voice.py",
+          "line": 360,
+          "text": "#     assert simulation.reward_info.nl_assertions[2].met is False"
+        }
+      ],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_003",
+      "source_id": "source_a",
+      "parent_commit": "0ed8c0ef0a1f6b024a0fb733e186922411874879",
+      "test_file_count": 62,
+      "runnable_test_file_count": 45,
+      "implementation_match_count": 31,
+      "contract_match_count": 3,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_026.py",
+          "line": 115,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_026.py",
+          "line": 132,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_026.py",
+          "line": 140,
+          "text": "name=\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_026.py",
+          "line": 206,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_026.py",
+          "line": 216,
+          "text": "name=\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_028.py",
+          "line": 117,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_028.py",
+          "line": 134,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_028.py",
+          "line": 142,
+          "text": "name=\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_028.py",
+          "line": 210,
+          "text": "name=\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/tasks/test_task_028.py",
+          "line": 220,
+          "text": "name=\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1302,
+          "text": "\"\"\"build_tools should return KnowledgeToolsWithKBSearchAndGrep.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1310,
+          "text": "KnowledgeToolsWithKBSearchAndGrep,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1315,
+          "text": "assert isinstance(toolkit, KnowledgeToolsWithKBSearchAndGrep)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1443,
+          "text": "KnowledgeToolsWithKBSearch,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1447,
+          "text": "return KnowledgeToolsWithKBSearch(mock_db, bm25_pipeline)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1453,
+          "text": "KnowledgeToolsWithGrep,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1457,
+          "text": "return KnowledgeToolsWithGrep(mock_db, grep_pipeline)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 27,
+          "text": "KnowledgeTools,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 255,
+          "text": "tools = KnowledgeTools(db)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 310,
+          "text": "resp = call(env, \"unlock_discoverable_agent_tool\", {\"agent_tool_name\": tool_name})"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 315,
+          "text": "\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 695,
+          "text": "\"\"\"Tests for unlock_discoverable_agent_tool.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 700,
+          "text": "\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 713,
+          "text": "\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 723,
+          "text": "\"\"\"Tests for call_discoverable_agent_tool.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 728,
+          "text": "\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 742,
+          "text": "\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 753,
+          "text": "\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 760,
+          "text": "\"call_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 2914,
+          "text": "\"unlock_discoverable_agent_tool\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 2924,
+          "text": "\"call_discoverable_agent_tool\","
+        }
+      ],
+      "contract_matches": [
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 2976,
+          "text": "# 19. Read-only Discoverable Agent Tool Tests"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 2980,
+          "text": "class TestReadOnlyDiscoverableAgentTools:"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 2981,
+          "text": "\"\"\"Tests for read-only discoverable agent tools.\"\"\""
+        }
+      ],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_004",
+      "source_id": "source_a",
+      "parent_commit": "b51a6d69e26f0e94a9173e2e80fe8735a8dff650",
+      "test_file_count": 66,
+      "runnable_test_file_count": 48,
+      "implementation_match_count": 17,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1302,
+          "text": "\"\"\"build_tools should return KnowledgeToolsWithKBSearchAndGrep.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1310,
+          "text": "KnowledgeToolsWithKBSearchAndGrep,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1315,
+          "text": "assert isinstance(toolkit, KnowledgeToolsWithKBSearchAndGrep)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1443,
+          "text": "KnowledgeToolsWithKBSearch,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1447,
+          "text": "return KnowledgeToolsWithKBSearch(mock_db, bm25_pipeline)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1453,
+          "text": "KnowledgeToolsWithGrep,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_retrieval_system.py",
+          "line": 1457,
+          "text": "return KnowledgeToolsWithGrep(mock_db, grep_pipeline)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 27,
+          "text": "KnowledgeTools,"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 255,
+          "text": "tools = KnowledgeTools(db)"
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 1726,
+          "text": "\"\"\"Tests for apply_savings_account_credit_6831.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 1731,
+          "text": "\"apply_savings_account_credit_6831\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 1748,
+          "text": "\"apply_savings_account_credit_6831\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 1760,
+          "text": "\"apply_savings_account_credit_6831\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 3135,
+          "text": "\"\"\"Verify apply_savings_account_credit_6831 matches tau-knowledge checks.\"\"\""
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 3141,
+          "text": "\"apply_savings_account_credit_6831\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 3157,
+          "text": "\"apply_savings_account_credit_6831\","
+        },
+        {
+          "path": "tests/test_domains/test_banking_knowledge/test_tools_knowledge.py",
+          "line": 3170,
+          "text": "\"apply_savings_account_credit_6831\","
+        }
+      ],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_005",
+      "source_id": "source_a",
+      "parent_commit": "a1999a311b5b661642c72614744f9222bfcd0187",
+      "test_file_count": 65,
+      "runnable_test_file_count": 47,
+      "implementation_match_count": 0,
+      "contract_match_count": 2,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [
+        {
+          "path": "tests/test_review_model.py",
+          "line": 55,
+          "text": "def test_review_simulation_uses_custom_model_for_full_duplex(monkeypatch):"
+        },
+        {
+          "path": "tests/test_review_model.py",
+          "line": 142,
+          "text": "def test_review_simulation_uses_custom_model_for_user_only_full_duplex("
+        }
+      ],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_006",
+      "source_id": "source_a",
+      "parent_commit": "a1e85084a3960281cb06997594133e8f39ea42a7",
+      "test_file_count": 66,
+      "runnable_test_file_count": 48,
+      "implementation_match_count": 3,
+      "contract_match_count": 1,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [
+        {
+          "path": "tests/test_evaluate_trajectories.py",
+          "line": 25,
+          "text": "compute_simulation_rewards,"
+        },
+        {
+          "path": "tests/test_evaluate_trajectories.py",
+          "line": 170,
+          "text": "compute_simulation_rewards(results)"
+        },
+        {
+          "path": "tests/test_evaluate_trajectories.py",
+          "line": 230,
+          "text": "rescored = compute_simulation_rewards(results)"
+        }
+      ],
+      "contract_matches": [
+        {
+          "path": "src/experiments/agentify_tau_bench/tests/test_utils.py",
+          "line": 52,
+          "text": "\"\"\"Test that leading/trailing whitespace is stripped.\"\"\""
+        }
+      ],
+      "direct_contract_pairs": [],
+      "census_status": "no_co_located_contract_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_007",
+      "source_id": "source_b",
+      "parent_commit": "4da861eadf156928cd7177be5725870a9161411b",
+      "test_file_count": 4,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_008",
+      "source_id": "source_b",
+      "parent_commit": "33cabefc21eae4927f5cee83be12183ebd4ba10d",
+      "test_file_count": 5,
+      "runnable_test_file_count": 2,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_targeted_parent_native_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_009",
+      "source_id": "source_b",
+      "parent_commit": "951c72827ac9f7b3a4716a3339ea5eb439fef51e",
+      "test_file_count": 5,
+      "runnable_test_file_count": 2,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_targeted_parent_native_test_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_012",
+      "source_id": "source_b",
+      "parent_commit": "84ab3b6de0d03da567e76ff392207cff53805faa",
+      "test_file_count": 4,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_013",
+      "source_id": "source_c",
+      "parent_commit": "830202192922d916711dd07a5d235bab5d1be5e1",
+      "test_file_count": 7,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_014",
+      "source_id": "source_c",
+      "parent_commit": "c4e58b3df5ac2527a24c891d2dd33bfe74f74a0c",
+      "test_file_count": 7,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_015",
+      "source_id": "source_c",
+      "parent_commit": "e8ba8fde29889ae7e4377f6f325d736818434a04",
+      "test_file_count": 7,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    },
+    {
+      "lineage_id": "lineage_016",
+      "source_id": "source_c",
+      "parent_commit": "dcfcbc517d5b4c3524f61731c033094fde7cd6df",
+      "test_file_count": 7,
+      "runnable_test_file_count": 0,
+      "implementation_match_count": 0,
+      "contract_match_count": 0,
+      "direct_contract_pair_count": 0,
+      "implementation_matches": [],
+      "contract_matches": [],
+      "direct_contract_pairs": [],
+      "census_status": "no_runnable_parent_native_tests_discovered",
+      "native_fault_detected": null,
+      "inference_boundary": "Static census cannot prove that an indirect or dynamically generated native test passes or fails."
+    }
+  ]
+}

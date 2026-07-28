@@ -56,6 +56,93 @@ describe("RunStore", () => {
     expect(fetched?.title).toBe("Test Run Title");
   });
 
+  it("reuses an identical deterministic run id and rejects conflicting inputs", async () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-deterministic-"));
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+
+    const store = new RunStore(paths);
+    const deterministicId = [
+      "12345678",
+      "1234",
+      "5123",
+      "8123",
+      "123456789abc"
+    ].join("-");
+    const input = {
+      title: "Governed follow-up",
+      topic: "Evaluate a declared candidate",
+      constraints: ["bounded compute"],
+      objectiveMetric: "primary measure"
+    };
+    const first = await store.createRun(input, { deterministicId });
+    const second = await store.createRun(input, { deterministicId });
+
+    expect(first.id).toBe(deterministicId);
+    expect(second).toEqual(first);
+    expect(await store.listRuns()).toHaveLength(1);
+    await expect(store.createRun(
+      { ...input, topic: "A conflicting topic" },
+      { deterministicId }
+    )).rejects.toThrow("deterministic_run_id_conflict");
+    await expect(store.createRun(
+      input,
+      { deterministicId: "../unsafe" }
+    )).rejects.toThrow("deterministic_run_id_invalid");
+  });
+
+  it("preserves delegated_once lineage across deterministic reloads", async () => {
+    const cwd = mkdtempSync(
+      path.join(os.tmpdir(), "autolabos-runstore-confirmatory-")
+    );
+    tempDirs.push(cwd);
+    const paths = resolveAppPaths(cwd);
+    await ensureScaffold(paths);
+    const deterministicId = [
+      "22345678",
+      "1234",
+      "5123",
+      "8123",
+      "123456789abc"
+    ].join("-");
+    const input = {
+      title: "Confirmatory follow-up",
+      topic: "Verify a selected research claim",
+      constraints: ["one governed pass"],
+      objectiveMetric: "declared primary measure"
+    };
+    const options = {
+      deterministicId,
+      executionRole: "delegated_once" as const,
+      promotionLineage: {
+        schemaVersion: 1 as const,
+        relation: "topic_probe_confirmatory" as const,
+        parentRunId: "confirmatory-parent",
+        parentResearchCycle: 3,
+        outcomeContentSha256: "a".repeat(64),
+        receiptContentSha256: "b".repeat(64)
+      }
+    };
+
+    const created = await new RunStore(paths).createRun(input, options);
+    const reloadedStore = new RunStore(paths);
+    const reused = await reloadedStore.createRun(input, options);
+
+    expect(created).toMatchObject({
+      executionRole: "delegated_once",
+      promotionLineage: options.promotionLineage
+    });
+    expect(reused).toEqual(created);
+    expect(await reloadedStore.getRun(deterministicId)).toMatchObject({
+      executionRole: "delegated_once",
+      promotionLineage: options.promotionLineage
+    });
+    await expect(reloadedStore.createRun(input, { deterministicId })).rejects.toThrow(
+      "deterministic_run_id_conflict"
+    );
+  });
+
   it("applies the fast node option package to new run retry policy", async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), "autolabos-runstore-fast-package-"));
     tempDirs.push(cwd);
@@ -347,6 +434,12 @@ describe("RunStore", () => {
     const indexed = runsFile.runs.find((candidate) => candidate.id === run.id);
     expect(indexed?.graph.pendingTransition?.targetNode).toBe("design_experiments");
     expect(indexed?.graph.transitionHistory).toEqual([]);
+    expect(indexed?.graph.lastAppliedTransition).toMatchObject({
+      action: "backtrack_to_design",
+      fromNode: "analyze_results",
+      toNode: "design_experiments",
+      reason: "r1"
+    });
 
     const snapshot = await readJsonFile<RunRecord>(path.join(paths.runsDir, run.id, "run_record.json"));
     expect(snapshot.graph.transitionHistory).toHaveLength(1);

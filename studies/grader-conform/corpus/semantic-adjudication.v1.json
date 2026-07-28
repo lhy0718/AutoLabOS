@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "historical_evaluator_fault_semantic_adjudication",
+  "registry": "lineages.v1.json",
+  "adjudicated_at": "2026-07-28T00:30:00+09:00",
+  "behavioral_outcomes_observed_before_adjudication": false,
+  "scope_rule": "Admit only grader-local or evaluator-adapter implementation defects that can be tested by transforming the graded artifact, trace, state, or invocation context. Source-code transformations and model-facing prompt preprocessing are out of scope.",
+  "sampling_rule": "One direct fix commit counts as at most one root-cause lineage in the bounded probe. A bulk fix is not split after outcomes are observed.",
+  "summary": {
+    "candidate_count": 16,
+    "admitted_count": 14,
+    "excluded_count": 2,
+    "admitted_source_count": 3,
+    "bounded_probe_sample_floor_met_before_execution": true,
+    "confirmatory_sample_floor_met": false
+  },
+  "decisions": [
+    {"id": "lineage_001", "decision": "admit", "reason": "The replay evaluator handles a graded trajectory differently from the live evaluator."},
+    {"id": "lineage_002", "decision": "admit", "reason": "Two documented evaluator entry points disagree over the same reward-basis contract."},
+    {"id": "lineage_003", "decision": "admit", "reason": "A semantically benign read changes grading state and can create a false reject."},
+    {"id": "lineage_004", "decision": "admit", "reason": "Equivalent JSON numeric representations change the grading database hash."},
+    {"id": "lineage_005", "decision": "admit", "reason": "Offline and live evaluator entry points disagree over the same stored trajectory."},
+    {"id": "lineage_006", "decision": "admit_as_one_cluster", "reason": "The commit contains multiple replay gaps but is conservatively counted as one live/replay root-cause cluster in the bounded probe."},
+    {"id": "lineage_007", "decision": "admit", "reason": "Call cardinality changes whether the declared exact-match oracle is applied."},
+    {"id": "lineage_008", "decision": "admit", "reason": "Equivalent numeric argument forms receive different checker verdicts."},
+    {"id": "lineage_009", "decision": "admit", "reason": "The evaluator adapter coerces an invalid graded response into a false accept."},
+    {"id": "lineage_010", "decision": "exclude_out_of_scope", "reason": "The defect is primarily in model-facing prompt and function-document preprocessing rather than grading an already produced artifact."},
+    {"id": "lineage_011", "decision": "exclude_out_of_scope_and_dependent", "reason": "The follow-up preprocessing fix is model-facing and depends on the preceding preprocessing lineage."},
+    {"id": "lineage_012", "decision": "admit", "reason": "The response parser is an evaluator adapter and disagrees over contract-equivalent graded surface forms."},
+    {"id": "lineage_013", "decision": "admit", "reason": "The grader reads host context instead of the evaluated VM context and can misjudge the same task state."},
+    {"id": "lineage_014", "decision": "admit", "reason": "An irrelevant scroll-state field changes the verdict for an identical frozen split."},
+    {"id": "lineage_015", "decision": "admit", "reason": "Sequential grader invocations leak process state and make the second verdict order-dependent."},
+    {"id": "lineage_016", "decision": "admit", "reason": "Equivalent recoverable workspace state is rejected when an optional helper artifact is absent."}
+  ],
+  "paper_scale_decision": "blocked_for_paper_scale",
+  "next_allowed_state": "Execute the bounded parent/fixed probe on the 14 admitted lineages. Even a passing bounded probe authorizes only confirmatory corpus expansion, not manuscript claims."
+}

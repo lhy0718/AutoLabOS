@@ -13,13 +13,24 @@ import {
   EXPERIMENT_GOVERNANCE_DRIFT_REPORT_ARTIFACT,
   EXPERIMENT_GOVERNANCE_LEDGER_ARTIFACT,
   freezeManagedBundleLock,
+  getGovernedObjectiveProfile,
   storeExperimentGovernanceDecision
 } from "../src/core/experimentGovernance.js";
 import { MockLLMClient, LLMCompleteOptions } from "../src/core/llm/client.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { createAnalyzeResultsNode } from "../src/core/nodes/analyzeResults.js";
 import { createRunExperimentsNode } from "../src/core/nodes/runExperiments.js";
-import { buildHeuristicObjectiveMetricProfile } from "../src/core/objectiveMetric.js";
+import {
+  buildHeuristicObjectiveMetricProfile,
+  normalizeObjectiveMetricProfile,
+  type ObjectiveMetricProfile
+} from "../src/core/objectiveMetric.js";
+import {
+  buildCandidateObjectiveProfileBinding,
+  candidateRawDeltaMetricKey,
+  objectiveComparatorForEffectCriterion,
+  signedRawDeltaTargetForEffectCriterion
+} from "../src/core/effectCriterion.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
@@ -69,6 +80,135 @@ function makeRun(runId: string, currentNode: RunRecord["currentNode"], objective
   };
 }
 
+function buildSingleSeriesResultsArtifact(
+  metricId: string,
+  value: number,
+  direction: "higher_better" | "lower_better" = "higher_better"
+) {
+  const seriesId = "series_subject";
+  const observationId = `observation:${seriesId}:${metricId}`;
+  return {
+    schema_version: "2.0" as const,
+    metrics: [{ id: metricId, label: metricId, direction, unit: "unitless" }],
+    series: [{ id: seriesId, label: "Subject series", role: "primary" as const, dimensions: {} }],
+    observations: [
+      {
+        id: observationId,
+        series_id: seriesId,
+        metric_id: metricId,
+        scope: {},
+        value
+      }
+    ],
+    comparisons: []
+  };
+}
+
+function buildPairedResultsArtifact(input: {
+  comparisonId: string;
+  metricId: string;
+  subjectSeriesId: string;
+  referenceSeriesId: string;
+  subjectValue: number;
+  referenceValue: number;
+  direction?: "higher_better" | "lower_better";
+}) {
+  const subjectObservationId = `observation:${input.subjectSeriesId}:${input.metricId}`;
+  const referenceObservationId = `observation:${input.referenceSeriesId}:${input.metricId}`;
+  return {
+    schema_version: "2.0" as const,
+    metrics: [
+      {
+        id: input.metricId,
+        label: input.metricId,
+        direction: input.direction ?? "higher_better",
+        unit: "unitless"
+      }
+    ],
+    series: [
+      {
+        id: input.subjectSeriesId,
+        label: "Subject series",
+        role: "primary" as const,
+        dimensions: {}
+      },
+      {
+        id: input.referenceSeriesId,
+        label: "Reference series",
+        role: "baseline" as const,
+        dimensions: {}
+      }
+    ],
+    observations: [
+      {
+        id: subjectObservationId,
+        series_id: input.subjectSeriesId,
+        metric_id: input.metricId,
+        scope: {},
+        value: input.subjectValue
+      },
+      {
+        id: referenceObservationId,
+        series_id: input.referenceSeriesId,
+        metric_id: input.metricId,
+        scope: {},
+        value: input.referenceValue
+      }
+    ],
+    comparisons: [
+      {
+        id: input.comparisonId,
+        subject_observation_id: subjectObservationId,
+        reference_observation_id: referenceObservationId,
+        delta: input.subjectValue - input.referenceValue
+      }
+    ]
+  };
+}
+
+function buildCandidateGovernanceProfile(): ObjectiveMetricProfile {
+  const binding = buildCandidateObjectiveProfileBinding({
+    candidateId: "authorized_candidate",
+    primaryMetric: "primary_score",
+    metricUnit: "unitless",
+    metricScale: "raw",
+    metricDirection: "maximize",
+    comparator: "declared_reference",
+    effectCriterion: {
+      basis: "delta_vs_reference",
+      magnitude: 0.05,
+      scale: "raw",
+      inclusive: true
+    }
+  });
+  const outputMetricKey = candidateRawDeltaMetricKey(binding.primary_metric);
+  return normalizeObjectiveMetricProfile(
+    {
+      source: "heuristic_fallback",
+      primaryMetric: outputMetricKey,
+      preferredMetricKeys: [outputMetricKey],
+      analysisFocus: [],
+      paperEmphasis: [],
+      assumptions: [],
+      candidate_contract: binding,
+      delta_contract: {
+        output_metric_key: outputMetricKey,
+        source_metric_key: binding.primary_metric,
+        raw_delta_definition: "subject_minus_reference",
+        comparator: objectiveComparatorForEffectCriterion(
+          binding.metric_direction,
+          binding.effect_criterion
+        ),
+        signed_target: signedRawDeltaTargetForEffectCriterion(
+          binding.metric_direction,
+          binding.effect_criterion
+        )
+      }
+    },
+    binding.objective_raw
+  );
+}
+
 function buildNodeDeps(overrides?: {
   aci?: Record<string, unknown>;
   llm?: MockLLMClient;
@@ -94,6 +234,146 @@ function buildNodeDeps(overrides?: {
 }
 
 describe("experiment governance", () => {
+  it("preserves the candidate effect contract and rejects a merely positive sub-threshold result", () => {
+    const objectiveProfile = buildCandidateGovernanceProfile();
+    const run = makeRun("run-effect-floor", "design_experiments", "broad discovery objective");
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design_effect_floor",
+        hypothesis_ids: ["hypothesis_a"],
+        baselines: ["declared_reference"]
+      },
+      objectiveProfile,
+      managedBundleSupported: false,
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+    const comparisonId = "declared_primary_comparison";
+    const subjectSeriesId = "design_effect_floor:primary";
+    const referenceSeriesId = contract.baseline_candidate_ids[0]!;
+    const report = {
+      analysis_version: 1,
+      generated_at: "2026-01-01T00:00:00.000Z",
+      mean_score: 0,
+      metrics: {},
+      objective_metric: {
+        raw: contract.objective_profile.raw,
+        evaluation: {
+          rawObjectiveMetric: contract.objective_profile.raw,
+          profileSource: "heuristic_fallback",
+          primaryMetric: objectiveProfile.primaryMetric,
+          preferredMetricKeys: objectiveProfile.preferredMetricKeys,
+          matchedMetricKey: objectiveProfile.primaryMetric,
+          comparator: objectiveProfile.comparator,
+          targetValue: objectiveProfile.targetValue,
+          observedValue: 0.01,
+          status: "not_met",
+          summary: "Objective metric not met: observed delta 0.01 is below the declared 0.05 floor."
+        },
+        profile: {
+          source: "heuristic_fallback",
+          primary_metric: objectiveProfile.primaryMetric,
+          preferred_metric_keys: objectiveProfile.preferredMetricKeys,
+          candidate_contract: contract.objective_profile.candidate_contract,
+          delta_contract: contract.objective_profile.delta_contract,
+          analysis_focus: [],
+          paper_emphasis: [],
+          assumptions: []
+        }
+      },
+      overview: {
+        objective_status: "not_met",
+        objective_summary: "The positive delta missed the declared floor.",
+        matched_metric_key: objectiveProfile.primaryMetric,
+        observed_value: 0.01,
+        execution_runs: 1
+      },
+      plan_context: { plans: [], linkedHypothesisIds: [] },
+      metric_table: [],
+      results_artifact: buildPairedResultsArtifact({
+        comparisonId,
+        metricId: "primary_score",
+        subjectSeriesId,
+        referenceSeriesId,
+        subjectValue: 0.51,
+        referenceValue: 0.5
+      }),
+      primary_comparison_id: comparisonId,
+      condition_comparisons: [],
+      execution_summary: { success: true, runCount: 1, observations: [] },
+      primary_findings: [],
+      limitations: [],
+      warnings: [],
+      paper_claims: [],
+      figure_specs: [],
+      supplemental_runs: [],
+      external_comparisons: [],
+      statistical_summary: {
+        confidence_intervals: [],
+        stability_metrics: [],
+        effect_estimates: [],
+        notes: []
+      },
+      failure_taxonomy: []
+    };
+
+    expect(contract.objective_metric_name).toBe("primary_score_delta_vs_baseline");
+    expect(contract.objective_profile.candidate_contract).toEqual(objectiveProfile.candidate_contract);
+    expect(contract.objective_profile.comparison).toEqual({
+      baselineId: referenceSeriesId,
+      candidateId: subjectSeriesId,
+      metricKey: "primary_score"
+    });
+    expect(deriveGovernedAnalysisDecision({ report: report as any, contract })).toMatchObject({
+      candidateEntry: {
+        verdict: "discard",
+        rationale: expect.stringContaining("effect criterion failed")
+      },
+      transitionOverride: { targetNode: "design_experiments" }
+    });
+  });
+
+  it.each([
+    [
+      { candidateId: "authorized_candidate", baselines: ["other_reference"], datasets: ["declared_scope"] },
+      "topic_probe_design_comparator_binding_mismatch"
+    ],
+    [
+      { candidateId: "authorized_candidate", baselines: ["declared_reference"], datasets: ["other_scope"] },
+      "topic_probe_design_dataset_task_scope_binding_mismatch"
+    ],
+    [
+      { candidateId: "other_candidate", baselines: ["declared_reference"], datasets: ["declared_scope"] },
+      "topic_probe_design_treatment_binding_mismatch"
+    ]
+  ] as const)(
+    "fails closed when a topic-probe design changes its treatment, comparator, or dataset/task scope",
+    (variant, expectedError) => {
+      const objectiveProfile = buildCandidateGovernanceProfile();
+
+      expect(() => buildExperimentComparisonContract({
+        run: {
+          id: "run-binding-check",
+          objectiveMetric: "broad discovery objective"
+        },
+        selectedDesign: {
+          id: "design_binding_check",
+          hypothesis_ids: ["hypothesis_a"],
+          baselines: [...variant.baselines],
+          datasets: [...variant.datasets]
+        },
+        objectiveProfile,
+        topicProbe: {
+          candidateId: variant.candidateId,
+          candidateContentSha256: "a".repeat(64),
+          comparator: "declared_reference",
+          datasetTaskScope: "declared_scope"
+        },
+        managedBundleSupported: false
+      })).toThrow(expectedError);
+    }
+  );
+
   it("locks the configured runtime budget into comparison contracts", () => {
     const run = makeRun("run-configured-budget", "design_experiments", "validation score");
     const contract = buildExperimentComparisonContract({
@@ -112,6 +392,86 @@ describe("experiment governance", () => {
       mode: "single_run_locked",
       locked: true,
       timeout_sec: 7200
+    });
+  });
+
+  it("freezes the complete explicit objective profile without heuristic reconstruction", () => {
+    const run = makeRun("run-objective-contract", "design_experiments", "declared outcome contract");
+    const objectiveProfile = {
+      source: "llm" as const,
+      raw: run.objectiveMetric,
+      primaryMetric: "outcome_measure",
+      preferredMetricKeys: ["outcome_measure"],
+      direction: "minimize" as const,
+      comparator: "<=" as const,
+      targetValue: 12,
+      targetDescription: "At most twelve percentage points.",
+      unit: "percentage_point",
+      scale: "percentage_point" as const,
+      targetUnit: "percentage_point",
+      targetScale: "percentage_point" as const,
+      comparison: {
+        baselineId: "reference_series",
+        candidateId: "subject_series",
+        metricKey: "outcome_measure"
+      },
+      resourceLimits: {
+        runtimeRatioMax: 1.25,
+        memoryRatioMax: 1.1
+      },
+      analysisFocus: ["Analyze the declared paired comparison."],
+      paperEmphasis: ["Report the declared unit."],
+      assumptions: ["The measurement protocol is fixed."]
+    };
+
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design-objective-contract",
+        hypothesis_ids: ["hypothesis-neutral"],
+        baselines: ["reference_series"]
+      },
+      objectiveProfile,
+      managedBundleSupported: false
+    });
+
+    expect(contract.objective_profile).toEqual(objectiveProfile);
+    objectiveProfile.comparison.baselineId = "mutated-reference";
+    objectiveProfile.resourceLimits.runtimeRatioMax = 9;
+    objectiveProfile.analysisFocus.push("mutated");
+    expect(contract.objective_profile.comparison?.baselineId).toBe("reference_series");
+    expect(contract.objective_profile.resourceLimits?.runtimeRatioMax).toBe(1.25);
+    expect(contract.objective_profile.analysisFocus).toEqual([
+      "Analyze the declared paired comparison."
+    ]);
+  });
+
+  it("keeps the frozen candidate objective raw text when the run objective differs", () => {
+    const run = makeRun("run-frozen-objective", "run_experiments", "broad portfolio objective");
+    const objectiveProfile = {
+      ...buildHeuristicObjectiveMetricProfile("candidate_delta >= 0.05"),
+      raw: "candidate_delta >= 0.05",
+      primaryMetric: "candidate_delta",
+      preferredMetricKeys: ["candidate_delta"],
+      direction: "maximize" as const,
+      comparator: ">=" as const,
+      targetValue: 0.05
+    };
+    const contract = buildExperimentComparisonContract({
+      run,
+      selectedDesign: {
+        id: "design-frozen-objective",
+        hypothesis_ids: ["hypothesis-neutral"],
+        baselines: ["reference_series"]
+      },
+      objectiveProfile,
+      managedBundleSupported: false
+    });
+
+    expect(getGovernedObjectiveProfile(contract, run.objectiveMetric)).toMatchObject({
+      raw: "candidate_delta >= 0.05",
+      primaryMetric: "candidate_delta",
+      targetValue: 0.05
     });
   });
 
@@ -149,12 +509,14 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.85,
-          primary_condition: "candidate_runner",
-          baseline_condition: "baseline_runner",
-          condition_metrics: {
-            candidate_runner: { accuracy: 0.85 },
-            baseline_runner: { accuracy: 0.87 }
-          },
+          results_artifact: buildPairedResultsArtifact({
+            comparisonId: "comparison:subject-vs-reference",
+            metricId: "accuracy",
+            subjectSeriesId: "design_accuracy:primary",
+            referenceSeriesId: "design_accuracy:baseline:baseline_runner",
+            subjectValue: 0.85,
+            referenceValue: 0.87
+          }),
           sampling_profile: {
             name: "standard",
             total_trials: 6,
@@ -237,8 +599,8 @@ describe("experiment governance", () => {
     expect(baselineSnapshot).toMatchObject({
       baseline_value: 0.87,
       primary_value: 0.85,
-      baseline_condition: "baseline_runner",
-      primary_condition: "candidate_runner"
+      baseline_condition: "design_accuracy:baseline:baseline_runner",
+      primary_condition: "design_accuracy:primary"
     });
 
     const ledger = JSON.parse(
@@ -402,6 +764,7 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.91,
+          results_artifact: buildSingleSeriesResultsArtifact("accuracy", 0.91),
           sampling_profile: {
             name: "standard",
             total_trials: 48,
@@ -466,8 +829,8 @@ describe("experiment governance", () => {
       path.join(publicDir, "evaluator_manifest.json"),
       JSON.stringify(
         {
-          qa_metric: "exact_match",
-          code_metric: "pass@1"
+          metric_a: "primary_score",
+          metric_b: "secondary_score"
         },
         null,
         2
@@ -531,8 +894,8 @@ describe("experiment governance", () => {
       path.join(publicDir, "evaluator_manifest.json"),
       JSON.stringify(
         {
-          qa_metric: "f1",
-          code_metric: "pass@1"
+          metric_a: "alternate_score",
+          metric_b: "secondary_score"
         },
         null,
         2
@@ -695,6 +1058,7 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.92,
+          results_artifact: buildSingleSeriesResultsArtifact("accuracy", 0.92),
           sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
         },
         null,
@@ -832,6 +1196,7 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.92,
+          results_artifact: buildSingleSeriesResultsArtifact("accuracy", 0.92),
           sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
         },
         null,
@@ -971,6 +1336,7 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.92,
+          results_artifact: buildSingleSeriesResultsArtifact("accuracy", 0.92),
           sampling_profile: { name: "standard", total_trials: 48, executed_trials: 48 }
         },
         null,
@@ -1124,6 +1490,7 @@ describe("experiment governance", () => {
       JSON.stringify(
         {
           accuracy: 0.93,
+          results_artifact: buildSingleSeriesResultsArtifact("accuracy", 0.93),
           sampling_profile: { name: "standard", total_trials: 24, executed_trials: 24 }
         },
         null,
@@ -1234,7 +1601,7 @@ describe("experiment governance", () => {
     ).toBe(true);
   });
 
-  it("advances to review when full-cycle objective remains lifecycle-provisional under baseline-first lock", async () => {
+  it("blocks a baseline-first lifecycle result that omits its explicit comparison", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-experiment-governance-full-cycle-"));
     process.chdir(root);
 
@@ -1394,15 +1761,15 @@ describe("experiment governance", () => {
 
     expect(result.status).toBe("success");
     expect(result.transitionRecommendation).toMatchObject({
-      action: "advance",
-      targetNode: "figure_audit"
+      action: "pause_for_human",
+      reason: "incomplete_results_table"
     });
     const transitionRaw = await readFile(path.join(runDir, "transition_recommendation.json"), "utf8");
-    expect(transitionRaw).toContain('"action": "advance"');
-    expect(transitionRaw).toContain('"targetNode": "figure_audit"');
+    expect(transitionRaw).toContain('"action": "pause_for_human"');
+    expect(transitionRaw).toContain('"reason": "incomplete_results_table"');
   });
 
-  it("skips governance backtrack for factorial designs with empty condition_comparisons", () => {
+  it("fails closed when a baseline-first factorial report omits its primary comparison", () => {
     const report = {
       analysis_version: 1 as const,
       generated_at: new Date().toISOString(),
@@ -1433,6 +1800,7 @@ describe("experiment governance", () => {
       },
       plan_context: { plans: [], selectedPlanId: undefined, linkedHypothesisIds: [] },
       metric_table: [],
+      results_artifact: buildSingleSeriesResultsArtifact("macro_f1", 0.79),
       condition_comparisons: [],
       execution_summary: {
         success: true,
@@ -1483,13 +1851,14 @@ describe("experiment governance", () => {
       created_at: new Date().toISOString()
     };
 
-    // When condition_comparisons is empty (factorial design), governance should
-    // return undefined (skip override) even with baseline_first_required=true
     const result = deriveGovernedAnalysisDecision({
       report: report as any,
       contract
     });
 
-    expect(result).toBeUndefined();
+    expect(result).toMatchObject({
+      candidateEntry: { verdict: "discard" },
+      transitionOverride: { targetNode: "implement_experiments" }
+    });
   });
 });

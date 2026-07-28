@@ -407,7 +407,7 @@ async function writeBrokenPaperArtifacts(runDir: string): Promise<void> {
   await mkdir(paperDir, { recursive: true });
   await writeFile(
     path.join(paperDir, "main.tex"),
-    "\\documentclass{article}\n\\usepackage[review]{ACL2023}\n\\begin{document}\nClaim~\\cite{paper_a,paper_b}.\n\\bibliographystyle{acl_natbib}\n\\bibliography{references}\n\\end{document}\n",
+    "\\documentclass{article}\n\\usepackage[review]{acl}\n\\begin{document}\nClaim~\\cite{paper_a,paper_b}.\n\\bibliography{references}\n\\end{document}\n",
     "utf8"
   );
   await writeFile(

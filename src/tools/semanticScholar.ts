@@ -1,5 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import { hasSemanticScholarSpecialSyntax } from "../core/runConstraints.js";
+import { compileTopicDiscoveryPlainQuery } from "./topicDiscoveryProviderQuery.js";
 
 export type SemanticScholarSortField = "relevance" | "citationCount" | "publicationDate" | "paperId";
 export type SemanticScholarSortOrder = "asc" | "desc";
@@ -17,11 +18,22 @@ export interface SemanticScholarSearchFilters {
 export interface SemanticScholarSearchRequest {
   query: string;
   limit: number;
+  retrievalIntent?: "topic_discovery";
+  topicDiscoveryFamily?: TopicDiscoverySearchFamilyIntent;
   sort?: {
     field: SemanticScholarSortField;
     order?: SemanticScholarSortOrder;
   };
   filters?: SemanticScholarSearchFilters;
+}
+
+export interface TopicDiscoverySearchFamilyIntent {
+  familyId: string;
+  sharedAnchorTerms: string[];
+  axisTerms: string[];
+  lens?: string;
+  contributionIntent?: string;
+  contractSource?: "planner_declared" | "bounded_inference";
 }
 
 export interface SemanticScholarPaper {
@@ -94,6 +106,7 @@ export class SemanticScholarClient {
   private nextRequestAtMs = 0;
   private throttleQueue: Promise<void> = Promise.resolve();
   private lastSearchDiagnostics: SemanticScholarSearchDiagnostics = emptyDiagnostics();
+  private terminalRateLimit?: { retryAfterMs?: number };
 
   constructor(opts: SemanticScholarClientOptions) {
     this.apiKey = opts.apiKey;
@@ -160,8 +173,18 @@ export class SemanticScholarClient {
 
     const targetLimit = Math.max(1, normalized.limit);
     const sortField = normalized.sort?.field ?? "relevance";
-    if (sortField === "relevance" && !hasSemanticScholarSpecialSyntax(normalized.query)) {
-      yield* this.streamByRelevance(normalized, targetLimit, abortSignal);
+    const topicDiscovery = normalized.retrievalIntent === "topic_discovery";
+    if (sortField === "relevance" && (topicDiscovery || !hasSemanticScholarSpecialSyntax(normalized.query))) {
+      const relevanceRequest = topicDiscovery
+        ? {
+            ...normalized,
+            query:
+              compileTopicDiscoveryPlainQuery(normalized.topicDiscoveryFamily) ||
+              toTopicDiscoveryRelevanceQuery(normalized.query) ||
+              normalized.query
+          }
+        : normalized;
+      yield* this.streamByRelevance(relevanceRequest, targetLimit, abortSignal);
       return;
     }
     yield* this.streamByBulk(normalized, targetLimit, abortSignal);
@@ -191,6 +214,14 @@ export class SemanticScholarClient {
     return {
       query: requestOrQuery.query || "",
       limit: Math.max(1, requestOrQuery.limit || 1),
+      retrievalIntent: requestOrQuery.retrievalIntent,
+      topicDiscoveryFamily: requestOrQuery.topicDiscoveryFamily
+        ? {
+            familyId: requestOrQuery.topicDiscoveryFamily.familyId,
+            sharedAnchorTerms: [...requestOrQuery.topicDiscoveryFamily.sharedAnchorTerms],
+            axisTerms: [...requestOrQuery.topicDiscoveryFamily.axisTerms]
+          }
+        : undefined,
       sort: {
         field: requestOrQuery.sort?.field ?? "relevance",
         order: requestOrQuery.sort?.order
@@ -368,6 +399,12 @@ export class SemanticScholarClient {
   }
 
   private async fetchJson(endpoint: string, abortSignal?: AbortSignal): Promise<unknown> {
+    if (this.terminalRateLimit) {
+      this.lastSearchDiagnostics.lastStatus = 429;
+      this.lastSearchDiagnostics.retryAfterMs = this.terminalRateLimit.retryAfterMs;
+      throw new SemanticScholarHttpError(429, this.terminalRateLimit.retryAfterMs);
+    }
+
     let lastError: unknown;
     for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
       throwIfAborted(abortSignal);
@@ -424,6 +461,9 @@ export class SemanticScholarClient {
       }
     }
 
+    if (lastError instanceof SemanticScholarHttpError && lastError.status === 429) {
+      this.terminalRateLimit = { retryAfterMs: lastError.retryAfterMs };
+    }
     throw lastError instanceof Error ? lastError : new Error("Semantic Scholar request failed");
   }
 
@@ -447,6 +487,16 @@ export class SemanticScholarClient {
     this.throttleQueue = ticket.catch(() => undefined);
     await ticket;
   }
+}
+
+function toTopicDiscoveryRelevanceQuery(query: string): string {
+  return query
+    .replace(/(^|\s)-(?:(?:"[^"]+")|(?:\([^)]*\))|(?:[^\s]+))/gu, "$1")
+    .replace(/\b(?:AND|OR|NOT)\b/giu, " ")
+    .replace(/[+|()"']/gu, " ")
+    .replace(/(?<=\p{L})-(?=\p{L})/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
 }
 
 function emptyDiagnostics(): SemanticScholarSearchDiagnostics {

@@ -5,7 +5,10 @@ import { RunContextMemory } from "../memory/runContextMemory.js";
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { appendJsonl, writeRunArtifact } from "./helpers.js";
 import { publishPublicRunOutputs, PublishPublicRunOutputsResult } from "../publicOutputPublisher.js";
-import { resolveRunCommand } from "./runCommandResolver.js";
+import {
+  resolveRunCommand,
+  resolveRunCommandGpuRequestMetadata
+} from "./runCommandResolver.js";
 import { NodeExecutionDeps } from "./types.js";
 import { fileExists } from "../../utils/fs.js";
 import {
@@ -31,6 +34,10 @@ import {
 import { detectPreflightOnlyMetrics } from "../experiments/executedMetrics.js";
 import { FailureMemory, buildErrorFingerprint } from "../experiments/failureMemory.js";
 import {
+  loadExperimentContract,
+  type ExperimentContract
+} from "../experiments/experimentContract.js";
+import {
   buildExperimentRunManifest,
   BuildExperimentRunManifestTrialGroupExecution,
   buildFallbackExperimentPortfolio,
@@ -54,10 +61,45 @@ import {
 import { wrapCommandForExecutionProfile } from "../../runtime/executionProfile.js";
 import { parseMarkdownRunBriefSections, type MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import {
+  loadResearchBriefSnapshot,
+  resolveResearchRunModeGuard,
+  type ResearchEvidenceStage
+} from "../runs/researchRunModeGuard.js";
+import {
   countExecutedPlannedConditions,
   deriveRequiredPlannedConditionCount
 } from "../analysis/plannedConditionCoverage.js";
 import { buildIntermediateArtifactCaptureManifest } from "../artifacts/intermediateArtifactCapture.js";
+import {
+  checkResultsContractCompleteness,
+  validateResultsArtifactV2,
+  type ResultsArtifactV2,
+  type ResultsComparisonV2,
+  type ResultsMetricDefinitionV2,
+  type ResultsObservationV2,
+  type ResultsSeriesRole,
+  type ResultsSeriesV2
+} from "../analysis/resultsTableSchema.js";
+import {
+  validateActiveTopicProbeContract
+} from "../activeTopicProbeContract.js";
+import { resolveTopicProbeComputeContractSource } from "../topicProbeComputeContractSource.js";
+import {
+  loadTopicProbeExecutionAuthorizationGate,
+  TOPIC_PROBE_EXECUTION_AUTHORIZATION_GATE_RELATIVE_PATH
+} from "../runs/topicProbeExecutionAuthorizationGate.js";
+import {
+  appendTopicProbeComputeActualUsage,
+  appendTopicProbeComputePreflight,
+  appendTopicProbeComputeUnverifiableUsage,
+  buildTopicProbeComputeBudgetContract,
+  parseTopicProbeComputeBudgetCeilingFromBrief,
+  parseTopicProbeComputeUsageEvidence,
+  sha256Utf8,
+  topicProbeComputeBudgetLimitsEqual,
+  validateTopicProbeComputeUsageLedger,
+  type TopicProbeComputeBudgetContract
+} from "../topicProbeComputeBudget.js";
 type SupplementalProfileName = "quick_check" | "confirmatory";
 
 interface ManagedSupplementalProfile {
@@ -84,12 +126,23 @@ interface SupplementalRunRecord {
   log_file?: string;
   objective_evaluation?: ObjectiveMetricEvaluation;
   sampling_profile?: ExperimentPortfolioSamplingProfile;
+  compute_budget_blocked?: boolean;
 }
 
 interface SupplementalExpectationArtifact {
   applicable: boolean;
   profiles: string[];
   reason?: string;
+}
+
+interface TopicProbeComputeGovernor {
+  contract: TopicProbeComputeBudgetContract;
+  ledgerPath: string;
+  estimatedWallTimeMs: number;
+  estimatedGpuCount: number;
+  enforceEnvironmentGpuLimit: boolean;
+  estimatedFreshTrials?: number;
+  supplementalEstimatedFreshTrials: Partial<Record<SupplementalProfileName, number>>;
 }
 
 interface ManagedMatrixSliceArtifact {
@@ -107,6 +160,7 @@ interface ManagedMatrixSliceArtifact {
   sampling_profile?: ExperimentPortfolioSamplingProfile;
   condition_metrics: Record<string, unknown>;
   comparison: Record<string, unknown>;
+  diagnostics?: Array<{ code: string; message: string }>;
   summary: string;
 }
 
@@ -116,8 +170,36 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
     async execute({ run, abortSignal }) {
       const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
       const comparisonContract = await loadExperimentComparisonContract(run, runContext);
+      const experimentContract = await loadExperimentContract(run.id);
       const implementationContext = await loadExperimentImplementationContext(run, runContext);
-      const rawBrief = await runContext.get<string>("run_brief.raw");
+      const memoryRawBrief = await runContext.get<string>("run_brief.raw");
+      const snapshotBrief = await loadResearchBriefSnapshot(process.cwd(), run.id);
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief: memoryRawBrief,
+        run,
+        expectedResearchCycle: run.graph.researchCycle,
+        requireActiveBoundedProbeLineage: true
+      });
+      const rawBrief = memoryRawBrief || snapshotBrief;
+      await runContext.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "run_experiments blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
       const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
       const pendingHandoff =
         (await runContext.get<boolean>("implement_experiments.pending_handoff_to_run_experiments")) === true;
@@ -173,6 +255,37 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
           toolCallsUsed: 0
         };
       }
+
+      if (researchModeGuard.effectiveMode === "topic_discovery") {
+        const executionAuthorizationGate = await loadTopicProbeExecutionAuthorizationGate({
+          workspaceRoot: process.cwd(),
+          runId: run.id,
+          expectedResearchCycle: run.graph.researchCycle
+        });
+        await runContext.put(
+          "research_governance.topic_probe_execution_authorization",
+          executionAuthorizationGate
+        );
+        await writeRunArtifact(
+          run,
+          TOPIC_PROBE_EXECUTION_AUTHORIZATION_GATE_RELATIVE_PATH,
+          `${JSON.stringify(executionAuthorizationGate, null, 2)}\n`
+        );
+        if (!executionAuthorizationGate.effective_execution_authorized) {
+          const message =
+            "topic_probe_execution_preflight_blocked:"
+            + executionAuthorizationGate.authorization.reason_codes.join(",");
+          return {
+            status: "failure",
+            failureKind: "gate_blocked",
+            error: message,
+            summary: message,
+            toolCallsUsed: 0
+          };
+        }
+      }
+
+      let topicProbeComputeGovernor: TopicProbeComputeGovernor | undefined;
 
       const defaultMetricsPath = path.join(process.cwd(), ".autolabos", "runs", run.id, "metrics.json");
       const failureMemory = FailureMemory.forRun(run.id);
@@ -371,6 +484,34 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         return {
           status: "failure",
           error: message,
+          toolCallsUsed: 0
+        };
+      }
+
+      try {
+        topicProbeComputeGovernor = await initializeTopicProbeComputeGovernor({
+          run,
+          researchModeGuard,
+          comparisonContract,
+          experimentPortfolio,
+          managedSupplementalPlan,
+          resolvedCommand: resolved,
+          rawBrief,
+          enforceEnvironmentGpuLimit: (deps.executionProfile || "local") === "local",
+          configuredTimeoutSec: resolveRunExperimentsBudgetTimeoutSec(deps.config)
+        });
+      } catch (error) {
+        const summary =
+          "Topic-probe compute budget initialization blocked execution: " +
+          (error instanceof Error ? error.message : String(error));
+        await runContext.put("run_experiments.topic_probe_compute_budget_failure", {
+          stage: "initialization",
+          reasons: [summary]
+        });
+        return {
+          status: "failure",
+          error: summary,
+          summary,
           toolCallsUsed: 0
         };
       }
@@ -798,6 +939,38 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       while (true) {
         const attemptNumber = primaryAttemptsUsed + 1;
         primaryAttemptsUsed += 1;
+        const computePreflight = topicProbeComputeGovernor
+          ? await appendTopicProbeComputePreflight({
+              ledgerPath: topicProbeComputeGovernor.ledgerPath,
+              contract: topicProbeComputeGovernor.contract,
+              profile: attemptNumber === 1 ? "primary" : "primary_retry",
+              command: primaryCommand,
+              estimatedWallTimeMs:
+                topicProbeComputeGovernor.estimatedWallTimeMs,
+              estimatedGpuCount: topicProbeComputeGovernor.estimatedGpuCount,
+              estimatedFreshTrials:
+                topicProbeComputeGovernor.estimatedFreshTrials
+            })
+          : undefined;
+        if (computePreflight && !computePreflight.allowed) {
+          const summary = formatTopicProbeComputeBudgetFailure(
+            computePreflight.reasons
+          );
+          await runContext.put(
+            "run_experiments.topic_probe_compute_budget_failure",
+            {
+              stage: "preflight",
+              reasons: computePreflight.reasons
+            }
+          );
+          await recordRunFailure(summary, "resource");
+          return {
+            status: "failure",
+            error: summary,
+            summary,
+            toolCallsUsed: preflightToolCallsUsed + primaryAttemptsUsed - 1
+          };
+        }
         deps.eventStream.emit({
           type: "TOOL_CALLED",
           runId: run.id,
@@ -828,6 +1001,45 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             obs.stderr || ""
           ].join("\n")
         );
+
+        if (
+          topicProbeComputeGovernor
+          && computePreflight?.entry
+        ) {
+          const computeActual = await finalizeTopicProbeComputeUsage({
+            run,
+            governor: topicProbeComputeGovernor,
+            profile: computePreflight.entry.profile,
+            command: primaryCommand,
+            metricsPath: resolved.metricsPath,
+            attempt: computePreflight.entry.attempt,
+            startedAt: new Date(commandStartedAtMs).toISOString(),
+            wallTimeMs:
+              typeof obs.duration_ms === "number"
+                ? obs.duration_ms
+                : Math.max(0, Date.now() - commandStartedAtMs)
+          });
+          if (!computeActual.allowed) {
+            const summary = formatTopicProbeComputeBudgetFailure(
+              computeActual.reasons
+            );
+            await runContext.put(
+              "run_experiments.topic_probe_compute_budget_failure",
+              {
+                stage: "actual",
+                reasons: computeActual.reasons
+              }
+            );
+            await recordRunFailure(summary, "resource");
+            return {
+              status: "failure",
+              error: summary,
+              summary,
+              toolCallsUsed:
+                preflightToolCallsUsed + primaryAttemptsUsed
+            };
+          }
+        }
 
         if (obs.status !== "ok") {
           const policyBlock = extractPolicyBlock(obs);
@@ -881,6 +1093,9 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
                 text: `Retrying the primary command once because the failure looked transient (${rerunDecision.reason})`
               }
             });
+            if (topicProbeComputeGovernor) {
+              await fs.unlink(resolved.metricsPath).catch(() => undefined);
+            }
             continue;
           }
 
@@ -1174,7 +1389,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
               }
             });
           }
-          const promotedObjectiveMetric = promoteSummaryPrimaryMetric(parsedMetrics);
+          const promotedObjectiveMetric = promoteExplicitResultsPrimaryObservation(parsedMetrics);
           if (promotedObjectiveMetric) {
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
@@ -1465,7 +1680,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
       const objectiveEvaluation = evaluateObjectiveMetric(
         parsedMetrics,
         objectiveProfile,
-        run.objectiveMetric
+        objectiveProfile.raw
       );
       objectiveEvaluationSummary = objectiveEvaluation.summary;
       await writeRunArtifact(run, "metrics.json", JSON.stringify(parsedMetrics, null, 2));
@@ -1474,6 +1689,7 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         metrics: parsedMetrics,
         objectiveEvaluation,
         comparisonContract,
+        experimentContract,
         briefSections,
         experimentPortfolio
       });
@@ -1595,7 +1811,8 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
         objectiveEvaluation,
         primaryCommand,
         plan: managedSupplementalPlan,
-        abortSignal
+        abortSignal,
+        topicProbeComputeGovernor
       });
       for (const record of supplementalRuns.records.filter((item) => item.status === "fail")) {
         triageAttempts.push(
@@ -1610,6 +1827,42 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
             metricsPath: record.metrics_path
           })
         );
+      }
+      const supplementalComputeFailure = supplementalRuns.records.find(
+        (record) => record.compute_budget_blocked
+      );
+      if (supplementalComputeFailure) {
+        const summary = supplementalComputeFailure.summary;
+        await persistRunVerifierReport(
+          run,
+          runContext,
+          buildRunVerifierReport({
+            status: "fail",
+            trigger,
+            stage: "policy",
+            summary,
+            command: supplementalComputeFailure.command,
+            cwd: supplementalComputeFailure.cwd,
+            metricsPath: supplementalComputeFailure.metrics_path,
+            suggestedNextAction:
+              "Repair the compute declaration or execution profile before another topic-probe command."
+          })
+        );
+        await persistRunFailureState(runContext, {
+          command: supplementalComputeFailure.command,
+          cwd: supplementalComputeFailure.cwd,
+          error: summary
+        });
+        await recordRunFailure(summary, "resource");
+        return {
+          status: "failure",
+          error: summary,
+          summary,
+          toolCallsUsed:
+            preflightToolCallsUsed
+            + primaryAttemptsUsed
+            + supplementalRuns.toolCallsUsed
+        };
       }
       watchdog = recordSupplementalOutputs(
         watchdog,
@@ -1732,6 +1985,277 @@ export function createRunExperimentsNode(deps: NodeExecutionDeps): GraphNodeHand
 };
 }
 
+async function initializeTopicProbeComputeGovernor(input: {
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  researchModeGuard: {
+    evidenceStage: ResearchEvidenceStage;
+  };
+  comparisonContract?: Awaited<
+    ReturnType<typeof loadExperimentComparisonContract>
+  >;
+  experimentPortfolio: ExperimentPortfolio;
+  managedSupplementalPlan?: ManagedSupplementalPlan;
+  resolvedCommand: Awaited<ReturnType<typeof resolveRunCommand>>;
+  rawBrief?: string;
+  enforceEnvironmentGpuLimit: boolean;
+  configuredTimeoutSec?: number;
+}): Promise<TopicProbeComputeGovernor | undefined> {
+  if (input.researchModeGuard.evidenceStage === "standard") {
+    return undefined;
+  }
+  if (input.resolvedCommand.testCommand?.trim()) {
+    throw new Error("topic_probe_pre_execution_test_command_forbidden");
+  }
+  if (input.resolvedCommand.gpuRequestIssue) {
+    throw new Error(input.resolvedCommand.gpuRequestIssue);
+  }
+  const requestedGpuCount = input.resolvedCommand.requestedGpuCount;
+  if (requestedGpuCount === undefined) {
+    throw new Error("topic_probe_compute_preflight_requested_gpu_count_missing");
+  }
+  if (
+    input.enforceEnvironmentGpuLimit
+    && input.resolvedCommand.environmentGpuLimit !== undefined
+    && requestedGpuCount > input.resolvedCommand.environmentGpuLimit
+  ) {
+    throw new Error(
+      "topic_probe_compute_preflight_environment_gpu_limit_exceeded:"
+      + `requested=${requestedGpuCount},`
+      + `environment_limit=${input.resolvedCommand.environmentGpuLimit},`
+      + `source=${input.resolvedCommand.environmentGpuLimitSource || "unknown"}`
+    );
+  }
+  const contractSource = resolveTopicProbeComputeContractSource(
+    input.researchModeGuard.evidenceStage
+  );
+  if (!contractSource) {
+    return undefined;
+  }
+  const stage = contractSource.stage;
+  const activeContractRelativePath = contractSource.relativePath;
+  const activeContractPath = path.join(
+    process.cwd(),
+    ".autolabos",
+    "runs",
+    input.run.id,
+    activeContractRelativePath
+  );
+  let activeContractRaw: string;
+  try {
+    activeContractRaw = await fs.readFile(activeContractPath, "utf8");
+  } catch {
+    throw new Error(
+      "topic_probe_compute_active_contract_missing"
+    );
+  }
+  const activeValidation = validateActiveTopicProbeContract(
+    activeContractRaw,
+    contractSource.requireCurrentRunId ? { expectedRunId: input.run.id } : {}
+  );
+  if (!activeValidation.valid || !activeValidation.contract) {
+    throw new Error(
+      `topic_probe_compute_active_contract_invalid:${activeValidation.reasons.join(",")}`
+    );
+  }
+  const activeContract = activeValidation.contract;
+  const briefComputeBudgetCeiling =
+    parseTopicProbeComputeBudgetCeilingFromBrief(input.rawBrief || "");
+  if (
+    !topicProbeComputeBudgetLimitsEqual(
+      activeContract.brief_compute_budget_ceiling,
+      briefComputeBudgetCeiling
+    )
+  ) {
+    throw new Error(
+      "topic_probe_compute_active_contract_brief_ceiling_mismatch"
+    );
+  }
+  const budgetContract = buildTopicProbeComputeBudgetContract({
+    runId: input.run.id,
+    stage,
+    activeTopicProbeContractSha256: activeContract.content_sha256,
+    localBudget: activeContract.local_budget,
+    briefComputeBudgetCeiling,
+    limits: activeContract.compute_budget,
+    generatedAt: activeContract.generated_at
+  });
+  await writeRunArtifact(
+    input.run,
+    "governance/topic_probe_compute_budget_contract.json",
+    `${JSON.stringify(budgetContract, null, 2)}\n`
+  );
+  const ledgerPath = path.join(
+    process.cwd(),
+    ".autolabos",
+    "runs",
+    input.run.id,
+    "governance",
+    "topic_probe_compute_usage_ledger.jsonl"
+  );
+  let existingLedger = "";
+  try {
+    existingLedger = await fs.readFile(ledgerPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  const ledgerValidation = validateTopicProbeComputeUsageLedger(
+    existingLedger,
+    budgetContract
+  );
+  if (
+    !ledgerValidation.valid
+    || ledgerValidation.pendingAttempt !== undefined
+    || ledgerValidation.blocked
+  ) {
+    throw new Error(
+      `topic_probe_compute_usage_ledger_not_appendable:${[
+        ...ledgerValidation.reasons,
+        ...(ledgerValidation.pendingAttempt !== undefined
+          ? ["pending_attempt_unresolved"]
+          : []),
+        ...(ledgerValidation.blocked ? ["terminally_blocked"] : [])
+      ].join(",")}`
+    );
+  }
+
+  const timeoutSec =
+    input.comparisonContract?.budget_profile.timeout_sec
+    ?? input.configuredTimeoutSec;
+  if (
+    typeof timeoutSec !== "number"
+    || !Number.isFinite(timeoutSec)
+    || timeoutSec <= 0
+  ) {
+    throw new Error(
+      "topic_probe_compute_preflight_timeout_missing"
+    );
+  }
+  const trialResolution = deriveRequiredPlannedRunCount({
+    metrics: {},
+    comparisonContract: input.comparisonContract,
+    experimentPortfolio: input.experimentPortfolio
+  });
+  if (
+    budgetContract.active_limit.max_trials !== undefined
+    && (
+      trialResolution.count === undefined
+      || trialResolution.issue
+    )
+  ) {
+    throw new Error(
+      trialResolution.issue
+        ? `topic_probe_compute_preflight_trial_estimate_ambiguous:${trialResolution.issue}`
+        : "topic_probe_compute_preflight_trial_estimate_missing"
+    );
+  }
+  const supplementalEstimatedFreshTrials: Partial<
+    Record<SupplementalProfileName, number>
+  > = {};
+  if (
+    budgetContract.active_limit.max_trials !== undefined
+    && input.managedSupplementalPlan
+  ) {
+    for (const profile of input.managedSupplementalPlan.profiles) {
+      const resolution = deriveSupplementalProfileTrialEstimate(
+        input.experimentPortfolio,
+        profile.profile
+      );
+      if (resolution.count === undefined || resolution.issue) {
+        throw new Error(
+          resolution.issue
+            ? `topic_probe_compute_preflight_supplemental_trial_estimate_ambiguous:profile=${profile.profile}:${resolution.issue}`
+            : `topic_probe_compute_preflight_supplemental_trial_estimate_missing:profile=${profile.profile}`
+        );
+      }
+      supplementalEstimatedFreshTrials[profile.profile] = resolution.count;
+    }
+  }
+  return {
+    contract: budgetContract,
+    ledgerPath,
+    estimatedWallTimeMs: timeoutSec * 1_000,
+    estimatedGpuCount: requestedGpuCount,
+    enforceEnvironmentGpuLimit: input.enforceEnvironmentGpuLimit,
+    supplementalEstimatedFreshTrials,
+    ...(trialResolution.count !== undefined
+      ? { estimatedFreshTrials: trialResolution.count }
+      : {})
+  };
+}
+
+async function finalizeTopicProbeComputeUsage(input: {
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
+  governor: TopicProbeComputeGovernor;
+  profile: string;
+  command: string;
+  metricsPath: string;
+  attempt: number;
+  startedAt: string;
+  wallTimeMs: number;
+}): Promise<{ allowed: boolean; reasons: string[] }> {
+  let raw: string;
+  try {
+    raw = await fs.readFile(input.metricsPath, "utf8");
+  } catch {
+    return appendTopicProbeComputeUnverifiableUsage({
+      ledgerPath: input.governor.ledgerPath,
+      contract: input.governor.contract,
+      profile: input.profile,
+      command: input.command,
+      startedAt: input.startedAt,
+      wallTimeMs: input.wallTimeMs,
+      reasonCodes: ["topic_probe_compute_usage_evidence_missing"]
+    });
+  }
+  let metrics: unknown;
+  let evidence;
+  try {
+    metrics = JSON.parse(raw);
+    evidence = parseTopicProbeComputeUsageEvidence(metrics);
+  } catch (error) {
+    return appendTopicProbeComputeUnverifiableUsage({
+      ledgerPath: input.governor.ledgerPath,
+      contract: input.governor.contract,
+      profile: input.profile,
+      command: input.command,
+      startedAt: input.startedAt,
+      wallTimeMs: input.wallTimeMs,
+      reasonCodes: [
+        error instanceof Error
+          ? error.message
+          : "topic_probe_compute_usage_evidence_invalid"
+      ]
+    });
+  }
+  const normalizedUsageEvidenceBytes = raw.endsWith("\n") ? raw : `${raw}\n`;
+  await writeRunArtifact(
+    input.run,
+    `governance/topic_probe_compute_usage_evidence/attempt_${input.attempt}.json`,
+    normalizedUsageEvidenceBytes
+  );
+  return appendTopicProbeComputeActualUsage({
+    ledgerPath: input.governor.ledgerPath,
+    contract: input.governor.contract,
+    profile: input.profile,
+    command: input.command,
+    startedAt: input.startedAt,
+    wallTimeMs: input.wallTimeMs,
+    evidence,
+    usageEvidenceSha256: sha256Utf8(normalizedUsageEvidenceBytes)
+  });
+}
+
+function formatTopicProbeComputeBudgetFailure(
+  reasons: string[]
+): string {
+  return (
+    "Topic-probe compute budget blocked execution: "
+    + (reasons.join(", ") || "usage could not be verified")
+  );
+}
+
 function detectZeroExitRuntimeFailure(stderr: string): string | undefined {
   const normalized = stderr.trim();
   if (!normalized) {
@@ -1825,16 +2349,16 @@ function buildMetricsFailureSuggestedNextAction(summary: string): string {
     return "Repair data materialization before retrying: generated runners must load real bounded training examples and evaluation examples from the declared reusable dataset/task contract, preserve train_records/train_examples aliases, preserve usable text from common fields such as instruction, input, output, prompt, response, text, question, answer, messages, and conversations, and fail at data_access with loader diagnostics instead of executing conditions with an empty train set.";
   }
   if (detectEvaluationNoObjectiveMetricFailure(summary)) {
-    return "Repair evaluation data normalization before retrying: preserve or map objective labels such as gold, label, answer, answer_index, correct_index, and answerKey, keep evaluated counts nonzero when requested examples exist, and emit schema diagnostics instead of accuracy:null rows.";
+    return "Repair evaluation data normalization before retrying: preserve or map objective labels such as gold, label, answer, answer_index, correct_index, and answerKey, keep evaluated counts nonzero when requested examples exist, and emit schema diagnostics instead of null objective observations.";
   }
-  return "Repair the experiment implementation so metrics.json records completed baseline/comparator execution instead of a top-level failed status.";
+  return "Repair the experiment implementation so metrics.json records completed execution, the configured objective observation, and any comparison explicitly required by the experiment contract instead of a top-level failed status.";
 }
 
 function buildMetricsContractSuggestedNextAction(summary: string): string {
   if (detectEvaluationNoObjectiveMetricFailure(summary)) {
-    return "Repair metrics aggregation before retrying: convert evaluation task_metrics or average_accuracy into condition-level accuracy/objective metric rows, exclude train-only runtime fields such as model/tokenizer from metrics.json, and compute the baseline-relative objective before analysis proceeds.";
+    return "Repair metrics aggregation before retrying: preserve explicitly recorded metric ids and numeric observations in condition-level objective rows, exclude train-only runtime fields such as model/tokenizer from metrics.json, and emit a relative comparison only when the runner explicitly records its operands and role pair.";
   }
-  return "Repair the experiment implementation so completed metrics include the configured objective metric and successful baseline/comparator results before analysis proceeds.";
+  return "Repair the experiment implementation so completed metrics include the configured objective metric and every comparison explicitly required by the experiment contract before analysis proceeds.";
 }
 
 function detectRuntimeConfigAttributeFailure(output: string): boolean {
@@ -1933,7 +2457,7 @@ function detectEvaluationNoObjectiveMetricFailure(output: string): boolean {
   return (
     /evaluation produced no objective metric/iu.test(normalized) ||
     /completed_condition_missing_evaluation_metrics=\d+\/\d+/iu.test(normalized) ||
-    /(?:accuracy|score|metric)[^|.;]*(?:null|none|nan)/iu.test(normalized)
+    /(?:objective|primary)[ _-]?(?:metric|observation|value)[^|.;]*(?:null|none|nan)/iu.test(normalized)
   );
 }
 
@@ -1956,8 +2480,8 @@ function detectTrainCompleteWithoutEvaluationMetricsFailure(output: string): boo
     return false;
   }
   return (
-    /completed_condition_count=0\/\d+[^|.;]*(?:primary_metric_value|accuracy_delta_vs_baseline):null[^|.;]*condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)/iu.test(normalized) ||
-    /condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)[^|.;]*(?:primary_metric_value|accuracy_delta_vs_baseline):null/iu.test(normalized) ||
+    /completed_condition_count=0\/\d+[^|.;]*primary_(?:metric|observation)_value:null[^|.;]*condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)/iu.test(normalized) ||
+    /condition_result_statuses=[^|.;]*(?:completed_training|training_completed|train_complete)[^|.;]*primary_(?:metric|observation)_value:null/iu.test(normalized) ||
     /condition_result_samples=[^|.;]*(?:status=completed_training|status=training_completed|status=train_complete)/iu.test(normalized)
   );
 }
@@ -2039,16 +2563,6 @@ function detectSentinelWatchdogFindings(
     if (typeof entry.value !== "number" || !Number.isFinite(entry.value)) {
       continue;
     }
-    if (/(accuracy|f1|precision|recall|auc|success_rate|pass_rate|win_rate|p_value)$/iu.test(entry.path)) {
-      if (entry.value < 0 || entry.value > 1) {
-        findings.push({
-          code: "statistical_anomaly",
-          severity: "warning",
-          message: `Sentinel watchdog flagged ${entry.path}=${entry.value}, which falls outside the expected [0, 1] range.`,
-          requires_human_review: true
-        });
-      }
-    }
     if (/(citation_reliability|citation_confidence)$/iu.test(entry.path) && entry.value < 0.5) {
       findings.push({
         code: "citation_reliability_anomaly",
@@ -2084,23 +2598,23 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
           (nestedErrorMessage
             ? `${nestedErrorType ? `${nestedErrorType}: ` : ""}${nestedErrorMessage}`
             : undefined);
-  const firstFailure = Array.isArray(metrics.failures)
-    ? metrics.failures.map((item) => asRecord(item)).find((item) => Object.keys(item).length > 0)
-    : undefined;
-  const failureCode =
-    asString(metrics.failure_code) ||
-    asString(failure?.failure_code) ||
-    asString(firstFailure?.failure_code) ||
-    asString(firstFailure?.code);
+  const distinctFailures = collectDistinctMetricsFailures(metrics);
+  const explicitFailureCode = asString(metrics.failure_code) || asString(failure?.failure_code);
+  const distinctFailureCodes = [...new Set(
+    distinctFailures.map((item) => item.code).filter((value): value is string => Boolean(value))
+  )];
+  const representativeFailureCode = explicitFailureCode ||
+    (distinctFailureCodes.length === 1 ? distinctFailureCodes[0] : undefined);
   const dependencyBlocked =
     status === "dependency_blocked" ||
     status === "dependency_failed" ||
-    /(?:^|_)dependency(?:_|$)/iu.test(failureCode || "") ||
-    /_unavailable$/iu.test(failureCode || "");
+    [explicitFailureCode, ...distinctFailureCodes].some((code) =>
+      /(?:^|_)dependency(?:_|$)/iu.test(code || "") || /_unavailable$/iu.test(code || "")
+    );
 
   if (isFailureLikeMetricsStatus(status)) {
     const prefix = dependencyBlocked
-      ? `Experiment dependency blocked${failureCode ? ` (${failureCode})` : ""}`
+      ? `Experiment dependency blocked${representativeFailureCode ? ` (${representativeFailureCode})` : ""}`
       : "Experiment metrics payload reports failed status";
     return appendMetricsFailureEvidence(
       `${prefix}${failureMessage ? `: ${failureMessage}` : "."}`,
@@ -2135,6 +2649,71 @@ function detectFailedMetricsPayload(metrics: Record<string, unknown>): string | 
     return `Experiment metrics payload reports failed recipe(s): ${failedRecipeSummaries.join("; ")}.`;
   }
   return null;
+}
+
+function collectDistinctMetricsFailures(metrics: Record<string, unknown>): Array<{
+  code?: string;
+  reason?: string;
+}> {
+  const failures: Array<{ code?: string; reason?: string }> = [];
+  const seen = new Set<string>();
+  const add = (value: unknown): void => {
+    const record = asRecord(value);
+    if (Object.keys(record).length === 0) {
+      return;
+    }
+    const status = asString(record.status)?.toLowerCase();
+    const code =
+      asString(record.failure_code) ||
+      asString(record.error_code) ||
+      asString(record.code) ||
+      asString(record.type) ||
+      asString(asRecord(record.error).type);
+    const reason =
+      asString(record.failure_reason) ||
+      asString(record.reason) ||
+      asString(record.message) ||
+      asString(record.error) ||
+      asString(asRecord(record.error).message) ||
+      asString(asRecord(record.exception).message);
+    if (!code && !reason && (!status || !isFailureLikeMetricsStatus(status))) {
+      return;
+    }
+    const key = `${code || ""}\u0000${reason || ""}`;
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    failures.push({ code, reason });
+  };
+  const addMany = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        add(item);
+      }
+      return;
+    }
+    add(value);
+  };
+
+  addMany(metrics.failure);
+  addMany(metrics.failures);
+  const result = asRecord(metrics.result);
+  addMany(result.failure);
+  addMany(result.failures);
+  for (const rows of [
+    metrics.condition_results,
+    metrics.raw_condition_results,
+    metrics.condition_seed_rows,
+    metrics.condition_states,
+    metrics.per_seed_rows,
+    metrics.seed_results,
+    result.condition_results,
+    result.failures
+  ]) {
+    addMany(rows);
+  }
+  return failures;
 }
 
 function isFailureLikeMetricsStatus(status: string): boolean {
@@ -2346,16 +2925,26 @@ function summarizeMetricsFailureEvidence(metrics: Record<string, unknown>): stri
     parts.push(`metrics_status=${trimShort(status, 80)}`);
   }
   const failureRecord = asRecord(metrics.failure);
-  const firstFailure = Array.isArray(metrics.failures)
-    ? metrics.failures.map((item) => asRecord(item)).find((item) => Object.keys(item).length > 0)
-    : undefined;
-  const failureCode =
-    asString(metrics.failure_code) ||
-    asString(failureRecord.failure_code) ||
-    asString(firstFailure?.failure_code) ||
-    asString(firstFailure?.code);
-  if (failureCode) {
-    parts.push(`failure_code=${trimShort(failureCode, 120)}`);
+  const distinctFailures = collectDistinctMetricsFailures(metrics);
+  const failureCodes = [...new Set([
+    asString(metrics.failure_code),
+    asString(failureRecord.failure_code),
+    ...distinctFailures.map((item) => item.code)
+  ].filter((value): value is string => Boolean(value)))];
+  if (failureCodes.length === 1) {
+    parts.push(`failure_code=${trimShort(failureCodes[0], 120)}`);
+  } else if (failureCodes.length > 1) {
+    parts.push(`failure_codes=${failureCodes.slice(0, 8).map((code) => trimShort(code, 120)).join(",")}`);
+  }
+  if (distinctFailures.length > 0) {
+    const boundedFailures = distinctFailures.slice(0, 8).map((item) => [
+      item.code ? `code=${trimShort(item.code, 80)}` : undefined,
+      item.reason ? `reason=${trimShort(item.reason, 180)}` : undefined
+    ].filter((value): value is string => Boolean(value)).join(","));
+    const omitted = distinctFailures.length - boundedFailures.length;
+    parts.push(
+      `distinct_failures=${boundedFailures.join(" | ")}${omitted > 0 ? ` | +${omitted} more distinct failure(s)` : ""}`
+    );
   }
   const loaderDiagnostics = summarizeLoaderDiagnostics(metrics);
   if (loaderDiagnostics.length > 0) {
@@ -2657,11 +3246,11 @@ function summarizeMetricsEvidenceRecords(metrics: Record<string, unknown>): stri
 
 function summarizePrimaryMetricValueEvidence(metrics: Record<string, unknown>): string[] {
   const objective = asRecord(metrics.objective);
-  const primaryMetric = asRecord(metrics.primary_metric);
+  const resultsSelection = asRecord(metrics.results_selection);
   const keys = [
+    asString(resultsSelection.metric_id),
     asString(metrics.primary_metric_key),
-    asString(objective.primary_metric_key),
-    asString(primaryMetric.name)
+    asString(objective.primary_metric_key)
   ].filter((key): key is string => Boolean(key));
   const uniqueKeys = [...new Set(keys)];
   const parts: string[] = [];
@@ -2908,51 +3497,64 @@ function conditionRowHasEvaluationMetric(row: Record<string, unknown>): boolean 
   return conditionRowEvaluationMetricKeys(row).length > 0;
 }
 
-const EVALUATION_METRIC_KEY_TERMS = [
-  "accuracy",
-  "f1",
-  "bleu",
-  "rouge",
-  "perplexity",
-  "score",
-  "metric",
-  "auc",
-  "mcc"
-];
-
-function normalizedKeyContainsMetricTerm(normalized: string): boolean {
-  return EVALUATION_METRIC_KEY_TERMS.some(
-    (term) =>
-      normalized === term ||
-      normalized.startsWith(`${term}_`) ||
-      normalized.endsWith(`_${term}`) ||
-      normalized.includes(`_${term}_`)
-  );
-}
-
 function conditionRowEvaluationMetricKeys(row: Record<string, unknown>): string[] {
   const keys = new Set<string>();
-  const addMetric = (record: Record<string, unknown> | undefined, prefix = "") => {
-    if (!record) {
+  const raw = asRecord(row.raw_evidence);
+  const candidates = [
+    row,
+    raw,
+    asRecord(raw.raw_evidence),
+    asRecord(row.result),
+    asRecord(raw.result)
+  ];
+  const explicitMetricIds = new Set(
+    candidates
+      .flatMap((candidate) => [
+        asString(candidate.metric_id),
+        asString(candidate.metric_key),
+        asString(candidate.primary_metric_key)
+      ])
+      .filter((value): value is string => Boolean(value))
+  );
+  for (const metricId of explicitMetricIds) {
+    for (const candidate of candidates) {
+      if (asNumber(candidate[metricId]) !== undefined) {
+        keys.add(metricId);
+      }
+      if (asString(candidate.metric_id) === metricId && asNumber(candidate.value) !== undefined) {
+        keys.add(`${metricId}:value`);
+      }
+    }
+  }
+
+  const addStructuredNumericLeaves = (
+    record: Record<string, unknown>,
+    prefix: string,
+    depth = 0
+  ): void => {
+    if (depth > 2) {
       return;
     }
     for (const [key, value] of Object.entries(record)) {
-      const normalized = key.toLowerCase();
-      const metricLike =
-        normalizedKeyContainsMetricTerm(normalized) ||
-        normalized === "value" ||
-        normalized === "primary_metric_value";
-      if (!metricLike || asNumber(value) === undefined) {
+      const path = `${prefix}.${key}`;
+      if (asNumber(value) !== undefined) {
+        keys.add(path);
         continue;
       }
-      keys.add(prefix ? `${prefix}.${key}` : key);
+      const nested = asRecord(value);
+      if (Object.keys(nested).length > 0) {
+        addStructuredNumericLeaves(nested, path, depth + 1);
+      }
     }
   };
-  addMetric(row);
-  addMetric(asRecord(row.metrics), "metrics");
-  addMetric(asRecord(row.evaluation), "evaluation");
-  addMetric(asRecord(row.eval_result), "eval_result");
-  addMetric(asRecord(row.evaluation_result), "evaluation_result");
+  for (const candidate of candidates) {
+    for (const containerKey of ["metrics", "evaluation", "eval_result", "evaluation_result"]) {
+      const record = asRecord(candidate[containerKey]);
+      if (Object.keys(record).length > 0) {
+        addStructuredNumericLeaves(record, containerKey);
+      }
+    }
+  }
   return [...keys].sort();
 }
 
@@ -3093,24 +3695,6 @@ function collectSeedProvenanceRows(metrics: Record<string, unknown>): Array<Reco
     ...collectConditionRows(studySummary.per_run_results),
     ...collectConditionRows(studySummary.seed_results)
   ];
-}
-
-function countUniqueCompletedConditionSeedEvidence(metrics: Record<string, unknown>): number {
-  const pairs = new Set<string>();
-  for (const row of collectSeedProvenanceRows(metrics)) {
-    const status = normalizeConditionResultStatus(row);
-    if (status !== "unknown" && !isCompletedConditionStatus(status)) {
-      continue;
-    }
-    const marker = conditionResultMarker(row);
-    if (!marker) {
-      continue;
-    }
-    for (const seed of collectConditionSeedValues(row)) {
-      pairs.add(`${marker}::${String(seed)}`);
-    }
-  }
-  return pairs.size;
 }
 
 function conditionResultMarker(row: Record<string, unknown>): string | undefined {
@@ -3577,6 +4161,7 @@ async function maybeRunManagedSupplementalProfiles(input: {
   primaryCommand: string;
   plan?: ManagedSupplementalPlan;
   abortSignal?: AbortSignal;
+  topicProbeComputeGovernor?: TopicProbeComputeGovernor;
 }): Promise<{
   records: SupplementalRunRecord[];
   summary?: string;
@@ -3638,7 +4223,7 @@ async function maybeRunManagedSupplementalProfiles(input: {
     ...input,
     profile: input.plan.profiles[0]
   });
-  toolCallsUsed += 1;
+  toolCallsUsed += quickCheck.compute_budget_blocked ? 0 : 1;
   if (input.plan.kind === "compatibility_python_runner" && isCompatibilitySupplementalUnsupported(quickCheck.summary)) {
     const summary =
       "Supplemental quick_check and confirmatory profiles are not supported by this compatibility experiment runner; the repeated standard run is the complete executed design.";
@@ -3679,7 +4264,7 @@ async function maybeRunManagedSupplementalProfiles(input: {
       ...input,
       profile: input.plan.profiles[1]
     });
-    toolCallsUsed += 1;
+    toolCallsUsed += confirmatory.compute_budget_blocked ? 0 : 1;
     records.push(confirmatory);
   }
 
@@ -3701,7 +4286,76 @@ async function runManagedSupplementalProfile(input: {
   objectiveProfile: Awaited<ReturnType<typeof resolveObjectiveMetricProfile>>;
   profile: ManagedSupplementalProfile;
   abortSignal?: AbortSignal;
+  topicProbeComputeGovernor?: TopicProbeComputeGovernor;
 }): Promise<SupplementalRunRecord> {
+  const supplementalGpuMetadata = input.topicProbeComputeGovernor
+    ? resolveRunCommandGpuRequestMetadata(input.profile.command)
+    : undefined;
+  if (supplementalGpuMetadata?.gpuRequestIssue) {
+    return {
+      profile: input.profile.profile,
+      status: "fail",
+      command: input.profile.command,
+      cwd: input.profile.workingDir,
+      metrics_path: input.profile.metricsPath,
+      summary: supplementalGpuMetadata.gpuRequestIssue,
+      compute_budget_blocked: true
+    };
+  }
+  const supplementalEstimatedGpuCount = input.topicProbeComputeGovernor
+    ? supplementalGpuMetadata?.requestedGpuCount
+      ?? input.topicProbeComputeGovernor.estimatedGpuCount
+    : undefined;
+  if (
+    input.topicProbeComputeGovernor?.enforceEnvironmentGpuLimit
+    && supplementalGpuMetadata?.environmentGpuLimit !== undefined
+    && supplementalEstimatedGpuCount !== undefined
+    && supplementalEstimatedGpuCount
+      > supplementalGpuMetadata.environmentGpuLimit
+  ) {
+    return {
+      profile: input.profile.profile,
+      status: "fail",
+      command: input.profile.command,
+      cwd: input.profile.workingDir,
+      metrics_path: input.profile.metricsPath,
+      summary:
+        "topic_probe_compute_preflight_environment_gpu_limit_exceeded:"
+        + `requested=${supplementalEstimatedGpuCount},`
+        + `environment_limit=${supplementalGpuMetadata.environmentGpuLimit},`
+        + `source=${supplementalGpuMetadata.environmentGpuLimitSource || "unknown"}`,
+      compute_budget_blocked: true
+    };
+  }
+  const computePreflight = input.topicProbeComputeGovernor
+    ? await appendTopicProbeComputePreflight({
+        ledgerPath: input.topicProbeComputeGovernor.ledgerPath,
+        contract: input.topicProbeComputeGovernor.contract,
+        profile: input.profile.profile,
+        command: input.profile.command,
+        estimatedWallTimeMs:
+          input.topicProbeComputeGovernor.estimatedWallTimeMs,
+        estimatedGpuCount: supplementalEstimatedGpuCount!,
+        estimatedFreshTrials:
+          input.topicProbeComputeGovernor.supplementalEstimatedFreshTrials[
+            input.profile.profile
+          ]
+      })
+    : undefined;
+  if (computePreflight && !computePreflight.allowed) {
+    return {
+      profile: input.profile.profile,
+      status: "fail",
+      command: input.profile.command,
+      cwd: input.profile.workingDir,
+      metrics_path: input.profile.metricsPath,
+      summary: formatTopicProbeComputeBudgetFailure(
+        computePreflight.reasons
+      ),
+      compute_budget_blocked: true
+    };
+  }
+
   input.deps.eventStream.emit({
     type: "TOOL_CALLED",
     runId: input.run.id,
@@ -3728,6 +4382,44 @@ async function runManagedSupplementalProfile(input: {
       obs.stderr || ""
     ].join("\n")
   );
+
+  if (
+    input.topicProbeComputeGovernor
+    && computePreflight?.entry
+  ) {
+    const computeActual = await finalizeTopicProbeComputeUsage({
+      run: input.run,
+      governor: input.topicProbeComputeGovernor,
+      profile: input.profile.profile,
+      command: input.profile.command,
+      metricsPath: input.profile.metricsPath,
+      attempt: computePreflight.entry.attempt,
+      startedAt: new Date(
+        Date.now() - (
+          typeof obs.duration_ms === "number" ? obs.duration_ms : 0
+        )
+      ).toISOString(),
+      wallTimeMs:
+        typeof obs.duration_ms === "number" ? obs.duration_ms : 0
+    });
+    if (!computeActual.allowed) {
+      const summary = formatTopicProbeComputeBudgetFailure(
+        computeActual.reasons
+      );
+      emitSupplementalObservation(input, summary);
+      return {
+        profile: input.profile.profile,
+        status: "fail",
+        command: input.profile.command,
+        cwd,
+        metrics_path: input.profile.metricsPath,
+        summary,
+        exit_code: obs.exit_code ?? 1,
+        log_file: logFile,
+        compute_budget_blocked: true
+      };
+    }
+  }
 
   if (obs.status !== "ok") {
     const summary = `Supplemental ${input.profile.profile} run failed: ${obs.stderr || "command failed"}`;
@@ -3884,29 +4576,32 @@ async function promoteObjectiveMetricFromPublicBundle(input: {
     if (!candidateMetrics) {
       continue;
     }
-    promoteSummaryPrimaryMetric(candidateMetrics);
-    const matchedKey = preferredKeys.find((key) => asNumber(candidateMetrics[key]) !== undefined);
-    if (!matchedKey) {
+    const candidateSelection = resolveExplicitResultsSelection(candidateMetrics).selection;
+    if (!candidateSelection || !preferredKeys.includes(candidateSelection.metric.id)) {
       continue;
     }
-    for (const key of preferredKeys) {
-      const value = asNumber(candidateMetrics[key]);
-      if (value !== undefined && asNumber(input.metrics[key]) === undefined) {
-        input.metrics[key] = value;
-      }
+    promoteExplicitResultsPrimaryObservation(candidateMetrics);
+    const matchedKey = candidateSelection.metric.id;
+    if (asNumber(candidateMetrics[matchedKey]) === undefined) {
+      continue;
+    }
+    const selectedValue = asNumber(candidateMetrics[matchedKey]);
+    if (selectedValue !== undefined && asNumber(input.metrics[matchedKey]) === undefined) {
+      input.metrics[matchedKey] = selectedValue;
     }
     for (const key of [
       "primary_metric_key",
       "primary_metric_value",
-      "primary_metric",
+      "primary_metric_direction",
+      "primary_observation_id",
+      "primary_comparison_id",
+      "results_selection",
+      "results_artifact",
       "completed_run_count",
       "completed_condition_count",
       "failed_run_count",
       "required_run_count",
-      "required_condition_count",
-      "baseline_condition_marker",
-      "best_condition",
-      "condition_summaries"
+      "required_condition_count"
     ]) {
       if (input.metrics[key] == null && candidateMetrics[key] != null) {
         input.metrics[key] = candidateMetrics[key];
@@ -3948,15 +4643,17 @@ async function recoverPublicBundleMetricsOutput(input: {
     if (!metrics || Object.keys(metrics).length === 0) {
       continue;
     }
+    const publicSelection = resolveExplicitResultsSelection(metrics).selection;
+    if (!publicSelection) {
+      continue;
+    }
     if (existingMetrics) {
-      const publicPrimaryKey = asString(metrics.primary_metric_key);
-      const publicHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(metrics[publicPrimaryKey]) !== undefined);
-      const existingHasPrimaryValue = Boolean(publicPrimaryKey && asNumber(existingMetrics[publicPrimaryKey]) !== undefined);
+      const existingSelection = resolveExplicitResultsSelection(existingMetrics).selection;
       const publicStatus = asString(metrics.status)?.toLowerCase();
       const existingStatus = asString(existingMetrics.status)?.toLowerCase();
       const publicCompleted = publicStatus === "completed" || publicStatus === "success" || publicStatus === "succeeded";
       const existingFailed = existingStatus === "failed" || existingStatus === "failure" || existingStatus === "error";
-      if (!publicHasPrimaryValue || (existingHasPrimaryValue && !(publicCompleted && existingFailed))) {
+      if (existingSelection && !(publicCompleted && existingFailed)) {
         continue;
       }
     }
@@ -4648,22 +5345,90 @@ async function enrichMetricsWithRawConditionEvidence(input: {
   }
 
   let enriched = 0;
+  const unmatchedSummaryIds: string[] = [];
+  const ambiguousFailureEvidence: Array<{ id: string; evidence: string[] }> = [];
   for (const summary of collectConditionRows(input.metrics.condition_results)) {
     if (conditionResultReason(summary)) {
       continue;
     }
     const id = conditionResultId(summary);
-    const matchingRaw = rows.find((row) => id && conditionResultId(row) === id) || rows[0];
-    const reason = conditionResultReason(matchingRaw);
-    if (!reason) {
+    const matchingRawRows = id
+      ? rows.filter((row) => conditionResultId(row) === id)
+      : [];
+    if (matchingRawRows.length === 0) {
+      unmatchedSummaryIds.push(id || "<missing condition id>");
       continue;
     }
-    summary.failure_reason = reason;
-    const stage = asString(matchingRaw.stage) || asString(matchingRaw.failure_stage);
-    if (stage && !asString(summary.failure_stage)) {
-      summary.failure_stage = stage;
+    const distinctEvidence = new Map<string, { code?: string; reason: string; stage?: string }>();
+    for (const matchingRaw of matchingRawRows) {
+      const reason = conditionResultReason(matchingRaw);
+      if (!reason) {
+        continue;
+      }
+      const code =
+        asString(matchingRaw.failure_code) ||
+        asString(matchingRaw.error_code) ||
+        asString(asRecord(matchingRaw.error).type);
+      const stage = asString(matchingRaw.stage) || asString(matchingRaw.failure_stage);
+      const evidence = { code, reason, stage };
+      distinctEvidence.set(JSON.stringify(evidence), evidence);
+    }
+    if (distinctEvidence.size === 0) {
+      continue;
+    }
+    if (distinctEvidence.size > 1) {
+      ambiguousFailureEvidence.push({
+        id: id || "<missing condition id>",
+        evidence: [...distinctEvidence.values()].map((item) =>
+          [
+            item.code ? `code=${trimShort(item.code, 80)}` : undefined,
+            `reason=${trimShort(item.reason, 160)}`,
+            item.stage ? `stage=${trimShort(item.stage, 80)}` : undefined
+          ].filter((value): value is string => Boolean(value)).join(",")
+        )
+      });
+      continue;
+    }
+    let explicitEvidence: { code?: string; reason: string; stage?: string } | undefined;
+    for (const item of distinctEvidence.values()) {
+      explicitEvidence = item;
+    }
+    if (!explicitEvidence) {
+      continue;
+    }
+    summary.failure_reason = explicitEvidence.reason;
+    if (explicitEvidence.code && !asString(summary.failure_code)) {
+      summary.failure_code = explicitEvidence.code;
+    }
+    if (explicitEvidence.stage && !asString(summary.failure_stage)) {
+      summary.failure_stage = explicitEvidence.stage;
     }
     enriched += 1;
+  }
+  if (unmatchedSummaryIds.length > 0) {
+    const distinctIds = [...new Set(unmatchedSummaryIds)];
+    const boundedIds = distinctIds.slice(0, 8);
+    const omitted = distinctIds.length - boundedIds.length;
+    appendResultMeaningDiagnostic(input.metrics, {
+      code: "raw_condition_evidence_enrichment_skipped_unmatched_condition",
+      message:
+        `Skipped raw condition evidence enrichment for ${unmatchedSummaryIds.length} condition summary row(s) ` +
+        `without an exact condition id match (${boundedIds.join(", ")}${omitted > 0 ? `, +${omitted} more` : ""}).`
+    });
+  }
+  if (ambiguousFailureEvidence.length > 0) {
+    const allEvidence = ambiguousFailureEvidence.flatMap((item) =>
+      item.evidence.map((evidence) => `${trimShort(item.id, 80)}[${evidence}]`)
+    );
+    const boundedEvidence = allEvidence.slice(0, 8);
+    const omitted = allEvidence.length - boundedEvidence.length;
+    appendResultMeaningDiagnostic(input.metrics, {
+      code: "raw_condition_evidence_enrichment_skipped_ambiguous_failures",
+      message:
+        `Skipped raw condition evidence enrichment for ${ambiguousFailureEvidence.length} condition summary row(s) ` +
+        `with multiple distinct failure observations: ${boundedEvidence.join(" | ")}` +
+        `${omitted > 0 ? ` | +${omitted} more distinct failure(s)` : ""}.`
+    });
   }
 
   if (enriched > 0) {
@@ -4838,6 +5603,9 @@ function readPythonTupleConstant(source: string, names: string[]): unknown[] | u
 }
 
 function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unknown>): string | undefined {
+  if (Object.prototype.hasOwnProperty.call(metrics, "results_artifact")) {
+    return undefined;
+  }
   const conditionRows = collectConditionRows(metrics.condition_results);
   const rawRows = collectConditionRows(metrics.raw_condition_results);
   const preferRawRows = shouldPreferRawRowsForConditionProjection(conditionRows, rawRows);
@@ -4845,30 +5613,48 @@ function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unkno
   if (rows.length === 0) {
     return undefined;
   }
-  const alreadySummarized = rows.some((row) =>
-    asNumber(row.average_accuracy) !== undefined ||
-    Object.keys(asRecord(row.evaluation)).length > 0 ||
-    Object.keys(asRecord(row.task_metrics)).length > 0
-  );
-  if (alreadySummarized) {
-    return undefined;
-  }
-  const metricRows = rows.filter((row) => {
+
+  const binaryRows = rows.filter((row) => {
     const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
-    const value = asNumber(row.accuracy) ?? asNumber(row.metric) ?? asNumber(row.score) ?? asNumber(row.value);
-    return Boolean(marker) && (value !== undefined || typeof row.correct === "boolean");
+    return Boolean(marker) && hasExplicitBinaryOutcomeContract(row);
   });
-  if (metricRows.length === 0) {
+  const ambiguousObservationCount = rows.filter(
+    (row) => hasAmbiguousPerExampleMetricObservation(row) && !hasExplicitBinaryOutcomeContract(row)
+  ).length;
+  if (binaryRows.length === 0) {
+    if (ambiguousObservationCount > 0) {
+      appendResultMeaningDiagnostic(metrics, {
+        code: "per_example_projection_skipped_ambiguous_metric_semantics",
+        message:
+          `Preserved ${ambiguousObservationCount} per-example observation row(s) without binary-rate projection ` +
+          "because they did not declare binary outcome semantics."
+      });
+      return `Skipped binary-rate projection for ${ambiguousObservationCount} ambiguous observation row(s); raw observations were preserved.`;
+    }
     return undefined;
   }
 
+  const metricResolution = resolveExplicitBinaryMetricDefinition(binaryRows);
+  if (!metricResolution.metric) {
+    appendResultMeaningDiagnostic(metrics, {
+      code: "binary_projection_skipped_missing_metric_contract",
+      message: metricResolution.diagnostic ||
+        "Preserved explicit binary rows without projection because metric_id and metric_direction were not explicit and unique."
+    });
+    if (!Array.isArray(metrics.raw_condition_results)) {
+      metrics.raw_condition_results = rows;
+    }
+    return metricResolution.diagnostic;
+  }
+  const metric = metricResolution.metric;
+
   type Group = { rows: Array<Record<string, unknown>>; tasks: Map<string, Array<Record<string, unknown>>> };
   const grouped = new Map<string, Group>();
-  const rowSeed = (row: Record<string, unknown>): unknown => {
-    return projectionRowSeed(row);
-  };
-  for (const row of metricRows) {
-    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || "condition";
+  for (const row of binaryRows) {
+    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+    if (!marker) {
+      continue;
+    }
     const tasks = projectionRowTasks(row);
     const group = grouped.get(marker) ?? { rows: [], tasks: new Map<string, Array<Record<string, unknown>>>() };
     group.rows.push(row);
@@ -4879,212 +5665,236 @@ function promotePerExampleConditionRowsToSummaries(metrics: Record<string, unkno
     }
     grouped.set(marker, group);
   }
-  if (grouped.size === 0) {
-    return undefined;
-  }
 
+  const roleResolution = resolveExplicitConditionRoles(metrics, rows);
+  const series: ResultsSeriesV2[] = [];
+  const observations: ResultsObservationV2[] = [];
   const confidenceIntervals: Array<Record<string, unknown>> = [];
-  const summaries: Array<Record<string, unknown>> = [];
-  const means = new Map<string, number>();
+  const binaryCountEvidence: Array<Record<string, unknown>> = [];
+  const pooledObservationBySeries = new Map<string, ResultsObservationV2>();
   for (const [marker, group] of grouped.entries()) {
-    const evaluation: Record<string, unknown> = {};
+    const role = resolveExplicitSeriesRole(marker, group.rows, roleResolution);
+    series.push({
+      id: marker,
+      label: marker,
+      ...(role ? { role } : {}),
+      dimensions: {}
+    });
     const seeds: unknown[] = [];
     for (const row of group.rows) {
-      const seed = rowSeed(row);
+      const seed = projectionRowSeed(row);
       if (seed !== undefined && seed !== null && !seeds.some((seen) => String(seen) === String(seed))) {
         seeds.push(seed);
       }
     }
-    const allValues: number[] = [];
     let totalCorrect = 0;
     let totalCount = 0;
     for (const [task, taskRows] of [...group.tasks.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-      const values: number[] = [];
       let correctCount = 0;
       let count = 0;
-      const predictions: Array<Record<string, unknown>> = [];
       for (const row of taskRows) {
-        const taskMetrics = conditionRowTaskMetrics(row, task);
-        const raw = asRecord(row.raw_evidence);
-        const nestedRaw = asRecord(raw.raw_evidence);
-        const explicitValue = firstNumber(
-          taskMetrics.accuracy,
-          taskMetrics.metric,
-          taskMetrics.score,
-          taskMetrics.value,
-          row.accuracy,
-          row.metric,
-          row.score,
-          row.value
-        );
-        const correct = typeof row.correct === "boolean" ? row.correct : undefined;
-        const rowCorrectCount = firstNumber(
-          row.correct_count,
-          row.corrects,
-          row.num_correct,
-          row.correct,
-          raw.correct_count,
-          raw.corrects,
-          raw.num_correct,
-          raw.correct,
-          nestedRaw.correct_count,
-          nestedRaw.corrects,
-          nestedRaw.num_correct,
-          nestedRaw.correct,
-          taskMetrics.correct_count,
-          taskMetrics.corrects,
-          taskMetrics.num_correct,
-          taskMetrics.correct
-        );
-        const rowTotalCount = firstNumber(
-          row.total_count,
-          row.total,
-          row.evaluated_count,
-          row.sample_size,
-          row.n,
-          raw.total_count,
-          raw.total,
-          raw.evaluated_count,
-          raw.sample_size,
-          raw.n,
-          nestedRaw.total_count,
-          nestedRaw.total,
-          nestedRaw.evaluated_count,
-          nestedRaw.sample_size,
-          nestedRaw.n,
-          taskMetrics.total_count,
-          taskMetrics.total,
-          taskMetrics.evaluated_count,
-          taskMetrics.sample_size,
-          taskMetrics.n
-        );
-        const value = explicitValue ?? (correct === undefined ? undefined : correct ? 1 : 0);
-        if (value === undefined) {
+        const outcome = extractExplicitBinaryOutcome(row, conditionRowTaskMetrics(row, task));
+        if (!outcome) {
           continue;
         }
-        values.push(value);
-        if (rowCorrectCount !== undefined && rowTotalCount !== undefined && rowTotalCount > 0) {
-          correctCount += rowCorrectCount;
-          count += rowTotalCount;
-        } else if (correct !== undefined) {
-          correctCount += correct ? 1 : 0;
-          count += 1;
-        }
-        if (correct !== undefined || row.prediction !== undefined || row.example_id !== undefined) {
-          predictions.push({
-            correct: correct ?? value >= 0.5,
-            seed: rowSeed(row) ?? null,
-            prediction: row.prediction ?? asRecord(row.raw_evidence).prediction ?? null,
-            gold_key: row.gold_key ?? asRecord(row.raw_evidence).gold_key ?? null,
-            example_id: row.example_id ?? asRecord(row.raw_evidence).example_id ?? null
-          });
-        }
+        correctCount += outcome.correctCount;
+        count += outcome.totalCount;
       }
-      if (values.length === 0) {
+      if (count <= 0) {
         continue;
       }
-      const accuracy = count > 0 ? correctCount / count : mean(values);
-      if (count === 0) {
-        count = values.length;
-        correctCount = Math.round(accuracy * count);
-      }
-      const interval = wilsonInterval(correctCount, count);
-      const taskSummary: Record<string, unknown> = {
-        accuracy,
-        correct_count: correctCount,
-        total_count: count,
-        predictions
+      const observation: ResultsObservationV2 = {
+        id: buildResultsObservationId(marker, metric.id, `task:${task}`),
+        series_id: marker,
+        metric_id: metric.id,
+        scope: { task },
+        value: correctCount / count
       };
+      observations.push(observation);
+      binaryCountEvidence.push({
+        observation_id: observation.id,
+        correct_count: correctCount,
+        total_count: count
+      });
+      const interval = wilsonInterval(correctCount, count);
       if (interval) {
-        taskSummary.confidence_interval = interval;
-        confidenceIntervals.push({ metric_key: `condition_results.${marker}.${task}.accuracy`, ...interval });
+        confidenceIntervals.push({ observation_id: observation.id, ...interval });
       }
-      evaluation[task] = taskSummary;
-      allValues.push(accuracy);
       totalCorrect += correctCount;
       totalCount += count;
     }
-    if (allValues.length === 0) {
+    if (totalCount <= 0) {
       continue;
     }
-    const averageAccuracy = totalCount > 0 ? totalCorrect / totalCount : mean(allValues);
-    const overallInterval = wilsonInterval(totalCorrect, totalCount);
-    const summary: Record<string, unknown> = {
-      condition_marker: marker,
-      marker,
-      status: "completed",
-      accuracy: averageAccuracy,
-      average_accuracy: averageAccuracy,
+    const pooledObservation: ResultsObservationV2 = {
+      id: buildResultsObservationId(marker, metric.id, "pooled"),
+      series_id: marker,
+      metric_id: metric.id,
+      scope: { aggregation: "pooled_binary_count" },
+      value: totalCorrect / totalCount
+    };
+    observations.push(pooledObservation);
+    pooledObservationBySeries.set(marker, pooledObservation);
+    binaryCountEvidence.push({
+      observation_id: pooledObservation.id,
       correct_count: totalCorrect,
       total_count: totalCount,
       seeds,
-      seed_count: seeds.length,
-      evaluation
-    };
-    if (overallInterval) {
-      summary.confidence_interval = overallInterval;
-      confidenceIntervals.push({ metric_key: `condition_results.${marker}.average_accuracy`, ...overallInterval });
+      seed_count: seeds.length
+    });
+    const interval = wilsonInterval(totalCorrect, totalCount);
+    if (interval) {
+      confidenceIntervals.push({ observation_id: pooledObservation.id, ...interval });
     }
-    summaries.push(summary);
-    means.set(marker, averageAccuracy);
   }
-  if (summaries.length === 0 || means.size === 0) {
+  if (observations.length === 0) {
     return undefined;
   }
 
-  const inferredBaselineMarker = inferBaselineConditionMarker([...rows, ...summaries]);
-  const baselineMarker = inferredBaselineMarker || asString(metrics.baseline_condition_marker) || [...means.keys()].sort()[0];
-  const baselineMetric = means.get(baselineMarker) ?? means.get([...means.keys()].sort()[0]);
-  if (baselineMetric !== undefined) {
-    for (const summary of summaries) {
-      const value = asNumber(summary.average_accuracy);
-      if (value !== undefined) {
-        summary.accuracy_delta_vs_baseline = value - baselineMetric;
-      }
-    }
-    const best = summaries.reduce((current, candidate) => {
-      const currentValue = asNumber(current.average_accuracy) ?? Number.NEGATIVE_INFINITY;
-      const candidateValue = asNumber(candidate.average_accuracy) ?? Number.NEGATIVE_INFINITY;
-      return candidateValue > currentValue ? candidate : current;
-    }, summaries[0]);
-    metrics.baseline_condition_marker = baselineMarker;
-    metrics.baseline_metric = baselineMetric;
-    metrics.best_condition = best;
-    metrics.best_condition_marker = asString(best.condition_marker) || asString(best.marker);
-    const bestDelta = asNumber(best.accuracy_delta_vs_baseline);
-    if (bestDelta !== undefined) {
-      metrics.accuracy_delta_vs_baseline = bestDelta;
-      metrics.primary_metric_key = asString(metrics.primary_metric_key) || "accuracy_delta_vs_baseline";
-      metrics.primary_metric_value = bestDelta;
-    }
+  const artifact: ResultsArtifactV2 = {
+    schema_version: "2.0",
+    metrics: [metric],
+    series,
+    observations,
+    comparisons: []
+  };
+  const validation = validateResultsArtifactV2(artifact);
+  if (!validation.valid) {
+    appendResultMeaningDiagnostic(metrics, {
+      code: "binary_projection_rejected_invalid_results_v2",
+      message:
+        `Rejected binary projection because the generated ResultsArtifactV2 was invalid: ` +
+        validation.issues.slice(0, 8).join(" "),
+      severity: "error"
+    });
+    return "Binary projection was rejected by ResultsArtifactV2 validation.";
   }
 
+  if (grouped.size > 1 && (!roleResolution.baselineId || !roleResolution.primaryId)) {
+    appendResultMeaningDiagnostic(metrics, {
+      code: "comparison_projection_skipped_ambiguous_series_roles",
+      message: roleResolution.diagnostic ||
+        "Preserved condition observations without a comparison because baseline and primary series roles were not explicit and unique."
+    });
+  }
+  if (ambiguousObservationCount > 0) {
+    appendResultMeaningDiagnostic(metrics, {
+      code: "per_example_projection_skipped_ambiguous_metric_semantics",
+      message:
+        `Preserved ${ambiguousObservationCount} per-example observation row(s) without binary-rate projection ` +
+        "because they did not declare binary outcome semantics."
+    });
+  }
+
+  metrics.results_artifact = artifact;
+  metrics.binary_count_evidence = binaryCountEvidence;
+  if (roleResolution.primaryId) {
+    const selectedObservation = pooledObservationBySeries.get(roleResolution.primaryId);
+    if (selectedObservation) {
+      metrics.results_selection = {
+        metric_id: metric.id,
+        primary_observation_id: selectedObservation.id
+      };
+    }
+  }
   if (!Array.isArray(metrics.raw_condition_results)) {
     metrics.raw_condition_results = rows;
   }
-  metrics.condition_results = summaries;
-  const existingSummaryCount = collectConditionRows(metrics.condition_summaries).length;
-  const projectableRawEvidenceCount = rawRows.filter(isProjectablePerExampleConditionRow).length;
-  if (
-    !Array.isArray(metrics.condition_summaries) ||
-    (preferRawRows && projectableRawEvidenceCount > existingSummaryCount)
-  ) {
-    metrics.condition_summaries = summaries;
-  }
-  metrics.completed_condition_count = summaries.length;
-  metrics.required_condition_count = asNumber(metrics.required_condition_count) ?? summaries.length;
-  const completedRunCount = summaries.reduce((sum, row) => {
-    const seedCount = Array.isArray(row.seeds) ? row.seeds.length : asNumber(row.seed_count);
-    return sum + Math.max(1, seedCount ?? 0);
-  }, 0);
-  metrics.completed_run_count = asNumber(metrics.completed_run_count) ?? completedRunCount;
-  metrics.required_run_count = asNumber(metrics.required_run_count) ?? completedRunCount;
-  metrics.confidence_intervals = confidenceIntervals;
+  metrics.confidence_intervals = [
+    ...(Array.isArray(metrics.confidence_intervals) ? metrics.confidence_intervals : []),
+    ...confidenceIntervals
+  ];
   metrics.statistical_summary = {
     ...asRecord(metrics.statistical_summary),
-    confidence_intervals: confidenceIntervals
+    confidence_intervals: metrics.confidence_intervals
   };
-  return `Projected ${metricRows.length} per-example metric row(s) into ${summaries.length} condition summary row(s) with confidence intervals before contract evaluation.`;
+  return (
+    `Projected ${binaryRows.length} explicit binary outcome row(s) into ` +
+    `${observations.length} ResultsArtifactV2 observation(s) with Wilson intervals and no synthesized comparison.`
+  );
+}
+
+function resolveExplicitBinaryMetricDefinition(
+  rows: Array<Record<string, unknown>>
+): { metric?: ResultsMetricDefinitionV2; diagnostic?: string } {
+  const definitions = new Map<string, ResultsMetricDefinitionV2>();
+  let incompleteCount = 0;
+  for (const row of rows) {
+    const raw = asRecord(row.raw_evidence);
+    const taskRecords = projectionRowTasks(row).map((task) => conditionRowTaskMetrics(row, task));
+    const candidates = [
+      row,
+      raw,
+      asRecord(raw.raw_evidence),
+      asRecord(row.result),
+      asRecord(raw.result),
+      ...taskRecords
+    ];
+    const metricId = candidates.map((item) => asString(item.metric_id)).find(Boolean);
+    const direction = candidates
+      .map((item) => asString(item.metric_direction) || asString(item.direction))
+      .find((value) => value === "higher_better" || value === "lower_better");
+    const unit = candidates
+      .map((item) => asString(item.metric_unit) || asString(item.unit))
+      .find(Boolean);
+    const label = candidates.map((item) => asString(item.metric_label)).find(Boolean) || metricId;
+    if (!metricId || !direction || !unit || !label) {
+      incompleteCount += 1;
+      continue;
+    }
+    const definition: ResultsMetricDefinitionV2 = {
+      id: metricId,
+      label,
+      direction,
+      unit
+    };
+    definitions.set(JSON.stringify(definition), definition);
+  }
+  if (incompleteCount > 0) {
+    return {
+      diagnostic:
+        `Skipped binary projection because ${incompleteCount}/${rows.length} row(s) omitted ` +
+        "an explicit metric_id, metric_direction, or metric_unit."
+    };
+  }
+  if (definitions.size !== 1) {
+    return {
+      diagnostic:
+        `Skipped binary projection because rows declared ${definitions.size} distinct metric contracts; ` +
+        "one explicit metric id and direction are required."
+    };
+  }
+  for (const metric of definitions.values()) {
+    return { metric };
+  }
+  return { diagnostic: "Skipped binary projection because no explicit metric contract was recorded." };
+}
+
+function resolveExplicitSeriesRole(
+  marker: string,
+  rows: Array<Record<string, unknown>>,
+  roleResolution: ReturnType<typeof resolveExplicitConditionRoles>
+): ResultsSeriesRole | undefined {
+  const roles = new Set<ResultsSeriesRole>();
+  for (const row of rows) {
+    const role = projectionRowRole(row);
+    if (role === "baseline" || role === "comparator" || role === "primary" || role === "control" || role === "other") {
+      roles.add(role);
+    }
+  }
+  if (roleResolution.baselineId === marker) {
+    roles.add("baseline");
+  }
+  if (roleResolution.primaryId === marker) {
+    roles.add("primary");
+  }
+  return roles.size === 1 ? [...roles][0] : undefined;
+}
+
+function buildResultsObservationId(seriesId: string, metricId: string, scopeId: string): string {
+  return [seriesId, metricId, scopeId]
+    .map((value) => value.replace(/[^A-Za-z0-9_.:-]+/gu, "_"))
+    .join("::");
 }
 
 function shouldPreferRawRowsForConditionProjection(
@@ -5099,11 +5909,7 @@ function shouldPreferRawRowsForConditionProjection(
   }
   const conditionSeedRows = conditionRows.filter((row) => projectionRowSeed(row) !== undefined).length;
   const rawSeedRows = rawRows.filter((row) => projectionRowSeed(row) !== undefined).length;
-  const rawMetricRows = rawRows.filter((row) => {
-    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
-    const value = firstNumber(row.accuracy, row.metric, row.score, row.value);
-    return Boolean(marker) && (value !== undefined || typeof row.correct === "boolean");
-  }).length;
+  const rawMetricRows = rawRows.filter(isProjectablePerExampleConditionRow).length;
   const projectableRawEvidenceCount = rawRows.filter(isProjectablePerExampleConditionRow).length;
   return (
     rawMetricRows > 0 &&
@@ -5121,6 +5927,7 @@ function isClearlyPerExampleConditionRow(row: Record<string, unknown>): boolean 
   return [row, raw, nestedRaw].some(
     (candidate) =>
       typeof candidate.correct === "boolean" ||
+      (asNumber(candidate.correct_count) !== undefined && asNumber(candidate.total_count) !== undefined) ||
       candidate.example_id !== undefined ||
       candidate.prediction !== undefined ||
       candidate.gold_key !== undefined
@@ -5128,13 +5935,208 @@ function isClearlyPerExampleConditionRow(row: Record<string, unknown>): boolean 
 }
 
 function isProjectablePerExampleConditionRow(row: Record<string, unknown>): boolean {
+  const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
+  return Boolean(marker) && hasExplicitBinaryOutcomeContract(row);
+}
+
+function hasExplicitBinaryOutcomeContract(row: Record<string, unknown>): boolean {
+  return projectionRowTasks(row).some((task) =>
+    Boolean(extractExplicitBinaryOutcome(row, conditionRowTaskMetrics(row, task)))
+  );
+}
+
+function hasAmbiguousPerExampleMetricObservation(row: Record<string, unknown>): boolean {
   if (!isClearlyPerExampleConditionRow(row)) {
     return false;
   }
-  return (
-    firstNumber(row.accuracy, row.metric, row.score, row.value) !== undefined ||
-    typeof row.correct === "boolean"
+  const structuralNumericKeys = new Set([
+    "seed",
+    "seed_id",
+    "random_seed",
+    "correct_count",
+    "total_count",
+    "example_index",
+    "row_index",
+    "duration_ms"
+  ]);
+  const candidates = [
+    row,
+    asRecord(row.raw_evidence),
+    asRecord(asRecord(row.raw_evidence).raw_evidence),
+    ...projectionRowTasks(row).map((task) => conditionRowTaskMetrics(row, task))
+  ];
+  return candidates.some((candidate) =>
+    Object.entries(candidate).some(
+      ([key, value]) => !structuralNumericKeys.has(key) && asNumber(value) !== undefined
+    )
   );
+}
+
+function extractExplicitBinaryOutcome(
+  row: Record<string, unknown>,
+  taskMetrics: Record<string, unknown>
+): {
+  correctCount: number;
+  totalCount: number;
+  booleanOutcome?: boolean;
+} | undefined {
+  const raw = asRecord(row.raw_evidence);
+  const candidates = [
+    row,
+    raw,
+    asRecord(raw.raw_evidence),
+    asRecord(row.result),
+    asRecord(raw.result),
+    taskMetrics
+  ];
+  for (const candidate of candidates) {
+    const booleanOutcome = [candidate.correct, candidate.is_correct, candidate.outcome]
+      .find((value): value is boolean => typeof value === "boolean");
+    if (booleanOutcome !== undefined) {
+      return {
+        correctCount: booleanOutcome ? 1 : 0,
+        totalCount: 1,
+        booleanOutcome
+      };
+    }
+    const correctCount = asNumber(candidate.correct_count);
+    const totalCount = asNumber(candidate.total_count);
+    if (
+      correctCount !== undefined &&
+      totalCount !== undefined &&
+      Number.isInteger(correctCount) &&
+      Number.isInteger(totalCount) &&
+      correctCount >= 0 &&
+      totalCount > 0 &&
+      correctCount <= totalCount
+    ) {
+      return { correctCount, totalCount };
+    }
+  }
+  return undefined;
+}
+
+function appendResultMeaningDiagnostic(
+  metrics: Record<string, unknown>,
+  diagnostic: { code: string; message: string; severity?: "warning" | "error" }
+): void {
+  const existing = Array.isArray(metrics.run_experiments_diagnostics)
+    ? metrics.run_experiments_diagnostics
+        .map((item) => asRecord(item))
+        .filter((item) => Object.keys(item).length > 0)
+    : [];
+  if (existing.some((item) => asString(item.code) === diagnostic.code && asString(item.message) === diagnostic.message)) {
+    return;
+  }
+  metrics.run_experiments_diagnostics = [...existing, diagnostic].slice(0, 32);
+}
+
+function resolveExplicitConditionRoles(
+  metrics: Record<string, unknown>,
+  rows: Array<Record<string, unknown>>
+): {
+  baselineId?: string;
+  primaryId?: string;
+  diagnostic?: string;
+} {
+  const baselineIds = new Set<string>();
+  const primaryIds = new Set<string>();
+  const comparison = asRecord(metrics.primary_comparison);
+  const genericComparison = asRecord(metrics.comparison);
+  const primaryObservation = asRecord(metrics.primary_observation);
+  const add = (target: Set<string>, value: unknown): void => {
+    const id = asString(value);
+    if (id) {
+      target.add(id);
+    }
+  };
+
+  for (const value of [
+    metrics.baseline_condition_marker,
+    metrics.baseline_condition_id,
+    metrics.baseline_condition,
+    metrics.baseline_id,
+    comparison.baseline_condition_id,
+    comparison.baseline_id,
+    genericComparison.baseline_condition_id,
+    genericComparison.baseline_id
+  ]) {
+    add(baselineIds, value);
+  }
+  for (const value of [
+    metrics.primary_condition_marker,
+    metrics.primary_condition_id,
+    metrics.primary_condition,
+    comparison.primary_condition_id,
+    comparison.primary_id,
+    comparison.candidate_id,
+    genericComparison.primary_condition_id,
+    genericComparison.primary_id,
+    primaryObservation.condition_id,
+    primaryObservation.condition_marker
+  ]) {
+    add(primaryIds, value);
+  }
+
+  for (const row of rows) {
+    const id = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || asString(row.id);
+    if (!id) {
+      continue;
+    }
+    if (projectionRowBaselineFlag(row) === true || projectionRowRole(row) === "baseline") {
+      baselineIds.add(id);
+    }
+    if (projectionRowPrimaryFlag(row) === true || projectionRowRole(row) === "primary") {
+      primaryIds.add(id);
+    }
+  }
+
+  const baselineId = baselineIds.size === 1 ? [...baselineIds][0] : undefined;
+  const primaryId = primaryIds.size === 1 ? [...primaryIds][0] : undefined;
+  const diagnostics: string[] = [];
+  if (baselineIds.size === 0) {
+    diagnostics.push("No explicit baseline condition id or role was recorded.");
+  } else if (baselineIds.size > 1) {
+    diagnostics.push(`Multiple explicit baseline conditions were recorded: ${[...baselineIds].join(", ")}.`);
+  }
+  if (primaryIds.size === 0) {
+    diagnostics.push("No explicit primary condition id or role was recorded.");
+  } else if (primaryIds.size > 1) {
+    diagnostics.push(`Multiple explicit primary conditions were recorded: ${[...primaryIds].join(", ")}.`);
+  }
+  if (baselineId && primaryId && baselineId === primaryId) {
+    diagnostics.push(`Condition ${baselineId} was declared as both baseline and primary.`);
+    return { diagnostic: diagnostics.join(" ") };
+  }
+  return {
+    baselineId,
+    primaryId,
+    diagnostic: diagnostics.length > 0 ? diagnostics.join(" ") : undefined
+  };
+}
+
+function projectionRowRole(row: Record<string, unknown>): string | undefined {
+  const raw = asRecord(row.raw_evidence);
+  for (const candidate of [row, raw, asRecord(raw.raw_evidence), asRecord(row.result), asRecord(raw.result)]) {
+    const role = asString(candidate.role) || asString(candidate.condition_role);
+    if (role) {
+      return role.toLowerCase();
+    }
+  }
+  return undefined;
+}
+
+function projectionRowPrimaryFlag(row: Record<string, unknown>): boolean | undefined {
+  const raw = asRecord(row.raw_evidence);
+  for (const candidate of [row, raw, asRecord(raw.raw_evidence), asRecord(row.result), asRecord(raw.result)]) {
+    if (candidate.is_primary === true || candidate.primary === true) {
+      return true;
+    }
+    if (candidate.is_primary === false || candidate.primary === false) {
+      return false;
+    }
+  }
+  return undefined;
 }
 
 function projectionRowSeed(row: Record<string, unknown>): unknown {
@@ -5190,12 +6192,16 @@ function conditionRowTaskMetrics(row: Record<string, unknown>, task: string): Re
   return {};
 }
 
-function mean(values: number[]): number {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
 function wilsonInterval(correctCount: number, totalCount: number): Record<string, unknown> | undefined {
-  if (!Number.isFinite(correctCount) || !Number.isFinite(totalCount) || totalCount <= 0) {
+  if (
+    !Number.isFinite(correctCount) ||
+    !Number.isFinite(totalCount) ||
+    !Number.isInteger(correctCount) ||
+    !Number.isInteger(totalCount) ||
+    correctCount < 0 ||
+    totalCount <= 0 ||
+    correctCount > totalCount
+  ) {
     return undefined;
   }
   const z = 1.96;
@@ -5213,125 +6219,244 @@ function wilsonInterval(correctCount: number, totalCount: number): Record<string
   };
 }
 
-function promoteSummaryPrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+interface ExplicitResultsSelection {
+  artifact: ResultsArtifactV2;
+  metric: ResultsMetricDefinitionV2;
+  series: ResultsSeriesV2;
+  observation: ResultsObservationV2;
+  comparison?: ResultsComparisonV2;
+}
+
+interface ExplicitResultsSelectionResolution {
+  selection?: ExplicitResultsSelection;
+  diagnostic?: { code: string; message: string; severity: "warning" | "error" };
+}
+
+function promoteExplicitResultsPrimaryObservation(metrics: Record<string, unknown>): string | undefined {
   const promotions = [
-    promoteAggregatePrimaryMetric(metrics),
+    promoteAggregateExecutionMetadata(metrics),
     promoteTrainingAggregateMetrics(metrics)
   ].filter((value): value is string => Boolean(value));
-  if (promotions.length > 0) {
+  const resolution = resolveExplicitResultsSelection(metrics);
+  if (resolution.diagnostic) {
+    appendResultMeaningDiagnostic(metrics, resolution.diagnostic);
+    promotions.push(resolution.diagnostic.message);
+  }
+  const selection = resolution.selection;
+  if (!selection) {
+    return promotions.length > 0 ? promotions.join(" ") : undefined;
+  }
+
+  const declaredMetricId = asString(metrics.primary_metric_key);
+  const declaredMetricValue = asNumber(metrics.primary_metric_value);
+  const existingMetricValue = asNumber(metrics[selection.metric.id]);
+  const conflicts = [
+    declaredMetricId && declaredMetricId !== selection.metric.id
+      ? `primary_metric_key=${declaredMetricId} conflicts with selected metric_id=${selection.metric.id}`
+      : undefined,
+    declaredMetricValue !== undefined && Math.abs(declaredMetricValue - selection.observation.value) > 1e-12
+      ? `primary_metric_value=${declaredMetricValue} conflicts with selected observation value=${selection.observation.value}`
+      : undefined,
+    existingMetricValue !== undefined && Math.abs(existingMetricValue - selection.observation.value) > 1e-12
+      ? `${selection.metric.id}=${existingMetricValue} conflicts with selected observation value=${selection.observation.value}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+  if (conflicts.length > 0) {
+    const diagnostic = {
+      code: "results_v2_primary_selection_conflict",
+      message: `Rejected primary observation promotion because ${conflicts.join("; ")}.`,
+      severity: "error" as const
+    };
+    appendResultMeaningDiagnostic(metrics, diagnostic);
+    promotions.push(diagnostic.message);
     return promotions.join(" ");
   }
 
-  const topLevelPrimaryMetricKey = metrics.primary_metric_key;
-  if (
-    typeof topLevelPrimaryMetricKey === "string" &&
-    /^[A-Za-z_][A-Za-z0-9_]*$/u.test(topLevelPrimaryMetricKey) &&
-    metrics[topLevelPrimaryMetricKey] == null
-  ) {
-    const topLevelPrimaryMetric = metrics.primary_metric;
-    if (typeof topLevelPrimaryMetric === "number" && Number.isFinite(topLevelPrimaryMetric)) {
-      metrics[topLevelPrimaryMetricKey] = topLevelPrimaryMetric;
-      return `Promoted primary metric ${topLevelPrimaryMetricKey}=${topLevelPrimaryMetric} to top-level metrics before contract evaluation.`;
-    }
-    const conditionSummaryMetric = derivePrimaryMetricFromConditionSummaries(metrics, topLevelPrimaryMetricKey);
-    if (conditionSummaryMetric !== undefined) {
-      metrics[topLevelPrimaryMetricKey] = conditionSummaryMetric;
-      if (typeof metrics.primary_metric_value !== "number" || !Number.isFinite(metrics.primary_metric_value)) {
-        metrics.primary_metric_value = conditionSummaryMetric;
-      }
-      return `Promoted condition-summary primary metric ${topLevelPrimaryMetricKey}=${conditionSummaryMetric} to top-level metrics before contract evaluation.`;
-    }
+  metrics.primary_metric_key = selection.metric.id;
+  metrics.primary_metric_value = selection.observation.value;
+  metrics.primary_metric_direction = selection.metric.direction;
+  metrics.primary_observation_id = selection.observation.id;
+  metrics[selection.metric.id] = selection.observation.value;
+  if (selection.comparison) {
+    metrics.primary_comparison_id = selection.comparison.id;
   }
-
-  const summary = metrics.summary;
-  if (!summary || typeof summary !== "object" || Array.isArray(summary)) {
-    return undefined;
-  }
-  const summaryRecord = summary as Record<string, unknown>;
-  const primaryMetricKey = summaryRecord.primary_metric_key;
-  if (typeof primaryMetricKey !== "string" || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(primaryMetricKey)) {
-    return undefined;
-  }
-  if (metrics[primaryMetricKey] !== undefined) {
-    return undefined;
-  }
-  const primaryMetric = summaryRecord.primary_metric;
-  if (typeof primaryMetric !== "number" || !Number.isFinite(primaryMetric)) {
-    return undefined;
-  }
-  metrics[primaryMetricKey] = primaryMetric;
-  return `Promoted summary primary metric ${primaryMetricKey}=${primaryMetric} to top-level metrics before contract evaluation.`;
+  promotions.push(
+    `Promoted explicit ResultsArtifactV2 observation ${selection.observation.id} ` +
+      `for metric ${selection.metric.id}=${selection.observation.value}.`
+  );
+  return promotions.join(" ");
 }
 
-function promoteAggregatePrimaryMetric(metrics: Record<string, unknown>): string | undefined {
+function resolveExplicitResultsSelection(
+  metrics: Record<string, unknown>
+): ExplicitResultsSelectionResolution {
+  if (!Object.prototype.hasOwnProperty.call(metrics, "results_artifact")) {
+    return {};
+  }
+  const validation = validateResultsArtifactV2(metrics.results_artifact);
+  if (!validation.valid) {
+    return {
+      diagnostic: {
+        code: "results_v2_contract_rejected",
+        message:
+          `Rejected ResultsArtifactV2 projection: ${validation.issues.slice(0, 8).join(" ")}` +
+          `${validation.issues.length > 8 ? ` +${validation.issues.length - 8} more issue(s).` : ""}`,
+        severity: "error"
+      }
+    };
+  }
+
+  const artifact = metrics.results_artifact as ResultsArtifactV2;
+  const selector = asRecord(metrics.results_selection);
+  const explicitObservationId =
+    asString(selector.primary_observation_id) || asString(metrics.primary_observation_id);
+  const explicitComparisonId =
+    asString(selector.primary_comparison_id) || asString(metrics.primary_comparison_id);
+  let comparison: ResultsComparisonV2 | undefined;
+  if (explicitComparisonId) {
+    comparison = artifact.comparisons.find((item) => item.id === explicitComparisonId);
+    if (!comparison) {
+      return {
+        diagnostic: {
+          code: "results_v2_selection_rejected_unknown_comparison",
+          message: `Results selection references unknown comparison id ${explicitComparisonId}.`,
+          severity: "error"
+        }
+      };
+    }
+  }
+
+  let observation: ResultsObservationV2 | undefined;
+  if (explicitObservationId) {
+    observation = artifact.observations.find((item) => item.id === explicitObservationId);
+    if (!observation) {
+      return {
+        diagnostic: {
+          code: "results_v2_selection_rejected_unknown_observation",
+          message: `Results selection references unknown observation id ${explicitObservationId}.`,
+          severity: "error"
+        }
+      };
+    }
+  }
+  if (comparison) {
+    const subject = artifact.observations.find(
+      (item) => item.id === comparison?.subject_observation_id
+    );
+    if (!subject) {
+      return {
+        diagnostic: {
+          code: "results_v2_selection_rejected_invalid_comparison",
+          message: `Selected comparison ${comparison.id} has no resolvable subject observation.`,
+          severity: "error"
+        }
+      };
+    }
+    if (observation && observation.id !== subject.id) {
+      return {
+        diagnostic: {
+          code: "results_v2_selection_rejected_conflicting_references",
+          message:
+            `Selected observation ${observation.id} is not the subject of selected comparison ${comparison.id}.`,
+          severity: "error"
+        }
+      };
+    }
+    observation = subject;
+  }
+
+  const explicitMetricId =
+    asString(selector.metric_id) ||
+    asString(metrics.primary_metric_key) ||
+    observation?.metric_id;
+  if (!observation && explicitMetricId) {
+    const primarySeries = artifact.series.filter((item) => item.role === "primary");
+    if (primarySeries.length === 1) {
+      const candidates = artifact.observations.filter(
+        (item) => item.series_id === primarySeries[0].id && item.metric_id === explicitMetricId
+      );
+      if (candidates.length === 1) {
+        observation = candidates[0];
+      } else if (candidates.length > 1) {
+        return {
+          diagnostic: {
+            code: "results_v2_selection_rejected_ambiguous_primary_observations",
+            message:
+              `Primary series ${primarySeries[0].id} has ${candidates.length} observations for metric ${explicitMetricId}; ` +
+              "results_selection.primary_observation_id is required.",
+            severity: "error"
+          }
+        };
+      }
+    } else if (primarySeries.length > 1) {
+      return {
+        diagnostic: {
+          code: "results_v2_selection_rejected_ambiguous_primary_series",
+          message: `ResultsArtifactV2 declares ${primarySeries.length} series with role=primary.`,
+          severity: "error"
+        }
+      };
+    }
+  }
+  if (!observation) {
+    return {
+      diagnostic: {
+        code: "results_v2_selection_missing",
+        message:
+          "Preserved ResultsArtifactV2 without objective promotion because no explicit primary observation, " +
+          "comparison subject, or unique primary-series observation was selected.",
+        severity: "warning"
+      }
+    };
+  }
+
+  const metricId = explicitMetricId || observation.metric_id;
+  if (observation.metric_id !== metricId) {
+    return {
+      diagnostic: {
+        code: "results_v2_selection_rejected_metric_mismatch",
+        message:
+          `Selected observation ${observation.id} records metric_id=${observation.metric_id}, ` +
+          `not selected metric_id=${metricId}.`,
+        severity: "error"
+      }
+    };
+  }
+  const metric = artifact.metrics.find((item) => item.id === metricId);
+  const series = artifact.series.find((item) => item.id === observation?.series_id);
+  if (!metric || !series || !series.role) {
+    return {
+      diagnostic: {
+        code: "results_v2_selection_rejected_incomplete_semantics",
+        message:
+          `Selected observation ${observation.id} requires an explicit metric definition with direction ` +
+          "and a series with an explicit role.",
+        severity: "error"
+      }
+    };
+  }
+  return { selection: { artifact, metric, series, observation, comparison } };
+}
+
+function promoteAggregateExecutionMetadata(metrics: Record<string, unknown>): string | undefined {
   const aggregate = asRecord(metrics.aggregate);
   if (Object.keys(aggregate).length === 0) {
     return undefined;
   }
-  const config = asRecord(metrics.config);
-  const primaryMetricKey =
-    asString(metrics.primary_metric_key) ||
-    asString(config.primary_metric_key) ||
-    asString(asRecord(metrics.objective).primary_metric_key);
-  if (!primaryMetricKey || !/^[A-Za-z_][A-Za-z0-9_]*$/u.test(primaryMetricKey)) {
-    return undefined;
-  }
-
-  const bestCondition = asRecord(aggregate.best_condition);
-  const primaryMetricValue =
-    asNumber(metrics[primaryMetricKey]) ??
-    asNumber(metrics.primary_metric_value) ??
-    asNumber(bestCondition[primaryMetricKey]) ??
-    asNumber(aggregate[primaryMetricKey]);
   const promoted: string[] = [];
-  if (primaryMetricValue !== undefined) {
-    if (metrics[primaryMetricKey] == null) {
-      metrics[primaryMetricKey] = primaryMetricValue;
-      promoted.push(`${primaryMetricKey}=${primaryMetricValue}`);
-    }
-    if (typeof metrics.primary_metric_value !== "number" || !Number.isFinite(metrics.primary_metric_value)) {
-      metrics.primary_metric_value = primaryMetricValue;
-    }
-    if (typeof metrics.primary_metric !== "number" || !Number.isFinite(metrics.primary_metric)) {
-      metrics.primary_metric = primaryMetricValue;
-    }
+  for (const key of [
+    "completed_run_count",
+    "required_run_count",
+    "completed_condition_count",
+    "required_condition_count",
+    "failed_run_count",
+    "timed_out_run_count"
+  ]) {
+    promoteNumericField(metrics, aggregate, key, promoted);
   }
-  if (typeof metrics.primary_metric_key !== "string") {
-    metrics.primary_metric_key = primaryMetricKey;
-  }
-
-  promoteNumericField(metrics, aggregate, "completed_run_count", promoted);
-  promoteNumericField(metrics, aggregate, "completed_condition_count", promoted);
-  promoteNumericField(metrics, aggregate, "failed_run_count", promoted);
-  promoteNumericField(metrics, aggregate, "timed_out_run_count", promoted);
-  promoteStringField(metrics, aggregate, "baseline_marker", "baseline_condition_marker", promoted);
-  const conditionAggregates = aggregate.condition_aggregates;
-  if (!Array.isArray(metrics.condition_summaries) && Array.isArray(conditionAggregates)) {
-    metrics.condition_summaries = conditionAggregates;
-    promoted.push(`condition_summaries=${conditionAggregates.length}`);
-  }
-  if (Object.keys(asRecord(metrics.best_condition)).length === 0 && Object.keys(bestCondition).length > 0) {
-    metrics.best_condition = bestCondition;
-    promoted.push("best_condition");
-  }
-
-  const requiredMarkers = Array.isArray(config.required_condition_markers)
-    ? config.required_condition_markers
+  return promoted.length > 0
+    ? `Promoted explicit aggregate execution counts before contract evaluation: ${promoted.join(", ")}.`
     : undefined;
-  if (asNumber(metrics.required_condition_count) === undefined && requiredMarkers) {
-    metrics.required_condition_count = requiredMarkers.length;
-    promoted.push(`required_condition_count=${requiredMarkers.length}`);
-  }
-  const seedSchedule = Array.isArray(config.seed_schedule) ? config.seed_schedule : undefined;
-  if (asNumber(metrics.required_run_count) === undefined && requiredMarkers && seedSchedule) {
-    metrics.required_run_count = requiredMarkers.length * seedSchedule.length;
-    promoted.push(`required_run_count=${requiredMarkers.length * seedSchedule.length}`);
-  }
-
-  if (promoted.length === 0) {
-    return undefined;
-  }
-  return `Promoted aggregate metrics projection before contract evaluation: ${promoted.join(", ")}.`;
 }
 
 function promoteTrainingAggregateMetrics(metrics: Record<string, unknown>): string | undefined {
@@ -5341,44 +6466,19 @@ function promoteTrainingAggregateMetrics(metrics: Record<string, unknown>): stri
   }
 
   const promoted: string[] = [];
-  promoteNumericField(metrics, trainingAggregates, "completed_run_count", promoted);
-  promoteNumericField(metrics, trainingAggregates, "failed_run_count", promoted);
-  promoteNumericField(metrics, trainingAggregates, "completed_condition_count", promoted);
-
-  const conditionAggregates = collectConditionRows(trainingAggregates.condition_execution_aggregates);
-  if (conditionAggregates.length > 0) {
-    if (asNumber(metrics.required_condition_count) === undefined) {
-      metrics.required_condition_count = conditionAggregates.length;
-      promoted.push(`required_condition_count=${conditionAggregates.length}`);
-    }
-    if (asNumber(metrics.required_run_count) === undefined) {
-      const requiredRunCount = conditionAggregates
-        .map((row) => asNumber(row.run_count) ?? collectConditionSeedValues(row).length)
-        .filter((value): value is number => typeof value === "number" && value > 0)
-        .reduce((sum, value) => sum + value, 0);
-      if (requiredRunCount > 0) {
-        metrics.required_run_count = requiredRunCount;
-        promoted.push(`required_run_count=${requiredRunCount}`);
-      }
-    }
-    if (asNumber(metrics.timed_out_run_count) === undefined) {
-      const timedOutRunCount = conditionAggregates
-        .map((row) => {
-          const statusCounts = asRecord(row.status_counts);
-          return asNumber(statusCounts.timeout) ?? asNumber(statusCounts.timed_out) ?? 0;
-        })
-        .reduce((sum, value) => sum + value, 0);
-      if (timedOutRunCount > 0) {
-        metrics.timed_out_run_count = timedOutRunCount;
-        promoted.push(`timed_out_run_count=${timedOutRunCount}`);
-      }
-    }
+  for (const key of [
+    "completed_run_count",
+    "required_run_count",
+    "failed_run_count",
+    "timed_out_run_count",
+    "completed_condition_count",
+    "required_condition_count"
+  ]) {
+    promoteNumericField(metrics, trainingAggregates, key, promoted);
   }
-
-  if (promoted.length === 0) {
-    return undefined;
-  }
-  return `Promoted training aggregate metrics projection before contract evaluation: ${promoted.join(", ")}.`;
+  return promoted.length > 0
+    ? `Promoted explicitly declared training aggregate fields before contract evaluation: ${promoted.join(", ")}.`
+    : undefined;
 }
 
 function promoteNumericField(
@@ -5396,64 +6496,6 @@ function promoteNumericField(
   }
   target[key] = value;
   promoted.push(`${key}=${value}`);
-}
-
-function promoteStringField(
-  target: Record<string, unknown>,
-  source: Record<string, unknown>,
-  sourceKey: string,
-  targetKey: string,
-  promoted: string[]
-): void {
-  if (asString(target[targetKey])) {
-    return;
-  }
-  const value = asString(source[sourceKey]);
-  if (!value) {
-    return;
-  }
-  target[targetKey] = value;
-  promoted.push(`${targetKey}=${value}`);
-}
-
-function derivePrimaryMetricFromConditionSummaries(
-  metrics: Record<string, unknown>,
-  primaryMetricKey: string
-): number | undefined {
-  const rows = [
-    ...collectConditionRows(metrics.condition_summaries),
-    ...collectConditionRows(metrics.condition_results),
-    ...collectConditionRows(metrics.conditions),
-    ...collectConditionRows(asRecord(metrics.study).condition_summaries),
-    ...collectConditionRows(asRecord(metrics.study).condition_results)
-  ];
-  if (rows.length === 0) {
-    return undefined;
-  }
-  const baselineMarker = asString(metrics.baseline_condition_marker) || inferBaselineConditionMarker(rows);
-  const candidateRows =
-    primaryMetricKey === "accuracy_delta_vs_baseline"
-      ? rows.filter((row) => {
-          const marker = asString(row.condition_marker) || asString(row.marker);
-          return marker !== baselineMarker;
-        })
-      : rows;
-  const values = (candidateRows.length > 0 ? candidateRows : rows)
-    .map((row) => asNumber(row[primaryMetricKey]))
-    .filter((value): value is number => value !== undefined);
-  if (values.length === 0) {
-    return undefined;
-  }
-  return Math.max(...values);
-}
-
-function inferBaselineConditionMarker(rows: Record<string, unknown>[]): string | undefined {
-  for (const row of rows) {
-    if (projectionRowBaselineFlag(row) === true) {
-      return asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id) || asString(row.id);
-    }
-  }
-  return undefined;
 }
 
 function projectionRowBaselineFlag(row: Record<string, unknown>): boolean | undefined {
@@ -5761,26 +6803,57 @@ async function materializeRunExperimentPublicSummaryProjection(input: {
   summaryPath: string;
   studySummaryPath: string;
 }> {
-  const bestCondition = asRecord(input.metrics.best_condition);
+  const artifactValidation = validateResultsArtifactV2(input.metrics.results_artifact);
+  const resultsArtifact = artifactValidation.valid
+    ? input.metrics.results_artifact as ResultsArtifactV2
+    : undefined;
+  const selection = resolveExplicitResultsSelection(input.metrics).selection;
+  const primaryMetricKey = selection?.metric.id;
+  const primaryMetricValue = selection?.observation.value;
+  const primaryReferenceObservation = selection?.comparison
+    ? resultsArtifact?.observations.find(
+        (item) => item.id === selection.comparison?.reference_observation_id
+      )
+    : undefined;
   const summary = {
-    version: 1,
+    version: 2,
     source: "run_experiments",
     projection_source: "metrics.json",
     status: asString(input.metrics.status) || "completed",
     objective: {
       raw_objective_metric: input.objectiveEvaluation.rawObjectiveMetric,
-      primary_metric_key:
-        input.objectiveEvaluation.matchedMetricKey ||
-        input.objectiveEvaluation.primaryMetric ||
-        asString(input.metrics.primary_metric_key) ||
-        null,
-      observed_value:
-        input.objectiveEvaluation.observedValue ??
-        asNumber(input.metrics.primary_metric_value) ??
-        null,
+      metric_id: primaryMetricKey || null,
+      metric_direction: selection?.metric.direction || null,
+      observed_value: primaryMetricValue ?? null,
       status: input.objectiveEvaluation.status,
       summary: input.objectiveEvaluation.summary
     },
+    primary_observation: selection
+      ? {
+          id: selection.observation.id,
+          series_id: selection.observation.series_id,
+          series_role: selection.series.role,
+          metric_id: selection.metric.id,
+          metric_direction: selection.metric.direction,
+          scope: selection.observation.scope,
+          value: selection.observation.value
+        }
+      : null,
+    primary_comparison: selection?.comparison
+      ? {
+          id: selection.comparison.id,
+          subject_observation_id: selection.comparison.subject_observation_id,
+          reference_observation_id: selection.comparison.reference_observation_id,
+          metric_id: selection.metric.id,
+          metric_direction: selection.metric.direction,
+          delta: selection.comparison.delta,
+          reference_value: primaryReferenceObservation?.value ?? null
+        }
+      : null,
+    results_selection: Object.keys(asRecord(input.metrics.results_selection)).length > 0
+      ? input.metrics.results_selection
+      : null,
+    results_artifact: resultsArtifact || null,
     metrics_path: input.metricsPath,
     command: input.command,
     cwd: input.cwd || null,
@@ -5790,32 +6863,20 @@ async function materializeRunExperimentPublicSummaryProjection(input: {
     failed_run_count: asNumber(input.metrics.failed_run_count) ?? null,
     completed_condition_count: asNumber(input.metrics.completed_condition_count) ?? null,
     required_condition_count: asNumber(input.metrics.required_condition_count) ?? null,
-    primary_metric_key:
-      asString(input.metrics.primary_metric_key) ||
-      input.objectiveEvaluation.matchedMetricKey ||
-      input.objectiveEvaluation.primaryMetric ||
-      null,
-    primary_metric_value:
-      asNumber(input.metrics.primary_metric_value) ??
-      input.objectiveEvaluation.observedValue ??
-      null,
-    accuracy_delta_vs_baseline: asNumber(input.metrics.accuracy_delta_vs_baseline) ?? null,
-    average_accuracy: asNumber(input.metrics.average_accuracy) ?? null,
-    baseline_average_accuracy: asNumber(input.metrics.baseline_average_accuracy) ?? null,
-    best_condition_marker:
-      asString(bestCondition.condition_marker) ||
-      asString(bestCondition.marker) ||
-      null,
-    best_condition_accuracy_delta_vs_baseline:
-      asNumber(bestCondition.accuracy_delta_vs_baseline) ?? null,
-    condition_summaries: Array.isArray(input.metrics.condition_summaries)
-      ? input.metrics.condition_summaries
+    primary_metric_key: primaryMetricKey || null,
+    primary_metric_value: primaryMetricValue ?? null,
+    run_experiments_diagnostics: Array.isArray(input.metrics.run_experiments_diagnostics)
+      ? input.metrics.run_experiments_diagnostics
       : []
   };
   const studySummary = {
     ...summary,
     study_status: summary.status,
-    baseline_condition_marker: asString(input.metrics.baseline_condition_marker) || null,
+    series_roles: resultsArtifact
+      ? resultsArtifact.series
+          .filter((item) => Boolean(item.role))
+          .map((item) => ({ series_id: item.id, role: item.role }))
+      : [],
     seed_count: asNumber(input.metrics.seed_count) ?? null,
     successful_seed_count: asNumber(input.metrics.successful_seed_count) ?? null,
     failed_seed_count: asNumber(input.metrics.failed_seed_count) ?? null
@@ -5963,12 +7024,10 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
     metrics?: Record<string, unknown>;
     summary: string;
   }>();
-  const primaryGroup =
-    aggregateGroups.find((group) => group.id === input.portfolio.primary_trial_group_id) ||
-    aggregateGroups.find((group) => group.role === "primary");
-  if (primaryGroup) {
-    sourceExecutions.set(primaryGroup.id, {
-      group: primaryGroup,
+  const primaryResolution = resolvePortfolioPrimaryTrialGroup(input.portfolio, aggregateGroups);
+  if (primaryResolution.group) {
+    sourceExecutions.set(primaryResolution.group.id, {
+      group: primaryResolution.group,
       status: "pass",
       command: input.primaryCommand,
       cwd: input.primaryCwd,
@@ -5979,12 +7038,11 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
   }
 
   for (const record of input.supplementalRuns) {
-    const sourceGroup = aggregateGroups.find(
-      (group) => group.group_kind !== "matrix_slice" && group.profile === record.profile
-    );
-    if (!sourceGroup) {
+    const matchingGroups = aggregateGroups.filter((group) => group.profile === record.profile);
+    if (matchingGroups.length !== 1) {
       continue;
     }
+    const sourceGroup = matchingGroups[0];
     sourceExecutions.set(sourceGroup.id, {
       group: sourceGroup,
       status: record.status,
@@ -6001,14 +7059,22 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
   const records: BuildExperimentRunManifestTrialGroupExecution[] = [];
   const matrixSummary: Array<Record<string, unknown>> = [];
   for (const group of matrixGroups) {
-    const sourceId = group.source_trial_group_id;
-    const dataset = group.matrix_axes?.dataset || group.dataset_scope[0];
+    const sourceId = asString(group.source_trial_group_id);
+    const axisDataset = asString(group.matrix_axes?.dataset);
+    const dataset = axisDataset || (group.dataset_scope.length === 1 ? asString(group.dataset_scope[0]) : undefined);
     const sourceExecution = sourceId ? sourceExecutions.get(sourceId) : undefined;
     if (!sourceId || !dataset || !sourceExecution) {
+      const reasons = [
+        !sourceId ? "source_trial_group_id was not declared" : undefined,
+        !dataset ? "the matrix dataset was absent or ambiguous" : undefined,
+        sourceId && !sourceExecution
+          ? primaryResolution.diagnostic || `source trial group ${sourceId} had no unique execution`
+          : undefined
+      ].filter((value): value is string => Boolean(value));
       const record = {
         id: group.id,
         status: "skipped" as const,
-        summary: "Matrix slice could not be materialized because the source aggregate group was unavailable."
+        summary: `Matrix slice was not materialized: ${reasons.join("; ")}.`
       };
       records.push(record);
       matrixSummary.push({
@@ -6040,7 +7106,7 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
       continue;
     }
 
-    const artifact = buildManagedMatrixSliceArtifact({
+    const projection = buildManagedMatrixSliceArtifact({
       runId: input.run.id,
       group,
       sourceGroup: sourceExecution.group,
@@ -6050,10 +7116,29 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
       sourceMetrics: sourceExecution.metrics,
       sourceMetricsPath: sourceExecution.metricsPath
     });
+    if (!projection.artifact) {
+      const record = {
+        id: group.id,
+        status: "skipped" as const,
+        command: sourceExecution.command,
+        cwd: sourceExecution.cwd,
+        summary: projection.diagnostic
+      };
+      records.push(record);
+      matrixSummary.push({
+        ...record,
+        group_kind: group.group_kind,
+        source_trial_group_id: sourceId,
+        matrix_axes: group.matrix_axes,
+        dataset_scope: group.dataset_scope
+      });
+      continue;
+    }
+
     const metricsPath = await writeRunArtifact(
       input.run,
       path.join("trial_group_metrics", `${group.id}.json`),
-      `${JSON.stringify(artifact, null, 2)}\n`
+      `${JSON.stringify(projection.artifact, null, 2)}\n`
     );
     const record = {
       id: group.id,
@@ -6061,8 +7146,8 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
       command: sourceExecution.command,
       cwd: sourceExecution.cwd,
       metrics_path: metricsPath,
-      summary: artifact.summary,
-      sampling_profile: artifact.sampling_profile
+      summary: projection.artifact.summary,
+      sampling_profile: projection.artifact.sampling_profile
     };
     records.push(record);
     matrixSummary.push({
@@ -6089,6 +7174,33 @@ async function materializeManagedMatrixTrialGroupArtifacts(input: {
   return records;
 }
 
+function resolvePortfolioPrimaryTrialGroup(
+  portfolio: ExperimentPortfolio,
+  groups: ExperimentPortfolioTrialGroup[] = portfolio.trial_groups.filter(
+    (group) => group.group_kind !== "matrix_slice"
+  )
+): {
+  group?: ExperimentPortfolioTrialGroup;
+  diagnostic?: string;
+} {
+  const explicitPrimaryId = asString(asRecord(portfolio).primary_trial_group_id);
+  if (explicitPrimaryId) {
+    const matches = groups.filter((group) => group.id === explicitPrimaryId);
+    return matches.length === 1
+      ? { group: matches[0] }
+      : { diagnostic: `Explicit primary_trial_group_id ${explicitPrimaryId} did not resolve to one aggregate trial group.` };
+  }
+  const roleMatches = groups.filter((group) => group.role === "primary");
+  if (roleMatches.length === 1) {
+    return { group: roleMatches[0] };
+  }
+  return {
+    diagnostic: roleMatches.length === 0
+      ? "Portfolio omitted primary_trial_group_id and no aggregate trial group declared role=primary."
+      : `Portfolio omitted primary_trial_group_id and ${roleMatches.length} aggregate trial groups declared role=primary.`
+  };
+}
+
 function buildManagedMatrixSliceArtifact(input: {
   runId: string;
   group: ExperimentPortfolioTrialGroup;
@@ -6098,139 +7210,197 @@ function buildManagedMatrixSliceArtifact(input: {
   cwd?: string;
   sourceMetrics: Record<string, unknown>;
   sourceMetricsPath: string;
-}): ManagedMatrixSliceArtifact {
+}): {
+  artifact?: ManagedMatrixSliceArtifact;
+  diagnostic: string;
+} {
   const metrics = asRecord(input.sourceMetrics);
-  const conditionMetrics = asRecord(metrics.condition_metrics);
-  const primaryCondition = asString(metrics.primary_condition) || "shared_state_schema";
-  const baselineCondition = asString(metrics.baseline_condition) || "free_form_chat";
-  const primaryConditionMetrics = asRecord(conditionMetrics[primaryCondition]);
-  const baselineConditionMetrics = asRecord(conditionMetrics[baselineCondition]);
-  const primaryDatasetBreakdown = asRecord(asRecord(primaryConditionMetrics.dataset_breakdown)[input.dataset]);
-  const baselineDatasetBreakdown = asRecord(asRecord(baselineConditionMetrics.dataset_breakdown)[input.dataset]);
-  const primaryDatasetScore = asNumber(asRecord(primaryConditionMetrics.dataset_scores)[input.dataset]);
-  const baselineDatasetScore = asNumber(asRecord(baselineConditionMetrics.dataset_scores)[input.dataset]);
-  const datasetCount = inferManagedDatasetCount(input.sourceGroup, primaryConditionMetrics, baselineConditionMetrics);
-  const samplingProfile = divideSamplingProfileAcrossDatasets(
-    extractSamplingProfile(input.sourceMetrics),
-    datasetCount
+  const artifactValidation = validateResultsArtifactV2(metrics.results_artifact);
+  if (!artifactValidation.valid) {
+    return {
+      diagnostic:
+        `Matrix slice ${input.group.id} was skipped because source metrics did not provide a valid ` +
+        `ResultsArtifactV2: ${artifactValidation.issues.slice(0, 4).join(" ")}`
+    };
+  }
+  const artifact = metrics.results_artifact as ResultsArtifactV2;
+  const seriesById = new Map(artifact.series.map((series) => [series.id, series]));
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation])
   );
-  const comparison = compactRecord({
-    dataset_score_delta: subtractNumbers(primaryDatasetScore, baselineDatasetScore),
-    mean_task_score_delta: subtractNumbers(
-      asNumber(primaryDatasetBreakdown.mean_task_score),
-      asNumber(baselineDatasetBreakdown.mean_task_score)
-    ),
-    failure_rate_delta: subtractNumbers(
-      asNumber(primaryDatasetBreakdown.failure_rate),
-      asNumber(baselineDatasetBreakdown.failure_rate)
-    ),
-    token_count_mean_delta: subtractNumbers(
-      asNumber(primaryDatasetBreakdown.token_count_mean),
-      asNumber(baselineDatasetBreakdown.token_count_mean)
-    )
+  const candidates = artifact.comparisons.flatMap((comparison) => {
+    const subject = observationsById.get(comparison.subject_observation_id);
+    const reference = observationsById.get(comparison.reference_observation_id);
+    if (!subject || !reference || subject.metric_id !== reference.metric_id) {
+      return [];
+    }
+    const subjectSeries = seriesById.get(subject.series_id);
+    const referenceSeries = seriesById.get(reference.series_id);
+    const metric = artifact.metrics.find((item) => item.id === subject.metric_id);
+    if (
+      !subjectSeries ||
+      !referenceSeries ||
+      !metric ||
+      subjectSeries.role !== "primary" ||
+      referenceSeries.role !== "baseline" ||
+      !matrixObservationMatchesDataset(subject, subjectSeries, input.dataset) ||
+      !matrixObservationMatchesDataset(reference, referenceSeries, input.dataset)
+    ) {
+      return [];
+    }
+    if (input.group.metrics.length > 0 && !input.group.metrics.includes(metric.id)) {
+      return [];
+    }
+    return [{ comparison, subject, reference, subjectSeries, referenceSeries, metric }];
   });
+  if (candidates.length !== 1) {
+    return {
+      diagnostic:
+        `Matrix slice ${input.group.id} was skipped because ${candidates.length} explicit ResultsArtifactV2 ` +
+        `comparison(s) matched dataset ${input.dataset} with subject role=primary and reference role=baseline; ` +
+        "exactly one is required."
+    };
+  }
+
+  const selected = candidates[0];
+  const sampling = extractExplicitMatrixSliceSamplingProfile(
+    input.sourceMetrics,
+    input.group.id,
+    input.dataset
+  );
+  const diagnostics = sampling.diagnostic
+    ? [{ code: "matrix_slice_sampling_ambiguous", message: sampling.diagnostic }]
+    : undefined;
+  const comparison = {
+    id: selected.comparison.id,
+    metric_id: selected.metric.id,
+    metric_direction: selected.metric.direction,
+    subject_observation_id: selected.subject.id,
+    reference_observation_id: selected.reference.id,
+    delta: selected.comparison.delta
+  };
 
   return {
-    version: 1,
-    run_id: input.runId,
-    trial_group_id: input.group.id,
-    source_trial_group_id: input.sourceGroup.id,
-    generated_at: new Date().toISOString(),
-    execution_model: "managed_bundle",
-    runner_profile: input.group.profile || input.sourceGroup.profile,
-    dataset: input.dataset,
-    source_metrics_path: input.sourceMetricsPath,
-    command: input.command,
-    cwd: input.cwd,
-    sampling_profile: samplingProfile,
-    condition_metrics: compactRecord({
-      [primaryCondition]: compactRecord({
-        dataset_score: primaryDatasetScore,
-        ...primaryDatasetBreakdown
-      }),
-      [baselineCondition]: compactRecord({
-        dataset_score: baselineDatasetScore,
-        ...baselineDatasetBreakdown
-      })
-    }),
-    comparison,
-    summary: buildManagedMatrixSliceSummary({
+    diagnostic: diagnostics?.[0]?.message || "",
+    artifact: {
+      version: 1,
+      run_id: input.runId,
+      trial_group_id: input.group.id,
+      source_trial_group_id: input.sourceGroup.id,
+      generated_at: new Date().toISOString(),
+      execution_model: "managed_bundle",
+      runner_profile: input.group.profile || input.sourceGroup.profile,
       dataset: input.dataset,
-      sourceLabel: input.sourceGroup.label,
-      profile: input.group.profile || input.sourceGroup.profile,
-      datasetScoreDelta: asNumber(comparison.dataset_score_delta),
-      meanTaskScoreDelta: asNumber(comparison.mean_task_score_delta)
-    })
+      source_metrics_path: input.sourceMetricsPath,
+      command: input.command,
+      cwd: input.cwd,
+      sampling_profile: sampling.profile,
+      condition_metrics: {
+        [selected.subjectSeries.id]: {
+          role: selected.subjectSeries.role,
+          observation_id: selected.subject.id,
+          metric_id: selected.metric.id,
+          metric_direction: selected.metric.direction,
+          scope: selected.subject.scope,
+          value: selected.subject.value
+        },
+        [selected.referenceSeries.id]: {
+          role: selected.referenceSeries.role,
+          observation_id: selected.reference.id,
+          metric_id: selected.metric.id,
+          metric_direction: selected.metric.direction,
+          scope: selected.reference.scope,
+          value: selected.reference.value
+        }
+      },
+      comparison,
+      diagnostics,
+      summary: buildManagedMatrixSliceSummary({
+        dataset: input.dataset,
+        sourceLabel: input.sourceGroup.label,
+        profile: input.group.profile || input.sourceGroup.profile,
+        metricId: selected.metric.id,
+        metricDirection: selected.metric.direction,
+        comparisonDelta: selected.comparison.delta
+      })
+    }
   };
+}
+
+function matrixObservationMatchesDataset(
+  observation: ResultsObservationV2,
+  series: ResultsSeriesV2,
+  dataset: string
+): boolean {
+  return asString(observation.scope.dataset) === dataset || asString(series.dimensions.dataset) === dataset;
 }
 
 function buildManagedMatrixSliceSummary(input: {
   dataset: string;
   sourceLabel: string;
   profile?: string;
-  datasetScoreDelta?: number;
-  meanTaskScoreDelta?: number;
+  metricId: string;
+  metricDirection: ResultsMetricDefinitionV2["direction"];
+  comparisonDelta: number;
 }): string {
-  const parts = [
+  return [
     `Matrix slice ${input.dataset}`,
     input.profile ? `(profile=${input.profile})` : undefined,
-    `from ${input.sourceLabel}.`
-  ].filter((part): part is string => Boolean(part));
-  if (typeof input.datasetScoreDelta === "number") {
-    parts.push(`dataset_score_delta=${formatMetricValue(input.datasetScoreDelta)}.`);
-  } else if (typeof input.meanTaskScoreDelta === "number") {
-    parts.push(`mean_task_score_delta=${formatMetricValue(input.meanTaskScoreDelta)}.`);
-  } else {
-    parts.push("Dataset-level delta could not be recovered from the source metrics.");
+    `from ${input.sourceLabel}.`,
+    `metric_id=${input.metricId}.`,
+    `metric_direction=${input.metricDirection}.`,
+    `comparison_delta=${formatMetricValue(input.comparisonDelta)}.`
+  ].filter((part): part is string => Boolean(part)).join(" ");
+}
+
+function extractExplicitMatrixSliceSamplingProfile(
+  metrics: Record<string, unknown>,
+  groupId: string,
+  dataset: string
+): {
+  profile?: ExperimentPortfolioSamplingProfile;
+  diagnostic?: string;
+} {
+  const candidates = [
+    asRecord(asRecord(metrics.matrix_slice_sampling)[groupId]),
+    asRecord(asRecord(metrics.trial_group_sampling)[groupId]),
+    asRecord(asRecord(metrics.dataset_sampling_profiles)[dataset]),
+    asRecord(asRecord(asRecord(metrics.matrix_slices)[groupId]).sampling_profile)
+  ]
+    .map(normalizeExplicitSamplingProfile)
+    .filter((profile): profile is ExperimentPortfolioSamplingProfile => Boolean(profile));
+  const distinct = new Map(candidates.map((profile) => [JSON.stringify(profile), profile]));
+  if (distinct.size === 1) {
+    return { profile: [...distinct.values()][0] };
   }
-  return parts.join(" ");
+  if (distinct.size > 1) {
+    return {
+      diagnostic:
+        `Matrix slice ${groupId} recorded conflicting explicit sampling profiles; trial counts were omitted.`
+    };
+  }
+  return {};
 }
 
-function inferManagedDatasetCount(
-  sourceGroup: ExperimentPortfolioTrialGroup,
-  primaryConditionMetrics: Record<string, unknown>,
-  baselineConditionMetrics: Record<string, unknown>
-): number {
-  return Math.max(
-    sourceGroup.dataset_scope.length,
-    Object.keys(asRecord(primaryConditionMetrics.dataset_scores)).length,
-    Object.keys(asRecord(baselineConditionMetrics.dataset_scores)).length,
-    1
-  );
-}
-
-function divideSamplingProfileAcrossDatasets(
-  samplingProfile: ExperimentPortfolioSamplingProfile | undefined,
-  datasetCount: number
-): ExperimentPortfolioSamplingProfile | undefined {
-  if (!samplingProfile) {
+function normalizeExplicitSamplingProfile(value: Record<string, unknown>): ExperimentPortfolioSamplingProfile | undefined {
+  if (Object.keys(value).length === 0) {
     return undefined;
   }
-  const next: ExperimentPortfolioSamplingProfile = {};
-  if (samplingProfile.name) {
-    next.name = samplingProfile.name;
+  const source = Object.keys(asRecord(value.sampling_profile)).length > 0
+    ? asRecord(value.sampling_profile)
+    : value;
+  const profile: ExperimentPortfolioSamplingProfile = {};
+  const name = asString(source.name);
+  if (name) {
+    profile.name = name;
   }
-  const totalTrials = divideEvenlyNumber(samplingProfile.total_trials, datasetCount);
-  const executedTrials = divideEvenlyNumber(samplingProfile.executed_trials, datasetCount);
-  const cachedTrials = divideEvenlyNumber(samplingProfile.cached_trials, datasetCount);
-  if (typeof totalTrials === "number") {
-    next.total_trials = totalTrials;
+  for (const key of ["total_trials", "executed_trials", "cached_trials"] as const) {
+    const count = asNumber(source[key]);
+    if (count !== undefined) {
+      profile[key] = count;
+    }
   }
-  if (typeof executedTrials === "number") {
-    next.executed_trials = executedTrials;
-  }
-  if (typeof cachedTrials === "number") {
-    next.cached_trials = cachedTrials;
-  }
-  return Object.keys(next).length > 0 ? next : undefined;
-}
-
-function divideEvenlyNumber(value: number | undefined, divisor: number): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || divisor <= 0) {
-    return undefined;
-  }
-  const quotient = value / divisor;
-  return Number.isInteger(quotient) ? quotient : undefined;
+  return Object.keys(profile).length > 0 ? profile : undefined;
 }
 
 async function readMetricsObject(
@@ -6308,10 +7478,9 @@ function validatePlannedConditionCoverage(input: {
   briefSections?: MarkdownRunBriefSections;
   experimentPortfolio?: ExperimentPortfolio;
 }): string | undefined {
-  const primaryGroup =
-    input.experimentPortfolio?.trial_groups.find(
-      (group) => group.id === input.experimentPortfolio?.primary_trial_group_id
-    ) || input.experimentPortfolio?.trial_groups[0];
+  const primaryGroup = input.experimentPortfolio
+    ? resolvePortfolioPrimaryTrialGroup(input.experimentPortfolio).group
+    : undefined;
   const requirement = deriveRequiredPlannedConditionCount(input.briefSections, {
     summary: primaryGroup?.label,
     implementation_notes: primaryGroup?.notes,
@@ -6342,10 +7511,9 @@ function validatePlannedConditionExpansion(input: {
   briefSections?: MarkdownRunBriefSections;
   experimentPortfolio?: ExperimentPortfolio;
 }): string[] {
-  const primaryGroup =
-    input.experimentPortfolio?.trial_groups.find(
-      (group) => group.id === input.experimentPortfolio?.primary_trial_group_id
-    ) || input.experimentPortfolio?.trial_groups[0];
+  const primaryGroup = input.experimentPortfolio
+    ? resolvePortfolioPrimaryTrialGroup(input.experimentPortfolio).group
+    : undefined;
   const requirement = deriveRequiredPlannedConditionCount(input.briefSections, {
     summary: primaryGroup?.label,
     implementation_notes: primaryGroup?.notes,
@@ -6483,7 +7651,7 @@ function validatePrimarySeedExpansion(
   metrics: Record<string, unknown>,
   briefSections?: MarkdownRunBriefSections
 ): string | undefined {
-  const governedSeedCount = deriveGovernedSeedsPerCondition(metrics);
+  const governedSeedCount = deriveExplicitSeedScheduleCount(metrics);
   const declaredSeedCount = parseDeclaredPrimarySeedCount(briefSections);
   const expectedSeedCount = governedSeedCount ?? declaredSeedCount;
   if (expectedSeedCount === undefined) {
@@ -6511,10 +7679,6 @@ function validatePrimarySeedExpansion(
     return undefined;
   }
 
-  const allowedExpandedConditionCount = briefMentionsTargetedRepeats(briefSections) ? 2 : 0;
-  if (expanded.size <= allowedExpandedConditionCount) {
-    return undefined;
-  }
   const samples = [...expanded.entries()]
     .slice(0, 4)
     .map(([marker, count]) => `${trimShort(marker, 80)}:${count}`)
@@ -6525,22 +7689,46 @@ function validatePrimarySeedExpansion(
   );
 }
 
-function deriveGovernedSeedsPerCondition(metrics: Record<string, unknown>): number | undefined {
-  const requiredRunCount = asNumber(metrics.required_run_count);
-  const requiredConditionCount = asNumber(metrics.required_condition_count);
-  if (
-    requiredRunCount === undefined ||
-    requiredConditionCount === undefined ||
-    requiredConditionCount <= 0 ||
-    requiredRunCount <= requiredConditionCount
-  ) {
-    return undefined;
+function deriveExplicitSeedScheduleCount(metrics: Record<string, unknown>): number | undefined {
+  const config = asRecord(metrics.config);
+  const runConfig = asRecord(metrics.run_config);
+  const study = asRecord(metrics.study);
+  const scheduleCounts = [
+    metrics.seed_schedule,
+    metrics.seeds,
+    config.seed_schedule,
+    config.seeds,
+    runConfig.seed_schedule,
+    runConfig.seeds,
+    study.seed_schedule,
+    study.seeds
+  ]
+    .filter((value): value is unknown[] => Array.isArray(value) && value.length > 0)
+    .map((value) => value.length);
+  const countRecords = [
+    asRecord(metrics.seed_count_provenance),
+    asRecord(config.seed_count_provenance),
+    asRecord(runConfig.seed_count_provenance)
+  ];
+  for (const record of countRecords) {
+    const provenance = asString(record.provenance) || asString(record.source) || asString(record.schedule_id);
+    const count = firstNumber(record.count, record.seed_count, record.seeds_per_condition);
+    if (provenance && count !== undefined && Number.isInteger(count) && count > 0) {
+      scheduleCounts.push(count);
+    }
   }
-  const seedsPerCondition = requiredRunCount / requiredConditionCount;
-  if (!Number.isFinite(seedsPerCondition) || seedsPerCondition < 1 || !Number.isInteger(seedsPerCondition)) {
-    return undefined;
+  const distinctCounts = [...new Set(scheduleCounts)];
+  if (distinctCounts.length === 1) {
+    return distinctCounts[0];
   }
-  return seedsPerCondition;
+  if (distinctCounts.length > 1) {
+    appendResultMeaningDiagnostic(metrics, {
+      code: "seed_schedule_provenance_ambiguous",
+      message:
+        `Explicit seed schedules reported conflicting counts (${distinctCounts.join(", ")}); no seeds-per-condition contract was inferred.`
+    });
+  }
+  return undefined;
 }
 
 function parseDeclaredPrimarySeedCount(briefSections?: MarkdownRunBriefSections): number | undefined {
@@ -6578,27 +7766,29 @@ function parseDeclaredPrimarySeedCount(briefSections?: MarkdownRunBriefSections)
   return undefined;
 }
 
-function briefMentionsTargetedRepeats(briefSections?: MarkdownRunBriefSections): boolean {
-  const text = [
-    briefSections?.allowedBudgetedPasses,
-    briefSections?.minimumAcceptableEvidence,
-    briefSections?.paperWorthinessGate
-  ]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .join("\n");
-  return /\brepeat\s+runs?\s+for\s+the\s+baseline\s+and\s+strongest\b/iu.test(text);
-}
 
 function validateRunMetricsContract(input: {
   metrics: Record<string, unknown>;
   objectiveEvaluation: ObjectiveMetricEvaluation;
   comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
+  experimentContract?: ExperimentContract;
   briefSections?: MarkdownRunBriefSections;
   experimentPortfolio?: ExperimentPortfolio;
 }): string[] {
   const issues: string[] = [];
+  for (const diagnostic of collectConditionRows(input.metrics.run_experiments_diagnostics)) {
+    if (asString(diagnostic.severity) === "error") {
+      issues.push(asString(diagnostic.message) || "Results projection was rejected by an error diagnostic.");
+    }
+  }
   if (input.objectiveEvaluation.status === "missing") {
     issues.push(input.objectiveEvaluation.summary);
+  }
+  if (input.experimentPortfolio) {
+    const primaryGroupResolution = resolvePortfolioPrimaryTrialGroup(input.experimentPortfolio);
+    if (!primaryGroupResolution.group) {
+      issues.push(`Experiment portfolio primary trial group is ambiguous: ${primaryGroupResolution.diagnostic}`);
+    }
   }
 
   const conditionCoverageIssue = validatePlannedConditionCoverage({
@@ -6628,7 +7818,11 @@ function validateRunMetricsContract(input: {
     asNumber(studySummary.required_run_count),
     asNumber(study.required_run_count)
   ].find((value): value is number => typeof value === "number");
-  const derivedRequiredRunCount = deriveRequiredPlannedRunCount(input);
+  const requiredRunResolution = deriveRequiredPlannedRunCount(input);
+  if (requiredRunResolution.issue) {
+    issues.push(requiredRunResolution.issue);
+  }
+  const derivedRequiredRunCount = requiredRunResolution.count;
   const requiredRunCount = explicitRequiredRunCount ?? derivedRequiredRunCount;
   if (
     explicitRequiredRunCount !== undefined &&
@@ -6724,38 +7918,24 @@ function validateRunMetricsContract(input: {
       );
     }
   }
-  if (
-    requiredRunCount !== undefined &&
-    requiredConditionCount !== undefined &&
-    requiredRunCount > requiredConditionCount
-  ) {
+  const explicitSeedScheduleCount = deriveExplicitSeedScheduleCount(input.metrics);
+  if (explicitSeedScheduleCount !== undefined && explicitSeedScheduleCount > 1) {
     const seedRows = collectSeedProvenanceRows(input.metrics);
     const completedSeedRows = seedRows.filter((row) => {
       const status = normalizeConditionResultStatus(row);
       return status === "unknown" || isCompletedConditionStatus(status);
     });
-    const seedValues = new Set(completedSeedRows.flatMap((row) => collectConditionSeedValues(row)).map((value) => String(value)));
+    const seedValues = new Set(
+      completedSeedRows.flatMap((row) => collectConditionSeedValues(row)).map((value) => String(value))
+    );
     if (completedSeedRows.length > 0 && seedValues.size === 0) {
       issues.push(
-        "Repeated-run contract requires seed provenance, but " + completedSeedRows.length + " completed evidence row(s) omit seed or seed_id."
-      );
-    }
-    const conditionSeedEvidence = countUniqueCompletedConditionSeedEvidence(input.metrics);
-    const expectedEvidenceCount = Math.min(requiredRunCount, completedRunCount ?? requiredRunCount);
-    if (completedRunCount !== undefined && completedRunCount > 0 && conditionSeedEvidence < expectedEvidenceCount) {
-      issues.push(
-        `Repeated-run evidence incomplete: observed_condition_seed_count=${conditionSeedEvidence}/${expectedEvidenceCount}; ` +
-          `metrics report completed_run_count=${completedRunCount}/${requiredRunCount} without matching condition-seed provenance.`
+        `Explicit seed schedule (${explicitSeedScheduleCount} seeds) requires seed provenance, but ` +
+          `${completedSeedRows.length} completed evidence row(s) omit seed or seed_id.`
       );
     }
   }
-  issues.push(
-    ...validateConditionSummaryConsistency({
-      metrics: input.metrics,
-      requiredRunCount,
-      requiredConditionCount
-    })
-  );
+  issues.push(...validateExplicitResultsArtifactEvidence(input.metrics, input.experimentContract));
 
   const aggregate = asRecord(study.aggregate);
   if (Object.keys(aggregate).length > 0) {
@@ -6770,230 +7950,138 @@ function validateRunMetricsContract(input: {
         `Study aggregate reports incomplete execution${counts.length > 0 ? ` (${counts.join(", ")})` : ""}.`
       );
     }
-
-    const requiresComparator =
-      input.comparisonContract?.baseline_first_required === true ||
-      input.comparisonContract?.comparison_mode === "baseline_first_locked";
-    if (requiresComparator) {
-      const successfulTunedCount = asNumber(aggregate.successful_tuned_condition_count);
-      if (successfulTunedCount === 0) {
-        issues.push("No tuned comparator condition completed successfully.");
-      }
-      for (const key of ["baseline_mean_accuracy", "best_tuned_mean_accuracy", "best_tuned_delta_vs_baseline"]) {
-        if (Object.prototype.hasOwnProperty.call(aggregate, key) && asNumber(aggregate[key]) === undefined) {
-          issues.push(`Study aggregate did not include a numeric ${key}.`);
-        }
-      }
-    }
   }
 
   return [...new Set(issues.map((issue) => issue.trim()).filter(Boolean))];
 }
 
-function validateConditionSummaryConsistency(input: {
-  metrics: Record<string, unknown>;
-  requiredRunCount?: number;
-  requiredConditionCount?: number;
-}): string[] {
-  const rows = collectConditionSummaryRows(input.metrics).filter((row) =>
-    isCompletedConditionStatus(normalizeConditionResultStatus(row))
-  );
-  if (rows.length === 0) {
-    return [];
+function validateExplicitResultsArtifactEvidence(
+  metrics: Record<string, unknown>,
+  experimentContract?: ExperimentContract
+): string[] {
+  if (!Object.prototype.hasOwnProperty.call(metrics, "results_artifact")) {
+    return experimentContract
+      ? ["Experiment results omitted results_artifact required by experiment_contract.results_plan."]
+      : [];
   }
-
+  const validation = validateResultsArtifactV2(metrics.results_artifact);
+  if (!validation.valid) {
+    return [
+      `ResultsArtifactV2 contract failed: ${validation.issues.slice(0, 8).join(" ")}` +
+        `${validation.issues.length > 8 ? ` +${validation.issues.length - 8} more issue(s).` : ""}`
+    ];
+  }
   const issues: string[] = [];
-  const expectedSeedsPerCondition =
-    input.requiredRunCount !== undefined &&
-    input.requiredConditionCount !== undefined &&
-    input.requiredConditionCount > 0 &&
-    input.requiredRunCount > input.requiredConditionCount
-      ? Math.floor(input.requiredRunCount / input.requiredConditionCount)
-      : undefined;
-  let inconsistentAccuracyCount = 0;
-  let disagreeingAccuracyFieldCount = 0;
-  let undersizedRawEvidenceCount = 0;
-  let zeroSeedSummaryCount = 0;
-  let undersizedSummaryIntervalCount = 0;
-
-  const rawPerExampleCounts = new Map<string, number>();
-  for (const rawRow of collectConditionRows(input.metrics.raw_condition_results)) {
-    if (!isClearlyPerExampleConditionRow(rawRow)) {
-      continue;
-    }
-    const marker = asString(rawRow.condition_marker) || asString(rawRow.marker) || asString(rawRow.condition_id);
-    if (marker) {
-      rawPerExampleCounts.set(marker, (rawPerExampleCounts.get(marker) ?? 0) + 1);
-    }
-  }
-
-  for (const row of rows) {
-    const evaluation = asRecord(row.evaluation);
-    const evaluationOverall = asRecord(evaluation.overall);
-    const confidenceInterval = asRecord(row.confidence_interval);
-    const nestedConfidenceInterval = asRecord(evaluationOverall.confidence_interval);
-    const accuracyValues = [row.average_accuracy, row.accuracy, evaluationOverall.accuracy]
-      .map(asNumber)
-      .filter((value): value is number => value !== undefined);
-    const accuracy = accuracyValues[0];
-    const correctCount = firstNumber(
-      row.correct_count,
-      row.correct,
-      evaluationOverall.correct_count,
-      evaluationOverall.correct
+  if (experimentContract) {
+    const completeness = checkResultsContractCompleteness(
+      metrics.results_artifact,
+      experimentContract.results_plan
     );
-    const totalCount = firstNumber(
-      row.total_count,
-      row.total,
-      row.evaluated_count,
-      evaluationOverall.total_count,
-      evaluationOverall.total,
-      evaluationOverall.evaluated_count
-    );
-    if (
-      accuracy !== undefined &&
-      correctCount !== undefined &&
-      totalCount !== undefined &&
-      totalCount > 0 &&
-      Math.abs(accuracy - correctCount / totalCount) > 1e-6
-    ) {
-      inconsistentAccuracyCount += 1;
-    }
-    if (
-      accuracyValues.length > 1 &&
-      Math.max(...accuracyValues) - Math.min(...accuracyValues) > 1e-6
-    ) {
-      disagreeingAccuracyFieldCount += 1;
-    }
-
-    const marker = asString(row.condition_marker) || asString(row.marker) || asString(row.condition_id);
-    const rawPerExampleCount = marker ? rawPerExampleCounts.get(marker) : undefined;
-    if (
-      totalCount !== undefined &&
-      rawPerExampleCount !== undefined &&
-      totalCount < rawPerExampleCount
-    ) {
-      undersizedRawEvidenceCount += 1;
-    }
-
-    if (expectedSeedsPerCondition !== undefined && expectedSeedsPerCondition > 1) {
-      const seedCount = firstNumber(row.seed_count, row.completed_seed_count, evaluationOverall.seed_count);
-      const sampleSize = firstNumber(
-        confidenceInterval.sample_size,
-        nestedConfidenceInterval.sample_size,
-        evaluationOverall.sample_size
+    if (!completeness.complete) {
+      issues.push(
+        "ResultsArtifactV2 does not satisfy experiment_contract.results_plan: " +
+          completeness.issues.slice(0, 8).join(" ") +
+          (completeness.issues.length > 8
+            ? ` +${completeness.issues.length - 8} more issue(s).`
+            : "")
       );
-      if (seedCount === 0) {
-        zeroSeedSummaryCount += 1;
-      }
-      if (sampleSize !== undefined && sampleSize < expectedSeedsPerCondition) {
-        undersizedSummaryIntervalCount += 1;
-      }
     }
   }
-
-  if (inconsistentAccuracyCount > 0) {
-    issues.push(
-      `Condition summary accuracy is inconsistent with correct/total counts for ${inconsistentAccuracyCount}/${rows.length} completed condition summary row(s).`
-    );
-  }
-  if (disagreeingAccuracyFieldCount > 0) {
-    issues.push(
-      `Condition summary accuracy fields disagree for ${disagreeingAccuracyFieldCount}/${rows.length} completed condition summary row(s).`
-    );
-  }
-  if (undersizedRawEvidenceCount > 0) {
-    issues.push(
-      `Condition summary total_count is smaller than raw per-example evidence for ${undersizedRawEvidenceCount}/${rows.length} completed condition summary row(s).`
-    );
-  }
-  if (zeroSeedSummaryCount > 0) {
-    issues.push(
-      `Repeated-run condition summaries report seed_count=0 for ${zeroSeedSummaryCount}/${rows.length} completed condition summary row(s).`
-    );
-  }
-  if (undersizedSummaryIntervalCount > 0 && expectedSeedsPerCondition !== undefined) {
-    issues.push(
-      `Repeated-run condition summaries use confidence intervals with sample_size below the expected per-condition seed count (${undersizedSummaryIntervalCount}/${rows.length} row(s), expected at least ${expectedSeedsPerCondition}).`
-    );
+  const resolution = resolveExplicitResultsSelection(metrics);
+  if (resolution.diagnostic?.severity === "error") {
+    issues.push(resolution.diagnostic.message);
   }
   return issues;
-}
-
-function collectConditionSummaryRows(metrics: Record<string, unknown>): Array<Record<string, unknown>> {
-  const study = asRecord(metrics.study);
-  const studySummary = asRecord(metrics.study_summary);
-  for (const value of [
-    metrics.condition_summaries,
-    study.condition_summaries,
-    studySummary.condition_summaries,
-    metrics.condition_results,
-    study.condition_results,
-    studySummary.condition_results
-  ]) {
-    const rows = collectConditionRows(value);
-    if (rows.length > 0) {
-      return rows;
-    }
-  }
-  return [];
 }
 
 function firstNumber(...values: unknown[]): number | undefined {
   return values.map(asNumber).find((value): value is number => typeof value === "number");
 }
 
+function deriveSupplementalProfileTrialEstimate(
+  experimentPortfolio: ExperimentPortfolio,
+  profile: SupplementalProfileName
+): { count?: number; issue?: string } {
+  const candidates = experimentPortfolio.trial_groups
+    .filter(
+      (group) =>
+        group.role === "supplemental"
+        && group.profile === profile
+        && group.group_kind !== "matrix_slice"
+    )
+    .map((group) => ({
+      source: `experiment_portfolio.trial_groups.${group.id}.expected_trials`,
+      value: asNumber(group.expected_trials)
+    }))
+    .filter(
+      (candidate): candidate is { source: string; value: number } =>
+        typeof candidate.value === "number"
+        && Number.isInteger(candidate.value)
+        && candidate.value > 0
+    );
+  if (candidates.length === 0) {
+    return {};
+  }
+  const distinctCounts = new Map<number, string[]>();
+  for (const candidate of candidates) {
+    distinctCounts.set(candidate.value, [
+      ...(distinctCounts.get(candidate.value) || []),
+      candidate.source
+    ]);
+  }
+  if (distinctCounts.size === 1) {
+    return { count: candidates[0].value };
+  }
+  return {
+    issue:
+      "Explicit supplemental trial count provenance is ambiguous: "
+      + candidates.map((candidate) => `${candidate.source}=${candidate.value}`).join(", ")
+  };
+}
+
 function deriveRequiredPlannedRunCount(input: {
   metrics: Record<string, unknown>;
   comparisonContract?: Awaited<ReturnType<typeof loadExperimentComparisonContract>>;
   experimentPortfolio?: ExperimentPortfolio;
-}): number | undefined {
-  const directCandidates = [
-    asNumber(input.comparisonContract?.budget_profile.total_trials),
-    asNumber(input.experimentPortfolio?.total_expected_trials),
-    ...((input.experimentPortfolio?.trial_groups ?? []).map((group) => asNumber(group.expected_trials)))
-  ].filter((value): value is number => typeof value === "number" && value > 0);
-  if (directCandidates.length > 0) {
-    return Math.max(...directCandidates);
-  }
-
-  const text = [
-    ...(input.experimentPortfolio?.trial_groups ?? []).flatMap((group) => [
-      group.label,
-      ...(group.metrics ?? []),
-      ...(group.notes ?? [])
-    ])
-  ]
-    .filter((value): value is string => Boolean(value?.trim()))
-    .join("\n");
-  return parseRequiredRunCountFromText(text);
-}
-
-function parseRequiredRunCountFromText(text: string): number | undefined {
-  if (!text.trim()) {
-    return undefined;
-  }
-
-  const explicitTotalMatches = [
-    ...text.matchAll(/\b(\d+)\s+(?:fine[-\s]?tune\s+|experiment\s+)?(?:runs?|trials?)\s+total\b/giu),
-    ...text.matchAll(/\btotal\s+(?:of\s+)?(\d+)\s+(?:fine[-\s]?tune\s+|experiment\s+)?(?:runs?|trials?)\b/giu)
-  ]
-    .map((match) => Number.parseInt(match[1], 10))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  if (explicitTotalMatches.length > 0) {
-    return Math.max(...explicitTotalMatches);
-  }
-
-  const factoredMatches = [...text.matchAll(/\b(\d+)\s*(?:x|×)\s*(\d+)\s+seeds?\s*=\s*(\d+)[^.\n;]*(?:plus|\+)\s*(\d+)\b/giu)]
-    .map((match) => Number.parseInt(match[3], 10) + Number.parseInt(match[4], 10))
-    .filter((value) => Number.isFinite(value) && value > 0);
-  return factoredMatches.length > 0 ? Math.max(...factoredMatches) : undefined;
-}
-
-function subtractNumbers(left: number | undefined, right: number | undefined): number | undefined {
-  return typeof left === "number" && typeof right === "number"
-    ? Number((left - right).toFixed(6))
+}): { count?: number; issue?: string } {
+  const primaryGroup = input.experimentPortfolio
+    ? resolvePortfolioPrimaryTrialGroup(input.experimentPortfolio).group
     : undefined;
+  const candidates = [
+    {
+      source: "comparison_contract.budget_profile.total_trials",
+      value: asNumber(input.comparisonContract?.budget_profile.total_trials)
+    },
+    {
+      source: "experiment_portfolio.total_expected_trials",
+      value: asNumber(input.experimentPortfolio?.total_expected_trials)
+    },
+    {
+      source: "experiment_portfolio.primary_trial_group.expected_trials",
+      value: asNumber(primaryGroup?.expected_trials)
+    }
+  ].filter(
+    (candidate): candidate is { source: string; value: number } =>
+      typeof candidate.value === "number" && Number.isInteger(candidate.value) && candidate.value > 0
+  );
+  if (candidates.length === 0) {
+    return {};
+  }
+  const distinctCounts = new Map<number, string[]>();
+  for (const candidate of candidates) {
+    const sources = distinctCounts.get(candidate.value) ?? [];
+    sources.push(candidate.source);
+    distinctCounts.set(candidate.value, sources);
+  }
+  if (distinctCounts.size === 1) {
+    return { count: candidates[0].value };
+  }
+  return {
+    issue:
+      "Explicit required run count provenance is ambiguous: " +
+      candidates.map((candidate) => `${candidate.source}=${candidate.value}`).join(", ") +
+      ". No governed required_run_count was inferred."
+  };
 }
 
 function compactRecord(value: Record<string, unknown>): Record<string, unknown> {

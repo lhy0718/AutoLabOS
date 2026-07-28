@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "research_candidate_gate_decision",
+  "study_id": "relation_serialization_probe_v1",
+  "decided_at": "2026-07-26T00:00:00+09:00",
+  "decision": "KILL_PRE_EXECUTION",
+  "topic_selected": false,
+  "model_calls_completed": 0,
+  "empirical_results_available": false,
+  "binding_protocol": {
+    "path": ".autolabos/research-evidence/relation-serialization/v2/preaudit/preregistration.json",
+    "sha256": "1e9390b6fc8d238b38a73643244866b0623b055516492425d87faa90fc5d1171",
+    "public_snapshot_path": "docs/research/relation-serialization-probe-preregistration-v1.json",
+    "public_snapshot_sha256": "94a59701b6a6cd69979b527d292abdc07b2c0c0085870ee438288a95b2a6736f",
+    "candidate_pool_sha256": "9c43f12a91f6b40a1808d7f086218aa8e72d984df56ab613899ec81193c1b66f"
+  },
+  "binding_audit": {
+    "reviewer_id": "codex_semantic_b",
+    "human_attestation": false,
+    "path": ".autolabos/research-evidence/relation-serialization/v2/audit/reviewer-b.jsonl",
+    "sha256": "bda578dfe83e37ea13e6917386d22095946c91b86060fdde0aec3316f32afe0b",
+    "audited_entries": 70,
+    "all_checks_passed": 31,
+    "any_failure": 39,
+    "order_invariant_failures": 14
+  },
+  "corroborating_audit": {
+    "reviewer_id": "codex_semantic_a",
+    "human_attestation": false,
+    "path": ".autolabos/research-evidence/relation-serialization/v1/audit/reviewer-a.jsonl",
+    "sha256": "373de6275accfd7ca65ed1118abf2ccf0345cd15cb177f63c5553a446d848f75",
+    "audited_entries": 70,
+    "all_checks_passed": 31,
+    "any_failure": 39,
+    "gate_binding": false,
+    "gate_binding_reason": "This audit is bound to the earlier v1 preaudit artifact rather than the v2 candidate-pool bytes. It corroborates the failure count but does not create the binding decision."
+  },
+  "cross_audit_diagnostics": {
+    "same_claim_id_universe": true,
+    "pass_set_overlap": 26,
+    "pass_set_union": 36,
+    "reviewer_a_only_pass": 5,
+    "reviewer_b_only_pass": 5,
+    "records_with_ambiguity_or_order_disagreement": 21,
+    "consensus_is_evidence": false
+  },
+  "failed_gate": {
+    "contract": "Every record in the fixed 70-row universe must pass ambiguity, order-invariance, caption, and unit checks. Any failure hard-blocks the study.",
+    "observed": "The binding audit failed 39 of 70 records; only 31 passed every check.",
+    "minimum_required": 70,
+    "observed_passed": 31
+  },
+  "forbidden_recovery_actions": [
+    "run either model family on this frozen candidate pool",
+    "replace failed records after audit",
+    "expand the pool to search for substitute records",
+    "lower the frozen audit requirement or confirmatory sample size",
+    "report the 31 passing records as an executed pilot",
+    "describe either model audit as human review"
+  ],
+  "next_allowed_state": "Return to the multi-candidate topic portfolio. A future relation-serialization study would require a new study id, a new independently justified source contract, and a completely new preregistration before any model call."
+}

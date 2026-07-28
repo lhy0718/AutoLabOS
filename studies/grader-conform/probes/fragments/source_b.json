@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_probe_manifest_fragment",
+  "source_id": "source_b",
+  "development_after_initial_outcomes": true,
+  "probes": [
+    {
+      "lineage_id": "lineage_008",
+      "relation_family": "representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "A JSON Schema number admits both integer and fractional JSON number encodings, so replacing a whole-valued float with its numerically equal integer spelling must not change the verdict for an already produced float argument.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_numeric_representation_relation.py"
+    },
+    {
+      "lineage_id": "lineage_009",
+      "relation_family": "invalid_input_rejection",
+      "transformation_target": "graded response",
+      "contract_source": "A function-calling evaluator must preserve a model-produced argument type until validation; it must not turn a numeric argument into a contract-valid string and thereby create a false accept.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_invalid_type_rejection_relation.py"
+    },
+    {
+      "lineage_id": "lineage_012",
+      "relation_family": "parser_representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "Single- and double-quoted JavaScript string literals denote the same string value, so parsing either valid surface form into a function call must yield the same semantic parameter.",
+      "adapter": "studies/grader-conform/probes/python/bfcl_parser_string_quote_relation.py"
+    }
+  ]
+}

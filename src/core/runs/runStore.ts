@@ -9,6 +9,8 @@ import {
   GraphNodeId,
   NodeOptionPackageName,
   NodeStatus,
+  RunExecutionRole,
+  RunPromotionLineage,
   RunRecord,
   RunsFile,
   SlashContextRun,
@@ -26,6 +28,10 @@ import { createDefaultGraphState } from "../stateGraph/defaults.js";
 import { RunContextItem } from "../memory/runContextMemory.js";
 import { normalizeRunUsageSummary } from "./runUsage.js";
 import { RunIndexDatabase, toRunArtifactType } from "./runIndexDatabase.js";
+import {
+  buildDelegatedSuccessorMarker,
+  RunPromotionStore
+} from "./runPromotionStore.js";
 import { buildRunCheckpointsDirPath, buildRunRecordPath, buildRunRootPath } from "./runPaths.js";
 import { indexRunKnowledge } from "../repositoryKnowledge.js";
 
@@ -36,8 +42,15 @@ export interface CreateRunInput {
   objectiveMetric: string;
 }
 
+export interface CreateRunOptions {
+  deterministicId?: string;
+  executionRole?: RunExecutionRole;
+  promotionLineage?: RunPromotionLineage;
+}
+
 export class RunStore {
   private runIndexReady?: Promise<RunIndexDatabase>;
+  private promotionStore?: RunPromotionStore;
 
   constructor(
     private readonly paths: AppPaths,
@@ -97,10 +110,32 @@ export class RunStore {
     });
   }
 
-  async createRun(input: CreateRunInput): Promise<RunRecord> {
+  async createRun(
+    input: CreateRunInput,
+    options: CreateRunOptions = {}
+  ): Promise<RunRecord> {
+    const deterministicId = options.deterministicId?.trim();
+    if (deterministicId && !isUuid(deterministicId)) {
+      throw new Error("deterministic_run_id_invalid");
+    }
+    if (
+      (options.executionRole === "delegated_once")
+      !== Boolean(options.promotionLineage)
+    ) {
+      throw new Error("delegated_run_lineage_invalid");
+    }
     return this.withRunIndex(async (index) => {
       const ts = nowIso();
-      const id = randomUUID();
+      const id = deterministicId || randomUUID();
+      const storedSummary = index.getRun(id);
+      if (storedSummary) {
+        const stored = await this.readStoredRunRecord(storedSummary);
+        const existing = await this.reconcileRunRecord(stored.run);
+        if (!createRunInputMatches(existing, input, options)) {
+          throw new Error("deterministic_run_id_conflict");
+        }
+        return existing;
+      }
       const graph = createDefaultGraphState(this.options.nodeOptionPackageName);
 
       const run: RunRecord = {
@@ -117,6 +152,12 @@ export class RunStore {
         nodeThreads: {},
         createdAt: ts,
         updatedAt: ts,
+        ...(options.executionRole
+          ? { executionRole: options.executionRole }
+          : {}),
+        ...(options.promotionLineage
+          ? { promotionLineage: options.promotionLineage }
+          : {}),
         graph,
         memoryRefs: {
           runContextPath: `.autolabos/runs/${id}/memory/run_context.json`,
@@ -133,6 +174,9 @@ export class RunStore {
   }
 
   async updateRun(run: RunRecord): Promise<void> {
+    if (this.getPromotionStore().getByParentRunId(run.id)) {
+      throw new Error(`run_delegated_to_successor:update:${run.id}`);
+    }
     await this.withRunIndex(async (index) => {
       const storedSummary = index.getRun(run.id);
       if (!storedSummary) {
@@ -381,6 +425,21 @@ export class RunStore {
     let next = normalizeRunRecord(run);
     const details = await this.readDerivedRunDetails(next);
     next = applyCheckpointDerivedState(next, details.latestCheckpoint);
+    const promotion = this.getPromotionStore().getByParentRunId(next.id);
+    if (promotion) {
+      const marker = buildDelegatedSuccessorMarker(promotion);
+      if (
+        next.delegatedSuccessor
+        && JSON.stringify(next.delegatedSuccessor) !== JSON.stringify(marker)
+      ) {
+        throw new Error("run_promotion_parent_marker_conflict");
+      }
+      next = {
+        ...next,
+        delegatedSuccessor: marker,
+        updatedAt: maxIso([next.updatedAt, marker.reservedAt]) ?? next.updatedAt
+      };
+    }
     const collectSummary = buildCollectDerivedSummary(details);
     const analyzeSummary = buildAnalyzeDerivedSummary(details);
 
@@ -446,6 +505,15 @@ export class RunStore {
 
   resolveWorkspacePath(filePath: string): string {
     return normalizeFsPath(path.isAbsolute(filePath) ? filePath : path.join(this.paths.cwd, filePath));
+  }
+
+  getWorkspaceRoot(): string {
+    return this.paths.cwd;
+  }
+
+  getPromotionStore(): RunPromotionStore {
+    this.promotionStore ??= new RunPromotionStore(this.paths.runsDbFile);
+    return this.promotionStore;
   }
 
   private async readRunContextItems(filePath: string): Promise<RunContextItem[]> {
@@ -599,6 +667,25 @@ export class RunStore {
   }
 }
 
+function createRunInputMatches(
+  run: RunRecord,
+  input: CreateRunInput,
+  options: CreateRunOptions
+): boolean {
+  return run.title === input.title
+    && run.topic === input.topic
+    && run.objectiveMetric === input.objectiveMetric
+    && JSON.stringify(run.constraints) === JSON.stringify(input.constraints)
+    && (run.executionRole ?? "standard")
+      === (options.executionRole ?? "standard")
+    && JSON.stringify(run.promotionLineage ?? null)
+      === JSON.stringify(options.promotionLineage ?? null);
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(value);
+}
+
 function normalizeRunsV3(runsFile: RunsFile): RunsFile {
   return {
     version: 3,
@@ -611,6 +698,9 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
     ...createDefaultGraphState().retryPolicy,
     ...(run.graph?.retryPolicy ?? {})
   };
+  const transitionHistory = run.graph?.transitionHistory ?? [];
+  const lastAppliedTransition =
+    transitionHistory.at(-1) ?? run.graph?.lastAppliedTransition;
   return {
     ...run,
     version: 3,
@@ -631,7 +721,10 @@ function normalizeRunRecord(run: RunRecord): RunRecord {
         Math.max(0, retryPolicy.maxAutoRollbacksPerNode)
       ),
       researchCycle: run.graph?.researchCycle ?? 0,
-      transitionHistory: run.graph?.transitionHistory ?? [],
+      transitionHistory,
+      ...(lastAppliedTransition
+        ? { lastAppliedTransition: { ...lastAppliedTransition } }
+        : {}),
       retryPolicy,
       pendingTransition: normalizePendingTransition(run.graph?.pendingTransition)
     },

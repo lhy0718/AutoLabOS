@@ -12,8 +12,10 @@ import {
   filterPaperSearchCandidates,
   parseYear,
   resolveDateBounds,
-  resolvePerQueryLimit
+  resolvePerQueryLimit,
+  toPhrasePreservingSearchQuery
 } from "./paperSearchCommon.js";
+import { compileTopicDiscoveryPlainQuery } from "./topicDiscoveryProviderQuery.js";
 
 interface CrossrefMessageItem {
   DOI?: string;
@@ -47,7 +49,14 @@ export class CrossrefClient {
     abortSignal?: AbortSignal
   ): Promise<PaperSearchCandidate[]> {
     const queryPlan = buildSearchQueryPlan(request.query);
-    const queryVariants = queryPlan.variantClauses.map((clause) => clause.text).filter(Boolean);
+    const topicDiscoveryQuery = compileTopicDiscoveryPlainQuery(
+      request.topicDiscoveryFamily
+    );
+    const queryVariants = topicDiscoveryQuery
+      ? [topicDiscoveryQuery]
+      : queryPlan.variantClauses
+          .map((clause) => toPhrasePreservingSearchQuery(clause))
+          .filter(Boolean);
     const filterApplications = buildCrossrefFilterApplications(request);
     const perQueryLimit = resolvePerQueryLimit(request.limit, CROSSREF_MAX_RESULTS, queryVariants.length);
 
@@ -59,7 +68,9 @@ export class CrossrefClient {
       queryTransformation: {
         original: request.query,
         transformed: queryVariants.join(" OR ") || request.query,
-        strategy: describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
+        strategy: topicDiscoveryQuery
+          ? "topic_discovery_structured_free_text"
+          : describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
         variants: queryVariants
       },
       filterApplications

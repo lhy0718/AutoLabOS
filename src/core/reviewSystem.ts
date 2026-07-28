@@ -3,7 +3,12 @@ import type { RiskSignal } from "./analysis/riskSignals.js";
 import { parseStructuredModelJsonObject } from "./analysis/modelJson.js";
 import { LLMClient, LLMCompletionUsage } from "./llm/client.js";
 import type { FigureAuditSummary } from "./exploration/types.js";
-import { AnalysisFailureCategory, AnalysisPaperClaim, AnalysisReport } from "./resultAnalysis.js";
+import {
+  AnalysisFailureCategory,
+  AnalysisPaperClaim,
+  AnalysisReport,
+  resolvePrimaryResultsArtifactComparison
+} from "./resultAnalysis.js";
 import { RunRecord, GraphNodeId } from "../types.js";
 import { loadReviewPromptSections } from "./nodePrompts.js";
 
@@ -360,6 +365,17 @@ function buildReviewerPrompt(
   riskSignals: RiskSignal[] = [],
   figureAuditSummary?: FigureAuditSummary
 ): string {
+  const primaryComparison = resolveExplicitPrimaryComparison(report);
+  const primaryEffectEstimates = primaryComparison
+    ? report.statistical_summary.effect_estimates.filter(
+        (item) => item.comparison_id === primaryComparison.comparison.id
+      )
+    : [];
+  const transitionRecommendation =
+    report.transition_recommendation?.action !== "backtrack_to_hypotheses" ||
+    primaryComparison?.hypothesis_supported === false
+      ? report.transition_recommendation
+      : undefined;
   const payload = {
     reviewer: {
       id: spec.reviewer_id,
@@ -377,12 +393,12 @@ function buildReviewerPrompt(
       objective_summary: report.overview.objective_summary,
       execution_runs: report.overview.execution_runs
     },
-    transition_recommendation: report.transition_recommendation
+    transition_recommendation: transitionRecommendation
       ? {
-          action: report.transition_recommendation.action,
-          targetNode: report.transition_recommendation.targetNode,
-          reason: report.transition_recommendation.reason,
-          confidence: report.transition_recommendation.confidence
+          action: transitionRecommendation.action,
+          targetNode: transitionRecommendation.targetNode,
+          reason: transitionRecommendation.reason,
+          confidence: transitionRecommendation.confidence
         }
       : undefined,
     artifact_presence: presence,
@@ -417,11 +433,21 @@ function buildReviewerPrompt(
           risks: report.plan_context.selected_design.risks
         }
       : undefined,
+    primary_comparison: primaryComparison
+      ? {
+          id: primaryComparison.comparison.id,
+          subject_series_id: primaryComparison.subject_series.id,
+          reference_series_id: primaryComparison.reference_series.id,
+          metric_id: primaryComparison.metric.id,
+          hypothesis_supported: primaryComparison.hypothesis_supported,
+          summary: primaryComparison.summary
+        }
+      : undefined,
     statistical_summary: {
       total_trials: report.statistical_summary.total_trials,
       executed_trials: report.statistical_summary.executed_trials,
       confidence_intervals: report.statistical_summary.confidence_intervals.slice(0, 4).map((item) => item.summary),
-      effect_estimates: report.statistical_summary.effect_estimates.slice(0, 4).map((item) => item.summary),
+      effect_estimates: primaryEffectEstimates.slice(0, 4).map((item) => item.summary),
       notes: report.statistical_summary.notes.slice(0, 4)
     },
     failure_taxonomy: report.failure_taxonomy.slice(0, 6).map((item) => ({
@@ -598,9 +624,10 @@ function buildClaimVerificationFallback(
     );
   }
 
-  if (report.condition_comparisons.length === 0 && report.paper_claims.length > 0) {
+  const primaryComparison = resolveExplicitPrimaryComparison(report);
+  if (!primaryComparison && report.paper_claims.length > 0) {
     findings.push(
-      createFinding("claim_verifier", "Claim verifier", "claim_verification", "medium", "No primary comparison for drafted claims", "Claims are present but the report does not expose a primary condition comparison to justify them.", ["result_analysis.json"], claimIds(report.paper_claims), "Add a grounded comparison or soften the claims to descriptive statements only.", 0.74)
+      createFinding("claim_verifier", "Claim verifier", "claim_verification", "medium", "No explicit primary comparison for drafted claims", "Claims are present but the report does not expose a uniquely bound primary ResultsArtifactV2 comparison to justify them.", ["result_analysis.json"], claimIds(report.paper_claims), "Bind primary_comparison_id to a valid ResultsArtifactV2 comparison or soften the claims to descriptive statements only.", 0.74)
     );
   }
 
@@ -679,6 +706,12 @@ function buildStatisticsFallback(
 ): SpecialistReviewResult {
   const findings: ReviewFinding[] = [];
   const executedTrials = report.statistical_summary.executed_trials ?? report.execution_summary.observation_count ?? 0;
+  const primaryComparison = resolveExplicitPrimaryComparison(report);
+  const hasPrimaryEffectEstimate = primaryComparison
+    ? report.statistical_summary.effect_estimates.some(
+        (item) => item.comparison_id === primaryComparison.comparison.id
+      )
+    : false;
 
   if (executedTrials <= 0) {
     findings.push(
@@ -698,9 +731,9 @@ function buildStatisticsFallback(
     );
   }
 
-  if (report.statistical_summary.effect_estimates.length === 0 && report.condition_comparisons.length > 0) {
+  if (primaryComparison && !hasPrimaryEffectEstimate) {
     findings.push(
-      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", "medium", "Missing effect estimate summary", "Condition comparisons exist but no structured effect estimates were emitted.", ["result_analysis.json"], [], "Add effect estimates for the primary comparisons.", 0.73)
+      createFinding("statistics_reviewer", "Statistics reviewer", "statistics", "medium", "Missing primary effect estimate summary", "The explicitly selected primary comparison has no matching structured effect estimate.", ["result_analysis.json"], [], "Add an effect estimate whose comparison_id matches primary_comparison_id.", 0.73)
     );
   }
 
@@ -972,14 +1005,16 @@ function buildDecision(
   const hasRuntimeFailure =
     report.failure_taxonomy.some((item) => item.category === "runtime_failure" && item.severity === "high") ||
     report.verifier_feedback?.status === "fail";
-  const supportedComparison = report.condition_comparisons.some((item) => item.hypothesis_supported === true);
-  const unsupportedComparison = report.condition_comparisons.some((item) => item.hypothesis_supported === false);
+  const primaryComparison = resolveExplicitPrimaryComparison(report);
+  const unsupportedComparison = primaryComparison?.hypothesis_supported === false;
   const hasClaimBlocker = highFindings.some((item) => item.dimension === "claim_verification");
   const shouldResetHypotheses =
-    report.transition_recommendation?.action === "backtrack_to_hypotheses" ||
-    (!supportedComparison &&
-      unsupportedComparison &&
-      (report.overview.objective_status !== "met" || hasClaimBlocker));
+    unsupportedComparison &&
+    (
+      report.transition_recommendation?.action === "backtrack_to_hypotheses" ||
+      report.overview.objective_status !== "met" ||
+      hasClaimBlocker
+    );
   const hasMethodologyBlocker = highFindings.some((item) => item.dimension === "methodology" || item.dimension === "statistics");
   const hasIntegrityBlocker = highFindings.some((item) => item.dimension === "integrity" || item.dimension === "claim_verification");
   const hasWritingBlocker = highFindings.some((item) => item.dimension === "writing_readiness");
@@ -1042,6 +1077,16 @@ function buildDecision(
     blocking_finding_ids: blockingIds,
     required_actions: revisionPlan.items.slice(0, 4).map((item) => item.action)
   };
+}
+
+function resolveExplicitPrimaryComparison(report: AnalysisReport) {
+  if (!report.primary_comparison_id) {
+    return undefined;
+  }
+  return resolvePrimaryResultsArtifactComparison(
+    report.results_artifact,
+    report.primary_comparison_id
+  );
 }
 
 function buildPaperSurfaceFindings(issues: PaperSurfaceReviewIssue[]): ReviewFinding[] {

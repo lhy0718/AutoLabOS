@@ -6,6 +6,7 @@ import {
   ObjectiveMetricProfile
 } from "../objectiveMetric.js";
 import { AnalysisReport, parseAnalysisReport } from "../resultAnalysis.js";
+import { validateResultsArtifactV2 } from "./resultsTableSchema.js";
 import { ConstraintProfile } from "../runConstraints.js";
 import { buildBibtexEntry } from "../collection/bibtex.js";
 
@@ -234,6 +235,10 @@ export function buildPaperWriterPrompt(input: {
   const allowedEvidenceIds = uniqueStrings(input.bundle.evidenceRows.map((item) => item.evidence_id)).slice(0, 80);
   const allowedPaperIds = uniqueStrings(input.bundle.corpus.map((item) => item.paper_id)).slice(0, 80);
   const relatedWorkBrief = buildRelatedWorkBrief(input.bundle);
+  const resultAnalysisDigest = buildPromptResultAnalysisDigest(input.bundle.resultAnalysis);
+  const hasCanonicalResultsArtifact = validateResultsArtifactV2(
+    input.bundle.resultAnalysis?.results_artifact
+  ).valid;
   const promptPayload = {
     run: {
       title: input.bundle.runTitle,
@@ -272,9 +277,11 @@ export function buildPaperWriterPrompt(input: {
       selected_summary: input.bundle.experimentPlan?.selectedSummary,
       excerpt: truncateText(input.bundle.experimentPlan?.rawText || "", 1400)
     },
-    result_analysis: buildPromptResultAnalysisDigest(input.bundle.resultAnalysis),
+    result_analysis: resultAnalysisDigest,
     detailed_results:
-      input.bundle.latestResults && typeof input.bundle.latestResults === "object"
+      hasCanonicalResultsArtifact
+      && input.bundle.latestResults
+      && typeof input.bundle.latestResults === "object"
         ? {
             protocol: (() => {
               const protocol = (input.bundle.latestResults as Record<string, unknown>).protocol;
@@ -452,6 +459,9 @@ export function buildPaperWriterPrompt(input: {
     "- Section-level evidence_ids and citation_paper_ids should summarize the union of the paragraph-level grounding.",
     "- Results must mention the objective metric, the observed outcome when available, dataset-level analysis, uncertainty or CI if available, and runtime or memory discussion when available.",
     "- Method must describe datasets, protocol, metrics, and reproducibility-relevant setup when those details exist in the payload.",
+    "- Treat result_analysis.results_artifact as the canonical quantitative evidence slice.",
+    "- Follow only explicit subject_observation_id/reference_observation_id links and explicit series roles; do not infer baseline, comparator, primary, or winner roles from labels, array order, or scores.",
+    "- When result_analysis.results_artifact has availability=unavailable, quantitative result claims are blocked; do not recover them from historical rows, metric summaries, labels, scores, or array order.",
     "- If evidence is weak, weaken the claim language instead of shortening the section.",
     "- Use only provided paper_ids and evidence_ids.",
     "- When related_work_brief has at least 3 notes, write Related Work as two paragraphs: one taxonomy/comparison paragraph and one positioning paragraph.",
@@ -469,16 +479,38 @@ export function buildPaperWriterPrompt(input: {
   ].join("\n");
 }
 
-function buildPromptResultAnalysisDigest(resultAnalysis?: ResultAnalysisArtifact): Record<string, unknown> | undefined {
+const RESULTS_ARTIFACT_UNAVAILABLE_REASON =
+  "A valid ResultsArtifactV2 was not supplied. Quantitative paper claims must not be drafted from historical result rows or summaries.";
+
+function buildPromptResultAnalysisDigest(resultAnalysis?: ResultAnalysisArtifact): Record<string, unknown> {
   if (!resultAnalysis) {
-    return undefined;
+    return {
+      results_artifact: buildPromptResultsArtifactSlice(undefined),
+      quantitative_claims: {
+        allowed: false,
+        reason: RESULTS_ARTIFACT_UNAVAILABLE_REASON
+      }
+    };
   }
-  const resultsTable = arrayValue(resultAnalysis.results_table);
-  const metricTable = arrayValue(resultAnalysis.metric_table);
-  const conditionComparisons = arrayValue(resultAnalysis.condition_comparisons);
-  const primaryFindings = stringListValue(resultAnalysis.primary_findings);
+  const resultsArtifact = buildPromptResultsArtifactSlice(resultAnalysis.results_artifact);
   const limitations = stringListValue(resultAnalysis.limitations);
   const warnings = stringListValue(resultAnalysis.warnings);
+  if ("availability" in resultsArtifact) {
+    return {
+      analysis_version: resultAnalysis.analysis_version,
+      generated_at: resultAnalysis.generated_at,
+      results_artifact: resultsArtifact,
+      quantitative_claims: {
+        allowed: false,
+        reason: resultsArtifact.reason
+      },
+      limitations: limitations.slice(0, 8).map((item) => truncateText(item, 500)),
+      warnings: warnings.slice(0, 8).map((item) => truncateText(item, 400))
+    };
+  }
+
+  const metricTable = arrayValue(resultAnalysis.metric_table);
+  const primaryFindings = stringListValue(resultAnalysis.primary_findings);
   const paperClaims = arrayValue(resultAnalysis.paper_claims);
   const figureSpecs = arrayValue(resultAnalysis.figure_specs);
   const failureTaxonomy = arrayValue(resultAnalysis.failure_taxonomy);
@@ -505,23 +537,12 @@ function buildPromptResultAnalysisDigest(resultAnalysis?: ResultAnalysisArtifact
       maxObjectKeys: 12,
       maxStringLength: 500
     }),
-    results_table: resultsTable.slice(0, 12).map((row) => compactPromptJsonValue(row, {
-      maxDepth: 2,
-      maxArrayItems: 8,
-      maxObjectKeys: 8,
-      maxStringLength: 300
-    })),
+    results_artifact: resultsArtifact,
     metric_table: metricTable.slice(0, 16).map((row) => compactPromptJsonValue(row, {
       maxDepth: 3,
       maxArrayItems: 8,
       maxObjectKeys: 12,
       maxStringLength: 300
-    })),
-    condition_comparisons: conditionComparisons.slice(0, 8).map((item) => compactPromptJsonValue(item, {
-      maxDepth: 4,
-      maxArrayItems: 8,
-      maxObjectKeys: 14,
-      maxStringLength: 500
     })),
     execution_summary: compactPromptJsonValue(resultAnalysis.execution_summary, {
       maxDepth: 3,
@@ -569,11 +590,121 @@ function buildPromptResultAnalysisDigest(resultAnalysis?: ResultAnalysisArtifact
       maxStringLength: 500
     }),
     raw_metrics_omitted: {
-      reason: "Full raw metrics are intentionally omitted from paper-writing prompts; use the compact result table, comparisons, statistical summary, verifier feedback, and claims above.",
+      reason: "Full raw metrics are intentionally omitted from paper-writing prompts; use the canonical ResultsArtifactV2 slice, statistical summary, verifier feedback, and claims above.",
       metric_key_count: Object.keys(resultAnalysis.metrics || {}).length,
       sample_metric_keys: Object.keys(resultAnalysis.metrics || {}).slice(0, 20)
     }
   };
+}
+
+const RESULTS_ARTIFACT_PROMPT_LIMITS = {
+  metrics: 16,
+  series: 16,
+  observations: 16,
+  comparisons: 8
+} as const;
+
+interface PromptUnavailableResultsArtifact {
+  availability: "unavailable";
+  claim_status: "blocked";
+  quantitative_claims_allowed: false;
+  reason: string;
+  validation_issues: string[];
+}
+
+function buildPromptResultsArtifactSlice(
+  artifact: unknown
+): AnalysisReport["results_artifact"] | PromptUnavailableResultsArtifact {
+  const validation = validateResultsArtifactV2(artifact);
+  if (!validation.valid) {
+    return {
+      availability: "unavailable",
+      claim_status: "blocked",
+      quantitative_claims_allowed: false,
+      reason: RESULTS_ARTIFACT_UNAVAILABLE_REASON,
+      validation_issues: validation.issues.slice(0, 8)
+    };
+  }
+
+  const canonicalArtifact = artifact as AnalysisReport["results_artifact"];
+  const comparisons = canonicalArtifact.comparisons.slice(0, RESULTS_ARTIFACT_PROMPT_LIMITS.comparisons);
+  const requiredObservationIds = new Set(
+    comparisons.flatMap((comparison) => [
+      comparison.subject_observation_id,
+      comparison.reference_observation_id
+    ])
+  );
+  const observations = selectReferencedArtifactItems(
+    canonicalArtifact.observations,
+    requiredObservationIds,
+    RESULTS_ARTIFACT_PROMPT_LIMITS.observations
+  );
+  const requiredMetricIds = new Set(observations.map((observation) => observation.metric_id));
+  const requiredSeriesIds = new Set(observations.map((observation) => observation.series_id));
+  const metrics = selectReferencedArtifactItems(
+    canonicalArtifact.metrics,
+    requiredMetricIds,
+    RESULTS_ARTIFACT_PROMPT_LIMITS.metrics
+  );
+  const series = selectReferencedArtifactItems(
+    canonicalArtifact.series,
+    requiredSeriesIds,
+    RESULTS_ARTIFACT_PROMPT_LIMITS.series
+  );
+
+  return {
+    schema_version: canonicalArtifact.schema_version,
+    metrics: metrics.map((metric) => ({
+      id: metric.id,
+      label: metric.label,
+      direction: metric.direction,
+      ...(metric.unit !== undefined ? { unit: metric.unit } : {})
+    })),
+    series: series.map((item) => ({
+      id: item.id,
+      label: item.label,
+      ...(item.role !== undefined ? { role: item.role } : {}),
+      dimensions: { ...item.dimensions }
+    })),
+    observations: observations.map((observation) => ({
+      id: observation.id,
+      series_id: observation.series_id,
+      metric_id: observation.metric_id,
+      scope: { ...observation.scope },
+      value: observation.value,
+      ...(observation.evidence_refs !== undefined
+        ? { evidence_refs: [...observation.evidence_refs] }
+        : {})
+    })),
+    comparisons: comparisons.map((comparison) => ({
+      id: comparison.id,
+      subject_observation_id: comparison.subject_observation_id,
+      reference_observation_id: comparison.reference_observation_id,
+      delta: comparison.delta,
+      ...(comparison.judgement !== undefined ? { judgement: comparison.judgement } : {}),
+      ...(comparison.evidence_refs !== undefined
+        ? { evidence_refs: [...comparison.evidence_refs] }
+        : {})
+    }))
+  };
+}
+
+function selectReferencedArtifactItems<T extends { id: string }>(
+  items: T[],
+  requiredIds: ReadonlySet<string>,
+  limit: number
+): T[] {
+  const availableIds = new Set(items.map((item) => item.id));
+  const selectedIds = new Set(
+    [...requiredIds].filter((id) => availableIds.has(id))
+  );
+  for (const item of items) {
+    if (selectedIds.size >= limit) {
+      break;
+    }
+    selectedIds.add(item.id);
+  }
+  return items.filter((item) => selectedIds.has(item.id));
 }
 
 function arrayValue(value: unknown): unknown[] {
@@ -695,6 +826,9 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     .sort((left, right) => right.confidence - left.confidence)
     .slice(0, 4);
   const relatedWorkBrief = buildRelatedWorkBrief(bundle);
+  const hasCanonicalResultsArtifact = validateResultsArtifactV2(
+    bundle.resultAnalysis?.results_artifact
+  ).valid;
   const citedPaperIds = uniqueStrings(
     [
       ...bundle.paperSummaries.slice(0, 4).map((item) => item.paper_id),
@@ -725,9 +859,11 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
   ].filter(Boolean).join(" ");
   const resultsParagraph = [
     `Primary objective: ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`,
-    bundle.resultAnalysis?.objective_metric?.evaluation?.summary ||
-      "Results are summarized from the latest experiment outputs.",
-    typeof bundle.resultAnalysis?.mean_score === "number"
+    hasCanonicalResultsArtifact
+      ? bundle.resultAnalysis?.objective_metric?.evaluation?.summary ||
+        "Results are summarized from the canonical ResultsArtifactV2."
+      : "Canonical quantitative results are unavailable because no valid ResultsArtifactV2 was supplied; quantitative claims are blocked.",
+    hasCanonicalResultsArtifact && typeof bundle.resultAnalysis?.mean_score === "number"
       ? `Mean numeric score across reported metrics is ${bundle.resultAnalysis.mean_score}.`
       : ""
   ].filter(Boolean).join(" ");
@@ -804,7 +940,9 @@ export function buildFallbackPaperDraft(bundle: PaperWritingBundle): PaperDraft 
     abstract: [
       `We study ${safeTopic}.`,
       `The draft integrates literature analysis, hypothesis generation, experiment design, and experimental results around the objective metric ${describeObjectiveMetricForNarrative(bundle.objectiveMetric)}.`,
-      bundle.resultAnalysis?.objective_metric?.evaluation?.summary || ""
+      hasCanonicalResultsArtifact
+        ? bundle.resultAnalysis?.objective_metric?.evaluation?.summary || ""
+        : "A canonical ResultsArtifactV2 was not available, so this draft does not make quantitative result claims."
     ].filter(Boolean).join(" "),
     keywords: uniqueStrings([
       bundle.topic,
@@ -2311,12 +2449,13 @@ function renderResultsLines(
     }
   }
 
-  if ((resultAnalysis?.condition_comparisons || []).length > 0) {
+  const comparisonSummaries = resultAnalysis
+    ? buildCanonicalComparisonSummaries(resultAnalysis.results_artifact)
+    : [];
+  if (comparisonSummaries.length > 0) {
     lines.push("Comparative findings:");
-    for (const comparison of (resultAnalysis?.condition_comparisons || []).slice(0, 2)) {
-      if (comparison?.summary) {
-        lines.push(`- ${latexEscape(comparison.summary)}`);
-      }
+    for (const summary of comparisonSummaries.slice(0, 2)) {
+      lines.push(`- ${latexEscape(summary)}`);
     }
   }
 
@@ -2409,6 +2548,36 @@ function renderResultsLines(
   }
 
   return lines;
+}
+
+function buildCanonicalComparisonSummaries(
+  artifact: AnalysisReport["results_artifact"]
+): string[] {
+  if (!validateResultsArtifactV2(artifact).valid) {
+    return [];
+  }
+  const metricsById = new Map(artifact.metrics.map((metric) => [metric.id, metric] as const));
+  const seriesById = new Map(artifact.series.map((series) => [series.id, series] as const));
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  return artifact.comparisons.flatMap((comparison) => {
+    const subject = observationsById.get(comparison.subject_observation_id);
+    const reference = observationsById.get(comparison.reference_observation_id);
+    if (!subject || !reference || subject.metric_id !== reference.metric_id) {
+      return [];
+    }
+    const metric = metricsById.get(subject.metric_id);
+    const subjectSeries = seriesById.get(subject.series_id);
+    const referenceSeries = seriesById.get(reference.series_id);
+    if (!metric || !subjectSeries || !referenceSeries) {
+      return [];
+    }
+    const unit = metric.unit ? ` ${metric.unit}` : "";
+    return [
+      `${metric.label} (${metric.id}, ${metric.direction}): ${subjectSeries.label}=${subject.value}${unit}; ${referenceSeries.label}=${reference.value}${unit}; subject-minus-reference delta=${comparison.delta}${unit}.`
+    ];
+  });
 }
 
 function renderResultMetricTable(resultAnalysis: ResultAnalysisArtifact | undefined): string[] {

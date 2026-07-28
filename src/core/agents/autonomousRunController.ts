@@ -6,6 +6,15 @@ import { GRAPH_NODE_ORDER, GraphNodeId, RunRecord, TransitionRecommendation } fr
 import { AgentOrchestrator } from "./agentOrchestrator.js";
 import { AutonomousProgressReporter, AutonomousCycleSnapshot, BestBranchInfo } from "./autonomousProgressReporter.js";
 import { writeRunArtifact, safeRead } from "../nodes/helpers.js";
+import {
+  type TopicProbeFollowupExecutionLease,
+  TopicProbeFollowupRunManager,
+  type TopicProbeFollowupRunResult
+} from "../topicProbeFollowupRun.js";
+import type {
+  RunPromotionExecutionState,
+  RunPromotionTerminalStatus
+} from "../runs/runPromotionStore.js";
 
 // ---------------------------------------------------------------------------
 // Policy types
@@ -96,8 +105,21 @@ export type AutonomousStopReason =
   | "manual_review_required"
   | "repeated_recommendation"
   | "stagnation"
+  | "followup_handoff_blocked"
   | "catastrophic_fuse"
   | "consecutive_failures";
+
+export interface TopicProbeFollowupRunConsumer {
+  consumePromotedFollowup(parentRun: RunRecord): Promise<TopicProbeFollowupRunResult>;
+  heartbeatExecution?(
+    lease: TopicProbeFollowupExecutionLease
+  ): Promise<TopicProbeFollowupExecutionLease>;
+  markExecutionTerminal?(
+    lease: TopicProbeFollowupExecutionLease,
+    status: RunPromotionTerminalStatus,
+    detail?: string
+  ): Promise<RunPromotionExecutionState>;
+}
 
 // ---------------------------------------------------------------------------
 // Novelty signals
@@ -206,7 +228,9 @@ export class AutonomousRunController {
   constructor(
     private readonly runStore: RunStore,
     private readonly orchestrator: AgentOrchestrator,
-    private readonly eventStream: EventStream
+    private readonly eventStream: EventStream,
+    private readonly topicProbeFollowupRuns: TopicProbeFollowupRunConsumer =
+      buildDefaultTopicProbeFollowupConsumer(runStore)
   ) {}
 
   // -------------------------------------------------------------------------
@@ -302,6 +326,7 @@ export class AutonomousRunController {
             };
           }
 
+
           repeatedRecommendationCount = key === lastRecommendationKey ? repeatedRecommendationCount + 1 : 1;
           lastRecommendationKey = key;
           const stopThreshold = policy.mode === "overnight"
@@ -382,6 +407,7 @@ export class AutonomousRunController {
     opts?: { abortSignal?: AbortSignal }
   ): Promise<AutonomousRunResult> {
     const startedAt = Date.now();
+    let activeRunId = runId;
     let approvalsApplied = 0;
     let transitionsApplied = 0;
     let iterations = 0;
@@ -399,10 +425,12 @@ export class AutonomousRunController {
     let previousMetricsHash = "";
     let loopDirection: "exploring" | "consolidating" = "exploring";
     let bestBranch: BestBranchInfo | undefined;
+    let activePromotionLease: TopicProbeFollowupExecutionLease | undefined;
+    let activePromotionTerminalState: RunPromotionExecutionState | undefined;
 
     const reporter = new AutonomousProgressReporter();
 
-    let run = await this.getRunOrThrow(runId);
+    let run = await this.getRunOrThrow(activeRunId);
     const runtimePolicy = Number.isFinite(policy.maxMinutes)
       ? `${Math.round(policy.maxMinutes / 60)}h`
       : "unbounded";
@@ -436,7 +464,7 @@ export class AutonomousRunController {
       stopReason: AutonomousStopReason,
       message?: string
     ): Promise<AutonomousRunResult> => {
-      run = await this.getRunOrThrow(runId);
+      run = await this.getRunOrThrow(activeRunId);
       const paperStatus = await this.readPaperStatus(run);
       const gateResult = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
       const snap: AutonomousCycleSnapshot = {
@@ -472,7 +500,150 @@ export class AutonomousRunController {
         this.emit(run, "Autonomous mode: user abort.");
         return buildStopResult("canceled", "User abort.", "user_stop");
       }
-      run = await this.getRunOrThrow(runId);
+      run = await this.getRunOrThrow(activeRunId);
+
+      const pendingAtBoundary = run.graph.pendingTransition;
+      const stateAtBoundary = run.graph.nodeStates[run.currentNode];
+      if (
+        run.status === "paused"
+        && stateAtBoundary.status === "needs_approval"
+        && pendingAtBoundary?.action === "pause_for_human"
+      ) {
+        const key = recommendationKey(pendingAtBoundary);
+        this.emit(run, `[autonomous] Paused for required human review at ${run.currentNode}: ${key}.`);
+        return buildStopResult(
+          "stopped",
+          `Manual review required: ${key} at ${run.currentNode}.`,
+          "manual_review_required"
+        );
+      }
+
+      if (run.executionRole === "delegated_once") {
+        const routeMetadata = describeDelegatedRunRoute(run);
+        if (
+          activePromotionLease
+          && activePromotionLease.childRunId !== run.id
+        ) {
+          return buildStopResult(
+            "stopped",
+            `Delegated execution lease/run mismatch (${routeMetadata}).`,
+            "followup_handoff_blocked"
+          );
+        }
+        if (
+          activePromotionTerminalState
+          && activePromotionTerminalState.childRunId !== run.id
+        ) {
+          return buildStopResult(
+            "stopped",
+            `Delegated execution terminal/run mismatch (${routeMetadata}).`,
+            "followup_handoff_blocked"
+          );
+        }
+
+        if (!activePromotionLease && !activePromotionTerminalState) {
+          const recovered = await this.recoverDelegatedExecution(run);
+          if (
+            (recovered.status !== "created" && recovered.status !== "reused")
+            || recovered.childRun?.id !== run.id
+          ) {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution recovery blocked (${routeMetadata}): ${
+                recovered.reasons.join(", ") || "reservation unavailable"
+              }.`,
+              "followup_handoff_blocked"
+            );
+          }
+          activePromotionLease = recovered.executionLease;
+          activePromotionTerminalState = recovered.terminalState;
+        }
+
+        if (run.delegatedSuccessor?.state === "delegated" && activePromotionLease) {
+          try {
+            activePromotionTerminalState = await this.markDelegatedExecutionCompleted(
+              activePromotionLease,
+              "delegated successor reserved"
+            );
+            activePromotionLease = undefined;
+          } catch (error) {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution terminal fencing failed (${routeMetadata}): ${normalizeControllerError(error)}.`,
+              "followup_handoff_blocked"
+            );
+          }
+        }
+
+        if (run.status === "completed") {
+          if (activePromotionLease) {
+            try {
+              activePromotionTerminalState = await this.markDelegatedExecutionCompleted(
+                activePromotionLease,
+                "delegated run completed"
+              );
+              activePromotionLease = undefined;
+            } catch (error) {
+              return buildStopResult(
+                "stopped",
+                `Delegated execution terminal fencing failed (${routeMetadata}): ${normalizeControllerError(error)}.`,
+                "followup_handoff_blocked"
+              );
+            }
+          }
+          if (activePromotionTerminalState?.status !== "completed") {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution terminal state is unavailable (${routeMetadata}).`,
+              "followup_handoff_blocked"
+            );
+          }
+          this.emit(run, `[autonomous] Delegated run completed (${routeMetadata}); one-shot stop applied.`);
+          return buildStopResult(
+            "completed",
+            `Delegated one-shot run completed (${routeMetadata}).`,
+            "run_completed",
+            `Delegated one-shot run completed without autonomous re-cycling (${routeMetadata}).`
+          );
+        }
+
+        if (run.delegatedSuccessor?.state === "delegated") {
+          if (activePromotionTerminalState?.status !== "completed") {
+            return buildStopResult(
+              "stopped",
+              `Delegated successor recovery requires a completed inbound lease (${routeMetadata}).`,
+              "followup_handoff_blocked"
+            );
+          }
+        } else {
+          if (!activePromotionLease) {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution claim is unavailable (${routeMetadata}).`,
+              "followup_handoff_blocked"
+            );
+          }
+          if (!this.topicProbeFollowupRuns.heartbeatExecution) {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution heartbeat support is unavailable (${routeMetadata}).`,
+              "followup_handoff_blocked"
+            );
+          }
+          try {
+            activePromotionLease = await this.topicProbeFollowupRuns.heartbeatExecution(
+              activePromotionLease
+            );
+            activePromotionTerminalState = undefined;
+          } catch (error) {
+            return buildStopResult(
+              "stopped",
+              `Delegated execution lease lost (${routeMetadata}): ${normalizeControllerError(error)}.`,
+              "followup_handoff_blocked"
+            );
+          }
+        }
+      }
 
       // --- Emergency fuse: total iterations ---
       if (iterations >= policy.fuse.maxTotalIterations) {
@@ -495,8 +666,9 @@ export class AutonomousRunController {
 
       // --- Write-paper gate (top-of-loop): catches runtime auto-advancing past review ---
       if (run.currentNode === "write_paper" && run.status === "running") {
-        bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
-        const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+        const currentBranch = await this.evaluateCurrentBranch(run, researchCycles, bestBranch);
+        bestBranch = this.selectStrongerBranch(bestBranch, currentBranch);
+        const gate = this.meetsWritePaperBar(currentBranch, policy.writePaperGate);
         if (!gate.passes) {
           this.emit(run, `[autonomous] Write-paper gate (pre-execution): blocked. ${gate.blockers.join(", ")}`);
           await reporter.writeSnapshot(run, {
@@ -506,17 +678,17 @@ export class AutonomousRunController {
             paperStatus: await this.readPaperStatus(run),
             stopRisk: "write_paper_gate_blocked",
             message: `Write-paper gate blocked (pre-execution): ${gate.blockers.join(", ")}`,
-            bestBranch: bestBranch?.hypothesis,
-            paperCandidateStatus: bestBranch?.manuscriptType,
-            evidenceGaps: bestBranch?.evidenceGaps,
+            bestBranch: currentBranch.hypothesis,
+            paperCandidateStatus: currentBranch.manuscriptType,
+            evidenceGaps: currentBranch.evidenceGaps,
             writePaperGateBlocked: true,
             writePaperGateBlockers: gate.blockers,
             loopDirection: "consolidating",
             runtimePolicy,
-            ...this.bestBranchQualityFields(bestBranch)
+            ...this.bestBranchQualityFields(currentBranch)
           });
           try {
-            await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+            await this.orchestrator.jumpToNode(run.id, "design_experiments", "safe",
               `Write-paper evidence bar not met (pre-execution): ${gate.blockers.join(", ")}`);
             this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
           } catch {
@@ -540,7 +712,8 @@ export class AutonomousRunController {
         previousMetricsHash = await this.readMetricsHash(run);
 
         // Update best-branch tracking
-        bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
+        const currentBranch = await this.evaluateCurrentBranch(run, researchCycles, bestBranch);
+        bestBranch = this.selectStrongerBranch(bestBranch, currentBranch);
 
         // Check stagnation
         const windowSignals = noveltySignals.filter(
@@ -560,19 +733,19 @@ export class AutonomousRunController {
         }
 
         // Determine loop direction: explore vs consolidate
-        const shouldConsolidate = this.shouldConsolidate(bestBranch, researchCycles, lastPaperPressureCycle, policy);
+        const shouldConsolidate = this.shouldConsolidate(currentBranch, researchCycles, lastPaperPressureCycle, policy);
         loopDirection = shouldConsolidate ? "consolidating" : "exploring";
 
-        // Paper pressure: periodically consolidate the strongest branch
-        if (shouldConsolidate && bestBranch) {
+        // Periodically re-enter the node that owns the current cycle's gap.
+        if (shouldConsolidate) {
           lastPaperPressureCycle = researchCycles;
           loopDirection = "consolidating";
           this.emit(run, `Paper pressure: consolidating best branch at cycle ${researchCycles}.`);
 
-          const upgradeAction = this.determineUpgradeAction(bestBranch);
-          if (bestBranch) {
-            bestBranch.upgradeActions.push(upgradeAction);
-          }
+          const upgradeAction = this.determineUpgradeAction(currentBranch);
+          currentBranch.upgradeActions.push(upgradeAction);
+          const currentGate = this.meetsWritePaperBar(currentBranch, policy.writePaperGate);
+          const upgradeTarget: GraphNodeId = currentGate.passes ? "review" : "design_experiments";
 
           // Record paper quality upgrade as novelty
           noveltySignals.push({
@@ -588,25 +761,32 @@ export class AutonomousRunController {
             paperStatus: await this.readPaperStatus(run),
             stopRisk: stagnantWindows > 0 ? "stagnation_risk" : "none",
             message: `Cycle ${researchCycles}: consolidating best branch for paper quality.`,
-            bestBranch: bestBranch?.hypothesis,
+            bestBranch: currentBranch.hypothesis,
             latestUpgradeAction: upgradeAction,
-            paperCandidateStatus: bestBranch?.manuscriptType,
-            evidenceGaps: bestBranch?.evidenceGaps,
+            paperCandidateStatus: currentBranch.manuscriptType,
+            evidenceGaps: currentBranch.evidenceGaps,
             nextUpgradeAction: upgradeAction,
             loopDirection: "consolidating",
             whyContinued: `Best branch has upgrade potential: ${upgradeAction}`,
-            ...this.bestBranchQualityFields(bestBranch)
+            writePaperGateBlocked: !currentGate.passes,
+            writePaperGateBlockers: currentGate.blockers,
+            ...this.bestBranchQualityFields(currentBranch)
           });
 
-          // Jump to review to trigger paper-quality improvement
+          // Re-enter the node that owns the missing evidence. Review is only
+          // eligible once the current cycle itself clears the write-paper bar.
           try {
-            await this.orchestrator.jumpToNode(run.id, "review", "force", `Paper pressure consolidation at cycle ${researchCycles}`);
-            this.emit(run, `Jumped to review for paper-quality consolidation (cycle ${researchCycles}).`);
-            if (bestBranch) {
-              bestBranch.lastUpgradeCycle = researchCycles;
-            }
+            await this.orchestrator.jumpToNode(
+              run.id,
+              upgradeTarget,
+              "safe",
+              `Evidence-owned consolidation at cycle ${researchCycles}: ${upgradeAction}`
+            );
+            this.emit(run, `Re-entered ${upgradeTarget} for evidence-owned consolidation (cycle ${researchCycles}).`);
+            currentBranch.lastUpgradeCycle = researchCycles;
+            bestBranch.lastUpgradeCycle = researchCycles;
           } catch {
-            this.emit(run, "Paper pressure: failed to jump to review. Continuing exploration.");
+            this.emit(run, `Evidence-owned consolidation: failed to jump to ${upgradeTarget}. Continuing exploration.`);
           }
           continue;
         }
@@ -634,7 +814,7 @@ export class AutonomousRunController {
         consecutiveFailures = 0;
 
         try {
-          await this.orchestrator.jumpToNode(run.id, "generate_hypotheses", "force", `Re-cycle for exploration cycle ${researchCycles + 1}`);
+          await this.orchestrator.jumpToNode(run.id, "generate_hypotheses", "safe", `Re-cycle for exploration cycle ${researchCycles + 1}`);
           this.emit(run, `Re-cycling to generate_hypotheses for cycle ${researchCycles + 1}.`);
         } catch {
           this.emit(run, "Autonomous mode: failed to re-cycle. Stopping.");
@@ -677,6 +857,108 @@ export class AutonomousRunController {
             );
           }
 
+          if (recommendation.action === "delegate_successor") {
+            if (!this.isAuthorizedSuccessorDelegation(run, recommendation)) {
+              this.emit(
+                run,
+                `[autonomous] Delegated successor request requires human review: ${key}.`
+              );
+              return buildStopResult(
+                "stopped",
+                `Manual review required for invalid delegated successor request: ${key} at ${run.currentNode}.`,
+                "manual_review_required"
+              );
+            }
+
+            if (run.executionRole === "delegated_once") {
+              if (activePromotionLease) {
+                try {
+                  activePromotionTerminalState = await this.markDelegatedExecutionCompleted(
+                    activePromotionLease,
+                    "delegated child requested a successor"
+                  );
+                  activePromotionLease = undefined;
+                } catch (error) {
+                  return buildStopResult(
+                    "stopped",
+                    `Delegated execution terminal fencing failed (${describeDelegatedRunRoute(run)}): ${normalizeControllerError(error)}.`,
+                    "followup_handoff_blocked"
+                  );
+                }
+              } else if (activePromotionTerminalState?.status !== "completed") {
+                return buildStopResult(
+                  "stopped",
+                  `Delegated successor handoff requires a completed inbound lease (${describeDelegatedRunRoute(run)}).`,
+                  "followup_handoff_blocked"
+                );
+              }
+            }
+
+            const followup = await this.topicProbeFollowupRuns.consumePromotedFollowup(run);
+            if (
+              (followup.status === "created" || followup.status === "reused")
+              && followup.childRun
+            ) {
+              if (
+                followup.childRun.executionRole !== "delegated_once"
+                || !followup.childRun.promotionLineage
+              ) {
+                return buildStopResult(
+                  "stopped",
+                  "Delegated successor manager returned a non-delegated child.",
+                  "followup_handoff_blocked"
+                );
+              }
+              const routeMetadata = describeFollowupRoute(followup, followup.childRun);
+              this.emit(
+                run,
+                `[autonomous] Delegated successor ${followup.status}: ${followup.childRun.id} (${routeMetadata}).`
+              );
+              activeRunId = followup.childRun.id;
+              run = followup.childRun;
+              activePromotionLease = followup.executionLease;
+              activePromotionTerminalState = followup.terminalState;
+              bestBranch = undefined;
+              previousHypothesisNode = "";
+              previousAnalysisNote = "";
+              previousDesignNote = "";
+              previousMetricsHash = "";
+              stagnantWindows = 0;
+              repeatedRecommendationCount = 0;
+              lastRecommendationKey = undefined;
+              consecutiveFailures = 0;
+              loopDirection = "exploring";
+              noveltySignals.push({
+                cycle: researchCycles,
+                type: "new_experiment_artifact",
+                detail: `Activated a delegated successor (${routeMetadata}).`
+              });
+              await reporter.writeSnapshot(run, {
+                mode: "autonomous",
+                cycle: researchCycles,
+                iteration: iterations,
+                currentNode: run.currentNode,
+                status: "running",
+                noveltySignals: noveltySignals.slice(-10),
+                paperStatus: await this.readPaperStatus(run),
+                stopRisk: "none",
+                message: `Switched active run to delegated successor (${routeMetadata}).`,
+                loopDirection,
+                runtimePolicy
+              });
+              continue;
+            }
+
+            const reasons = followup.reasons.join(", ") || followup.status;
+            this.emit(run, `[autonomous] Delegated successor handoff blocked: ${reasons}.`);
+            return buildStopResult(
+              "stopped",
+              `Delegated successor handoff blocked: ${reasons}.`,
+              "followup_handoff_blocked"
+            );
+          }
+
+
           repeatedRecommendationCount = key === lastRecommendationKey ? repeatedRecommendationCount + 1 : 1;
           lastRecommendationKey = key;
 
@@ -688,8 +970,9 @@ export class AutonomousRunController {
           if (this.canApplyRecommendation(run, recommendation, policy)) {
             // Write-paper gate: block advancing from review unless evidence bar is met
             if (run.currentNode === "review" && recommendation.action === "advance") {
-              bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
-              const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+              const currentBranch = await this.evaluateCurrentBranch(run, researchCycles, bestBranch);
+              bestBranch = this.selectStrongerBranch(bestBranch, currentBranch);
+              const gate = this.meetsWritePaperBar(currentBranch, policy.writePaperGate);
               if (!gate.passes) {
                 this.emit(run, `[autonomous] Review→write_paper blocked: ${gate.blockers.join(", ")}. Backtracking.`);
                 await reporter.writeSnapshot(run, {
@@ -699,16 +982,16 @@ export class AutonomousRunController {
                   paperStatus: await this.readPaperStatus(run),
                   stopRisk: "write_paper_gate_blocked",
                   message: `Write-paper gate blocked: ${gate.blockers.join(", ")}`,
-                  bestBranch: bestBranch?.hypothesis,
-                  paperCandidateStatus: bestBranch?.manuscriptType,
-                  evidenceGaps: bestBranch?.evidenceGaps,
+                  bestBranch: currentBranch.hypothesis,
+                  paperCandidateStatus: currentBranch.manuscriptType,
+                  evidenceGaps: currentBranch.evidenceGaps,
                   writePaperGateBlocked: true,
                   writePaperGateBlockers: gate.blockers,
                   loopDirection: "consolidating",
-                  ...this.bestBranchQualityFields(bestBranch)
+                  ...this.bestBranchQualityFields(currentBranch)
                 });
                 try {
-                  await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+                  await this.orchestrator.jumpToNode(run.id, "design_experiments", "safe",
                     `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
                   this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
                 } catch {
@@ -737,45 +1020,18 @@ export class AutonomousRunController {
             continue;
           }
 
-          // In autonomous mode: auto-approve even non-auto-executable recommendations with relaxed confidence
-          if (recommendation.confidence >= policy.minTransitionConfidence) {
-            // Gate check for review→write_paper even on force-apply path
-            if (run.currentNode === "review" && recommendation.action === "advance") {
-              bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
-              const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
-              if (!gate.passes) {
-                this.emit(run, `[autonomous] Review→write_paper blocked (force path): ${gate.blockers.join(", ")}.`);
-                try {
-                  await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
-                    `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
-                } catch {
-                  return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
-                }
-                continue;
-              }
-            }
-            this.emit(run, `[autonomous] Force-applying recommendation ${key} (confidence=${recommendation.confidence}).`);
-            run = await this.orchestrator.applyPendingTransition(run.id);
-            transitionsApplied += 1;
-            continue;
-          }
-
-          // Last resort: auto-approve the node itself
-          if (policy.autoApproveNodes.includes(run.currentNode)) {
-            this.emit(run, `[autonomous] Auto-approving ${run.currentNode} despite low-confidence recommendation.`);
-            run = await this.orchestrator.approveCurrent(run.id);
-            approvalsApplied += 1;
-            continue;
-          }
-
-          this.emit(run, `[autonomous] Paused: cannot resolve recommendation ${key} at ${run.currentNode}.`);
+          this.emit(
+            run,
+            `[autonomous] Paused: recommendation ${key} is not explicitly auto-executable under the active policy.`
+          );
           return buildStopResult("stopped", `Manual review required: ${key} at ${run.currentNode}.`, "manual_review_required");
         }
 
         // No recommendation, but needs approval — gate check for review and write_paper
         if (run.currentNode === "review" || run.currentNode === "write_paper") {
-          bestBranch = await this.evaluateBestBranch(run, bestBranch, researchCycles);
-          const gate = this.meetsWritePaperBar(bestBranch, policy.writePaperGate);
+          const currentBranch = await this.evaluateCurrentBranch(run, researchCycles, bestBranch);
+          bestBranch = this.selectStrongerBranch(bestBranch, currentBranch);
+          const gate = this.meetsWritePaperBar(currentBranch, policy.writePaperGate);
           if (run.currentNode === "review" && !gate.passes) {
             // Review completed but evidence insufficient for write_paper — backtrack
             this.emit(run, `[autonomous] Review gate: write_paper blocked. ${gate.blockers.join(", ")}. Backtracking.`);
@@ -786,16 +1042,16 @@ export class AutonomousRunController {
               paperStatus: await this.readPaperStatus(run),
               stopRisk: "write_paper_gate_blocked",
               message: `Review gate: write_paper blocked. ${gate.blockers.join(", ")}`,
-              bestBranch: bestBranch?.hypothesis,
-              paperCandidateStatus: bestBranch?.manuscriptType,
-              evidenceGaps: bestBranch?.evidenceGaps,
+              bestBranch: currentBranch.hypothesis,
+              paperCandidateStatus: currentBranch.manuscriptType,
+              evidenceGaps: currentBranch.evidenceGaps,
               writePaperGateBlocked: true,
               writePaperGateBlockers: gate.blockers,
               loopDirection: "consolidating",
-              ...this.bestBranchQualityFields(bestBranch)
+              ...this.bestBranchQualityFields(currentBranch)
             });
             try {
-              await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+              await this.orchestrator.jumpToNode(run.id, "design_experiments", "safe",
                 `Write-paper evidence bar not met at review: ${gate.blockers.join(", ")}`);
               this.emit(run, "[autonomous] Backtracked to design_experiments to strengthen evidence.");
             } catch {
@@ -818,7 +1074,7 @@ export class AutonomousRunController {
           if (run.currentNode === "write_paper" && !gate.passes) {
             this.emit(run, `[autonomous] Write-paper evidence bar not met: ${gate.blockers.join(", ")}. Backtracking.`);
             try {
-              await this.orchestrator.jumpToNode(run.id, "design_experiments", "force",
+              await this.orchestrator.jumpToNode(run.id, "design_experiments", "safe",
                 `Write-paper evidence bar not met: ${gate.blockers.join(", ")}`);
             } catch {
               return buildStopResult("stopped", `Write-paper gate blocked: ${gate.blockers.join(", ")}`, "write_paper_gate");
@@ -840,10 +1096,14 @@ export class AutonomousRunController {
 
       // --- Execute current node ---
       try {
-        const response = await this.orchestrator.runCurrentAgentWithOptions(run.id, {
-          abortSignal: opts?.abortSignal,
-          stopAfterApprovalBoundary: true
-        });
+        const response = await this.runWithPromotionHeartbeat(
+          activePromotionLease,
+          opts?.abortSignal,
+          (abortSignal) => this.orchestrator.runCurrentAgentWithOptions(run.id, {
+            abortSignal,
+            stopAfterApprovalBoundary: true
+          })
+        );
         run = response.run;
         iterations += 1;
 
@@ -906,6 +1166,15 @@ export class AutonomousRunController {
     run: RunRecord,
     current: BestBranchInfo | undefined,
     cycle: number
+  ): Promise<BestBranchInfo> {
+    const candidate = await this.evaluateCurrentBranch(run, cycle, current);
+    return this.selectStrongerBranch(current, candidate);
+  }
+
+  async evaluateCurrentBranch(
+    run: RunRecord,
+    cycle: number,
+    prior?: BestBranchInfo
   ): Promise<BestBranchInfo> {
     const runDir = path.join(".autolabos", "runs", run.id);
 
@@ -990,8 +1259,8 @@ export class AutonomousRunController {
     }
 
     const upgradeActions = llmUpgradeActions && llmUpgradeActions.length > 0
-      ? llmUpgradeActions
-      : current?.upgradeActions || [];
+      ? [...llmUpgradeActions]
+      : [...(prior?.upgradeActions || [])];
 
     const branch: BestBranchInfo = {
       branchId: `cycle-${cycle}`,
@@ -1001,7 +1270,7 @@ export class AutonomousRunController {
       hasQuantitativeResults,
       hasResultTable,
       manuscriptType,
-      lastUpgradeCycle: current?.lastUpgradeCycle || 0,
+      lastUpgradeCycle: prior?.lastUpgradeCycle || 0,
       evidenceGaps,
       upgradeActions,
       llmScore,
@@ -1010,15 +1279,19 @@ export class AutonomousRunController {
       minimumGatePassed,
       minimumGateCeiling
     };
-
-    // Use LLM score when available for comparison, else fall back to heuristic
-    const currentScore = current ? (current.llmScore ?? this.branchScore(current)) : -1;
-    const newScore = llmScore ?? this.branchScore(branch);
-    if (current && currentScore > newScore) {
-      return { ...current, evidenceGaps: current.evidenceGaps };
-    }
-
     return branch;
+  }
+
+  private selectStrongerBranch(
+    current: BestBranchInfo | undefined,
+    candidate: BestBranchInfo
+  ): BestBranchInfo {
+    if (!current) {
+      return candidate;
+    }
+    const currentScore = current.llmScore ?? this.branchScore(current);
+    const candidateScore = candidate.llmScore ?? this.branchScore(candidate);
+    return currentScore > candidateScore ? current : candidate;
   }
 
   /** Simple numeric score for comparing branch quality */
@@ -1233,6 +1506,70 @@ export class AutonomousRunController {
     return "";
   }
 
+  private isAuthorizedSuccessorDelegation(
+    run: RunRecord,
+    recommendation: TransitionRecommendation
+  ): boolean {
+    return run.currentNode === "review"
+      && run.graph.currentNode === "review"
+      && recommendation.sourceNode === "review"
+      && recommendation.autoExecutable === true
+      && recommendation.targetNode === undefined;
+  }
+
+  private async recoverDelegatedExecution(
+    run: RunRecord
+  ): Promise<TopicProbeFollowupRunResult> {
+    const parentRunId = run.promotionLineage?.parentRunId;
+    if (!parentRunId) {
+      return {
+        status: "blocked",
+        reasons: ["delegated_execution_lineage_missing"]
+      };
+    }
+    const parent = await this.runStore.getRun(parentRunId);
+    if (!parent) {
+      return {
+        status: "blocked",
+        reasons: ["delegated_execution_parent_missing"]
+      };
+    }
+    const recovered = await this.topicProbeFollowupRuns.consumePromotedFollowup(parent);
+    if (
+      (recovered.status === "created" || recovered.status === "reused")
+      && recovered.childRun?.id !== run.id
+    ) {
+      return {
+        status: "blocked",
+        reasons: ["delegated_execution_recovery_child_mismatch"]
+      };
+    }
+    return recovered;
+  }
+
+  private async markDelegatedExecutionCompleted(
+    lease: TopicProbeFollowupExecutionLease,
+    detail: string
+  ): Promise<RunPromotionExecutionState> {
+    const markTerminal = this.topicProbeFollowupRuns.markExecutionTerminal;
+    if (!markTerminal) {
+      throw new Error("delegated_execution_terminal_persistence_unavailable");
+    }
+    const terminalState = await markTerminal.call(
+      this.topicProbeFollowupRuns,
+      lease,
+      "completed",
+      detail
+    );
+    if (
+      terminalState.childRunId !== lease.childRunId
+      || terminalState.status !== "completed"
+    ) {
+      throw new Error("delegated_execution_terminal_state_invalid");
+    }
+    return terminalState;
+  }
+
   private canApplyRecommendation(
     run: RunRecord,
     recommendation: TransitionRecommendation,
@@ -1244,7 +1581,10 @@ export class AutonomousRunController {
     if (recommendation.confidence < policy.minTransitionConfidence) {
       return false;
     }
-    if (recommendation.action === "pause_for_human") {
+    if (
+      recommendation.action === "pause_for_human"
+      || recommendation.action === "delegate_successor"
+    ) {
       return false;
     }
     if (recommendation.action === "advance") {
@@ -1283,6 +1623,58 @@ export class AutonomousRunController {
     return true;
   }
 
+  private async runWithPromotionHeartbeat<T>(
+    lease: TopicProbeFollowupExecutionLease | undefined,
+    externalSignal: AbortSignal | undefined,
+    operation: (abortSignal?: AbortSignal) => Promise<T>
+  ): Promise<T> {
+    if (!lease) {
+      return operation(externalSignal);
+    }
+    const heartbeat = this.topicProbeFollowupRuns.heartbeatExecution;
+    if (!heartbeat) {
+      throw new Error("topic_probe_followup_heartbeat_unavailable");
+    }
+
+    const controller = new AbortController();
+    const forwardAbort = () => controller.abort();
+    if (externalSignal?.aborted) {
+      controller.abort();
+    } else {
+      externalSignal?.addEventListener("abort", forwardAbort, { once: true });
+    }
+    let heartbeatError: unknown;
+    let heartbeatChain: Promise<void> = Promise.resolve();
+    const tick = () => {
+      heartbeatChain = heartbeatChain.then(async () => {
+        if (heartbeatError) {
+          return;
+        }
+        try {
+          await heartbeat.call(this.topicProbeFollowupRuns, lease);
+        } catch (error) {
+          heartbeatError = error;
+          controller.abort();
+        }
+      });
+    };
+    const interval = setInterval(
+      tick,
+      Math.max(25, Math.floor(lease.leaseDurationMs / 3))
+    );
+    try {
+      const result = await operation(controller.signal);
+      await heartbeatChain;
+      if (heartbeatError) {
+        throw heartbeatError;
+      }
+      return result;
+    } finally {
+      clearInterval(interval);
+      externalSignal?.removeEventListener("abort", forwardAbort);
+    }
+  }
+
   private async getRunOrThrow(runId: string): Promise<RunRecord> {
     const run = await this.runStore.getRun(runId);
     if (!run) {
@@ -1307,8 +1699,47 @@ export class AutonomousRunController {
   }
 }
 
+function buildDefaultTopicProbeFollowupConsumer(
+  runStore: RunStore
+): TopicProbeFollowupRunConsumer {
+  const candidate = runStore as Partial<RunStore>;
+  if (
+    typeof candidate.getWorkspaceRoot !== "function"
+    || typeof candidate.getPromotionStore !== "function"
+  ) {
+    return {
+      async consumePromotedFollowup() {
+        return {
+          status: "blocked",
+          reasons: ["topic_probe_followup_store_unavailable"]
+        };
+      }
+    };
+  }
+  return new TopicProbeFollowupRunManager(runStore);
+}
+
 function recommendationKey(recommendation: TransitionRecommendation): string {
   return `${recommendation.action}:${recommendation.targetNode || "stay"}`;
+}
+
+function describeFollowupRoute(
+  result: TopicProbeFollowupRunResult,
+  childRun: RunRecord
+): string {
+  const relation = result.receipt?.relation
+    ?? childRun.promotionLineage?.relation
+    ?? "unknown";
+  const receipt = result.receipt?.content_sha256
+    ?? childRun.promotionLineage?.receiptContentSha256
+    ?? "unavailable";
+  return `route=${relation}, receipt=${receipt}`;
+}
+
+function describeDelegatedRunRoute(run: RunRecord): string {
+  const relation = run.promotionLineage?.relation ?? "unknown";
+  const receipt = run.promotionLineage?.receiptContentSha256 ?? "unavailable";
+  return `route=${relation}, receipt=${receipt}`;
 }
 
 function supportsHypothesisBacktrack(recommendation: TransitionRecommendation): boolean {
@@ -1324,4 +1755,11 @@ function supportsHypothesisBacktrack(recommendation: TransitionRecommendation): 
     text.includes("metrics file") ||
     text.includes("missing metrics");
   return hasHypothesisSignal && !hasExecutionSignal;
+}
+
+function normalizeControllerError(error: unknown): string {
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return "unknown";
+  }
+  return error.message.replace(/[^a-z0-9_:.\/-]+/giu, "_").slice(0, 180);
 }

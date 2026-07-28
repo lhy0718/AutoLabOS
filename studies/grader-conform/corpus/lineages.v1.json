@@ -1,0 +1,189 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "historical_evaluator_fault_candidate_registry",
+  "frozen_at": "2026-07-28T00:00:00+09:00",
+  "outcomes_observed_before_freeze": false,
+  "purpose": "Bounded feasibility census for deterministic semantic conformance probes over public agent-evaluation pipelines.",
+  "sources": {
+    "source_a": {
+      "repository_url": "https://github.com/sierra-research/tau2-bench.git",
+      "cache_key": "tau2-bench",
+      "license": "MIT",
+      "license_path": "LICENSE"
+    },
+    "source_b": {
+      "repository_url": "https://github.com/ShishirPatil/gorilla.git",
+      "cache_key": "gorilla",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE"
+    },
+    "source_c": {
+      "repository_url": "https://github.com/xlang-ai/OSWorld.git",
+      "cache_key": "osworld",
+      "license": "Apache-2.0",
+      "license_path": "LICENSE"
+    }
+  },
+  "lineages": [
+    {
+      "id": "lineage_001",
+      "source_id": "source_a",
+      "parent_commit": "387c7753941362628710aeb74cf0bbc04e3a239a",
+      "fix_commit": "2be691669909439cf88dedc13decf94b7664d262",
+      "fault_family": "live_replay_equivalence",
+      "source_claim": "Unknown tool calls were no-ops live but raised during replay, changing retry and metric denominators.",
+      "evidence_paths": ["src/tau2/environment/environment.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_002",
+      "source_id": "source_a",
+      "parent_commit": "8d4f52741b980e0ed167b387af305ba62f974bf6",
+      "fix_commit": "a11d95e19a049638dd3fd7c5b941a509422452dc",
+      "fault_family": "entrypoint_equivalence",
+      "source_claim": "The ALL evaluator omitted a reward-basis component and crashed most affected retail tasks.",
+      "evidence_paths": ["src/tau2/evaluator/evaluator.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_003",
+      "source_id": "source_a",
+      "parent_commit": "0ed8c0ef0a1f6b024a0fb733e186922411874879",
+      "fix_commit": "7356b7d0e55d175bb3738e4de95d4615c4a71b86",
+      "fault_family": "benign_action_invariance",
+      "source_claim": "Extra read-only tool calls mutated the grading database and could zero an otherwise correct reward.",
+      "evidence_paths": ["src/tau2/domains/banking_knowledge/tools.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_004",
+      "source_id": "source_a",
+      "parent_commit": "b51a6d69e26f0e94a9173e2e80fe8735a8dff650",
+      "fix_commit": "40ac84c9a8010a2ab6c412b0b0f19199ba07552c",
+      "fault_family": "representation_invariance",
+      "source_claim": "Equivalent integer and whole-valued floating-point JSON spellings produced different record identifiers and database hashes.",
+      "evidence_paths": ["src/tau2/domains/banking_knowledge/tools.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_005",
+      "source_id": "source_a",
+      "parent_commit": "a1999a311b5b661642c72614744f9222bfcd0187",
+      "fix_commit": "bbccfc0c4e03b860becd8abdc1c3b2a78fef76fc",
+      "fault_family": "entrypoint_equivalence",
+      "source_claim": "Offline rescoring silently used the half-duplex evaluator for full-duplex trajectories and produced incorrect rewards.",
+      "evidence_paths": ["src/tau2/scripts/evaluate_trajectories.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_006",
+      "source_id": "source_a",
+      "parent_commit": "a1e85084a3960281cb06997594133e8f39ea42a7",
+      "fix_commit": "922c1f6fee94daf6ceab3b960ab5ed33db241049",
+      "fault_family": "live_replay_equivalence",
+      "source_claim": "Three implementation gaps made historical trajectory rescoring diverge from live grading.",
+      "evidence_paths": ["src/tau2/scripts/evaluate_trajectories.py", "src/tau2/environment/environment.py", "src/tau2/evaluator/evaluator.py"],
+      "candidate_status": "pending_root_cause_split_review"
+    },
+    {
+      "id": "lineage_007",
+      "source_id": "source_b",
+      "parent_commit": "4da861eadf156928cd7177be5725870a9161411b",
+      "fix_commit": "3362de286ad186749d68f4c4f78a8603e1996231",
+      "fault_family": "cardinality_consistency",
+      "source_claim": "Exact-match checking was bypassed for a multi-call execution case and changed leaderboard results.",
+      "evidence_paths": ["berkeley-function-call-leaderboard/openfunctions_executable_checker.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_008",
+      "source_id": "source_b",
+      "parent_commit": "33cabefc21eae4927f5cee83be12183ebd4ba10d",
+      "fix_commit": "4cf2e8d3004376033fb9721a59b6518ab56b55c1",
+      "fault_family": "representation_invariance",
+      "source_claim": "The evaluator rejected semantically admissible integer spellings for floating-point parameters.",
+      "evidence_paths": ["berkeley-function-call-leaderboard/eval_checker/checker.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_009",
+      "source_id": "source_b",
+      "parent_commit": "951c72827ac9f7b3a4716a3339ea5eb439fef51e",
+      "fix_commit": "9196826ea72d57fda2c3a766eec787520b471303",
+      "fault_family": "invalid_input_rejection",
+      "source_claim": "A second cast gave malformed Java and JavaScript arguments another chance and introduced false positives.",
+      "evidence_paths": ["berkeley-function-call-leaderboard/model_handler"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_010",
+      "source_id": "source_b",
+      "parent_commit": "7b230df44bfb668ce34f3e8695bb285657a61d01",
+      "fix_commit": "5b7635e4684f9131b06420a9137d693b19483267",
+      "fault_family": "adapter_symmetry",
+      "source_claim": "Language-specific preprocessing failed to implement the documented contract and materially changed Java and JavaScript scores.",
+      "evidence_paths": ["berkeley-function-call-leaderboard/model_handler/utils.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_011",
+      "source_id": "source_b",
+      "parent_commit": "b0e32898ab804a4c8b5b8bdc54f474cefa428b80",
+      "fix_commit": "f1417a8092540302257f7030aaa1d6ba163ac363",
+      "fault_family": "adapter_symmetry",
+      "source_claim": "Handler-local preprocessing created unequal evaluation treatment and mishandled nested element types.",
+      "evidence_paths": ["berkeley-function-call-leaderboard/model_handler/utils.py"],
+      "candidate_status": "pending_independence_review"
+    },
+    {
+      "id": "lineage_012",
+      "source_id": "source_b",
+      "parent_commit": "84ab3b6de0d03da567e76ff392207cff53805faa",
+      "fix_commit": "c1b67eed241c419f5a9929993dcb4a117b6029b5",
+      "fault_family": "parser_representation_invariance",
+      "source_claim": "Java and JavaScript response parsers mishandled valid equivalent surface forms.",
+      "evidence_paths": ["openfunctions/utils/java_parser.py", "openfunctions/utils/js_parser.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_013",
+      "source_id": "source_c",
+      "parent_commit": "830202192922d916711dd07a5d235bab5d1be5e1",
+      "fix_commit": "d15fcb74270f19e679890fb7d067f2aa599085db",
+      "fault_family": "environment_context_invariance",
+      "source_claim": "Relative-time evaluation used host time instead of the evaluated VM's local time.",
+      "evidence_paths": ["desktop_env/evaluators/getters/misc.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_014",
+      "source_id": "source_c",
+      "parent_commit": "c4e58b3df5ac2527a24c891d2dd33bfe74f74a0c",
+      "fix_commit": "e74232a5a8dca90c96a823255cbda1900c8fa66b",
+      "fault_family": "irrelevant_state_invariance",
+      "source_claim": "Spreadsheet freeze evaluation compared a scroll-dependent visible cell instead of the frozen split.",
+      "evidence_paths": ["desktop_env/evaluators/metrics/table.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_015",
+      "source_id": "source_c",
+      "parent_commit": "e8ba8fde29889ae7e4377f6f325d736818434a04",
+      "fix_commit": "c7e54d24d136d52be0c6d5a7487a1a32f99e7017",
+      "fault_family": "sequential_state_isolation",
+      "source_claim": "Evaluator imports leaked across sequential tasks and caused false zero scores.",
+      "evidence_paths": ["desktop_env/evaluators/metrics/vscode.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    },
+    {
+      "id": "lineage_016",
+      "source_id": "source_c",
+      "parent_commit": "dcfcbc517d5b4c3524f61731c033094fde7cd6df",
+      "fix_commit": "f2947efd41a4f60b45f56cd5a2dac3c51443dfed",
+      "fault_family": "equivalent_state_recovery",
+      "source_claim": "Workspace evaluation failed when an optional helper artifact was absent despite an equivalent recoverable state.",
+      "evidence_paths": ["desktop_env/evaluators/getters/vscode.py"],
+      "candidate_status": "pending_behavioral_reproduction"
+    }
+  ]
+}

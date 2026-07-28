@@ -15,10 +15,16 @@ import {
   DesignRetryContext,
   ExperimentDesignCandidate
 } from "../analysis/researchPlanning.js";
-import { supportsRealExecutionBundle } from "../experiments/realExecutionBundle.js";
+import { buildResearchGapEvidenceChain } from "../analysis/researchGapEvidenceChain.js";
 import { buildExperimentPortfolioFromDesign } from "../experiments/experimentPortfolio.js";
 import { clearExecutionSummaryArtifactsInvalidatedByDesign } from "../experiments/staleExecutionArtifacts.js";
 import { runDesignExperimentsPanel } from "../designExperimentsPanel.js";
+import {
+  buildEstimatorFeasibilityArtifacts,
+  ESTIMATOR_FEASIBILITY_CANDIDATE_EXPERIMENT_CONTRACT_RELATIVE_PATH,
+  ESTIMATOR_FEASIBILITY_CONTRACT_RELATIVE_PATH,
+  ESTIMATOR_FEASIBILITY_REPORT_RELATIVE_PATH
+} from "../estimatorFeasibilityGate.js";
 import {
   buildExperimentComparisonContract,
   storeExperimentGovernanceDecision
@@ -29,12 +35,58 @@ import {
   validateExperimentContract
 } from "../experiments/experimentContract.js";
 import { checkBriefDesignConsistency } from "../experiments/briefDesignConsistency.js";
+import {
+  RESULTS_ARTIFACT_SCHEMA_VERSION,
+  type ResultsPlanV2
+} from "../analysis/resultsTableSchema.js";
 import { parseMarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
+import {
+  loadResearchBriefSnapshot,
+  resolveResearchRunModeGuard
+} from "../runs/researchRunModeGuard.js";
 import { BriefCompletenessArtifact, buildBriefCompletenessArtifact } from "../runs/researchBriefFiles.js";
 import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
 import { resolveExplorationConfig } from "../exploration/explorationConfig.js";
 import { ExplorationManager } from "../exploration/explorationManager.js";
+import {
+  buildTopicDecision,
+  hashCanonical,
+  validateResearchFunnelClosedChain,
+  type TopicPortfolio,
+  type TopicPortfolioCandidate,
+  type ResearchFunnelGate
+} from "../researchFunnel.js";
+import {
+  evaluateTopicMemory,
+  validateTopicMemoryLedger,
+  type TopicMemoryDecision,
+  type TopicMemoryLedger
+} from "../topicMemory.js";
+import {
+  buildTopicMemoryDatabasePath,
+  TopicMemoryStore
+} from "../runs/topicMemoryStore.js";
+import {
+  buildActiveTopicProbeContract,
+  validateActiveTopicProbeContract,
+  type ActiveTopicProbeContract
+} from "../activeTopicProbeContract.js";
+import {
+  buildCandidateObjectiveProfileBinding,
+  candidateRawDeltaMetricKey,
+  objectiveComparatorForEffectCriterion,
+  parseEffectCriterion,
+  readCandidateObjectiveProfileBinding,
+  signedRawDeltaTargetForEffectCriterion,
+  type CandidateObjectiveProfileBinding
+} from "../effectCriterion.js";
+import {
+  isTopicProbeSuccessorDesignCandidate,
+  validateTopicProbeSuccessorPortfolioTarget,
+  validateTopicProbeSuccessorDesignTarget,
+  type TopicProbeSuccessorDesignCandidate
+} from "../topicProbeSuccessorDesignTarget.js";
 
 interface FilteredHypothesis {
   hypothesis_id: string;
@@ -42,77 +94,290 @@ interface FilteredHypothesis {
   reason: string;
 }
 
-const MANAGED_EXECUTABLE_DESIGN = {
-  runner_id: "managed_real_execution_bundle",
-  conditions: [
-    "free_form_chat: planner, solver, and verifier hand off natural-language notes.",
-    "shared_state_schema: planner, solver, and verifier hand off structured JSON shared state."
-  ],
-  standard_profile: {
-    repeats: 2,
-    prompt_variants: 2,
-    tasks_per_dataset: 2,
-    dataset_count: 3,
-    total_trials: 48
-  },
-  quick_check_profile: {
-    repeats: 1,
-    prompt_variants: 1,
-    tasks_per_dataset: 1,
-    dataset_count: 3,
-    total_trials: 6
-  },
-  confirmatory_profile: {
-    repeats: 3,
-    prompt_variants: 2,
-    tasks_per_dataset: 2,
-    dataset_count: 3,
-    total_trials: 72
-  },
-  supported_dataset_ids: [
-    "hotpotqa_mini",
-    "gsm8k_mini",
-    "humaneval_mini"
-  ],
-  supported_benchmarks: [
-    "hotpotqa_mini (2 tasks in standard, 1 task in quick_check)",
-    "gsm8k_mini (2 tasks in standard, 1 task in quick_check)",
-    "humaneval_mini (2 tasks in standard, 1 task in quick_check)"
-  ],
-  execution_settings: {
-    max_workers: 2,
-    planner_reasoning_effort: "low",
-    planner_fast_mode: true,
-    solver_reasoning_effort: "medium",
-    verifier_reasoning_effort: "medium"
-  },
-  implemented_perturbations: [
-    "Prompt phrasing / coordination-style variation via neutral vs compressed collaboration instructions."
-  ],
-  supported_metrics: [
-    "reproducibility_score",
-    "replication_success_rate",
-    "cross_run_variance",
-    "run_to_run_variance",
-    "seed_stability",
-    "prompt_paraphrase_sensitivity",
-    "slot_consistency",
-    "artifact_availability",
-    "artifact_consistency_rate",
-    "environment_rebuild_success"
-  ],
-  supported_baselines: [
-    "free_form_chat baseline",
-    "shared_state_schema treatment arm",
-    "recent-paper reproducibility comparison derived from the collected 2022-2026 corpus"
-  ]
-} as const;
+interface ParsedDesignHypothesis extends DesignInputHypothesis {
+  candidate_id?: string;
+  run_id?: string;
+  research_cycle?: number;
+  supported_gap_ids?: string[];
+}
+
+interface ClosedChainArtifactRead {
+  raw?: string;
+  reasonCode?: string;
+}
+
+interface CandidateOwnedObjectiveMetricProfile extends ObjectiveMetricProfile {
+  candidate_contract: CandidateObjectiveProfileBinding;
+  delta_contract: {
+    output_metric_key: string;
+    source_metric_key: string;
+    raw_delta_definition: "subject_minus_reference";
+    comparator: ">=" | ">" | "<=" | "<";
+    signed_target: number;
+  };
+}
+
+type CandidateObjectiveContract =
+  | ActiveTopicProbeContract
+  | TopicProbeSuccessorDesignCandidate;
+
+export interface CurrentTopicMemoryPortfolioResolution {
+  valid: boolean;
+  reasons: string[];
+  snapshot_relation: "current" | "ancestor" | "invalid";
+  snapshot_ledger_sha256?: string;
+  current_ledger_sha256?: string;
+  portfolio?: TopicPortfolio;
+  candidate_decisions: Array<{
+    candidate_id: string;
+    candidate_content_sha256: string;
+    decision: TopicMemoryDecision;
+  }>;
+}
+
+export function rebaseTopicPortfolioToCurrentMemory(input: {
+  portfolio: TopicPortfolio;
+  currentLedger: TopicMemoryLedger;
+}): CurrentTopicMemoryPortfolioResolution {
+  const snapshotValidation = validateTopicMemoryLedger(
+    input.portfolio.topic_memory_ledger
+  );
+  const currentValidation = validateTopicMemoryLedger(input.currentLedger);
+  const snapshot = snapshotValidation.ledger;
+  const current = currentValidation.ledger;
+  const validationReasons = uniqueStrings([
+    ...snapshotValidation.reasons.map(
+      (reason) => `topic_memory_portfolio_snapshot_invalid:${reason}`
+    ),
+    ...currentValidation.reasons.map(
+      (reason) => `topic_memory_current_ledger_invalid:${reason}`
+    )
+  ]);
+  if (!snapshot || !current || validationReasons.length > 0) {
+    return {
+      valid: false,
+      reasons: validationReasons.length > 0
+        ? validationReasons
+        : ["topic_memory_ledger_unavailable"],
+      snapshot_relation: "invalid",
+      snapshot_ledger_sha256: snapshot?.ledger_sha256,
+      current_ledger_sha256: current?.ledger_sha256,
+      candidate_decisions: []
+    };
+  }
+
+  const snapshotRelation = classifyTopicMemorySnapshot(snapshot, current);
+  if (snapshotRelation === "invalid") {
+    return {
+      valid: false,
+      reasons: ["topic_memory_portfolio_snapshot_not_current_ancestor"],
+      snapshot_relation: snapshotRelation,
+      snapshot_ledger_sha256: snapshot.ledger_sha256,
+      current_ledger_sha256: current.ledger_sha256,
+      candidate_decisions: []
+    };
+  }
+
+  const reasons: string[] = [];
+  const candidateDecisions: CurrentTopicMemoryPortfolioResolution["candidate_decisions"] = [];
+  const candidates = input.portfolio.candidates.map((candidate) => {
+    const descriptor = candidate.topic_memory?.descriptor;
+    if (!descriptor) {
+      reasons.push(
+        `topic_memory_candidate_descriptor_missing:${candidate.source_candidate_id}`
+      );
+      return candidate;
+    }
+    const decision = evaluateTopicMemory(
+      current,
+      descriptor,
+      candidate.topic_memory?.reentry_ticket
+    );
+    const memoryEligible =
+      decision.disposition === "clear"
+      || decision.disposition === "reentry_allowed";
+    const memoryGateCode = "topic_memory_clear_or_reentry_allowed";
+    if (!candidate.gates.some((gate) => gate.code === memoryGateCode)) {
+      reasons.push(
+        `topic_memory_candidate_gate_missing:${candidate.source_candidate_id}`
+      );
+    }
+    const gates = setGateStatus(candidate.gates, memoryGateCode, memoryEligible);
+    const { content_sha256: _candidateContentSha256, ...candidatePayload } = candidate;
+    const nextCandidatePayload: Omit<TopicPortfolioCandidate, "content_sha256"> = {
+      ...candidatePayload,
+      formulation_version: current.records.filter(
+        (record) =>
+          record.descriptor.lineage_sha256 === descriptor.lineage_sha256
+      ).length + 1,
+      topic_memory: {
+        ledger_sha256: current.ledger_sha256,
+        descriptor,
+        ...(candidate.topic_memory?.reentry_ticket
+          ? { reentry_ticket: candidate.topic_memory.reentry_ticket }
+          : {}),
+        decision
+      },
+      gates,
+      probe_eligible: gates.every((gate) => gate.status === "pass")
+    };
+    const nextCandidate = {
+      ...nextCandidatePayload,
+      content_sha256: hashCanonical(nextCandidatePayload)
+    };
+    candidateDecisions.push({
+      candidate_id: nextCandidate.source_candidate_id,
+      candidate_content_sha256: nextCandidate.content_sha256,
+      decision
+    });
+    return nextCandidate;
+  });
+
+  const requiredPortfolioGateCodes = [
+    "topic_memory_snapshot_valid",
+    "portfolio_candidates_admissible",
+    "probe_candidate_contract_complete"
+  ];
+  for (const gateCode of requiredPortfolioGateCodes) {
+    if (!input.portfolio.gates.some((gate) => gate.code === gateCode)) {
+      reasons.push(`topic_memory_portfolio_gate_missing:${gateCode}`);
+    }
+  }
+  if (reasons.length > 0) {
+    return {
+      valid: false,
+      reasons: uniqueStrings(reasons),
+      snapshot_relation: snapshotRelation,
+      snapshot_ledger_sha256: snapshot.ledger_sha256,
+      current_ledger_sha256: current.ledger_sha256,
+      candidate_decisions: candidateDecisions
+    };
+  }
+
+  const probeCandidates = candidates.filter(
+    (candidate) => candidate.probe_status === "shortlisted"
+  );
+  let gates = setGateStatus(
+    input.portfolio.gates,
+    "topic_memory_snapshot_valid",
+    true
+  );
+  gates = setGateStatus(
+    gates,
+    "portfolio_candidates_admissible",
+    candidates.length > 0
+      && candidates.every((candidate) => candidate.probe_eligible)
+  );
+  gates = setGateStatus(
+    gates,
+    "probe_candidate_contract_complete",
+    probeCandidates.length > 0
+      && probeCandidates.every((candidate) => candidate.probe_eligible)
+  );
+  const { content_sha256: _portfolioContentSha256, ...portfolioPayload } = input.portfolio;
+  const nextPortfolioPayload: Omit<TopicPortfolio, "content_sha256"> = {
+    ...portfolioPayload,
+    topic_memory_ledger: current,
+    candidates,
+    gates,
+    probe_allowed: gates.every((gate) => gate.status === "pass")
+  };
+  const portfolio = {
+    ...nextPortfolioPayload,
+    content_sha256: hashCanonical(nextPortfolioPayload)
+  };
+  return {
+    valid: true,
+    reasons: [],
+    snapshot_relation: snapshotRelation,
+    snapshot_ledger_sha256: snapshot.ledger_sha256,
+    current_ledger_sha256: current.ledger_sha256,
+    portfolio,
+    candidate_decisions: candidateDecisions
+  };
+}
+
+function classifyTopicMemorySnapshot(
+  snapshot: TopicMemoryLedger,
+  current: TopicMemoryLedger
+): CurrentTopicMemoryPortfolioResolution["snapshot_relation"] {
+  if (snapshot.ledger_sha256 === current.ledger_sha256) {
+    return "current";
+  }
+  if (snapshot.records.length >= current.records.length) {
+    return "invalid";
+  }
+  const prefixMatches = snapshot.records.every(
+    (record, index) =>
+      current.records[index]?.record_sha256 === record.record_sha256
+  );
+  const firstSuccessor = current.records[snapshot.records.length];
+  return prefixMatches
+    && firstSuccessor?.previous_ledger_sha256 === snapshot.ledger_sha256
+    ? "ancestor"
+    : "invalid";
+}
+
+function setGateStatus(
+  gates: ResearchFunnelGate[],
+  code: string,
+  passed: boolean
+): ResearchFunnelGate[] {
+  return gates.map((gate) =>
+    gate.code === code
+      ? { ...gate, status: passed ? "pass" : "block" }
+      : gate
+  );
+}
+
+function loadCurrentTopicMemoryLedger(workspaceRoot: string): TopicMemoryLedger {
+  const store = new TopicMemoryStore(
+    buildTopicMemoryDatabasePath(workspaceRoot)
+  );
+  try {
+    return store.loadLedger();
+  } finally {
+    store.close();
+  }
+}
 
 export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeHandler {
+
   return {
     id: "design_experiments",
     async execute({ run }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const memoryRawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const snapshotBrief = await loadResearchBriefSnapshot(process.cwd(), run.id);
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief: memoryRawBrief,
+        run
+      });
+      const rawBrief = memoryRawBrief || snapshotBrief || "";
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "design_experiments blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const researchMode = researchModeGuard.effectiveMode;
+      const hypothesisBacktrackTarget =
+        researchMode === "topic_discovery"
+          ? "analyze_papers"
+          : "generate_hypotheses";
       const emitLog = (text: string) => {
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
@@ -121,6 +386,395 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           payload: { text }
         });
       };
+      const runDir = path.join(".autolabos", "runs", run.id);
+      const gapMapRelativePath = "analysis/gap_map.json";
+      const gapSynthesisRelativePath = "analysis/gap_synthesis.json";
+      const evidenceRelativePath = "evidence_store.jsonl";
+      const corpusRelativePath = "corpus.jsonl";
+      const collectGenerationRelativePath = "collect_generation.json";
+      const evidenceAxesRelativePath =
+        "hypothesis_generation/evidence_axes.json";
+      const priorAbsorptionMatrixRelativePath =
+        "hypothesis_generation/prior_absorption_matrix.json";
+      const hypothesesRelativePath = "hypotheses.jsonl";
+      const draftsRelativePath = "hypothesis_generation/drafts.jsonl";
+      const reviewsRelativePath = "hypothesis_generation/reviews.jsonl";
+      const probeShortlistRelativePath = "hypothesis_generation/probe_shortlist.json";
+      const topicPortfolioRelativePath = "hypothesis_generation/topic_portfolio.json";
+      const topicDecisionRelativePath = "design_experiments_panel/topic_decision.json";
+      const topicMemoryRefreshRelativePath =
+        "design_experiments_panel/topic_memory_refresh.json";
+      const hypothesesRead = await readClosedChainArtifact(runDir, hypothesesRelativePath);
+      let approvedCandidateIds: string[] | undefined;
+      let validatedPortfolio: TopicPortfolio | undefined;
+      let successorDesignCandidate:
+        TopicProbeSuccessorDesignCandidate | undefined;
+      const successorRouteTarget = researchModeGuard.successorRouteTarget;
+
+      if (
+        run.executionRole === "delegated_once"
+        && !successorRouteTarget
+      ) {
+        const message =
+          "Delegated successor design is missing its validated route target.";
+        emitLog(message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
+      }
+
+      if (researchMode === "topic_discovery") {
+        const [
+          gapMapRead,
+          gapSynthesisRead,
+          evidenceRead,
+          corpusRead,
+          collectGenerationRead,
+          evidenceAxesRead,
+          priorAbsorptionMatrixRead,
+          draftsRead,
+          reviewsRead,
+          probeShortlistRead,
+          portfolioRead
+        ] =
+          await Promise.all([
+          readClosedChainArtifact(runDir, gapMapRelativePath),
+          readClosedChainArtifact(runDir, gapSynthesisRelativePath),
+          readClosedChainArtifact(runDir, evidenceRelativePath),
+          readClosedChainArtifact(runDir, corpusRelativePath),
+          readClosedChainArtifact(runDir, collectGenerationRelativePath),
+          readClosedChainArtifact(runDir, evidenceAxesRelativePath),
+          readClosedChainArtifact(runDir, priorAbsorptionMatrixRelativePath),
+          readClosedChainArtifact(runDir, draftsRelativePath),
+          readClosedChainArtifact(runDir, reviewsRelativePath),
+          readClosedChainArtifact(runDir, probeShortlistRelativePath),
+          readClosedChainArtifact(runDir, topicPortfolioRelativePath)
+          ]);
+        const artifactReadReasons = uniqueStrings(
+          [
+            gapMapRead,
+            gapSynthesisRead,
+            evidenceRead,
+            corpusRead,
+            collectGenerationRead,
+            evidenceAxesRead,
+            priorAbsorptionMatrixRead,
+            hypothesesRead,
+            draftsRead,
+            reviewsRead,
+            probeShortlistRead,
+            portfolioRead
+          ]
+            .flatMap((read) => read.reasonCode ? [read.reasonCode] : [])
+        );
+        const gapEvidenceChain = buildResearchGapEvidenceChain({
+          runId: run.id,
+          researchCycle: run.graph.researchCycle,
+          corpusRaw: corpusRead.raw ?? "",
+          evidenceRaw: evidenceRead.raw ?? "",
+          synthesisRaw: gapSynthesisRead.raw ?? "",
+          collectGenerationRaw: collectGenerationRead.raw ?? ""
+        });
+        const sourceUpstreamValidation = validateResearchFunnelClosedChain({
+          expectedRunId: run.id,
+          expectedResearchCycle: run.graph.researchCycle,
+          gapMapRaw: gapMapRead.raw,
+          evidenceAxesRaw: evidenceAxesRead.raw,
+          priorAbsorptionMatrixRaw: priorAbsorptionMatrixRead.raw,
+          hypothesesRaw: hypothesesRead.raw,
+          draftsRaw: draftsRead.raw,
+          reviewsRaw: reviewsRead.raw,
+          probeShortlistRaw: probeShortlistRead.raw,
+          portfolioRaw: portfolioRead.raw,
+          requireDecision: false,
+          gapValidationContext: gapEvidenceChain.validationContext,
+          gapValidationReasonCodes: gapEvidenceChain.reasonCodes
+        });
+        const generatedAt = new Date().toISOString();
+        let portfolioRawForAuthorization = portfolioRead.raw;
+        let topicMemoryRefresh:
+          CurrentTopicMemoryPortfolioResolution | undefined;
+        const topicMemoryIntegrityReasons: string[] = [];
+        if (
+          sourceUpstreamValidation.portfolioValidation.valid
+          && sourceUpstreamValidation.portfolio
+        ) {
+          try {
+            const currentLedger = loadCurrentTopicMemoryLedger(process.cwd());
+            topicMemoryRefresh = rebaseTopicPortfolioToCurrentMemory({
+              portfolio: sourceUpstreamValidation.portfolio,
+              currentLedger
+            });
+            if (topicMemoryRefresh.valid && topicMemoryRefresh.portfolio) {
+              portfolioRawForAuthorization =
+                `${JSON.stringify(topicMemoryRefresh.portfolio, null, 2)}\n`;
+              await writeRunArtifact(
+                run,
+                topicPortfolioRelativePath,
+                portfolioRawForAuthorization
+              );
+            } else {
+              topicMemoryIntegrityReasons.push(...topicMemoryRefresh.reasons);
+            }
+          } catch {
+            topicMemoryIntegrityReasons.push(
+              "topic_memory_current_head_load_failed"
+            );
+          }
+        }
+        const topicMemoryRefreshPayload = {
+          schema_version: 1 as const,
+          artifact_kind: "topic_memory_design_refresh" as const,
+          generated_at: generatedAt,
+          run_id: run.id,
+          research_cycle: run.graph.researchCycle,
+          source_portfolio_content_sha256:
+            sourceUpstreamValidation.portfolio?.content_sha256,
+          snapshot_relation: topicMemoryRefresh?.snapshot_relation || "invalid",
+          snapshot_ledger_sha256:
+            topicMemoryRefresh?.snapshot_ledger_sha256,
+          current_ledger_sha256:
+            topicMemoryRefresh?.current_ledger_sha256,
+          refreshed_portfolio_content_sha256:
+            topicMemoryRefresh?.portfolio?.content_sha256,
+          candidate_decisions:
+            topicMemoryRefresh?.candidate_decisions || [],
+          valid: topicMemoryRefresh?.valid === true,
+          reasons: uniqueStrings([
+            ...(topicMemoryRefresh?.reasons || []),
+            ...topicMemoryIntegrityReasons
+          ])
+        };
+        await writeRunArtifact(
+          run,
+          topicMemoryRefreshRelativePath,
+          `${JSON.stringify({
+            ...topicMemoryRefreshPayload,
+            content_sha256: hashCanonical(topicMemoryRefreshPayload)
+          }, null, 2)}\n`
+        );
+        await runContextMemory.put(
+          "design_experiments.topic_memory_refresh",
+          topicMemoryRefreshPayload
+        );
+        const rebasedUpstreamValidation =
+          topicMemoryRefresh?.valid && topicMemoryRefresh.portfolio
+            ? validateResearchFunnelClosedChain({
+                expectedRunId: run.id,
+                expectedResearchCycle: run.graph.researchCycle,
+                gapMapRaw: gapMapRead.raw,
+                evidenceAxesRaw: evidenceAxesRead.raw,
+                priorAbsorptionMatrixRaw: priorAbsorptionMatrixRead.raw,
+                hypothesesRaw: hypothesesRead.raw,
+                draftsRaw: draftsRead.raw,
+                reviewsRaw: reviewsRead.raw,
+                probeShortlistRaw: probeShortlistRead.raw,
+                portfolioRaw: portfolioRawForAuthorization,
+                requireDecision: false,
+                gapValidationContext: gapEvidenceChain.validationContext,
+                gapValidationReasonCodes: gapEvidenceChain.reasonCodes
+              })
+            : sourceUpstreamValidation;
+        const upstreamValidation = {
+          ...rebasedUpstreamValidation,
+          valid:
+            rebasedUpstreamValidation.valid
+            && artifactReadReasons.length === 0
+            && topicMemoryIntegrityReasons.length === 0,
+          reasons: uniqueStrings([
+            ...rebasedUpstreamValidation.reasons,
+            ...artifactReadReasons,
+            ...topicMemoryIntegrityReasons
+          ])
+        };
+        const decision = buildTopicDecision({
+          runId: run.id,
+          researchCycle: run.graph.researchCycle,
+          validation: upstreamValidation,
+          generatedAt
+        });
+        const topicDecisionRaw = `${JSON.stringify(decision, null, 2)}\n`;
+        await writeRunArtifact(run, topicDecisionRelativePath, topicDecisionRaw);
+        const fullBaseValidation = validateResearchFunnelClosedChain({
+          expectedRunId: run.id,
+          expectedResearchCycle: run.graph.researchCycle,
+          gapMapRaw: gapMapRead.raw,
+          evidenceAxesRaw: evidenceAxesRead.raw,
+          priorAbsorptionMatrixRaw: priorAbsorptionMatrixRead.raw,
+          hypothesesRaw: hypothesesRead.raw,
+          draftsRaw: draftsRead.raw,
+          reviewsRaw: reviewsRead.raw,
+          probeShortlistRaw: probeShortlistRead.raw,
+          portfolioRaw: portfolioRawForAuthorization,
+          decisionRaw: topicDecisionRaw,
+          requireDecision: true,
+          gapValidationContext: gapEvidenceChain.validationContext,
+          gapValidationReasonCodes: gapEvidenceChain.reasonCodes
+        });
+        const validation = {
+          ...fullBaseValidation,
+          valid:
+            fullBaseValidation.valid
+            && artifactReadReasons.length === 0
+            && topicMemoryIntegrityReasons.length === 0,
+          probeAllowed:
+            fullBaseValidation.probeAllowed
+            && artifactReadReasons.length === 0
+            && topicMemoryIntegrityReasons.length === 0,
+          reasons: uniqueStrings([
+            ...fullBaseValidation.reasons,
+            ...artifactReadReasons,
+            ...topicMemoryIntegrityReasons
+          ])
+        };
+        await runContextMemory.put("design_experiments.probe_authorization_status", decision.disposition);
+        await runContextMemory.put("design_experiments.probe_authorization", decision);
+
+        if (!validation.probeAllowed) {
+          const reasonCodes = uniqueStrings([
+            ...decision.reason_codes,
+            ...validation.reasons,
+            ...(decision.reason_codes.length === 0 && validation.reasons.length === 0
+              ? ["topic_probe_not_authorized"]
+              : [])
+          ]);
+          const message =
+            `Probe authorization blocked experiment-design entry: ${reasonCodes.join(", ")}. ` +
+            "Regenerate and independently review a 5-7 candidate portfolio spanning at least 3 evidence-axis clusters before requesting a bounded execution probe.";
+          emitLog(message);
+          await runContextMemory.put("design_experiments.probe_authorization_blocked", true);
+          await runContextMemory.put("design_experiments.probe_authorization_blocked_reason", message);
+          return {
+            status: "success",
+            summary: message,
+            needsApproval: true,
+            toolCallsUsed: 0,
+            transitionRecommendation: {
+              action: "backtrack_to_hypotheses",
+              sourceNode: "design_experiments",
+              targetNode: hypothesisBacktrackTarget,
+              reason: message,
+              confidence: 0.98,
+              autoExecutable: true,
+              evidence: [
+                topicPortfolioRelativePath,
+                topicMemoryRefreshRelativePath,
+                topicDecisionRelativePath,
+                ...reasonCodes
+              ],
+              suggestedCommands: [`/agent run ${hypothesisBacktrackTarget} ${run.id}`],
+              generatedAt
+            }
+          };
+        }
+
+        approvedCandidateIds = validation.approvedCandidateIds;
+        validatedPortfolio = validation.portfolio;
+        if (successorRouteTarget && validatedPortfolio) {
+          const portfolioTargetValidation =
+            validateTopicProbeSuccessorPortfolioTarget({
+              routeTarget: successorRouteTarget,
+              candidates: validatedPortfolio.candidates
+            });
+          if (!portfolioTargetValidation.valid) {
+            const message =
+              `Successor portfolio violates its governed route target: ${portfolioTargetValidation.reasons.join(", ")}`;
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+        }
+        if (successorRouteTarget?.target_candidate) {
+          const matchedCandidate = validatedPortfolio?.candidates.find(
+            (candidate) =>
+              candidate.source_candidate_id
+                === successorRouteTarget.target_candidate?.source_candidate_id
+              && candidate.topic_id
+                === successorRouteTarget.target_candidate?.topic_id
+          );
+          if (!matchedCandidate) {
+            const message =
+              "Successor design target is absent from the validated child portfolio.";
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+          const targetValidation = validateTopicProbeSuccessorDesignTarget({
+            routeTarget: successorRouteTarget,
+            candidate: matchedCandidate
+          });
+          if (
+            !targetValidation.valid
+            || !isTopicProbeSuccessorDesignCandidate(matchedCandidate)
+          ) {
+            const message =
+              `Successor design target drifted from its governed candidate: ${targetValidation.reasons.join(", ")}`;
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+          successorDesignCandidate = matchedCandidate;
+          approvedCandidateIds = [
+            successorDesignCandidate.source_candidate_id
+          ];
+        }
+        await runContextMemory.put("design_experiments.probe_authorization_blocked", false);
+        emitLog(
+          `Probe authorization passed for ${approvedCandidateIds.length} bounded execution candidate(s) from a complete closed artifact chain; no final paper topic was selected.`
+        );
+      } else {
+        await runContextMemory.put("design_experiments.probe_authorization_status", "not_applicable");
+        await runContextMemory.put("design_experiments.probe_authorization_blocked", false);
+        emitLog("Declared hypothesis-test mode bypasses topic-portfolio probe authorization.");
+        if (successorRouteTarget) {
+          const targetCandidate = successorRouteTarget.target_candidate;
+          if (!targetCandidate) {
+            const message =
+              "Hypothesis-test successor is missing its frozen target candidate.";
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+          const targetValidation = validateTopicProbeSuccessorDesignTarget({
+            routeTarget: successorRouteTarget,
+            candidate: targetCandidate
+          });
+          if (
+            !targetValidation.valid
+            || !isTopicProbeSuccessorDesignCandidate(targetCandidate)
+          ) {
+            const message =
+              `Hypothesis-test successor target is invalid: ${targetValidation.reasons.join(", ")}`;
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+          successorDesignCandidate = targetCandidate;
+        }
+      }
 
       const explorationConfig = resolveExplorationConfig({
         workspaceRoot: process.cwd(),
@@ -142,7 +796,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         eventStream: deps.eventStream,
         node: "design_experiments"
       });
-      const objectiveMetricProfile = await resolveObjectiveMetricProfile({
+      const runObjectiveMetricProfile = await resolveObjectiveMetricProfile({
         run,
         runContextMemory,
         llm: deps.llm,
@@ -150,11 +804,16 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         node: "design_experiments"
       });
 
-      const hypothesesPath = path.join(".autolabos", "runs", run.id, "hypotheses.jsonl");
-      const hypotheses = parseHypotheses(await safeRead(hypothesesPath));
+      const parsedHypotheses = parseHypotheses(hypothesesRead.raw || "");
+      const hypotheses = successorDesignCandidate
+        ? [buildDesignHypothesisFromTopicCandidate(successorDesignCandidate)]
+        : approvedCandidateIds
+          ? selectApprovedHypotheses(parsedHypotheses, approvedCandidateIds)
+          : parsedHypotheses;
       if (hypotheses.length === 0) {
-        const message =
-          "No valid hypotheses were found for experiment design. Generate hypotheses first or repair hypotheses.jsonl.";
+        const message = researchMode === "topic_discovery"
+          ? "No closed-chain-approved hypotheses were found for experiment design. Regenerate the hypothesis artifacts and topic decision."
+          : "No valid hypotheses were found for experiment design. Generate hypotheses first or repair hypotheses.jsonl.";
         emitLog(message);
         return {
           status: "failure",
@@ -163,10 +822,147 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           toolCallsUsed: 0
         };
       }
-      const filtered = filterDesignHypotheses(hypotheses, objectiveMetricProfile);
+      const filtered = filterDesignHypotheses(hypotheses);
       if (filtered.dropped.length > 0) {
         emitLog(
           `Filtered ${filtered.dropped.length} weak hypothesis/hypotheses before experiment design; keeping ${filtered.kept.length}.`
+        );
+      }
+
+      const activeHypothesis = filtered.kept[0];
+      if (!activeHypothesis) {
+        const message = researchMode === "topic_discovery"
+          ? "No hypothesis passed the design-quality gate for an active bounded probe."
+          : "No hypothesis passed the experiment design-quality gate.";
+        emitLog(message);
+        return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+      }
+      const deferredHypotheses: FilteredHypothesis[] = researchMode === "topic_discovery"
+        ? filtered.kept.slice(1).map((hypothesis) => ({
+            hypothesis_id: hypothesis.hypothesis_id,
+            text: hypothesis.text,
+            reason: "Deferred until the currently bound topic probe is resolved."
+          }))
+        : [];
+      let activeProbeContract: ActiveTopicProbeContract | undefined;
+      let boundActiveHypothesis = activeHypothesis;
+      if (researchMode === "topic_discovery") {
+        const activeCandidateId = activeHypothesis.candidate_id?.trim();
+        if (!activeCandidateId) {
+          const message = "The active topic-probe hypothesis does not declare a candidate_id.";
+          emitLog(message);
+          return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+        }
+        const portfolioCandidate = validatedPortfolio?.candidates.find(
+          (candidate) => candidate.source_candidate_id === activeCandidateId
+        );
+        if (!validatedPortfolio || !portfolioCandidate) {
+          const message = "The active hypothesis is not bound to a validated topic-portfolio candidate.";
+          emitLog(message);
+          return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+        }
+        if (successorRouteTarget) {
+          const targetValidation = validateTopicProbeSuccessorDesignTarget({
+            routeTarget: successorRouteTarget,
+            candidate: portfolioCandidate
+          });
+          if (!targetValidation.valid) {
+            const message =
+              `Selected successor design violates its governed route target: ${targetValidation.reasons.join(", ")}`;
+            emitLog(message);
+            return {
+              status: "failure",
+              error: message,
+              summary: message,
+              toolCallsUsed: 0
+            };
+          }
+        }
+        try {
+          activeProbeContract = buildActiveTopicProbeContract({
+            runId: run.id,
+            researchCycle: run.graph.researchCycle,
+            researchMode,
+            portfolioContentSha256: validatedPortfolio.content_sha256,
+            candidate: portfolioCandidate,
+            deferredCandidateIds: filtered.kept
+              .slice(1)
+              .map((hypothesis) => hypothesis.candidate_id?.trim())
+              .filter((candidateId): candidateId is string => Boolean(candidateId))
+          });
+        } catch (error) {
+          const message = `Active topic-probe contract could not be built: ${String(error)}`;
+          emitLog(message);
+          return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+        }
+        const activeProbeValidation = validateActiveTopicProbeContract(
+          JSON.stringify(activeProbeContract),
+          {
+            expectedRunId: run.id,
+            expectedResearchCycle: run.graph.researchCycle,
+            portfolio: validatedPortfolio
+          }
+        );
+        if (!activeProbeValidation.valid) {
+          const message =
+            `Active topic-probe contract failed validation: ${activeProbeValidation.reasons.join(", ")}`;
+          emitLog(message);
+          return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+        }
+        await writeRunArtifact(
+          run,
+          "design_experiments_panel/active_topic_probe_contract.json",
+          `${JSON.stringify(activeProbeContract, null, 2)}\n`
+        );
+        await runContextMemory.put("design_experiments.active_topic_probe_contract", activeProbeContract);
+        boundActiveHypothesis = {
+          ...activeHypothesis,
+          text: activeProbeContract.statement,
+          primary_metric: activeProbeContract.primary_metric,
+          metric_unit: activeProbeContract.metric_unit,
+          metric_scale: activeProbeContract.metric_scale,
+          metric_direction: activeProbeContract.metric_direction,
+          effect_criterion: { ...activeProbeContract.effect_criterion },
+          meaningful_effect: activeProbeContract.meaningful_effect,
+          comparator: activeProbeContract.comparator,
+          dataset_task_bench: activeProbeContract.dataset_task_bench,
+          falsifier: activeProbeContract.falsifier,
+          kill_signal: activeProbeContract.kill_signal,
+          local_budget: activeProbeContract.local_budget
+        };
+      }
+      if (researchMode === "topic_discovery" && !activeProbeContract) {
+        const message =
+          "Topic probe contract is incomplete: primary_metric, metric_unit, metric_scale, metric_direction, comparator, and effect_criterion are required before experiment design.";
+        emitLog(message);
+        return { status: "failure", error: message, summary: message, toolCallsUsed: 0 };
+      }
+      const activeHypotheses = researchMode === "topic_discovery"
+        ? [boundActiveHypothesis]
+        : filtered.kept;
+      const candidateObjectiveContract =
+        activeProbeContract ?? successorDesignCandidate;
+      const objectiveMetricProfile = candidateObjectiveContract
+        ? buildCandidateObjectiveMetricProfile(
+            candidateObjectiveContract,
+            runObjectiveMetricProfile
+          )
+        : runObjectiveMetricProfile;
+      if (candidateObjectiveContract) {
+        await writeRunArtifact(
+          run,
+          "design_experiments_panel/candidate_objective_profile.json",
+          `${JSON.stringify(objectiveMetricProfile, null, 2)}\n`
+        );
+        await runContextMemory.put(
+          "design_experiments.candidate_objective_profile",
+          objectiveMetricProfile
+        );
+      }
+
+      if (deferredHypotheses.length > 0) {
+        emitLog(
+          `Bound candidate ${activeHypothesis.candidate_id} for this probe and deferred ${deferredHypotheses.length} other authorized candidate(s).`
         );
       }
 
@@ -183,13 +979,17 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         await runContextMemory.put("design_experiments.retry_context", retryContext);
       }
 
-      emitLog(`Designing experiments from ${filtered.kept.length} hypothesis/hypotheses.`);
+      emitLog(
+        researchMode === "topic_discovery"
+          ? `Designing experiment variants for active probe candidate ${activeHypothesis.candidate_id}.`
+          : `Designing experiment variants from ${activeHypotheses.length} declared hypothesis/hypotheses.`
+      );
       const design = await designExperimentsFromHypotheses({
         llm: deps.llm,
         runTitle: run.title,
-        runTopic: run.topic,
-        objectiveMetric: run.objectiveMetric,
-        hypotheses: filtered.kept,
+        runTopic: researchMode === "topic_discovery" ? activeHypothesis.text : run.topic,
+        objectiveMetric: objectiveMetricProfile.raw,
+        hypotheses: activeHypotheses,
         constraintProfile,
         objectiveProfile: objectiveMetricProfile,
         retryContext,
@@ -197,33 +997,14 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         onProgress: emitLog
       });
       const normalizedCandidates = design.candidates.map(normalizeCandidateProtocolGuardrails);
-      const managedBundleSupported = supportsRealExecutionBundle({
-        topic: run.topic,
-        objectiveMetric: run.objectiveMetric,
-        constraints: run.constraints
-      });
       const budgetTimeoutSec = resolveDesignBudgetTimeoutSec(deps.config.experiments?.timeout_sec);
       const panelResult = runDesignExperimentsPanel({
         candidates: normalizedCandidates,
         objectiveProfile: objectiveMetricProfile,
-        managedBundleSupported
+        evidenceStage: researchMode === "topic_discovery" ? "bounded_probe" : "confirmatory",
+        requireExecutableEstimator: researchMode === "topic_discovery"
       });
 
-      const planYaml = buildPlanYaml({
-        run,
-        hypotheses: filtered.kept,
-        droppedHypotheses: filtered.dropped,
-        selected: panelResult.selected,
-        candidates: normalizedCandidates,
-        constraintProfile,
-        objectiveProfile: objectiveMetricProfile,
-        source: design.source,
-        retryContext,
-        budgetTimeoutSec
-      });
-
-      const outputPath = await writeRunArtifact(run, "experiment_plan.yaml", planYaml);
-      await fs.access(outputPath);
       await writeRunArtifact(
         run,
         "design_experiments_panel/candidates.json",
@@ -245,42 +1026,149 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         const blockingReviewers = uniqueStrings(
           blockedCandidates.flatMap((score) => score.blocked_by.map((reviewer) => String(reviewer)))
         );
+        const estimatorProtocolBlockedCandidateIds = new Set(
+          panelResult.reviews
+            .filter(
+              (review) =>
+                review.reviewer_id === "statistical_reviewer"
+                && review.hard_block
+                && review.findings.some((finding) =>
+                  finding.startsWith("Executable estimator protocol is invalid:")
+                )
+            )
+            .map((review) => review.candidate_id)
+        );
+        const retryDesignForEstimatorProtocol =
+          researchMode === "topic_discovery"
+          && normalizedCandidates.every((candidate) =>
+            estimatorProtocolBlockedCandidateIds.has(candidate.id)
+          );
         const message =
           `Experiment design panel blocked progression: all ${normalizedCandidates.length} candidate(s) were hard-blocked. ` +
           `Least-bad candidate "${panelResult.selected.title}" was preserved for inspection but is not approved for implementation handoff. ` +
-          `Blocking reviewer(s): ${blockingReviewers.join(", ") || "unknown"}.`;
+          `Blocking reviewer(s): ${blockingReviewers.join(", ") || "unknown"}.` +
+          (retryDesignForEstimatorProtocol
+            ? " Regenerate the design with a complete executable estimator protocol."
+            : "");
         emitLog(message);
         await runContextMemory.put("design_experiments.paper_scale_blocked", true);
         await runContextMemory.put("design_experiments.blocked_reason", message);
+        const generatedAt = new Date().toISOString();
+        return {
+          status: "success",
+          summary: message,
+          needsApproval: true,
+          toolCallsUsed: 1,
+          transitionRecommendation: {
+            action: retryDesignForEstimatorProtocol
+              ? "retry_same"
+              : "backtrack_to_hypotheses",
+            sourceNode: "design_experiments",
+            targetNode: retryDesignForEstimatorProtocol
+              ? "design_experiments"
+              : hypothesisBacktrackTarget,
+            reason: message,
+            confidence: retryDesignForEstimatorProtocol ? 0.99 : 0.9,
+            autoExecutable: true,
+            evidence: [
+              "design_experiments_panel/candidates.json",
+              "design_experiments_panel/reviews.json",
+              "design_experiments_panel/selection.json",
+              ...blockingReviewers.map((reviewer) => `blocking_reviewer:${reviewer}`)
+            ],
+            suggestedCommands: retryDesignForEstimatorProtocol
+              ? [`/agent run design_experiments ${run.id}`]
+              : [`/agent run ${hypothesisBacktrackTarget} ${run.id}`],
+            generatedAt
+          }
+        };
+      }
+      const planYaml = buildPlanYaml({
+        run: researchMode === "topic_discovery"
+          ? { ...run, topic: activeHypothesis.text, objectiveMetric: objectiveMetricProfile.raw }
+          : run,
+        hypotheses: activeHypotheses,
+        droppedHypotheses: [...filtered.dropped, ...deferredHypotheses],
+        selected: panelResult.selected,
+        candidates: normalizedCandidates,
+        constraintProfile,
+        objectiveProfile: objectiveMetricProfile,
+        source: design.source,
+        retryContext,
+        budgetTimeoutSec
+      });
+
+      const outputPath = await writeRunArtifact(run, "experiment_plan.yaml", planYaml);
+      await fs.access(outputPath);
+      let comparisonContract: ReturnType<typeof buildExperimentComparisonContract>;
+      try {
+        comparisonContract = buildExperimentComparisonContract({
+          run,
+          selectedDesign: panelResult.selected,
+          objectiveProfile: objectiveMetricProfile,
+          ...(candidateObjectiveContract
+            ? {
+                topicProbe: {
+                  candidateId: resolveCandidateContractId(
+                    candidateObjectiveContract
+                  ),
+                  candidateContentSha256:
+                    resolveCandidateContractContentSha256(
+                      candidateObjectiveContract
+                    ),
+                  comparator: candidateObjectiveContract.comparator,
+                  datasetTaskScope:
+                    candidateObjectiveContract.dataset_task_bench
+                }
+              }
+            : {}),
+          managedBundleSupported: false,
+          budgetTimeoutSec
+        });
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        const message =
+          `Experiment contract creation failed closed because the selected design diverged from its declared comparison or dataset/task scope: ${reason}`;
+        emitLog(message);
+        await runContextMemory.put("design_experiments.results_plan_blocked_reason", message);
         return {
           status: "failure",
           error: message,
           summary: message,
-          toolCallsUsed: 1
+          toolCallsUsed: 0
         };
       }
-      const comparisonContract = buildExperimentComparisonContract({
-        run,
-        selectedDesign: panelResult.selected,
-        objectiveProfile: objectiveMetricProfile,
-        managedBundleSupported,
-        budgetTimeoutSec
-      });
       await storeExperimentGovernanceDecision(run, runContextMemory, {
         contract: comparisonContract,
         entries: []
       });
-      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const resultsPlanResolution = buildDesignResultsPlan({
+        objectiveProfile: objectiveMetricProfile,
+        comparisonContract
+      });
+      if (!resultsPlanResolution.ok) {
+        const message = researchMode === "topic_discovery"
+          ? `Probe authorization passed, but experiment contract creation was blocked: ${resultsPlanResolution.reason}`
+          : `Experiment contract creation was blocked: ${resultsPlanResolution.reason}`;
+        emitLog(message);
+        await runContextMemory.put("design_experiments.results_plan_blocked_reason", message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
+      }
       const briefSections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
       const briefCompleteness =
         (await runContextMemory.get<BriefCompletenessArtifact>("run_brief.completeness")) ??
         (rawBrief ? buildBriefCompletenessArtifact(rawBrief) : undefined);
 
       // --- Experiment contract: causal discipline artifact (Target 1+2) ---
-      const selectedHypotheses = filtered.kept.filter(
+      const selectedHypotheses = activeHypotheses.filter(
         (h) => panelResult.selected.hypothesis_ids.includes(h.hypothesis_id)
       );
-      const hypothesisText = selectedHypotheses.map((h) => h.text).join("; ") || run.objectiveMetric;
+      const hypothesisText = selectedHypotheses.map((h) => h.text).join("; ") || activeHypothesis.text;
       const experimentContract = buildExperimentContract({
         run,
         hypothesis: hypothesisText,
@@ -288,7 +1176,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         singleChange: deriveDesignSingleChange(panelResult.selected),
         additionalChanges: [],
         expectedMetricEffect: deriveDesignExpectedMetricEffect(
-          objectiveMetricProfile.primaryMetric || run.objectiveMetric,
+          objectiveMetricProfile.primaryMetric || objectiveMetricProfile.raw,
           panelResult.selected
         ),
         abortCondition: panelResult.selected.risks.length > 0
@@ -296,7 +1184,6 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           : "Abort if primary metric degrades significantly or execution fails repeatedly.",
         keepOrDiscardRule: "Keep if objective metric improves over baseline; discard if no improvement or result is inconclusive.",
         baselines: panelResult.selected.baselines,
-        metrics: panelResult.selected.metrics,
         selectedDesign: {
           id: panelResult.selected.id,
           title: panelResult.selected.title,
@@ -304,15 +1191,26 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         },
         evidenceCeiling: deriveDesignEvidenceCeiling(panelResult.selected),
         paperCeiling: deriveDesignPaperCeiling(panelResult.selected),
-        resultsTableDirection: objectiveMetricProfile.direction === "minimize" ? "lower_better" : "higher_better",
+        resultsPlan: resultsPlanResolution.resultsPlan,
         briefRequiredBaselineCount: deriveBriefRequiredBaselineCount(briefSections)
       });
       const contractValidation = validateExperimentContract(experimentContract);
+      if (researchMode === "topic_discovery") {
+        await writeRunArtifact(
+          run,
+          ESTIMATOR_FEASIBILITY_CANDIDATE_EXPERIMENT_CONTRACT_RELATIVE_PATH,
+          `${JSON.stringify(experimentContract, null, 2)}\n`
+        );
+        await runContextMemory.put(
+          "design_experiments.candidate_experiment_contract",
+          experimentContract
+        );
+      }
       if (contractValidation.issues.length > 0) {
         emitLog(`Experiment contract notes: ${contractValidation.issues.join("; ")}`);
       }
       const blockingContractIssues = contractValidation.issues.filter((issue) =>
-        /missing explicit baseline|potential confounding|confounded attempt/iu.test(issue)
+        /missing explicit baseline|invalid results_plan|results plan|potential confounding|confounded attempt/iu.test(issue)
       );
       if (blockingContractIssues.length > 0) {
         const message = `Experiment contract blocked before execution: ${blockingContractIssues.join("; ")}`;
@@ -324,69 +1222,105 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
           toolCallsUsed: 0
         };
       }
-      if (!experimentContract.results_table_schema || experimentContract.results_table_schema.length === 0) {
-        const message =
-          "Experiment contract is missing results_table_schema. Design must declare at least one metric and direction before execution.";
-        emitLog(message);
-        return {
-          status: "failure",
-          error: message,
-          summary: message,
-          toolCallsUsed: 0
-        };
+      if (researchMode === "topic_discovery") {
+        let estimatorArtifacts;
+        try {
+          estimatorArtifacts = buildEstimatorFeasibilityArtifacts({
+            runId: run.id,
+            activeProbeSha256: activeProbeContract!.content_sha256,
+            experimentContract,
+            estimatorProtocol: panelResult.selected.estimator_protocol
+          });
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          const message =
+            `Experiment design estimator preflight could not be materialized: ${reason}. `
+            + "The design must be regenerated before implementation.";
+          emitLog(message);
+          await runContextMemory.put(
+            "design_experiments.estimator_feasibility_blocked_reason",
+            message
+          );
+          return {
+            status: "success",
+            summary: message,
+            needsApproval: true,
+            toolCallsUsed: 1,
+            transitionRecommendation: {
+              action: "retry_same",
+              sourceNode: "design_experiments",
+              targetNode: "design_experiments",
+              reason: message,
+              confidence: 0.99,
+              autoExecutable: true,
+              evidence: [
+                ESTIMATOR_FEASIBILITY_CANDIDATE_EXPERIMENT_CONTRACT_RELATIVE_PATH,
+                "design_experiments_panel/candidates.json",
+                "design_experiments_panel/reviews.json",
+                `estimator_preflight_error:${reason}`
+              ],
+              suggestedCommands: [`/agent run design_experiments ${run.id}`],
+              generatedAt: new Date().toISOString()
+            }
+          };
+        }
+        await writeRunArtifact(
+          run,
+          ESTIMATOR_FEASIBILITY_CONTRACT_RELATIVE_PATH,
+          `${JSON.stringify(estimatorArtifacts.contract, null, 2)}\n`
+        );
+        await writeRunArtifact(
+          run,
+          ESTIMATOR_FEASIBILITY_REPORT_RELATIVE_PATH,
+          `${JSON.stringify(estimatorArtifacts.report, null, 2)}\n`
+        );
+        await runContextMemory.put(
+          "design_experiments.estimator_feasibility_contract",
+          estimatorArtifacts.contract
+        );
+        await runContextMemory.put(
+          "design_experiments.estimator_feasibility_report",
+          estimatorArtifacts.report
+        );
+        if (estimatorArtifacts.report.status !== "pass") {
+          const reasonCodes = estimatorArtifacts.report.reason_codes;
+          const message =
+            "Experiment design estimator preflight blocked implementation: "
+            + `${reasonCodes.join(", ") || "unknown_feasibility_failure"}. `
+            + "The design must be regenerated with an identifiable, attainable comparison.";
+          emitLog(message);
+          await runContextMemory.put(
+            "design_experiments.estimator_feasibility_blocked_reason",
+            message
+          );
+          return {
+            status: "success",
+            summary: message,
+            needsApproval: true,
+            toolCallsUsed: 1,
+            transitionRecommendation: {
+              action: "retry_same",
+              sourceNode: "design_experiments",
+              targetNode: "design_experiments",
+              reason: message,
+              confidence: 0.99,
+              autoExecutable: true,
+              evidence: [
+                ESTIMATOR_FEASIBILITY_CANDIDATE_EXPERIMENT_CONTRACT_RELATIVE_PATH,
+                ESTIMATOR_FEASIBILITY_CONTRACT_RELATIVE_PATH,
+                ESTIMATOR_FEASIBILITY_REPORT_RELATIVE_PATH,
+                ...reasonCodes.map((reason) => `estimator_reason:${reason}`)
+              ],
+              suggestedCommands: [`/agent run design_experiments ${run.id}`],
+              generatedAt: new Date().toISOString()
+            }
+          };
+        }
       }
       await writeExperimentContract(run, experimentContract);
       const experimentPortfolio = buildExperimentPortfolioFromDesign({
         runId: run.id,
-        selectedDesign: panelResult.selected,
-        managedConfig: managedBundleSupported
-          ? {
-              comparison_axes: ["runner_profile", "dataset", "repeat", "prompt_variant", "baseline"],
-              primary: {
-                id: "primary_standard",
-                label: "Primary standard managed run",
-                profile: "standard",
-                expected_trials: MANAGED_EXECUTABLE_DESIGN.standard_profile.total_trials,
-                dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
-                metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
-                baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
-                notes: [
-                  panelResult.selected.plan_summary,
-                  ...MANAGED_EXECUTABLE_DESIGN.conditions,
-                  ...panelResult.selected.evaluation_steps
-                ]
-              },
-              supplemental: [
-                {
-                  id: "quick_check",
-                  label: "Quick-check managed replication",
-                  profile: "quick_check",
-                  expected_trials: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.total_trials,
-                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
-                  metrics: [...MANAGED_EXECUTABLE_DESIGN.supported_metrics],
-                  baselines: [...MANAGED_EXECUTABLE_DESIGN.supported_baselines],
-                  notes: [
-                    "Low-cost validation run gated on the primary objective result.",
-                    ...panelResult.selected.implementation_notes
-                  ]
-                },
-                {
-                  id: "confirmatory",
-                  label: "Confirmatory extension",
-                  profile: "confirmatory",
-                  expected_trials: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.total_trials,
-                  dataset_scope: [...MANAGED_EXECUTABLE_DESIGN.supported_dataset_ids],
-                  metrics: panelResult.selected.metrics,
-                  baselines: panelResult.selected.baselines,
-                  notes: [
-                    "Higher-budget confirmatory run gated on the quick_check outcome.",
-                    ...panelResult.selected.evaluation_steps,
-                    ...panelResult.selected.resource_notes
-                  ]
-                }
-              ]
-            }
-          : undefined
+        selectedDesign: panelResult.selected
       });
       await writeRunArtifact(
         run,
@@ -407,7 +1341,7 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
         selected: panelResult.selected,
         comparisonContract,
         experimentContract,
-        objectiveMetric: run.objectiveMetric
+        objectiveMetric: objectiveMetricProfile.primaryMetric || objectiveMetricProfile.raw
       });
       await writeRunArtifact(
         run,
@@ -470,7 +1404,8 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
       await runContextMemory.put("design_experiments.primary", panelResult.selected.title);
       await runContextMemory.put("design_experiments.source", design.source);
       await runContextMemory.put("design_experiments.summary", design.summary);
-      await runContextMemory.put("design_experiments.hypothesis_count", filtered.kept.length);
+      await runContextMemory.put("design_experiments.hypothesis_count", activeHypotheses.length);
+      await runContextMemory.put("design_experiments.deferred_hypothesis_count", deferredHypotheses.length);
       await runContextMemory.put("design_experiments.filtered_out_count", filtered.dropped.length);
       const publicOutputs = await publishPublicRunOutputs({
         workspaceRoot: process.cwd(),
@@ -492,6 +1427,21 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
             sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "baseline_summary.json"),
             targetRelativePath: "baseline_summary.json",
             optional: true
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, "design_experiments_panel", "active_topic_probe_contract.json"),
+            targetRelativePath: "active_topic_probe_contract.json",
+            optional: researchMode !== "topic_discovery"
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, ESTIMATOR_FEASIBILITY_CONTRACT_RELATIVE_PATH),
+            targetRelativePath: "estimator_feasibility_contract.json",
+            optional: researchMode !== "topic_discovery"
+          },
+          {
+            sourcePath: path.join(process.cwd(), ".autolabos", "runs", run.id, ESTIMATOR_FEASIBILITY_REPORT_RELATIVE_PATH),
+            targetRelativePath: "estimator_feasibility_report.json",
+            optional: researchMode !== "topic_discovery"
           }
         ]
       });
@@ -527,6 +1477,26 @@ export function createDesignExperimentsNode(deps: NodeExecutionDeps): GraphNodeH
   };
 }
 
+async function readClosedChainArtifact(
+  runDir: string,
+  relativePath: string
+): Promise<ClosedChainArtifactRead> {
+  try {
+    return { raw: await fs.readFile(path.join(runDir, relativePath), "utf8") };
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      return {};
+    }
+    const code =
+      error instanceof Error && "code" in error && typeof error.code === "string"
+        ? `:${error.code.toLowerCase()}`
+        : "";
+    return {
+      reasonCode: `research_funnel_source_artifact_read_error:${relativePath}${code}`
+    };
+  }
+}
+
 function deriveBriefRequiredBaselineCount(briefSections?: MarkdownRunBriefSections): number | undefined {
   const text = [briefSections?.baselineComparator, briefSections?.targetComparison]
     .filter((value): value is string => Boolean(value?.trim()))
@@ -549,16 +1519,30 @@ function deriveBriefRequiredBaselineCount(briefSections?: MarkdownRunBriefSectio
   return 1;
 }
 
-function parseHypotheses(raw: string): DesignInputHypothesis[] {
-  const items: Array<DesignInputHypothesis | undefined> = raw
+function parseHypotheses(raw: string): ParsedDesignHypothesis[] {
+  const items: Array<ParsedDesignHypothesis | undefined> = raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line, index) => {
       try {
-        const parsed = JSON.parse(line) as DesignInputHypothesis;
+        const parsed = JSON.parse(line) as DesignInputHypothesis & ParsedDesignHypothesis;
+        const candidateId = typeof parsed.candidate_id === "string" ? parsed.candidate_id.trim() : "";
+        if (typeof parsed.text !== "string" || !parsed.text.trim()) {
+          return undefined;
+        }
         return {
           hypothesis_id: parsed.hypothesis_id || `h_${index + 1}`,
+          ...(candidateId ? { candidate_id: candidateId } : {}),
+          ...(typeof parsed.run_id === "string" ? { run_id: parsed.run_id } : {}),
+          ...(typeof parsed.research_cycle === "number" ? { research_cycle: parsed.research_cycle } : {}),
+          ...(Array.isArray(parsed.supported_gap_ids)
+            ? {
+                supported_gap_ids: parsed.supported_gap_ids.filter(
+                  (item): item is string => typeof item === "string"
+                )
+              }
+            : {}),
           text: parsed.text,
           score: parsed.score,
           evidence_links: parsed.evidence_links,
@@ -566,10 +1550,27 @@ function parseHypotheses(raw: string): DesignInputHypothesis[] {
           causal_clarity: parsed.causal_clarity,
           falsifiability: parsed.falsifiability,
           experimentability: parsed.experimentability,
-          reproducibility_specificity: parsed.reproducibility_specificity,
-          reproducibility_signals: parsed.reproducibility_signals,
+          measurement_specificity: parsed.measurement_specificity,
+          measurement_signals: parsed.measurement_signals,
           measurement_hint: parsed.measurement_hint,
           boundary_condition: parsed.boundary_condition,
+          gap_statement: parsed.gap_statement,
+          closest_prior_non_overlap: parsed.closest_prior_non_overlap,
+          reviewer_absorption_objection: parsed.reviewer_absorption_objection,
+          comparator: parsed.comparator,
+          dataset_task_bench: parsed.dataset_task_bench,
+          primary_metric: parsed.primary_metric,
+          metric_unit: parsed.metric_unit,
+          metric_scale: parsed.metric_scale,
+          metric_direction: parsed.metric_direction,
+          effect_criterion: parseEffectCriterion(parsed.effect_criterion),
+          meaningful_effect: parsed.meaningful_effect,
+          falsifier: parsed.falsifier,
+          axis_ids: parsed.axis_ids,
+          local_budget: parsed.local_budget,
+          kill_signal: parsed.kill_signal,
+          contribution_claim: parsed.contribution_claim,
+          minimum_publishable_evidence: parsed.minimum_publishable_evidence,
           limitation_reflection: parsed.limitation_reflection,
           measurement_readiness: parsed.measurement_readiness,
           critique_summary: parsed.critique_summary
@@ -578,7 +1579,68 @@ function parseHypotheses(raw: string): DesignInputHypothesis[] {
         return undefined;
       }
     });
-  return items.filter((item): item is DesignInputHypothesis => item !== undefined && Boolean(item.text));
+  return items.filter(
+    (item): item is ParsedDesignHypothesis => item !== undefined && Boolean(item.text)
+  );
+}
+
+function buildDesignHypothesisFromTopicCandidate(
+  candidate: TopicProbeSuccessorDesignCandidate
+): ParsedDesignHypothesis {
+  return {
+    hypothesis_id:
+      `successor_target_${candidate.content_sha256.slice(0, 12)}`,
+    candidate_id: candidate.source_candidate_id,
+    supported_gap_ids: [...candidate.supported_gap_ids],
+    text: candidate.statement,
+    score: candidate.scores.testability,
+    evidence_links: [...candidate.evidence_links],
+    axis_ids: [...candidate.cluster_ids],
+    groundedness: 4,
+    causal_clarity: 4,
+    falsifiability: 4,
+    experimentability: 4,
+    measurement_specificity: 4,
+    measurement_signals: [
+      candidate.primary_metric,
+      "uncertainty_interval"
+    ],
+    measurement_hint:
+      `Compare ${candidate.primary_metric} against ${candidate.comparator} under the frozen scope.`,
+    gap_statement: candidate.gap_statement,
+    closest_prior_non_overlap: candidate.closest_prior_non_overlap,
+    reviewer_absorption_objection: candidate.reviewer_absorption_objection,
+    comparator: candidate.comparator,
+    dataset_task_bench: candidate.dataset_task_bench,
+    primary_metric: candidate.primary_metric,
+    metric_unit: candidate.metric_unit,
+    metric_scale: candidate.metric_scale,
+    metric_direction: candidate.metric_direction,
+    effect_criterion: { ...candidate.effect_criterion },
+    meaningful_effect: candidate.meaningful_effect,
+    falsifier: candidate.falsifier,
+    local_budget: candidate.local_budget,
+    kill_signal: candidate.kill_signal,
+    contribution_claim: candidate.contribution_claim,
+    minimum_publishable_evidence: candidate.minimum_publishable_evidence,
+    limitation_reflection: 4,
+    measurement_readiness: 4,
+    critique_summary:
+      "This hypothesis is frozen by the validated successor route target."
+  };
+}
+
+function selectApprovedHypotheses(
+  hypotheses: ParsedDesignHypothesis[],
+  approvedCandidateIds: string[]
+): ParsedDesignHypothesis[] {
+  const byCandidateId = new Map(
+    hypotheses.flatMap((item) => item.candidate_id ? [[item.candidate_id, item] as const] : [])
+  );
+  return approvedCandidateIds.flatMap((candidateId) => {
+    const hypothesis = byCandidateId.get(candidateId);
+    return hypothesis ? [hypothesis] : [];
+  });
 }
 
 function deriveDesignSingleChange(candidate: ExperimentDesignCandidate): string {
@@ -589,6 +1651,172 @@ function deriveDesignSingleChange(candidate: ExperimentDesignCandidate): string 
   return candidate.title.replace(/^\s*plan\s+\d+\s*:\s*/iu, "").trim() || candidate.title;
 }
 
+
+export type DesignResultsPlanResolution =
+  | { ok: true; resultsPlan: ResultsPlanV2 }
+  | { ok: false; reason: string };
+
+export function buildDesignResultsPlan(input: {
+  objectiveProfile: ObjectiveMetricProfile;
+  comparisonContract: ReturnType<typeof buildExperimentComparisonContract>;
+}): DesignResultsPlanResolution {
+  const candidateBinding = readCandidateObjectiveProfileBinding(input.objectiveProfile);
+  const metricId = (
+    candidateBinding?.primary_metric
+    || input.objectiveProfile.primaryMetric
+  )?.trim();
+  if (!metricId) {
+    return {
+      ok: false,
+      reason: "the objective profile does not declare a primary metric identifier"
+    };
+  }
+  const direction = candidateBinding?.metric_direction || input.objectiveProfile.direction;
+  if (direction !== "maximize" && direction !== "minimize") {
+    return {
+      ok: false,
+      reason: `the objective profile does not declare a direction for metric "${metricId}"`
+    };
+  }
+  const topicProbeBinding = input.comparisonContract.topic_probe_binding;
+  if (topicProbeBinding) {
+    if (!candidateBinding) {
+      return {
+        ok: false,
+        reason: "the topic-probe comparison contract is missing its candidate objective binding"
+      };
+    }
+    if (
+      candidateBinding.candidate_id !== topicProbeBinding.candidate_id
+      || candidateBinding.comparator !== topicProbeBinding.declared_comparator
+    ) {
+      return {
+        ok: false,
+        reason: "the topic-probe treatment or comparator diverges from the selected candidate contract"
+      };
+    }
+  }
+  const subjectSeriesId = topicProbeBinding?.subject_series_id
+    || `${input.comparisonContract.plan_id.trim()}:primary`;
+  if (!subjectSeriesId) {
+    return {
+      ok: false,
+      reason: "the comparison contract does not declare a primary series identifier"
+    };
+  }
+  const baselineSeriesIds = uniqueStrings(input.comparisonContract.baseline_candidate_ids);
+  if (baselineSeriesIds.length === 0) {
+    return {
+      ok: false,
+      reason: "the comparison contract does not declare a baseline series identifier"
+    };
+  }
+  if (
+    topicProbeBinding
+    && (
+      baselineSeriesIds.length !== 1
+      || baselineSeriesIds[0] !== topicProbeBinding.reference_series_id
+    )
+  ) {
+    return {
+      ok: false,
+      reason: "the topic-probe comparison contract does not preserve its exact reference identifier"
+    };
+  }
+  const declaredReferenceId =
+    topicProbeBinding?.reference_series_id
+    || input.comparisonContract.objective_profile.comparison?.baselineId?.trim()
+    || input.objectiveProfile.comparison?.baselineId?.trim();
+  const frozenComparison = input.comparisonContract.objective_profile.comparison;
+  if (
+    topicProbeBinding
+    && (
+      frozenComparison?.candidateId !== topicProbeBinding.subject_series_id
+      || frozenComparison?.baselineId !== topicProbeBinding.reference_series_id
+      || frozenComparison?.metricKey !== metricId
+    )
+  ) {
+    return {
+      ok: false,
+      reason: "the frozen topic-probe comparison does not preserve its treatment, reference, and metric identifiers"
+    };
+  }
+  const primaryReferenceSeriesId = topicProbeBinding
+    ? topicProbeBinding.reference_series_id
+    : baselineSeriesIds.length === 1
+      ? baselineSeriesIds[0]
+      : declaredReferenceId
+        ? baselineSeriesIds.find((id) => matchesDeclaredSeriesId(id, declaredReferenceId))
+        : undefined;
+  if (!primaryReferenceSeriesId) {
+    return {
+      ok: false,
+      reason: "multiple baseline series are declared but the objective profile does not bind one primary reference identifier"
+    };
+  }
+  const metricDefinition = {
+    id: metricId,
+    label: metricId,
+    direction: direction === "minimize" ? ("lower_better" as const) : ("higher_better" as const),
+    ...((candidateBinding?.metric_unit || input.objectiveProfile.unit)?.trim()
+      ? { unit: (candidateBinding?.metric_unit || input.objectiveProfile.unit)!.trim() }
+      : {})
+  };
+  const requiredSeries: NonNullable<ResultsPlanV2["required_series"]> = [
+    { id: subjectSeriesId, role: "primary" },
+    ...baselineSeriesIds.map((id) => ({ id, role: "baseline" as const }))
+  ];
+  const requiredComparisons: NonNullable<ResultsPlanV2["required_comparisons"]> =
+    topicProbeBinding
+      ? [{
+          id: topicProbeBinding.primary_comparison_id,
+          subject_series_id: topicProbeBinding.subject_series_id,
+          reference_series_id: topicProbeBinding.reference_series_id,
+          metric_id: metricId,
+          scope: { ...topicProbeBinding.observation_scope }
+        }]
+      : baselineSeriesIds.map((referenceSeriesId) => ({
+          id: `${subjectSeriesId}__vs__${referenceSeriesId}`,
+          subject_series_id: subjectSeriesId,
+          reference_series_id: referenceSeriesId,
+          metric_id: metricId
+        }));
+  const primaryComparison = requiredComparisons.find(
+    (comparison) => comparison.reference_series_id === primaryReferenceSeriesId
+  )!;
+  return {
+    ok: true,
+    resultsPlan: {
+      schema_version: RESULTS_ARTIFACT_SCHEMA_VERSION,
+      required_metrics: [metricDefinition],
+      minimum_series_count: requiredSeries.length,
+      minimum_comparison_count: requiredComparisons.length,
+      required_series: requiredSeries,
+      required_comparisons: requiredComparisons,
+      primary_comparison_id: primaryComparison.id,
+      ...(candidateBinding
+        ? {
+            primary_effect_criterion: {
+              comparison_id: primaryComparison.id,
+              metric_id: candidateBinding.primary_metric,
+              metric_scale: candidateBinding.metric_scale,
+              direction: candidateBinding.metric_direction,
+              effect_criterion: { ...candidateBinding.effect_criterion }
+            }
+          }
+        : {})
+    }
+  };
+}
+
+function matchesDeclaredSeriesId(seriesId: string, declaredId: string): boolean {
+  if (seriesId === declaredId) return true;
+  const normalizedDeclared = declaredId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, "-")
+    .replace(/^-+|-+$/gu, "");
+  return normalizedDeclared.length > 0 && seriesId.endsWith(`:${normalizedDeclared}`);
+}
 function deriveDesignExpectedMetricEffect(
   objectiveMetric: string,
   candidate: ExperimentDesignCandidate
@@ -680,19 +1908,34 @@ function buildPlanYaml(args: {
 }): string {
   const collectDefaults = args.constraintProfile.collect;
   const paperProfile = args.constraintProfile.writing;
-  const useManagedExecutableSections = supportsRealExecutionBundle({
-    topic: args.run.topic,
-    objectiveMetric: args.run.objectiveMetric,
-    constraints: args.run.constraints
-  });
+  const candidateObjective = readCandidateObjectiveProfileBinding(args.objectiveProfile);
+  const objectiveRaw = args.objectiveProfile.raw.trim() || args.run.objectiveMetric;
 
   return [
     `run_id: ${args.run.id}`,
     `topic: "${escapeQuote(args.run.topic)}"`,
     "objective:",
-    `  metric: "${escapeQuote(args.run.objectiveMetric)}"`,
+    `  metric: "${escapeQuote(objectiveRaw)}"`,
+    `  discovery_metric: "${escapeQuote(args.run.objectiveMetric)}"`,
     `  primary_metric: "${escapeQuote(args.objectiveProfile.primaryMetric || "unspecified")}"`,
+    `  observed_metric: "${escapeQuote(candidateObjective?.primary_metric || args.objectiveProfile.primaryMetric || "unspecified")}"`,
+    `  metric_unit: "${escapeQuote(args.objectiveProfile.unit || "unspecified")}"`,
+    `  metric_scale: "${escapeQuote(args.objectiveProfile.scale || "unspecified")}"`,
+    `  target_unit: "${escapeQuote(args.objectiveProfile.targetUnit || "unspecified")}"`,
+    `  target_scale: "${escapeQuote(args.objectiveProfile.targetScale || "unspecified")}"`,
+    `  direction: "${escapeQuote(args.objectiveProfile.direction || "unspecified")}"`,
+    `  threshold_operator: "${escapeQuote(args.objectiveProfile.comparator || "unspecified")}"`,
+    `  reference: "${escapeQuote(candidateObjective?.comparator || args.objectiveProfile.comparison?.baselineId || "unspecified")}"`,
     `  target: "${escapeQuote(args.objectiveProfile.targetDescription || "observe and improve")}"`,
+    ...(candidateObjective
+      ? [
+          "  effect_criterion:",
+          `    basis: "${escapeQuote(candidateObjective.effect_criterion.basis)}"`,
+          `    magnitude: ${candidateObjective.effect_criterion.magnitude}`,
+          `    scale: "${escapeQuote(candidateObjective.effect_criterion.scale)}"`,
+          `    inclusive: ${candidateObjective.effect_criterion.inclusive ? "true" : "false"}`
+        ]
+      : []),
     "constraints:",
     "  raw:",
     ...renderYamlStringList(args.run.constraints, 2),
@@ -737,7 +1980,7 @@ function buildPlanYaml(args: {
     "hypothesis_filter:",
     `  retained_count: ${args.hypotheses.length}`,
     `  dropped_count: ${args.droppedHypotheses.length}`,
-    `  objective_sensitive: ${isReproducibilityObjective(args.objectiveProfile) ? "true" : "false"}`,
+    "  candidate_measurement_contract_bound: true",
     "dropped_hypotheses:",
     ...renderDroppedHypotheses(args.droppedHypotheses),
     "retry_context:",
@@ -774,9 +2017,7 @@ function buildPlanYaml(args: {
     `  id: "${escapeQuote(args.selected.id)}"`,
     `  title: "${escapeQuote(args.selected.title)}"`,
     `  summary: "${escapeQuote(args.selected.plan_summary)}"`,
-    ...(useManagedExecutableSections
-      ? renderManagedExecutableDesignSection(args.selected)
-      : renderCompatibilitySelectedDesignSection(args.selected)),
+    ...renderCompatibilitySelectedDesignSection(args.selected),
     "shortlisted_designs:",
     ...renderShortlistedDesigns(args.candidates),
     "execution:",
@@ -790,87 +2031,11 @@ function resolveDesignBudgetTimeoutSec(value: unknown): number {
   return Number.isFinite(numeric) && numeric > 0 ? Math.max(1, Math.floor(numeric)) : 1800;
 }
 
-function renderManagedExecutableDesignSection(selected: ExperimentDesignCandidate): string[] {
-  return [
-    "  executable_design:",
-    `    runner: "${MANAGED_EXECUTABLE_DESIGN.runner_id}"`,
-    "    conditions:",
-    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.conditions], 3),
-    "    standard_profile:",
-    ...renderYamlKeyValueObject(
-      {
-        repeats: MANAGED_EXECUTABLE_DESIGN.standard_profile.repeats,
-        prompt_variants: MANAGED_EXECUTABLE_DESIGN.standard_profile.prompt_variants,
-        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.standard_profile.tasks_per_dataset,
-        dataset_count: MANAGED_EXECUTABLE_DESIGN.standard_profile.dataset_count,
-        total_trials: MANAGED_EXECUTABLE_DESIGN.standard_profile.total_trials
-      },
-      3
-    ),
-    "    quick_check_profile:",
-    ...renderYamlKeyValueObject(
-      {
-        repeats: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.repeats,
-        prompt_variants: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.prompt_variants,
-        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.tasks_per_dataset,
-        dataset_count: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.dataset_count,
-        total_trials: MANAGED_EXECUTABLE_DESIGN.quick_check_profile.total_trials
-      },
-      3
-    ),
-    "    benchmarks:",
-    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_benchmarks], 3),
-    "    execution_settings:",
-    ...renderYamlKeyValueObject(
-      {
-        max_workers: MANAGED_EXECUTABLE_DESIGN.execution_settings.max_workers,
-        planner_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.planner_reasoning_effort,
-        planner_fast_mode: MANAGED_EXECUTABLE_DESIGN.execution_settings.planner_fast_mode,
-        solver_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.solver_reasoning_effort,
-        verifier_reasoning_effort: MANAGED_EXECUTABLE_DESIGN.execution_settings.verifier_reasoning_effort
-      },
-      3
-    ),
-    "    implemented_metrics:",
-    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_metrics], 3),
-    "    implemented_perturbations:",
-    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.implemented_perturbations], 3),
-    "    supported_baselines:",
-    ...renderYamlStringList([...MANAGED_EXECUTABLE_DESIGN.supported_baselines], 3),
-    "  confirmatory_extension:",
-    "    available_runner_profile:",
-    "      confirmatory:",
-    ...renderYamlKeyValueObject(
-      {
-        repeats: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.repeats,
-        prompt_variants: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.prompt_variants,
-        tasks_per_dataset: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.tasks_per_dataset,
-        dataset_count: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.dataset_count,
-        total_trials: MANAGED_EXECUTABLE_DESIGN.confirmatory_profile.total_trials
-      },
-      4
-    ),
-    "    research_scale_datasets:",
-    ...renderYamlStringList(uniqueStrings(selected.datasets), 3),
-    "    additional_metrics_and_protocol:",
-    ...renderYamlStringList(uniqueStrings(selected.metrics), 3),
-    "    additional_baselines:",
-    ...renderYamlStringList(uniqueStrings(selected.baselines), 3),
-    "    implementation_notes:",
-    ...renderYamlStringList(uniqueStrings(selected.implementation_notes), 3),
-    "    evaluation_steps:",
-    ...renderYamlStringList(uniqueStrings(selected.evaluation_steps), 3),
-    "    risks:",
-    ...renderYamlStringList(uniqueStrings(selected.risks), 3),
-    "    resource_notes:",
-    ...renderYamlStringList(uniqueStrings(selected.resource_notes), 3)
-  ];
-}
-
 function renderCompatibilitySelectedDesignSection(selected: ExperimentDesignCandidate): string[] {
   return [
     "  datasets:",
     ...renderYamlStringList(selected.datasets, 2),
+    `  primary_metric: "${escapeQuote(selected.primary_metric)}"`,
     "  metrics:",
     ...renderYamlStringList(selected.metrics, 2),
     "  baselines:",
@@ -901,13 +2066,29 @@ function renderShortlistedDesigns(candidates: ExperimentDesignCandidate[]): stri
 
 async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext | undefined> {
   const runDir = path.join(".autolabos", "runs", runId);
-  const [resultRaw, transitionRaw, runRecordRaw, runVerifierRaw] = await Promise.all([
+  const [
+    resultRaw,
+    transitionRaw,
+    runRecordRaw,
+    runVerifierRaw,
+    panelReviewsRaw,
+    estimatorReportRaw
+  ] = await Promise.all([
     safeRead(path.join(runDir, "result_analysis.json")),
     safeRead(path.join(runDir, "transition_recommendation.json")),
     safeRead(path.join(runDir, "run_record.json")),
-    safeRead(path.join(runDir, "run_experiments_verify_report.json"))
+    safeRead(path.join(runDir, "run_experiments_verify_report.json")),
+    safeRead(path.join(runDir, "design_experiments_panel", "reviews.json")),
+    safeRead(path.join(runDir, ESTIMATOR_FEASIBILITY_REPORT_RELATIVE_PATH))
   ]);
-  if (!resultRaw && !transitionRaw && !runRecordRaw && !runVerifierRaw) {
+  if (
+    !resultRaw
+    && !transitionRaw
+    && !runRecordRaw
+    && !runVerifierRaw
+    && !panelReviewsRaw
+    && !estimatorReportRaw
+  ) {
     return undefined;
   }
 
@@ -915,6 +2096,8 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
   const transition = parseJsonRecord(transitionRaw);
   const runRecord = parseJsonRecord(runRecordRaw);
   const runVerifier = parseJsonRecord(runVerifierRaw);
+  const panelReviews = parseJsonRecordArray(panelReviewsRaw);
+  const estimatorReport = parseJsonRecord(estimatorReportRaw);
   const transitionAction = stringValue(transition?.action);
   const transitionTarget = stringValue(transition?.targetNode);
   if (transitionAction && transitionAction !== "backtrack_to_design" && transitionTarget && transitionTarget !== "design_experiments") {
@@ -942,6 +2125,13 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
   const runVerifierOperatorActionRequired = runVerifierFailed
     ? booleanValue(runVerifier?.operator_action_required)
     : undefined;
+  const estimatorFailureReasons =
+    stringValue(estimatorReport?.status) === "blocked"
+      ? stringArrayValue(estimatorReport?.reason_codes)
+      : [];
+  const panelBlockFindings = panelReviews
+    .filter((review) => booleanValue(review.hard_block) === true)
+    .flatMap((review) => stringArrayValue(review.findings) ?? []);
 
   const context: DesignRetryContext = {
     previous_selected_design_title: stringValue(selectedDesign?.title),
@@ -974,7 +2164,9 @@ async function loadDesignRetryContext(runId: string): Promise<DesignRetryContext
       runVerifierFailureCode,
       runVerifierRepairTarget,
       runVerifierUpstreamRepairHint,
-      runVerifierOperatorActionRequired
+      runVerifierOperatorActionRequired,
+      estimatorFailureReasons,
+      panelBlockFindings
     })
   };
 
@@ -996,6 +2188,8 @@ function buildRetryDirectives(args: {
   runVerifierRepairTarget?: string;
   runVerifierUpstreamRepairHint?: string;
   runVerifierOperatorActionRequired?: boolean;
+  estimatorFailureReasons?: string[];
+  panelBlockFindings?: string[];
 }): string[] {
   const directives: string[] = [];
   if (
@@ -1039,7 +2233,23 @@ function buildRetryDirectives(args: {
       directives.push(`Dependency repair hint: ${truncateRetryDirective(args.runVerifierUpstreamRepairHint)}`);
     }
   }
-  directives.push("Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them.");
+  if (
+    args.panelBlockFindings?.some((finding) =>
+      finding.startsWith("Executable estimator protocol is invalid:")
+    )
+  ) {
+    directives.push(
+      "Declare a complete executable estimator_protocol; do not leave its units, arms, pairing, denominator, estimand, estimator, power, resampling, or multiplicity fields implicit in prose."
+    );
+  }
+  if ((args.estimatorFailureReasons?.length || 0) > 0) {
+    directives.push(
+      `Regenerate the design so estimator feasibility passes these prior blockers: ${uniqueStrings(args.estimatorFailureReasons || []).join(", ")}.`
+    );
+  }
+  if (directives.length > 0) {
+    directives.push("Keep the explicit comparator discipline and preserve the locked baselines unless there is direct evidence to replace them.");
+  }
   return uniqueStrings(directives);
 }
 
@@ -1052,6 +2262,21 @@ function parseJsonRecord(raw: string | undefined): Record<string, unknown> | und
     return recordValue(parsed);
   } catch {
     return undefined;
+  }
+}
+
+function parseJsonRecordArray(raw: string | undefined): Array<Record<string, unknown>> {
+  if (!raw) return [];
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return Array.isArray(value)
+      ? value.filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item)
+        )
+      : [];
+  } catch {
+    return [];
   }
 }
 
@@ -1171,16 +2396,11 @@ function renderYamlKeyValueObject(
 }
 
 function filterDesignHypotheses(
-  hypotheses: DesignInputHypothesis[],
-  objectiveProfile: ObjectiveMetricProfile
-): { kept: DesignInputHypothesis[]; dropped: FilteredHypothesis[] } {
-  if (hypotheses.length <= 1) {
-    return { kept: hypotheses, dropped: [] };
-  }
-
+  hypotheses: ParsedDesignHypothesis[]
+): { kept: ParsedDesignHypothesis[]; dropped: FilteredHypothesis[] } {
   const scored = hypotheses.map((hypothesis) => {
-    const qualityScore = computeHypothesisDesignQuality(hypothesis, objectiveProfile);
-    const reason = explainHypothesisDrop(hypothesis, objectiveProfile, qualityScore);
+    const qualityScore = computeHypothesisDesignQuality(hypothesis);
+    const reason = explainHypothesisDrop(hypothesis, qualityScore);
     return { hypothesis, qualityScore, reason };
   });
 
@@ -1193,38 +2413,101 @@ function filterDesignHypotheses(
       reason: item.reason || "Dropped by quality gate."
     }));
 
-  if (kept.length > 0) {
-    return { kept, dropped };
-  }
+  return { kept, dropped };
+}
 
-  const fallback = [...scored].sort((a, b) => b.qualityScore - a.qualityScore || a.hypothesis.hypothesis_id.localeCompare(b.hypothesis.hypothesis_id))[0];
-  if (!fallback) {
-    return { kept: hypotheses.slice(0, 1), dropped };
-  }
+function buildCandidateObjectiveMetricProfile(
+  contract: CandidateObjectiveContract,
+  inherited: ObjectiveMetricProfile
+): CandidateOwnedObjectiveMetricProfile {
+  const binding = buildCandidateObjectiveProfileBinding({
+    candidateId: resolveCandidateContractId(contract),
+    primaryMetric: contract.primary_metric,
+    metricUnit: contract.metric_unit,
+    metricScale: contract.metric_scale,
+    metricDirection: contract.metric_direction,
+    comparator: contract.comparator,
+    effectCriterion: contract.effect_criterion,
+    objectiveRaw: contract.objective_raw
+  });
+  const thresholdOperator = objectiveComparatorForEffectCriterion(
+    binding.metric_direction,
+    binding.effect_criterion
+  );
+  const signedTarget = signedRawDeltaTargetForEffectCriterion(
+    binding.metric_direction,
+    binding.effect_criterion
+  );
+  const deltaMetricKey = candidateRawDeltaMetricKey(binding.primary_metric);
+  const criterion = binding.effect_criterion;
+  const targetDescription =
+    `raw_delta(subject-reference) ${thresholdOperator} ${signedTarget} ${criterion.scale}`;
+  const meaningfulEffect = contract.meaningful_effect?.trim();
 
   return {
-    kept: [fallback.hypothesis],
-    dropped: scored
-      .filter((item) => item.hypothesis.hypothesis_id !== fallback.hypothesis.hypothesis_id)
-      .map((item) => ({
-        hypothesis_id: item.hypothesis.hypothesis_id,
-        text: item.hypothesis.text,
-        reason: item.reason || "Dropped because a stronger fallback hypothesis was retained."
-      }))
+    source: "heuristic_fallback",
+    raw: binding.objective_raw,
+    primaryMetric: deltaMetricKey,
+    preferredMetricKeys: [deltaMetricKey],
+    direction: binding.metric_direction,
+    comparator: thresholdOperator,
+    targetValue: signedTarget,
+    targetDescription,
+    unit: binding.metric_unit,
+    scale: binding.metric_scale,
+    targetUnit: binding.metric_unit,
+    targetScale: criterion.scale,
+    comparison: {
+      baselineId: binding.comparator,
+      candidateId: binding.candidate_id,
+      metricKey: binding.primary_metric
+    },
+    resourceLimits: inherited.resourceLimits,
+    analysisFocus: [
+      `Measure ${binding.primary_metric} in ${binding.metric_unit} on the ${binding.metric_scale} scale.`,
+      `Evaluate ${deltaMetricKey} as subject-reference and require ${thresholdOperator} ${signedTarget} after downstream scale conversion to ${criterion.scale}.`,
+      ...(meaningfulEffect ? [`Human-readable context only: ${meaningfulEffect}`] : [])
+    ],
+    paperEmphasis: [
+      `Report ${binding.primary_metric}, ${deltaMetricKey}, uncertainty, and the signed structured-effect threshold without substituting another objective.`
+    ],
+    assumptions: [
+      "The active objective profile is derived from the hash-bound topic candidate contract rather than the broad discovery brief."
+    ],
+    candidate_contract: binding,
+    delta_contract: {
+      output_metric_key: deltaMetricKey,
+      source_metric_key: binding.primary_metric,
+      raw_delta_definition: "subject_minus_reference",
+      comparator: thresholdOperator,
+      signed_target: signedTarget
+    }
   };
 }
 
-function computeHypothesisDesignQuality(
-  hypothesis: DesignInputHypothesis,
-  objectiveProfile: ObjectiveMetricProfile
-): number {
+function resolveCandidateContractId(
+  contract: CandidateObjectiveContract
+): string {
+  return "candidate_id" in contract
+    ? contract.candidate_id
+    : contract.source_candidate_id;
+}
+
+function resolveCandidateContractContentSha256(
+  contract: CandidateObjectiveContract
+): string {
+  return "candidate_content_sha256" in contract
+    ? contract.candidate_content_sha256
+    : contract.content_sha256;
+}
+function computeHypothesisDesignQuality(hypothesis: DesignInputHypothesis): number {
   let score = (hypothesis.score ?? 0) / 2;
   score += hypothesis.groundedness ?? 0;
   score += hypothesis.causal_clarity ?? 0;
   score += hypothesis.falsifiability ?? 0;
   score += hypothesis.experimentability ?? 0;
-  score += (hypothesis.reproducibility_specificity ?? 0) * (isReproducibilityObjective(objectiveProfile) ? 1.5 : 0.5);
-  score += (hypothesis.reproducibility_signals?.length ?? 0) > 0 ? 1 : 0;
+  score += (hypothesis.measurement_specificity ?? 0) * 1.5;
+  score += (hypothesis.measurement_signals?.length ?? 0) > 0 ? 1 : 0;
   score += hypothesis.measurement_hint ? 1 : 0;
   score += hypothesis.limitation_reflection ?? 0;
   score += hypothesis.measurement_readiness ?? 0;
@@ -1233,7 +2516,6 @@ function computeHypothesisDesignQuality(
 
 function explainHypothesisDrop(
   hypothesis: DesignInputHypothesis,
-  objectiveProfile: ObjectiveMetricProfile,
   qualityScore: number
 ): string | undefined {
   if (!hasStructuredHypothesisReview(hypothesis)) {
@@ -1257,19 +2539,17 @@ function explainHypothesisDrop(
     issues.push("measurement plan is not operationalized");
   }
 
-  if (isReproducibilityObjective(objectiveProfile)) {
-    if ((hypothesis.reproducibility_specificity ?? 0) < 3) {
-      issues.push("reproducibility outcome is underspecified");
-    }
-    if ((hypothesis.reproducibility_signals?.length ?? 0) === 0) {
-      issues.push("no reproducibility signal");
-    }
-    if (!hypothesis.measurement_hint) {
-      issues.push("no reproducibility measurement hint");
-    }
+  if ((hypothesis.measurement_specificity ?? 0) < 3) {
+    issues.push("candidate outcome is underspecified");
+  }
+  if ((hypothesis.measurement_signals?.length ?? 0) === 0) {
+    issues.push("no measurement signal");
+  }
+  if (!hypothesis.measurement_hint) {
+    issues.push("no executable measurement hint");
   }
 
-  if (qualityScore < (isReproducibilityObjective(objectiveProfile) ? 15 : 10)) {
+  if (qualityScore < 15) {
     issues.push("overall design quality below threshold");
   }
 
@@ -1278,10 +2558,6 @@ function explainHypothesisDrop(
   }
 
   return issues.join("; ");
-}
-
-function isReproducibilityObjective(profile: ObjectiveMetricProfile): boolean {
-  return /reproduc|재현/u.test(profile.raw) || /reproduc|재현/u.test(profile.primaryMetric || "");
 }
 
 function deriveDesignEvidenceCeiling(design: ExperimentDesignCandidate): string | undefined {
@@ -1374,11 +2650,11 @@ function hasStructuredHypothesisReview(hypothesis: DesignInputHypothesis): boole
     typeof hypothesis.causal_clarity === "number" ||
     typeof hypothesis.falsifiability === "number" ||
     typeof hypothesis.experimentability === "number" ||
-    typeof hypothesis.reproducibility_specificity === "number" ||
+    typeof hypothesis.measurement_specificity === "number" ||
     typeof hypothesis.limitation_reflection === "number" ||
     typeof hypothesis.measurement_readiness === "number" ||
     Boolean(hypothesis.measurement_hint) ||
     Boolean(hypothesis.critique_summary) ||
-    (hypothesis.reproducibility_signals?.length ?? 0) > 0
+    (hypothesis.measurement_signals?.length ?? 0) > 0
   );
 }

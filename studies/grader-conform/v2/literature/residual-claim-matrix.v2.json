@@ -1,0 +1,297 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "grader_conform_v2_primary_source_residual_claim_matrix",
+  "verified_at": "2026-07-28T12:49:28+09:00",
+  "verification_policy": {
+    "primary_sources_only": true,
+    "search_results_count_as_verification": false,
+    "abstract_only_sources_can_close_subsumption_gate": false,
+    "method_or_result_outcomes_observed": false,
+    "old_v1_decisions_used": false,
+    "five_axis_test": [
+      "research_object",
+      "core_question",
+      "intervention_or_method",
+      "evaluation_unit_and_evidence",
+      "claim_scope"
+    ]
+  },
+  "source_ledger": [
+    {
+      "source_id": "park2026tvb",
+      "title": "Can LLMs Detect Benchmark Defects? A Meta-Benchmark from Benchmark Updates",
+      "authors": "Jongwon Park",
+      "publication_status": "ICML 2026 DL4C workshop preprint",
+      "primary_url": "https://posttrain.dev/task-verification-bench-paper.pdf",
+      "verification_depth": "full paper method, curation, evaluation, results, and appendix passages inspected",
+      "evidence_locations": [
+        "pp. 1-2: research question and root-cause matching",
+        "pp. 3-4: version-diff ground truth and curation",
+        "pp. 4-6: verify-only/solve-then-verify and harness ablations",
+        "appendix: prompt and manual-verification procedures"
+      ],
+      "verified_facts": [
+        "Task Verification Bench uses author-acknowledged benchmark updates as defect ground truth.",
+        "The verifier receives original task artifacts and emits a binary verdict plus a natural-language defect diagnosis.",
+        "The study evaluates root-cause-matched recall and precision, with an LLM judge comparing the diagnosis to update-derived ground truth.",
+        "Its evaluation covers SWE-bench and two non-overlapping Terminal-Bench splits and compares model, pipeline, and harness-access conditions.",
+        "It does not require the verifier to produce an executable test that fails on a parent revision and passes on a fixed revision."
+      ],
+      "role_in_v2": "closest direct prior and mandatory design baseline"
+    },
+    {
+      "source_id": "tu2026benchguard",
+      "title": "BenchGuard: Who Guards the Benchmarks? Automated Auditing of LLM Agent Benchmarks",
+      "authors": "Xinming Tu, Tianze Wang, Yingzhou Lu, Kexin Huang, Yuanhao Qu, and Sara Mostafavi",
+      "publication_status": "arXiv preprint",
+      "primary_url": "https://arxiv.org/html/2604.24955",
+      "identifier": "arXiv:2604.24955",
+      "verification_depth": "full HTML method, evaluation, results, limitations, and prompts inspected",
+      "evidence_locations": [
+        "Sections 3.1-3.3: artifact stack, taxonomy, and six-phase verification protocol",
+        "Section 4: two benchmark evaluation and human/expert validation",
+        "Section 5: recall, precision, ensemble, and cost results",
+        "Appendix B: definition-level prompt templates"
+      ],
+      "verified_facts": [
+        "BenchGuard cross-verifies instructions, reference programs, evaluation logic, and environments using structured LLM protocols and deterministic checks.",
+        "Its definition-level audit uses a six-phase structured reasoning protocol and emits evidence-linked findings rather than executable reproducers.",
+        "It evaluates on ScienceAgentBench and BIXBench with author-confirmed or expert-revised issues.",
+        "It uses human or expert adjudication and an alignment judge to validate findings."
+      ],
+      "role_in_v2": "closest structured-audit prior and mandatory auditor baseline source"
+    },
+    {
+      "source_id": "wang2026aba",
+      "title": "Automated Benchmark Auditing for AI Agents and Large Language Models",
+      "authors": "Junlin Wang, Federico Bianchi, Shang Zhu, Fan Nie, Yongchan Kwon, Bhuwan Dhingra, and James Zou",
+      "publication_status": "arXiv preprint",
+      "primary_url": "https://arxiv.org/html/2605.26079",
+      "identifier": "arXiv:2605.26079",
+      "verification_depth": "full HTML method, portfolio, validation, reproducibility, and limitations inspected",
+      "evidence_locations": [
+        "Section 2: evidence collector and static/trajectory auditor",
+        "Section 3: 168-benchmark portfolio and static audit",
+        "Section 4: upstream-PR and expert validation",
+        "Appendix C: pinned agent configuration and audit prompts"
+      ],
+      "verified_facts": [
+        "ABA normalizes heterogeneous benchmark artifacts into a manifest and uses a benchmark-agnostic agentic auditor.",
+        "Its outputs are structured issue findings with evidence paths and suggested fixes.",
+        "It validates findings against upstream pull requests, prior reports, and expert review.",
+        "It does not compare equal-budget executable test-generation procedures on parent/fixed evaluator revisions."
+      ],
+      "role_in_v2": "large-scale benchmark-agnostic audit prior and reviewer-absorption threat"
+    },
+    {
+      "source_id": "zhu2025abc",
+      "title": "Establishing Best Practices for Building Rigorous Agentic Benchmarks",
+      "authors": "Yuxuan Zhu et al.",
+      "publication_status": "NeurIPS 2025 Datasets and Benchmarks Track",
+      "primary_url": "https://proceedings.neurips.cc/paper_files/paper/2025/file/f316275b44ee2de533102913828a8107-Paper-Datasets_and_Benchmarks_Track.pdf",
+      "identifier": "NeurIPS 2025 paper f316275b44ee2de533102913828a8107",
+      "verification_depth": "official proceedings PDF method, checklist, case studies, and appendices inspected",
+      "evidence_locations": [
+        "pp. 2-6: task validity, outcome validity, and ABC checklist",
+        "pp. 7-9: ten-benchmark assessment and newly identified issues",
+        "Appendix F: benchmark-specific validation experiments"
+      ],
+      "verified_facts": [
+        "ABC defines task-validity and outcome-validity checks for agentic benchmarks.",
+        "The authors assess ten open-source agentic benchmarks and validate selected issues with benchmark-specific experiments.",
+        "The contribution is a checklist, assessment, and repair case study rather than an automated executable-reproducer comparison."
+      ],
+      "role_in_v2": "domain framing, issue taxonomy, and validity criteria"
+    },
+    {
+      "source_id": "yu2025utboost",
+      "title": "UTBoost: Rigorous Evaluation of Coding Agents on SWE-Bench",
+      "authors": "Boxi Yu, Yuxuan Zhu, Pinjia He, and Daniel Kang",
+      "publication_status": "ACL 2025 main conference long paper",
+      "primary_url": "https://aclanthology.org/2025.acl-long.189.pdf",
+      "identifier": "10.18653/v1/2025.acl-long.189",
+      "verification_depth": "official ACL Anthology PDF method, evaluation, results, and limitations inspected",
+      "evidence_locations": [
+        "Sections 3-4: UTGenerator and UTBoost",
+        "Sections 5-6: test insufficiency and leaderboard correction results"
+      ],
+      "verified_facts": [
+        "UTBoost augments SWE-bench evaluation with LLM-generated unit tests.",
+        "It reports 36 task instances with insufficient tests and 345 erroneous patches that the original evaluation labeled as passed.",
+        "Its object is patch correctness within SWE-bench, not historical implementation faults in evaluator code across independent agent-evaluation repositories."
+      ],
+      "role_in_v2": "mandatory test-generation prior and direct-example-regression baseline source"
+    },
+    {
+      "source_id": "xu2026mrcoupler",
+      "title": "MR-Coupler: Automated Metamorphic Test Generation via Functional Coupling Analysis",
+      "authors": "Congying Xu, Hengcheng Zhu, Songqiang Chen, Jiarong Wu, Valerio Terragni, and Shing-Chi Cheung",
+      "publication_status": "PACMSE/FSE 2026",
+      "primary_url": "https://arxiv.org/html/2604.10126",
+      "identifier": "10.1145/3808213",
+      "verification_depth": "full HTML method, datasets, baselines, results, ablations, and threats inspected",
+      "evidence_locations": [
+        "Section 3: functional-coupling method and generated metamorphic tests",
+        "Section 4.1: human-written tests and 50 real-world bugs",
+        "Sections 4.3-4.5: baseline and ablation results",
+        "Section 4.9: threats to validity"
+      ],
+      "verified_facts": [
+        "MR-Coupler uses functional coupling to generate and validate metamorphic tests.",
+        "Its evaluation includes 100 human-written metamorphic-test tasks and 50 real-world bugs.",
+        "It reports that generated metamorphic tests detect 44 percent of the 50 real bugs.",
+        "It does not focus on agent-evaluator contracts or compare structured contract relations with equal-information audit-to-reproducer procedures."
+      ],
+      "role_in_v2": "mandatory metamorphic-test-generation prior"
+    },
+    {
+      "source_id": "kang2023libro",
+      "title": "Evaluating Diverse Large Language Models for Automatic and General Bug Reproduction",
+      "authors": "Sungmin Kang, Juyeon Yoon, Nargiz Askarbekkyzy, and Shin Yoo",
+      "publication_status": "arXiv preprint",
+      "primary_url": "https://arxiv.org/html/2311.04532",
+      "identifier": "arXiv:2311.04532",
+      "verification_depth": "full HTML approach, evaluation, results, and discussion inspected",
+      "evidence_locations": [
+        "Section 3: bug-report-to-test pipeline",
+        "Sections 4-6: Defects4J evaluation and model comparisons",
+        "Section 7: limitations and failure analysis"
+      ],
+      "verified_facts": [
+        "LIBRO prompts LLMs with natural-language bug reports to generate bug-reproducing tests and ranks candidates through post-processing.",
+        "Its evaluation uses general software bugs rather than agent-evaluator implementation contracts.",
+        "It does not use a blinded parent-only comparison of multiple equal-budget test-authoring procedures."
+      ],
+      "role_in_v2": "mandatory general bug-reproduction prior"
+    },
+    {
+      "source_id": "ravi2025pbt",
+      "title": "An Empirical Evaluation of Property-Based Testing in Python",
+      "authors": "Savitha Ravi and Michael Coblenz",
+      "publication_status": "PACMPL OOPSLA 2025",
+      "primary_url": "https://cseweb.ucsd.edu/~mcoblenz/assets/pdf/OOPSLA_2025_PBT.pdf",
+      "identifier": "10.1145/3764068",
+      "verification_depth": "author PDF method, corpus, mutation study, parameter sweep, and threats inspected",
+      "evidence_locations": [
+        "pp. 1-3: research questions and corpus",
+        "evaluation sections: mutation effectiveness and category comparison",
+        "parameter-sweep section: generated-input budget"
+      ],
+      "verified_facts": [
+        "The study categorizes property-based tests in 426 Python programs and evaluates suites from 40 projects with mutation testing.",
+        "Its evidence concerns mutation detection and existing test suites, not held-out historical evaluator faults or LLM-authored executable reproducers."
+      ],
+      "role_in_v2": "property-based-testing comparator rationale"
+    }
+  ],
+  "five_axis_comparison": [
+    {
+      "source_id": "park2026tvb",
+      "research_object": "Defective tasks in SWE-bench and Terminal-Bench versions",
+      "core_question": "Can LLM agents detect the correct root cause of benchmark defects?",
+      "intervention_or_method": "Verify-only or solve-then-verify diagnosis with optional harness access",
+      "evaluation_unit_and_evidence": "Task-level natural-language diagnosis matched to update-derived labels",
+      "claim_scope": "LLM-assisted benchmark-defect triage",
+      "overlap_verdict": "directly_adjacent_not_subsuming",
+      "residual_difference": "v2 requires an executable deterministic reproducer and compares authoring procedures under identical parent-only information and budgets."
+    },
+    {
+      "source_id": "tu2026benchguard",
+      "research_object": "Coupled instruction, reference, evaluator, and environment artifacts in execution-based benchmarks",
+      "core_question": "Can structured LLM audits find benchmark defects missed by prior review?",
+      "intervention_or_method": "Six-phase cross-artifact audit plus deterministic checks",
+      "evaluation_unit_and_evidence": "Evidence-linked natural-language findings aligned to confirmed or expert-revised issues",
+      "claim_scope": "Human-AI benchmark auditing",
+      "overlap_verdict": "directly_adjacent_not_subsuming",
+      "residual_difference": "v2 converts parent-visible contracts into executable reproducers and tests whether that procedure adds detection value over an audit-first reproducer baseline."
+    },
+    {
+      "source_id": "wang2026aba",
+      "research_object": "Tasks and artifacts across many LLM and agent benchmarks",
+      "core_question": "Can a benchmark-agnostic agent find instruction, environment, and evaluation issues at scale?",
+      "intervention_or_method": "Manifest normalization followed by static or trajectory audit",
+      "evaluation_unit_and_evidence": "Structured findings validated by reports, pull requests, or sampled expert review",
+      "claim_scope": "Large-scale automated benchmark auditing",
+      "overlap_verdict": "directly_adjacent_not_subsuming",
+      "residual_difference": "v2 studies controlled executable fault reproduction on a frozen historical parent/fix frame instead of open-ended issue reporting."
+    },
+    {
+      "source_id": "zhu2025abc",
+      "research_object": "Agentic benchmark validity and reporting practices",
+      "core_question": "Which validity checks should benchmark builders apply, and what failures do they expose?",
+      "intervention_or_method": "Checklist assessment plus issue-specific validation experiments",
+      "evaluation_unit_and_evidence": "Benchmark-level checklist scores and case-study measurements",
+      "claim_scope": "Best practices and benchmark validity",
+      "overlap_verdict": "required_framing_not_subsuming",
+      "residual_difference": "v2 evaluates automated test-authoring procedures rather than proposing a checklist."
+    },
+    {
+      "source_id": "yu2025utboost",
+      "research_object": "SWE-bench tasks and candidate agent patches",
+      "core_question": "Can generated tests correct insufficient patch evaluation?",
+      "intervention_or_method": "LLM-driven unit-test generation and augmentation",
+      "evaluation_unit_and_evidence": "Patch labels under augmented tests",
+      "claim_scope": "More rigorous evaluation of coding agents on SWE-bench",
+      "overlap_verdict": "test_generation_collision_not_subsuming",
+      "residual_difference": "v2 targets faults in evaluator implementations across repositories and compares four equal-budget authoring procedures with parent/fixed replay."
+    },
+    {
+      "source_id": "xu2026mrcoupler",
+      "research_object": "General program methods, human metamorphic tests, and real software bugs",
+      "core_question": "Does functional coupling improve automated metamorphic-test generation?",
+      "intervention_or_method": "Functional-coupling-guided metamorphic-test generation and validation",
+      "evaluation_unit_and_evidence": "Valid test generation and bug detection",
+      "claim_scope": "General automated metamorphic testing",
+      "overlap_verdict": "method_family_collision_not_subsuming",
+      "residual_difference": "v2 does not claim a new general metamorphic-testing method; it tests contract-structured authoring against direct audit and property-test procedures on agent-evaluator faults."
+    },
+    {
+      "source_id": "kang2023libro",
+      "research_object": "General software bugs described by bug reports",
+      "core_question": "Can LLMs generate bug-reproducing tests from reports?",
+      "intervention_or_method": "Prompted test generation plus execution-based post-processing and ranking",
+      "evaluation_unit_and_evidence": "Bug-level executable reproduction",
+      "claim_scope": "General bug reproduction",
+      "overlap_verdict": "output_type_collision_not_subsuming",
+      "residual_difference": "v2 uses parent-visible evaluator contracts, a held-out historical frame, controls, and equal-budget procedural comparison."
+    },
+    {
+      "source_id": "ravi2025pbt",
+      "research_object": "Existing Python property-based tests",
+      "core_question": "How effective are property-based tests and their categories?",
+      "intervention_or_method": "Static categorization, mutation analysis, and input-budget sweep",
+      "evaluation_unit_and_evidence": "Mutation detection by existing tests",
+      "claim_scope": "Empirical effectiveness of property-based testing",
+      "overlap_verdict": "comparator_evidence_not_subsuming",
+      "residual_difference": "v2 evaluates generated tests on historical evaluator faults and clean controls rather than mutants."
+    }
+  ],
+  "subsumption_decision": {
+    "verdict": "not_subsumed_but_high_collision",
+    "paper_stage": "PAPER_REPAIR_ONCE",
+    "surviving_research_question": "Under equal parent-only information, model, tool, and execution budgets, does a structured contract-to-metamorphic-test procedure produce more independently replayable executable reproducers for historical agent-evaluator implementation faults than a prior-work-anchored audit-to-reproducer procedure, direct example regression, or free-form property-test generation?",
+    "surviving_contribution": "A blinded cross-repository empirical comparison of executable-reproducer authoring procedures on historical agent-evaluator implementation faults.",
+    "forbidden_claims": [
+      "Automated auditing of agent benchmarks is new.",
+      "Using LLMs to find benchmark defects is new.",
+      "Generating tests with LLMs is new.",
+      "Metamorphic testing finds real software bugs for the first time.",
+      "The retained frame estimates evaluator-defect prevalence in all agent benchmarks.",
+      "A structured prompt is a new general metamorphic-testing method."
+    ],
+    "strongest_reviewer_absorption_objection": "Task Verification Bench, BenchGuard, and ABA already establish update-derived defect ground truth and structured LLM auditing, while UTBoost, LIBRO, and MR-Coupler already establish LLM-authored executable and metamorphic tests. A reviewer can therefore absorb v2 as a prompt-level recombination unless the study isolates executable-reproducer output, uses a prior-work-anchored audit-to-reproducer primary comparator, enforces information and budget parity, and demonstrates cross-cluster differences under deterministic parent/fixed replay.",
+    "required_primary_comparator": "prior_work_anchored_auditor_to_executable_reproducer",
+    "secondary_comparators": [
+      "direct_example_contract_regression",
+      "freeform_contract_property"
+    ],
+    "literature_gate_status": "pass_for_single_bounded_preflight_only",
+    "automatic_kill_conditions": [
+      "The prior-work-anchored auditor baseline cannot be implemented with the same parent-only information and budget as the structured arm.",
+      "The structured arm differs from the auditor baseline only in labels or prose without a distinct executable intermediate contract.",
+      "The historical frame cannot support source- and root-cause-independent deterministic parent/fixed replay.",
+      "The control corpus cannot estimate false alarms for all arms.",
+      "Any later primary source materially matches all five subsumption axes."
+    ]
+  }
+}

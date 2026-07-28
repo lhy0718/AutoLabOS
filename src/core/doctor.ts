@@ -19,7 +19,10 @@ import {
   HarnessValidationReport,
   runHarnessValidation
 } from "./validation/harnessValidationService.js";
-import { buildBriefCompletenessArtifact } from "./runs/researchBriefFiles.js";
+import {
+  buildBriefCompletenessArtifact,
+  validateResearchBriefMarkdown
+} from "./runs/researchBriefFiles.js";
 
 export interface DoctorRunOptions {
   llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
@@ -519,16 +522,21 @@ async function runResearchBriefContractCheck(
     const missingSections = completeness.contract_missing_sections.length > 0
       ? completeness.contract_missing_sections
       : completeness.missing_sections;
+    const validation = validateResearchBriefMarkdown(markdown);
+    const contractReady = completeness.contract_ready && validation.errors.length === 0;
+    const contractIssues = missingSections.length > 0 ? missingSections : validation.errors;
     return {
       resolvedPath,
-      contractReady: completeness.contract_ready,
-      missingSections,
+      contractReady,
+      missingSections: contractIssues,
       check: {
         name: "research-brief-contract",
-        ok: completeness.contract_ready,
-        detail: completeness.contract_ready
+        ok: contractReady,
+        detail: contractReady
           ? `Research brief contract is complete at ${resolvedPath}.`
-          : `Research brief contract is missing required section(s): ${missingSections.join(", ")}.`
+          : missingSections.length > 0
+            ? `Research brief contract is missing required section(s): ${missingSections.join(", ")}.`
+            : `Research brief contract is invalid: ${validation.errors.join(" ")}`
       }
     };
   } catch (error) {

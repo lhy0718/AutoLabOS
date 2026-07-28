@@ -22,7 +22,9 @@ Standalone role: the existing TUI/web workflow remains a reference implementatio
 
 Public contract: artifact and gate schema, not a fixed promise that every run becomes a paper.
 
-## Plugin Intents
+## Intent Classes
+
+### Executable CLI Intents
 
 - `research:new`: create or repair a governed research brief.
 - `research:audit`: audit a run or external artifact bundle as untrusted evidence.
@@ -31,16 +33,69 @@ Public contract: artifact and gate schema, not a fixed promise that every run be
   validator, policy, or runtime strengthening.
 - `research:pack`: export a traceable paper-readiness bundle and independently verify it before distribution.
 
-## Artifact Contract
+These intents are backed by `autolabos research
+<new|audit|review|improve|pack|verify-pack|verify-milestone>` through the
+plugin bridge.
+
+### Workflow-Native Intent
+
+`research:discover` explores paper topics within the fixed 10-node reference
+workflow. It is not a CLI-backed command and does not add a top-level node.
+Discovery starts only from a complete `ResearchBrief`; an incomplete brief is
+repaired through `research:new` before the workflow intent begins.
+
+The intent occupies the existing node sequence:
+
+`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments`
+
+- `collect_papers` builds a literature corpus bounded by the brief.
+- `analyze_papers` emits `ResearchGapMap` from evidence-linked limitations and
+  preserves supported versus provisional epistemic status.
+- `generate_hypotheses` emits `TopicPortfolio` with 5-7 candidates spanning at
+  least 3 distinct nonempty evidence-axis clusters.
+- Each portfolio candidate records closest-prior non-overlap, the
+  strongest-baseline absorption objection, a primary metric with explicit
+  unit and numeric scale, a structured delta-versus-reference effect criterion, a local budget,
+  a falsifier, a kill signal, and minimum publishable evidence.
+- `design_experiments` validates the portfolio and emits
+  `TopicProbeDecision` plus a hash-bound `ActiveTopicProbeContract` for exactly
+  one authorized candidate.
+
+The terminal authority is closed-chain probe authorization. It permits a
+bounded execution probe to continue through the existing downstream workflow;
+it is not final topic selection, research completion, or paper readiness. A
+blocked decision routes back to `generate_hypotheses`.
+
+## Governance Artifact Contract
 
 - `ResearchBrief`: execution contract with baseline, evidence floor, disallowed shortcuts, and failure conditions.
 - `EvidenceBundle`: collected literature, run outputs, metrics, logs, drafts, and provenance imported as evidence candidates, with available input bytes bound by portable path, SHA-256, and byte length.
 - `GateReport`: deterministic and structured findings about traceability, missing evidence, and done-condition drift, transitively bound to those audited inputs through its evidence-bundle ID and explicit input bindings.
 - `ReviewReport`: claim-evidence alignment, readiness class, downgrade decision, and repair target.
-- `ModelReviewBundle`: exact-gate-bound independent specialist reviews, model/provider/reasoning/execution provenance, preserved disagreement, and conservative meta reconciliation.
 - `MetaHarnessPatchPlan`: smallest safe node, prompt, skill, validator, policy,
   or runtime strengthening plan with rollback expectations.
 - `PaperReadinessBundle`: portable public bundle with provenance, claim evidence, downgrade decisions, limitations, and an explicit list of source copies redacted for public portability.
+
+## Workflow Artifact Contract
+
+- `ResearchGapMap`: evidence-linked literature-gap candidates emitted within
+  `analyze_papers`, including source support and epistemic status.
+- `TopicPortfolio`: bounded topic candidates emitted within
+  `generate_hypotheses`, including portfolio breadth and complete
+  falsification, budget, prior-work, comparator-objection, and
+  minimum-publishable-evidence contracts.
+- `TopicProbeDecision`: the `design_experiments` authorization or backtrack
+  decision bound to the validated portfolio. It cannot represent topic
+  selection or paper readiness.
+- `ActiveTopicProbeContract`: the hash-bound active-candidate measurement
+  contract. It carries the metric, unit, scale, direction, comparator, structured
+  effect criterion, deferred candidate IDs, and bounded-probe evidence ceiling.
+
+## Sidecar And Operational Artifacts
+
+- `ModelReviewBundle`: exact-gate-bound independent specialist reviews,
+  model/provider/reasoning/execution provenance, preserved disagreement, and
+  conservative meta reconciliation.
 - `PluginDependencyReport`: operational-only report for a missing or incompatible plugin dependency; it cannot represent research evidence or substitute for a `GateReport`.
 
 ## Decision Authority
@@ -100,6 +155,10 @@ available, delegates execution without a shell, and emits a blocking
 artifact validation and reuse of the existing brief, audit, review, and
 meta-harness logic.
 
+The bridge does not expose `research:discover`. Topic discovery is entered as
+a workflow-native intent and remains inside `collect_papers`,
+`analyze_papers`, `generate_hypotheses`, and `design_experiments`.
+
 `research review` accepts an optional `--model-review
 <model-review-bundle.json>` sidecar. The sidecar becomes required by policy for
 paper-scale or explicitly requested multi-agent review and remains subordinate
@@ -136,6 +195,8 @@ The dogfood report is a `research:improve` surface: failed checks map to the sma
 ## Non-Goals
 
 - Do not replace the governed workflow with an unbounded orchestrator.
+- Do not expose `research:discover` as a CLI subcommand or add a discovery node.
+- Do not treat probe authorization as final topic selection or paper readiness.
 - Do not encode one historical experiment in public source, tests, docs, or plugin examples.
 - Do not treat external agent success as research success.
 - Do not treat compiled manuscripts as paper-ready without review gates.

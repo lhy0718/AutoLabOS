@@ -2,7 +2,13 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 
 import { ensureDir, fileExists } from "../../utils/fs.js";
-import { ExtractedRunBrief, MarkdownRunBriefSections, parseMarkdownRunBriefSections } from "./runBriefParser.js";
+import {
+  ExtractedRunBrief,
+  MarkdownRunBriefSections,
+  parseDeclaredResearchRunMode,
+  parseMarkdownRunBriefSections
+} from "./runBriefParser.js";
+import { buildTopicDiscoveryScopeContract } from "../topicDiscoveryScopeContract.js";
 import type { ManuscriptFormatTarget } from "../../types.js";
 
 export const RESEARCH_BRIEF_DIR = ".autolabos/briefs";
@@ -14,7 +20,9 @@ export interface BriefValidationResult {
 }
 
 type ResearchBriefSectionKey =
+  | "researchMode"
   | "topic"
+  | "scientificScope"
   | "objectiveMetric"
   | "constraints"
   | "plan"
@@ -43,7 +51,11 @@ export interface ParsedAppendixPreferences {
 }
 
 export interface GuidedResearchBriefAnswers {
+  researchMode?: "hypothesis_test" | "topic_discovery";
   topic: string;
+  scientificObject?: string;
+  empiricalProblems?: string;
+  priorWorkProbes?: string;
   primaryMetric: string;
   secondaryMetrics?: string;
   meaningfulImprovement: string;
@@ -68,7 +80,7 @@ export interface GuidedResearchBriefAnswers {
 
 type RequiredResearchBriefSectionKey = Exclude<
   ResearchBriefSectionKey,
-  "manuscriptFormat" | "manuscriptTemplate" | "manuscriptAuthors" | "appendixPreferences" | "notes" | "questionsRisks"
+  "researchMode" | "scientificScope" | "manuscriptFormat" | "manuscriptTemplate" | "manuscriptAuthors" | "appendixPreferences" | "notes" | "questionsRisks"
 >;
 
 const RESEARCH_BRIEF_SECTION_SPECS: Array<{
@@ -78,10 +90,34 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
   required: boolean;
 }> = [
   {
+    key: "researchMode",
+    heading: "Research Mode",
+    required: false,
+    lines: [
+      "Choose one: hypothesis_test | topic_discovery",
+      "Use topic_discovery when the brief defines a broad search scope and candidate-selection constraints rather than a final experimental claim."
+    ]
+  },
+  {
     key: "topic",
     heading: "Topic",
     required: true,
     lines: ["State the research area and the concrete problem in 1-3 sentences."]
+  },
+  {
+    key: "scientificScope",
+    heading: "Scientific Scope",
+    required: false,
+    lines: [
+      "Required for topic_discovery.",
+      "### Scientific Object",
+      "- one concise 2-to-5-term domain object",
+      "### Empirical Problems",
+      "- first observable problem or failure relation",
+      "- second independent observable problem or failure relation",
+      "### Prior-Work Probes",
+      "- closest-prior or subsumption question"
+    ]
   },
   {
     key: "objectiveMetric",
@@ -363,15 +399,33 @@ function sanitizeScalar(text: string | undefined): string {
 }
 
 export function buildGuidedResearchBriefMarkdown(input: GuidedResearchBriefAnswers): string {
+  const researchMode = input.researchMode || "hypothesis_test";
   const appendixPrefer = splitStructuredLines(input.appendixPrefer ?? "");
   const appendixKeepMain = splitStructuredLines(input.appendixKeepMain ?? "");
   const manuscriptTemplate = input.manuscriptTemplate?.trim();
   const sections: string[] = [
     "# Research Brief",
     "",
+    "## Research Mode",
+    researchMode,
+    "",
     "## Topic",
     sanitizeScalar(input.topic),
     "",
+    ...(researchMode === "topic_discovery"
+      ? [
+          "## Scientific Scope",
+          "### Scientific Object",
+          ...toBulletSection(input.scientificObject ?? ""),
+          "",
+          "### Empirical Problems",
+          ...toBulletSection(input.empiricalProblems ?? ""),
+          "",
+          "### Prior-Work Probes",
+          ...toBulletSection(input.priorWorkProbes ?? ""),
+          ""
+        ]
+      : []),
     "## Objective Metric",
     `- Primary metric: ${sanitizeScalar(input.primaryMetric)}`,
     `- Secondary metrics (if any): ${sanitizeScalar(input.secondaryMetrics)}`,
@@ -381,13 +435,25 @@ export function buildGuidedResearchBriefMarkdown(input: GuidedResearchBriefAnswe
     ...toBulletSection(input.constraints),
     "",
     "## Plan",
-    "1. collect paper-scale related work",
-    "2. identify the comparator family and lock a named baseline",
-    "3. form a falsifiable hypothesis",
-    "4. design a small but real experiment",
-    "5. implement and run the baseline plus alternative condition(s)",
-    "6. analyze results with explicit quantitative comparison",
-    "7. draft only after the evidence gate is met",
+    ...(researchMode === "topic_discovery"
+      ? [
+          "1. collect broad primary-source related work across independent research clusters",
+          "2. map limitations, closest priors, and the strongest novelty-absorption objections",
+          "3. generate five to seven candidate-owned contracts with a metric, explicit unit and numeric scale, direction, structured effect criterion, comparator, data source, falsifier, local budget, and kill signal",
+          "4. adversarially review the portfolio and authorize exactly one bounded probe while deferring the remaining eligible candidates",
+          "5. run the bounded probe and kill or backtrack immediately when a frozen gate fails",
+          "6. freeze a confirmatory hypothesis and experiment only after real probe evidence supports promotion",
+          "7. draft only after the confirmatory evidence gate is met"
+        ]
+      : [
+          "1. collect paper-scale related work",
+          "2. identify the comparator family and lock a named baseline",
+          "3. form a falsifiable hypothesis",
+          "4. design a small but real experiment",
+          "5. implement and run the baseline plus alternative condition(s)",
+          "6. analyze results with explicit quantitative comparison",
+          "7. draft only after the evidence gate is met"
+        ]),
     "",
     "## Manuscript Format",
     "- Columns: 2",
@@ -520,6 +586,9 @@ export function validateResearchBriefDraftMarkdown(markdown: string): BriefValid
   if (!sections?.title || sections.title.toLowerCase() !== "research brief") {
     warnings.push('Expected the document to start with "# Research Brief".');
   }
+  if (hasExplicitResearchModeValue(sections?.researchMode) && !parseDeclaredResearchRunMode(markdown)) {
+    errors.push('Set "## Research Mode" to either "hypothesis_test" or "topic_discovery".');
+  }
 
   const topicStatus = sectionStatus("topic", sections?.topic);
   if (!topicStatus.present) {
@@ -539,6 +608,9 @@ export function validateResearchBriefMarkdown(markdown: string): BriefValidation
   if (!sections?.title || sections.title.toLowerCase() !== "research brief") {
     warnings.push('Expected the document to start with "# Research Brief".');
   }
+  if (hasExplicitResearchModeValue(sections?.researchMode) && !parseDeclaredResearchRunMode(markdown)) {
+    errors.push('Set "## Research Mode" to either "hypothesis_test" or "topic_discovery".');
+  }
 
   for (const key of REQUIRED_RESEARCH_BRIEF_SECTION_KEYS) {
     const status = completeness.sections[key];
@@ -551,7 +623,30 @@ export function validateResearchBriefMarkdown(markdown: string): BriefValidation
       errors.push(`Replace the placeholder text in "## ${heading}" before starting the run.`);
     }
   }
+  if (parseDeclaredResearchRunMode(markdown) === "topic_discovery") {
+    const scopeStatus = sectionStatus("scientificScope", sections?.scientificScope);
+    if (!scopeStatus.present) {
+      errors.push('Fill in the "## Scientific Scope" section before starting a topic-discovery run.');
+    } else if (!scopeStatus.substantive) {
+      errors.push('Replace the placeholder text in "## Scientific Scope" before starting a topic-discovery run.');
+    } else {
+      const scopeContract = buildTopicDiscoveryScopeContract(markdown);
+      if (
+        scopeContract.contractSource !== "explicit_scientific_scope"
+        || !scopeContract.enforced
+      ) {
+        errors.push(
+          'Make "## Scientific Scope" explicit: declare one 2-to-5-term Scientific Object and at least two Empirical Problems or Scientific Relations with four distinctive terms in total.'
+        );
+      }
+    }
+  }
   return { errors, warnings };
+}
+
+function hasExplicitResearchModeValue(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase() || "";
+  return Boolean(normalized) && !normalized.startsWith("choose one:");
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +665,7 @@ export interface BriefCompletenessArtifact {
   grade: BriefCompletenessGrade;
   sections: {
     topic: BriefSectionStatus;
+    scientificScope: BriefSectionStatus;
     objectiveMetric: BriefSectionStatus;
     constraints: BriefSectionStatus;
     plan: BriefSectionStatus;
@@ -597,7 +693,7 @@ function normalizeBriefSectionText(content: string): string {
 }
 
 function sectionStatus(
-  key: RequiredResearchBriefSectionKey,
+  key: ResearchBriefSectionKey,
   content: string | undefined
 ): BriefSectionStatus {
   if (!content) return { present: false, substantive: false };
@@ -627,6 +723,7 @@ export function buildBriefCompletenessArtifact(markdown: string): BriefCompleten
 
   const sectionMap = {
     topic: sectionStatus("topic", sections?.topic),
+    scientificScope: sectionStatus("scientificScope", sections?.scientificScope),
     objectiveMetric: sectionStatus("objectiveMetric", sections?.objectiveMetric),
     constraints: sectionStatus("constraints", sections?.constraints),
     plan: sectionStatus("plan", sections?.plan),
@@ -651,16 +748,30 @@ export function buildBriefCompletenessArtifact(markdown: string): BriefCompleten
       missing.push(RESEARCH_BRIEF_SECTION_LABELS[key]);
     }
   }
+  const topicDiscovery = parseDeclaredResearchRunMode(markdown) === "topic_discovery";
+  const scopeContract = topicDiscovery
+    ? buildTopicDiscoveryScopeContract(markdown)
+    : undefined;
+  const topicDiscoveryScopeReady = !topicDiscovery || Boolean(
+    sectionMap.scientificScope.substantive
+    && scopeContract?.contractSource === "explicit_scientific_scope"
+    && scopeContract.enforced
+  );
+  if (!topicDiscoveryScopeReady) {
+    missing.push(RESEARCH_BRIEF_SECTION_LABELS.scientificScope);
+  }
 
   const substantiveRequiredCount = REQUIRED_RESEARCH_BRIEF_SECTION_KEYS.filter(
     (key) => sectionMap[key].substantive
-  ).length;
+  ).length + (topicDiscovery && topicDiscoveryScopeReady ? 1 : 0);
+  const requiredSectionCount = REQUIRED_RESEARCH_BRIEF_SECTION_KEYS.length
+    + (topicDiscovery ? 1 : 0);
   const partialCoreComplete = PARTIAL_RESEARCH_BRIEF_SECTION_KEYS.every(
     (key) => sectionMap[key].substantive
-  );
+  ) && topicDiscoveryScopeReady;
 
   let grade: BriefCompletenessGrade;
-  if (substantiveRequiredCount === REQUIRED_RESEARCH_BRIEF_SECTION_KEYS.length) {
+  if (substantiveRequiredCount === requiredSectionCount) {
     grade = "complete";
   } else if (partialCoreComplete && substantiveRequiredCount >= 10) {
     grade = "partial";
@@ -682,6 +793,9 @@ export function buildBriefCompletenessArtifact(markdown: string): BriefCompleten
   const contractMissing = contractCriticalSectionKeys
     .filter((key) => !sectionMap[key].substantive)
     .map((key) => RESEARCH_BRIEF_SECTION_LABELS[key]);
+  if (!topicDiscoveryScopeReady) {
+    contractMissing.unshift(RESEARCH_BRIEF_SECTION_LABELS.scientificScope);
+  }
 
   return {
     generated_at: new Date().toISOString(),
@@ -698,6 +812,24 @@ export async function snapshotResearchBriefToRun(workspaceRoot: string, runId: s
   const destinationPath = path.join(workspaceRoot, ".autolabos", "runs", runId, "brief", "source_brief.md");
   await ensureDir(path.dirname(destinationPath));
   await fs.copyFile(sourcePath, destinationPath);
+  return destinationPath;
+}
+
+export async function snapshotResearchBriefContentToRun(
+  workspaceRoot: string,
+  runId: string,
+  brief: string
+): Promise<string> {
+  const destinationPath = path.join(
+    workspaceRoot,
+    ".autolabos",
+    "runs",
+    runId,
+    "brief",
+    "source_brief.md"
+  );
+  await ensureDir(path.dirname(destinationPath));
+  await fs.writeFile(destinationPath, `${brief.replace(/\s+$/u, "")}\n`, "utf8");
   return destinationPath;
 }
 

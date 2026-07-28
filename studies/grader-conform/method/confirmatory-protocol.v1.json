@@ -1,0 +1,351 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "blinded_confirmatory_protocol",
+  "frozen_at": "2026-07-28T09:44:44+09:00",
+  "status": "frozen_before_heldout_candidate_inspection",
+  "paper_scale_claim_authorized": false,
+  "amendments": [
+    {
+      "amended_at": "2026-07-28T09:55:04+09:00",
+      "reason": "A parent commit inside a full Git clone still exposes later history and can reveal the held-out fix.",
+      "candidate_details_observed_before_amendment": false,
+      "method_or_baseline_outcomes_observed_before_amendment": false,
+      "changes": [
+        "replace full-clone access with history-free parent-tree snapshot archives",
+        "replace repository source identifiers with blinded source identifiers",
+        "remove commit, tree, remote, cache, license-evidence, and candidate-localized path details from designer packets",
+        "require network-disabled and VCS-history-disabled probe design"
+      ]
+    },
+    {
+      "amended_at": "2026-07-28T10:14:47+09:00",
+      "reason": "An independent pre-outcome methods audit found that three repositories, self-attested completeness, status-only detections, and prose-only thresholds could authorize an invalid confirmatory result.",
+      "candidate_details_observed_before_amendment": true,
+      "candidate_detail_scope_observed": "group_1 census only",
+      "method_or_baseline_outcomes_observed_before_amendment": false,
+      "changes": [
+        "require at least six source-selection independence clusters",
+        "make exact cluster-level sign-flip randomization the inferential promotion test",
+        "make lineage-level McNemar exploratory and complete-pair only",
+        "treat cluster bootstrap intervals as descriptive",
+        "bind machine-readable promotion thresholds",
+        "require artifact-derived detections and closed census, registry, packet, manifest, and receipt bindings"
+      ]
+    },
+    {
+      "amended_at": "2026-07-28T10:55:20+09:00",
+      "reason": "A second independent pre-outcome methods audit showed that internally consistent packet and receipt self-claims could pass the statistical gate without archive semantics, original candidate evidence, or independently replayed execution provenance.",
+      "candidate_details_observed_before_amendment": true,
+      "candidate_detail_scope_observed": "group_1 and group_3 eligibility adjudications plus frozen census identifiers; no heldout probe design or execution outcomes",
+      "method_or_baseline_outcomes_observed_before_amendment": false,
+      "changes": [
+        "recompute canonical packet hashes from packet content",
+        "verify tar payload types, modes, sizes, and content hashes against the Git-tree snapshot manifest",
+        "re-read hash-bound census and independent adjudication artifacts during final analysis",
+        "force the fixed controls to be the first registered lineages in sealed order",
+        "treat eligible baseline inapplicability conservatively so it cannot create a method-only gain",
+        "separate receipt-level statistical checks from empirical and paper promotion",
+        "require independently replayed raw execution provenance before empirical or paper promotion"
+      ]
+    },
+    {
+      "amended_at": "2026-07-28T11:20:47+09:00",
+      "reason": "The local public repositories were acquired under two temporary roots; a portable source plan is required so registry construction cannot publish or depend on machine-local paths.",
+      "candidate_details_observed_before_amendment": true,
+      "candidate_detail_scope_observed": "heldout census and eligibility decisions only",
+      "method_or_baseline_outcomes_observed_before_amendment": false,
+      "changes": [
+        "bind the portable source ID to cache-key and bounded-environment plan",
+        "require registry construction and final analysis to verify the exact source-plan bytes"
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "path": "studies/grader-conform/method/relation-templates.v1.json",
+      "sha256": "a36c05ecf3e9d70e555002bd73d3a61b5a7ec90beb9719e54b6c1610b5495c50"
+    },
+    {
+      "path": "docs/research/grader-conform-probe-preregistration-v1.json",
+      "sha256": "69348e5075600f71a8502a0a62dc01800408b8e798c20751b5b82fb77984cb7c"
+    },
+    {
+      "path": "docs/research/grader-conform-bounded-development-decision-v1.json",
+      "sha256": "71c57a02d4a63c7b2f32671f5bb78fcba2550ee1e53c03bcdf749ca723291406"
+    },
+    {
+      "path": "studies/grader-conform/corpus/heldout-source-freeze.v1.json",
+      "sha256": "59b9e921b9bd5bb513f7889c353e65b5285bc61744bffb45a2f41bd8bc59634e"
+    },
+    {
+      "path": "studies/grader-conform/corpus/heldout-registry-source-plan.v1.json",
+      "sha256": "85e08aa8fea1d717185e2e5add16b488eca66182afcb78d6b9c213f8cb980869"
+    }
+  ],
+  "information_observed_before_freeze": {
+    "development_outcomes": true,
+    "heldout_source_repository_names": true,
+    "heldout_source_history_sizes": true,
+    "heldout_candidate_identifiers": false,
+    "heldout_parent_commits": false,
+    "heldout_fix_commits": false,
+    "heldout_fix_diffs": false,
+    "heldout_post_fix_tests_or_documentation": false,
+    "heldout_method_outcomes": false,
+    "heldout_baseline_outcomes": false
+  },
+  "sampling_contract": {
+    "development_repository_overlap": "forbidden",
+    "minimum_heldout_lineages": 24,
+    "minimum_heldout_repositories": 6,
+    "minimum_heldout_independence_clusters": 6,
+    "census_requirement": "Each source census must be marked complete and exhaustive within its frozen search queries before any candidate detail is inspected by the probe designer.",
+    "admission_rule": "Admit every unique root-cause lineage that satisfies the preregistered inclusion and exclusion rules.",
+    "deduplication_timing": "before_parent_packet_generation",
+    "outcome_dependent_replacement": "forbidden",
+    "shortfall_action": "Activate only the pre-ranked frozen reserves before probe design if needed, then kill the confirmatory formulation if fewer than 24 admitted lineages across 6 held-out independence clusters remain. Never add easier sources after method or baseline outcomes are observed.",
+    "denominator_policy": {
+      "included": [
+        "detected",
+        "not_detected",
+        "no_frozen_template_applicable",
+        "probe_implementation_failed",
+        "baseline_not_applicable",
+        "environment_setup_failed_after_bounded_retries"
+      ],
+      "excluded_only_if": [
+        "pre-outcome adjudication proves the upstream change is not an evaluator implementation defect",
+        "the parent or fix commit is unavailable from the pinned public repository",
+        "the repository license blocks local execution or publication of derived measurements",
+        "the candidate duplicates a root cause already selected before packet generation"
+      ]
+    }
+  },
+  "blind_packet_contract": {
+    "allowed_fields": [
+      "anonymous_lineage_id",
+      "registry_index",
+      "blinded_source_id",
+      "license_status",
+      "source_snapshot_archive",
+      "source_snapshot_sha256",
+      "source_snapshot_bytes",
+      "source_snapshot_manifest",
+      "source_snapshot_manifest_sha256",
+      "source_snapshot_manifest_bytes",
+      "bounded_environment_notes",
+      "packet_sha256"
+    ],
+    "forbidden_fields": [
+      "fix_commit",
+      "fix_diff",
+      "fix_message",
+      "post_fix_tests",
+      "post_fix_documentation",
+      "changed_lines",
+      "historical_fault_description",
+      "expected_relation_family",
+      "method_or_baseline_outcome",
+      "source_id",
+      "source_cache_key",
+      "repository_name",
+      "remote_url",
+      "parent_commit",
+      "parent_tree_hash",
+      "git_history",
+      "license_evidence"
+    ],
+    "packet_hash_required": true,
+    "packet_hash_algorithm": "SHA-256 over canonical JSON of every packet field except packet_sha256",
+    "history_free_snapshot_required": true,
+    "snapshot_must_exclude_vcs_metadata": true,
+    "snapshot_archive_must_semantically_match_manifest": true,
+    "source_metadata_identifier_must_be_pseudonymized": true,
+    "repository_identity_blinding_guaranteed": false,
+    "blindness_target": "The designer cannot access the historical fix, descendants of the parent revision, post-fix artifacts, commit identifiers, or method outcomes. Repository identity may remain inferable from parent-source contents.",
+    "designer_network_access": "forbidden",
+    "designer_vcs_history_access": "forbidden",
+    "designer_input_inventory_must_be_closed": true,
+    "designer_may_read_only": [
+      "the frozen relation template file",
+      "the generated parent-only packet",
+      "the hash-bound history-free parent-tree snapshot",
+      "public dependencies required to execute the parent revision"
+    ],
+    "designer_output_must_be_hashed_before_unblinding": [
+      "template applicability decision",
+      "selected template identifiers",
+      "contract evidence paths and spans",
+      "probe adapter source",
+      "expected invariant or directional oracle",
+      "bounded execution command"
+    ]
+  },
+  "primary_method_contract": {
+    "template_source": "the hash-bound frozen relation template registry",
+    "lineage_specific_template_creation": "forbidden",
+    "fix_aware_probe_repair": "forbidden",
+    "no_applicable_template_outcome": "not_detected",
+    "detection_definition": "A pre-unblinding relation fails on the parent revision and passes on the fixed revision under the identical hash-bound probe and deterministic oracle.",
+    "detection_must_be_derived_from_bound_execution_receipts": true,
+    "independent_replay_required_before_empirical_promotion": true,
+    "status_only_detection_input": "forbidden",
+    "fixed_revision_failure": "false_alarm_unless_independently_adjudicated_as_a_remaining_public_defect"
+  },
+  "baseline_contracts": [
+    {
+      "id": "parent_native_tests",
+      "role": "fault_detector",
+      "procedure": "Select commands and tests only from the parent revision, execute the identical selection on parent and fixed revisions, and count a detection only when a parent failure is deterministically attributable to the registered evaluator contract and the fixed revision passes.",
+      "case_budget_rule": "repository_native_command",
+      "eligible_for_strongest_detector_union": true
+    },
+    {
+      "id": "schema_and_static_checks",
+      "role": "fault_detector",
+      "procedure": "Run repository-native type, schema, lint, and syntax checks selected from the parent revision. Count only a deterministic finding that identifies the registered evaluator path and violated contract without the fix diff.",
+      "case_budget_rule": "repository_native_command",
+      "eligible_for_strongest_detector_union": true
+    },
+    {
+      "id": "generic_property_or_metamorphic",
+      "role": "fault_detector",
+      "procedure": "Apply a frozen, type-directed transformation library without evaluator-specific semantic templates. Give it no more generated cases than the primary method and score it with the same parent-fail/fixed-pass rule.",
+      "case_budget_rule": "not_greater_than_primary_generated_cases",
+      "eligible_for_strongest_detector_union": true
+    },
+    {
+      "id": "contract_aware_input_mutation",
+      "role": "fault_detector",
+      "procedure": "Generate valid and minimally invalid inputs from parent-visible schemas, without relation-family guidance or fix knowledge. Match the primary method's generated-case budget and use a deterministic schema-derived oracle.",
+      "case_budget_rule": "not_greater_than_primary_generated_cases",
+      "eligible_for_strongest_detector_union": true
+    },
+    {
+      "id": "conventional_mutation_testing",
+      "role": "test_suite_strength_diagnostic",
+      "procedure": "Apply a frozen conventional source-mutator set to the parent evaluator path and report whether parent-native tests kill the mutants under the same bounded execution budget.",
+      "case_budget_rule": "diagnostic_wall_clock_budget",
+      "eligible_for_strongest_detector_union": false,
+      "reason_not_comparable": "Mutant kill rate measures test-suite sensitivity rather than direct detection of the historical parent defect."
+    },
+    {
+      "id": "test_strength_diagnosis",
+      "role": "test_suite_strength_diagnostic",
+      "procedure": "When technically applicable, diagnose weak parent tests using a frozen test-strength method and report coverage separately.",
+      "case_budget_rule": "diagnostic_wall_clock_budget",
+      "eligible_for_strongest_detector_union": false,
+      "reason_not_comparable": "A weak-test diagnosis is not a fault-level parent-fail/fixed-pass verdict unless the method emits one before unblinding."
+    }
+  ],
+  "fairness_contract": {
+    "strongest_detector_baseline": "Per-lineage union of every eligible deterministic baseline detection, with any eligible baseline execution failure treated conservatively as a baseline detection for promotion comparisons.",
+    "eligible_baseline_execution_failure_treatment": "Report execution failures separately, retain the lineage, and never count a method-only gain on that lineage.",
+    "generated_case_budget": "Each generated-input baseline receives at most the number of executed semantic relation cases used by the primary method for that lineage.",
+    "wall_clock_reporting": "Report setup and execution time separately for every method; do not use wall clock to drop failed cases.",
+    "baseline_tuning_on_method_outcomes": "forbidden",
+    "baseline_inapplicability": "Retain the lineage, exclude it from complete-pair exploratory analysis, report it separately, and conservatively prevent a method-only gain for promotion."
+  },
+  "artifact_binding_contract": {
+    "required_hash_bound_inputs": [
+      "heldout_lineage_registry",
+      "heldout_registry_source_plan",
+      "heldout_parent_only_packet_set",
+      "blinded_probe_manifest",
+      "blinded_baseline_manifest",
+      "confirmatory_receipt_index",
+      "every parent and fixed execution receipt",
+      "raw parent and fixed execution transcripts",
+      "independent replay attestation"
+    ],
+    "lineage_identity_source": "sealed heldout_lineage_registry only",
+    "source_and_cluster_source": "sealed heldout_lineage_registry only",
+    "fixed_control_order_source": "sealed heldout_lineage_registry only",
+    "candidate_accounting_source": "hash-verified census and adjudication bindings",
+    "self_attested_completion_booleans": "insufficient",
+    "receipt_level_statistical_pass_without_independent_replay": "insufficient_for_empirical_or_paper_promotion"
+  },
+  "analysis_plan": {
+    "primary_endpoint": "heldout_historical_fault_recall",
+    "primary_comparison": "paired detection difference versus the strongest deterministic detector union",
+    "secondary_endpoints": [
+      "unique heldout detections beyond the strongest detector union",
+      "fixed revision false alarm rate",
+      "repository and relation-family coverage",
+      "applicability-stratified recall",
+      "setup and execution time",
+      "native-test and mutation-test strength diagnostics"
+    ],
+    "confidence_level": 0.95,
+    "cluster_bootstrap": {
+      "cluster_unit": "source_selection_independence_cluster",
+      "replicates": 10000,
+      "seed": 20260728,
+      "interval": "percentile",
+      "inferential_status": "descriptive_only",
+      "targets": [
+        "primary_method_recall",
+        "paired_detection_difference",
+        "unique_detection_rate"
+      ]
+    },
+    "paired_test": {
+      "method": "two_sided_exact_mcnemar_complete_pairs_only",
+      "comparison": "primary method versus strongest deterministic detector union",
+      "unit": "heldout root-cause lineage",
+      "inferential_status": "exploratory_due_to_within_cluster_dependence"
+    },
+    "cluster_randomization": {
+      "method": "two_sided_exact_sign_flip_randomization",
+      "unit": "source_selection_independence_cluster",
+      "cluster_statistic": "mean_paired_detection_difference",
+      "aggregate_statistic": "unweighted_mean_across_clusters",
+      "alpha": 0.05,
+      "inferential_status": "primary"
+    },
+    "sensitivity": {
+      "leave_one_independence_cluster_out": true,
+      "report_every_exclusion": true,
+      "report_no_template_and_setup_failure_as_not_detected": true
+    },
+    "false_alarm_interval": "two_sided_wilson_interval_on_fixed_revision_controls"
+  },
+  "promotion_gate": {
+    "machine_thresholds": {
+      "minimum_heldout_lineages": 24,
+      "minimum_heldout_repositories": 6,
+      "minimum_heldout_independence_clusters": 6,
+      "minimum_unique_detections": 6,
+      "minimum_unique_detection_clusters": 6,
+      "maximum_cluster_randomization_p_value": 0.05,
+      "registered_fixed_control_count": 24,
+      "maximum_fixed_control_false_alarms": 1,
+      "minimum_leave_one_cluster_out_difference": 0,
+      "require_all_registered_fixed_controls_executed": true,
+      "require_closed_artifact_bindings": true,
+      "require_complete_candidate_accounting": true,
+      "require_independent_execution_provenance": true
+    },
+    "all_required": [
+      "at least 24 admitted heldout lineages across at least 6 heldout repositories and 6 frozen independence clusters",
+      "at least 6 unique heldout detections beyond the strongest deterministic detector union",
+      "unique detections span at least 6 frozen independence clusters",
+      "the two-sided exact cluster sign-flip randomization p-value is at most 0.05",
+      "all first 24 controls in sealed registry order execute and at most 1 is a fixed-revision false alarm",
+      "no leave-one-independence-cluster-out result reverses the sign of the paired detection difference",
+      "all census candidates, exclusions, probe failures, baseline failures, and deviations are published",
+      "an independent replay reproduces the hash-bound raw execution transcripts before empirical or paper promotion"
+    ],
+    "failure_action": "Reject this paper formulation and return AutoLabOS to topic portfolio generation. Do not write a positive workshop paper from development results."
+  },
+  "deviation_policy": {
+    "amendment_requires": [
+      "timestamp",
+      "reason",
+      "affected endpoint or procedure",
+      "whether any candidate detail, method outcome, or baseline outcome was already observed",
+      "separate original and amended analyses"
+    ],
+    "silent_amendment": "forbidden"
+  }
+}

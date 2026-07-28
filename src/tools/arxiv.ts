@@ -15,6 +15,7 @@ import {
   resolveDateBounds,
   resolvePerQueryLimit
 } from "./paperSearchCommon.js";
+import { compileTopicDiscoveryArxivQuery } from "./topicDiscoveryProviderQuery.js";
 
 const ARXIV_MAX_RESULTS = 25;
 
@@ -27,9 +28,14 @@ export class ArxivClient {
     abortSignal?: AbortSignal
   ): Promise<PaperSearchCandidate[]> {
     const queryPlan = buildSearchQueryPlan(request.query);
-    const queryVariants = queryPlan.variantClauses
-      .map((clause) => buildArxivClauseQuery(clause))
-      .filter((value): value is string => Boolean(value));
+    const topicDiscoveryQuery = compileTopicDiscoveryArxivQuery(
+      request.topicDiscoveryFamily
+    );
+    const queryVariants = topicDiscoveryQuery
+      ? [topicDiscoveryQuery]
+      : queryPlan.variantClauses
+          .map((clause) => buildArxivClauseQuery(clause))
+          .filter((value): value is string => Boolean(value));
     const filterApplications = buildArxivFilterApplications(request);
     const perQueryLimit = resolvePerQueryLimit(request.limit, ARXIV_MAX_RESULTS, queryVariants.length);
 
@@ -41,7 +47,9 @@ export class ArxivClient {
       queryTransformation: {
         original: request.query,
         transformed: queryVariants.join(" OR ") || request.query,
-        strategy: describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
+        strategy: topicDiscoveryQuery
+          ? "topic_discovery_fielded_anchor_quorum_axis_or"
+          : describeVariantStrategy(request.query, queryVariants, queryPlan.excludedTerms),
         variants: queryVariants
       },
       filterApplications

@@ -52,6 +52,7 @@ describe("collection enrichment", () => {
         publication_date: "2025-01-01",
         publication_types: ["Review"],
         fields_of_study: ["Computer Science"],
+        query_families: ["query_family_primary"],
         semantic_scholar_bibtex: "@article{s2existing,\n  title = {Existing}\n}",
         bibtex: "@inproceedings{better,\n  title = {Existing}\n}",
         bibtex_source: "acl_anthology",
@@ -70,6 +71,7 @@ describe("collection enrichment", () => {
         publication_date: undefined,
         publication_types: undefined,
         fields_of_study: undefined,
+        query_families: ["query_family_secondary", "query_family_primary"],
         semantic_scholar_bibtex: undefined,
         bibtex: undefined,
         bibtex_source: undefined,
@@ -89,6 +91,7 @@ describe("collection enrichment", () => {
     expect(merged.publication_date).toBe("2025-01-01");
     expect(merged.publication_types).toEqual(["Review"]);
     expect(merged.fields_of_study).toEqual(["Computer Science"]);
+    expect(merged.query_families).toEqual(["query_family_primary", "query_family_secondary"]);
     expect(merged.semantic_scholar_bibtex).toContain("@article{s2existing");
     expect(merged.bibtex).toContain("@inproceedings{better");
     expect(merged.bibtex_source).toBe("acl_anthology");

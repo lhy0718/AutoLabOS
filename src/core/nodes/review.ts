@@ -1,7 +1,11 @@
 import path from "node:path";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
-import { AnalysisConditionComparison, AnalysisReport } from "../resultAnalysis.js";
+import {
+  AnalysisReport,
+  parseAnalysisReport,
+  resolvePrimaryResultsArtifactComparison
+} from "../resultAnalysis.js";
 import { buildReviewPacket } from "../reviewPacket.js";
 import {
   runReviewPanel,
@@ -45,23 +49,86 @@ import {
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
 import { inspectAclTemplateSurface } from "../latex/aclTemplate.js";
+import {
+  buildValidatedWritePaperAnalysisProjection,
+  resolveWritePaperResultsContract
+} from "./writePaper.js";
+import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
+import {
+  loadTopicProbeOutcomeArtifacts,
+  TOPIC_PROBE_OUTCOME_RELATIVE_PATH
+} from "../topicProbeOutcomeArtifacts.js";
+import {
+  buildTopicProbeFollowupHandoff,
+  validateTopicProbeFollowupHandoff,
+  type TopicProbeFollowupHandoff
+} from "../topicProbeFollowup.js";
+import type { TopicProbeOutcomeDecision } from "../topicProbeOutcome.js";
+import {
+  buildTopicProbeReviewGate,
+  validateTopicProbeReviewGate,
+  type TopicProbeReviewGateArtifact
+} from "../topicProbeReviewGate.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "review",
     async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const report = await loadAnalysisReport(run.id, runContextMemory);
-      if (!report) {
+      const loadedReport = await loadAnalysisReport(run.id, runContextMemory);
+      if (!loadedReport) {
         return {
           status: "failure",
-          error: "review requires a completed analyze_results artifact at result_analysis.json.",
-          summary: "review requires analyze_results output before it can prepare a manual review packet.",
+          error: "review requires a parseable result_analysis.json with canonical ResultsArtifactV2 results.",
+          summary: "review paused because analyze_results output is missing or malformed; regenerate the canonical result artifact before review.",
           toolCallsUsed: 1
         };
       }
+      const resultsResolution = resolveWritePaperResultsContract(loadedReport);
+      if (!resultsResolution.ok) {
+        return {
+          status: "failure",
+          error: "review requires an explicit, valid primary comparison binding. "
+            + resultsResolution.issues.join(" "),
+          summary: "review paused because the canonical result artifact does not declare a valid primary comparison.",
+          toolCallsUsed: 1
+        };
+      }
+      const report = buildValidatedWritePaperAnalysisProjection(
+        loadedReport,
+        resultsResolution.contract
+      );
 
       const runDir = path.join(".autolabos", "runs", run.id);
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief,
+        run
+      });
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "review blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const researchMode = researchModeGuard.effectiveMode;
+      const topicProbeReviewState =
+        researchMode === "topic_discovery"
+          ? await evaluateAndPersistTopicProbeReviewGate(run, report)
+          : undefined;
       const priorCompiledPageValidation = await loadPriorCompiledPageValidation(runDir);
 
       // --- Pre-review summary artifact (Target 6) ---
@@ -109,19 +176,30 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           ? citationConsistencyArtifact.orphan_citations.filter((value): value is string => typeof value === "string")
           : [],
         paperSurfaceIssues,
-        riskSignals: Array.isArray(riskSignalsArtifact)
-          ? riskSignalsArtifact.filter((value): value is RiskSignal => {
-              if (!value || typeof value !== "object" || Array.isArray(value)) {
-                return false;
-              }
-              const candidate = value as Partial<RiskSignal>;
-              return (
-                typeof candidate.type === "string"
-                && (candidate.severity === "warn" || candidate.severity === "critical")
-                && typeof candidate.detail === "string"
-              );
-            })
-          : [],
+        riskSignals: [
+          ...(Array.isArray(riskSignalsArtifact)
+            ? riskSignalsArtifact.filter((value): value is RiskSignal => {
+                if (!value || typeof value !== "object" || Array.isArray(value)) {
+                  return false;
+                }
+                const candidate = value as Partial<RiskSignal>;
+                return (
+                  typeof candidate.type === "string"
+                  && (candidate.severity === "warn" || candidate.severity === "critical")
+                  && typeof candidate.detail === "string"
+                );
+              })
+            : []),
+          ...(topicProbeReviewState
+            ? [{
+                type: "bounded_topic_probe_not_paper_evidence",
+                severity: "critical" as const,
+                detail: topicProbeReviewState.valid
+                  ? `Bounded probe disposition ${topicProbeReviewState.decision?.disposition} delegates a machine-governed successor run; write_paper is forbidden in the parent run.`
+                  : `Topic-probe artifact validation failed: ${topicProbeReviewState.reasons.join(", ")}. write_paper is forbidden.`
+              }]
+            : [])
+        ],
         figureAuditSummary,
         llm: deps.llm,
         eventStream: deps.eventStream,
@@ -167,7 +245,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       );
 
       // Build structured pre-draft critique artifact
-      const preDraftCritique = buildPreDraftCritique({
+      let preDraftCritique = buildPreDraftCritique({
         scorecard: effectivePanel.scorecard,
         decision: effectivePanel.decision,
         findings: effectivePanel.findings,
@@ -227,6 +305,11 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         priorScientificValidationSignal,
         packet.suggested_actions
       ) ?? transitionRecommendation;
+      if (topicProbeReviewState) {
+        transitionRecommendation = buildTopicProbeReviewTransitionRecommendation(
+          topicProbeReviewState
+        );
+      }
       effectivePanel = applyHardGateTransitionDecision(
         effectivePanel,
         transitionRecommendation,
@@ -239,6 +322,20 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         priorScientificValidationSignal,
         transitionRecommendation
       );
+      if (topicProbeReviewState) {
+        effectivePanel = applyTopicProbeReviewDecisionGate(
+          effectivePanel,
+          topicProbeReviewState
+        );
+        preDraftCritique = buildPreDraftCritique({
+          scorecard: effectivePanel.scorecard,
+          decision: effectivePanel.decision,
+          findings: effectivePanel.findings,
+          presence,
+          minimumGateCeiling: minimumGate.ceiling_type,
+          minimumGateFailedChecks: minimumGate.failed_checks
+        });
+      }
       packet = buildReviewPacket(report, presence, effectivePanel);
       completionDecision = checkReviewDecision(packet);
       const markdown = renderReviewChecklist(run, packet, effectivePanel);
@@ -250,8 +347,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         config: deps.config
       });
 
-      const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(panel.findings));
-      const scorecardPath = await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(panel.scorecard, null, 2)}\n`);
+      const findingsPath = await writeRunArtifact(run, "review/findings.jsonl", renderJsonl(effectivePanel.findings));
+      const scorecardPath = await writeRunArtifact(run, "review/scorecard.json", `${JSON.stringify(effectivePanel.scorecard, null, 2)}\n`);
       await writeRunArtifact(
         run,
         "review/consistency_report.json",
@@ -320,7 +417,16 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           { label: "Paper-scale diagnostics", path: "review/paper_scale_diagnostics.json" },
           { label: "Node strengthening", path: "review/node_strengthening_recommendations.json" },
           { label: "Readiness risks", path: "review/readiness_risks.json" },
-          { label: "Figure audit summary", path: "figure_audit/figure_audit_summary.json" }
+          { label: "Figure audit summary", path: "figure_audit/figure_audit_summary.json" },
+          ...(topicProbeReviewState
+            ? [
+                { label: "Topic probe review gate", path: "review/topic_probe_gate.json" },
+                ...(topicProbeReviewState.handoff
+                  ? [{ label: "Topic probe follow-up handoff", path: "review/topic_probe_followup_handoff.json" }]
+                  : []),
+                { label: "Topic probe outcome", path: TOPIC_PROBE_OUTCOME_RELATIVE_PATH }
+              ]
+            : [])
         ]
       };
       const operatorSummaryPath = await writeRunArtifact(
@@ -395,6 +501,20 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: nodeStrengtheningPath,
             targetRelativePath: "node_strengthening_recommendations.json"
+          },
+          {
+            sourcePath:
+              topicProbeReviewState?.gatePath
+              || path.join(runDir, "review", "topic_probe_gate.json"),
+            targetRelativePath: "topic_probe_gate.json",
+            optional: true
+          },
+          {
+            sourcePath:
+              topicProbeReviewState?.handoffPath
+              || path.join(runDir, "review", "topic_probe_followup_handoff.json"),
+            targetRelativePath: "topic_probe_followup_handoff.json",
+            optional: true
           }
         ]
       });
@@ -445,7 +565,7 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.last_recommendation", packet.recommendation || null);
       await runContextMemory.put("review.last_decision", decisionArtifact);
       await runContextMemory.put("review.completion_decision", completionDecision);
-      await runContextMemory.put("review.last_findings_count", panel.findings.length);
+      await runContextMemory.put("review.last_findings_count", effectivePanel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
@@ -454,6 +574,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.readiness_risks", readinessRisks);
       await runContextMemory.put("review.paper_scale_diagnostics", paperScaleDiagnostics);
       await runContextMemory.put("review.node_strengthening_recommendations", nodeStrengtheningRecommendations);
+      if (topicProbeReviewState) {
+        await runContextMemory.put("review.topic_probe_gate", topicProbeReviewState.gate);
+        await runContextMemory.put("review.topic_probe_followup_handoff", topicProbeReviewState.handoff || null);
+      }
 
       deps.eventStream.emit({
         type: "OBS_RECEIVED",
@@ -486,9 +610,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         status: "success",
         summary:
           completionDecision.verdict === "reject" || blockers > 0
-            ? `Review panel prepared ${panel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). Completion verdict: reject. The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
+            ? `Review panel prepared ${effectivePanel.findings.length} finding(s) with ${blockers} blocking issue(s), ${warnings} warning(s), and ${manual} manual review item(s). Completion verdict: reject. The runtime will take the conservative backtrack recommended by review before paper drafting.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
             : completionDecision.verdict === "revise" || warnings > 0 || manual > 0
-              ? `Review panel prepared ${panel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). Completion verdict: revise. The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
+              ? `Review panel prepared ${effectivePanel.findings.length} finding(s) with ${warnings} warning(s) and ${manual} manual review item(s). Completion verdict: revise. The next stage will carry the attached revision checklist or follow the recommended backtrack automatically.${critiqueLabel} Public outputs: ${publicOutputs.outputRootRelative}.`
               : `Review panel completed with outcome ${effectivePanel.decision.outcome} and completion verdict accept.${critiqueLabel} The runtime can continue automatically from the review recommendation. Public outputs: ${publicOutputs.outputRootRelative}.`,
         needsApproval: true,
         approvalSignal: {
@@ -642,7 +766,250 @@ interface NodeStrengtheningRecommendation {
 interface ScientificValidationReviewSignal {
   missingEvidenceCategories: string[];
   blockedByEvidenceInsufficiency: boolean;
-  aggregateAccuracyConflict: boolean;
+  aggregateMetricConflict: boolean;
+}
+
+interface TopicProbeReviewState {
+  valid: boolean;
+  reasons: string[];
+  decision?: TopicProbeOutcomeDecision;
+  handoff?: TopicProbeFollowupHandoff;
+  gate: TopicProbeReviewGateArtifact;
+  gatePath: string;
+  handoffPath?: string;
+}
+
+async function evaluateAndPersistTopicProbeReviewGate(
+  run: Parameters<GraphNodeHandler["execute"]>[0]["run"],
+  report: AnalysisReport
+): Promise<TopicProbeReviewState> {
+  const source = await loadTopicProbeOutcomeArtifacts({
+    workspaceRoot: process.cwd(),
+    runId: run.id,
+    expectedResearchCycle: run.graph.researchCycle,
+    requireOutcome: true,
+    report
+  });
+  const reasons = source.valid
+    ? []
+    : source.reasons.length > 0
+      ? [...source.reasons]
+      : ["topic_probe_review_source_chain_invalid"];
+
+  const decision = source.valid ? source.decision : undefined;
+  let handoff: TopicProbeFollowupHandoff | undefined;
+  let handoffPath: string | undefined;
+  if (
+    source.valid
+    && source.portfolio
+    && source.contract
+    && decision
+  ) {
+    const matchingCandidates = source.portfolio.candidates.filter(
+      (candidate) =>
+        candidate.source_candidate_id === source.contract?.candidate_id
+        && candidate.topic_id === source.contract?.topic_id
+    );
+    if (matchingCandidates.length !== 1) {
+      reasons.push(
+        matchingCandidates.length === 0
+          ? "topic_probe_review_active_candidate_missing"
+          : "topic_probe_review_active_candidate_ambiguous"
+      );
+    } else {
+      try {
+        const candidate = matchingCandidates[0];
+        const builtHandoff = buildTopicProbeFollowupHandoff({
+          portfolio: source.portfolio,
+          contract: source.contract,
+          outcome: decision,
+          candidate
+        });
+        const validation = validateTopicProbeFollowupHandoff(
+          JSON.stringify(builtHandoff),
+          {
+            portfolio: source.portfolio,
+            contract: source.contract,
+            outcome: decision,
+            candidate,
+            expectedRunId: run.id,
+            expectedResearchCycle: run.graph.researchCycle
+          }
+        );
+        if (!validation.valid) {
+          reasons.push(...validation.reasons);
+        } else {
+          handoff = builtHandoff;
+        }
+      } catch {
+        reasons.push("topic_probe_review_handoff_build_failed");
+      }
+    }
+  } else if (source.valid) {
+    reasons.push("topic_probe_review_validated_source_projection_incomplete");
+  }
+
+  let gate = buildTopicProbeReviewGate({
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    outcome: decision,
+    handoff,
+    validationReasons: reasons
+  });
+  const gateValidation = validateTopicProbeReviewGate(JSON.stringify(gate), {
+    runId: run.id,
+    researchCycle: run.graph.researchCycle,
+    outcome: decision,
+    handoff,
+    validationReasons: reasons
+  });
+  if (!gateValidation.valid) {
+    handoff = undefined;
+    reasons.push(...gateValidation.reasons, "topic_probe_review_gate_self_validation_failed");
+    gate = buildTopicProbeReviewGate({
+      runId: run.id,
+      researchCycle: run.graph.researchCycle,
+      outcome: decision,
+      validationReasons: reasons
+    });
+  }
+
+  if (handoff) {
+    handoffPath = await writeRunArtifact(
+      run,
+      "review/topic_probe_followup_handoff.json",
+      `${JSON.stringify(handoff, null, 2)}\n`
+    );
+  }
+  const gatePath = await writeRunArtifact(
+    run,
+    "review/topic_probe_gate.json",
+    `${JSON.stringify(gate, null, 2)}\n`
+  );
+
+  return {
+    valid: gate.status === "followup_required" && Boolean(handoff),
+    reasons: gate.reason_codes,
+    decision,
+    handoff,
+    gate,
+    gatePath,
+    handoffPath
+  };
+}
+
+function buildTopicProbeReviewTransitionRecommendation(
+  state: TopicProbeReviewState
+): TransitionRecommendation {
+  if (!state.valid || !state.handoff || !state.decision) {
+    return createReviewTransition({
+      action: "backtrack_to_hypotheses",
+      targetNode: "generate_hypotheses",
+      reason: "Topic discovery cannot advance because its hash-bound research funnel, active probe contract, outcome, or follow-up handoff is invalid. Repair the closed artifact chain before any further experiment or paper work.",
+      confidence: 0.99,
+      autoExecutable: true,
+      evidence: [
+        `Gate status: ${state.gate.status}`,
+        `Validation reasons: ${state.reasons.join(", ") || "unknown"}`,
+        "Source artifact: review/topic_probe_gate.json"
+      ],
+      suggestedCommands: ["/agent jump generate_hypotheses --force"]
+    });
+  }
+
+  return createReviewTransition({
+    action: "delegate_successor",
+    reason: `Bounded topic probe completed with disposition ${state.decision.disposition}. Review delegates machine execution authority to a separate governed ${state.handoff.evidence_stage} successor while the parent run remains closed below paper evidence.`,
+    confidence: 0.99,
+    autoExecutable: true,
+    evidence: [
+      `Outcome SHA-256: ${state.decision.content_sha256}`,
+      `Handoff SHA-256: ${state.handoff.content_sha256}`,
+      `Gate SHA-256: ${state.gate.content_sha256}`,
+      "Paper drafting allowed: false"
+    ],
+    suggestedCommands: []
+  });
+}
+
+function applyTopicProbeReviewDecisionGate(
+  panel: Awaited<ReturnType<typeof runReviewPanel>>,
+  state: TopicProbeReviewState
+): Awaited<ReturnType<typeof runReviewPanel>> {
+  const findingId = state.valid
+    ? "topic_probe:parent_paper_drafting_forbidden"
+    : "topic_probe:artifact_chain_invalid";
+  const finding: ReviewFinding = {
+    id: findingId,
+    reviewer_id: "topic_probe_governance_gate",
+    reviewer_label: "Topic-probe governance gate",
+    dimension: state.valid ? "methodology" : "integrity",
+    severity: "high",
+    title: state.valid
+      ? "Bounded probe delegates a machine-governed successor while parent drafting remains forbidden"
+      : "Topic-probe artifact chain is invalid",
+    detail: state.valid
+      ? `The hash-bound outcome, handoff, and review gate delegate a separate ${state.handoff?.evidence_stage} successor to the runtime; the bounded parent outcome is not paper evidence.`
+      : `The closed topic-probe chain failed validation: ${state.reasons.join(", ") || "unknown validation failure"}.`,
+    claim_ids: [],
+    evidence_paths: [
+      "review/topic_probe_gate.json",
+      TOPIC_PROBE_OUTCOME_RELATIVE_PATH,
+      ...(state.handoff ? ["review/topic_probe_followup_handoff.json"] : [])
+    ],
+    fix_hint: state.valid
+      ? "Let the runtime consume the validated handoff as a separate governed successor and keep all bounded-probe observations out of confirmatory paper claims."
+      : "Regenerate and validate the research funnel, active probe contract, bounded outcome, and follow-up handoff as one hash-bound chain.",
+    confidence: 0.99
+  };
+  const findings = panel.findings.some((candidate) => candidate.id === finding.id)
+    ? panel.findings
+    : [...panel.findings, finding];
+  const revisionItem = {
+    id: `revision:${finding.id}`,
+    priority: "high" as const,
+    owner: state.valid ? "design" as const : "analysis" as const,
+    title: finding.title,
+    action: finding.fix_hint || finding.detail,
+    source_finding_ids: [finding.id]
+  };
+  const revisionItems = panel.revision_plan.items.some(
+    (item) => item.id === revisionItem.id
+  )
+    ? panel.revision_plan.items
+    : [...panel.revision_plan.items, revisionItem];
+  const requiredAction = state.valid
+    ? "The runtime must consume review/topic_probe_followup_handoff.json through machine-governed successor delegation; never advance this parent run to write_paper."
+    : "Repair the invalid closed artifact chain before authorizing another probe, confirmatory run, or paper draft.";
+
+  return {
+    ...panel,
+    findings,
+    revision_plan: {
+      items: revisionItems,
+      summary: `${panel.revision_plan.summary} Topic-probe governance added one machine-governed successor-delegation requirement.`
+    },
+    decision: {
+      ...panel.decision,
+      outcome: state.valid ? "manual_block" : "backtrack_to_hypotheses",
+      ...(state.valid
+        ? { recommended_transition: undefined }
+        : { recommended_transition: "backtrack_to_hypotheses" as const }),
+      confidence: Math.max(panel.decision.confidence, 0.99),
+      summary: state.valid
+        ? "The bounded topic probe is complete; review delegates its hash-bound follow-up to a machine-governed successor while the parent run remains blocked from paper drafting."
+        : "The topic-probe artifact chain is invalid and must backtrack before any downstream use.",
+      rationale: `${finding.detail} Previous panel decision: ${panel.decision.summary}`,
+      blocking_finding_ids: Array.from(new Set([
+        ...panel.decision.blocking_finding_ids,
+        finding.id
+      ])).slice(0, 20),
+      required_actions: Array.from(new Set([
+        requiredAction,
+        ...panel.decision.required_actions
+      ])).slice(0, 6)
+    }
+  };
 }
 
 export function buildNodeStrengtheningRecommendations(
@@ -701,15 +1068,15 @@ export function buildNodeStrengtheningRecommendations(
     });
   }
 
-  if (scientificValidationSignal?.aggregateAccuracyConflict) {
+  if (scientificValidationSignal?.aggregateMetricConflict) {
     signals.push({
-      id: "scientific_validation:aggregate_accuracy_conflict",
+      id: "scientific_validation:aggregate_metric_conflict",
       severity: "blocking",
-      summary: "Prior paper scientific validation reported conflicting aggregate accuracy values across manuscript sections.",
+      summary: "Prior paper scientific validation reported conflicting aggregate metric values across manuscript surfaces.",
       target_node: "write_paper",
       source_node: "scientific_validation",
-      recommended_action: "Align all manuscript aggregate accuracy claims to the executed analysis artifacts before PDF build.",
-      recheck_condition: "paper/gate_decision.json and paper/scientific_validation.json report no aggregate accuracy conflicts."
+      recommended_action: "Align all aggregate metric claims to the executed analysis artifacts before PDF build.",
+      recheck_condition: "paper/gate_decision.json and paper/scientific_validation.json report no aggregate metric conflicts."
     });
   }
 
@@ -1048,7 +1415,7 @@ function createReviewTransition(input: {
   return {
     action: input.action,
     sourceNode: "review",
-    targetNode: input.targetNode,
+    ...(input.targetNode ? { targetNode: input.targetNode } : {}),
     reason: input.reason,
     confidence: input.confidence,
     autoExecutable: input.autoExecutable,
@@ -1098,21 +1465,43 @@ async function loadAnalysisReport(
   runId: string,
   runContextMemory: RunContextMemory
 ): Promise<AnalysisReport | undefined> {
-  const cached = await runContextMemory.get<AnalysisReport>("analyze_results.last_summary");
-  if (cached) {
-    return cached;
+  const cached = await runContextMemory.get<unknown>("analyze_results.last_summary");
+  const cachedReport = parseStoredAnalysisReport(cached);
+  if (cachedReport) {
+    return cachedReport;
   }
 
   const raw = await safeRead(path.join(".autolabos", "runs", runId, "result_analysis.json"));
-  if (!raw) {
+  return raw ? parseStoredAnalysisReport(raw) : undefined;
+}
+
+function parseStoredAnalysisReport(value: unknown): AnalysisReport | undefined {
+  let sourceValue: unknown;
+  let serialized: string;
+  if (typeof value === "string") {
+    serialized = value;
+    try {
+      sourceValue = JSON.parse(value) as unknown;
+    } catch {
+      return undefined;
+    }
+  } else if (value === undefined || value === null) {
     return undefined;
+  } else {
+    sourceValue = value;
+    try {
+      serialized = JSON.stringify(value);
+    } catch {
+      return undefined;
+    }
   }
 
-  try {
-    return JSON.parse(raw) as AnalysisReport;
-  } catch {
+  if (!parseAnalysisReport(serialized)) {
     return undefined;
   }
+  return sourceValue && typeof sourceValue === "object" && !Array.isArray(sourceValue)
+    ? sourceValue as AnalysisReport
+    : undefined;
 }
 
 async function safeReadJson(filePath: string): Promise<unknown | undefined> {
@@ -1142,16 +1531,16 @@ async function resolveScientificValidationReviewSignal(
   const blockedByEvidenceInsufficiency =
     diagnostics?.blocked_by_evidence_insufficiency === true ||
     (missingEvidenceCategories.length > 0 && /evidence insufficiency/iu.test(previousError));
-  const aggregateAccuracyConflict = /conflicting aggregate accuracy values/iu.test(previousError);
+  const aggregateMetricConflict = /conflicting aggregate [^.!?]{1,80} values/iu.test(previousError);
 
-  if (!blockedByEvidenceInsufficiency && missingEvidenceCategories.length === 0 && !aggregateAccuracyConflict) {
+  if (!blockedByEvidenceInsufficiency && missingEvidenceCategories.length === 0 && !aggregateMetricConflict) {
     return undefined;
   }
 
   return {
     missingEvidenceCategories,
     blockedByEvidenceInsufficiency,
-    aggregateAccuracyConflict
+    aggregateMetricConflict
   };
 }
 
@@ -1172,7 +1561,7 @@ function buildScientificValidationTransitionRecommendation(
     evidence: [
       `Missing evidence: ${missing}`,
       "Source artifact: paper/scientific_validation.json",
-      ...(signal.aggregateAccuracyConflict ? ["Prior write_paper also reported aggregate accuracy conflicts."] : [])
+      ...(signal.aggregateMetricConflict ? ["Prior write_paper also reported aggregate metric conflicts."] : [])
     ],
     suggestedCommands: ["/agent jump implement_experiments --force", ...suggestedActions]
   });
@@ -1189,13 +1578,13 @@ function applyScientificValidationDecisionGate(
   const missing = signal.missingEvidenceCategories.join(", ") || "upstream evidence";
   const requiredActions = Array.from(new Set([
     `Persist missing upstream evidence before paper drafting: ${missing}.`,
-    ...(signal.aggregateAccuracyConflict ? ["Align aggregate accuracy values across Abstract, Results, Conclusion, tables, and figures."] : []),
+    ...(signal.aggregateMetricConflict ? ["Align aggregate metric values across Abstract, Results, Conclusion, tables, and figures."] : []),
     ...panel.decision.required_actions
   ])).slice(0, 6);
   const blockingIds = Array.from(new Set([
     ...panel.decision.blocking_finding_ids,
     "scientific_validation:blocked_by_evidence_insufficiency",
-    ...(signal.aggregateAccuracyConflict ? ["scientific_validation:aggregate_accuracy_conflict"] : [])
+    ...(signal.aggregateMetricConflict ? ["scientific_validation:aggregate_metric_conflict"] : [])
   ])).slice(0, 20);
 
   return {
@@ -1713,20 +2102,23 @@ async function loadPriorCompiledPageValidation(runDir: string): Promise<PreRevie
 function extractPreReviewBaselineLabels(report: AnalysisReport): string[] {
   const labels = new Set<string>();
 
-  for (const comparison of report.condition_comparisons ?? []) {
-    if (comparison.label.toLowerCase().includes("baseline")) {
-      labels.add(comparison.label);
+  const primaryComparison = report.primary_comparison_id
+    ? resolvePrimaryResultsArtifactComparison(report.results_artifact, report.primary_comparison_id)
+    : undefined;
+  if (primaryComparison) {
+    addBaselineLabel(labels, primaryComparison.reference_series.label);
+    addBaselineLabel(labels, primaryComparison.reference_series.id);
+  }
+
+  for (const series of report.results_artifact.series) {
+    if (series.role === "baseline") {
+      addBaselineLabel(labels, series.label);
+      addBaselineLabel(labels, series.id);
     }
   }
 
-  const metrics = asRecord(report.metrics);
-  const currentBestBaseline = asRecord(metrics.current_best_baseline);
-  const comparisonContract = asRecord(metrics.comparison_contract);
-  const baselineBinding = asRecord(comparisonContract.baseline_binding);
   const selectedDesignBaselines = report.plan_context?.selected_design?.baselines ?? [];
 
-  addBaselineLabel(labels, currentBestBaseline.arm_name);
-  addBaselineLabel(labels, baselineBinding.source_arm_name);
   for (const baseline of selectedDesignBaselines) {
     addBaselineLabel(labels, baseline);
   }
@@ -1743,10 +2135,6 @@ function addBaselineLabel(labels: Set<string>, value: unknown): void {
     return;
   }
   labels.add(trimmed);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? value as Record<string, unknown> : {};
 }
 
 function buildClaimCeilingDetail(input: {

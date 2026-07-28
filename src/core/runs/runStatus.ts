@@ -80,30 +80,49 @@ export async function buildRunOperatorStatus(input: {
 }): Promise<RunOperatorStatusArtifact> {
   const runDir = buildWorkspaceRunRoot(input.workspaceRoot, input.run.id);
   const currentNode = input.currentNode || input.run.currentNode;
-  const analysisReady = await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
-  const reviewReady = await hasArtifacts(runDir, [
-    "review/review_packet.json",
-    "review/paper_critique.json",
-    "review/minimum_gate.json",
-    "review/readiness_risks.json"
-  ]);
-  const paperReadiness = await readJsonArtifact<PaperReadinessProjection>(
-    path.join(runDir, "paper", "paper_readiness.json")
-  );
-  const referenceAuthorityGate = await inspectReferenceAuthorityGate(path.join(runDir, "paper"));
+  const analysisProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "analyze_results");
+  const reviewProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "review");
+  const paperProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "write_paper");
+  const analysisReady = analysisProjectionActive
+    && await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
+  const reviewReady = reviewProjectionActive
+    && await hasArtifacts(runDir, [
+      "review/review_packet.json",
+      "review/paper_critique.json",
+      "review/minimum_gate.json",
+      "review/readiness_risks.json"
+    ]);
+  const paperReadiness = paperProjectionActive
+    ? await readJsonArtifact<PaperReadinessProjection>(
+      path.join(runDir, "paper", "paper_readiness.json")
+    )
+    : undefined;
+  const referenceAuthorityGate = paperProjectionActive
+    ? await inspectReferenceAuthorityGate(path.join(runDir, "paper"))
+    : undefined;
   const paperReady = paperReadiness?.paper_ready === true
-    && referenceAuthorityGate.status === "pass";
-  const reviewRisks = await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"));
-  const paperRisks = await readReadinessRisks(path.join(runDir, "paper", "readiness_risks.json"));
-  const reviewCritique = await readJsonArtifact<ReviewCritiqueProjection>(
-    path.join(runDir, "review", "paper_critique.json")
-  );
-  const reviewPacket = await readJsonArtifact<ReviewPacketProjection>(
-    path.join(runDir, "review", "review_packet.json")
-  );
-  const reviewScorecard = await readJsonArtifact<ReviewScorecardProjection>(
-    path.join(runDir, "review", "scorecard.json")
-  );
+    && referenceAuthorityGate?.status === "pass";
+  const reviewRisks = reviewProjectionActive
+    ? await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"))
+    : undefined;
+  const paperRisks = paperProjectionActive
+    ? await readReadinessRisks(path.join(runDir, "paper", "readiness_risks.json"))
+    : undefined;
+  const reviewCritique = reviewProjectionActive
+    ? await readJsonArtifact<ReviewCritiqueProjection>(
+      path.join(runDir, "review", "paper_critique.json")
+    )
+    : undefined;
+  const reviewPacket = reviewProjectionActive
+    ? await readJsonArtifact<ReviewPacketProjection>(
+      path.join(runDir, "review", "review_packet.json")
+    )
+    : undefined;
+  const reviewScorecard = reviewProjectionActive
+    ? await readJsonArtifact<ReviewScorecardProjection>(
+      path.join(runDir, "review", "scorecard.json")
+    )
+    : undefined;
   const lifecycleStatus = deriveLifecycleStatus(input.run, currentNode, input.lifecycleStatus);
   const lastEventAt = await readLastEventTimestamp(runDir, input.run.updatedAt);
   const dominantFailure = deriveDominantFailure({
@@ -148,6 +167,9 @@ export async function buildRunOperatorStatus(input: {
     version: 1,
     generated_at: new Date().toISOString(),
     run_id: input.run.id,
+    research_cycle: input.run.graph.researchCycle ?? 0,
+    checkpoint_seq: input.run.graph.checkpointSeq ?? 0,
+    run_updated_at: input.run.updatedAt,
     title: input.run.title,
     current_node: currentNode,
     lifecycle_status: lifecycleStatus,
@@ -183,6 +205,10 @@ export async function buildRunOperatorStatus(input: {
     network_dependency: networkDependency,
     validation_scope: input.validationScope || "full_run"
   };
+}
+
+function nodeArtifactsBelongToCurrentGraph(run: RunRecord, node: GraphNodeId): boolean {
+  return run.graph.nodeStates[node]?.status !== "pending";
 }
 
 function collectRiskMessages(
@@ -348,8 +374,7 @@ function deriveDominantFailure(input: {
   paperReadiness?: PaperReadinessProjection;
 }): FailureSeed | undefined {
   const runtimeError = compactOneLine(
-    input.run.graph.nodeStates[input.currentNode]?.lastError
-      || input.run.graph.nodeStates[input.currentNode]?.note,
+    input.run.graph.nodeStates[input.currentNode]?.lastError,
     180
   );
   if (runtimeError) {

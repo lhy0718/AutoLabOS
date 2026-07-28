@@ -1,0 +1,85 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "parent_native_test_census_specification",
+  "maximum_direct_line_distance": 40,
+  "runnable_test_signals": [
+    "\\bassert\\b",
+    "pytest\\.",
+    "unittest\\.",
+    "TestCase",
+    "\\bexpect\\s*\\(",
+    "\\bit\\s*\\("
+  ],
+  "lineages": [
+    {
+      "lineage_id": "lineage_001",
+      "implementation_terms": ["replay", "set_state"],
+      "contract_terms": ["unknown.?tool", "missing_tool", "no.?op"]
+    },
+    {
+      "lineage_id": "lineage_002",
+      "implementation_terms": ["evaluate_simulation", "EvaluationType\\.ALL"],
+      "contract_terms": ["NL_ASSERTION", "ALL_WITH_NL_ASSERTIONS", "reward_basis"]
+    },
+    {
+      "lineage_id": "lineage_003",
+      "implementation_terms": ["discoverable_agent_tool", "KnowledgeTools"],
+      "contract_terms": ["read.?only", "db_hash", "state.*unchanged"]
+    },
+    {
+      "lineage_id": "lineage_004",
+      "implementation_terms": ["apply_savings_account_credit", "KnowledgeTools"],
+      "contract_terms": ["33\\.0", "integer.*float", "numeric.*representation"]
+    },
+    {
+      "lineage_id": "lineage_005",
+      "implementation_terms": ["compute_simulation_rewards"],
+      "contract_terms": ["offline.*rescor", "stored.*tick", "mode.*full.?duplex"]
+    },
+    {
+      "lineage_id": "lineage_006",
+      "implementation_terms": ["compute_simulation_rewards"],
+      "contract_terms": ["historical.*traject", "trailing.*space", "render.*drift"]
+    },
+    {
+      "lineage_id": "lineage_007",
+      "implementation_terms": ["openfunctions_executable_checker", "exact_match"],
+      "contract_terms": ["multiple.*call", "cardinality", "second.*call"]
+    },
+    {
+      "lineage_id": "lineage_008",
+      "implementation_terms": ["simple_function_checker", "type_checker"],
+      "contract_terms": ["float", "integer", "whole.?valued"]
+    },
+    {
+      "lineage_id": "lineage_009",
+      "implementation_terms": ["decode_ast", "gpt_handler"],
+      "contract_terms": ["double.?cast", "second.?chance", "false.?positive"]
+    },
+    {
+      "lineage_id": "lineage_012",
+      "implementation_terms": ["parse_javascript_function_call", "js_parser"],
+      "contract_terms": ["single.?quote", "double.?quote", "string_literal"]
+    },
+    {
+      "lineage_id": "lineage_013",
+      "implementation_terms": ["get_rule_relativeTime", "relativeTime"],
+      "contract_terms": ["VM.*time", "controller.*datetime", "host.*time"]
+    },
+    {
+      "lineage_id": "lineage_014",
+      "implementation_terms": ["compare_table", "freeze_panes"],
+      "contract_terms": ["topLeftCell", "xSplit", "ySplit", "scroll"]
+    },
+    {
+      "lineage_id": "lineage_015",
+      "implementation_terms": ["check_python_file_by_test_suite", "sys\\.modules"],
+      "contract_terms": ["sequential", "state.*isolation", "module.*leak"]
+    },
+    {
+      "lineage_id": "lineage_016",
+      "implementation_terms": ["get_vscode_config", "OpenProject"],
+      "contract_terms": ["workspaceStorage", "helper.*missing", "fallback"]
+    }
+  ]
+}

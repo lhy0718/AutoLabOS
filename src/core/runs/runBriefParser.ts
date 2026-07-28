@@ -32,7 +32,9 @@ export interface ExtractedRunBrief {
 
 export interface MarkdownRunBriefSections {
   title?: string;
+  researchMode?: string;
   topic?: string;
+  scientificScope?: string;
   objectiveMetric?: string;
   constraints?: string;
   plan?: string;
@@ -55,6 +57,8 @@ export interface MarkdownRunBriefSections {
   manuscriptAuthors?: string;
   appendixPreferences?: string;
 }
+
+export type ResearchRunMode = "hypothesis_test" | "topic_discovery";
 
 const RUN_BRIEF_TIMEOUT_REASONING = "medium";
 const DEFAULT_RUN_BRIEF_TIMEOUT_MS = 8_000;
@@ -229,7 +233,9 @@ export function parseMarkdownRunBriefSections(markdown: string): MarkdownRunBrie
 
   return {
     title,
+    researchMode: collapseMarkdownSection(sections.researchMode),
     topic: collapseMarkdownSection(sections.topic),
+    scientificScope: collapseMarkdownSection(sections.scientificScope),
     objectiveMetric: collapseMarkdownSection(sections.objectiveMetric),
     constraints: collapseMarkdownSection(sections.constraints),
     plan: collapseMarkdownSection(sections.plan),
@@ -519,7 +525,7 @@ function containsTopicQualifier(value: string): boolean {
     /\b(?:cpu[-\s]?only|cpu[-\s]?safe|gpu[-\s]?free|laptop[-\s]?safe|consumer[-\s]?hardware)\b/iu,
     /\b(?:lightweight|reproducible|seed[-\s]?controlled|fixed splits?)\b/iu,
     /\b(?:small|compact)\s+public\s+(?:datasets?|benchmarks?)\b/iu,
-    /\b(?:runtime|memory|macro[-\s]?f1|wall[-\s]?clock)\b/iu
+    /\b(?:runtime|memory|wall[-\s]?clock)\b/iu
   ].some((pattern) => pattern.test(value));
 }
 
@@ -587,8 +593,16 @@ function escapeRegex(value: string): string {
 function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSections | undefined {
   const normalized = value.trim().toLowerCase();
   switch (normalized) {
+    case "research mode":
+    case "run mode":
+    case "research intent":
+      return "researchMode";
     case "topic":
       return "topic";
+    case "scientific scope":
+    case "research scope":
+    case "scientific search scope":
+      return "scientificScope";
     case "objective metric":
     case "objective":
       return "objectiveMetric";
@@ -669,6 +683,33 @@ function mapMarkdownHeadingToSection(value: string): keyof MarkdownRunBriefSecti
     default:
       return undefined;
   }
+}
+
+export function parseDeclaredResearchRunMode(markdown: string): ResearchRunMode | undefined {
+  const sectionValue = parseMarkdownRunBriefSections(markdown)?.researchMode;
+  if (!sectionValue) {
+    return undefined;
+  }
+  const declared = sectionValue
+    .replace(/^[\s*-]+/u, "")
+    .replace(/^(?:mode|intent)\s*:\s*/u, "")
+    .trim()
+    .replace(/^`([^`]+)`$/u, "$1");
+  const raw = declared
+    ?.toLowerCase()
+    .replace(/[\s-]+/gu, "_")
+    .trim();
+  if (raw === "topic_discovery") {
+    return "topic_discovery";
+  }
+  if (raw === "hypothesis_test") {
+    return "hypothesis_test";
+  }
+  return undefined;
+}
+
+export function parseResearchRunMode(markdown: string): ResearchRunMode {
+  return parseDeclaredResearchRunMode(markdown) || "hypothesis_test";
 }
 
 function collapseMarkdownSection(lines: string[] | undefined): string | undefined {

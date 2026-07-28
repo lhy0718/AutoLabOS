@@ -53,66 +53,66 @@ function makeTraceability(manuscript: PaperManuscript): PaperTraceabilityReport 
 
 function makeCleanManuscript(): PaperManuscript {
   return {
-    title: "Thread-Backed Drafting for More Stable Manuscript Revision",
+    title: "Protocol U: Controlled Structured Revision",
     abstract:
-      "We study manuscript generation for agent collaboration workflows. We evaluate a thread-backed drafting pipeline against a stateless baseline on AgentBench-mini. Across repeated runs, the thread-backed pipeline improves revision stability by 0.05. These results suggest that persistent drafting support can improve revisability within the tested workflow setting.",
-    keywords: ["agent collaboration", "manuscript generation"],
+      "We study structured revision in a controlled workflow. Protocol U evaluates Series U and Series V on Evaluation Set Q. The report records Measure Q for Series U under the declared scope. The interpretation remains bounded to the executed setting.",
+    keywords: ["structured revision", "controlled evaluation"],
     sections: [
       {
         heading: "Introduction",
         paragraphs: [
-          "Manuscript generation for agent collaboration workflows is difficult because revisions often drift away from grounded evidence and earlier decisions.",
-          "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing in a constrained workflow setting."
+          "Structured revision is difficult because edits can drift away from grounded evidence and earlier decisions.",
+          "This paper evaluates a controlled procedure for preserving evidence-grounded writing in a constrained workflow setting."
         ]
       },
       {
         heading: "Related Work",
         paragraphs: [
-          "Prior work on collaborative agents studies revision stability, while workflow benchmarking studies orchestration quality at the system level.",
-          "Compared with those strands, our study focuses on whether persistent drafting state improves revisability under the same workflow and task setting."
+          "Prior work studies structured revision, while workflow research examines orchestration quality at the system level.",
+          "Our study narrows the evaluation scope to a controlled protocol and an explicit measurement definition."
         ]
       },
       {
         heading: "Method",
         paragraphs: [
-          "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark dataset.",
-          "Both conditions use the same staged paper-writing pipeline within the same evaluation setup, and revision stability is the primary metric.",
-          "The evaluation tracks repeated runs so that the comparison reflects stable behavior rather than a single example."
+          "Protocol U declares Series U and Series V before execution on Evaluation Set Q.",
+          "Both series use the same staged procedure, and Measure Q has an explicit definition.",
+          "The evaluation tracks repeated runs so that the report reflects recorded behavior rather than a single example."
         ]
       },
       {
         heading: "Results",
         paragraphs: [
-          "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini.",
-          "The main table preserves the exact comparison, and the result remains modest rather than dramatic."
+          "The structured result artifact records Measure Q for Series U under the declared scope.",
+          "The main table preserves the reported observations without assigning a winner."
         ]
       },
       {
         heading: "Discussion",
         paragraphs: [
-          "The result suggests that persistent drafting state reduces avoidable revision drift, but the effect remains specific to the tested workflow.",
-          "This interpretation matters because the gain is useful without implying broad generalization beyond the observed setting."
+          "The recorded observation supports only a bounded interpretation within the tested workflow.",
+          "No conclusion is drawn beyond the declared scope and measurement definition."
         ]
       },
       {
         heading: "Limitations",
         paragraphs: [
-          "The evaluation is limited to one workflow benchmark and a small comparator set, so broader claims would require additional tasks and baselines."
+          "The evaluation is limited to one workflow and two declared series, so broader claims would require additional settings and explicit contracts."
         ]
       },
       {
         heading: "Conclusion",
         paragraphs: [
-          "Within the tested workflow setting, thread-backed drafting improves revision stability and supports more consistent manuscript revision."
+          "Within the tested workflow, Protocol U reports a scoped observation without selecting a preferred series."
         ]
       }
     ],
     tables: [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ]
@@ -120,7 +120,7 @@ function makeCleanManuscript(): PaperManuscript {
 }
 
 describe("manuscriptQuality style lint", () => {
-  it("instructs bounded repairs to preserve numeric facts and avoid overclaiming ambiguous comparisons", () => {
+  it("instructs bounded repairs to preserve numeric facts and remove unsupported comparisons", () => {
     const manuscript = makeCleanManuscript();
     const prompt = buildManuscriptRepairPrompt({
       manuscript,
@@ -159,24 +159,22 @@ describe("manuscriptQuality style lint", () => {
           severity: "fail",
           repairable: true,
           section: "Results",
-          message: "The manuscript says the planned baseline comparison is ambiguous while claiming the target was met.",
+          message: "The manuscript asserts a directional outcome without one explicit primary comparison contract.",
           anchor_ids: ["paragraph:results:0"],
-          suggested_fix: "Use bounded screening language."
+          suggested_fix: "Require an explicit comparison contract or remove directional language."
         }
       ]
     });
 
     expect(prompt).toContain("Preserve structured numeric facts exactly");
-    expect(prompt).toContain("do not claim that a baseline-relative target was met");
-    expect(prompt).toContain("If multiple reported rows or conditions are tied");
     expect(prompt).toContain("Remove reader-visible to-do language");
-    expect(prompt).toContain("registered-baseline and locked-comparator distinction");
+    expect(prompt).toContain("explicit primary comparison contract");
   });
 
   it("adds reader-visible citation callouts to the manuscript review prompt", () => {
     const manuscript = makeCleanManuscript();
     const traceability = makeTraceability(manuscript);
-    const citationKeysByPaperId = new Map([["paper_1", "smith2024threaded"]]);
+    const citationKeysByPaperId = new Map([["paper_1", "smith2024protocol"]]);
 
     const readerVisible = buildReaderVisibleManuscript({
       manuscript,
@@ -184,20 +182,20 @@ describe("manuscriptQuality style lint", () => {
       citationKeysByPaperId
     });
 
-    expect(readerVisible.abstract.text).not.toContain("smith2024threaded");
+    expect(readerVisible.abstract.text).not.toContain("smith2024protocol");
     expect(readerVisible.sections[0]?.paragraphs[0]?.text).toContain("(Smith et al., 2024)");
-    expect(readerVisible.sections[0]?.paragraphs[0]?.text).not.toContain("smith2024threaded");
+    expect(readerVisible.sections[0]?.paragraphs[0]?.text).not.toContain("smith2024protocol");
     expect(readerVisible.sections[0]?.paragraphs[0]?.citation_paper_ids).toEqual(["paper_1"]);
-    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).not.toContain("smith2024threaded");
+    expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).not.toContain("smith2024protocol");
 
     const prompt = buildManuscriptReviewPrompt({
       manuscript,
       traceability,
       citationKeysByPaperId,
       bundle: {
-        runTitle: "Thread-backed drafting",
+        runTitle: "Series U",
         topic: "manuscript generation",
-        objectiveMetric: "revision stability"
+        objectiveMetric: "Measure Q"
       } as any,
       constraintProfile: {
         writing: {
@@ -207,14 +205,14 @@ describe("manuscriptQuality style lint", () => {
         }
       } as any,
       objectiveMetricProfile: {
-        primaryMetric: "revision stability",
+        primaryMetric: "Measure Q",
         targetDescription: "higher is better"
       } as any
     });
 
     expect(prompt).toContain("reader_visible_manuscript");
     expect(prompt).toContain("(Smith et al., 2024)");
-    expect(prompt).not.toContain("(citations: smith2024threaded)");
+    expect(prompt).not.toContain("(citations: smith2024protocol)");
     expect(prompt).toContain("judge citation_hygiene from reader_visible_manuscript");
   });
 
@@ -233,7 +231,7 @@ describe("manuscriptQuality style lint", () => {
     const readerVisible = buildReaderVisibleManuscript({
       manuscript,
       traceability: makeTraceability(manuscript),
-      citationKeysByPaperId: new Map([["paper_1", "smith2024threaded"]])
+      citationKeysByPaperId: new Map([["paper_1", "smith2024protocol"]])
     });
 
     expect(readerVisible.sections.find((section) => section.heading === "Method")?.paragraphs[0]?.text).not.toContain(
@@ -260,7 +258,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Abstract",
                 paragraph_index: 0,
-                excerpt: "Across repeated runs, the thread-backed pipeline improves revision stability by 0.05.",
+                excerpt: "The report records Measure Q for Series U under the declared scope.",
                 reason: "This is the relevant abstract sentence."
               },
               {
@@ -280,7 +278,7 @@ describe("manuscriptQuality style lint", () => {
       {
         section: "Abstract",
         paragraph_index: 0,
-        excerpt: "Across repeated runs, the thread-backed pipeline improves revision stability by 0.05.",
+        excerpt: "The report records Measure Q for Series U under the declared scope.",
         reason: "This is the relevant abstract sentence."
       }
     ]);
@@ -295,33 +293,6 @@ describe("manuscriptQuality style lint", () => {
     expect(fallback.issues[0]?.supporting_spans).toEqual([]);
   });
 
-  it("fallback review flags baseline ambiguity and repeated screening-threshold prose", () => {
-    const manuscript = makeCleanManuscript();
-    const results = manuscript.sections.find((section) => section.heading === "Results");
-    expect(results).toBeTruthy();
-    results!.paragraphs = [
-      "The stated baseline is the registered comparison row. The displayed contrast uses a different locked comparison row, so the baseline-relative result is not yet reconciled.",
-      "The archived comparison exceeded the configured screening threshold, but this remains a screening signal rather than a stable success claim.",
-      "The threshold-exceeding point estimate is repeated here as another screening-threshold interpretation instead of adding a distinct result takeaway."
-    ];
-
-    const fallback = buildFallbackManuscriptReview(manuscript);
-    const validated = validateManuscriptReviewArtifact({
-      review: fallback,
-      manuscript,
-      traceability: makeTraceability(manuscript)
-    });
-
-    expect(fallback.overall_decision).toBe("repair");
-    expect(fallback.issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining(["alignment", "paragraph_redundancy"])
-    );
-    expect(fallback.checks.alignment.status).toBe("fail");
-    expect(fallback.checks.paragraph_redundancy.status).toBe("warn");
-    expect(validated.validation.ok).toBe(true);
-    expect(validated.validation.retained_issue_count).toBeGreaterThanOrEqual(2);
-    expect(validated.review.issues.flatMap((issue) => issue.supporting_spans).every((span) => span.anchor_id)).toBe(true);
-  });
 
   it("validates supporting spans into traceability anchors and source refs", () => {
     const manuscript = makeCleanManuscript();
@@ -341,7 +312,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Abstract",
                 paragraph_index: 0,
-                excerpt: "We study manuscript generation for agent collaboration workflows.",
+                excerpt: "We study structured revision in a controlled workflow.",
                 reason: "This is the abstract opening."
               }
             ]
@@ -386,7 +357,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Results",
                 paragraph_index: 1,
-                excerpt: "The main table preserves the exact comparison",
+                excerpt: "The main table preserves the reported observations",
                 reason: "This paragraph is a valid local anchor."
               }
             ],
@@ -394,7 +365,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 kind: "table",
                 index: 0,
-                rationale: "The first row is labeled \"Registered baseline condition (factor x=0)\"."
+                rationale: "The first row is labeled \"Unit Omega\"."
               }
             ]
           }
@@ -441,7 +412,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Abstract",
                 paragraph_index: 0,
-                excerpt: "We study manuscript generation for agent collaboration workflows.",
+                excerpt: "We study structured revision in a controlled workflow.",
                 reason: "This span is textually valid but will be unanchored."
               }
             ]
@@ -523,7 +494,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Discussion",
                 paragraph_index: 0,
-                excerpt: "The result suggests that persistent drafting state reduces avoidable revision drift, but the effect remains specific to the tested workflow.",
+                excerpt: "The recorded observation supports only a bounded interpretation within the tested workflow.",
                 reason: "This is the local discussion paragraph."
               }
             ]
@@ -642,7 +613,7 @@ describe("manuscriptQuality style lint", () => {
               {
                 section: "Results",
                 paragraph_index: 1,
-                excerpt: "The main table preserves the exact comparison, and the result remains modest rather than dramatic.",
+                excerpt: "The main table preserves the reported observations without assigning a winner.",
                 reason: "This paragraph states how the table should be interpreted."
               }
             ],
@@ -774,7 +745,7 @@ describe("manuscriptQuality style lint", () => {
             repairable: true,
             message: "The Related Work section identifies high-level axes but does not position the study against prior work.",
             fix_recommendation:
-              "Compare prior work and this study along concrete axes such as model scale, method setup, condition-parameter variation, and evaluation scope.",
+              "Compare prior work and this study along concrete axes such as model scale, method setup, measurement-scope variation, and evaluation scope.",
             supporting_spans: []
           }
         ]
@@ -971,10 +942,10 @@ describe("manuscriptQuality style lint", () => {
     const manuscript = makeCleanManuscript();
     manuscript.tables = [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
@@ -982,8 +953,8 @@ describe("manuscriptQuality style lint", () => {
       {
         caption: "A redundant figure that should be revised into a distinct visual takeaway.",
         bars: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
@@ -1052,17 +1023,17 @@ describe("manuscriptQuality style lint", () => {
     manuscript.sections[3] = {
       heading: "Results",
       paragraphs: [
-        "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline.",
+        "The structured result artifact records Measure Q for Series U under the declared scope.",
         "The first result paragraph needs a clearer explanation of the table.",
         "The later results paragraph also needs to connect the table back to the claim."
       ]
     };
     manuscript.tables = [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
@@ -1124,7 +1095,7 @@ describe("manuscriptQuality style lint", () => {
     manuscript.sections[3] = {
       heading: "Results",
       paragraphs: [
-        "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini.",
+        "The structured result artifact records Measure Q for Series U under the declared scope.",
         "However, the next paragraph repeats setup details instead of transitioning into interpretation."
       ]
     };
@@ -1782,20 +1753,20 @@ describe("manuscriptQuality style lint", () => {
     const before = makeCleanManuscript();
     before.tables = [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
     before.figures = [
       {
-        caption: "A trend-focused figure highlighting the local revision-stability gap.",
+        caption: "A figure of reported Measure Q observations.",
         bars: [
-          { label: "Relative stability gap", value: 0.05 },
-          { label: "Thread-backed drafting", value: 0.76 },
-          { label: "Stateless baseline", value: 0.71 }
+          { label: "Measure Q auxiliary", value: 0.05 },
+          { label: "Series U", value: 0.76 },
+          { label: "Series V", value: 0.71 }
         ]
       }
     ];
@@ -1805,9 +1776,9 @@ describe("manuscriptQuality style lint", () => {
       {
         caption: "This figure clearly demonstrates broad applicability across domains.",
         bars: [
-          { label: "Relative stability gap", value: 0.05 },
-          { label: "Thread-backed drafting", value: 0.76 },
-          { label: "Stateless baseline", value: 0.71 }
+          { label: "Measure Q auxiliary", value: 0.05 },
+          { label: "Series U", value: 0.76 },
+          { label: "Series V", value: 0.71 }
         ]
       }
     ];
@@ -1862,11 +1833,11 @@ describe("manuscriptQuality style lint", () => {
     const before = makeCleanManuscript();
     before.figures = [
       {
-        caption: "A trend-focused figure highlighting the local revision-stability gap.",
+        caption: "A figure of reported Measure Q observations.",
         bars: [
-          { label: "Relative stability gap", value: 0.05 },
-          { label: "Thread-backed drafting", value: 0.76 },
-          { label: "Stateless baseline", value: 0.71 }
+          { label: "Measure Q auxiliary", value: 0.05 },
+          { label: "Series U", value: 0.76 },
+          { label: "Series V", value: 0.71 }
         ]
       }
     ];
@@ -1874,11 +1845,11 @@ describe("manuscriptQuality style lint", () => {
     const after = structuredClone(before);
     after.figures = [
       {
-        caption: "A trend-focused figure highlighting the local revision-stability gap.",
+        caption: "A figure of reported Measure Q observations.",
         bars: [
           { label: "Broad applicability across domains", value: 0.05 },
-          { label: "Thread-backed drafting", value: 0.76 },
-          { label: "Stateless baseline", value: 0.71 }
+          { label: "Series U", value: 0.76 },
+          { label: "Series V", value: 0.71 }
         ]
       }
     ];
@@ -2074,10 +2045,10 @@ describe("manuscriptQuality style lint", () => {
     const manuscript = makeCleanManuscript();
     manuscript.tables = [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
@@ -2085,8 +2056,8 @@ describe("manuscriptQuality style lint", () => {
       {
         caption: "A redundant figure that should be revised into a distinct visual takeaway.",
         bars: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       }
     ];
@@ -2136,17 +2107,17 @@ describe("manuscriptQuality style lint", () => {
     const manuscript = makeCleanManuscript();
     manuscript.tables = [
       {
-        caption: "Exact numeric comparison for the main revision-stability result.",
+        caption: "Reported observations for Measure Q.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series V", value: 0.71 },
+          { label: "Series U", value: 0.76 }
         ]
       },
       {
         caption: "A separate calibration table that should not be targeted.",
         rows: [
-          { label: "Calibration baseline", value: 0.41 },
-          { label: "Calibrated variant", value: 0.45 }
+          { label: "Series W", value: 0.41 },
+          { label: "Series X", value: 0.45 }
         ]
       }
     ];
@@ -2154,15 +2125,15 @@ describe("manuscriptQuality style lint", () => {
       {
         caption: "Dataset-level outcome summary retained in the main paper.",
         bars: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Series U", value: 0.76 },
+          { label: "Series V", value: 0.71 }
         ]
       },
       {
         caption: "A distinct tradeoff figure that should remain untouched.",
         bars: [
-          { label: "Latency-optimized", value: 0.52 },
-          { label: "Accuracy-optimized", value: 0.61 }
+          { label: "Mode Y", value: 0.52 },
+          { label: "Mode Z", value: 0.61 }
         ]
       }
     ];
@@ -2177,7 +2148,7 @@ describe("manuscriptQuality style lint", () => {
     expect(visualIssue?.redundant_visual_pair).toEqual({
       table_index: 0,
       figure_index: 0,
-      shared_labels: ["Stateless baseline", "Thread-backed drafting"]
+      shared_labels: ["Series V", "Series U"]
     });
 
     const repairPlan = buildManuscriptRepairPlan({
@@ -2235,7 +2206,7 @@ describe("manuscriptQuality style lint", () => {
       {
         heading: "Appendix. Notes",
         paragraphs: [
-          "Seed coverage is part of the evidence contract. The repeated condition cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run."
+          "Seed coverage is part of the evidence contract. The repeated measurement cells with recorded seed coverage expose whether the observed mean gain is stable enough to motivate a larger run."
         ]
       }
     ];

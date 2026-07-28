@@ -4,14 +4,114 @@ This document is the governed execution contract for one run.
 Keep workspace-level provider/runtime defaults in `.autolabos/config.yaml`.
 Put run-specific research intent, evidence thresholds, baseline expectations, manuscript-format targets, and any manuscript template path here.
 
+## Research Mode
+
+Choose one:
+
+- `hypothesis_test`: the brief already defines the experimental question and comparison contract.
+- `topic_discovery`: the brief defines a broad research scope and selection constraints; each shortlisted topic must later supply its own metric, explicit unit and numeric scale, direction, structured effect criterion, comparator, data, falsifier, and local budget before any probe is authorized.
+
+When omitted, the mode is `hypothesis_test`.
+
+For `topic_discovery`, the required sections below remain required, but their
+meaning changes from final experiment values to candidate-selection rules:
+
+- `Topic` defines the bounded search domain and excluded directions.
+- `Objective Metric` defines how topic candidates will be promoted and what
+  makes a metric admissible; it does not name the final experiment metric.
+- `Research Question` asks which evidence-backed, locally testable question
+  should be promoted.
+- `Baseline / Comparator` defines the rule that every candidate must name its
+  strongest feasible comparator.
+- `Dataset / Task / Bench` defines admissible source, license, size, and local
+  execution constraints rather than pretending a dataset is already selected.
+- `Target Comparison` defines the fields every candidate comparison must bind.
+- `Minimum Acceptable Evidence` separates the bounded-probe promotion floor
+  from the later confirmatory paper-evidence floor.
+- `Plan` requires broad literature discovery across multiple independent
+  scientific lenses before candidate generation. It must not collapse topic
+  selection into one keyword query or preselect a favored intervention.
+
+The collection stage assigns each query family a stable identifier, a lens
+describing what central relation would count as direct evidence, and a
+contribution intent such as method, measurement, dataset or benchmark,
+empirical finding, theory, or reproducibility. Papers that merely apply the
+target object are retained only as non-evidence diagnostics. Candidate topics
+must be grounded in papers judged as direct support under the declared family
+contract; lexical overlap alone is not admissible support.
+
+The selected candidate, not the broad discovery brief, owns the final primary
+metric, explicit unit and numeric scale, direction, structured practical-effect criterion,
+comparator, data/task scope,
+falsifier, kill signal, and local budget.
+
+For `topic_discovery`, the brief must also state numeric ceilings for both the
+bounded probe and the confirmatory stage: aggregate GPU-hours and maximum
+concurrent GPUs and fresh trials for each stage. Include one exact line in the
+`Constraints` section using this form:
+
+`Machine-readable compute ceiling: {"bounded_probe":{"max_gpu_hours":1,"max_concurrent_gpus":1,"max_trials":1},"confirmatory":{"max_gpu_hours":1,"max_concurrent_gpus":1,"max_trials":1}}`
+
+A candidate may declare tighter limits, but it must not omit either stage or
+exceed any brief-owned ceiling.
+
 ## Topic
 State the research area and the concrete problem in 1–3 sentences.
 
+In `topic_discovery`, state a bounded search scope and exclusions instead of a
+preselected intervention.
+
 Example:
-Improve calibration or macro-F1 on small tabular classification tasks under tight compute budgets.
+Test whether [intervention] improves [prespecified outcome] over [comparator] on [task scope] within [budget].
+
+## Scientific Scope
+Required for `topic_discovery`. This section is the deterministic authority for
+literature-query scope. Keep scientific content separate from eligibility,
+execution, and publication rules by using the role headings below.
+
+Required structure:
+
+```md
+## Scientific Scope
+
+### Scientific Object
+- [one concise 2-to-5-term domain object used as the shared search anchor]
+
+### Empirical Problems
+- [observable problem or failure relation]
+- [second independent observable problem or failure relation]
+
+### Scientific Relations
+- [optional testable relation between measured quantities]
+
+### Prior-Work Probes
+- [closest-prior or subsumption question; this does not authorize a scientific axis]
+
+### Admissibility Constraints
+- [data, license, grading, or local-execution eligibility rule]
+
+### Process Rules
+- [workflow or preregistration rule]
+
+### Publication Goals
+- [venue or contribution target]
+
+### Exclusions
+- [forbidden direction]
+```
+
+Only `Empirical Problems` and `Scientific Relations` authorize literature query
+families. `Scientific Object` authorizes the immutable shared anchor.
+`Prior-Work Probes` are routed to closest-prior checks. Constraints, process
+rules, publication goals, and exclusions never become scientific query axes.
 
 ## Objective Metric
 State the primary success metric and any important secondary metrics.
+
+In `topic_discovery`, state the topic-promotion objective and metric
+admissibility rules. Each candidate must later declare its own experimental
+metric, explicit unit and numeric scale, optimization direction, and structured practical-effect
+criterion.
 
 Required:
 - Primary metric
@@ -19,9 +119,9 @@ Required:
 - What counts as meaningful improvement
 
 Example:
-Primary metric: macro-F1.
-Secondary metrics: runtime, peak memory.
-Meaningful improvement: at least +0.5 macro-F1 points over the strongest baseline without an unacceptable runtime increase.
+Primary metric: [metric key, unit, and optimization direction].
+Secondary metrics: [cost, reliability, or resource metrics, if any].
+Meaningful improvement: [prespecified effect size or decision boundary] over [named comparator] without violating [resource or quality constraint].
 
 ## Constraints
 List practical constraints that shape the run.
@@ -117,6 +217,10 @@ Keep in main body:
 ## Research Question
 Write one clear research question that could be answered by a small real experiment.
 
+In `topic_discovery`, use a selection question such as: Which independently
+supported gap yields the strongest falsifiable comparison under the declared
+local budget and evidence floor?
+
 Good example:
 Can method X outperform baseline Y on task Z under constraint C?
 
@@ -136,17 +240,25 @@ Include:
 ## Baseline / Comparator
 List at least one explicit baseline or comparator.
 
+In `topic_discovery`, define the comparator-selection rule and require every
+candidate to name the strongest feasible comparator; do not invent one shared
+baseline for unrelated candidate families.
+
 Required:
 - baseline name
 - why it is relevant
 - expected comparison dimension
 
 Example:
-- Logistic regression: strong simple tabular baseline
-- RBF-SVM: classical non-linear comparator
+- `[baseline_condition_id]`: strongest feasible comparator under the same budget
+- `[secondary_comparator_id]`: simpler or mechanism-matched reference condition
 
 ## Dataset / Task / Bench
 Specify the experimental setting.
+
+In `topic_discovery`, specify admissibility constraints such as public access,
+license, maximum download size, deterministic sampling, and local runtime. The
+candidate contract supplies the selected data/task identifier.
 
 Required:
 - dataset(s)
@@ -158,17 +270,23 @@ Required:
 ## Target Comparison
 Specify the primary comparison the experiment should produce.
 
+In `topic_discovery`, require each candidate to bind a proposed condition,
+strongest feasible comparator, metric, explicit unit and numeric scale, direction,
+delta-versus-reference effect criterion, and matched evaluation scope.
+
 Required:
 - proposed method or condition name
 - comparator or baseline name
-- comparison dimension (metric, setting, or resource)
+- comparison dimension (metric, unit, setting, or resource)
 - direction of expected improvement
+- structured effect criterion (`basis`, numeric `magnitude`, `scale`, and
+  inclusive/exclusive boundary)
 
 Example:
-- Proposed: shared_state_schema condition
-- Comparator: free_form_chat baseline
-- Dimension: macro-F1 on tabular classification
-- Expected: +0.5 macro-F1 over baseline
+- Proposed: `[candidate_condition_id]`
+- Comparator: `[baseline_condition_id]`
+- Dimension: `[primary metric]` (`[unit]`) on `[dataset/task scope]`
+- Expected: cross the prespecified `[effect or decision boundary]` in the favorable direction
 
 ## Minimum Acceptable Evidence
 Define the threshold below which the result is not useful.
@@ -179,9 +297,9 @@ Required:
 - what counts as "no signal" vs. "weak signal"
 
 Example:
-- At least 3 outer folds with consistent direction
-- At least +0.3 macro-F1 improvement to claim meaningful gain
-- If 95% CI crosses zero, classify as inconclusive
+- At least `[N]` independent repeats, folds, or matched evaluation units
+- A prespecified effect or error-rate boundary for a meaningful result
+- An uncertainty rule that classifies the result as supported, inconclusive, or falsified
 
 ## Disallowed Shortcuts
 List experimental shortcuts that would invalidate the result.
@@ -212,7 +330,7 @@ Options:
 - `blocked_for_paper_scale` — evidence exists but is structurally insufficient
 
 Example:
-If macro-F1 improvement is below +0.3 or only one dataset shows improvement,
+If the primary decision boundary is not crossed or the result lacks the required independent support,
 cap the output at `research_memo` and do not claim a paper-ready result.
 
 ## Minimum Experiment Plan

@@ -1,0 +1,301 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "metric_polarity_corpus_preflight",
+  "generated_without_model_outputs": true,
+  "source": {
+    "dataset": "alabnii/sciclaimeval-shared-task",
+    "dataset_url": "https://huggingface.co/datasets/alabnii/sciclaimeval-shared-task",
+    "revision": "efb3807399acec43854fdf7741c1bcfe605a72b9",
+    "split": "dev",
+    "evidence_type": "table",
+    "label_filter": "Supported"
+  },
+  "metadata_sha256": "48938d69a53f8f7e86e1817d8cb05561d26e3e729248b198b330dbffc1ae8885",
+  "metadata_row_count": 747,
+  "supported_table_row_count": 246,
+  "unique_loaded_table_count": 153,
+  "eligible_family_count": 19,
+  "eligible_paper_count": 4,
+  "direction_counts": {
+    "higher": 14,
+    "lower": 5
+  },
+  "license_counts": {
+    "CC BY 4.0": 3,
+    "CC BY-SA 4.0": 1
+  },
+  "exclusion_counts": {
+    "directional_column_without_two_distinct_numeric_rows": 6,
+    "duplicate_table_content": 85,
+    "missing_or_invalid_table_json": 8,
+    "no_eligible_explicit_direction_column": 149
+  },
+  "gates": {
+    "minimum_family_count": {
+      "observed": 19,
+      "required": 100,
+      "pass": false
+    },
+    "minimum_paper_count": {
+      "observed": 4,
+      "required": 30,
+      "pass": false
+    },
+    "minimum_lower_direction_count": {
+      "observed": 5,
+      "required": 20,
+      "pass": false
+    }
+  },
+  "corpus_eligible": false,
+  "decision": "kill_candidate_for_insufficient_independent_corpus",
+  "families": [
+    {
+      "family_id": "50eec356dca6800851c484c9",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 1,
+      "column_name": "CIFAR100 [BOLD]Avg ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "f28b4c40ee73cdced7b55678",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 2,
+      "column_name": "CIFAR100 [BOLD]Last ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "3470a64dc6b5ea99c6e6829b",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 3,
+      "column_name": "ImageNet100 [BOLD]Avg ↑",
+      "direction": "higher",
+      "numeric_row_count": 15,
+      "distinct_value_count": 15,
+      "eligible": true
+    },
+    {
+      "family_id": "a268df236d57df5eaed23bc3",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 4,
+      "column_name": "ImageNet100 [BOLD]Last ↑",
+      "direction": "higher",
+      "numeric_row_count": 15,
+      "distinct_value_count": 14,
+      "eligible": true
+    },
+    {
+      "family_id": "04281641300fe0a3b56c3b93",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 5,
+      "column_name": "ImageNet-R [BOLD]Avg ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "ed10bfdd497c301a21489b30",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 6,
+      "column_name": "ImageNet-R [BOLD]Last ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "2f150498eae5a8996e248990",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 7,
+      "column_name": "CUB200 [BOLD]Avg ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "11e0c4600c0227d44a224a36",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 8,
+      "column_name": "CUB200 [BOLD]Last ↑",
+      "direction": "higher",
+      "numeric_row_count": 18,
+      "distinct_value_count": 18,
+      "eligible": true
+    },
+    {
+      "family_id": "2ce97ddd6fedc4209595e559",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 9,
+      "column_name": "VTAB [BOLD]Avg ↑",
+      "direction": "higher",
+      "numeric_row_count": 15,
+      "distinct_value_count": 15,
+      "eligible": true
+    },
+    {
+      "family_id": "c5a86d81a6f8e0d70cd8427a",
+      "paper_id": "2403.19137",
+      "claim_id": "val_tab_0001",
+      "claim_pair_id": "0001",
+      "table_sha256": "8ad65c9f5bf32213a2019b847ab64db9365eee297bfc5890642b2328482cde5e",
+      "column_index": 10,
+      "column_name": "VTAB [BOLD]Last ↑",
+      "direction": "higher",
+      "numeric_row_count": 15,
+      "distinct_value_count": 15,
+      "eligible": true
+    },
+    {
+      "family_id": "a2fc0d0f552c8488ddce66fc",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 1,
+      "column_name": "Dynamics MSE (↓) (× 10^{-3})",
+      "direction": "lower",
+      "numeric_row_count": 4,
+      "distinct_value_count": 4,
+      "eligible": true
+    },
+    {
+      "family_id": "ce860d0dfca2e327c7fa6cd7",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 2,
+      "column_name": "Switch MSE (↓) (× 10^{-3})",
+      "direction": "lower",
+      "numeric_row_count": 4,
+      "distinct_value_count": 4,
+      "eligible": true
+    },
+    {
+      "family_id": "cdbdfda70e750ca6284a60c2",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 3,
+      "column_name": "100-step R^2 (↑)",
+      "direction": "higher",
+      "numeric_row_count": 3,
+      "distinct_value_count": 3,
+      "eligible": true
+    },
+    {
+      "family_id": "c01f7f1663a2fd901c61fd2b",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 4,
+      "column_name": "Dynamics MSE (↓)",
+      "direction": "lower",
+      "numeric_row_count": 4,
+      "distinct_value_count": 4,
+      "eligible": true
+    },
+    {
+      "family_id": "230166ef69a58c89927f64cc",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 5,
+      "column_name": "Switch MSE (↓)",
+      "direction": "lower",
+      "numeric_row_count": 4,
+      "distinct_value_count": 4,
+      "eligible": true
+    },
+    {
+      "family_id": "0ae6c69860595025c5d5c907",
+      "paper_id": "2408.16862",
+      "claim_id": "val_tab_0079",
+      "claim_pair_id": "0030",
+      "table_sha256": "9e5de0b51dada30c5cafe89a24b75ee971316112af73c12c9cb70836b96a83dc",
+      "column_index": 6,
+      "column_name": "100-step R^2 (↑)",
+      "direction": "higher",
+      "numeric_row_count": 3,
+      "distinct_value_count": 3,
+      "eligible": true
+    },
+    {
+      "family_id": "73c7eff56eb57f122c054034",
+      "paper_id": "2023.starsem-1.10",
+      "claim_id": "val_tab_0093",
+      "claim_pair_id": "0076",
+      "table_sha256": "46a509dfc9d1caf287a333dc9898199b414d7e8ad87615a7b35cd963545df095",
+      "column_index": 2,
+      "column_name": "Mean PPL↓",
+      "direction": "lower",
+      "numeric_row_count": 5,
+      "distinct_value_count": 5,
+      "eligible": true
+    },
+    {
+      "family_id": "1cbd73c13195e4e300b1893a",
+      "paper_id": "2023.emnlp-main.20",
+      "claim_id": "val_tab_0297",
+      "claim_pair_id": "0175",
+      "table_sha256": "8b99ec82bee8ae7f637ca6039c9be8ef86bb7ed9b52ed9ed8e2f5ae463d85b5f",
+      "column_index": 2,
+      "column_name": "POPE↑",
+      "direction": "higher",
+      "numeric_row_count": 6,
+      "distinct_value_count": 6,
+      "eligible": true
+    },
+    {
+      "family_id": "594351b0900d0cd869008558",
+      "paper_id": "2023.emnlp-main.20",
+      "claim_id": "val_tab_0297",
+      "claim_pair_id": "0175",
+      "table_sha256": "8b99ec82bee8ae7f637ca6039c9be8ef86bb7ed9b52ed9ed8e2f5ae463d85b5f",
+      "column_index": 3,
+      "column_name": "VQA↑",
+      "direction": "higher",
+      "numeric_row_count": 6,
+      "distinct_value_count": 6,
+      "eligible": true
+    }
+  ]
+}

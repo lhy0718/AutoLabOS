@@ -1,0 +1,536 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "bounded_interface_invariance_preregistration",
+  "study_id": "relation_serialization_probe_v1",
+  "registered_at": "2026-07-26T00:00:00+09:00",
+  "status": "pivot_preregistered_not_executed",
+  "protocol_frozen": true,
+  "title": "Same Evidence, Different Verdict? A Preregistered Interface-Invariance Audit for Local Scientific Review Agents",
+  "design_decision": {
+    "previous_harness": "KILL",
+    "current_protocol": "PIVOT",
+    "evidence_execution_ready": false,
+    "activation_rule": "This repository preregistration never authorizes inference by itself. Only a run-specific evidence freeze that resolves every blocker and passes all fail-closed validators may authorize the explicit run command.",
+    "readiness_blockers": [
+      "No source-byte receipt has been frozen for an evidence run.",
+      "No actual-source feasibility audit has yet shown that the fixed 70-paper pool can meet the 5/5 promotion and 30/30 confirmatory quotas.",
+      "No source-bound 70-paper candidate-pool manifest has been frozen before manual review.",
+      "The exact entire-pool SCITAB ambiguity and order-invariance audit has not been supplied and frozen.",
+      "No two-family Ollama model metadata bundle has been frozen."
+    ],
+    "no_results_claim": true
+  },
+  "research_question_kind": "scientific_review_replayed_tool_role_response_invariance",
+  "research_object": {
+    "agent_role": "local scientific review agent",
+    "interface": "native assistant-tool-call and tool-role message history containing a replayed deterministic get_table_evidence return",
+    "interaction_mode": "replayed_deterministic_tool_return_native_tool_role",
+    "model_tool_selection_observed": false,
+    "question": "When exactly the same canonical scientific-table contract is replayed at a native tool-role message boundary, how often does changing only its reversible natural-language versus typed-JSON representation change a local review agent's terminal verdict, and how much worst-case correctness is hidden by one-view evaluation?",
+    "excluded_question": "This is not a generic table classifier benchmark and does not test which serialization has the highest aggregate score.",
+    "unit": "paper-unique claim and table packet within a frozen model family",
+    "ecological_validity_limit": "The model does not select or invoke get_table_evidence. The harness preconstructs and replays the assistant tool call and deterministic tool-role return to isolate response processing. Results cannot establish live tool-choice or orchestration behavior."
+  },
+  "nearest_prior_absorption_boundary": {
+    "boundary": "Prior table-reasoning, serialization, natural-language tool, and tool-output processing work already absorbs generic claims that formatting, packing, structured encodings, response-processing approach, natural-language versus JSON interfaces, or structural variation can change model performance. This probe is limited to paired terminal scientific-review verdict instability under independently reversible information-equivalent NL and typed-JSON returns replayed at a native tool-role message boundary, plus robust correctness across all eight table views.",
+    "absorbing_priors": [
+      {
+        "id": "tap4llm",
+        "title": "TAP4LLM: Table Provider on Sampling, Augmenting, and Packing Semi-structured Data for Large Language Model Reasoning",
+        "url": "https://aclanthology.org/2024.findings-emnlp.603/",
+        "absorbs": "Generic effects of table sampling, augmentation, packing, and serialization."
+      },
+      {
+        "id": "tableformer",
+        "title": "TableFormer: Robust Transformer Modeling for Table-Text Encoding",
+        "url": "https://arxiv.org/abs/2203.00274",
+        "absorbs": "Generic row and column order bias and order-invariance objectives."
+      },
+      {
+        "id": "table_meets_llm",
+        "title": "Table Meets LLM: Can Large Language Models Understand Structured Table Data? A Benchmark and Empirical Study",
+        "url": "https://arxiv.org/abs/2305.13062",
+        "absorbs": "Generic effects of table input format, content order, and prompt structure."
+      },
+      {
+        "id": "rethink_tabular_understanding",
+        "title": "Rethinking Tabular Data Understanding with Large Language Models",
+        "venue": "NAACL 2024",
+        "url": "https://aclanthology.org/2024.naacl-long.26/",
+        "absorbs": "Generic novelty from table structural perturbations changing LLM reasoning performance, including differences between textual and symbolic reasoning pathways."
+      },
+      {
+        "id": "structured_entity_serialization",
+        "title": "How to Talk to Language Models: Serialization Strategies for Structured Entity Matching",
+        "venue": "Findings of NAACL 2025",
+        "url": "https://aclanthology.org/2025.findings-naacl.437/",
+        "absorbs": "Generic novelty from systematically comparing plain and JSON serialization, attribute ordering, and model-size effects for tabular and semi-structured inputs. Its endpoint is entity matching rather than paired scientific verdict invariance at a tool-result boundary."
+      },
+      {
+        "id": "serialization_research",
+        "title": "TabLLM and subsequent table-serialization evaluations",
+        "urls": [
+          "https://proceedings.mlr.press/v206/hegselmann23a.html",
+          "https://arxiv.org/abs/2503.04396"
+        ],
+        "absorbs": "Generic natural-language versus structured serialization performance differences."
+      },
+      {
+        "id": "tool_output_processing",
+        "title": "How Good Are LLMs at Processing Tool Outputs?",
+        "venue": "EACL 2026",
+        "url": "https://aclanthology.org/2026.eacl-long.134/",
+        "arxiv_url": "https://arxiv.org/abs/2510.15955",
+        "absorbs": "Generic novelty from tool-response processing difficulty, complex JSON, broad model comparison, prompting-approach dependence, and reported 3-50% performance differences."
+      },
+      {
+        "id": "natural_language_tools",
+        "title": "Natural Language Tools: A Natural Language Approach to Tool Calling In Large Language Agents",
+        "url": "https://arxiv.org/abs/2510.14453",
+        "absorbs": "Generic novelty from replacing programmatic JSON tool-call outputs or interfaces with natural-language tool-call outputs or claiming NL-tool performance and variance differences. This work concerns tool-call output/interface design and is not treated as direct evidence about controlled tool-result input processing."
+      },
+      {
+        "id": "natural_language_tools_replication",
+        "title": "The Remarkable Effectiveness of Providing AI Agents with Natural Language Tools: A Replication Study Validating NLT Performance Across 14 Models",
+        "url": "https://arxiv.org/abs/2607.03953",
+        "absorbs": "Replication-based generic claims about natural-language tool-call interface effectiveness across models; it remains distinct from paired tool-result input invariance."
+      },
+      {
+        "id": "tabular_structural_robustness",
+        "title": "How well do LLMs reason over tabular data, really?",
+        "venue": "Table Representation Learning Workshop 2025",
+        "url": "https://aclanthology.org/2025.trl-1.21/",
+        "absorbs": "Generic novelty from robustness failures under realistic structural variations in tabular input."
+      },
+      {
+        "id": "structured_output_token_grammar",
+        "title": "Lost in Space: Finding the Right Tokens for Structured Output",
+        "venue": "GEM 2026",
+        "url": "https://aclanthology.org/2026.gem-main.18/",
+        "absorbs": "Generic novelty from semantically similar output grammars or tokenization conventions changing downstream classification performance, including effects under deterministic decoding."
+      },
+      {
+        "id": "mcp_structured_tool_results",
+        "title": "Model Context Protocol 2025-06-18 Tool Result Specification",
+        "url": "https://modelcontextprotocol.io/specification/2025-06-18/server/tools",
+        "absorbs": "Protocol novelty from structured tool results. The specification already defines structuredContent and recommends serialized JSON text alongside it for backwards compatibility."
+      }
+    ],
+    "forbidden_novelty_claims": [
+      "serialization affects language-model performance",
+      "natural language is generally superior to JSON",
+      "JSON is generally superior to natural language",
+      "row or column order sensitivity is newly discovered",
+      "plain and JSON serialization have not been systematically compared",
+      "attribute order effects on structured LLM inputs are newly discovered",
+      "tool-output processing difficulty is newly discovered",
+      "natural-language tools generally outperform JSON tools",
+      "semantically similar output grammars are behaviorally interchangeable",
+      "structured and serialized tool results are a newly proposed compatibility pattern",
+      "SCITAB claim verification is introduced here"
+    ],
+    "remaining_difference": "Same canonical scientific evidence is supplied as tool-result input through independently reversible NL and typed-JSON codecs with identical stable fields and IDs; the endpoint is paired terminal verdict invariance and robust all-view worst-case correctness at a replayed native tool-result turn. It is not a generic JSON-versus-NL winner comparison, tool-call output study, or output-grammar study.",
+    "literature_gate": {
+      "timing": "Must be completed and frozen before the source candidate pool and before any promotion result.",
+      "current_outcome": "PIVOT_TO_NARROW_CLAIM",
+      "promote_only_if": "No prior directly combines same canonical scientific evidence as native tool-result input, independently reversible information-equivalent NL and typed JSON, terminal scientific-review verdict flips, and robust all-view worst-case correctness.",
+      "pivot_if": "A close prior absorbs part of this remaining combination but a narrower non-overlapping endpoint remains.",
+      "kill_if": "A prior directly evaluates the remaining combination or leaves only a generic format-winner claim.",
+      "replacement_after_any_model_result_allowed": false
+    }
+  },
+  "primary_source": {
+    "dataset_id": "XinyuanLu00/SciTab",
+    "paper_title": "SCITAB: A Challenging Benchmark for Compositional Reasoning and Claim Verification on Scientific Tables",
+    "paper_url": "https://aclanthology.org/2023.emnlp-main.483/",
+    "repository_url": "https://github.com/XinyuanLu00/SciTab",
+    "commit": "217cfbd71ebf39ba26a0938f0d87a9fce560e0fe",
+    "commit_url": "https://github.com/XinyuanLu00/SciTab/tree/217cfbd71ebf39ba26a0938f0d87a9fce560e0fe",
+    "path": "dataset/sci_tab.json",
+    "url": "https://raw.githubusercontent.com/XinyuanLu00/SciTab/217cfbd71ebf39ba26a0938f0d87a9fce560e0fe/dataset/sci_tab.json",
+    "license_name": "MIT",
+    "license_path": "LICENSE",
+    "license_url": "https://raw.githubusercontent.com/XinyuanLu00/SciTab/217cfbd71ebf39ba26a0938f0d87a9fce560e0fe/LICENSE",
+    "source_receipt_required": [
+      "exact repository URL and commit",
+      "exact data and license URLs",
+      "local-byte SHA256 and byte count for both files",
+      "acquisition timestamp"
+    ],
+    "verified_public_shape": {
+      "rows": 1224,
+      "papers": 80,
+      "tables": 213,
+      "label_counts": {
+        "supports": 457,
+        "refutes": 411,
+        "not_enough_info": 356
+      },
+      "structured_fields": [
+        "table_column_names",
+        "table_content_values"
+      ]
+    },
+    "split": "none",
+    "test_split_allowed": false,
+    "downloads_performed_by_harness": false,
+    "actual_source_pool_feasibility": {
+      "required": true,
+      "status": "not_run_no_local_source_bytes",
+      "must_be_recorded_by": "source receipt plus deterministic candidate-pool manifest",
+      "success_criterion": "Exactly 70 renderable paper-unique binary rows can be preassigned as promotion 5/5 and confirmatory 30/30 without using not_enough_info.",
+      "failure_action": "Hard block; do not audit, substitute, expand, or call a model."
+    }
+  },
+  "manual_audit_contract": {
+    "required_before_selection": false,
+    "candidate_pool_required_before_audit": true,
+    "candidate_pool_size": 70,
+    "audit_entire_candidate_pool": true,
+    "audit_pool_hash_binding_required": true,
+    "required_status": "adjudicated_pre_execution",
+    "required_packet_count": 70,
+    "checks": [
+      "claim and table are unambiguous for binary supports/refutes grading",
+      "scientific meaning is invariant under row-only, column-only, and joint order changes",
+      "caption is correctly preserved",
+      "every stable column id has an explicit string or null unit"
+    ],
+    "frozen_manifest_required": true,
+    "post_execution_replacement_allowed": false,
+    "replacement_or_expansion_after_pool_freeze_allowed": false,
+    "partial_audit_allowed": false,
+    "ambiguous_or_failed_rows": "Any failure in the fixed 70-row audit universe hard-blocks the study. No row may be replaced and no additional row may be audited for substitution.",
+    "synthetic_fixture_eligibility": false
+  },
+  "sample_contract": {
+    "eligible_labels": [
+      "supports",
+      "refutes"
+    ],
+    "candidate_pool_packet_count": 70,
+    "promotion_packet_count": 10,
+    "target_packet_count": 60,
+    "target_label_counts": {
+      "supports": 30,
+      "refutes": 30
+    },
+    "earlier_nonoperational_feasibility_floor": 40,
+    "feasibility_floor_may_reduce_confirmatory_n": false,
+    "primary_analysis_requires_exactly": 60,
+    "paper_unique": true,
+    "maximum_packets_per_paper": 1,
+    "promotion_and_confirmatory_paper_disjoint": true,
+    "selection_order": "sha256_deterministic_preaudit_v1",
+    "selection_seed": 2026072601,
+    "selection_timing": "Immediately after exact source-receipt verification and before manual audit or any model result. First select 70 binary paper-unique rows at 35/35, then preassign 10 promotion rows at 5/5 and 60 confirmatory rows at 30/30.",
+    "audit_timing": "Audit the complete fixed 70-row pool after preassignment. Audit outcomes cannot trigger replacement, expansion, or repartitioning.",
+    "insufficient_pool_action": "Hard block before manual audit when the exact source cannot meet all preassigned quotas.",
+    "nonbinary_label_rule": "The 3-class source parser recognizes not_enough_info for source-shape validation, but candidate-pool selection, audit eligibility, packet construction, and terminal grading exclude it fail-closed.",
+    "label_exposure": "Labels are available only to balanced sampling and the protected terminal grader.",
+    "table_size_gates": {
+      "minimum_rows": 2,
+      "maximum_rows": 30,
+      "minimum_columns": 2,
+      "maximum_columns": 12,
+      "maximum_cells": 240,
+      "maximum_characters_per_cell_or_column": 200,
+      "maximum_tokens_per_view": 2500,
+      "maximum_larger_to_smaller_token_ratio": 1.5
+    }
+  },
+  "promotion_stage": {
+    "role": "deterministic development decision only; never primary or secondary paper evidence",
+    "packet_count": 10,
+    "paper_unique": true,
+    "paper_disjoint_from_confirmatory": true,
+    "label_counts_for_balance_only": {
+      "supports": 5,
+      "refutes": 5
+    },
+    "conditions": [
+      "nl_identity",
+      "json_identity",
+      "claim_only"
+    ],
+    "calls_across_two_models": 60,
+    "thresholds_frozen_before_any_result": true,
+    "thresholds_per_model": {
+      "minimum_nl_identity_correct": 6,
+      "minimum_valid_identity_flips": 1,
+      "maximum_invalid_per_identity_cell": 1,
+      "minimum_nl_correct_claim_wrong": 2,
+      "maximum_claim_correct_nl_wrong": 0
+    },
+    "decision": {
+      "PROMOTE": "Both frozen model families pass every substantive threshold and no infrastructure failure occurs.",
+      "PIVOT": "A completed promotion campaign contains an in_doubt infrastructure outcome; confirmatory execution remains blocked.",
+      "KILL": "Either model family has low capability, zero valid identity flips, excessive identity invalidity, or fails the directional table-use threshold."
+    },
+    "confirmatory_execution_requires": "PROMOTE",
+    "threshold_or_protocol_change_after_any_promotion_result_allowed": false,
+    "promotion_results_in_confirmatory_analysis_allowed": false
+  },
+  "packet_and_codec_contract": {
+    "packet_schema": "benchmarks/relation-serialization/schemas/packet.schema.json",
+    "candidate_pool_schema": "benchmarks/relation-serialization/schemas/candidate-pool.schema.json",
+    "manual_audit_schema": "benchmarks/relation-serialization/schemas/manual-audit.schema.json",
+    "canonical_fields": [
+      "schema_version",
+      "caption",
+      "columns with stable column_id, name, and unit",
+      "rows with stable row_id",
+      "cells with stable cell_id, row_id, column_id, and value"
+    ],
+    "stable_id_rule": "All row, column, and cell ids are assigned from original canonical coordinates once and are never reassigned after an order permutation.",
+    "natural_codec": "Deterministic natural row and cell statements exposing every canonical field.",
+    "json_codec": "Deterministic typed JSON exposing every canonical field.",
+    "round_trip_requirement": "For every packet and order, decode_natural(render_natural(x)) == x and decode_json(render_json(x)) == x, and the two decoded values are exactly equal.",
+    "insufficient_round_trip_evidence": "A shared source digest without independent decode equality is not accepted as a round trip.",
+    "hash_bindings": [
+      "canonical contract SHA256",
+      "canonical atom-list SHA256",
+      "matched order-schedule SHA256",
+      "packet claim, canonical contract, and relation-metadata SHA256"
+    ],
+    "source_attribution_required": true,
+    "relation_metadata_fields": [
+      "entity",
+      "metric",
+      "unit",
+      "direction",
+      "scope"
+    ],
+    "relation_metadata_rendered": false
+  },
+  "tool_interface_manipulation": {
+    "tool_name": "get_table_evidence",
+    "interaction_mode": "replayed_deterministic_tool_return_native_tool_role",
+    "native_message_sequence": "system, user claim, preconstructed assistant tool_call, deterministic role=tool return",
+    "model_selects_or_invokes_tool": false,
+    "response_processing_isolated": true,
+    "tool_return_only_manipulation": true,
+    "serializers": [
+      "nl",
+      "json"
+    ],
+    "orders": [
+      "identity",
+      "row_only",
+      "column_only",
+      "joint"
+    ],
+    "conditions": [
+      "nl_identity",
+      "json_identity",
+      "nl_row_only",
+      "json_row_only",
+      "nl_column_only",
+      "json_column_only",
+      "nl_joint",
+      "json_joint",
+      "claim_only"
+    ],
+    "matched_schedule": "The same deterministic row and column permutation schedule is used by both serializers.",
+    "claim_only": "No tool, caption, table, canonical field, relation metadata, answer, or gold is exposed.",
+    "gold_in_any_view": false,
+    "forbidden_framing": [
+      "actual tool interaction",
+      "live model-selected tool call",
+      "end-to-end tool orchestration audit"
+    ]
+  },
+  "model_output_contract": {
+    "allowed_raw_outputs": [
+      "SUPPORTS",
+      "REFUTES"
+    ],
+    "exactly_one_terminal_token": true,
+    "whitespace_tolerance": false,
+    "json_output": false,
+    "abstention_output": false,
+    "free_text": false,
+    "llm_judge": false,
+    "malformed_handling": "Any other raw string is invalid and incorrect. Invalid output is reported separately and never counted as a verdict flip."
+  },
+  "primary_analysis": {
+    "sample_size_per_model": 60,
+    "F_m": {
+      "name": "identity paired verdict flip rate",
+      "definition": "Across the fixed 60 packets, a flip occurs only when nl_identity and json_identity are both valid and their verdict tokens differ. Invalid pairs contribute no flip and are governed by a separate kill gate.",
+      "null": "F_m <= 0.10",
+      "alternative": "F_m > 0.10",
+      "test": "one-sided exact binomial upper-tail test at p0=0.10",
+      "alpha": 0.05,
+      "minimum_flips_to_reject_at_n_60": 11,
+      "two_family_decision": "intersection-union; both frozen model families must independently reject",
+      "derived_only": "verdict invariance equals 1 - F_m"
+    },
+    "R_m": {
+      "name": "robust correctness",
+      "definition": "A packet is robustly correct only when all eight table views are valid and exactly equal to gold.",
+      "denominator": 60
+    },
+    "A0_m": {
+      "name": "fixed identity baseline accuracy",
+      "definition": "nl_identity exact accuracy over 60 packets"
+    },
+    "H_m": {
+      "name": "single-view hidden gap",
+      "definition": "A0_m - R_m",
+      "forbidden_baseline": "maximum accuracy across formats or conditions"
+    },
+    "kill_gates_per_model": {
+      "capability": "A0 correct count must be at least 37 of 60.",
+      "table_use_effect_size": "A0 accuracy minus claim_only accuracy must be at least 0.10.",
+      "table_use_test": "One-sided exact McNemar p-value must be below 0.05, with nl_identity as the directional winner.",
+      "invalid_primary_cells": "More than 3 invalid outputs among 60 in either nl_identity or json_identity kills the study.",
+      "hidden_gap": "H_m below 0.10 kills the study.",
+      "flip_count": "Fewer than 11 identity flips kills the study."
+    }
+  },
+  "secondary_and_exploratory_analysis": {
+    "fixed_secondary": [
+      "per-condition accuracy",
+      "per-format macro-F1",
+      "claim-only accuracy",
+      "false assertion rate",
+      "invalid output rate",
+      "identity pair joint correctness"
+    ],
+    "order_decomposition": [
+      "identity",
+      "row_only",
+      "column_only",
+      "joint"
+    ],
+    "intervals": "Exact two-sided 95% Clopper-Pearson intervals for binomial rates.",
+    "bootstrap": "10000-replicate percentile paper-cluster bootstrap with seed 20260726.",
+    "paired_permutation": "Exact paired sign permutation at no more than 20 nonzero paper clusters; otherwise 10000 deterministic Monte Carlo sign permutations.",
+    "multiple_comparisons": "Holm adjustment is applied only to exploratory directional comparisons and never to the primary F_m test or kill gates.",
+    "model_reporting": "Report each family separately; two families are not a sampled model population."
+  },
+  "execution_integrity": {
+    "provider": "ollama_local",
+    "required_model_families": 2,
+    "distinctness": [
+      "declared family id",
+      "Ollama-reported family",
+      "requested model name",
+      "installed digest"
+    ],
+    "native_tool_result_continuation": {
+      "official_documentation": "https://docs.ollama.com/capabilities/tool-calling",
+      "documented_history_shape": "A follow-up chat request may contain a prefilled assistant message with tool_calls followed by a role=tool message and then request the model's continuation.",
+      "harness_use": "The harness freezes that documented continuation history with a deterministic replayed tool result. It does not claim that the model selected the prefilled call.",
+      "live_tool_execution_observed": false
+    },
+    "model_candidate_policy": {
+      "status": "candidates_only_not_run_specific_selection",
+      "candidates": [
+        {
+          "family_candidate": "Qwen3.5",
+          "ollama_library_url": "https://ollama.com/library/qwen3.5",
+          "reason": "Ollama candidate from a tool-capable independent model family."
+        },
+        {
+          "family_candidate": "Mistral Small 3.2",
+          "ollama_library_url": "https://ollama.com/library/mistral-small3.2",
+          "reason": "Independent 24B family with Ollama function-calling support; the listed Q4 artifact is approximately 15GB."
+        }
+      ],
+      "final_selection_timing": "After this repository preregistration, during the immutable run-specific freeze, and before any promotion request.",
+      "final_requested_tags": null,
+      "final_installed_digests": null,
+      "required_run_receipt": "Freeze exact requested tag, Ollama-reported family, installed digest, tag record, show-response hash, and server version for both families.",
+      "post_result_model_replacement_allowed": false
+    },
+    "do_sample": false,
+    "request_attempt_limit": 1,
+    "retry_count": 0,
+    "generation_options": {
+      "temperature": 0.0,
+      "top_k": 1,
+      "top_p": 1.0,
+      "repeat_penalty": 1.0,
+      "num_predict": 4,
+      "stop": [
+        "\n"
+      ]
+    },
+    "freeze_before_any_model_call": [
+      "preregistration",
+      "source and license receipt",
+      "70-paper candidate-pool manifest frozen before manual audit",
+      "10-paper promotion and 60-paper confirmatory partition assignment",
+      "manual audit manifest",
+      "paper-unique partitioned selection manifest",
+      "promotion three-view and confirmatory nine-view campaigns",
+      "promotion decision thresholds",
+      "model metadata and generation contract",
+      "source-code hashes"
+    ],
+    "append_only_receipts": "Campaign ledgers and terminal master receipts are identity-bound, hash-chained, fsync-backed JSONL.",
+    "resume_policy": "A request-start event without a recorded response becomes terminal in_doubt and is never retried. A recorded response may only proceed to deterministic terminal grading.",
+    "gated_test_allowed": false,
+    "gated_test_definition": "No dataset test split, hidden test set, or adaptive confirmatory gate is permitted. The fixed paper-disjoint promotion partition is a preassigned development decision stage, not a dataset test split and never paper evidence.",
+    "two_stage_execution_required": true,
+    "promotion_decision_required_before_confirmatory": true,
+    "intentional_evidence_batching_allowed": false
+  },
+  "evidence_gates": [
+    "exact SCITAB commit, path, URL, local-byte SHA256, and MIT license receipt",
+    "source audit equals 1224 rows, 80 papers, 213 tables, and 457/411/356 label counts",
+    "deterministic source-bound 70-paper preaudit pool with 35 supports, 35 refutes, and zero not_enough_info rows",
+    "paper-disjoint preassignment of promotion 5/5 and confirmatory 30/30 before manual audit",
+    "completed and self-hashed exact whole-pool ambiguity, order-invariance, caption, and unit audit with no replacement or expansion",
+    "PROMOTE from the fixed 10-paper three-view stage before any 60-paper confirmatory request",
+    "all packet schema, attribution, stable-id, codec round-trip, size, and token-ratio audits pass",
+    "no development marker or synthetic fixture",
+    "fully frozen manifest and unchanged source hashes",
+    "exactly two distinct local Ollama model families",
+    "complete promotion and confirmatory terminal receipt sets with promotion records excluded from primary analysis"
+  ],
+  "development_policy": {
+    "synthetic_fixtures": "development only and permanently evidence-ineligible",
+    "model_calls_required_for_validation": false,
+    "data_downloads_required_for_validation": false,
+    "promotion_allowed": true,
+    "promotion_scope": "Only the fixed 10-paper source-verified partition; never synthetic fixtures and never confirmatory evidence."
+  },
+  "secondary_external_validation_candidate": {
+    "dataset": "SciClaimEval",
+    "exact_revision": "efb3807399acec43854fdf7741c1bcfe605a72b9",
+    "role": "Unimplemented external-validation candidate only; never a fallback that changes the frozen primary analysis.",
+    "feasibility_audit": {
+      "task1_release_rows": 747,
+      "task1_complete_table_no_context_cc_by_pairs": 134,
+      "task1_papers": 63,
+      "task2_release_rows": 352,
+      "task2_filtered_rows": 134,
+      "task2_papers": 63,
+      "rows_with_both_tex_sources": 104,
+      "papers_with_both_tex_sources": 49,
+      "strict_simple_parser_paper_unique": 17,
+      "moderate_multicolumn_parser_paper_unique": 25
+    },
+    "verified_filter": "dev rows only; evi_type=table; use_context=no; license_name=CC BY 4.0; evi_path_original present; nonempty claim_id_pair; same-paper complete Supported/Refuted pair",
+    "task2_evidence_shape": "Each filtered row supplies two evidence PNGs and one gold evidence_id.",
+    "future_requirements": [
+      "exact revision, URL, and local-byte SHA256 receipt",
+      "development marker and no dataset test split",
+      "row-level CC BY 4.0 attribution",
+      "exact labels Supported and Refuted, never Not Supported",
+      "fail-closed exclusion of CJK, colorbox, nested tabular, or any TeX not completely preserved"
+    ],
+    "reason_not_primary": "Fail-closed TeX preservation leaves the 24-paper floor fragile, whereas SCITAB exposes direct structured columns and cells."
+  },
+  "claim_ceiling": "This bounded audit may report paired identity verdict flips, derived invariance, order decomposition, robust eight-view correctness, and the fixed NL-identity hidden gap only for the frozen 60-paper confirmatory SCITAB binary partition and the two frozen local Ollama model families. It evaluates response processing for deterministic evidence replayed through native assistant-tool-call and tool-role messages. It does not observe model tool selection or live tool execution and cannot establish end-to-end tool orchestration behavior, a generally superior serialization, a new generic formatting effect, transfer to other datasets or agents, or scientific-review reliability beyond this replayed message boundary.",
+  "implementation_status": {
+    "contract_tests_available": true,
+    "evidence_execution_ready": false,
+    "model_calls_completed": 0,
+    "data_downloads_completed": 0,
+    "results_available": false
+  }
+}

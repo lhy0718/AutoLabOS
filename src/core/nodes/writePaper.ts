@@ -5,6 +5,7 @@ import { GraphNodeHandler } from "../stateGraph/types.js";
 import { runArtifactsDir, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
+import { resolveResearchRunModeGuard } from "../runs/researchRunModeGuard.js";
 import { publishPublicRunOutputs, generatePublicRunReadme } from "../publicOutputPublisher.js";
 import {
   buildOperatorHistoryRelativePath,
@@ -14,7 +15,7 @@ import {
 import { PaperProfileConfig, TransitionRecommendation } from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
-import { buildPublicAnalysisDir, buildPublicPaperDir } from "../publicArtifacts.js";
+import { buildPublicPaperDir } from "../publicArtifacts.js";
 import type { ConstraintProfile } from "../runConstraints.js";
 import {
   ACL_BIBLIOGRAPHY_STYLE,
@@ -131,6 +132,18 @@ import {
   inspectReferenceAuthorityGate,
   type ReferenceAuthorityGateArtifact
 } from "../referenceAuthorityGate.js";
+import type { AnalysisReport } from "../resultAnalysis.js";
+import {
+  type ResultsArtifactV2,
+  type ResultsComparisonV2,
+  type ResultsMetricDefinitionV2,
+  type ResultsObservationV2,
+  type ResultsPlanV2,
+  type ResultsSeriesRole,
+  type ResultsSeriesV2,
+  validateResultsPrimaryComparisonSelectionV2,
+  validateResultsArtifactV2
+} from "../analysis/resultsTableSchema.js";
 
 interface PaperCompileCommandResult {
   step: string;
@@ -256,6 +269,32 @@ interface PaperInputValidationReport {
   ok: boolean;
   issues: PaperInputValidationIssue[];
 }
+
+export interface WritePaperPrimaryComparison {
+  comparison: ResultsComparisonV2;
+  metric: ResultsMetricDefinitionV2 & { unit: string };
+  subjectObservation: ResultsObservationV2;
+  referenceObservation: ResultsObservationV2;
+  subjectSeries: ResultsSeriesV2 & { role: ResultsSeriesRole };
+  referenceSeries: ResultsSeriesV2 & { role: ResultsSeriesRole };
+}
+
+export interface WritePaperResultsContract {
+  artifact: ResultsArtifactV2;
+  primaryComparisonId: string;
+  primary: WritePaperPrimaryComparison;
+}
+
+export type WritePaperResultsContractResolution =
+  | {
+      ok: true;
+      contract: WritePaperResultsContract;
+      issues: [];
+    }
+  | {
+      ok: false;
+      issues: string[];
+    };
 
 type ClaimEvidenceStatus = "verified" | "unverified" | "blocked" | "inferred";
 
@@ -429,6 +468,35 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           payload: { text }
         });
       };
+      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief,
+        run
+      });
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.paperDraftingAllowed) {
+        const reasonCodes = researchModeGuard.valid
+          ? ["bounded_probe_parent_cannot_draft_paper"]
+          : researchModeGuard.reasons;
+        const error =
+          "write_paper blocked by research evidence lineage: "
+          + reasonCodes.join(", ");
+        emitLog(error);
+        await runContextMemory.put("write_paper.last_error", error);
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
       const bundleResult = await loadValidatedPaperBundle(run);
       await writeRunArtifact(
         run,
@@ -449,6 +517,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           toolCallsUsed: 0
         };
       }
+      const bundle = bundleResult.bundle;
+      const resultsContract = bundleResult.resultsContract;
       await runContextMemory.put("write_paper.last_error", null);
       const preDraftCritique = await loadPreDraftCritique(run.id);
       const briefEvidenceAssessment =
@@ -484,6 +554,22 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           toolCallsUsed: 0
         };
       }
+      if (!resultsContract) {
+        const error =
+          "write_paper requires AnalysisReport.results_artifact V2 with an explicit, unambiguous primary comparison before drafting. "
+          + "Historical result analysis remains readable for inspection but cannot be used to create or revise paper claims.";
+        emitLog(error);
+        await runContextMemory.put("write_paper.last_error", error);
+        await runContextMemory.put("write_paper.compile_status", null);
+        await runContextMemory.put("write_paper.compile_report", null);
+        await runContextMemory.put("write_paper.pdf_path", null);
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
 
       const constraintProfile = await resolveConstraintProfile({
         run,
@@ -501,10 +587,8 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         node: "write_paper"
       });
       const objectiveEvaluation = await loadObjectiveEvaluation(runContextMemory, run.id);
-      const bundle = bundleResult.bundle;
       const manuscriptFormatTarget = await runContextMemory.get("run_brief.manuscript_format") as
         { columns?: number; main_body_pages?: number; references_excluded_from_page_limit?: boolean; appendices_excluded_from_page_limit?: boolean } | undefined;
-      const rawBrief = (await runContextMemory.get<string>("run_brief.raw")) ?? null;
       const briefTemplatePath = rawBrief
         ? (parseManuscriptTemplateFromBrief(rawBrief) ?? null)
         : null;
@@ -564,7 +648,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         constraintProfile
       );
       const validationMode = resolvePaperValidationMode(deps.config.paper?.validation_mode);
-      bundle.latestResults = await loadLatestResultsArtifact(run);
+      bundle.latestResults = buildWritePaperResultsInput(resultsContract);
       const relatedWorkScout = await maybeRunRelatedWorkScout({
         run,
         bundle,
@@ -922,7 +1006,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         objectiveMetricProfile
       });
       manuscript = stabilizePaperManuscriptForSubmission(compactReaderFacingRepairedManuscript(manuscript), {
-        conditionSummaries: finalArtifactContext.results.condition_summaries,
         resultAnalysis: bundle.resultAnalysis,
         methodModelNames: finalArtifactContext.method.model_names
       });
@@ -939,7 +1022,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           manuscript = stabilizePaperManuscriptForSubmission(
             compactReaderFacingRepairedManuscript(stabilizedFloor.manuscript),
             {
-              conditionSummaries: finalArtifactContext.results.condition_summaries,
               resultAnalysis: bundle.resultAnalysis,
               methodModelNames: finalArtifactContext.method.model_names
             }
@@ -954,7 +1036,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           manuscript = stabilizePaperManuscriptForSubmission(
             compactReaderFacingRepairedManuscript(finalStabilizedFloor.manuscript),
             {
-              conditionSummaries: finalArtifactContext.results.condition_summaries,
               resultAnalysis: bundle.resultAnalysis,
               methodModelNames: finalArtifactContext.method.model_names
             }
@@ -974,7 +1055,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
           manuscript = stabilizePaperManuscriptForSubmission(
             compactReaderFacingRepairedManuscript(postFinalStabilizedFloor.manuscript),
             {
-              conditionSummaries: finalArtifactContext.results.condition_summaries,
               resultAnalysis: bundle.resultAnalysis,
               methodModelNames: finalArtifactContext.method.model_names
             }
@@ -1019,6 +1099,21 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
         consistencyLint: finalConsistencyLint,
         appendixLint: finalAppendixLint
       });
+      try {
+        buildWritePaperFigurePayload(manuscript, resultsContract);
+      } catch (error) {
+        const message =
+          `write_paper stopped because manuscript result visuals do not satisfy the validated V2 contract: `
+          + `${error instanceof Error ? error.message : String(error)}`;
+        emitLog(message);
+        await runContextMemory.put("write_paper.last_error", message);
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: manuscriptQuality.toolCallsUsed
+        };
+      }
       const traceability = buildPaperTraceability({
         draft: paperDraft,
         manuscript
@@ -1043,11 +1138,16 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const publicFiguresDir = path.join(publicPaperDir, "figures");
       await ensureDir(publicFiguresDir);
       const runPaperDirForFigures = path.join(process.cwd(), ".autolabos", "runs", run.id, "paper");
-      if (deps.config?.paper?.build_pdf === true && typeof deps.aci?.runCommand === "function") {
+      if (
+        resultsContract
+        && deps.config?.paper?.build_pdf === true
+        && typeof deps.aci?.runCommand === "function"
+      ) {
         figureManifest = await maybeRenderPaperFigureAssets({
           deps,
           run,
           manuscript,
+          resultsContract,
           figureManifest,
           runPaperDir: runPaperDirForFigures,
           publicPaperDir,
@@ -1918,25 +2018,6 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       }
       await runContextMemory.put("write_paper.last_error", sessionResult.errors[0] || null);
 
-      deps.eventStream.emit({
-        type: "NODE_COMPLETED",
-        runId: run.id,
-        node: "write_paper",
-        payload: {
-          artifacts: [
-            "paper/main.tex",
-            "paper/references.bib",
-            "paper/manuscript.json",
-            "paper/traceability.json",
-            "paper/provenance_map.json",
-            "paper/figures/figure_manifest.json",
-            "paper/render_validation.json",
-            ...(compileResult.pdf_path ? ["paper/main.pdf"] : []),
-            publicPaperDir
-          ]
-        }
-      });
-
       return {
         status: "success",
         summary:
@@ -2073,10 +2154,453 @@ function mergeBundleEvidenceRows(
   return [...merged.values()];
 }
 
+export function resolveWritePaperResultsContract(
+  reportValue: unknown
+): WritePaperResultsContractResolution {
+  if (!isWritePaperRecord(reportValue)) {
+    return {
+      ok: false,
+      issues: ["AnalysisReport must be an object."]
+    };
+  }
+  if (!Object.prototype.hasOwnProperty.call(reportValue, "results_artifact")) {
+    return {
+      ok: false,
+      issues: [
+        "AnalysisReport.results_artifact must be supplied explicitly for quantitative paper claims."
+      ]
+    };
+  }
+
+  const validation = validateResultsArtifactV2(reportValue.results_artifact);
+  if (!validation.valid) {
+    return {
+      ok: false,
+      issues: validation.issues
+    };
+  }
+
+  const artifact = reportValue.results_artifact as ResultsArtifactV2;
+  const issues: string[] = [];
+  if (artifact.comparisons.length === 0) {
+    issues.push("AnalysisReport.results_artifact must include at least one explicit comparison.");
+  }
+  const comparisonById = new Map(
+    artifact.comparisons.map((comparison) => [comparison.id, comparison] as const)
+  );
+  const primarySelection = validateResultsPrimaryComparisonSelectionV2({
+    comparisonIds: [...comparisonById.keys()],
+    comparisonCount: artifact.comparisons.length,
+    primaryComparisonId: reportValue.primary_comparison_id,
+    primaryPath: "AnalysisReport.primary_comparison_id",
+    comparisonsPath: "results_artifact.comparisons"
+  });
+  issues.push(...primarySelection.issues);
+  const primaryComparisonId = primarySelection.valid
+    && typeof reportValue.primary_comparison_id === "string"
+    ? reportValue.primary_comparison_id
+    : "";
+
+  const metricById = new Map(artifact.metrics.map((metric) => [metric.id, metric] as const));
+  const seriesById = new Map(artifact.series.map((series) => [series.id, series] as const));
+  const observationById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  let primary: WritePaperPrimaryComparison | undefined;
+
+  for (const [index, comparison] of artifact.comparisons.entries()) {
+    const pathPrefix = `AnalysisReport.results_artifact.comparisons[${index}]`;
+    const comparisonIssues: string[] = [];
+    const subjectObservation = observationById.get(comparison.subject_observation_id);
+    const referenceObservation = observationById.get(comparison.reference_observation_id);
+    if (!subjectObservation || !referenceObservation) {
+      comparisonIssues.push(`${pathPrefix} does not resolve to both linked observations.`);
+    }
+    if (
+      subjectObservation
+      && referenceObservation
+      && subjectObservation.id === referenceObservation.id
+    ) {
+      comparisonIssues.push(`${pathPrefix} must link distinct subject and reference observations.`);
+    }
+
+    const metric = subjectObservation ? metricById.get(subjectObservation.metric_id) : undefined;
+    const unit = metric?.unit?.trim();
+    if (!metric) {
+      comparisonIssues.push(`${pathPrefix} does not resolve to an explicit metric definition.`);
+    } else if (!unit) {
+      comparisonIssues.push(
+        `${pathPrefix} metric "${metric.id}" must declare a non-empty unit for paper use.`
+      );
+    }
+
+    const subjectSeries = subjectObservation
+      ? seriesById.get(subjectObservation.series_id)
+      : undefined;
+    const referenceSeries = referenceObservation
+      ? seriesById.get(referenceObservation.series_id)
+      : undefined;
+    if (!subjectSeries?.role) {
+      comparisonIssues.push(`${pathPrefix} subject series must declare an explicit role.`);
+    }
+    if (!referenceSeries?.role) {
+      comparisonIssues.push(`${pathPrefix} reference series must declare an explicit role.`);
+    }
+    if (subjectSeries && referenceSeries && subjectSeries.id === referenceSeries.id) {
+      comparisonIssues.push(`${pathPrefix} must link observations from distinct series.`);
+    }
+    if (
+      subjectObservation
+      && referenceObservation
+      && stableWritePaperScopeSignature(subjectObservation.scope)
+        !== stableWritePaperScopeSignature(referenceObservation.scope)
+    ) {
+      comparisonIssues.push(
+        `${pathPrefix} subject and reference observations must declare the same scope.`
+      );
+    }
+
+    issues.push(...comparisonIssues);
+    if (
+      comparison.id === primaryComparisonId
+      && comparisonIssues.length === 0
+      && metric
+      && unit
+      && subjectObservation
+      && referenceObservation
+      && subjectSeries?.role
+      && referenceSeries?.role
+    ) {
+      primary = {
+        comparison: { ...comparison },
+        metric: { ...metric, unit },
+        subjectObservation: cloneWritePaperObservation(subjectObservation),
+        referenceObservation: cloneWritePaperObservation(referenceObservation),
+        subjectSeries: cloneWritePaperSeriesWithRole(subjectSeries, subjectSeries.role),
+        referenceSeries: cloneWritePaperSeriesWithRole(referenceSeries, referenceSeries.role)
+      };
+    }
+  }
+
+  if (primaryComparisonId && !primary) {
+    issues.push(
+      `AnalysisReport primary comparison "${primaryComparisonId}" does not have complete, unambiguous paper semantics.`
+    );
+  }
+  if (issues.length > 0 || !primary) {
+    return {
+      ok: false,
+      issues: uniqueStrings(issues)
+    };
+  }
+
+  return {
+    ok: true,
+    contract: {
+      artifact,
+      primaryComparisonId,
+      primary
+    },
+    issues: []
+  };
+}
+
+export function buildWritePaperResultsInput(
+  contract: WritePaperResultsContract
+): Record<string, unknown> {
+  const artifact = buildPrimaryWritePaperResultsArtifact(contract);
+  const primary = contract.primary;
+  return {
+    results_artifact: artifact,
+    primary_comparison_id: contract.primaryComparisonId,
+    metric_definition: { ...primary.metric },
+    subject_series: cloneWritePaperSeriesWithRole(
+      primary.subjectSeries,
+      primary.subjectSeries.role
+    ),
+    reference_series: cloneWritePaperSeriesWithRole(
+      primary.referenceSeries,
+      primary.referenceSeries.role
+    ),
+    subject_observation: cloneWritePaperObservation(primary.subjectObservation),
+    reference_observation: cloneWritePaperObservation(primary.referenceObservation),
+    comparison: { ...primary.comparison }
+  };
+}
+
+function parseWritePaperResultAnalysisInput(raw: string): {
+  report?: AnalysisReport;
+  contract?: WritePaperResultsContract;
+  mode?: "validated_v2" | "historical_read_only";
+  error?: string;
+} {
+  let parsedValue: unknown;
+  try {
+    parsedValue = JSON.parse(raw) as unknown;
+  } catch {
+    return { error: "the result analysis is not valid JSON" };
+  }
+  if (!isWritePaperRecord(parsedValue)) {
+    return { error: "the result analysis must be a JSON object" };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(parsedValue, "results_artifact")) {
+    const report = adaptHistoricalWritePaperResultForReadOnlyContext(raw);
+    return report
+      ? { report, mode: "historical_read_only" }
+      : { error: "the historical result analysis could not be read safely" };
+  }
+
+  const resolution = resolveWritePaperResultsContract(parsedValue);
+  if (!resolution.ok) {
+    return {
+      error: `the V2 result contract is invalid: ${resolution.issues.join(" ")}`
+    };
+  }
+  const report = parseResultAnalysis(raw);
+  if (!report) {
+    return { error: "the V2 result analysis could not be parsed" };
+  }
+  return {
+    report: buildValidatedWritePaperAnalysisProjection(
+      parsedValue as unknown as AnalysisReport,
+      resolution.contract
+    ),
+    contract: resolution.contract,
+    mode: "validated_v2"
+  };
+}
+
+export function buildValidatedWritePaperAnalysisProjection(
+  report: AnalysisReport,
+  contract: WritePaperResultsContract
+): AnalysisReport {
+  const primaryComparisonId = contract.primaryComparisonId;
+  const primaryResultsPlan = buildPrimaryWritePaperResultsPlan(
+    report.results_plan,
+    primaryComparisonId
+  );
+  return {
+    ...report,
+    results_artifact: {
+      ...contract.artifact,
+      comparisons: contract.artifact.comparisons.filter(
+        (comparison) => comparison.id === primaryComparisonId
+      )
+    },
+    ...(primaryResultsPlan ? { results_plan: primaryResultsPlan } : {}),
+    primary_comparison_id: primaryComparisonId,
+    condition_comparisons: (report.condition_comparisons ?? []).filter(
+      (comparison) => comparison.id === primaryComparisonId
+    ),
+    statistical_summary: {
+      ...report.statistical_summary,
+      effect_estimates: (report.statistical_summary?.effect_estimates ?? []).filter(
+        (effect) => effect.comparison_id === primaryComparisonId
+      )
+    }
+  };
+}
+
+function buildPrimaryWritePaperResultsPlan(
+  plan: ResultsPlanV2 | undefined,
+  primaryComparisonId: string
+): ResultsPlanV2 | undefined {
+  if (!plan) {
+    return undefined;
+  }
+  return {
+    ...plan,
+    required_metrics: plan.required_metrics.map((metric) => ({ ...metric })),
+    required_series: plan.required_series?.map((series) => ({ ...series })),
+    required_comparisons: plan.required_comparisons
+      ?.filter((comparison) => comparison.id === primaryComparisonId)
+      .map((comparison) => ({
+        ...comparison,
+        scope: comparison.scope ? { ...comparison.scope } : undefined
+      })),
+    minimum_comparison_count: 1,
+    primary_comparison_id: primaryComparisonId,
+    primary_effect_criterion: plan.primary_effect_criterion
+      ? {
+          ...plan.primary_effect_criterion,
+          effect_criterion: { ...plan.primary_effect_criterion.effect_criterion }
+        }
+      : undefined
+  };
+}
+
+export function adaptHistoricalWritePaperResultForReadOnlyContext(
+  raw: string
+): AnalysisReport | undefined {
+  let parsedValue: unknown;
+  try {
+    parsedValue = JSON.parse(raw) as unknown;
+  } catch {
+    return undefined;
+  }
+  if (!isWritePaperRecord(parsedValue)) {
+    return undefined;
+  }
+  const source = parsedValue;
+  const emptyArtifact: ResultsArtifactV2 = {
+    schema_version: "2.0",
+    metrics: [],
+    series: [],
+    observations: [],
+    comparisons: []
+  };
+  const notice =
+    "Quantitative comparisons are omitted because the available evidence does not identify an explicit subject-reference comparison with metric direction and units.";
+  const objectiveMetric = asWritePaperRecord(source.objective_metric);
+  const objectiveEvaluation = asWritePaperRecord(objectiveMetric.evaluation);
+  const objectiveProfile = asWritePaperRecord(objectiveMetric.profile);
+  const overview = asWritePaperRecord(source.overview);
+  const planContext = asWritePaperRecord(source.plan_context);
+  const executionSummary = asWritePaperRecord(source.execution_summary);
+  const projection: Record<string, unknown> = {
+    analysis_version: 1,
+    generated_at: typeof source.generated_at === "string" ? source.generated_at : "",
+    metrics: {},
+    objective_metric: {
+      raw: typeof objectiveMetric.raw === "string" ? objectiveMetric.raw : "",
+      evaluation: {
+        rawObjectiveMetric: typeof objectiveEvaluation.rawObjectiveMetric === "string"
+          ? objectiveEvaluation.rawObjectiveMetric
+          : "",
+        profileSource: objectiveEvaluation.profileSource === "llm"
+          ? "llm"
+          : "heuristic_fallback",
+        preferredMetricKeys: [],
+        status: "unknown",
+        summary: notice
+      },
+      profile: {
+        source: objectiveProfile.source === "llm" ? "llm" : "heuristic_fallback",
+        preferred_metric_keys: [],
+        analysis_focus: [],
+        paper_emphasis: [],
+        assumptions: []
+      }
+    },
+    overview: {
+      objective_status: "unknown",
+      objective_summary: notice,
+      ...(typeof overview.selected_design_title === "string"
+        ? { selected_design_title: overview.selected_design_title }
+        : {}),
+      execution_runs: 0
+    },
+    plan_context: {
+      ...(isWritePaperRecord(planContext.selected_design)
+        ? { selected_design: planContext.selected_design }
+        : {}),
+      shortlisted_designs: Array.isArray(planContext.shortlisted_designs)
+        ? planContext.shortlisted_designs
+        : [],
+      design_notes: Array.isArray(planContext.design_notes) ? planContext.design_notes : [],
+      implementation_notes: Array.isArray(planContext.implementation_notes)
+        ? planContext.implementation_notes
+        : [],
+      evaluation_notes: Array.isArray(planContext.evaluation_notes)
+        ? planContext.evaluation_notes
+        : [],
+      assumptions: Array.isArray(planContext.assumptions) ? planContext.assumptions : []
+    },
+    results_artifact: emptyArtifact,
+    metric_table: [],
+    condition_comparisons: [],
+    execution_summary: {
+      observation_count: typeof executionSummary.observation_count === "number"
+        ? executionSummary.observation_count
+        : 0,
+      commands: Array.isArray(executionSummary.commands) ? executionSummary.commands : [],
+      sources: Array.isArray(executionSummary.sources) ? executionSummary.sources : [],
+      ...(typeof executionSummary.latest_log_file === "string"
+        ? { latest_log_file: executionSummary.latest_log_file }
+        : {}),
+      stderr_excerpts: Array.isArray(executionSummary.stderr_excerpts)
+        ? executionSummary.stderr_excerpts
+        : []
+    },
+    primary_findings: [],
+    limitations: [notice],
+    warnings: [notice],
+    paper_claims: [],
+    figure_specs: [],
+    supplemental_runs: [],
+    external_comparisons: [],
+    statistical_summary: {
+      confidence_intervals: [],
+      stability_metrics: [],
+      effect_estimates: [],
+      notes: []
+    },
+    failure_taxonomy: []
+  };
+  return projection as unknown as AnalysisReport;
+}
+
+function buildPrimaryWritePaperResultsArtifact(
+  contract: WritePaperResultsContract
+): ResultsArtifactV2 {
+  const primary = contract.primary;
+  return {
+    schema_version: "2.0",
+    metrics: [{ ...primary.metric }],
+    series: [
+      cloneWritePaperSeriesWithRole(primary.subjectSeries, primary.subjectSeries.role),
+      cloneWritePaperSeriesWithRole(primary.referenceSeries, primary.referenceSeries.role)
+    ],
+    observations: [
+      cloneWritePaperObservation(primary.subjectObservation),
+      cloneWritePaperObservation(primary.referenceObservation)
+    ],
+    comparisons: [{ ...primary.comparison }]
+  };
+}
+
+function cloneWritePaperObservation(observation: ResultsObservationV2): ResultsObservationV2 {
+  return {
+    ...observation,
+    scope: { ...observation.scope },
+    ...(observation.evidence_refs
+      ? { evidence_refs: [...observation.evidence_refs] }
+      : {})
+  };
+}
+
+function cloneWritePaperSeriesWithRole(
+  series: ResultsSeriesV2,
+  role: ResultsSeriesRole
+): ResultsSeriesV2 & { role: ResultsSeriesRole } {
+  return {
+    ...series,
+    role,
+    dimensions: { ...series.dimensions }
+  };
+}
+
+function stableWritePaperScopeSignature(scope: Record<string, unknown>): string {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(scope).sort(([left], [right]) => left.localeCompare(right)))
+  );
+}
+
+function isWritePaperRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function asWritePaperRecord(value: unknown): Record<string, unknown> {
+  return isWritePaperRecord(value) ? value : {};
+}
+
 async function loadValidatedPaperBundle(
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"]
 ): Promise<{
   bundle?: PaperWritingBundle;
+  resultsContract?: WritePaperResultsContract;
+  resultsInputMode?: "validated_v2" | "historical_read_only";
   report: PaperInputValidationReport;
   error: string;
 }> {
@@ -2156,12 +2680,15 @@ async function loadValidatedPaperBundle(
     });
   }
 
-  const resultAnalysis = resultAnalysisRaw ? parseResultAnalysis(resultAnalysisRaw) : undefined;
+  const resultInput = resultAnalysisRaw
+    ? parseWritePaperResultAnalysisInput(resultAnalysisRaw)
+    : undefined;
+  const resultAnalysis = resultInput?.report;
   if (resultAnalysisRaw && !resultAnalysis) {
     issues.push({
       artifact: "result_analysis.json",
       path: resultAnalysisPath,
-      reason: "the result analysis could not be parsed"
+      reason: resultInput?.error || "the result analysis could not be parsed"
     });
   }
   const reviewContext = parseReviewContext(reviewDecisionRaw, reviewFindingsRaw);
@@ -2193,6 +2720,8 @@ async function loadValidatedPaperBundle(
       resultAnalysis,
       reviewContext
     },
+    ...(resultInput?.contract ? { resultsContract: resultInput.contract } : {}),
+    ...(resultInput?.mode ? { resultsInputMode: resultInput.mode } : {}),
     report,
     error: ""
   };
@@ -2286,150 +2815,6 @@ async function loadObjectiveEvaluation(
   } catch {
     return undefined;
   }
-}
-
-async function loadLatestResultsArtifact(
-  run: Pick<Parameters<GraphNodeHandler["execute"]>[0]["run"], "id" | "title">
-): Promise<Record<string, unknown> | undefined> {
-  const candidatePaths = [
-    path.join(buildPublicAnalysisDir(process.cwd(), run), "latest_results.json"),
-    path.join(".autolabos", "runs", run.id, "metrics.json")
-  ];
-  for (const filePath of candidatePaths) {
-    try {
-      const raw = await fs.readFile(filePath, "utf8");
-      const parsed = JSON.parse(raw) as unknown;
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        const record = parsed as Record<string, unknown>;
-        return filePath.endsWith("metrics.json")
-          ? buildLatestResultsFallbackFromMetrics(record)
-          : record;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return undefined;
-}
-
-function buildLatestResultsFallbackFromMetrics(metrics: Record<string, unknown>): Record<string, unknown> {
-  const studySummary = readRecord(metrics.study_summary);
-  return {
-    selected_model: readString(metrics.selected_model) || readString(studySummary.selected_model) || readString(studySummary.model_id),
-    requested_models: readRecord(metrics.requested_models),
-    study_summary: pickRecordFields(studySummary, [
-      "status",
-      "model_id",
-      "selected_model",
-      "completed_run_count",
-      "completed_condition_count",
-      "failed_run_count",
-      "planned_run_count",
-      "baseline_condition_marker",
-      "best_nonbaseline_condition_marker",
-      "best_nonbaseline_accuracy_delta_vs_baseline_mean",
-      "run_average_accuracy_mean",
-      "run_accuracy_delta_vs_baseline_mean",
-      "run_accuracy_delta_vs_baseline_ci95",
-      "run_runtime_sec_mean",
-      "run_peak_vram_bytes_mean",
-      "run_train_loss_mean",
-      "seed_schedule"
-    ]),
-    condition_summaries: readArray(metrics.condition_summaries).slice(0, 12).map((condition) =>
-      summarizeConditionForPaperContext(readRecord(condition))
-    )
-  };
-}
-
-function summarizeConditionForPaperContext(condition: Record<string, unknown>): Record<string, unknown> {
-  return {
-    ...pickRecordFields(condition, [
-      "condition_marker",
-      "condition_parameter_x",
-      "condition_parameter_y",
-      "completed_seed_count",
-      "failed_seed_count",
-      "average_accuracy_mean",
-      "average_accuracy_ci95",
-      "accuracy_delta_vs_baseline_mean",
-      "accuracy_delta_vs_baseline_ci95",
-      "runtime_sec_mean",
-      "peak_vram_bytes_mean",
-      "train_loss_mean"
-    ]),
-    seed_results: readArray(condition.seed_results).slice(0, 1).map((seedResult) =>
-      summarizeSeedResultForPaperContext(readRecord(seedResult))
-    )
-  };
-}
-
-function summarizeSeedResultForPaperContext(seedResult: Record<string, unknown>): Record<string, unknown> {
-  const trainMetadata = readRecord(seedResult.train_metadata);
-  const trainerState = readRecord(trainMetadata.trainer_state);
-  return {
-    ...pickRecordFields(seedResult, [
-      "seed",
-      "condition_marker",
-      "condition_parameter_x",
-      "condition_parameter_y",
-      "average_accuracy",
-      "accuracy_delta_vs_baseline",
-      "completed",
-      "train_status"
-    ]),
-    train_metadata: {
-      ...pickRecordFields(trainMetadata, [
-        "model_name",
-        "model_dtype",
-        "device_name",
-        "condition_parameter_x",
-        "condition_parameter_y",
-        "selected_target_modules",
-        "num_train_samples",
-        "train_dataset_token_count",
-        "train_loss",
-        "runtime_sec",
-        "peak_vram_bytes",
-        "optimizer_steps",
-        "gradient_accumulation_steps",
-        "status"
-      ]),
-      trainer_state: pickRecordFields(trainerState, [
-        "learning_rate",
-        "per_device_train_batch_size",
-        "gradient_accumulation_steps",
-        "weight_decay",
-        "max_grad_norm",
-        "optimizer_steps",
-        "max_steps_requested"
-      ])
-    }
-  };
-}
-
-function pickRecordFields(record: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  const picked: Record<string, unknown> = {};
-  for (const key of keys) {
-    if (record[key] !== undefined) {
-      picked[key] = record[key];
-    }
-  }
-  return picked;
-}
-
-function readRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function readArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : [];
-}
-
-function readString(value: unknown): string {
-  return typeof value === "string" ? value : "";
 }
 
 async function readRequiredRunArtifact(
@@ -3009,7 +3394,7 @@ function findPaperManuscriptSectionByHeading(
 }
 
 function enforceRepairPlanLocalityAfterStabilization(
-  baseline: PaperManuscript,
+  reference: PaperManuscript,
   candidate: PaperManuscript,
   repairPlan: ManuscriptRepairPlanArtifact
 ): PaperManuscript {
@@ -3024,9 +3409,9 @@ function enforceRepairPlanLocalityAfterStabilization(
 
   return {
     ...candidate,
-    title: selectText("title", baseline.title, candidate.title),
-    abstract: selectText("abstract", baseline.abstract, candidate.abstract),
-    sections: baseline.sections.map((section, sectionIndex) => {
+    title: selectText("title", reference.title, candidate.title),
+    abstract: selectText("abstract", reference.abstract, candidate.abstract),
+    sections: reference.sections.map((section, sectionIndex) => {
       const candidateSection = findPaperManuscriptSectionByHeading(candidate.sections, section.heading, sectionIndex);
       return {
         ...section,
@@ -3041,9 +3426,9 @@ function enforceRepairPlanLocalityAfterStabilization(
         )
       };
     }),
-    ...(baseline.appendix_sections
+    ...(reference.appendix_sections
       ? {
-          appendix_sections: baseline.appendix_sections.map((section, sectionIndex) => {
+          appendix_sections: reference.appendix_sections.map((section, sectionIndex) => {
             const candidateSection = findPaperManuscriptSectionByHeading(
               candidate.appendix_sections,
               section.heading,
@@ -3064,9 +3449,9 @@ function enforceRepairPlanLocalityAfterStabilization(
           })
         }
       : { appendix_sections: candidate.appendix_sections }),
-    ...(baseline.tables
+    ...(reference.tables
       ? {
-          tables: baseline.tables.map((table, index) => ({
+          tables: reference.tables.map((table, index) => ({
             ...table,
             ...(isDerivedMainTable(table) ? {} : candidate.tables?.[index]),
             caption: isDerivedMainTable(table)
@@ -3078,9 +3463,9 @@ function enforceRepairPlanLocalityAfterStabilization(
           }))
         }
       : { tables: candidate.tables }),
-    ...(baseline.figures
+    ...(reference.figures
       ? {
-          figures: baseline.figures.map((figure, index) => ({
+          figures: reference.figures.map((figure, index) => ({
             ...figure,
             ...(isDerivedMainFigure(figure) ? {} : candidate.figures?.[index]),
             caption: isDerivedMainFigure(figure)
@@ -3092,9 +3477,9 @@ function enforceRepairPlanLocalityAfterStabilization(
           }))
         }
       : { figures: candidate.figures }),
-    ...(baseline.appendix_tables
+    ...(reference.appendix_tables
       ? {
-          appendix_tables: baseline.appendix_tables.map((table, index) => ({
+          appendix_tables: reference.appendix_tables.map((table, index) => ({
             ...table,
             ...candidate.appendix_tables?.[index],
             caption: selectText(
@@ -3106,9 +3491,9 @@ function enforceRepairPlanLocalityAfterStabilization(
           }))
         }
       : { appendix_tables: candidate.appendix_tables }),
-    ...(baseline.appendix_figures
+    ...(reference.appendix_figures
       ? {
-          appendix_figures: baseline.appendix_figures.map((figure, index) => ({
+          appendix_figures: reference.appendix_figures.map((figure, index) => ({
             ...figure,
             ...candidate.appendix_figures?.[index],
             caption: selectText(
@@ -3125,27 +3510,27 @@ function enforceRepairPlanLocalityAfterStabilization(
   };
 }
 
-function restoreDerivedMainVisualsFromBaseline(
+function restoreDerivedMainVisualsFromReference(
   candidate: PaperManuscript,
-  baseline: PaperManuscript
+  reference: PaperManuscript
 ): PaperManuscript {
-  const baselineTables = baseline.tables || [];
-  const baselineFigures = baseline.figures || [];
+  const referenceTables = reference.tables || [];
+  const referenceFigures = reference.figures || [];
   return {
     ...candidate,
     ...(candidate.tables
       ? {
           tables: candidate.tables.map((table, index) => {
-            const baselineTable = baselineTables[index];
-            return shouldRestoreDerivedMainTable(table, baselineTable) ? baselineTable || table : table;
+            const referenceTable = referenceTables[index];
+            return shouldRestoreDerivedMainTable(table, referenceTable) ? referenceTable || table : table;
           })
         }
       : {}),
     ...(candidate.figures
       ? {
           figures: candidate.figures.map((figure, index) => {
-            const baselineFigure = baselineFigures[index];
-            return shouldRestoreDerivedMainFigure(figure, baselineFigure) ? baselineFigure || figure : figure;
+            const referenceFigure = referenceFigures[index];
+            return shouldRestoreDerivedMainFigure(figure, referenceFigure) ? referenceFigure || figure : figure;
           })
         }
       : {})
@@ -3154,16 +3539,16 @@ function restoreDerivedMainVisualsFromBaseline(
 
 function shouldRestoreDerivedMainTable(
   candidate: { rows?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined,
-  baseline: { rows?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined
+  reference: { rows?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined
 ): boolean {
-  if (!baseline || !isDerivedMainTable(baseline)) {
+  if (!reference || !isDerivedMainTable(reference)) {
     return false;
   }
   if (
     candidate
     && isDerivedMainTable(candidate)
-    && hasStructuredConditionMetadata(candidate)
-    && !hasStructuredConditionMetadata(baseline)
+    && hasCompleteWritePaperComparisonMetadata(candidate.rows)
+    && !hasCompleteWritePaperComparisonMetadata(reference.rows)
   ) {
     return false;
   }
@@ -3172,50 +3557,44 @@ function shouldRestoreDerivedMainTable(
 
 function shouldRestoreDerivedMainFigure(
   candidate: { bars?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined,
-  baseline: { bars?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined
+  reference: { bars?: PaperManuscriptVisualRow[]; source_refs?: Array<{ kind: string; id: string }> } | undefined
 ): boolean {
-  if (!baseline || !isDerivedMainFigure(baseline)) {
+  if (!reference || !isDerivedMainFigure(reference)) {
     return false;
   }
   if (
     candidate
     && isDerivedMainFigure(candidate)
-    && hasReaderFacingTaskDeltaLabels(candidate)
-    && hasGenericTaskDeltaLabels(baseline)
+    && hasCompleteWritePaperComparisonMetadata(candidate.bars)
+    && !hasCompleteWritePaperComparisonMetadata(reference.bars)
   ) {
     return false;
   }
   return true;
 }
 
-function hasStructuredConditionMetadata(table: { rows?: PaperManuscriptVisualRow[] }): boolean {
-  return Boolean(table.rows?.some(
-    (row) => typeof row.condition_parameter_x === "number" || typeof row.condition_parameter_y === "number"
-  ));
-}
-
-function normalizeVisualRestoreLabel(value: unknown): string {
-  return String(value || "").trim().replace(/\s+/gu, " ");
-}
-
-function hasReaderFacingTaskDeltaLabels(figure: { bars?: PaperManuscriptVisualRow[] }): boolean {
-  const labels = figure.bars?.map((bar) => normalizeVisualRestoreLabel(bar.label)).join(" ") || "";
-  return (
-    /\bBenchmark Task A (?:accuracy delta|task difference)\b/iu.test(labels)
-    && /\bBenchmark Task B (?:accuracy delta|task difference)\b/iu.test(labels)
+function hasCompleteWritePaperComparisonMetadata(
+  rows: PaperManuscriptVisualRow[] | undefined
+): boolean {
+  return Boolean(
+    rows?.length
+    && rows.every((row) => {
+      if (!row.comparison_id || !row.metric_id || !row.comparison_side) {
+        return false;
+      }
+      if (row.comparison_side === "difference") {
+        return true;
+      }
+      return Boolean(row.observation_id && row.series_id && row.series_role);
+    })
   );
-}
-
-function hasGenericTaskDeltaLabels(figure: { bars?: PaperManuscriptVisualRow[] }): boolean {
-  const labels = figure.bars?.map((bar) => normalizeVisualRestoreLabel(bar.label)).join(" ") || "";
-  return /\bTask A delta\b|\bTask B delta\b/iu.test(labels);
 }
 
 function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): PaperManuscript {
   const compactTables = compactReaderFacingTables(manuscript.tables);
   return {
     ...manuscript,
-    title: softenFinalLmBenchmarkPilotTitle(manuscript.title),
+    title: sanitizeFinalPaperTitle(manuscript.title),
     abstract: sanitizeFinalPaperAbstract(manuscript.abstract),
     keywords: sanitizeFinalPaperKeywords(manuscript.keywords),
     sections: compactReaderFacingSections(manuscript.sections),
@@ -3223,11 +3602,10 @@ function compactReaderFacingRepairedManuscript(manuscript: PaperManuscript): Pap
     ...(manuscript.appendix_sections ? { appendix_sections: manuscript.appendix_sections } : {}),
     ...(manuscript.figures
       ? {
-          figures: manuscript.figures.filter(
-            (figure) =>
-              !isNoisyMixedMetricRepairFigure(figure) &&
-              !isRedundantTaskDeltaFigureForConditionTable(figure, compactTables)
-          )
+          figures: manuscript.figures.map((figure) => ({
+            ...figure,
+            bars: figure.bars.map(compactWritePaperVisualRow)
+          }))
         }
       : {}),
     ...(manuscript.appendix_tables
@@ -3260,94 +3638,29 @@ function compactReaderFacingTables(tables: PaperManuscript["tables"] | undefined
   if (!tables) {
     return undefined;
   }
-  return tables.map((table) => {
-    const isConditionTable = table.rows.some(
-      (row) => typeof row.condition_parameter_x === "number" || typeof row.condition_parameter_y === "number"
-    );
-    if (!isConditionTable) {
-      return table;
-    }
-    return {
-      ...table,
-      rows: table.rows.map((row) => compactConditionTableRow(row, table))
-    };
-  });
+  return tables.map((table) => ({
+    ...table,
+    rows: table.rows.map(compactWritePaperVisualRow)
+  }));
 }
 
-function compactConditionTableRow(
-  row: PaperManuscriptVisualRow,
-  table?: { condition_axis_x_label?: string; condition_axis_y_label?: string }
-): PaperManuscriptVisualRow {
-  const average = typeof row.average_accuracy === "number" ? row.average_accuracy : row.value;
+function compactWritePaperVisualRow(row: PaperManuscriptVisualRow): PaperManuscriptVisualRow {
   return {
-    label: compactConditionRowLabel(row, table),
-    value: average,
-    ...(typeof row.condition_parameter_x === "number" ? { condition_parameter_x: row.condition_parameter_x } : {}),
-    ...(typeof row.condition_parameter_y === "number" ? { condition_parameter_y: row.condition_parameter_y } : {}),
-    ...(typeof row.accuracy_delta_vs_comparator === "number"
-      ? { accuracy_delta_vs_comparator: row.accuracy_delta_vs_comparator }
-      : typeof row.accuracy_delta_vs_baseline === "number"
-        ? { accuracy_delta_vs_baseline: row.accuracy_delta_vs_baseline }
-        : {}),
-    ...(typeof row.benchmark_task_a_accuracy === "number" ? { benchmark_task_a_accuracy: row.benchmark_task_a_accuracy } : {}),
-    ...(typeof row.benchmark_task_b_accuracy === "number" ? { benchmark_task_b_accuracy: row.benchmark_task_b_accuracy } : {}),
-    ...(row.is_baseline ? { is_baseline: true } : {}),
-    ...(row.is_comparator ? { is_comparator: true } : {}),
-    ...(row.is_registered_baseline ? { is_registered_baseline: true } : {})
+    label: sanitizeAppendixTableLabel(row.label),
+    value: row.value,
+    ...(row.comparison_id ? { comparison_id: row.comparison_id } : {}),
+    ...(row.observation_id ? { observation_id: row.observation_id } : {}),
+    ...(row.metric_id ? { metric_id: row.metric_id } : {}),
+    ...(row.series_id ? { series_id: row.series_id } : {}),
+    ...(row.series_role ? { series_role: row.series_role } : {}),
+    ...(row.comparison_side ? { comparison_side: row.comparison_side } : {})
   };
-}
-
-function compactConditionRowLabel(
-  row: PaperManuscriptVisualRow,
-  table?: { condition_axis_x_label?: string; condition_axis_y_label?: string }
-): string {
-  const assignment = compactConditionAxisAssignment(row, table);
-  if (row.is_registered_baseline || (row.is_baseline && !row.is_comparator)) {
-    if (/\bnot\s+delta\s+reference\b/iu.test(row.label)) {
-      return assignment ? `Registered baseline, not delta reference (${assignment})` : "Registered baseline, not delta reference";
-    }
-    return assignment ? `Registered baseline (${assignment})` : "Registered baseline";
-  }
-  if (row.is_comparator || /\bcomparison row\b/iu.test(row.label)) {
-    return assignment ? `Archived reference condition (${assignment})` : "Archived reference condition";
-  }
-  const cleaned = sanitizePaperNarrativeText(row.label)
-    .replace(/\s*\([^)]*\)\s*$/u, "")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (assignment && /^Condition\s+[A-Z]$/u.test(cleaned)) {
-    return `${cleaned} (${assignment})`;
-  }
-  return cleaned || (assignment ? `Candidate condition (${assignment})` : "Candidate condition");
-}
-
-function compactConditionAxisAssignment(
-  row: PaperManuscriptVisualRow,
-  table?: { condition_axis_x_label?: string; condition_axis_y_label?: string }
-): string {
-  const parts: string[] = [];
-  const xLabel = sanitizePaperNarrativeText(table?.condition_axis_x_label || "factor x");
-  const yLabel = sanitizePaperNarrativeText(table?.condition_axis_y_label || "factor y");
-  if (typeof row.condition_parameter_x === "number") {
-    parts.push(`${xLabel}=${formatCompactConditionValue(row.condition_parameter_x)}`);
-  }
-  if (typeof row.condition_parameter_y === "number") {
-    parts.push(`${yLabel}=${formatCompactConditionValue(row.condition_parameter_y)}`);
-  }
-  return parts.join(", ");
-}
-
-function formatCompactConditionValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
 }
 
 function compactAppendixTableLabels<T extends { rows: PaperManuscriptVisualRow[] }>(table: T): T {
   return {
     ...table,
-    rows: table.rows.map((row) => ({
-      ...row,
-      label: sanitizeAppendixTableLabel(row.label)
-    }))
+    rows: table.rows.map(compactWritePaperVisualRow)
   };
 }
 
@@ -3376,13 +3689,9 @@ function isNonReaderFacingFinalParagraph(heading: string, paragraph: string): bo
     return false;
   }
   return (
-    /^The supplied related work/iu.test(paragraph)
-    || /^Related work clusters around/iu.test(paragraph)
-    || /^The closest cited work frames/iu.test(paragraph)
-    || /^This positioning is intentionally narrower/iu.test(paragraph)
-    || /lightweights+bearing[-s]?fault/iu.test(paragraph)
-    || /timeout-based extraction caveats/iu.test(paragraph)
-    || /paper analyses include/iu.test(paragraph)
+    /^(?:The\s+)?(?:supplied|provided)\s+related\s+work\b/iu.test(paragraph)
+    || /\b(?:collection|extraction)\s+(?:timeout|fallback)\s+(?:caveat|artifact)s?\b/iu.test(paragraph)
+    || /\bpaper\s+analys(?:is|es)\s+(?:artifact|include)\b/iu.test(paragraph)
   );
 }
 
@@ -3416,7 +3725,7 @@ function sanitizeFinalPaperAbstract(abstract: string): string {
     : cleaned;
 }
 
-function softenFinalLmBenchmarkPilotTitle(title: string): string {
+function sanitizeFinalPaperTitle(title: string): string {
   const cleaned = sanitizePaperNarrativeText(title);
   if (!cleaned || cleaned.length > 110 || /\b(?:workflow|audit|paper[- ]?readiness|result[- ]?gating)\b/iu.test(cleaned)) {
     return "A Governed Experimental Study Under a Fixed Resource Budget";
@@ -3475,39 +3784,16 @@ function dedupeRepairTables<T extends { caption: string; rows: PaperManuscriptVi
   return compact;
 }
 
-function isNoisyMixedMetricRepairFigure(figure: { bars: PaperManuscriptVisualRow[] }): boolean {
-  const labels = figure.bars.map((row) => row.label).join(" ");
-  const hasAccuracy = /accuracy|delta|baseline/iu.test(labels);
-  const hasRawResource =
-    /memory|cuda|vram|bytes|runtime|seconds/iu.test(labels)
-    && figure.bars.some((row) => Number.isFinite(row.value) && Math.abs(row.value) > 10_000);
-  return hasAccuracy && hasRawResource;
-}
-
-function isRedundantTaskDeltaFigureForConditionTable(
-  figure: { caption: string; bars: PaperManuscriptVisualRow[] },
-  tables: PaperManuscript["tables"] | undefined
+function hasAmbiguousFigureMetricSemantics(
+  figure: { bars: PaperManuscriptVisualRow[] }
 ): boolean {
-  const hasTaskColumnTable = Boolean(tables?.some((table) =>
-    table.rows.some((row) =>
-      typeof row.benchmark_task_a_accuracy === "number" &&
-      typeof row.benchmark_task_b_accuracy === "number"
-    )
-  ));
-  if (!hasTaskColumnTable) {
-    return false;
+  if (figure.bars.length === 0) {
+    return true;
   }
-  const caption = sanitizePaperNarrativeText(figure.caption);
-  const labels = figure.bars.map((bar) => sanitizePaperNarrativeText(bar.label)).join(" ");
-  const hasOnlyTaskDeltaRows =
-    figure.bars.length <= 3 &&
-    figure.bars.length > 0 &&
-    figure.bars.every((bar) => /\btask\b|\bbenchmark\b/iu.test(bar.label) && /\bdelta\b/iu.test(bar.label));
-  return (
-    hasOnlyTaskDeltaRows ||
-    /\btask[-\s]?level\b.*\bdelta\b/iu.test(caption) ||
-    /\btask[-\s]?delta\b/iu.test(labels)
+  const metricIds = new Set(
+    figure.bars.map((row) => row.metric_id).filter((id): id is string => Boolean(id))
   );
+  return metricIds.size !== 1 || !hasCompleteWritePaperComparisonMetadata(figure.bars);
 }
 
 function normalizeRepairTextKey(value: string): string {
@@ -3573,7 +3859,6 @@ let currentManuscript = compactReaderFacingRepairedManuscript(input.initialManus
   const evaluateCandidate = (manuscript: PaperManuscript): ManuscriptCandidateEvaluation => {
     manuscript = compactReaderFacingRepairedManuscript(
       stabilizePaperManuscriptForSubmission(manuscript, {
-        conditionSummaries: context.results.condition_summaries,
         resultAnalysis: input.bundle.resultAnalysis,
         methodModelNames: context.method.model_names
       })
@@ -4029,21 +4314,19 @@ let currentManuscript = compactReaderFacingRepairedManuscript(input.initialManus
     if (repairResult.source !== "fallback") {
       toolCallsUsed += 1;
     }
-    const normalizedVerificationBaselineManuscript = normalizeManuscriptForRepairLocalityComparison(manuscriptBeforeRepair, {
-      conditionSummaries: context.results.condition_summaries,
+    const normalizedVerificationReferenceManuscript = normalizeManuscriptForRepairLocalityComparison(manuscriptBeforeRepair, {
       resultAnalysis: input.bundle.resultAnalysis,
       methodModelNames: context.method.model_names
     });
-    const verificationBaselineManuscript = restoreDerivedMainVisualsFromBaseline(
-      normalizedVerificationBaselineManuscript,
+    const verificationReferenceManuscript = restoreDerivedMainVisualsFromReference(
+      normalizedVerificationReferenceManuscript,
       manuscriptBeforeRepair
     );
     currentManuscript = enforceRepairPlanLocalityAfterStabilization(
-      verificationBaselineManuscript,
+      verificationReferenceManuscript,
       stabilizePaperManuscriptForSubmission(
         sanitizeReaderFacingRepairTargets(manuscriptBeforeRepair, repairResult.manuscript, repairPlan),
         {
-          conditionSummaries: context.results.condition_summaries,
           resultAnalysis: input.bundle.resultAnalysis,
           methodModelNames: context.method.model_names
         }
@@ -4051,19 +4334,18 @@ let currentManuscript = compactReaderFacingRepairedManuscript(input.initialManus
       repairPlan
     );
     currentManuscript = stabilizePaperManuscriptForSubmission(currentManuscript, {
-      conditionSummaries: context.results.condition_summaries,
       resultAnalysis: input.bundle.resultAnalysis,
       methodModelNames: context.method.model_names
     });
-    currentManuscript = restoreDerivedMainVisualsFromBaseline(currentManuscript, verificationBaselineManuscript);
-    currentManuscript = restoreDerivedMainVisualsFromBaseline(currentManuscript, manuscriptBeforeRepair);
+    currentManuscript = restoreDerivedMainVisualsFromReference(currentManuscript, verificationReferenceManuscript);
+    currentManuscript = restoreDerivedMainVisualsFromReference(currentManuscript, manuscriptBeforeRepair);
     currentManuscript = enforceRepairPlanLocalityAfterStabilization(
-      verificationBaselineManuscript,
+      verificationReferenceManuscript,
       currentManuscript,
       repairPlan
     );
-    currentManuscript = restoreDerivedMainVisualsFromBaseline(currentManuscript, verificationBaselineManuscript);
-    currentManuscript = restoreDerivedMainVisualsFromBaseline(currentManuscript, manuscriptBeforeRepair);
+    currentManuscript = restoreDerivedMainVisualsFromReference(currentManuscript, verificationReferenceManuscript);
+    currentManuscript = restoreDerivedMainVisualsFromReference(currentManuscript, manuscriptBeforeRepair);
     evaluation = evaluateCandidate(currentManuscript);
     reviewCycle = await runGroundedReviewCycle({
       evaluation,
@@ -4089,7 +4371,7 @@ let currentManuscript = compactReaderFacingRepairedManuscript(input.initialManus
     };
     const repairVerification = buildManuscriptRepairVerificationArtifact({
       passIndex,
-      before: verificationBaselineManuscript,
+      before: verificationReferenceManuscript,
       after: currentManuscript,
       repairPlan,
       reviewAfter: review
@@ -5356,19 +5638,18 @@ function inferRunArtifactRefsForClaim(
   const unlinkedExperimentClaim =
     claim.evidence_ids.length === 0
     && claim.citation_paper_ids.length === 0
-    && /this study|present study|experiment|run|baseline|comparator|metric|result|accuracy|objective|condition|seed|parameter|factor|benchmark|model|dataset/iu.test(text);
+    && /this study|present study|experiment|run|metric|result|objective|condition|seed|parameter|factor|model|dataset/iu.test(text);
   if (!experimentSection && !unlinkedExperimentClaim) {
     return [];
   }
 
   const refs: string[] = [];
   const hasResultAnalysis = Boolean(bundle.resultAnalysis);
-  const hasLatestResults = Boolean(bundle.latestResults);
   const hasExperimentPlan = Boolean(bundle.experimentPlan?.rawText || bundle.experimentPlan?.selectedTitle);
   const resultLike =
-    /result|accuracy|metric|delta|baseline|comparator|confidence|interval|ci\b|uncertainty|seed|task|benchmark_task_a|benchmark_task_b|condition|parameter|factor|runtime|memory|vram|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
+    /result|metric|difference|confidence|interval|ci\b|uncertainty|seed|task|condition|parameter|factor|runtime|memory|completed|failed|objective|improvement|inconclusive|promising|feasibility|preflight|continuation|generalization|study scope|supplemental artifact|compute-side|compute budget/iu.test(text);
   const methodLike =
-    /method|protocol|design|dataset|model|backbone|seed|condition|parameter|factor|baseline|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
+    /method|protocol|design|dataset|model|backbone|seed|condition|parameter|factor|harness|preprocess|token|budget|reproducib|run identifier|command line/iu.test(text);
   const runStateLike =
     /completed|failed|run visibility|failed attempts|execution status|run identifier|command line|environment|reproducib/iu.test(text);
 
@@ -5376,16 +5657,10 @@ function inferRunArtifactRefsForClaim(
     refs.push("experiment_plan.yaml");
   }
   if (hasResultAnalysis && resultLike) {
-    refs.push("result_analysis.json", "result_table.json");
-  }
-  if (hasLatestResults && resultLike) {
-    refs.push("latest_results.json");
+    refs.push("result_analysis.json");
   }
   if (runStateLike || (hasResultAnalysis && /completed|failed|training runs?|cells?|seeds?/i.test(text))) {
     refs.push("run_record.json");
-  }
-  if (hasResultAnalysis && /metric|accuracy|delta|baseline|runtime|memory|vram|loss|condition|task|benchmark_task_a|benchmark_task_b|completed|failed/iu.test(text)) {
-    refs.push("metrics.json");
   }
 
   return uniqueStrings(refs);
@@ -5914,10 +6189,166 @@ function buildPaperFigureManifest(input: {
   };
 }
 
+export function buildWritePaperFigurePayload(
+  manuscript: PaperManuscript,
+  contract: WritePaperResultsContract
+): {
+  figures: Array<{
+    id: string;
+    output_pdf: string;
+    caption: string;
+    metric: ResultsMetricDefinitionV2 & { unit: string };
+    comparison: ResultsComparisonV2;
+    bars: Array<{
+      label: string;
+      value: number;
+      comparison_id: string;
+      observation_id: string;
+      metric_id: string;
+      series_id: string;
+      series_role: ResultsSeriesRole;
+      comparison_side: "subject" | "reference";
+    }>;
+  }>;
+} {
+  const primary = contract.primary;
+  return {
+    figures: (manuscript.figures || []).map((figure, index) => {
+      if (hasAmbiguousFigureMetricSemantics(figure)) {
+        throw new Error(
+          `figure ${index + 1} must declare one metric id and complete comparison metadata on every bar`
+        );
+      }
+      if (figure.bars.length !== 2) {
+        throw new Error(
+          `figure ${index + 1} must contain exactly the linked subject and reference observations`
+        );
+      }
+      const subjectRow = figure.bars.find((row) => row.comparison_side === "subject");
+      const referenceRow = figure.bars.find((row) => row.comparison_side === "reference");
+      if (!subjectRow || !referenceRow) {
+        throw new Error(
+          `figure ${index + 1} must identify one subject bar and one reference bar explicitly`
+        );
+      }
+      assertWritePaperFigureRow({
+        row: subjectRow,
+        expectedSide: "subject",
+        expectedObservation: primary.subjectObservation,
+        expectedSeries: primary.subjectSeries,
+        contract,
+        figureIndex: index
+      });
+      assertWritePaperFigureRow({
+        row: referenceRow,
+        expectedSide: "reference",
+        expectedObservation: primary.referenceObservation,
+        expectedSeries: primary.referenceSeries,
+        contract,
+        figureIndex: index
+      });
+      const directionLabel = primary.metric.direction === "higher_better"
+        ? "higher values preferred"
+        : "lower values preferred";
+      return {
+        id: `main-result-figure-${index + 1}`,
+        output_pdf: `main-result-figure-${index + 1}.pdf`,
+        caption:
+          `${primary.metric.label} for declared comparison ${contract.primaryComparisonId} `
+          + `(${directionLabel}; unit: ${primary.metric.unit}).`,
+        metric: { ...primary.metric },
+        comparison: { ...primary.comparison },
+        bars: [
+          buildWritePaperFigureBar(
+            primary.subjectSeries,
+            primary.subjectObservation,
+            primary.comparison.id,
+            primary.metric.id,
+            "subject"
+          ),
+          buildWritePaperFigureBar(
+            primary.referenceSeries,
+            primary.referenceObservation,
+            primary.comparison.id,
+            primary.metric.id,
+            "reference"
+          )
+        ]
+      };
+    })
+  };
+}
+
+function assertWritePaperFigureRow(input: {
+  row: PaperManuscriptVisualRow;
+  expectedSide: "subject" | "reference";
+  expectedObservation: ResultsObservationV2;
+  expectedSeries: ResultsSeriesV2 & { role: ResultsSeriesRole };
+  contract: WritePaperResultsContract;
+  figureIndex: number;
+}): void {
+  const pathPrefix = `figure ${input.figureIndex + 1} ${input.expectedSide} bar`;
+  if (input.row.comparison_id !== input.contract.primaryComparisonId) {
+    throw new Error(`${pathPrefix} must reference the declared primary comparison id`);
+  }
+  if (input.row.metric_id !== input.contract.primary.metric.id) {
+    throw new Error(`${pathPrefix} must reference the declared metric id`);
+  }
+  if (input.row.observation_id !== input.expectedObservation.id) {
+    throw new Error(`${pathPrefix} must reference the linked observation id`);
+  }
+  if (input.row.series_id !== input.expectedSeries.id) {
+    throw new Error(`${pathPrefix} must reference the linked series id`);
+  }
+  if (input.row.series_role !== input.expectedSeries.role) {
+    throw new Error(`${pathPrefix} must preserve the series role declared by results_artifact`);
+  }
+  if (input.row.comparison_side !== input.expectedSide) {
+    throw new Error(`${pathPrefix} must preserve the explicit comparison side`);
+  }
+  if (!matchesWritePaperNumericValue(input.row.value, input.expectedObservation.value)) {
+    throw new Error(`${pathPrefix} value must match the linked observation value`);
+  }
+}
+
+function buildWritePaperFigureBar(
+  series: ResultsSeriesV2 & { role: ResultsSeriesRole },
+  observation: ResultsObservationV2,
+  comparisonId: string,
+  metricId: string,
+  comparisonSide: "subject" | "reference"
+): {
+  label: string;
+  value: number;
+  comparison_id: string;
+  observation_id: string;
+  metric_id: string;
+  series_id: string;
+  series_role: ResultsSeriesRole;
+  comparison_side: "subject" | "reference";
+} {
+  return {
+    label: `${series.label} (${series.role} role, ${comparisonSide})`,
+    value: observation.value,
+    comparison_id: comparisonId,
+    observation_id: observation.id,
+    metric_id: metricId,
+    series_id: series.id,
+    series_role: series.role,
+    comparison_side: comparisonSide
+  };
+}
+
+function matchesWritePaperNumericValue(left: number, right: number): boolean {
+  const scale = Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(left - right) <= Number.EPSILON * 32 * scale;
+}
+
 async function maybeRenderPaperFigureAssets(input: {
   deps: NodeExecutionDeps;
   run: Parameters<GraphNodeHandler["execute"]>[0]["run"];
   manuscript: PaperManuscript;
+  resultsContract: WritePaperResultsContract;
   figureManifest: PaperFigureManifest;
   runPaperDir: string;
   publicPaperDir: string;
@@ -5930,28 +6361,7 @@ async function maybeRenderPaperFigureAssets(input: {
   await ensureDir(figuresDir);
   await ensureDir(publicFiguresDir);
 
-  const payload = {
-    figures: figures.map((figure, index) => ({
-      id: `main-result-figure-${index + 1}`,
-      output_pdf: `main-result-figure-${index + 1}.pdf`,
-      caption: figure.caption,
-      bars: figure.bars.map((row) => ({
-        label: row.label,
-        value: row.value,
-        ...(typeof row.condition_parameter_x === "number" ? { condition_parameter_x: row.condition_parameter_x } : {}),
-        ...(typeof row.condition_parameter_y === "number" ? { condition_parameter_y: row.condition_parameter_y } : {}),
-        ...(typeof row.accuracy_delta_vs_baseline === "number"
-          ? { accuracy_delta_vs_baseline: row.accuracy_delta_vs_baseline }
-          : {}),
-        ...(typeof row.accuracy_delta_vs_comparator === "number"
-          ? { accuracy_delta_vs_comparator: row.accuracy_delta_vs_comparator }
-          : {}),
-        ...(row.is_baseline ? { is_baseline: true } : {}),
-        ...(row.is_comparator ? { is_comparator: true } : {}),
-        ...(row.is_registered_baseline ? { is_registered_baseline: true } : {})
-      }))
-    }))
-  };
+  const payload = buildWritePaperFigurePayload(input.manuscript, input.resultsContract);
   const expectedRenderedPdfs = new Set(payload.figures.map((figure) => figure.output_pdf));
   await pruneGeneratedPaperFigureAssets(figuresDir, expectedRenderedPdfs);
   await pruneGeneratedPaperFigureAssets(publicFiguresDir, expectedRenderedPdfs);
@@ -6043,69 +6453,92 @@ async function pruneGeneratedPaperFigureAssets(dir: string, expectedFilenames: S
   );
 }
 
-function buildPythonVectorFigureRendererScript(): string {
+export function buildPythonVectorFigureRendererScript(): string {
   return String.raw`#!/usr/bin/env python3
 import json
 import math
-import re
 import textwrap
 from pathlib import Path
 
-def build_paired_accuracy_rows(bars):
-    grouped = {}
-    order = []
-    for row in bars:
-        label = str(row.get("label", "")).strip()
-        match = re.match(r"^(Baseline|Leading)\s+(.+)$", label, flags=re.IGNORECASE)
-        if not match:
-            return None
-        series = match.group(1).lower()
-        metric = match.group(2).strip()
-        if metric not in grouped:
-            grouped[metric] = {}
-            order.append(metric)
-        grouped[metric][series] = float(row.get("value", 0) or 0)
-    rows = []
-    for metric in order:
-        values = grouped.get(metric, {})
-        if "baseline" not in values or "leading" not in values:
-            return None
-        rows.append({
-            "metric": metric,
-            "baseline": values["baseline"],
-            "leading": values["leading"],
-            "delta": values["leading"] - values["baseline"],
-        })
-    return rows if len(rows) >= 2 else None
+SIDE_COLORS = {
+    "subject": "#3268B2",
+    "reference": "#C86414",
+}
+PDF_SIDE_COLORS = {
+    "subject": (0.196, 0.408, 0.698),
+    "reference": (0.784, 0.392, 0.078),
+}
 
-def build_condition_grid_rows(bars):
-    rows = []
-    for row in bars:
-        label = str(row.get("label", "")).strip()
-        parameter_x = row.get("condition_parameter_x") or row.get("parameter_x")
-        parameter_y = row.get("condition_parameter_y") or row.get("parameter_y")
-        if parameter_x is None:
-            match = re.search(r"\bparameter[_\s-]?x\s*=?\s*([0-9]+(?:\.[0-9]+)?)", label, flags=re.IGNORECASE)
-            parameter_x = float(match.group(1)) if match else None
-        if parameter_y is None:
-            match = re.search(r"\bparameter[_\s-]?y\s*=?\s*([0-9]+(?:\.[0-9]+)?)", label, flags=re.IGNORECASE)
-            parameter_y = float(match.group(1)) if match else None
-        if parameter_x is None or parameter_y is None:
-            return None
-        rows.append({
-            "label": label,
-            "parameter_x": float(parameter_x),
-            "parameter_y": float(parameter_y),
-            "accuracy": float(row.get("value", 0) or 0),
-            "delta": float(row.get("accuracy_delta_vs_comparator", row.get("accuracy_delta_vs_baseline", 0)) or 0),
-            "is_baseline": bool(row.get("is_registered_baseline")) or (bool(row.get("is_baseline")) and not bool(row.get("is_comparator"))) or "registered baseline" in label.lower(),
-            "is_comparator": bool(row.get("is_comparator")) or "comparison row" in label.lower(),
-        })
-    if len(rows) < 4:
-        return None
-    parameter_y_values = sorted(set(row["parameter_y"] for row in rows))
-    parameter_x_values = sorted(set(row["parameter_x"] for row in rows))
-    return rows if len(parameter_y_values) >= 2 and len(parameter_x_values) >= 2 else None
+def required_string(record, key, path):
+    value = record.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{path}.{key} must be a non-empty string")
+    return value.strip()
+
+def validate_figure(figure):
+    if not isinstance(figure, dict):
+        raise ValueError("figure must be an object")
+    metric = figure.get("metric")
+    comparison = figure.get("comparison")
+    bars = figure.get("bars")
+    if not isinstance(metric, dict):
+        raise ValueError("figure.metric must be an object")
+    if not isinstance(comparison, dict):
+        raise ValueError("figure.comparison must be an object")
+    metric_id = required_string(metric, "id", "figure.metric")
+    metric_label = required_string(metric, "label", "figure.metric")
+    metric_unit = required_string(metric, "unit", "figure.metric")
+    direction = required_string(metric, "direction", "figure.metric")
+    if direction not in {"higher_better", "lower_better"}:
+        raise ValueError("figure.metric.direction must be higher_better or lower_better")
+    comparison_id = required_string(comparison, "id", "figure.comparison")
+    if not isinstance(bars, list) or len(bars) != 2:
+        raise ValueError("figure.bars must contain exactly two linked observations")
+
+    normalized = []
+    observed_sides = set()
+    for index, row in enumerate(bars):
+        path = f"figure.bars[{index}]"
+        if not isinstance(row, dict):
+            raise ValueError(f"{path} must be an object")
+        side = required_string(row, "comparison_side", path)
+        if side not in SIDE_COLORS or side in observed_sides:
+            raise ValueError(f"{path}.comparison_side must uniquely identify subject or reference")
+        observed_sides.add(side)
+        if required_string(row, "comparison_id", path) != comparison_id:
+            raise ValueError(f"{path}.comparison_id must match figure.comparison.id")
+        if required_string(row, "metric_id", path) != metric_id:
+            raise ValueError(f"{path}.metric_id must match figure.metric.id")
+        required_string(row, "observation_id", path)
+        required_string(row, "series_id", path)
+        required_string(row, "series_role", path)
+        label = required_string(row, "label", path)
+        value = row.get("value")
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value):
+            raise ValueError(f"{path}.value must be a finite number")
+        normalized.append({**row, "label": label, "value": float(value), "comparison_side": side})
+    if observed_sides != {"subject", "reference"}:
+        raise ValueError("figure.bars must include explicit subject and reference sides")
+    return {
+        "metric_id": metric_id,
+        "metric_label": metric_label,
+        "metric_unit": metric_unit,
+        "direction": direction,
+        "comparison_id": comparison_id,
+        "bars": normalized,
+    }
+
+def axis_label(validated):
+    return f"{validated['metric_label']} ({validated['metric_unit']})"
+
+def value_bounds(values):
+    lower = min(values + [0.0])
+    upper = max(values + [0.0])
+    span = upper - lower
+    if span <= 0:
+        span = max(abs(lower), abs(upper), 1.0)
+    padding = span * 0.12
+    return lower - padding, upper + padding
 
 def render_with_matplotlib(figure):
     try:
@@ -6115,273 +6548,91 @@ def render_with_matplotlib(figure):
     except Exception:
         return None
 
-    bars = figure.get("bars") or []
-    labels = [str(row.get("label", "")) for row in bars]
-    values = [float(row.get("value", 0) or 0) for row in bars]
-    if not labels:
-        return None
-
-    condition_rows = build_condition_grid_rows(bars)
-    if condition_rows:
-        axis_x_label = str(figure.get("condition_axis_x_label") or "Factor x")
-        axis_y_label = str(figure.get("condition_axis_y_label") or "Factor y")
-        parameter_x_values = sorted(set(row["parameter_x"] for row in condition_rows))
-        parameter_y_values = sorted(set(row["parameter_y"] for row in condition_rows))
-        fig, ax = plt.subplots(figsize=(3.45, 2.25))
-        colors = ["#3B66B8", "#C85F00", "#3D9A50"]
-        markers = ["o", "s", "^"]
-        for index, parameter_y in enumerate(parameter_y_values):
-            series = []
-            for parameter_x in parameter_x_values:
-                match = next((row for row in condition_rows if row["parameter_x"] == parameter_x and row["parameter_y"] == parameter_y), None)
-                series.append(match["accuracy"] if match else math.nan)
-            ax.plot(
-                parameter_x_values,
-                series,
-                marker=markers[index % len(markers)],
-                linewidth=1.3,
-                markersize=4.3,
-                color=colors[index % len(colors)],
-                label=f"{axis_y_label} {parameter_y:g}",
-            )
-        baseline = next((row for row in condition_rows if row["is_baseline"]), None)
-        if baseline:
-            ax.scatter([baseline["parameter_x"]], [baseline["accuracy"]], s=58, facecolors="none", edgecolors="#111111", linewidths=1.0, zorder=5)
-            ax.annotate("baseline", (baseline["parameter_x"], baseline["accuracy"]), xytext=(4, 7), textcoords="offset points", fontsize=6.6)
-        best = max(condition_rows, key=lambda row: row["accuracy"])
-        ax.annotate(
-            f"best {best['accuracy']:.3f}",
-            (best["parameter_x"], best["accuracy"]),
-            xytext=(-30, 8),
-            textcoords="offset points",
-            fontsize=6.6,
-            arrowprops={"arrowstyle": "-", "linewidth": 0.6, "color": "#555555"},
-        )
-        y_values = [row["accuracy"] for row in condition_rows]
-        y_min = max(0.0, min(y_values) - 0.05)
-        y_max = min(1.0, max(y_values) + 0.08)
-        ax.set_ylim(y_min, y_max if y_max > y_min else y_min + 0.1)
-        ax.set_xticks(parameter_x_values, labels=[f"{parameter_x:g}" for parameter_x in parameter_x_values])
-        ax.set_xlabel(axis_x_label, fontsize=8)
-        ax.set_ylabel("Average\naccuracy", fontsize=8, rotation=0, labelpad=30, va="center")
-        ax.set_title("Accuracy across condition grid", fontsize=9, pad=6)
-        ax.grid(axis="y", color="#d9d9d9", linewidth=0.6)
-        ax.set_axisbelow(True)
-        for spine in ["top", "right"]:
-            ax.spines[spine].set_visible(False)
-        ax.spines["left"].set_linewidth(0.6)
-        ax.spines["bottom"].set_linewidth(0.6)
-        ax.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
-        ax.legend(loc="upper left", frameon=False, fontsize=7, handlelength=1.4, borderaxespad=0.2)
-        fig.subplots_adjust(left=0.24, right=0.98, bottom=0.22, top=0.82)
-        fig.tight_layout(pad=0.35)
-        output = figure["output_pdf"]
-        fig.savefig(output, format="pdf", bbox_inches="tight")
-        plt.close(fig)
-        return output
-
-    paired_rows = build_paired_accuracy_rows(bars)
-    if paired_rows:
-        metric_labels = ["\n".join(textwrap.wrap(row["metric"], width=18)) for row in paired_rows]
-        y_positions = list(range(len(paired_rows)))
-        baseline_values = [row["baseline"] for row in paired_rows]
-        leading_values = [row["leading"] for row in paired_rows]
-        max_value = max(baseline_values + leading_values + [1.0])
-        x_limit = max(1.0, math.ceil(max_value * 4) / 4)
-
-        fig_height = max(2.05, 0.42 * len(paired_rows) + 1.25)
-        fig, ax = plt.subplots(figsize=(3.35, fig_height))
-        offset = 0.16
-        ax.barh([y + offset for y in y_positions], baseline_values, height=0.26, color="#5E6A71", label="Baseline")
-        ax.barh([y - offset for y in y_positions], leading_values, height=0.26, color="#2F6DB5", label="Leading")
-        ax.set_yticks(y_positions, labels=metric_labels)
-        ax.invert_yaxis()
-        ax.set_xlim(0, x_limit)
-        ax.set_xlabel("Accuracy", fontsize=8)
-        ax.set_title("Task-level and average accuracy", fontsize=9, pad=6)
-        ax.grid(axis="x", color="#d9d9d9", linewidth=0.6)
-        ax.set_axisbelow(True)
-        for spine in ["top", "right"]:
-            ax.spines[spine].set_visible(False)
-        ax.spines["left"].set_linewidth(0.6)
-        ax.spines["bottom"].set_linewidth(0.6)
-        ax.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
-        ax.legend(loc="lower right", frameon=False, fontsize=7, handlelength=1.2, borderaxespad=0.2)
-        for y, row in zip(y_positions, paired_rows):
-            label = f"{row['leading']:.3f} ({row['delta']:+.3f})"
-            ax.text(min(row["leading"] + x_limit * 0.018, x_limit * 0.86), y - offset, label, va="center", fontsize=6.6)
-        fig.tight_layout(pad=0.35)
-        output = figure["output_pdf"]
-        fig.savefig(output, format="pdf", bbox_inches="tight")
-        plt.close(fig)
-        return output
-
-    wrapped_labels = ["\n".join(textwrap.wrap(label, width=24)) for label in labels]
-    max_abs = max([abs(v) for v in values] + [1.0])
-    x_limit = max(1.0, math.ceil(max_abs * 4) / 4)
-    colors = ["#3B66B8", "#C85F00", "#3D9A50", "#7A4EA3", "#6A7A88"]
-
-    fig_height = max(1.9, 0.34 * len(labels) + 1.05)
-    fig, ax = plt.subplots(figsize=(3.35, fig_height))
-    y_positions = list(range(len(labels)))
-    ax.barh(y_positions, values, color=[colors[i % len(colors)] for i in y_positions], height=0.46)
-    ax.set_yticks(y_positions, labels=wrapped_labels)
-    ax.invert_yaxis()
-    ax.set_xlim(0, x_limit)
-    ax.set_xlabel("Accuracy", fontsize=8)
-    ax.set_title("Task-level accuracy", fontsize=9, pad=6)
-    ax.grid(axis="x", color="#d9d9d9", linewidth=0.6)
-    ax.set_axisbelow(True)
+    validated = validate_figure(figure)
+    bars = validated["bars"]
+    values = [row["value"] for row in bars]
+    labels = ["\n".join(textwrap.wrap(row["label"], width=25)) for row in bars]
+    colors = [SIDE_COLORS[row["comparison_side"]] for row in bars]
+    lower, upper = value_bounds(values)
+    figure_height = max(2.0, 0.55 * len(bars) + 1.25)
+    canvas, axis = plt.subplots(figsize=(3.45, figure_height))
+    positions = list(range(len(bars)))
+    axis.barh(positions, values, color=colors, height=0.46)
+    axis.set_yticks(positions, labels=labels)
+    axis.invert_yaxis()
+    axis.set_xlim(lower, upper)
+    axis.axvline(0.0, color="#333333", linewidth=0.7)
+    axis.set_xlabel(axis_label(validated), fontsize=8)
+    preference = "higher values preferred" if validated["direction"] == "higher_better" else "lower values preferred"
+    axis.set_title(
+        f"Declared comparison: {validated['comparison_id']}\n{preference}",
+        fontsize=8.5,
+        pad=6,
+    )
+    axis.grid(axis="x", color="#d9d9d9", linewidth=0.6)
+    axis.set_axisbelow(True)
     for spine in ["top", "right"]:
-        ax.spines[spine].set_visible(False)
-    ax.spines["left"].set_linewidth(0.6)
-    ax.spines["bottom"].set_linewidth(0.6)
-    ax.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
-    for y, value in zip(y_positions, values):
-        ax.text(value + x_limit * 0.015, y, f"{value:.4f}", va="center", fontsize=7)
-    fig.tight_layout(pad=0.35)
-    output = figure["output_pdf"]
-    fig.savefig(output, format="pdf", bbox_inches="tight")
-    plt.close(fig)
+        axis.spines[spine].set_visible(False)
+    axis.spines["left"].set_linewidth(0.6)
+    axis.spines["bottom"].set_linewidth(0.6)
+    axis.tick_params(axis="both", labelsize=7, length=2.5, width=0.6)
+    offset = (upper - lower) * 0.02
+    for position, value in zip(positions, values):
+        text_x = value + offset if value >= 0 else value - offset
+        alignment = "left" if value >= 0 else "right"
+        axis.text(text_x, position, f"{value:.4g}", va="center", ha=alignment, fontsize=7)
+    canvas.tight_layout(pad=0.4)
+    output = required_string(figure, "output_pdf", "figure")
+    canvas.savefig(output, format="pdf", bbox_inches="tight")
+    plt.close(canvas)
     return output
 
 def pdf_escape(value):
     return str(value).replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
 
 def text_cmd(x, y, text, size=7, color=(0, 0, 0)):
-    r, g, b = color
-    return f"{r:.3f} {g:.3f} {b:.3f} rg BT /F1 {size} Tf {x:.2f} {y:.2f} Td ({pdf_escape(text)}) Tj ET\n"
+    red, green, blue = color
+    return f"{red:.3f} {green:.3f} {blue:.3f} rg BT /F1 {size} Tf {x:.2f} {y:.2f} Td ({pdf_escape(text)}) Tj ET\n"
 
-def rect_cmd(x, y, w, h, color):
-    r, g, b = color
-    return f"{r:.3f} {g:.3f} {b:.3f} rg {x:.2f} {y:.2f} {w:.2f} {h:.2f} re f\n"
+def rect_cmd(x, y, width, height, color):
+    red, green, blue = color
+    return f"{red:.3f} {green:.3f} {blue:.3f} rg {x:.2f} {y:.2f} {width:.2f} {height:.2f} re f\n"
 
-def line_cmd(x1, y1, x2, y2):
-    return stroke_line_cmd(x1, y1, x2, y2, (0, 0, 0), 0.25)
+def line_cmd(x1, y1, x2, y2, color=(0, 0, 0), width=0.4):
+    red, green, blue = color
+    return f"{width:.2f} w {red:.3f} {green:.3f} {blue:.3f} RG {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n"
 
-def stroke_line_cmd(x1, y1, x2, y2, color=(0, 0, 0), width=0.6):
-    r, g, b = color
-    return f"{width:.2f} w {r:.3f} {g:.3f} {b:.3f} RG {x1:.2f} {y1:.2f} m {x2:.2f} {y2:.2f} l S\n"
-
-def marker_cmd(x, y, color, size=3.4, hollow=False):
-    half = size / 2
-    if hollow:
-        r, g, b = color
-        return f"{r:.3f} {g:.3f} {b:.3f} RG 0.75 w {x - half:.2f} {y - half:.2f} {size:.2f} {size:.2f} re S\n"
-    return rect_cmd(x - half, y - half, size, size, color)
-
-def render_figure(figure):
-    bars = figure.get("bars") or []
-    condition_rows = build_condition_grid_rows(bars)
+def render_native_pdf(figure):
+    validated = validate_figure(figure)
+    bars = validated["bars"]
+    values = [row["value"] for row in bars]
+    lower, upper = value_bounds(values)
+    span = upper - lower
     width, height = 306, 190
-    margin_l, margin_r, margin_t, margin_b = 106, 20, 28, 34
-    plot_w = width - margin_l - margin_r
-    plot_h = height - margin_t - margin_b
-    if condition_rows:
-        axis_x_label = str(figure.get("condition_axis_x_label") or "Factor x")
-        axis_y_label = str(figure.get("condition_axis_y_label") or "Factor y")
-        margin_l, margin_r, margin_t, margin_b = 56, 20, 32, 36
-        plot_w = width - margin_l - margin_r
-        plot_h = height - margin_t - margin_b
-        x_values = sorted(set(row["parameter_x"] for row in condition_rows))
-        y_groups = sorted(set(row["parameter_y"] for row in condition_rows))
-        y_values = [row["accuracy"] for row in condition_rows]
-        y_min = max(0.0, min(y_values) - 0.05)
-        y_max = min(1.0, max(y_values) + 0.08)
-        if y_max <= y_min:
-            y_max = y_min + 0.1
-        x_min = min(x_values)
-        x_max = max(x_values)
-        x_span = max(x_max - x_min, 1.0)
-        def x_for(value):
-            return margin_l + ((value - x_min) / x_span) * plot_w
-        def y_for(value):
-            return margin_b + ((value - y_min) / (y_max - y_min)) * plot_h
-        colors = [(0.231, 0.400, 0.722), (0.784, 0.373, 0.000), (0.239, 0.604, 0.314)]
-        content = []
-        content.append("1 1 1 rg 0 0 306 190 re f\n")
-        content.append(text_cmd(10, 176, "Accuracy across condition grid", 8.5))
-        content.append(text_cmd(130, 8, axis_x_label, 6, (0.12, 0.12, 0.12)))
-        content.append(text_cmd(margin_l, 158, "Mean accuracy", 5.8, (0.12, 0.12, 0.12)))
-        content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
-        content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))
-        for tick in [0.0, 0.5, 1.0]:
-            value = y_min + (y_max - y_min) * tick
-            y = y_for(value)
-            content.append(stroke_line_cmd(margin_l, y, margin_l + plot_w, y, (0.85, 0.85, 0.85), 0.2))
-            content.append(text_cmd(24, y - 2, f"{value:.2f}", 5.5, (0.18, 0.18, 0.18)))
-        for x_value in x_values:
-            x = x_for(x_value)
-            content.append(stroke_line_cmd(x, margin_b, x, margin_b - 3, (0, 0, 0), 0.25))
-            content.append(text_cmd(x - 4, 22, f"{x_value:g}", 5.8, (0.18, 0.18, 0.18)))
-        legend_x = 198
-        legend_y = 166
-        for index, y_group in enumerate(y_groups):
-            color = colors[index % len(colors)]
-            series = [row for row in condition_rows if row["parameter_y"] == y_group]
-            series.sort(key=lambda row: row["parameter_x"])
-            previous = None
-            for row in series:
-                point = (x_for(row["parameter_x"]), y_for(row["accuracy"]))
-                if previous:
-                    content.append(stroke_line_cmd(previous[0], previous[1], point[0], point[1], color, 0.9))
-                content.append(marker_cmd(point[0], point[1], color, 4.0))
-                previous = point
-            content.append(marker_cmd(legend_x, legend_y - index * 10, color, 4.0))
-            content.append(text_cmd(legend_x + 7, legend_y - 2 - index * 10, f"{axis_y_label} {y_group:g}", 6, (0.05, 0.05, 0.05)))
-        baseline = next((row for row in condition_rows if row["is_baseline"]), None)
-        if baseline:
-            bx, by = x_for(baseline["parameter_x"]), y_for(baseline["accuracy"])
-            content.append(marker_cmd(bx, by, (0.05, 0.05, 0.05), 7.0, True))
-            content.append(text_cmd(bx + 4, by + 7, "baseline", 5.8, (0.05, 0.05, 0.05)))
-        best = max(condition_rows, key=lambda row: row["accuracy"])
-        best_x, best_y = x_for(best["parameter_x"]), y_for(best["accuracy"])
-        content.append(text_cmd(max(margin_l, best_x - 24), min(height - 42, best_y + 10), f"best {best['accuracy']:.3f}", 5.8, (0.05, 0.05, 0.05)))
-        stream = "".join(content).encode("latin-1", "replace")
-        objects = [
-            b"<< /Type /Catalog /Pages 2 0 R >>",
-            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 306 190] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-            b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-            b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream",
-        ]
-        out = [b"%PDF-1.4\n"]
-        offsets = [0]
-        for i, obj in enumerate(objects, 1):
-            offsets.append(sum(len(part) for part in out))
-            out.append(f"{i} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
-        xref_start = sum(len(part) for part in out)
-        out.append(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
-        for offset in offsets[1:]:
-            out.append(f"{offset:010d} 00000 n \n".encode("ascii"))
-        out.append(
-            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF\n".encode("ascii")
-        )
-        return b"".join(out)
-    values = [float(row.get("value", 0) or 0) for row in bars]
-    max_value = max([abs(v) for v in values] + [1.0])
-    row_h = plot_h / max(len(bars), 1)
-    colors = [(0.196, 0.388, 0.733), (0.835, 0.369, 0.000), (0.235, 0.627, 0.310)]
+    margin_left, margin_right, margin_bottom = 108, 20, 36
+    plot_width = width - margin_left - margin_right
+    plot_height = 104
+    row_height = plot_height / len(bars)
 
-    content = []
-    content.append("1 1 1 rg 0 0 306 190 re f\n")
-    content.append(text_cmd(10, 174, "Task-level accuracy", 8.5))
-    content.append(text_cmd(margin_l + plot_w / 2 - 16, 8, "Accuracy", 6, (0.12, 0.12, 0.12)))
-    content.append(line_cmd(margin_l, margin_b, margin_l + plot_w, margin_b))
-    content.append(line_cmd(margin_l, margin_b, margin_l, margin_b + plot_h))
-    for tick in [0, 0.25, 0.5, 0.75, 1.0]:
-        x = margin_l + plot_w * tick
-        content.append("0.85 0.85 0.85 RG 0.2 w " + f"{x:.2f} {margin_b:.2f} m {x:.2f} {margin_b + plot_h:.2f} l S\n")
-        content.append(text_cmd(x - 5, 20, f"{tick * max_value:.2f}", 5.5, (0.18, 0.18, 0.18)))
+    def x_for(value):
+        return margin_left + ((value - lower) / span) * plot_width
+
+    zero_x = x_for(0.0)
+    content = ["1 1 1 rg 0 0 306 190 re f\n"]
+    content.append(text_cmd(10, 174, f"Declared comparison: {validated['comparison_id']}", 8.2))
+    content.append(text_cmd(10, 162, axis_label(validated), 6.2, (0.12, 0.12, 0.12)))
+    content.append(line_cmd(zero_x, margin_bottom, zero_x, margin_bottom + plot_height, (0.18, 0.18, 0.18), 0.7))
     for index, row in enumerate(bars):
-        label = str(row.get("label", ""))[:36]
-        value = float(row.get("value", 0) or 0)
-        y = margin_b + plot_h - (index + 0.7) * row_h
-        bar_h = max(7, row_h * 0.42)
-        bar_w = max(1, (abs(value) / max_value) * plot_w)
-        content.append(text_cmd(10, y + 1, label, 6.4, (0.05, 0.05, 0.05)))
-        content.append(rect_cmd(margin_l, y, bar_w, bar_h, colors[index % len(colors)]))
-        content.append(text_cmd(margin_l + bar_w + 3, y + 1, f"{value:.4f}", 6.2, (0.05, 0.05, 0.05)))
+        value = row["value"]
+        value_x = x_for(value)
+        bar_x = min(zero_x, value_x)
+        bar_width = max(abs(value_x - zero_x), 1.0)
+        y = margin_bottom + plot_height - (index + 0.7) * row_height
+        label = row["label"][:42]
+        content.append(text_cmd(8, y + 1, label, 6.1, (0.05, 0.05, 0.05)))
+        content.append(rect_cmd(bar_x, y, bar_width, 14, PDF_SIDE_COLORS[row["comparison_side"]]))
+        value_label_x = value_x + 3 if value >= 0 else value_x - 27
+        content.append(text_cmd(value_label_x, y + 2, f"{value:.4g}", 6.1, (0.05, 0.05, 0.05)))
     stream = "".join(content).encode("latin-1", "replace")
     objects = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
@@ -6390,23 +6641,27 @@ def render_figure(figure):
         b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
         b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream",
     ]
-    out = [b"%PDF-1.4\n"]
+    output = [b"%PDF-1.4\n"]
     offsets = [0]
-    for i, obj in enumerate(objects, 1):
-        offsets.append(sum(len(part) for part in out))
-        out.append(f"{i} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
-    xref = sum(len(part) for part in out)
-    out.append(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode("ascii"))
+    for index, obj in enumerate(objects, 1):
+        offsets.append(sum(len(part) for part in output))
+        output.append(f"{index} 0 obj\n".encode("ascii") + obj + b"\nendobj\n")
+    xref = sum(len(part) for part in output)
+    output.append(f"xref\n0 {len(objects) + 1}\n0000000000 65535 f \n".encode("ascii"))
     for offset in offsets[1:]:
-        out.append(f"{offset:010d} 00000 n \n".encode("ascii"))
-    out.append(f"trailer << /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
-    return b"".join(out)
+        output.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    output.append(f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode("ascii"))
+    return b"".join(output)
 
 payload = json.loads(Path("figure_payload.json").read_text(encoding="utf-8"))
-for figure in payload.get("figures", []):
+figures = payload.get("figures")
+if not isinstance(figures, list):
+    raise ValueError("figure_payload.figures must be an array")
+for figure in figures:
     rendered = render_with_matplotlib(figure)
     if rendered is None:
-        Path(figure["output_pdf"]).write_bytes(render_figure(figure))
+        output_path = required_string(figure, "output_pdf", "figure")
+        Path(output_path).write_bytes(render_native_pdf(figure))
 `;
 }
 
@@ -6423,7 +6678,7 @@ function buildConceptualDiagramPrompt(input: {
       "Asset type: two-column research paper conceptual diagram",
       `Primary request: Create a clean algorithm/protocol explanation figure for '${input.runTitle}'.`,
       `Scientific context: ${input.topic}`,
-      "Diagram content: show a governed research flow from fixed brief, locked baseline/comparator, configured condition grid, executed training/evaluation, result table, figure audit, review gate, and paper-readiness decision.",
+      "Diagram content: show a governed research flow from fixed brief, declared subject/reference comparison, configured experiment, executed evaluation, validated result artifact, figure audit, review gate, and paper-readiness decision.",
       "Style: publication-ready, minimal, high contrast, white background, no decorative scene, no fake numeric results.",
       "Text constraints: use short labels only; do not include claims, citations, author names, watermarks, or fabricated data.",
       "Output intent: candidate raster figure that must pass figure_audit before inclusion in the final paper."
@@ -6691,8 +6946,8 @@ function expectedBibliographyStyleForTemplate(parsedTemplate: ParsedLatexTemplat
     ...(parsedTemplate?.packages || [])
   ].join("\n");
   const aclTemplate = detectAclTemplatePackage(templateSurface);
-  if (aclTemplate?.bibliographyStyleOwner === "document") {
-    return ACL_BIBLIOGRAPHY_STYLE;
+  if (aclTemplate) {
+    return null;
   }
   const explicitStyle = parsedTemplate?.bibliographyStyle?.trim();
   if (explicitStyle) {
@@ -6710,7 +6965,7 @@ function currentAclTemplateOwnsBibliographyStyle(
     parsedTemplate?.preamble || "",
     ...(parsedTemplate?.packages || [])
   ].join("\n");
-  return detectAclTemplatePackage(templateSurface)?.bibliographyStyleOwner === "package";
+  return detectAclTemplatePackage(templateSurface) !== null;
 }
 
 function detectRepeatedCitationBundles(tex: string): Array<{ bundle: string; count: number; section: string }> {
@@ -6867,7 +7122,7 @@ function extractRawPaperTextLeak(tex: string): string | undefined {
   const patterns = [
     /raw result [^\\\n.]{0,80}/iu,
     /Objective metric:\s*-/iu,
-    /accuracy\\?_delta\\?_vs\\?_baseline/iu,
+    /\b[a-z][a-z0-9]*(?:\\?_[a-z][a-z0-9]*){2,}\b/iu,
     /study summary run/iu,
     /\bP6\b/u,
     /We study Study how/iu

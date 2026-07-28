@@ -7,7 +7,10 @@ import { ensureScaffold, resolveAppPaths } from "../src/config.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
 import { buildPublicExperimentDir } from "../src/core/publicArtifacts.js";
 import { RunStore } from "../src/core/runs/runStore.js";
-import { resolveRunCommand } from "../src/core/nodes/runCommandResolver.js";
+import {
+  resolveRunCommand,
+  resolveRunCommandGpuRequestMetadata
+} from "../src/core/nodes/runCommandResolver.js";
 
 const ORIGINAL_CWD = process.cwd();
 const tempDirs: string[] = [];
@@ -306,5 +309,19 @@ describe("resolveRunCommand", () => {
     expect(resolved.command).toContain("--metrics-path");
     expect(resolved.command).not.toContain(conditionRunner);
     expect(resolved.source).toBe("run_context.run_command.full_study_alternative");
+  });
+
+  it("resolves command-local GPU requests and visible-device limits for supplemental runs", () => {
+    expect(resolveRunCommandGpuRequestMetadata(
+      "CUDA_VISIBLE_DEVICES=0,1 python3 configured_runner.py --num-gpus 2"
+    )).toMatchObject({
+      requestedGpuCount: 2,
+      environmentGpuLimit: 2
+    });
+    expect(resolveRunCommandGpuRequestMetadata(
+      "python3 configured_runner.py --num-gpus 1 --nproc-per-node 2"
+    ).gpuRequestIssue).toContain(
+      "conflicting GPU count declarations"
+    );
   });
 });

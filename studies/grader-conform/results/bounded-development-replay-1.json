@@ -1,0 +1,714 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_bounded_probe_receipt",
+  "registry_sha256": "6c71670be7ea6758fe2bc612f41792d1e857c7ccc2880284a1761ce10711c9e4",
+  "adjudication_sha256": "b53330e63febbb2f9968e102ef915184b926e3256c612fd6f8adc524371fe7e6",
+  "manifest_sha256": "28716569d8afff554a3c60d6d504ac088fa06eea978c5fd69080d4e919357d1b",
+  "runner_sha256": "5fdb104078a36477934df1198cca1aa82ddc790225d0e1f0688f7f7ead75f5f5",
+  "probe_count": 14,
+  "source_count": 3,
+  "detected_count": 14,
+  "fixed_revision_false_alarm_count": 0,
+  "behavioral_outcomes_included": true,
+  "development_after_initial_outcomes": true,
+  "outcome_signature_sha256": "08f9badf0429e1852f143fb82cd622f7acfd5f2356222eebba53ea605049a0f1",
+  "execution_environment": {
+    "node_version": "v24.14.1",
+    "python_version": "Python 3.13.5",
+    "platform": "linux",
+    "architecture": "x64"
+  },
+  "paper_scale_claim_authorized": false,
+  "results": [
+    {
+      "lineage_id": "lineage_001",
+      "source_id": "source_a",
+      "relation_family": "live_replay_equivalence",
+      "transformation_target": "execution trace",
+      "contract_source": "The public environment contract treats an unknown tool call as an error response with no state mutation; replay must preserve the same terminal state.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_replay_noop_relation.py",
+      "adapter_sha256": "63721276dce347d5330f14609cd6b9d48e7a1f2c80344416c4201ad0b0f27098",
+      "parent_commit": "387c7753941362628710aeb74cf0bbc04e3a239a",
+      "fix_commit": "2be691669909439cf88dedc13decf94b7664d262",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "clean_terminal_value": 1,
+            "transformed_error": "ValueError: Unknown tool 'missing_tool' encountered during replay. The tool does not exist in the current environment.",
+            "transformed_terminal_value": null
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1523.839015,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "clean_terminal_value": 1,
+            "transformed_error": null,
+            "transformed_terminal_value": 1
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1535.059287,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_007",
+      "source_id": "source_b",
+      "relation_family": "cardinality_consistency",
+      "transformation_target": "graded response",
+      "contract_source": "Every result marked exact_match must be compared by value regardless of the number of calls in the graded response.",
+      "adapter_path": "studies/grader-conform/probes/python/bfcl_cardinality_relation.py",
+      "adapter_sha256": "32485dc715310e0b5fba205373ecc6cad8ad3ac5e31324eb4ae96b7d4d7d6a1c",
+      "parent_commit": "4da861eadf156928cd7177be5725870a9161411b",
+      "fix_commit": "3362de286ad186749d68f4c4f78a8603e1996231",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "checker_exit_code": 0,
+            "invalid_response_success_rate": 1,
+            "output_tail": "Testing type: executable_probe, Model: offline-probe, success rate: 1.0\n\n\n  0%|          | 0/1 [00:00<?, ?it/s]\n100%|██████████| 1/1 [00:00<00:00, 864.63it/s]\n"
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 98.575709,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "checker_exit_code": 0,
+            "invalid_response_success_rate": 0,
+            "output_tail": "Testing type: executable_probe, Model: offline-probe, success rate: 0.0\n\n\n  0%|          | 0/1 [00:00<?, ?it/s]\n100%|██████████| 1/1 [00:00<00:00, 833.69it/s]\n"
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 97.437023,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_014",
+      "source_id": "source_c",
+      "relation_family": "irrelevant_state_invariance",
+      "transformation_target": "graded artifact",
+      "contract_source": "Spreadsheet freeze semantics are defined by the frozen row and column split; scrolling changes the visible top-left cell but not the freeze operation.",
+      "adapter_path": "studies/grader-conform/probes/python/osworld_freeze_relation.py",
+      "adapter_sha256": "e6437450878dc47e03833ed31bf93a0eedfa53dd0aeb908ae9672789275f3283",
+      "parent_commit": "c4e58b3df5ac2527a24c891d2dd33bfe74f74a0c",
+      "fix_commit": "e74232a5a8dca90c96a823255cbda1900c8fa66b",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "expected_top_left_cell": "B2",
+            "frozen_split": {
+              "x": 1,
+              "y": 1
+            },
+            "metric_score": 0,
+            "transformed_top_left_cell": "F9"
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 268.347145,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "expected_top_left_cell": "B2",
+            "frozen_split": {
+              "x": 1,
+              "y": 1
+            },
+            "metric_score": 1,
+            "transformed_top_left_cell": "F9"
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 212.322719,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_002",
+      "source_id": "source_a",
+      "relation_family": "entrypoint_equivalence",
+      "transformation_target": "evaluator invocation context",
+      "contract_source": "A task's declared reward basis defines the components that the comprehensive evaluator must score; selecting the default comprehensive entry point must not omit a declared component.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_reward_basis_entrypoint_relation.py",
+      "adapter_sha256": "39ad12502ed115a32e9ad1c0e4d46e48f66e7c6d8edefb30b6878eb12ceb688a",
+      "parent_commit": "8d4f52741b980e0ed167b387af305ba62f974bf6",
+      "fix_commit": "a11d95e19a049638dd3fd7c5b941a509422452dc",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "all_error": "ValueError: NL assertions are part of the reward basis, but they are not being evaluated.",
+            "all_reward": null,
+            "explicit_error": null,
+            "explicit_reward": 0.5,
+            "nl_evaluator_calls": 1
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1506.911479,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "all_error": null,
+            "all_reward": 0.5,
+            "explicit_error": null,
+            "explicit_reward": 0.5,
+            "nl_evaluator_calls": 2
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1496.352706,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_003",
+      "source_id": "source_a",
+      "relation_family": "benign_action_invariance",
+      "transformation_target": "graded state",
+      "contract_source": "A tool declared read-only may return information but must not change the database state used for environment grading.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_readonly_state_relation.py",
+      "adapter_sha256": "b9a125fa1467b2e59ab42492f690094a86d3645fe8a063c5c23bccbe2b3d8de7",
+      "parent_commit": "0ed8c0ef0a1f6b024a0fb733e186922411874879",
+      "fix_commit": "7356b7d0e55d175bb3738e4de95d4615c4a71b86",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "account_id": "01",
+            "after_hash": "0222bde48eff943051008be97a588816bd7104e508796598124d39f81751a7a5",
+            "before_hash": "ced82503aee0a382d00d8b3ebb0dcfdef6fa0d54ccca3afc9189d48b6315ec7e",
+            "call_error": null,
+            "record_count": 1
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1469.299597,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "account_id": "01",
+            "after_hash": "ced82503aee0a382d00d8b3ebb0dcfdef6fa0d54ccca3afc9189d48b6315ec7e",
+            "before_hash": "ced82503aee0a382d00d8b3ebb0dcfdef6fa0d54ccca3afc9189d48b6315ec7e",
+            "call_error": null,
+            "record_count": 0
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1505.755145,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_004",
+      "source_id": "source_a",
+      "relation_family": "representation_invariance",
+      "transformation_target": "graded tool-call trace",
+      "contract_source": "JSON integer and whole-valued floating-point spellings denote the same documented numeric amount and therefore must produce the same deterministic graded state.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_numeric_representation_relation.py",
+      "adapter_sha256": "9b864d555c8cf6012bebf537ce8cc1a87d0dbb1c63b261e05231502182b2e4c0",
+      "parent_commit": "b51a6d69e26f0e94a9173e2e80fe8735a8dff650",
+      "fix_commit": "40ac84c9a8010a2ab6c412b0b0f19199ba07552c",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "account_id": "02",
+            "floating_error": null,
+            "floating_hash": "0668a6bf7eae04d37782a1293a5156b7ed5d019675d86d3493a85ff025995598",
+            "integer_error": null,
+            "integer_hash": "4819c40747848c76895afa98ba74908916c9e57c138eac3d0618c8e73646ea18"
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1484.494111,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "account_id": "02",
+            "floating_error": null,
+            "floating_hash": "0668a6bf7eae04d37782a1293a5156b7ed5d019675d86d3493a85ff025995598",
+            "integer_error": null,
+            "integer_hash": "0668a6bf7eae04d37782a1293a5156b7ed5d019675d86d3493a85ff025995598"
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1503.641073,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_005",
+      "source_id": "source_a",
+      "relation_family": "entrypoint_equivalence",
+      "transformation_target": "stored trajectory invocation context",
+      "contract_source": "A stored full-duplex simulation is represented by ticks and a full-duplex mode marker; offline rescoring must evaluate that representation under the same communication mode as live grading.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_duplex_rescore_relation.py",
+      "adapter_sha256": "d7e5eaa18384d3c4cb09faa042297aafc15c860f8b8e23c4aadca5c173cb0e04",
+      "parent_commit": "a1999a311b5b661642c72614744f9222bfcd0187",
+      "fix_commit": "bbccfc0c4e03b860becd8abdc1c3b2a78fef76fc",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "db_match": null,
+            "rescore_error": "TypeError",
+            "reward": null
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1475.514862,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "db_match": true,
+            "rescore_error": null,
+            "reward": 1
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1492.636814,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_006",
+      "source_id": "source_a",
+      "relation_family": "live_replay_equivalence",
+      "transformation_target": "execution trace",
+      "contract_source": "Offline rescoring of a historical trajectory must preserve its tool-induced terminal state when only the recorded tool-result rendering has drifted.",
+      "adapter_path": "studies/grader-conform/probes/python/tau_historical_replay_relation.py",
+      "adapter_sha256": "e2a1e9cec49a15dbba416a83d3f37d04c6d86b36f39eb79ae20552dc6705b3ad",
+      "parent_commit": "a1e85084a3960281cb06997594133e8f39ea42a7",
+      "fix_commit": "922c1f6fee94daf6ceab3b960ab5ed33db241049",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "db_match": null,
+            "rescore_error": "ValueError",
+            "reward": null
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1511.769237,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "db_match": true,
+            "rescore_error": null,
+            "reward": 1
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 1483.78899,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_008",
+      "source_id": "source_b",
+      "relation_family": "representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "A JSON Schema number admits both integer and fractional JSON number encodings, so replacing a whole-valued float with its numerically equal integer spelling must not change the verdict for an already produced float argument.",
+      "adapter_path": "studies/grader-conform/probes/python/bfcl_numeric_representation_relation.py",
+      "adapter_sha256": "e76025f3cc992b34f70232ee87a3a2a9927a5e82cb9dcb6af07a1e54ca0ede53",
+      "parent_commit": "33cabefc21eae4927f5cee83be12183ebd4ba10d",
+      "fix_commit": "4cf2e8d3004376033fb9721a59b6518ab56b55c1",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "canonical_accepted": true,
+            "canonical_error_type": "simple_function_checker:unclear",
+            "equivalent_integer_spelling_accepted": false,
+            "equivalent_integer_spelling_error_type": "type_error:simple"
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 60.464316,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "canonical_accepted": true,
+            "canonical_error_type": "simple_function_checker:unclear",
+            "equivalent_integer_spelling_accepted": true,
+            "equivalent_integer_spelling_error_type": "simple_function_checker:unclear"
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 56.36263,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_009",
+      "source_id": "source_b",
+      "relation_family": "invalid_input_rejection",
+      "transformation_target": "graded response",
+      "contract_source": "A function-calling evaluator must preserve a model-produced argument type until validation; it must not turn a numeric argument into a contract-valid string and thereby create a false accept.",
+      "adapter_path": "studies/grader-conform/probes/python/bfcl_invalid_type_rejection_relation.py",
+      "adapter_sha256": "7b2bd2d9d3cccfeac6529df75f490b1b17822818681a28a17751aa5ddb75b75e",
+      "parent_commit": "951c72827ac9f7b3a4716a3339ea5eb439fef51e",
+      "fix_commit": "9196826ea72d57fda2c3a766eec787520b471303",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "languages": {
+              "Java": {
+                "canonical_decoded_type": "str",
+                "invalid_decoded_type": "str",
+                "invalid_remains_distinguishable": false
+              },
+              "JavaScript": {
+                "canonical_decoded_type": "str",
+                "invalid_decoded_type": "str",
+                "invalid_remains_distinguishable": false
+              }
+            }
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 340.785804,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "languages": {
+              "Java": {
+                "canonical_decoded_type": "str",
+                "invalid_decoded_type": "int",
+                "invalid_remains_distinguishable": true
+              },
+              "JavaScript": {
+                "canonical_decoded_type": "str",
+                "invalid_decoded_type": "int",
+                "invalid_remains_distinguishable": true
+              }
+            }
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 349.146166,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_012",
+      "source_id": "source_b",
+      "relation_family": "parser_representation_invariance",
+      "transformation_target": "graded response",
+      "contract_source": "Single- and double-quoted JavaScript string literals denote the same string value, so parsing either valid surface form into a function call must yield the same semantic parameter.",
+      "adapter_path": "studies/grader-conform/probes/python/bfcl_parser_string_quote_relation.py",
+      "adapter_sha256": "26cfb6f2aae688fc5570b3f1ed047acf54670dcc313de3ae440f74e1217709f1",
+      "parent_commit": "84ab3b6de0d03da567e76ff392207cff53805faa",
+      "fix_commit": "c1b67eed241c419f5a9929993dcb4a117b6029b5",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "double_quoted_result": {
+              "function": {
+                "name": "set_status",
+                "parameters": {
+                  "status": "\"ready\""
+                }
+              }
+            },
+            "equivalent_surface_forms": false,
+            "implementation_stdout": "",
+            "single_quoted_result": {
+              "function": {
+                "name": "set_status",
+                "parameters": {
+                  "status": "'ready'"
+                }
+              }
+            }
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 22.462567,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "double_quoted_result": {
+              "function": {
+                "name": "set_status",
+                "parameters": {
+                  "status": "ready"
+                }
+              }
+            },
+            "equivalent_surface_forms": true,
+            "implementation_stdout": "",
+            "single_quoted_result": {
+              "function": {
+                "name": "set_status",
+                "parameters": {
+                  "status": "ready"
+                }
+              }
+            }
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 24.941627,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_013",
+      "source_id": "source_c",
+      "relation_family": "environment_context_invariance",
+      "transformation_target": "evaluator invocation context",
+      "contract_source": "Relative time in an evaluated desktop environment is anchored to that environment's local clock unless the task explicitly supplies another timezone.",
+      "adapter_path": "studies/grader-conform/probes/python/osworld_vm_time_relation.py",
+      "adapter_sha256": "94b77fa386689d1067b8efa2cb0389a578d3846b765b880ba1c2852e4403a9d8",
+      "parent_commit": "830202192922d916711dd07a5d235bab5d1be5e1",
+      "fix_commit": "d15fcb74270f19e679890fb7d067f2aa599085db",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "expected_relative_dates": [
+              "2030-03-11",
+              "2030-04-21"
+            ],
+            "host_date": "2024-01-15",
+            "observed_relative_dates": [
+              "2024-01-16",
+              "2024-01-16"
+            ],
+            "vm_datetimes": [
+              "2030-03-10T23:30:00+09:00",
+              "2030-04-20T08:00:00-04:00"
+            ]
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 62.355928,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "expected_relative_dates": [
+              "2030-03-11",
+              "2030-04-21"
+            ],
+            "host_date": "2024-01-15",
+            "observed_relative_dates": [
+              "2030-03-11",
+              "2030-04-21"
+            ],
+            "vm_datetimes": [
+              "2030-03-10T23:30:00+09:00",
+              "2030-04-20T08:00:00-04:00"
+            ]
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 62.041028,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_015",
+      "source_id": "source_c",
+      "relation_family": "sequential_state_isolation",
+      "transformation_target": "evaluator invocation context",
+      "contract_source": "Two task suites evaluated sequentially in one worker must resolve imports from their own task directories and receive the same verdicts as isolated execution.",
+      "adapter_path": "studies/grader-conform/probes/python/osworld_sequential_import_relation.py",
+      "adapter_sha256": "d0dde1260a5a1f5f8dd47567e82f0ca79aba942e118e2fc06f278b27f7657ffb",
+      "parent_commit": "e8ba8fde29889ae7e4377f6f325d736818434a04",
+      "fix_commit": "c7e54d24d136d52be0c6d5a7487a1a32f99e7017",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "sequential_scores": [
+              1,
+              0
+            ],
+            "shared_module_cached_after_first": true,
+            "shared_module_cached_after_second": true
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 27.966085,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "sequential_scores": [
+              1,
+              1
+            ],
+            "shared_module_cached_after_first": false,
+            "shared_module_cached_after_second": false
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 26.175175,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    },
+    {
+      "lineage_id": "lineage_016",
+      "source_id": "source_c",
+      "relation_family": "equivalent_state_recovery",
+      "transformation_target": "terminal state",
+      "contract_source": "An absent optional helper artifact must not force failure when the same open-workspace state is available through the environment's persistent workspace metadata.",
+      "adapter_path": "studies/grader-conform/probes/python/osworld_workspace_recovery_relation.py",
+      "adapter_sha256": "73fe6aaafd662917724455cb9e23207eb1d8a557d858ae16cdf6ad63fc1f0d82",
+      "parent_commit": "dcfcbc517d5b4c3524f61731c033094fde7cd6df",
+      "fix_commit": "f2947efd41a4f60b45f56cd5a2dac3c51443dfed",
+      "parent_worktree": "reused",
+      "fixed_worktree": "reused",
+      "parent": {
+        "receipt": {
+          "observations": {
+            "file_fetch_count": 1,
+            "primary_helper_missing": true,
+            "recovered_equivalent_state": false,
+            "window_activation_count": 0,
+            "workspace_content_matches": false,
+            "workspace_scan_count": 0
+          },
+          "relation_holds": false,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 23.145364,
+        "stderr_tail": ""
+      },
+      "fixed": {
+        "receipt": {
+          "observations": {
+            "file_fetch_count": 1,
+            "primary_helper_missing": true,
+            "recovered_equivalent_state": true,
+            "window_activation_count": 1,
+            "workspace_content_matches": true,
+            "workspace_scan_count": 1
+          },
+          "relation_holds": true,
+          "schema_version": "1.0"
+        },
+        "runtime_ms": 26.950403,
+        "stderr_tail": ""
+      },
+      "historical_fault_detected": true,
+      "fixed_revision_false_alarm": false,
+      "native_parent_test_status": "not_run"
+    }
+  ]
+}

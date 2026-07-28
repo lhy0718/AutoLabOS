@@ -39,19 +39,10 @@ import { ensureDir, fileExists, writeJsonFile } from "./utils/fs.js";
 import { askChoice, askLine, askRequiredLine, PromptReader } from "./utils/prompt.js";
 import {
   DEFAULT_OLLAMA_BASE_URL,
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL,
-  OLLAMA_CHAT_MODEL_OPTIONS,
-  OLLAMA_RESEARCH_MODEL_OPTIONS,
-  OLLAMA_EXPERIMENT_MODEL_OPTIONS,
-  OLLAMA_VISION_MODEL_OPTIONS,
-  buildOllamaChatModelChoices,
-  buildOllamaResearchModelChoices,
-  buildOllamaExperimentModelChoices,
-  buildOllamaVisionModelChoices
+  getMissingOllamaModelRoles,
+  type OllamaRoleModels
 } from "./integrations/ollama/modelCatalog.js";
+import { OllamaClient } from "./integrations/ollama/ollamaClient.js";
 import {
   GENERAL_CHAT_MODEL_PROMPT,
   GENERAL_CHAT_REASONING_PROMPT,
@@ -65,9 +56,59 @@ export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
 export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.5" as const;
 export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "medium" as const;
 export const DEFAULT_BACKEND_REASONING_EFFORT = "medium" as const;
-export const DEFAULT_RESEARCH_TOPIC = "Multi-agent collaboration" as const;
-export const DEFAULT_RESEARCH_CONSTRAINTS = ["recent papers", "last 5 years"] as const;
-export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "state-of-the-art reproducibility" as const;
+export const DEFAULT_RESEARCH_TOPIC = "" as const;
+export const DEFAULT_RESEARCH_CONSTRAINTS: readonly string[] = [];
+export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "" as const;
+
+export interface ResearchRunInputs {
+  topic?: string;
+  constraints?: readonly string[];
+  objectiveMetric?: string;
+}
+
+export interface NormalizedResearchRunInputs {
+  topic: string;
+  constraints: string[];
+  objectiveMetric: string;
+}
+
+export class ResearchRunInputError extends Error {
+  readonly code = "research_run_input_required";
+
+  constructor(readonly missingFields: Array<"topic" | "constraints" | "objectiveMetric">) {
+    super(
+      "Research run input is incomplete: " + missingFields.join(", ") + ". "
+      + "Provide explicit values or a guided/topic-discovery brief that supplies them."
+    );
+    this.name = "ResearchRunInputError";
+  }
+}
+
+export function normalizeResearchRunInputs(input: ResearchRunInputs): NormalizedResearchRunInputs {
+  const normalized = {
+    topic: input.topic?.trim() || "",
+    constraints: (input.constraints || []).map((item) => item.trim()).filter(Boolean),
+    objectiveMetric: input.objectiveMetric?.trim() || ""
+  };
+  const missingFields: ResearchRunInputError["missingFields"] = [];
+  if (!normalized.topic) missingFields.push("topic");
+  if (normalized.constraints.length === 0) missingFields.push("constraints");
+  if (!normalized.objectiveMetric) missingFields.push("objectiveMetric");
+  if (missingFields.length > 0) {
+    throw new ResearchRunInputError(missingFields);
+  }
+  return normalized;
+}
+
+export function assertCompleteOllamaModelConfiguration(models: OllamaRoleModels): void {
+  const missingRoles = getMissingOllamaModelRoles(models);
+  if (missingRoles.length > 0) {
+    throw new Error(
+      "Ollama model configuration is incomplete: " + missingRoles.join(", ") + ". "
+      + "Select installed models or enter model identifiers for every role."
+    );
+  }
+}
 
 export function isCodexLlmMode(value: unknown): value is "codex" | "codex_chatgpt_only" {
   return value === "codex" || value === "codex_chatgpt_only";
@@ -130,6 +171,7 @@ export interface NonInteractiveSetupInput {
 export interface SetupWizardOptions {
   codexClient?: Pick<CodexNativeClient, "checkCliAvailable" | "checkLoginStatus">;
   outputWriter?: Pick<typeof output, "write">;
+  discoverOllamaModels?: (baseUrl: string) => Promise<string[]>;
 }
 
 export function resolveAppPaths(cwd = process.cwd()): AppPaths {
@@ -176,7 +218,7 @@ function stripPersistedConfig(config: AppConfig): PersistedAppConfig {
   } as PersistedAppConfig & {
     analysis?: unknown;
     runtime?: unknown;
-    research?: unknown;
+    research?: AppConfig["research"];
     providers: {
       codex: AppConfig["providers"]["codex"] & { pdf_model?: unknown; pdf_fast_mode?: unknown };
       openai: AppConfig["providers"]["openai"] & { pdf_model?: unknown };
@@ -185,7 +227,20 @@ function stripPersistedConfig(config: AppConfig): PersistedAppConfig {
 
   delete sanitized.analysis;
   delete sanitized.runtime;
-  delete sanitized.research;
+  const research = sanitized.research;
+  if (
+    !research?.default_topic?.trim()
+    && !(research?.default_constraints || []).some((item) => item.trim())
+    && !research?.default_objective_metric?.trim()
+  ) {
+    delete sanitized.research;
+  } else if (research) {
+    sanitized.research = {
+      default_topic: research.default_topic?.trim() || "",
+      default_constraints: (research.default_constraints || []).map((item) => item.trim()).filter(Boolean),
+      default_objective_metric: research.default_objective_metric?.trim() || ""
+    };
+  }
   if (sanitized.paper) {
     const { template: _template, ...remainingPaper } = sanitized.paper;
     sanitized.paper = remainingPaper;
@@ -222,6 +277,14 @@ function buildConfigFromWizardAnswers(answers: {
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
 }): AppConfig {
+  if (answers.llmMode === "ollama") {
+    assertCompleteOllamaModelConfiguration({
+      chat: answers.ollamaChatModel,
+      research: answers.ollamaResearchModel,
+      experiment: answers.ollamaExperimentModel,
+      vision: answers.ollamaVisionModel
+    });
+  }
   const codexChatSelection = resolveCodexModelSelection(answers.codexChatModelChoice);
   const codexResearchBackendSelection = resolveCodexModelSelection(answers.codexResearchBackendModelChoice);
   const codexExperimentSelection = resolveCodexModelSelection(answers.codexExperimentModelChoice);
@@ -256,11 +319,11 @@ function buildConfigFromWizardAnswers(answers: {
       ...(answers.llmMode === "ollama"
         ? {
             ollama: {
-              base_url: answers.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL,
-              chat_model: answers.ollamaChatModel || DEFAULT_OLLAMA_CHAT_MODEL,
-              research_model: answers.ollamaResearchModel || DEFAULT_OLLAMA_RESEARCH_MODEL,
-              experiment_model: answers.ollamaExperimentModel || DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-              vision_model: answers.ollamaVisionModel || DEFAULT_OLLAMA_VISION_MODEL
+              base_url: answers.ollamaBaseUrl?.trim() || DEFAULT_OLLAMA_BASE_URL,
+              chat_model: answers.ollamaChatModel?.trim() || "",
+              research_model: answers.ollamaResearchModel?.trim() || "",
+              experiment_model: answers.ollamaExperimentModel?.trim() || "",
+              vision_model: answers.ollamaVisionModel?.trim() || ""
             }
           }
         : {})
@@ -324,10 +387,11 @@ export async function runSetupWizard(
   let ollamaVisionModel: string | undefined;
   if (llmMode === "ollama") {
     ollamaBaseUrl = await askOllamaBaseUrl(promptReader);
-    ollamaChatModel = await askOllamaModel("Chat model", OLLAMA_CHAT_MODEL_OPTIONS, DEFAULT_OLLAMA_CHAT_MODEL, promptReader);
-    ollamaResearchModel = await askOllamaModel(RESEARCH_BACKEND_MODEL_PROMPT, OLLAMA_RESEARCH_MODEL_OPTIONS, DEFAULT_OLLAMA_RESEARCH_MODEL, promptReader);
-    ollamaExperimentModel = await askOllamaModel("Experiment/code model", OLLAMA_EXPERIMENT_MODEL_OPTIONS, DEFAULT_OLLAMA_EXPERIMENT_MODEL, promptReader);
-    ollamaVisionModel = await askOllamaModel("Vision/PDF model", OLLAMA_VISION_MODEL_OPTIONS, DEFAULT_OLLAMA_VISION_MODEL, promptReader);
+    const installedModels = await discoverOllamaModelNames(ollamaBaseUrl, opts);
+    ollamaChatModel = await askOllamaModel("Chat model", installedModels, promptReader);
+    ollamaResearchModel = await askOllamaModel(RESEARCH_BACKEND_MODEL_PROMPT, installedModels, promptReader);
+    ollamaExperimentModel = await askOllamaModel("Experiment/code model", installedModels, promptReader);
+    ollamaVisionModel = await askOllamaModel("Vision/PDF model", installedModels, promptReader);
   }
 
   const defaultCodexChatSetupModel = DEFAULT_CODEX_CHAT_SETUP_MODEL;
@@ -452,15 +516,15 @@ export async function runNonInteractiveSetup(
   input: NonInteractiveSetupInput
 ): Promise<AppConfig> {
   const llmMode = input.llmMode || DEFAULT_PRIMARY_LLM_MODE;
-  const defaultConstraints = (input.defaultConstraints || ["recent papers", "last 5 years"])
+  const defaultConstraints = (input.defaultConstraints || [])
     .map((item) => item.trim())
     .filter(Boolean);
 
   const config = buildConfigFromWizardAnswers({
     projectName: (input.projectName || path.basename(paths.cwd)).trim() || path.basename(paths.cwd),
-    defaultTopic: (input.defaultTopic || "Multi-agent collaboration").trim(),
+    defaultTopic: input.defaultTopic?.trim() || "",
     defaultConstraints,
-    defaultObjectiveMetric: (input.defaultObjectiveMetric || "state-of-the-art reproducibility").trim(),
+    defaultObjectiveMetric: input.defaultObjectiveMetric?.trim() || "",
     llmMode,
     codexChatModelChoice: input.codexChatModelChoice || DEFAULT_CODEX_CHAT_SETUP_MODEL,
     codexChatReasoningEffort: input.codexChatReasoningEffort || DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT,
@@ -579,19 +643,19 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   if (config.providers.llm_mode === "ollama" && !config.providers.ollama) {
     config.providers.ollama = {
       base_url: DEFAULT_OLLAMA_BASE_URL,
-      chat_model: DEFAULT_OLLAMA_CHAT_MODEL,
-      research_model: DEFAULT_OLLAMA_RESEARCH_MODEL,
-      experiment_model: DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-      vision_model: DEFAULT_OLLAMA_VISION_MODEL
+      chat_model: "",
+      research_model: "",
+      experiment_model: "",
+      vision_model: ""
     };
   }
   if (config.providers.ollama) {
     const ollama = config.providers.ollama;
     ollama.base_url = ollama.base_url?.trim() || DEFAULT_OLLAMA_BASE_URL;
-    ollama.chat_model = ollama.chat_model?.trim() || DEFAULT_OLLAMA_CHAT_MODEL;
-    ollama.research_model = ollama.research_model?.trim() || DEFAULT_OLLAMA_RESEARCH_MODEL;
+    ollama.chat_model = ollama.chat_model?.trim() || "";
+    ollama.research_model = ollama.research_model?.trim() || "";
     ollama.experiment_model = ollama.experiment_model?.trim() || ollama.research_model;
-    ollama.vision_model = ollama.vision_model?.trim() || DEFAULT_OLLAMA_VISION_MODEL;
+    ollama.vision_model = ollama.vision_model?.trim() || "";
   }
   if (!config.workflow) {
     config.workflow = {
@@ -722,15 +786,13 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
     per_second_limit: Math.max(1, papers.per_second_limit || 1)
   };
   config.research = {
-    default_topic: research.default_topic?.trim() || DEFAULT_RESEARCH_TOPIC,
-    default_constraints:
-      Array.isArray(research.default_constraints) && research.default_constraints.length > 0
-        ? research.default_constraints
-            .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-            .map((item) => item.trim())
-        : [...DEFAULT_RESEARCH_CONSTRAINTS],
-    default_objective_metric:
-      research.default_objective_metric?.trim() || DEFAULT_RESEARCH_OBJECTIVE_METRIC
+    default_topic: research.default_topic?.trim() || "",
+    default_constraints: Array.isArray(research.default_constraints)
+      ? research.default_constraints
+          .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+          .map((item) => item.trim())
+      : [],
+    default_objective_metric: research.default_objective_metric?.trim() || ""
   };
   config.workflow = {
     mode: "agent_approval",
@@ -1010,25 +1072,53 @@ async function askOllamaBaseUrl(
   return answer || DEFAULT_OLLAMA_BASE_URL;
 }
 
+async function discoverOllamaModelNames(
+  baseUrl: string,
+  opts: SetupWizardOptions
+): Promise<string[]> {
+  const writer = opts.outputWriter || output;
+  try {
+    const discover = opts.discoverOllamaModels
+      || (async (url: string) => (await new OllamaClient(url).listModels()).map((model) => model.name));
+    const models = Array.from(
+      new Set((await discover(baseUrl)).map((model) => model.trim()).filter(Boolean))
+    ).sort((left, right) => left.localeCompare(right));
+    if (models.length === 0) {
+      writer.write(
+        "No installed Ollama models were discovered. Enter an installed model identifier for each role.\n"
+      );
+    }
+    return models;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    writer.write(
+      "Could not reach Ollama at " + baseUrl + ": " + detail
+      + ". Enter an installed model identifier for each role.\n"
+    );
+    return [];
+  }
+}
+
 async function askOllamaModel(
   label: string,
-  options: Array<{ value: string; label: string; description: string }>,
-  defaultValue: string,
+  installedModels: string[],
   promptReader: PromptReader = askLine
 ): Promise<string> {
-  if (promptReader === askLine) {
+  if (promptReader === askLine && installedModels.length > 0) {
     return askChoice(
       label,
-      options.map((o) => ({ label: o.label, value: o.value, description: o.description })),
-      defaultValue
+      installedModels.map((model) => ({
+        label: model,
+        value: model,
+        description: "(installed)"
+      }))
     );
   }
 
-  const optionValues = options.map((o) => o.value);
-  const answer = (await promptReader(`${label} (${defaultValue})`, defaultValue)).trim();
-  if (!answer) return defaultValue;
-  // Accept exact match or custom model name
-  return optionValues.includes(answer) ? answer : answer;
+  const availability = installedModels.length > 0
+    ? " (installed: " + installedModels.join(", ") + ")"
+    : " (required; enter an installed model identifier)";
+  return askRequiredLine(label + availability, promptReader);
 }
 
 async function askOpenAiResponsesModel(

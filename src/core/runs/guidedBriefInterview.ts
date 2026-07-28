@@ -10,12 +10,17 @@ export type GuidedBriefInterviewLanguage =
   | "pt"
   | "ru";
 
+export type GuidedBriefResearchMode = "hypothesis_test" | "topic_discovery";
+
 export interface GuidedBriefInterviewCopy {
   selectionTitle: string;
   introLines: string[];
   requiredAnswerMessage: string;
   questions: {
     topic: string;
+    scientificObject?: string;
+    empiricalProblems?: string;
+    priorWorkProbes?: string;
     primaryMetric: string;
     meaningfulImprovement: string;
     constraints: string;
@@ -43,6 +48,17 @@ export interface GuidedBriefInterviewLanguageOption {
   value: GuidedBriefInterviewLanguage;
   label: string;
   description: string;
+}
+
+export interface GuidedBriefResearchModeOption {
+  value: GuidedBriefResearchMode;
+  label: string;
+  description: string;
+}
+
+export interface GuidedBriefResearchModePrompt {
+  title: string;
+  options: GuidedBriefResearchModeOption[];
 }
 
 const ENGLISH_COPY: GuidedBriefInterviewCopy = {
@@ -373,13 +389,96 @@ const LANGUAGE_OPTIONS: GuidedBriefInterviewLanguageOption[] = [
   { value: "ru", label: "Русский", description: "Задает вопросы на русском языке." }
 ];
 
+const ENGLISH_RESEARCH_MODE_PROMPT: GuidedBriefResearchModePrompt = {
+  title: "Select research mode",
+  options: [
+    {
+      value: "hypothesis_test",
+      label: "Hypothesis test",
+      description: "Test a declared topic, metric, comparator, and falsifiable hypothesis."
+    },
+    {
+      value: "topic_discovery",
+      label: "Topic discovery",
+      description: "Define a broad scope and selection rules without pre-committing the final topic or metric."
+    }
+  ]
+};
+
+const KOREAN_RESEARCH_MODE_PROMPT: GuidedBriefResearchModePrompt = {
+  title: "연구 모드 선택",
+  options: [
+    {
+      value: "hypothesis_test",
+      label: "가설 검증",
+      description: "확정된 주제, 지표, 비교 대상과 반증 가능한 가설을 검증합니다."
+    },
+    {
+      value: "topic_discovery",
+      label: "주제 탐색",
+      description: "넓은 탐색 범위와 선정 규칙을 정하며 최종 주제나 지표를 미리 확정하지 않습니다."
+    }
+  ]
+};
+
 export function listGuidedBriefInterviewLanguages(): GuidedBriefInterviewLanguageOption[] {
   return LANGUAGE_OPTIONS.map((option) => ({ ...option }));
 }
 
-export function getGuidedBriefInterviewCopy(
+export function getGuidedBriefResearchModePrompt(
   language: GuidedBriefInterviewLanguage
-): GuidedBriefInterviewCopy {
-  return COPY_BY_LANGUAGE[language] ?? ENGLISH_COPY;
+): GuidedBriefResearchModePrompt {
+  const prompt = language === "ko" ? KOREAN_RESEARCH_MODE_PROMPT : ENGLISH_RESEARCH_MODE_PROMPT;
+  return {
+    title: prompt.title,
+    options: prompt.options.map((option) => ({ ...option }))
+  };
 }
 
+export function getGuidedBriefInterviewCopy(
+  language: GuidedBriefInterviewLanguage,
+  researchMode: GuidedBriefResearchMode = "hypothesis_test"
+): GuidedBriefInterviewCopy {
+  const copy = COPY_BY_LANGUAGE[language] ?? ENGLISH_COPY;
+  if (researchMode !== "topic_discovery") {
+    return copy;
+  }
+  const discoveryQuestions = language === "ko"
+    ? {
+        topic: "주제 탐색 범위",
+        scientificObject: "문헌 검색의 과학적 대상 (2~5개 핵심 용어)",
+        empiricalProblems: "검증할 독립적인 경험적 문제를 최소 2개 입력하세요 (세미콜론 구분)",
+        priorWorkProbes: "직접 선행연구 또는 기존 연구에 흡수될 가능성을 확인할 질문 (세미콜론 구분)",
+        primaryMetric: "후보별 주요 지표 허용 기준",
+        meaningfulImprovement: "후보별 실질 효과 기준",
+        researchQuestion: "넓은 주제 탐색 질문",
+        whySmallExperiment: "승격 후보를 왜 작은 실제 실험으로 검증할 수 있나요? (세미콜론 구분)",
+        baselineComparator: "후보에 요구할 베이스라인 / 비교군 기준 (세미콜론 구분)",
+        datasetTaskBench: "허용 데이터셋 / 작업 범위와 라이선스 기준 (세미콜론 구분)",
+        targetComparison: "후보에 요구할 비교 구조와 방향성 기준 (세미콜론 구분)",
+        minimumAcceptableEvidence: "주제 승격에 필요한 최소 증거 (세미콜론 구분)",
+        minimumExperimentPlan: "승격 후보의 최소 bounded probe 계획 (세미콜론 구분)"
+      }
+    : {
+        topic: "Topic search scope",
+        scientificObject: "Scientific object for literature search (2-5 core terms)",
+        empiricalProblems: "At least two independent empirical problems to test (semicolon-separated)",
+        priorWorkProbes: "Direct-prior or prior-absorption probes (semicolon-separated)",
+        primaryMetric: "Candidate-level primary metric admissibility rule",
+        meaningfulImprovement: "Candidate-level practical-effect rule",
+        researchQuestion: "Broad topic-search question",
+        whySmallExperiment: "Why can promoted candidates be tested with a small real experiment? (semicolon-separated)",
+        baselineComparator: "Required baseline / comparator rule for each candidate (semicolon-separated)",
+        datasetTaskBench: "Permitted dataset / task scope and license rule (semicolon-separated)",
+        targetComparison: "Required comparison structure and direction rule (semicolon-separated)",
+        minimumAcceptableEvidence: "Minimum evidence required for topic promotion (semicolon-separated)",
+        minimumExperimentPlan: "Minimum bounded-probe plan for a promoted candidate (semicolon-separated)"
+      };
+  return {
+    ...copy,
+    questions: {
+      ...copy.questions,
+      ...discoveryQuestions
+    }
+  };
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "heldout_source_selection_freeze",
+  "frozen_at": "2026-07-28T10:09:48+09:00",
+  "status": "frozen_before_heldout_probe_design_or_outcomes",
+  "paper_scale_claim_authorized": false,
+  "selection_basis": {
+    "path": "operational-source-expansion-census.json",
+    "sha256": "f53153b1609c86fcb97d7bbb0622d470a16cbcc142daa74082ecb9b87ad3ccc0",
+    "inspected_source_count": 12,
+    "ranking_completed_without_probe_or_method_outcomes": true,
+    "note": "The operational source scout is retained outside the publication tree until a portable, path-sanitized import is produced."
+  },
+  "information_observed_before_freeze": {
+    "development_method_outcomes": true,
+    "group_1_candidate_details": true,
+    "group_2_candidate_details": false,
+    "expansion_source_level_repair_count_heuristics": true,
+    "any_heldout_probe_design": false,
+    "any_heldout_method_outcome": false,
+    "any_heldout_baseline_outcome": false
+  },
+  "selection_rule": {
+    "initial_sources": "Retain every source already assigned to the two pre-outcome held-out census groups.",
+    "expansion_sources": "Retain ranks 1 through 5 and the prespecified rank-6 secondary source from the independent source scout.",
+    "reserve_sources": "Ranks 7 and 8 may be activated only if the complete active-source census has fewer than 24 admitted lineages or fewer than 6 independence clusters, and only before probe design or any held-out outcome.",
+    "outcome_dependent_source_addition": "forbidden",
+    "outcome_dependent_source_removal": "forbidden"
+  },
+  "active_sources": [
+    {
+      "source_id": "toolsandbox",
+      "pinned_head": "165848b9a78cead7ca7fe7c89c688b58e6501219",
+      "license": "non-SPDX source terms; eligibility must be adjudicated before any derived publication artifact",
+      "selection_origin": "initial_census",
+      "independence_cluster": "toolsandbox"
+    },
+    {
+      "source_id": "appworld",
+      "pinned_head": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+      "license": "Apache-2.0",
+      "selection_origin": "initial_census",
+      "independence_cluster": "appworld"
+    },
+    {
+      "source_id": "browsergym",
+      "pinned_head": "9e779f087de9a65668b6974d11f9ce9816026e96",
+      "license": "Apache-2.0",
+      "selection_origin": "initial_census",
+      "independence_cluster": "browser_evaluation"
+    },
+    {
+      "source_id": "terminal-bench-2",
+      "pinned_head": "2fd12b88aafdd04a52c298e3940bcb189f9766d6",
+      "license": "Apache-2.0",
+      "selection_origin": "initial_census",
+      "independence_cluster": "terminal_bench"
+    },
+    {
+      "source_id": "swe-bench",
+      "pinned_head": "f7bbbb2ccdf479001d6467c9e34af59e44a840f9",
+      "license": "MIT",
+      "selection_origin": "initial_census",
+      "independence_cluster": "swe_bench"
+    },
+    {
+      "source_id": "agentdojo",
+      "remote_url": "https://github.com/ethz-spylab/agentdojo.git",
+      "pinned_head": "089ed468cf3ed0322acc66b0211f26d9d90dbf60",
+      "license": "MIT",
+      "selection_origin": "source_scout_rank_1",
+      "independence_cluster": "agentdojo"
+    },
+    {
+      "source_id": "inspect_evals",
+      "remote_url": "https://github.com/UKGovernmentBEIS/inspect_evals.git",
+      "pinned_head": "bc6c62254629e9340deffaecba8475513f1f9743",
+      "license": "MIT",
+      "selection_origin": "source_scout_rank_2",
+      "independence_cluster": "inspect"
+    },
+    {
+      "source_id": "android_world",
+      "remote_url": "https://github.com/google-research/android_world.git",
+      "pinned_head": "3e50888527ef9f29b9157ecd537e408008bb1c85",
+      "license": "Apache-2.0",
+      "selection_origin": "source_scout_rank_3",
+      "independence_cluster": "android_world"
+    },
+    {
+      "source_id": "inspect_ai",
+      "remote_url": "https://github.com/UKGovernmentBEIS/inspect_ai.git",
+      "pinned_head": "487b3e007ec1cc7aea8bf1b214dee829a06b619d",
+      "license": "MIT",
+      "selection_origin": "source_scout_rank_4",
+      "independence_cluster": "inspect"
+    },
+    {
+      "source_id": "helm",
+      "remote_url": "https://github.com/stanford-crfm/helm.git",
+      "pinned_head": "63754d05db6f874e41a395880fb573890a13e791",
+      "license": "Apache-2.0",
+      "selection_origin": "source_scout_rank_5",
+      "independence_cluster": "helm"
+    },
+    {
+      "source_id": "webarena",
+      "remote_url": "https://github.com/web-arena-x/webarena.git",
+      "pinned_head": "dce04686a56253aefba7b18a4fa0937cf1dc987b",
+      "license": "Apache-2.0",
+      "selection_origin": "source_scout_rank_6_secondary",
+      "independence_cluster": "browser_evaluation"
+    }
+  ],
+  "reserve_sources": [
+    {
+      "source_id": "openai_evals",
+      "remote_url": "https://github.com/openai/evals.git",
+      "pinned_head": "8eac7a7de5215c907fbddc30efdaf316913eccdd",
+      "license": "MIT for code; bundled datasets require separate scope checks",
+      "selection_origin": "source_scout_rank_7_reserve",
+      "independence_cluster": "openai_evals"
+    },
+    {
+      "source_id": "miniwob_plusplus",
+      "remote_url": "https://github.com/Farama-Foundation/miniwob-plusplus.git",
+      "pinned_head": "eb59fed60fabe8951350275ba8650633b740013b",
+      "license": "MIT",
+      "selection_origin": "source_scout_rank_8_reserve",
+      "independence_cluster": "miniwob"
+    }
+  ],
+  "analysis_independence_policy": {
+    "cluster_field": "independence_cluster",
+    "minimum_heldout_clusters": 6,
+    "repository_count_cannot_substitute_for_cluster_count": true,
+    "inspect_ai_and_inspect_evals_share_one_cluster": true,
+    "browsergym_and_webarena_share_one_cluster": true
+  },
+  "stop_conditions": [
+    "Fewer than 24 admitted held-out lineages remain after active and conditionally activated reserve census.",
+    "Fewer than 6 independence clusters contain admitted held-out lineages.",
+    "Any source is added, removed, or reprioritized after a held-out method or baseline outcome is observed."
+  ]
+}

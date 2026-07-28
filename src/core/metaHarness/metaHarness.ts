@@ -6,7 +6,14 @@ import { RunRecord } from "../../types.js";
 import { AutoLabOSRuntime, bootstrapAutoLabOSRuntime } from "../../runtime/createRuntime.js";
 import { buildWorkspaceRunRoot } from "../runs/runPaths.js";
 import { readPersistedRunEvents, type AutoLabOSEvent } from "../events.js";
-import { applyWithSafetyNet, type HarnessApplyResult } from "./harnessApplier.js";
+import {
+  applyWithSafetyNet,
+  DEFAULT_HARNESS_PROMOTION_CRITERIA,
+  unavailableHarnessEvaluator,
+  type HarnessApplyResult,
+  type HarnessEvaluator,
+  type HarnessPromotionCriteria
+} from "./harnessApplier.js";
 import {
   CodexOAuthResponsesLLMClient,
   LLMClient,
@@ -47,7 +54,6 @@ export interface MetaHarnessResult {
 
 interface MetaHarnessRunSummary {
   run: RunRecord;
-  paperReadinessScore: number | null;
 }
 
 interface PromptTargetMapEntry {
@@ -67,6 +73,8 @@ interface MetaHarnessDeps {
   createLlm: (runtime: AutoLabOSRuntime) => LLMClient;
   callLlm: (client: LLMClient, input: { systemPrompt: string; userPrompt: string }) => Promise<string>;
   applyWithSafetyNet: typeof applyWithSafetyNet;
+  promotionEvaluator: HarnessEvaluator;
+  promotionCriteria: HarnessPromotionCriteria;
   now: () => Date;
 }
 
@@ -82,6 +90,8 @@ export async function runMetaHarness(
     createLlm: createMetaHarnessLlm,
     callLlm: defaultCallLlm,
     applyWithSafetyNet,
+    promotionEvaluator: unavailableHarnessEvaluator,
+    promotionCriteria: DEFAULT_HARNESS_PROMOTION_CRITERIA,
     now: () => new Date(),
     ...deps
   };
@@ -157,13 +167,18 @@ export async function runMetaHarness(
   const absoluteTargetFile = path.join(options.cwd, parsed.targetFile);
   const originalContent = await fs.readFile(absoluteTargetFile, "utf8");
   const newContent = applyUnifiedDiff(originalContent, parsed.diffText);
-  const scoreBefore = computeAveragePaperReadinessScore(selectedRuns);
   const applyResult = await resolvedDeps.applyWithSafetyNet({
     targetFile: absoluteTargetFile,
     newContent,
     source: "meta-harness",
     candidateId: timestamp,
-    scoreBefore
+    evaluator: resolvedDeps.promotionEvaluator,
+    promotionCriteria: resolvedDeps.promotionCriteria,
+    evaluationScope: {
+      run_ids: selectedRuns.map(({ run }) => run.id),
+      target_node: path.basename(parsed.targetFile, path.extname(parsed.targetFile)),
+      context_dir: path.relative(options.cwd, contextDir).replace(/\\/g, "/")
+    }
   });
 
   return {
@@ -175,11 +190,7 @@ export async function runMetaHarness(
       `Meta-harness context prepared: ${contextDir}`,
       ...formatExternalRunLines(options.externalRunRoots || []),
       `TARGET_FILE: ${parsed.targetFile}`,
-      applyResult.applied
-        ? `Applied safely and committed. Audit log: ${applyResult.auditLogPath}`
-        : applyResult.rolledBack
-          ? `Validation failed; restored original file. Audit log: ${applyResult.auditLogPath}`
-          : `No file changes were applied. Audit log: ${applyResult.auditLogPath}`
+      formatApplyResultLine(applyResult)
     ]
   };
 }
@@ -644,8 +655,11 @@ function summarizeGateDecisionIssueCodes(report: Record<string, unknown> | null 
   }
   const raw = JSON.stringify(report);
   const codes: string[] = [];
-  if (/Table 1 and Figure 1 report conflicting aggregate accuracy values/iu.test(raw)) {
-    codes.push("table_figure_aggregate_accuracy_conflict");
+  if (
+    /\b(?:table|figure)\b[^.!?]{0,120}\bconflicting aggregate [^.!?]{1,80} values\b/iu.test(raw)
+    || /\bconflicting aggregate [^.!?]{1,80} values\b[^.!?]{0,120}\b(?:table|figure)\b/iu.test(raw)
+  ) {
+    codes.push("cross_surface_aggregate_metric_conflict");
   }
   return codes;
 }
@@ -705,12 +719,7 @@ async function selectRecentRuns(runtime: AutoLabOSRuntime, count: number): Promi
     .filter((run) => run.status === "completed")
     .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
     .slice(0, count);
-  return Promise.all(
-    selected.map(async (run) => ({
-      run,
-      paperReadinessScore: await readPaperReadinessScore(runtime.paths.cwd, run.id)
-    }))
-  );
+  return selected.map((run) => ({ run }));
 }
 
 function createMetaHarnessLlm(runtime: AutoLabOSRuntime): LLMClient {
@@ -825,29 +834,19 @@ export function applyUnifiedDiff(originalContent: string, diffText: string): str
   return output.join("\n");
 }
 
-function computeAveragePaperReadinessScore(runs: MetaHarnessRunSummary[]): number | null {
-  const scores = runs
-    .map((run) => run.paperReadinessScore)
-    .filter((score): score is number => typeof score === "number" && Number.isFinite(score));
-  if (scores.length === 0) {
-    return null;
+function formatApplyResultLine(result: HarnessApplyResult): string {
+  const scores = `score_before=${formatEvaluationScore(result.scoreBefore)}, score_after=${formatEvaluationScore(result.scoreAfter)}`;
+  if (result.applied) {
+    return `Promotion committed after matched re-evaluation (${scores}). Audit log: ${result.auditLogPath}`;
   }
-  return Math.round((scores.reduce((sum, score) => sum + score, 0) / scores.length) * 100) / 100;
+  if (result.rolledBack) {
+    return `Promotion blocked; restored original file (${scores}). Reason: ${result.blockedReason || "promotion criteria not met"}. Audit log: ${result.auditLogPath}`;
+  }
+  return `Promotion unavailable; no file changes were applied (${scores}). Reason: ${result.blockedReason || "evaluator unavailable"}. Audit log: ${result.auditLogPath}`;
 }
 
-async function readPaperReadinessScore(cwd: string, runId: string): Promise<number | null> {
-  const paperReadinessPath = path.join(buildWorkspaceRunRoot(cwd, runId), "paper", "paper_readiness.json");
-  if (!(await fileExists(paperReadinessPath))) {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(await fs.readFile(paperReadinessPath, "utf8")) as { overall_score?: unknown };
-    return typeof parsed.overall_score === "number" && Number.isFinite(parsed.overall_score)
-      ? parsed.overall_score
-      : null;
-  } catch {
-    return null;
-  }
+function formatEvaluationScore(score: number | null): string {
+  return score === null ? "unavailable" : String(score);
 }
 
 async function copyFileToContext(sourcePath: string, targetPath: string): Promise<void> {

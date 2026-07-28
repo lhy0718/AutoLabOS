@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_probe_manifest_fragment",
+  "source_id": "source_c",
+  "development_after_initial_outcomes": true,
+  "probes": [
+    {
+      "lineage_id": "lineage_013",
+      "relation_family": "environment_context_invariance",
+      "adapter": "studies/grader-conform/probes/python/osworld_vm_time_relation.py",
+      "contract_source": "Relative time in an evaluated desktop environment is anchored to that environment's local clock unless the task explicitly supplies another timezone.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_015",
+      "relation_family": "sequential_state_isolation",
+      "adapter": "studies/grader-conform/probes/python/osworld_sequential_import_relation.py",
+      "contract_source": "Two task suites evaluated sequentially in one worker must resolve imports from their own task directories and receive the same verdicts as isolated execution.",
+      "transformation_target": "evaluator invocation context"
+    },
+    {
+      "lineage_id": "lineage_016",
+      "relation_family": "equivalent_state_recovery",
+      "adapter": "studies/grader-conform/probes/python/osworld_workspace_recovery_relation.py",
+      "contract_source": "An absent optional helper artifact must not force failure when the same open-workspace state is available through the environment's persistent workspace metadata.",
+      "transformation_target": "terminal state"
+    }
+  ]
+}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { evaluateBriefEvidenceAgainstResults } from "../src/core/analysis/briefEvidenceValidator.js";
 import type { AnalysisReport } from "../src/core/resultAnalysis.js";
+import type { ResultsArtifactV2 } from "../src/core/analysis/resultsTableSchema.js";
 import type { MarkdownRunBriefSections } from "../src/core/runs/runBriefParser.js";
 
 function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
@@ -16,24 +17,7 @@ function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
         baselines: ["baseline_a", "baseline_b"]
       }
     },
-    condition_comparisons: [
-      {
-        id: "comparison_1",
-        label: "candidate vs baseline",
-        source: "metrics.condition_metrics",
-        metrics: [],
-        hypothesis_supported: true,
-        summary: "Candidate outperformed the baseline."
-      },
-      {
-        id: "comparison_2",
-        label: "candidate vs second baseline",
-        source: "metrics.condition_metrics",
-        metrics: [],
-        hypothesis_supported: true,
-        summary: "Candidate also outperformed the second baseline."
-      }
-    ],
+    results_artifact: makeResultsArtifact(2, 1),
     failure_taxonomy: [],
     statistical_summary: {
       total_trials: 3,
@@ -41,14 +25,14 @@ function makeReport(overrides: Partial<AnalysisReport> = {}): AnalysisReport {
       cached_trials: 0,
       confidence_intervals: [
         {
-          metric_key: "accuracy",
-          label: "Accuracy 95% CI",
+          metric_key: "measure-primary",
+          label: "Primary measure 95% CI",
           lower: 0.89,
           upper: 0.93,
           level: 0.95,
           sample_size: 3,
           source: "metrics",
-          summary: "Accuracy remained above the threshold."
+          summary: "The primary measure remained above the threshold."
         }
       ],
       stability_metrics: [],
@@ -95,16 +79,7 @@ describe("briefEvidenceValidator", () => {
             baselines: ["baseline_a"]
           }
         } as AnalysisReport["plan_context"]["selected_design"],
-        condition_comparisons: [
-          {
-            id: "comparison_1",
-            label: "candidate vs baseline",
-            source: "metrics.condition_metrics",
-            metrics: [],
-            hypothesis_supported: true,
-            summary: "Only one executed baseline comparison is available."
-          }
-        ] as AnalysisReport["condition_comparisons"],
+        results_artifact: makeResultsArtifact(1, 1),
         failure_taxonomy: [
           {
             id: "gap_1",
@@ -221,20 +196,67 @@ describe("briefEvidenceValidator", () => {
             risks: []
           }
         } as AnalysisReport["plan_context"],
-        metrics: {
-          conditions: [
-            { name: "base_unmodified" },
-            { name: "candidate_condition_a" },
-            { name: "candidate_condition_b" }
-          ]
-        }
+        results_artifact: makeResultsArtifact(1, 2)
       })
     });
 
     expect(assessment.enabled).toBe(true);
     expect(assessment.status).toBe("fail");
     expect(assessment.requirements.minimum_condition_count).toBe(4);
-    expect(assessment.actual.executed_condition_count).toBe(2);
+    expect(assessment.actual.executed_condition_count).toBe(3);
     expect(assessment.failures).toContain("Executed evidence covers all planned conditions");
   });
 });
+
+function makeResultsArtifact(
+  baselineCount: number,
+  subjectCount: number
+): ResultsArtifactV2 {
+  const baselineSeries = Array.from({ length: baselineCount }, (_, index) => ({
+    id: `series-reference-${index + 1}`,
+    label: `Reference ${index + 1}`,
+    role: "baseline" as const,
+    dimensions: { cohort: index + 1 }
+  }));
+  const subjectSeries = Array.from({ length: subjectCount }, (_, index) => ({
+    id: `series-subject-${index + 1}`,
+    label: `Subject ${index + 1}`,
+    role: index === 0 ? "primary" as const : "comparator" as const,
+    dimensions: { cohort: index + 1 }
+  }));
+  const observations = [
+    ...baselineSeries.map((series, index) => ({
+      id: `observation-reference-${index + 1}`,
+      series_id: series.id,
+      metric_id: "measure-primary",
+      scope: { partition: "evaluation" },
+      value: 10 + index
+    })),
+    ...subjectSeries.map((series, index) => ({
+      id: `observation-subject-${index + 1}`,
+      series_id: series.id,
+      metric_id: "measure-primary",
+      scope: { partition: "evaluation" },
+      value: 20 + index
+    }))
+  ];
+  return {
+    schema_version: "2.0",
+    metrics: [
+      {
+        id: "measure-primary",
+        label: "Primary measure",
+        direction: "higher_better",
+        unit: "points"
+      }
+    ],
+    series: [...baselineSeries, ...subjectSeries],
+    observations,
+    comparisons: baselineSeries.map((series, index) => ({
+      id: `comparison-reference-${index + 1}`,
+      subject_observation_id: "observation-subject-1",
+      reference_observation_id: `observation-reference-${index + 1}`,
+      delta: 20 - (10 + index)
+    }))
+  };
+}

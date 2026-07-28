@@ -152,3 +152,50 @@ A TUI validation run must verify the following paper-readiness signals:
 - Manuscript type (e.g., `paper_ready`, `blocked_for_paper_scale`) appears in run projection.
 - Blocking issues are surfaceable in run detail view.
 - `workflow_completed` is visually distinct from `paper_ready`.
+
+## 7) Topic-discovery collection projection matrix
+
+Collection projection is fail-closed. A probe authorization is trusted only
+when the current collection generation uses the runtime's supported corpus-quality
+and semantic-review contracts with `passed=true` and
+`semantic_review.status=complete`.
+
+### 7.1 Generation and authorization
+
+| Runtime/artifact state | Projected collection state | Quality/recovery authority | Authorization trusted / probe allowed |
+| --- | --- | --- | --- |
+| Current generation matches all present collection artifacts; current-contract complete pass | `quality_gate_passed` | Current quality is authoritative | Eligible for `true / true` when the closed funnel also passes |
+| `collect_papers` is running and any collection artifact differs from `collect_generation.json` | `collecting` | Prior quality reasons, query-plan attempt, and recovery hint are ignored | `false / false` |
+| Collection is terminal and present collection artifacts disagree on generation | `failed` | Mismatched quality and recovery artifacts are ignored | `false / false` |
+| Current-contract complete review exists but quality fails | `quality_gate_failed` or `quality_gate_exhausted` | Current failure reason is authoritative | `false / false` |
+| Version 3 quality, partial review, operational reviewer failure, or missing required quality | Non-passing collection state | Downstream gap, portfolio, and decision artifacts remain diagnostic only | `false / false` |
+| Candidate-conditioned additional collection completed with a valid receipt | `quality_gate_passed` | Validate the current candidate plan/receipt archive and recursively validate the immutable broad-discovery parent lineage; stale parent quality files are not treated as current-attempt files | Pre-probe authority may remain trusted; execution still requires selected-candidate coverage and the estimator gate |
+
+`probe_authorized` and `effective_execution_authorized` are separate display
+states. Web and TUI must show a selected probe while its execution preflight is
+pending or blocked, and must display execution as authorized only when the
+shared gate reports all three components trusted and passing.
+
+### 7.2 Failure class and recovery display
+
+| `failure_class` | `active` / `feedback_applied` | `semantic_review_status` | TUI/Web display |
+| --- | --- | --- | --- |
+| `query_quality_failure` | `true / true` | `complete` | Show the concise quality reason and active query-reformulation hint |
+| `semantic_review_operational_failure` | `false / false` | `operational_failure` | Show reviewer operational failure; do not show a query-reformulation hint |
+| `semantic_review_incomplete` | `false / false` | `partial` | Show reviewer incompleteness; do not show a query-reformulation hint |
+
+Reviewer-only failures must not alter bounded query feedback history or appear
+as query-quality feedback.
+
+### 7.3 Retry and reload state
+
+| Persisted graph state | Displayed node attempt |
+| --- | --- |
+| `running`, retry counter `k` | `min(k + 1, maxAttemptsPerNode)` |
+| `completed` or `needs_approval`, retry counter `k` | `min(k + 1, maxAttemptsPerNode)` |
+| `failed`, retry counter `k` | `min(k, maxAttemptsPerNode)` |
+| Historical `usage.byNode.collect_papers.executions` exceeds the current retry cycle | Ignore cumulative executions for attempt display |
+
+Every persisted transition into `running` clears the prior node `lastError`
+and stale note before execution starts. Event-driven TUI projection applies the
+same rule so an existing session and a fresh reload show the same running state.

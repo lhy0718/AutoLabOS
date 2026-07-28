@@ -4,7 +4,11 @@ import { createHash } from "node:crypto";
 
 import { RunRecord } from "../types.js";
 import { ObjectiveMetricProfile, normalizeObjectiveMetricProfile } from "./objectiveMetric.js";
-import { AnalysisConditionComparison, AnalysisReport } from "./resultAnalysis.js";
+import { readCandidateObjectiveProfileBinding } from "./effectCriterion.js";
+import {
+  AnalysisReport,
+  resolvePrimaryResultsArtifactComparison
+} from "./resultAnalysis.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { safeRead, writeRunArtifact } from "./nodes/helpers.js";
 import { normalizeFsPath } from "../utils/fs.js";
@@ -83,6 +87,33 @@ export interface FrozenObjectiveProfile {
   comparator?: ObjectiveMetricProfile["comparator"];
   targetValue?: number;
   targetDescription?: string;
+  unit?: ObjectiveMetricProfile["unit"];
+  scale?: ObjectiveMetricProfile["scale"];
+  targetUnit?: ObjectiveMetricProfile["targetUnit"];
+  targetScale?: ObjectiveMetricProfile["targetScale"];
+  comparison?: ObjectiveMetricProfile["comparison"];
+  resourceLimits?: ObjectiveMetricProfile["resourceLimits"];
+  candidate_contract?: ObjectiveMetricProfile["candidate_contract"];
+  delta_contract?: ObjectiveMetricProfile["delta_contract"];
+  analysisFocus: string[];
+  paperEmphasis: string[];
+  assumptions: string[];
+}
+
+export interface TopicProbeExecutionBinding {
+  version: 1;
+  candidate_id: string;
+  candidate_content_sha256: string;
+  declared_comparator: string;
+  declared_dataset_task_scope: string;
+  subject_series_id: string;
+  reference_id: string;
+  reference_series_id: string;
+  dataset_task_scope_id: string;
+  primary_comparison_id: string;
+  observation_scope: {
+    dataset_task_scope_id: string;
+  };
 }
 
 export interface ExperimentComparisonContract {
@@ -97,6 +128,7 @@ export interface ExperimentComparisonContract {
   comparison_mode: "baseline_first_locked" | "objective_only";
   budget_profile: ExperimentBudgetProfile;
   objective_profile: FrozenObjectiveProfile;
+  topic_probe_binding?: TopicProbeExecutionBinding;
   evaluator_contract_id: string;
   created_at: string;
 }
@@ -303,29 +335,64 @@ export function buildExperimentComparisonContract(input: {
     id: string;
     hypothesis_ids: string[];
     baselines: string[];
+    datasets?: string[];
   };
   objectiveProfile: ObjectiveMetricProfile;
+  topicProbe?: {
+    candidateId: string;
+    candidateContentSha256: string;
+    comparator: string;
+    datasetTaskScope: string;
+  };
   managedBundleSupported: boolean;
   budgetTimeoutSec?: number;
   createdAt?: string;
 }): ExperimentComparisonContract {
   const createdAt = input.createdAt || new Date().toISOString();
-  const baselineIds = dedupeStrings(
-    input.selectedDesign.baselines.map((item) => toBaselineCandidateId(input.selectedDesign.id, item))
-  );
+  const candidateBinding = readCandidateObjectiveProfileBinding(input.objectiveProfile);
+  const topicProbeBinding = input.topicProbe
+    ? buildTopicProbeExecutionBinding(input.topicProbe)
+    : undefined;
+  if (topicProbeBinding) {
+    assertTopicProbeDesignBinding({
+      selectedDesign: input.selectedDesign,
+      candidateBinding,
+      binding: topicProbeBinding
+    });
+  }
+  const baselineIds = topicProbeBinding
+    ? [topicProbeBinding.reference_series_id]
+    : dedupeStrings(
+        input.selectedDesign.baselines.map((item) => toBaselineCandidateId(input.selectedDesign.id, item))
+      );
+  const primaryCandidateId = topicProbeBinding
+    ? topicProbeBinding.subject_series_id
+    : toPrimaryCandidateId(input.selectedDesign.id);
   const comparisonMode = baselineIds.length > 0 ? "baseline_first_locked" : "objective_only";
+  const frozenProfileInput: ObjectiveMetricProfile =
+    candidateBinding && baselineIds.length > 0
+      ? {
+          ...input.objectiveProfile,
+          comparison: {
+            baselineId: baselineIds[0],
+            candidateId: primaryCandidateId,
+            metricKey: candidateBinding.primary_metric
+          }
+        }
+      : input.objectiveProfile;
   const contract: ExperimentComparisonContract = {
     version: 1,
     run_id: input.run.id,
     plan_id: input.selectedDesign.id,
     hypothesis_id: input.selectedDesign.hypothesis_ids[0],
     selected_hypothesis_ids: [...input.selectedDesign.hypothesis_ids],
-    objective_metric_name: input.run.objectiveMetric,
+    objective_metric_name: input.objectiveProfile.primaryMetric || input.objectiveProfile.raw,
     baseline_first_required: baselineIds.length > 0,
     baseline_candidate_ids: baselineIds,
     comparison_mode: comparisonMode,
     budget_profile: buildBudgetProfile(input.managedBundleSupported, input.budgetTimeoutSec),
-    objective_profile: freezeObjectiveProfile(input.objectiveProfile),
+    objective_profile: freezeObjectiveProfile(frozenProfileInput),
+    ...(topicProbeBinding ? { topic_probe_binding: topicProbeBinding } : {}),
     evaluator_contract_id: "",
     created_at: createdAt
   };
@@ -333,9 +400,89 @@ export function buildExperimentComparisonContract(input: {
   contract.evaluator_contract_id = hashToId("eval", {
     plan_id: contract.plan_id,
     objective_profile: contract.objective_profile,
+    topic_probe_binding: contract.topic_probe_binding,
     budget_profile: contract.budget_profile
   });
   return contract;
+}
+
+export function buildTopicProbeExecutionBinding(input: {
+  candidateId: string;
+  candidateContentSha256: string;
+  comparator: string;
+  datasetTaskScope: string;
+}): TopicProbeExecutionBinding {
+  const candidateId = requireExactBindingText(input.candidateId, "candidate_id");
+  const candidateContentSha256 = requireSha256Binding(
+    input.candidateContentSha256,
+    "candidate_content_sha256"
+  );
+  const declaredComparator = requireExactBindingText(input.comparator, "comparator");
+  const declaredDatasetTaskScope = requireExactBindingText(
+    input.datasetTaskScope,
+    "dataset_task_scope"
+  );
+  const referenceHash = hashText(declaredComparator);
+  const scopeHash = hashText(declaredDatasetTaskScope);
+  const subjectSeriesId = `topic_probe_subject:${candidateContentSha256}`;
+  const referenceId = `topic_probe_reference:${referenceHash}`;
+  const datasetTaskScopeId = `topic_probe_scope:${scopeHash}`;
+  const primaryComparisonId = `topic_probe_comparison:${hashCanonicalJson({
+    candidate_id: candidateId,
+    candidate_content_sha256: candidateContentSha256,
+    reference_id: referenceId,
+    dataset_task_scope_id: datasetTaskScopeId
+  })}`;
+  return {
+    version: 1,
+    candidate_id: candidateId,
+    candidate_content_sha256: candidateContentSha256,
+    declared_comparator: declaredComparator,
+    declared_dataset_task_scope: declaredDatasetTaskScope,
+    subject_series_id: subjectSeriesId,
+    reference_id: referenceId,
+    reference_series_id: referenceId,
+    dataset_task_scope_id: datasetTaskScopeId,
+    primary_comparison_id: primaryComparisonId,
+    observation_scope: {
+      dataset_task_scope_id: datasetTaskScopeId
+    }
+  };
+}
+
+function assertTopicProbeDesignBinding(input: {
+  selectedDesign: {
+    baselines: string[];
+    datasets?: string[];
+  };
+  candidateBinding: ReturnType<typeof readCandidateObjectiveProfileBinding>;
+  binding: TopicProbeExecutionBinding;
+}): void {
+  const candidateBinding = input.candidateBinding;
+  if (!candidateBinding) {
+    throw new Error("topic_probe_design_candidate_contract_missing");
+  }
+  if (candidateBinding.candidate_id !== input.binding.candidate_id) {
+    throw new Error("topic_probe_design_treatment_binding_mismatch");
+  }
+  if (candidateBinding.comparator !== input.binding.declared_comparator) {
+    throw new Error("topic_probe_design_comparator_contract_mismatch");
+  }
+
+  const baselines = dedupeStrings(input.selectedDesign.baselines);
+  if (
+    baselines.length !== 1
+    || baselines[0] !== input.binding.declared_comparator
+  ) {
+    throw new Error("topic_probe_design_comparator_binding_mismatch");
+  }
+  const datasets = dedupeStrings(input.selectedDesign.datasets || []);
+  if (
+    datasets.length !== 1
+    || datasets[0] !== input.binding.declared_dataset_task_scope
+  ) {
+    throw new Error("topic_probe_design_dataset_task_scope_binding_mismatch");
+  }
 }
 
 export function buildExperimentImplementationContext(input: {
@@ -474,25 +621,13 @@ export function deriveGovernedAnalysisDecision(input: {
     return undefined;
   }
 
-  // When no condition comparisons exist from condition_metrics (typical of
-  // complete factorial designs where all conditions run in one script), the
-  // baseline-first governance cannot ground a comparison.  Rather than forcing
-  // a backtrack loop, skip governance and let the standard transition
-  // recommendation (which already checks objective status) decide.
-  const metricsComparisons = input.report.condition_comparisons.filter(
-    (c) => c.source === "metrics.condition_metrics"
-  );
-  if (metricsComparisons.length === 0) {
-    return undefined;
-  }
-
   const implementationContext =
     input.implementationContext ||
     buildExperimentImplementationContext({
       contract: input.contract,
       changedFiles: []
     });
-  const comparisonMetric = pickComparisonMetric(input.report);
+  const comparisonMetric = pickComparisonMetric(input.report, input.contract.objective_profile);
 
   if (hasBudgetMismatch(input.report, input.contract.budget_profile)) {
     const rationale = buildBudgetMismatchRationale(input.report, input.contract.budget_profile);
@@ -543,22 +678,29 @@ export function deriveGovernedAnalysisDecision(input: {
     };
   }
 
-  const primaryCondition =
-    cleanString(asString(input.report.metrics.primary_condition)) ||
-    parseConditionPair(comparisonMetric.comparison.id).primary ||
-    "primary";
-  const baselineCondition =
-    cleanString(asString(input.report.metrics.baseline_condition)) ||
-    parseConditionPair(comparisonMetric.comparison.id).baseline ||
-    "baseline";
+  const primaryCondition = comparisonMetric.subjectSeriesId;
+  const baselineCondition = comparisonMetric.referenceSeriesId;
   const baselineCandidateId =
-    input.contract.baseline_candidate_ids[0] || toBaselineCandidateId(input.contract.plan_id, baselineCondition);
+    input.contract.baseline_candidate_ids.find((candidateId) => candidateId === baselineCondition) ||
+    toBaselineCandidateId(input.contract.plan_id, baselineCondition);
   const primaryCandidateId = implementationContext.candidate_id;
-  const improved = isStrictImprovement(
-    comparisonMetric.metric.primary_value as number,
-    comparisonMetric.metric.baseline_value as number,
-    input.contract.objective_profile.direction
-  );
+  const candidateBinding = readCandidateObjectiveProfileBinding(input.contract.objective_profile);
+  const reportCandidateBinding = readCandidateObjectiveProfileBinding({
+    candidate_contract: input.report.objective_metric.profile.candidate_contract
+  });
+  const candidateContractIntact =
+    !candidateBinding
+    || Boolean(
+      reportCandidateBinding
+      && JSON.stringify(reportCandidateBinding) === JSON.stringify(candidateBinding)
+    );
+  const improved = candidateBinding
+    ? candidateContractIntact && input.report.objective_metric.evaluation.status === "met"
+    : isStrictImprovement(
+        comparisonMetric.metric.subjectValue,
+        comparisonMetric.metric.referenceValue,
+        comparisonMetric.metric.direction
+      );
   const snapshotCreatedAt = new Date().toISOString();
   const baselineSnapshot: ExperimentBaselineSnapshot = {
     version: 1,
@@ -567,8 +709,8 @@ export function deriveGovernedAnalysisDecision(input: {
       metric_key: comparisonMetric.metric.key,
       primary_condition: primaryCondition,
       baseline_condition: baselineCondition,
-      primary_value: comparisonMetric.metric.primary_value,
-      baseline_value: comparisonMetric.metric.baseline_value
+      primary_value: comparisonMetric.metric.subjectValue,
+      baseline_value: comparisonMetric.metric.referenceValue
     }),
     plan_id: input.contract.plan_id,
     baseline_candidate_id: baselineCandidateId,
@@ -577,8 +719,8 @@ export function deriveGovernedAnalysisDecision(input: {
     primary_condition: primaryCondition,
     metric_key: comparisonMetric.metric.key,
     objective_metric_name: input.contract.objective_metric_name,
-    baseline_value: comparisonMetric.metric.baseline_value as number,
-    primary_value: comparisonMetric.metric.primary_value as number,
+    baseline_value: comparisonMetric.metric.referenceValue,
+    primary_value: comparisonMetric.metric.subjectValue,
     budget_profile: input.contract.budget_profile,
     evaluator_contract_id: input.contract.evaluator_contract_id,
     created_at: snapshotCreatedAt
@@ -591,23 +733,27 @@ export function deriveGovernedAnalysisDecision(input: {
     code_state_ref: implementationContext.code_state_ref,
     budget_profile: input.contract.budget_profile,
     objective_metric_name: input.contract.objective_metric_name,
-    observed_value: comparisonMetric.metric.baseline_value as number,
+    observed_value: comparisonMetric.metric.referenceValue,
     verdict: "keep",
     rationale: oneLine(
       `Locked baseline snapshot fixed ${baselineCondition} at ${formatMetricValue(
-        comparisonMetric.metric.baseline_value as number
+        comparisonMetric.metric.referenceValue
       )} for ${comparisonMetric.metric.key}.`
     ),
     resource_usage: resourceUsage,
     timestamp: snapshotCreatedAt
   };
-  const candidateRationale = improved
-    ? `Locked baseline comparison passed: ${primaryCondition} improved ${comparisonMetric.metric.key} from ${formatMetricValue(
-        comparisonMetric.metric.baseline_value as number
-      )} to ${formatMetricValue(comparisonMetric.metric.primary_value as number)}.`
-    : `Locked baseline comparison failed: ${primaryCondition} did not improve ${comparisonMetric.metric.key} over ${baselineCondition} (${formatMetricValue(
-        comparisonMetric.metric.primary_value as number
-      )} vs ${formatMetricValue(comparisonMetric.metric.baseline_value as number)}).`;
+  const candidateRationale = candidateBinding
+    ? candidateContractIntact
+      ? `Locked candidate effect criterion ${improved ? "passed" : "failed"}: ${input.report.objective_metric.evaluation.summary}`
+      : "Locked candidate effect criterion failed closed because the analysis report did not preserve the hash-bound candidate objective contract."
+    : improved
+      ? `Locked baseline comparison passed: ${primaryCondition} improved ${comparisonMetric.metric.key} from ${formatMetricValue(
+          comparisonMetric.metric.referenceValue
+        )} to ${formatMetricValue(comparisonMetric.metric.subjectValue)}.`
+      : `Locked baseline comparison failed: ${primaryCondition} did not improve ${comparisonMetric.metric.key} over ${baselineCondition} (${formatMetricValue(
+          comparisonMetric.metric.subjectValue
+        )} vs ${formatMetricValue(comparisonMetric.metric.referenceValue)}).`;
   return {
     baselineSnapshot,
     baselineEntry,
@@ -619,7 +765,7 @@ export function deriveGovernedAnalysisDecision(input: {
       code_state_ref: implementationContext.code_state_ref,
       budget_profile: input.contract.budget_profile,
       objective_metric_name: input.contract.objective_metric_name,
-      observed_value: comparisonMetric.metric.primary_value as number,
+      observed_value: comparisonMetric.metric.subjectValue,
       verdict: improved ? "keep" : "discard",
       rationale: oneLine(candidateRationale),
       resource_usage: resourceUsage,
@@ -641,7 +787,8 @@ export function getGovernedObjectiveProfile(
   if (!contract) {
     return undefined;
   }
-  return normalizeObjectiveMetricProfile(contract.objective_profile, rawObjectiveMetric);
+  const frozenRawObjective = contract.objective_profile.raw.trim() || rawObjectiveMetric;
+  return normalizeObjectiveMetricProfile(contract.objective_profile, frozenRawObjective);
 }
 
 export async function writeExperimentGovernanceJson(
@@ -1083,12 +1230,54 @@ function freezeObjectiveProfile(profile: ObjectiveMetricProfile): FrozenObjectiv
     direction: profile.direction,
     comparator: profile.comparator,
     targetValue: profile.targetValue,
-    targetDescription: profile.targetDescription
+    targetDescription: profile.targetDescription,
+    unit: profile.unit,
+    scale: profile.scale,
+    targetUnit: profile.targetUnit,
+    targetScale: profile.targetScale,
+    comparison: profile.comparison
+      ? { ...profile.comparison }
+      : undefined,
+    resourceLimits: profile.resourceLimits
+      ? { ...profile.resourceLimits }
+      : undefined,
+    candidate_contract: profile.candidate_contract
+      ? {
+          ...profile.candidate_contract,
+          effect_criterion: { ...profile.candidate_contract.effect_criterion }
+        }
+      : undefined,
+    delta_contract: profile.delta_contract
+      ? { ...profile.delta_contract }
+      : undefined,
+    analysisFocus: [...profile.analysisFocus],
+    paperEmphasis: [...profile.paperEmphasis],
+    assumptions: [...profile.assumptions]
   };
 }
 
 function hashToId(prefix: string, value: unknown): string {
   return `${prefix}_${createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 12)}`;
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function requireExactBindingText(value: unknown, field: string): string {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) {
+    throw new Error(`topic_probe_execution_binding_${field}_missing`);
+  }
+  return normalized;
+}
+
+function requireSha256Binding(value: unknown, field: string): string {
+  const normalized = requireExactBindingText(value, field);
+  if (!/^[a-f0-9]{64}$/u.test(normalized)) {
+    throw new Error(`topic_probe_execution_binding_${field}_invalid`);
+  }
+  return normalized;
 }
 
 function hashBytes(value: Uint8Array): string {
@@ -1123,6 +1312,7 @@ function buildManagedBundleBindingId(contract: ExperimentComparisonContract): st
     plan_id: contract.plan_id,
     baseline_candidate_ids: contract.baseline_candidate_ids,
     objective_profile: contract.objective_profile,
+    topic_probe_binding: contract.topic_probe_binding,
     budget_profile: contract.budget_profile,
     evaluator_contract_id: contract.evaluator_contract_id
   });
@@ -1526,66 +1716,57 @@ function buildAnalysisResourceUsage(
 }
 
 function pickComparisonMetric(
-  report: AnalysisReport
+  report: AnalysisReport,
+  objectiveProfile: FrozenObjectiveProfile
 ):
   | {
-      comparison: AnalysisConditionComparison;
       metric: {
         key: string;
         value: number;
-        primary_value?: number;
-        baseline_value?: number;
+        direction: "higher_better" | "lower_better";
+        subjectValue: number;
+        referenceValue: number;
       };
+      subjectSeriesId: string;
+      referenceSeriesId: string;
     }
   | undefined {
-  const matchedMetricKey =
-    report.objective_metric.evaluation.matchedMetricKey || report.overview.matched_metric_key;
-  const conditionComparisons = report.condition_comparisons.filter(
-    (item) => item.source === "metrics.condition_metrics"
-  );
-  for (const comparison of conditionComparisons) {
-    const exact =
-      comparison.metrics.find(
-        (metric) =>
-          metric.key === matchedMetricKey &&
-          typeof metric.primary_value === "number" &&
-          typeof metric.baseline_value === "number"
-      ) ||
-      comparison.metrics.find(
-        (metric) =>
-          typeof metric.primary_value === "number" &&
-          typeof metric.baseline_value === "number"
-      );
-    if (exact) {
-      return {
-        comparison,
-        metric: exact
-      };
-    }
+  const candidateBinding = readCandidateObjectiveProfileBinding(objectiveProfile);
+  const metricKey = candidateBinding?.primary_metric
+    || report.objective_metric.evaluation.matchedMetricKey
+    || report.overview.matched_metric_key;
+  if (!metricKey) {
+    return undefined;
   }
-  return undefined;
-}
-
-function parseConditionPair(comparisonId: string): {
-  primary?: string;
-  baseline?: string;
-} {
-  const [primary, baseline] = comparisonId.split("_vs_");
+  const comparison = resolvePrimaryResultsArtifactComparison(
+    report.results_artifact,
+    report.primary_comparison_id
+  );
+  if (!comparison || comparison.metric.id !== metricKey) {
+    return undefined;
+  }
   return {
-    primary: cleanString(primary),
-    baseline: cleanString(baseline)
+    metric: {
+      key: comparison.metric.id,
+      value: comparison.delta,
+      direction: comparison.metric.direction,
+      subjectValue: comparison.subject_observation.value,
+      referenceValue: comparison.reference_observation.value
+    },
+    subjectSeriesId: comparison.subject_series.id,
+    referenceSeriesId: comparison.reference_series.id
   };
 }
 
 function isStrictImprovement(
-  primaryValue: number,
-  baselineValue: number,
-  direction: ObjectiveMetricProfile["direction"]
+  subjectValue: number,
+  referenceValue: number,
+  direction: "higher_better" | "lower_better"
 ): boolean {
-  if (direction === "minimize") {
-    return primaryValue < baselineValue;
+  if (direction === "lower_better") {
+    return subjectValue < referenceValue;
   }
-  return primaryValue > baselineValue;
+  return subjectValue > referenceValue;
 }
 
 function hasBudgetMismatch(report: AnalysisReport, budgetProfile: ExperimentBudgetProfile): boolean {

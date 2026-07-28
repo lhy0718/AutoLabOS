@@ -12,11 +12,14 @@ import {
   RunJobsSnapshot,
   RunRecord,
   RunRecommendedNextAction,
+  RunEvidenceReadinessProjection,
+  RunResearchFunnelProjection,
   WorkflowApprovalMode
 } from "../../types.js";
 import { fileExists } from "../../utils/fs.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { formatReadinessRiskSection, parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
+import { loadResearchFunnelProjection, type ResearchFunnelProjection } from "./researchFunnelProjection.js";
 import { buildRunOperatorStatus, readRunOperatorStatus } from "./runStatus.js";
 
 interface ReviewPacketProjection {
@@ -232,8 +235,20 @@ async function buildRunJobProjectionInternal(input: {
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
 }): Promise<RunJobProjectionInternal> {
-  const status = await loadOrBuildRunStatus(input);
-  return projectRunStatus(status);
+  const runDir = buildRunDir(input.workspaceRoot, input.run.id);
+  const [status, researchFunnel, evidenceDiagnostic] = await Promise.all([
+    loadOrBuildRunStatus(input),
+    loadResearchFunnelProjection(runDir, {
+      runId: input.run.id,
+      researchCycle: input.run.graph.researchCycle ?? 0
+    }),
+    loadEvidenceReadinessDiagnostic(runDir, input.run.id)
+  ]);
+  return projectRunStatus(
+    status,
+    researchFunnel,
+    authorizeEvidenceReadiness(evidenceDiagnostic, status.analysis_ready)
+  );
 }
 
 function stripInternalProjection(input: RunJobProjectionInternal): RunJobProjection {
@@ -260,7 +275,9 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     blocking_reasons: input.blocking_reasons,
     warning_reasons: input.warning_reasons,
     network_dependency: input.network_dependency,
-    validation_scope: input.validation_scope
+    validation_scope: input.validation_scope,
+    research_funnel: input.research_funnel,
+    evidence_readiness: input.evidence_readiness
   };
 }
 
@@ -413,6 +430,88 @@ export function formatRunJobProjectionLines(input: {
       : "";
     lines.push(`  paper state: ${input.projection.paper_gate_label || input.projection.paper_readiness_state}${paperDetail}`);
   }
+  if (input.projection.evidence_readiness) {
+    const evidence = input.projection.evidence_readiness;
+    const primary = evidence.primary_comparison_id
+      ? ` primary=${evidence.primary_comparison_id}`
+      : " primary=unmeasured";
+    lines.push(
+      `  evidence readiness: status=${evidence.status} ready=${yesNo(evidence.evidence_ready)} trusted=${yesNo(evidence.trusted)} comparisons=${evidence.comparison_count}${primary}`
+    );
+  }
+  if (input.projection.research_funnel) {
+    const funnel = input.projection.research_funnel;
+    lines.push(
+      `  research funnel: mode=${funnel.research_mode} lifecycle=${funnel.lifecycle_stage} integrity=${funnel.integrity_status} authorization_disposition=${funnel.authorization_disposition} candidates=${funnel.candidate_count} clusters=${funnel.cluster_count} diagnostics_trusted=${yesNo(funnel.diagnostics_trusted)} authorization_trusted=${yesNo(funnel.authorization_trusted)} probe_candidates=${funnel.probe_candidate_count} authorization_probe=${yesNo(funnel.authorization_probe_allowed)} execution_authorized=${yesNo(funnel.effective_execution_authorized)}`
+    );
+    lines.push(
+      `  bounded probe evidence: paper_evidence_allowed=${String(funnel.bounded_probe_paper_evidence_allowed)} | bounded probe only; not paper evidence`
+    );
+    if (funnel.outcome_disposition || funnel.outcome_next_action) {
+      lines.push(
+        `  post-probe outcome: disposition=${funnel.outcome_disposition || "unmeasured"} next_action=${funnel.outcome_next_action || "unmeasured"}`
+      );
+    }
+    lines.push(
+      `  outcome gate: status=${funnel.outcome_gate.status} trusted=${yesNo(funnel.outcome_gate.trusted)}`
+    );
+    lines.push(
+      `  follow-up handoff: status=${funnel.followup_handoff.status} trusted=${yesNo(funnel.followup_handoff.trusted)}`
+      + `${funnel.followup_handoff.recommended_followup_mode ? ` mode=${funnel.followup_handoff.recommended_followup_mode}` : ""}`
+      + `${funnel.followup_handoff.evidence_stage ? ` evidence_stage=${funnel.followup_handoff.evidence_stage}` : ""}`
+    );
+    lines.push(
+      `  topic-probe review gate: status=${funnel.review_gate.status} trusted=${yesNo(funnel.review_gate.trusted)} paper_drafting_allowed=${String(funnel.review_gate.paper_drafting_allowed)}`
+    );
+    if (funnel.invalid_chain_blockers.length > 0) {
+      lines.push(`  invalid-chain blockers: ${funnel.invalid_chain_blockers.join(", ")}`);
+    }
+    const activeProbe = readVerifiedActiveProbeProjection(funnel);
+    if (activeProbe) {
+      lines.push(
+        `  bounded probe contract: candidate=${activeProbe.candidateId} stage=${activeProbe.evidenceStage}`
+      );
+      lines.push(
+        `  metric boundary: ${activeProbe.primaryMetric} [unit=${activeProbe.metricUnit}; scale=${activeProbe.metricScale}] (${activeProbe.metricDirection}) | effect=${formatEffectCriterion(activeProbe.effectCriterion, activeProbe.metricDirection)}`
+      );
+      lines.push(`  candidate binding: sha256=${activeProbe.candidateHash} | deferred=${activeProbe.deferredCandidateIds.join(",") || "none"}`);
+      lines.push(`  objective binding: ${compactOneLine(activeProbe.objectiveRaw, 180)}`);
+      if (activeProbe.meaningfulEffect) {
+        lines.push(`  effect note: ${compactOneLine(activeProbe.meaningfulEffect, 180)}`);
+      }
+      lines.push(
+        `  probe contract: ${activeProbe.contractArtifactPath} | sha256=${activeProbe.contractHash}`
+      );
+    }
+    const probeStatement = funnel.probe_candidate_statements[0];
+    if (probeStatement) {
+      lines.push(`  bounded probe candidate: ${compactOneLine(probeStatement, 180)}`);
+    }
+    const shouldSurfaceReasons =
+      funnel.integrity_status === "partial"
+      || funnel.integrity_status === "mismatch"
+      || funnel.authorization_disposition === "backtrack_to_hypotheses";
+    if (shouldSurfaceReasons && funnel.reason_codes.length > 0) {
+      lines.push(
+        `  research funnel reasons: ${funnel.reason_codes.join(", ")}`
+      );
+    }
+    for (const gate of funnel.gates.filter((item) => item.status === "block")) {
+      lines.push(
+        `  blocked gate: ${gate.code} scope=${gate.scope} trusted=${yesNo(gate.trusted)} | ${compactOneLine(gate.message, 180)}`
+      );
+    }
+    for (const dissent of funnel.dissent.filter((item) => item.hard_block)) {
+      lines.push(
+        `  reviewer hard block: ${dissent.reviewer_label || dissent.reviewer_id || dissent.source} candidate=${dissent.candidate_id} trusted=${yesNo(dissent.trusted)} | ${compactOneLine(dissent.summary, 180)}`
+      );
+    }
+    for (const query of funnel.literature_queries) {
+      lines.push(
+        `  literature query: source=${query.source} fallback=${yesNo(query.fallback)} reason=${query.source_reason} retrieved=${query.fetched ?? "unmeasured"} relevant=${query.relevant_fetched ?? "unmeasured"} selected=${query.selected ?? "unmeasured"} | ${compactOneLine(query.query, 180)}`
+      );
+    }
+  }
   if (input.projection.network_dependency) {
     lines.push(`  network: ${input.projection.network_dependency.operator_label}`);
   }
@@ -458,7 +557,7 @@ async function loadOrBuildRunStatus(input: {
 }): Promise<RunOperatorStatusArtifact> {
   const runDir = buildRunDir(input.workspaceRoot, input.run.id);
   const existing = await readRunOperatorStatus(runDir);
-  if (existing) {
+  if (existing && runStatusMatchesCurrentRun(existing, input.run)) {
     return existing;
   }
   return buildRunOperatorStatus({
@@ -470,7 +569,19 @@ async function loadOrBuildRunStatus(input: {
   });
 }
 
-function projectRunStatus(status: RunOperatorStatusArtifact): RunJobProjectionInternal {
+function runStatusMatchesCurrentRun(status: RunOperatorStatusArtifact, run: RunRecord): boolean {
+  return status.run_id === run.id
+    && status.current_node === run.currentNode
+    && status.research_cycle === (run.graph.researchCycle ?? 0)
+    && status.checkpoint_seq === (run.graph.checkpointSeq ?? 0)
+    && status.run_updated_at === run.updatedAt;
+}
+
+function projectRunStatus(
+  status: RunOperatorStatusArtifact,
+  researchFunnel: ResearchFunnelProjection | undefined,
+  evidenceReadiness: RunEvidenceReadinessProjection
+): RunJobProjectionInternal {
   return {
     run_id: status.run_id,
     title: status.title,
@@ -495,6 +606,8 @@ function projectRunStatus(status: RunOperatorStatusArtifact): RunJobProjectionIn
     warning_reasons: [...status.warning_reasons],
     network_dependency: status.network_dependency,
     validation_scope: status.validation_scope,
+    research_funnel: researchFunnel ? projectResearchFunnel(researchFunnel) : undefined,
+    evidence_readiness: evidenceReadiness,
     dominantFailure: status.dominant_failure
       ? {
           key: status.dominant_failure.key,
@@ -503,4 +616,676 @@ function projectRunStatus(status: RunOperatorStatusArtifact): RunJobProjectionIn
         }
       : undefined
   };
+}
+
+export function projectResearchFunnel(input: ResearchFunnelProjection): RunResearchFunnelProjection {
+  const candidatePriorSearch = input.candidatePriorSearch ?? {
+    status: "unmeasured" as const,
+    trusted: false,
+    completedRounds: 0,
+    maxRounds: 0,
+    currentReceiptStatus: "unmeasured" as const,
+    candidateCount: 0,
+    selectedCandidateCount: 0,
+    broadLaneAttemptCount: 0,
+    recentLaneAttemptCount: 0,
+    fetchedCount: 0,
+    selectedPaperCount: 0,
+    coveredCandidateIds: [],
+    reasonCodes: [],
+    artifactRefs: []
+  };
+  const estimatorFeasibility = input.estimatorFeasibility ?? {
+    status: "unmeasured" as const,
+    trusted: false,
+    executionAuthorized: false,
+    reasonCodes: [],
+    artifactRefs: []
+  };
+  const portfolioCandidates = input.portfolioCandidates ?? [];
+  const executionAuthorization = input.executionAuthorization ?? {
+    status: "unmeasured" as const,
+    trusted: false,
+    authorized: false,
+    base_funnel_authorized: false,
+    candidate_prior_search_authorized: false,
+    estimator_authorized: false,
+    required_candidate_ids: [],
+    covered_candidate_ids: [],
+    reason_codes: []
+  };
+  const activeProbe = readVerifiedActiveProbeSource(input);
+  return {
+    research_mode: input.researchMode,
+    lifecycle_stage: input.lifecycleStage,
+    bounded_probe_paper_evidence_allowed: input.boundedProbePaperEvidenceAllowed,
+    collection_state: input.collectionState,
+    ...(input.collectionNodeAttempt !== undefined
+      ? { collection_node_attempt: input.collectionNodeAttempt }
+      : {}),
+    ...(input.collectionNodeMaxAttempts !== undefined
+      ? { collection_node_max_attempts: input.collectionNodeMaxAttempts }
+      : {}),
+    ...(input.queryPlanAttempt !== undefined
+      ? { query_plan_attempt: input.queryPlanAttempt }
+      : {}),
+    collection_quality_failure_reasons: [...input.collectionQualityFailureReasons],
+    ...(input.collectionReformulationHint
+      ? {
+          collection_reformulation_hint: {
+            evidence_status: input.collectionReformulationHint.evidenceStatus,
+            paper_evidence_allowed: input.collectionReformulationHint.paperEvidenceAllowed,
+            shared_anchor_terms: [...input.collectionReformulationHint.sharedAnchorTerms],
+            candidate_titles: [...input.collectionReformulationHint.candidateTitles],
+            axes: input.collectionReformulationHint.axes.map((axis) => ({
+              ...(axis.queryFamily ? { query_family: axis.queryFamily } : {}),
+              ...(axis.query ? { query: axis.query } : {}),
+              axis_terms: [...axis.axisTerms],
+              ...(axis.relevantPaperCount !== undefined
+                ? { relevant_paper_count: axis.relevantPaperCount }
+                : {})
+            })),
+            ...(input.collectionReformulationHint.artifactRef
+              ? { artifact_ref: { ...input.collectionReformulationHint.artifactRef } }
+              : {})
+          }
+        }
+      : {}),
+    gap_evidence_audit: {
+      status: input.gapEvidenceAudit.status,
+      ...(input.gapEvidenceAudit.constructionMode
+        ? { construction_mode: input.gapEvidenceAudit.constructionMode }
+        : {}),
+      ...(input.gapEvidenceAudit.synthesisStatus
+        ? { synthesis_status: input.gapEvidenceAudit.synthesisStatus }
+        : {}),
+      ...(input.gapEvidenceAudit.analysisCoverage
+        ? {
+            analysis_coverage: {
+              ...input.gapEvidenceAudit.analysisCoverage,
+              failed_paper_ids: [...input.gapEvidenceAudit.analysisCoverage.failed_paper_ids]
+            }
+          }
+        : {}),
+      total_evidence_count: input.gapEvidenceAudit.total_evidence_count,
+      scientific_evidence_count: input.gapEvidenceAudit.scientific_evidence_count,
+      grounded_scientific_evidence_count: input.gapEvidenceAudit.grounded_scientific_evidence_count,
+      synthesis_eligible_evidence_count: input.gapEvidenceAudit.synthesis_eligible_evidence_count,
+      synthesis_excluded_evidence_count: input.gapEvidenceAudit.synthesis_excluded_evidence_count,
+      accepted_cluster_count: input.gapEvidenceAudit.accepted_cluster_count,
+      malformed_evidence_row_count: input.gapEvidenceAudit.malformed_evidence_row_count,
+      source_scope_counts: { ...input.gapEvidenceAudit.source_scope_counts },
+      grounding_status_counts: { ...input.gapEvidenceAudit.grounding_status_counts }
+    },
+    candidate_count: input.candidateCount,
+    cluster_count: input.clusterCount,
+    candidate_prior_search: {
+      status: candidatePriorSearch.status,
+      trusted: candidatePriorSearch.trusted,
+      ...(candidatePriorSearch.action
+        ? { action: candidatePriorSearch.action }
+        : {}),
+      completed_rounds: candidatePriorSearch.completedRounds,
+      max_rounds: candidatePriorSearch.maxRounds,
+      current_receipt_status: candidatePriorSearch.currentReceiptStatus,
+      candidate_count: candidatePriorSearch.candidateCount,
+      selected_candidate_count: candidatePriorSearch.selectedCandidateCount,
+      broad_lane_attempt_count: candidatePriorSearch.broadLaneAttemptCount,
+      recent_lane_attempt_count: candidatePriorSearch.recentLaneAttemptCount,
+      fetched_count: candidatePriorSearch.fetchedCount,
+      selected_paper_count: candidatePriorSearch.selectedPaperCount,
+      covered_candidate_ids: [...candidatePriorSearch.coveredCandidateIds],
+      ...(candidatePriorSearch.planHash
+        ? { plan_sha256: candidatePriorSearch.planHash }
+        : {}),
+      ...(candidatePriorSearch.receiptHash
+        ? { receipt_sha256: candidatePriorSearch.receiptHash }
+        : {}),
+      reason_codes: [...candidatePriorSearch.reasonCodes],
+      artifact_refs: candidatePriorSearch.artifactRefs.map((ref) => ({ ...ref }))
+    },
+    estimator_feasibility: {
+      status: estimatorFeasibility.status,
+      trusted: estimatorFeasibility.trusted,
+      execution_authorized: estimatorFeasibility.executionAuthorized,
+      ...(estimatorFeasibility.estimandType
+        ? { estimand_type: estimatorFeasibility.estimandType }
+        : {}),
+      ...(estimatorFeasibility.estimatorFamily
+        ? { estimator_family: estimatorFeasibility.estimatorFamily }
+        : {}),
+      ...(estimatorFeasibility.independentClusterCount !== undefined
+        ? { independent_cluster_count: estimatorFeasibility.independentClusterCount }
+        : {}),
+      ...(estimatorFeasibility.primaryDenominator !== undefined
+        ? { primary_denominator: estimatorFeasibility.primaryDenominator }
+        : {}),
+      ...(estimatorFeasibility.attainableResolution !== undefined
+        ? { attainable_resolution: estimatorFeasibility.attainableResolution }
+        : {}),
+      ...(estimatorFeasibility.plannedMinimumDetectableEffect !== undefined
+        ? {
+            planned_minimum_detectable_effect:
+              estimatorFeasibility.plannedMinimumDetectableEffect
+          }
+        : {}),
+      ...(estimatorFeasibility.computedMinimumDetectableEffect !== undefined
+        ? {
+            computed_minimum_detectable_effect:
+              estimatorFeasibility.computedMinimumDetectableEffect
+          }
+        : {}),
+      reason_codes: [...estimatorFeasibility.reasonCodes],
+      artifact_refs: estimatorFeasibility.artifactRefs.map((ref) => ({ ...ref }))
+    },
+    topic_memory: {
+      status: input.topicMemory.status,
+      trusted: input.topicMemory.trusted,
+      ...(input.topicMemory.ledgerHash
+        ? { ledger_sha256: input.topicMemory.ledgerHash }
+        : {}),
+      record_count: input.topicMemory.recordCount,
+      blocked_candidate_count: input.topicMemory.blockedCandidateCount,
+      reentry_required_count: input.topicMemory.reentryRequiredCount,
+      reentry_allowed_count: input.topicMemory.reentryAllowedCount,
+      ...(input.topicMemory.auditArtifactRef
+        ? { audit_artifact_ref: { ...input.topicMemory.auditArtifactRef } }
+        : {}),
+      ...(input.topicMemory.updateArtifactRef
+        ? { update_artifact_ref: { ...input.topicMemory.updateArtifactRef } }
+        : {})
+    },
+    diagnostics_trusted: input.diagnosticsTrusted,
+    authorization_trusted: input.authorizationTrusted,
+    portfolio_candidates: portfolioCandidates.map((candidate) => ({
+      rank: candidate.rank,
+      candidate_id: candidate.candidateId,
+      topic_id: candidate.topicId,
+      statement: candidate.statement,
+      trusted: candidate.trusted,
+      review_status: candidate.reviewStatus,
+      probe_status: candidate.probeStatus,
+      probe_eligible: candidate.probeEligible,
+      scores: { ...candidate.scores },
+      closest_prior_paper_ids: [...candidate.closestPriorPaperIds],
+      closest_prior_full_text_paper_ids: [
+        ...candidate.closestPriorFullTextPaperIds
+      ],
+      prior_absorption_comparisons: candidate.priorAbsorptionComparisons.map(
+        (comparison) => ({
+          prior_paper_id: comparison.priorPaperId,
+          disposition: comparison.disposition
+        })
+      ),
+      prior_absorption_reason_codes: [
+        ...candidate.priorAbsorptionReasonCodes
+      ],
+      ...(candidate.closestPriorNonOverlap
+        ? { closest_prior_non_overlap: candidate.closestPriorNonOverlap }
+        : {}),
+      ...(candidate.reviewerAbsorptionObjection
+        ? { reviewer_absorption_objection: candidate.reviewerAbsorptionObjection }
+        : {}),
+      ...(candidate.comparator ? { comparator: candidate.comparator } : {}),
+      ...(candidate.datasetTaskBench
+        ? { dataset_task_bench: candidate.datasetTaskBench }
+        : {}),
+      ...(candidate.primaryMetric
+        ? { primary_metric: candidate.primaryMetric }
+        : {}),
+      ...(candidate.localBudget ? { local_budget: candidate.localBudget } : {}),
+      ...(candidate.killSignal ? { kill_signal: candidate.killSignal } : {}),
+      ...(candidate.contributionClaim
+        ? { contribution_claim: candidate.contributionClaim }
+        : {}),
+      ...(candidate.minimumPublishableEvidence
+        ? { minimum_publishable_evidence: candidate.minimumPublishableEvidence }
+        : {}),
+      ...(candidate.reviewSummary
+        ? { review_summary: candidate.reviewSummary }
+        : {}),
+      ...(candidate.topicMemoryDisposition
+        ? { topic_memory_disposition: candidate.topicMemoryDisposition }
+        : {}),
+      ...(candidate.topicMemoryMaximumLineageSimilarity !== undefined
+        ? {
+            topic_memory_maximum_lineage_similarity:
+              candidate.topicMemoryMaximumLineageSimilarity
+          }
+        : {}),
+      blocked_gate_codes: [...candidate.blockedGateCodes]
+    })),
+    probe_candidate_count: input.probeCandidateCount,
+    probe_candidate_ids: [...input.probeCandidateIds],
+    probe_candidate_statements: [...input.probeCandidateStatements],
+    ...(activeProbe
+      ? {
+          active_candidate_id: activeProbe.candidateId,
+          active_topic_id: activeProbe.topicId,
+          active_candidate_hash: activeProbe.candidateHash,
+          active_primary_metric: activeProbe.primaryMetric,
+          active_metric_unit: activeProbe.metricUnit,
+          active_metric_scale: activeProbe.metricScale,
+          active_metric_direction: activeProbe.metricDirection,
+          active_effect_criterion: { ...activeProbe.effectCriterion },
+          active_objective_raw: activeProbe.objectiveRaw,
+          ...(activeProbe.meaningfulEffect
+            ? { active_meaningful_effect: activeProbe.meaningfulEffect }
+            : {}),
+          active_evidence_stage: activeProbe.evidenceStage,
+          active_deferred_candidate_ids: [...activeProbe.deferredCandidateIds]
+        }
+      : {}),
+    authorization_disposition: input.authorizationDisposition,
+    authorization_probe_allowed:
+      input.authorizationTrusted
+      && input.integrityStatus !== "mismatch"
+      && input.authorizationProbeAllowed,
+    effective_execution_authorized:
+      input.effectiveExecutionAuthorized === true && executionAuthorization.authorized,
+    execution_authorization: {
+      ...executionAuthorization,
+      required_candidate_ids: [...executionAuthorization.required_candidate_ids],
+      covered_candidate_ids: [...executionAuthorization.covered_candidate_ids],
+      reason_codes: [...executionAuthorization.reason_codes]
+    },
+    ...(input.outcomeDisposition
+      ? { outcome_disposition: input.outcomeDisposition }
+      : {}),
+    ...(input.outcomeNextAction
+      ? { outcome_next_action: input.outcomeNextAction }
+      : {}),
+    outcome_gate: {
+      status: input.outcomeGate.status,
+      trusted: input.outcomeGate.trusted,
+      reason_codes: [...input.outcomeGate.reasonCodes],
+      ...(input.outcomeGate.contentHash
+        ? { content_sha256: input.outcomeGate.contentHash }
+        : {}),
+      ...(input.outcomeGate.artifactRef
+        ? { artifact_ref: { ...input.outcomeGate.artifactRef } }
+        : {})
+    },
+    followup_handoff: {
+      status: input.followupHandoff.status,
+      trusted: input.followupHandoff.trusted,
+      ...(input.followupHandoff.recommendedFollowupMode
+        ? { recommended_followup_mode: input.followupHandoff.recommendedFollowupMode }
+        : {}),
+      ...(input.followupHandoff.evidenceStage
+        ? { evidence_stage: input.followupHandoff.evidenceStage }
+        : {}),
+      ...(input.followupHandoff.contentHash
+        ? { content_sha256: input.followupHandoff.contentHash }
+        : {}),
+      ...(input.followupHandoff.artifactRef
+        ? { artifact_ref: { ...input.followupHandoff.artifactRef } }
+        : {})
+    },
+    review_gate: {
+      status: input.reviewGate.status,
+      trusted: input.reviewGate.trusted,
+      paper_drafting_allowed: input.reviewGate.paperDraftingAllowed,
+      reason_codes: [...input.reviewGate.reasonCodes],
+      ...(input.reviewGate.contentHash
+        ? { content_sha256: input.reviewGate.contentHash }
+        : {}),
+      ...(input.reviewGate.artifactRef
+        ? { artifact_ref: { ...input.reviewGate.artifactRef } }
+        : {})
+    },
+    invalid_chain_blockers: [...input.invalidChainBlockers],
+    reason_codes: [...input.reasonCodes],
+    gates: input.gates.map((gate) => ({
+      scope: gate.scope,
+      code: gate.code,
+      status: gate.status,
+      message: gate.message,
+      trusted: gate.trusted,
+      ...(gate.candidateId ? { candidate_id: gate.candidateId } : {})
+    })),
+    dissent: input.dissent.map((finding) => ({
+      source: finding.source,
+      candidate_id: finding.candidateId,
+      hard_block: finding.hardBlock,
+      summary: finding.summary,
+      findings: [...finding.findings],
+      trusted: finding.trusted,
+      ...(finding.reviewerId ? { reviewer_id: finding.reviewerId } : {}),
+      ...(finding.reviewerLabel ? { reviewer_label: finding.reviewerLabel } : {})
+    })),
+    literature_queries: input.literatureQueries.map((query) => ({
+      query: query.query,
+      source: query.source,
+      source_reason: query.sourceReason,
+      reason: query.reason,
+      fallback: query.fallback,
+      filters_relaxed: query.filtersRelaxed,
+      ...(query.allocatedLimit !== undefined ? { allocated_limit: query.allocatedLimit } : {}),
+      ...(query.retrievalLimit !== undefined ? { retrieval_limit: query.retrievalLimit } : {}),
+      ...(query.fetched !== undefined ? { fetched: query.fetched } : {}),
+      ...(query.relevantFetched !== undefined ? { relevant_fetched: query.relevantFetched } : {}),
+      ...(query.selected !== undefined ? { selected: query.selected } : {})
+    })),
+    query_fallback_used: input.queryFallbackUsed,
+    query_fallback_reasons: [...input.queryFallbackReasons],
+    hashes: {
+      gap_map: input.hashes.gapMap,
+      topic_portfolio: input.hashes.topicPortfolio,
+      topic_decision: input.hashes.topicDecision,
+      ...(activeProbe
+        ? { active_topic_probe_contract: activeProbe.contractHash }
+        : {}),
+      ...(input.hashes.topicProbeOutcome
+        ? { topic_probe_outcome: input.hashes.topicProbeOutcome }
+        : {}),
+      ...(input.hashes.topicProbeOutcomeGate
+        ? { topic_probe_outcome_gate: input.hashes.topicProbeOutcomeGate }
+        : {}),
+      ...(input.hashes.topicProbeFollowupHandoff
+        ? { topic_probe_followup_handoff: input.hashes.topicProbeFollowupHandoff }
+        : {}),
+      ...(input.hashes.topicProbeReviewGate
+        ? { topic_probe_review_gate: input.hashes.topicProbeReviewGate }
+        : {})
+    },
+    artifact_refs: input.artifactRefs.map((ref) => ({
+      label: ref.label,
+      path: ref.path
+    })),
+    integrity_status: input.integrityStatus
+  };
+}
+
+interface VerifiedActiveProbeProjection {
+  candidateId: string;
+  topicId: string;
+  candidateHash: string;
+  primaryMetric: string;
+  metricUnit: string;
+  metricScale: "raw" | "proportion" | "percent" | "percentage_point";
+  metricDirection: "maximize" | "minimize";
+  effectCriterion: NonNullable<RunResearchFunnelProjection["active_effect_criterion"]>;
+  objectiveRaw: string;
+  meaningfulEffect?: string;
+  evidenceStage: "bounded_probe";
+  deferredCandidateIds: string[];
+  contractArtifactPath: string;
+  contractHash: string;
+}
+
+function readVerifiedActiveProbeSource(
+  input: ResearchFunnelProjection
+): VerifiedActiveProbeProjection | undefined {
+  const contractArtifact = input.artifactRefs.find(isActiveTopicProbeContractRef);
+  const contractHash = input.hashes.activeTopicProbeContract;
+  if (
+    input.integrityStatus !== "complete"
+    || !input.authorizationTrusted
+    || input.authorizationDisposition !== "probe_authorized"
+    || !input.authorizationProbeAllowed
+    || !contractArtifact
+    || !isSha256(contractHash)
+    || !hasText(input.activeCandidateId)
+    || !hasText(input.activeTopicId)
+    || !isSha256(input.activeCandidateHash)
+    || !hasText(input.activePrimaryMetric)
+    || !hasText(input.activeMetricUnit)
+    || !isMetricScale(input.activeMetricScale)
+    || !isEffectCriterionProjection(input.activeEffectCriterion)
+    || !hasText(input.activeObjectiveRaw)
+    || (input.activeMetricDirection !== "maximize" && input.activeMetricDirection !== "minimize")
+    || input.activeEvidenceStage !== "bounded_probe"
+    || !Array.isArray(input.activeDeferredCandidateIds)
+  ) {
+    return undefined;
+  }
+  return {
+    candidateId: input.activeCandidateId,
+    topicId: input.activeTopicId,
+    candidateHash: input.activeCandidateHash,
+    primaryMetric: input.activePrimaryMetric,
+    metricUnit: input.activeMetricUnit,
+    metricScale: input.activeMetricScale,
+    metricDirection: input.activeMetricDirection,
+    effectCriterion: { ...input.activeEffectCriterion },
+    objectiveRaw: input.activeObjectiveRaw,
+    meaningfulEffect: input.activeMeaningfulEffect,
+    evidenceStage: input.activeEvidenceStage,
+    deferredCandidateIds: [...input.activeDeferredCandidateIds],
+    contractArtifactPath: contractArtifact.path,
+    contractHash
+  };
+}
+
+function readVerifiedActiveProbeProjection(
+  input: RunResearchFunnelProjection
+): VerifiedActiveProbeProjection | undefined {
+  const contractArtifact = input.artifact_refs.find(isActiveTopicProbeContractRef);
+  const contractHash = input.hashes.active_topic_probe_contract;
+  if (
+    input.integrity_status !== "complete"
+    || !input.authorization_trusted
+    || input.authorization_disposition !== "probe_authorized"
+    || !input.authorization_probe_allowed
+    || !contractArtifact
+    || !isSha256(contractHash)
+    || !hasText(input.active_candidate_id)
+    || !hasText(input.active_topic_id)
+    || !isSha256(input.active_candidate_hash)
+    || !hasText(input.active_primary_metric)
+    || !hasText(input.active_metric_unit)
+    || !isMetricScale(input.active_metric_scale)
+    || !isEffectCriterionProjection(input.active_effect_criterion)
+    || !hasText(input.active_objective_raw)
+    || (input.active_metric_direction !== "maximize" && input.active_metric_direction !== "minimize")
+    || input.active_evidence_stage !== "bounded_probe"
+    || !Array.isArray(input.active_deferred_candidate_ids)
+  ) {
+    return undefined;
+  }
+  return {
+    candidateId: input.active_candidate_id,
+    topicId: input.active_topic_id,
+    candidateHash: input.active_candidate_hash,
+    primaryMetric: input.active_primary_metric,
+    metricUnit: input.active_metric_unit,
+    metricScale: input.active_metric_scale,
+    metricDirection: input.active_metric_direction,
+    effectCriterion: { ...input.active_effect_criterion },
+    objectiveRaw: input.active_objective_raw,
+    meaningfulEffect: input.active_meaningful_effect,
+    evidenceStage: input.active_evidence_stage,
+    deferredCandidateIds: [...input.active_deferred_candidate_ids],
+    contractArtifactPath: contractArtifact.path,
+    contractHash
+  };
+}
+
+interface EvidenceReadinessDiagnostic {
+  artifactPresent: boolean;
+  valid: boolean;
+  status: "unmeasured" | "missing" | "available" | "invalid";
+  runMatches: boolean;
+  comparisonCount: number;
+  primaryComparisonId?: string;
+  warnings: string[];
+}
+
+async function loadEvidenceReadinessDiagnostic(
+  runDir: string,
+  expectedRunId: string
+): Promise<EvidenceReadinessDiagnostic> {
+  const artifactPath = path.join(runDir, "baseline_comparison.json");
+  let raw: string;
+  try {
+    raw = await fs.readFile(artifactPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return {
+        artifactPresent: false,
+        valid: true,
+        status: "unmeasured",
+        runMatches: true,
+        comparisonCount: 0,
+        warnings: []
+      };
+    }
+    return invalidEvidenceDiagnostic("baseline_comparison_read_error");
+  }
+
+  try {
+    const value = JSON.parse(raw) as unknown;
+    if (!isRecord(value)) {
+      return invalidEvidenceDiagnostic("baseline_comparison_not_object");
+    }
+    const status = value.status;
+    const comparisons = Array.isArray(value.comparisons) ? value.comparisons : undefined;
+    const primary = value.primary_comparison;
+    if (
+      value.version !== 1
+      || typeof value.run_id !== "string"
+      || (status !== "available" && status !== "missing")
+      || !comparisons
+      || !(primary === null || isRecord(primary))
+      || !Array.isArray(value.warnings)
+    ) {
+      return invalidEvidenceDiagnostic("baseline_comparison_schema_invalid");
+    }
+    const primaryComparisonId = isRecord(primary) ? readText(primary.id) : undefined;
+    const comparisonIds = comparisons.flatMap((comparison) => {
+      const id = isRecord(comparison) ? readText(comparison.id) : undefined;
+      return id ? [id] : [];
+    });
+    const warnings = value.warnings.flatMap((warning) => {
+      const text = readText(warning);
+      return text ? [text] : [];
+    });
+    const schemaValid = comparisonIds.length === comparisons.length
+      && (!primaryComparisonId || comparisonIds.includes(primaryComparisonId));
+    if (!schemaValid) {
+      return invalidEvidenceDiagnostic("baseline_comparison_binding_invalid");
+    }
+    return {
+      artifactPresent: true,
+      valid: true,
+      status,
+      runMatches: value.run_id === expectedRunId,
+      comparisonCount: comparisons.length,
+      primaryComparisonId,
+      warnings
+    };
+  } catch {
+    return invalidEvidenceDiagnostic("baseline_comparison_invalid_json");
+  }
+}
+
+function invalidEvidenceDiagnostic(reason: string): EvidenceReadinessDiagnostic {
+  return {
+    artifactPresent: true,
+    valid: false,
+    status: "invalid",
+    runMatches: false,
+    comparisonCount: 0,
+    warnings: [reason]
+  };
+}
+
+function authorizeEvidenceReadiness(
+  diagnostic: EvidenceReadinessDiagnostic,
+  analysisReady: boolean
+): RunEvidenceReadinessProjection {
+  if (!diagnostic.artifactPresent) {
+    return {
+      status: analysisReady ? "missing" : "unmeasured",
+      evidence_ready: false,
+      trusted: false,
+      comparison_count: 0,
+      warnings: analysisReady ? ["baseline_comparison_missing"] : []
+    };
+  }
+  const trusted = diagnostic.valid && diagnostic.runMatches && analysisReady;
+  return {
+    status: diagnostic.status,
+    evidence_ready:
+      trusted
+      && diagnostic.status === "available"
+      && Boolean(diagnostic.primaryComparisonId),
+    trusted,
+    comparison_count: diagnostic.comparisonCount,
+    primary_comparison_id: diagnostic.primaryComparisonId,
+    warnings: [
+      ...diagnostic.warnings,
+      ...(!diagnostic.runMatches ? ["baseline_comparison_run_id_mismatch"] : []),
+      ...(diagnostic.valid && !analysisReady ? ["baseline_comparison_not_currently_authoritative"] : [])
+    ],
+    artifact_ref: {
+      label: "Baseline comparison",
+      path: "baseline_comparison.json"
+    }
+  };
+}
+
+function isEffectCriterionProjection(
+  value: unknown
+): value is NonNullable<RunResearchFunnelProjection["active_effect_criterion"]> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return value.basis === "delta_vs_reference"
+    && typeof value.magnitude === "number"
+    && Number.isFinite(value.magnitude)
+    && value.magnitude >= 0
+    && (
+      value.scale === "raw"
+      || value.scale === "proportion"
+      || value.scale === "percent"
+      || value.scale === "percentage_point"
+    )
+    && typeof value.inclusive === "boolean";
+}
+
+function formatEffectCriterion(
+  criterion: NonNullable<RunResearchFunnelProjection["active_effect_criterion"]>,
+  direction: "maximize" | "minimize"
+): string {
+  const comparator = direction === "minimize"
+    ? criterion.inclusive ? "<=" : "<"
+    : criterion.inclusive ? ">=" : ">";
+  const target = direction === "minimize" ? -criterion.magnitude : criterion.magnitude;
+  return `${comparator}${target} ${criterion.scale} ${criterion.basis}`;
+}
+
+function isMetricScale(
+  value: unknown
+): value is "raw" | "proportion" | "percent" | "percentage_point" {
+  return value === "raw"
+    || value === "proportion"
+    || value === "percent"
+    || value === "percentage_point";
+}
+
+function isActiveTopicProbeContractRef(ref: { label: string; path: string }): boolean {
+  return ref.path.endsWith("/active_topic_probe_contract.json")
+    || ref.path === "active_topic_probe_contract.json";
+}
+
+function hasText(value: string | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isSha256(value: string | undefined): value is string {
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readText(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error;
 }

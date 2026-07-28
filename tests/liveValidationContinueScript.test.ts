@@ -178,7 +178,61 @@ describe("live-validation continue helper", () => {
     }
   });
 
-  it("treats active target-node progress as a resumeable TUI command path", async () => {
+  it("persists and diagnoses the explicitly selected Ollama validation profile", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "autolabos-preflight-provider-"));
+    const workspace = path.join(tempRoot, "workspace");
+    const outDir = path.join(tempRoot, "out");
+    const briefRelativePath = path.join("briefs", "governed.md");
+    const target = path.join(workspace, briefRelativePath);
+    const script = path.join(repoRoot, "scripts", "live-validation-preflight.mjs");
+
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(
+        target,
+        await readFile(path.join(repoRoot, "docs", "research-brief-template.md"), "utf8"),
+        "utf8"
+      );
+      try {
+        await execFileAsync("node", [script], {
+          env: {
+            ...process.env,
+            AUTOLABOS_VALIDATION_WORKSPACE: workspace,
+            AUTOLABOS_VALIDATION_PREFLIGHT_OUT: outDir,
+            AUTOLABOS_VALIDATION_BRIEF: briefRelativePath,
+            AUTOLABOS_VALIDATION_BRIEF_SOURCE: "",
+            AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE: "generic",
+            AUTOLABOS_VALIDATION_LLM_MODE: "ollama",
+            AUTOLABOS_VALIDATION_OLLAMA_BASE_URL: "http://127.0.0.1:1",
+            AUTOLABOS_VALIDATION_OLLAMA_RESEARCH_MODEL: "local-research-model:latest"
+          }
+        });
+      } catch {
+        // The unreachable server is intentional; the provider projection is still audited.
+      }
+
+      const config = await readFile(path.join(workspace, ".autolabos", "config.yaml"), "utf8");
+      const summary = JSON.parse(
+        await readFile(path.join(outDir, "preflight-summary.json"), "utf8")
+      ) as {
+        validationLlmMode: string;
+        doctor: { readiness?: { llmMode?: string } };
+        checks: Array<{ id: string; ok: boolean }>;
+      };
+
+      expect(config).toContain("llm_mode: ollama");
+      expect(config).toContain('research_model: "local-research-model:latest"');
+      expect(summary.validationLlmMode).toBe("ollama");
+      expect(summary.doctor.readiness?.llmMode).toBe("ollama");
+      expect(summary.checks).toContainEqual(
+        expect.objectContaining({ id: "provider_profile_matches_request", ok: true })
+      );
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("selects fail-closed continue commands for workflow targets and explicit overrides", async () => {
     const script = path.join(repoRoot, "scripts", "live-validation-approve-and-run-next.py");
     const result = await execFileAsync("python3", [script], {
       env: {
@@ -247,5 +301,6 @@ describe("live-validation continue helper", () => {
 
   it("preserves the live-validation workspace during test cleanup", () => {
     expect(shouldPreserveValidationRootEntry("live-validation")).toBe(true);
+    expect(shouldPreserveValidationRootEntry(".live")).toBe(true);
   });
 });

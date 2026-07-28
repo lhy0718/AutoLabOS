@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "bounded_development_gate_decision",
+  "study_id": "grader_conform_probe_v1",
+  "decision": "PROMOTE_TO_BLINDED_CONFIRMATORY_CORPUS_BUILD",
+  "bounded_development_gate_passed": true,
+  "paper_scale_claim_authorized": false,
+  "topic_selected_for_paper": false,
+  "evidence": {
+    "manifest": "studies/grader-conform/probes/probes.bounded-development.v1.json",
+    "replay_summary": "studies/grader-conform/results/bounded-development-summary.v1.json",
+    "native_test_static_census": "studies/grader-conform/results/native-test-static-census.v1.json",
+    "relation_template_registry": "studies/grader-conform/method/relation-templates.v1.json",
+    "development_lineages": 14,
+    "source_repositories": 3,
+    "historical_faults_reproduced": 14,
+    "fixed_revision_false_alarms": 0,
+    "stable_replays": 3,
+    "outcome_signature_sha256": "08f9badf0429e1852f143fb82cd622f7acfd5f2356222eebba53ea605049a0f1"
+  },
+  "native_test_comparator": {
+    "lineages_without_a_discovered_direct_contract_test": 14,
+    "lower_bound_with_no_discovered_runnable_parent_test": 6,
+    "lower_bound_source_repositories": 2,
+    "execution_outcomes_included": false,
+    "paper_scale_baseline_complete": false,
+    "interpretation": "The static census establishes absence of a discovered direct parent test, not that every indirect or dynamically generated parent suite was executed."
+  },
+  "development_evidence_boundary": [
+    "Eleven probe implementations were developed after the first three behavioral outcomes.",
+    "The 14-of-14 result is a development-set fit estimate, not held-out recall.",
+    "The result authorizes only a blinded confirmatory corpus build.",
+    "No prevalence, general superiority, or workshop-paper performance claim is authorized."
+  ],
+  "next_gate": {
+    "minimum_heldout_lineages": 24,
+    "minimum_new_repositories": 2,
+    "minimum_unique_gains_over_strongest_deterministic_baseline": 6,
+    "minimum_repositories_with_unique_gain": 3,
+    "fixed_control_false_alarm_maximum": 1,
+    "required_statistics": [
+      "repository-cluster bootstrap confidence interval",
+      "paired exact comparison against each executable baseline",
+      "leave-one-repository-out sensitivity",
+      "fixed-control false-alarm interval"
+    ]
+  }
+}

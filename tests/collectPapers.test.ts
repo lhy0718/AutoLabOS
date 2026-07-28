@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildBibtexEntry,
   buildBibtexFile,
+  buildCollectCorpusFingerprint,
   createCollectPapersNode,
   recoverCollectEnrichmentJobs,
   waitForAllCollectEnrichmentJobs,
@@ -15,19 +16,88 @@ import {
 import { InMemoryEventStream, PersistedEventStream, readPersistedRunEvents } from "../src/core/events.js";
 import { readGovernanceTrace } from "../src/governance/governanceTrace.js";
 import { MockLLMClient } from "../src/core/llm/client.js";
+import { TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION } from "../src/core/collection/topicDiscoveryCorpusQuality.js";
+import { TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT } from "../src/core/collection/topicDiscoveryArtifactVersions.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import { RunRecord } from "../src/types.js";
 
 const ORIGINAL_CWD = process.cwd();
 
 class JsonLLMClient extends MockLLMClient {
-  constructor(private readonly response: string) {
+  constructor(
+    private readonly response: string,
+    private readonly failSemanticAudit = false,
+    private readonly partialSemanticAudit = false
+  ) {
     super();
   }
 
-  override async complete(_prompt: string): Promise<{ text: string }> {
-    return { text: this.response };
+  override async complete(prompt: string): Promise<{ text: string }> {
+    if (
+      this.failSemanticAudit
+      && prompt.startsWith("Conservatively triage every requested paper-family pair.")
+    ) {
+      throw new Error("semantic_audit_fixture_outage");
+    }
+    if (
+      this.partialSemanticAudit
+      && prompt.startsWith("Conservatively triage every requested paper-family pair.")
+    ) {
+      return { text: partialSemanticAuditFixtureResponse(prompt) };
+    }
+    return { text: semanticAuditFixtureResponse(prompt) ?? this.response };
   }
+}
+
+function partialSemanticAuditFixtureResponse(prompt: string): string {
+  const marker = "\nInput:\n";
+  const markerIndex = prompt.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return JSON.stringify({ judgments: [] });
+  }
+  const payload = JSON.parse(prompt.slice(markerIndex + marker.length)) as {
+    papers: Array<{ paper_id: string; title: string }>;
+    requested_pairs: Array<{ paper_id: string; family_id: string }>;
+  };
+  const firstPair = payload.requested_pairs[0];
+  if (!firstPair) {
+    return JSON.stringify({ judgments: [] });
+  }
+  const title = payload.papers.find((paper) => paper.paper_id === firstPair.paper_id)?.title ?? "";
+  return JSON.stringify({
+    judgments: [{
+      ...firstPair,
+      verdict: "direct_support",
+      reason: "The supplied title directly satisfies the family contract.",
+      evidence_span: title
+    }]
+  });
+}
+
+function semanticAuditFixtureResponse(prompt: string): string | undefined {
+  const marker = "\nInput:\n";
+  if (!prompt.startsWith("Conservatively triage every requested paper-family pair.")) {
+    return undefined;
+  }
+  const markerIndex = prompt.lastIndexOf(marker);
+  if (markerIndex < 0) {
+    return JSON.stringify({ judgments: [] });
+  }
+  const payload = JSON.parse(prompt.slice(markerIndex + marker.length)) as {
+    papers: Array<{ paper_id: string; title: string }>;
+    requested_pairs: Array<{ paper_id: string; family_id: string }>;
+  };
+  const titleByPaper = new Map(
+    payload.papers.map((paper) => [paper.paper_id, paper.title] as const)
+  );
+  return JSON.stringify({
+    judgments: payload.requested_pairs.map((pair) => ({
+      ...pair,
+      verdict: "direct_support",
+      reason: "The supplied title directly satisfies the family contract.",
+      evidence_span: titleByPaper.get(pair.paper_id) ?? ""
+    }))
+  });
 }
 
 afterEach(async () => {
@@ -68,8 +138,8 @@ function makeRun(runId: string): RunRecord {
     version: 3,
     workflowVersion: 3,
     id: runId,
-    title: "Multi-Agent Collaboration",
-    topic: "Multi-agent collaboration",
+    title: "Configured Research Topic",
+    topic: "configured research topic",
     constraints: [],
     objectiveMetric: "metric",
     status: "running",
@@ -87,11 +157,60 @@ function makeRun(runId: string): RunRecord {
   };
 }
 
+function buildTopicDiscoveryScopeBrief(
+  topic: string,
+  scientificObject: string,
+  empiricalProblems: string[]
+): string {
+  return [
+    "# Research Brief",
+    "",
+    "## Research Mode",
+    "topic_discovery",
+    "",
+    "## Topic",
+    topic,
+    "",
+    "## Scientific Scope",
+    "### Scientific Object",
+    `- ${scientificObject}`,
+    "",
+    "### Empirical Problems",
+    ...empiricalProblems.map((problem) => `- ${problem}`),
+    "",
+    "### Prior-Work Probes",
+    "- whether direct prior work already subsumes the declared problems"
+  ].join("\n");
+}
+
 describe("collectPapers bibtex", () => {
+  it("binds recovery fingerprints to reviewed content and query-family provenance", () => {
+    const base = {
+      paper_id: "paper-stable-id",
+      title: "Configured evidence title",
+      abstract: "Configured evidence abstract.",
+      authors: ["Example Author"],
+      query_families: ["family-b", "family-a"]
+    };
+
+    expect(buildCollectCorpusFingerprint([base])).toBe(
+      buildCollectCorpusFingerprint([{ ...base, query_families: ["family-a", "family-b"] }])
+    );
+    expect(buildCollectCorpusFingerprint([base])).not.toBe(
+      buildCollectCorpusFingerprint([{ ...base, title: "Substituted evidence title" }])
+    );
+    expect(buildCollectCorpusFingerprint([base])).not.toBe(
+      buildCollectCorpusFingerprint([{ ...base, abstract: "Substituted evidence abstract." }])
+    );
+    expect(buildCollectCorpusFingerprint([base])).not.toBe(
+      buildCollectCorpusFingerprint([{ ...base, query_families: ["family-a"] }])
+    );
+  });
+
   it("builds bibtex entry with rich metadata", () => {
     const entry = buildBibtexEntry({
       paperId: "12345",
-      title: "Agentic Workflows for Science",
+      title: "Configured Method for Scientific Workflows",
       abstract: "x",
       year: 2025,
       venue: "NeurIPS",
@@ -103,7 +222,7 @@ describe("collectPapers bibtex", () => {
 
     expect(entry).toContain("@article{10_1000_xyz_123,");
     expect(entry).toContain("author = {Alice Kim and Bob Lee},");
-    expect(entry).toContain("title = {Agentic Workflows for Science},");
+    expect(entry).toContain("title = {Configured Method for Scientific Workflows},");
     expect(entry).toContain("year = {2025},");
     expect(entry).toContain("journal = {NeurIPS},");
     expect(entry).toContain("doi = {10.1000/xyz-123},");
@@ -172,8 +291,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -200,7 +319,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 300,
               sort: { field: "relevance", order: "desc" },
               filters: { lastYears: 5, openAccessPdf: true }
@@ -247,7 +366,7 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("failure");
-    expect(result.error).toContain('Semantic Scholar rate limited "Multi-Agent Collaboration"');
+    expect(result.error).toContain('Semantic Scholar rate limited "configured research topic"');
     expect(result.error).toContain("429");
     expect(result.error).toContain("lower --limit to 50-100");
     expect(
@@ -265,7 +384,7 @@ describe("collectPapers bibtex", () => {
       path.join(root, ".autolabos", "runs", runId, "collect_result.json"),
       "utf8"
     );
-    expect(resultMetaRaw).toContain('"query": "Multi-Agent Collaboration"');
+    expect(resultMetaRaw).toContain('"query": "configured research topic"');
     expect(resultMetaRaw).toContain('"fetchError": "Semantic Scholar request failed: 429"');
     expect(resultMetaRaw).toContain('"attemptCount": 3');
     expect(resultMetaRaw).toContain('"lastStatus": 429');
@@ -283,8 +402,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -311,7 +430,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 1,
               sort: { field: "relevance", order: "desc" },
               filters: { lastYears: 5, openAccessPdf: true }
@@ -340,7 +459,7 @@ describe("collectPapers bibtex", () => {
           batchStream([
             {
               paperId: "paper-1",
-              title: "Multi-Agent Collaboration for Research",
+              title: "Configured Method for Research",
               abstract: "Test abstract",
               year: 2025,
               venue: "NeurIPS",
@@ -376,7 +495,7 @@ describe("collectPapers bibtex", () => {
         .some((event) => String(event.payload?.text ?? "").includes("Requesting Semantic Scholar batch 1/1."))
     ).toBe(true);
     expect(result.summary).toBe(
-      'Semantic Scholar stored 1 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 1 paper(s).'
+      'Semantic Scholar stored 1 papers for "configured research topic". Deferred enrichment scheduled in background for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     expect(result.summary).not.toContain("Collection objective");
@@ -573,7 +692,7 @@ describe("collectPapers bibtex", () => {
             {
               key: "collect_papers.request",
               value: {
-                query: "Multi-Agent Collaboration",
+                query: "configured research topic",
                 limit: 1,
                 bibtexMode: "s2",
                 sort: { field: "relevance", order: "desc" }
@@ -652,7 +771,7 @@ describe("collectPapers bibtex", () => {
           searchPapers: openAlexSearch,
           getLastSearchDiagnostics: vi.fn(() => ({
             provider: "openalex",
-            query: "Multi-Agent Collaboration",
+            query: "configured research topic",
             fetched: 1,
             attemptCount: 1,
             attempts: [{ provider: "openalex", attempt: 1, ok: true, endpoint: "openalex" }]
@@ -663,7 +782,7 @@ describe("collectPapers bibtex", () => {
           searchPapers: crossrefSearch,
           getLastSearchDiagnostics: vi.fn(() => ({
             provider: "crossref",
-            query: "Multi-Agent Collaboration",
+            query: "configured research topic",
             fetched: 1,
             attemptCount: 1,
             attempts: [{ provider: "crossref", attempt: 1, ok: true, endpoint: "crossref" }]
@@ -674,7 +793,7 @@ describe("collectPapers bibtex", () => {
           searchPapers: arxivSearch,
           getLastSearchDiagnostics: vi.fn(() => ({
             provider: "arxiv",
-            query: "Multi-Agent Collaboration",
+            query: "configured research topic",
             fetched: 1,
             attemptCount: 1,
             attempts: [{ provider: "arxiv", attempt: 1, ok: true, endpoint: "arxiv" }]
@@ -688,7 +807,7 @@ describe("collectPapers bibtex", () => {
       });
 
       expect(result.status).toBe("success");
-      expect(result.summary).toBe('Semantic Scholar stored 1 papers for "Multi-Agent Collaboration".');
+      expect(result.summary).toBe('Semantic Scholar stored 1 papers for "configured research topic".');
       expect(openAlexSearch).not.toHaveBeenCalled();
       expect(crossrefSearch).not.toHaveBeenCalled();
       expect(arxivSearch).not.toHaveBeenCalled();
@@ -731,7 +850,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 5,
               bibtexMode: "s2",
               sort: { field: "relevance", order: "desc" }
@@ -795,7 +914,7 @@ describe("collectPapers bibtex", () => {
         ]),
         getLastSearchDiagnostics: vi.fn(() => ({
           provider: "crossref",
-          query: "Multi-Agent Collaboration",
+          query: "configured research topic",
           fetched: 1,
           attemptCount: 1,
           attempts: [{ provider: "crossref", attempt: 1, ok: true, endpoint: "crossref" }]
@@ -819,7 +938,7 @@ describe("collectPapers bibtex", () => {
         ]),
         getLastSearchDiagnostics: vi.fn(() => ({
           provider: "arxiv",
-          query: "Multi-Agent Collaboration",
+          query: "configured research topic",
           fetched: 1,
           attemptCount: 1,
           attempts: [{ provider: "arxiv", attempt: 1, ok: true, endpoint: "arxiv" }]
@@ -833,7 +952,7 @@ describe("collectPapers bibtex", () => {
     });
 
     expect(result.status).toBe("success");
-    expect(result.summary).toBe('Aggregated search stored 1 papers for "Multi-Agent Collaboration".');
+    expect(result.summary).toBe('Aggregated search stored 1 papers for "configured research topic".');
 
     const runDir = path.join(root, ".autolabos", "runs", runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -871,8 +990,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -911,7 +1030,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               additional: 2,
               limit: 3,
               sort: { field: "relevance", order: "desc" }
@@ -965,7 +1084,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 3 total papers for "Multi-Agent Collaboration" (2 newly added). Deferred enrichment scheduled in background for 3 paper(s).'
+      'Semantic Scholar stored 3 total papers for "configured research topic" (2 newly added). Deferred enrichment scheduled in background for 3 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -987,8 +1106,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -1026,7 +1145,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               additional: 1,
               limit: 2,
               sort: { field: "relevance", order: "desc" }
@@ -1079,7 +1198,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 total papers for "Multi-Agent Collaboration" (1 newly added). Deferred enrichment scheduled in background for 1 paper(s).'
+      'Semantic Scholar stored 2 total papers for "configured research topic" (1 newly added). Deferred enrichment scheduled in background for 1 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
@@ -1102,8 +1221,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -1150,7 +1269,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               additional: 1,
               limit: 2,
               sort: { field: "relevance", order: "desc" },
@@ -1214,8 +1333,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "AI agent automation",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -1242,7 +1361,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 3,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1316,7 +1435,7 @@ describe("collectPapers bibtex", () => {
       workflowVersion: 3,
       id: runId,
       title: "Constrained collect",
-      topic: "AI agent automation",
+      topic: "configured research topic",
       constraints: ["last 5 years", "open access", "review papers", "minimum citations 25"],
       objectiveMetric: "metric",
       status: "running",
@@ -1343,7 +1462,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "AI agent automation",
+              query: "configured research topic",
               limit: 1,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1390,7 +1509,7 @@ describe("collectPapers bibtex", () => {
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
     expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
-      query: "AI agent automation",
+      query: "configured research topic",
       filters: {
         openAccessPdf: true,
         publicationDateOrYear: `${new Date().getFullYear() - 4}:`,
@@ -1419,7 +1538,7 @@ describe("collectPapers bibtex", () => {
       workflowVersion: 3,
       id: runId,
       title: "Seven Year Retrieval",
-      topic: "AI agent automation",
+      topic: "configured research topic",
       constraints: ["Prefer open pdfs from the past seven years with at least 42 citations."],
       objectiveMetric: "metric",
       status: "running",
@@ -1446,7 +1565,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 10,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1524,8 +1643,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Benchmark Corpus",
-      topic: "tabular classification baselines",
+      title: "Configured Corpus",
+      topic: "configured method public task suite",
       constraints: ["Include both recent papers and core older benchmark or evaluation papers where relevant."],
       objectiveMetric: "metric",
       status: "running",
@@ -1552,7 +1671,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "tabular classification baselines",
+              query: "configured method public task suite",
               limit: 10,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1567,7 +1686,7 @@ describe("collectPapers bibtex", () => {
       batchStream([
         {
           paperId: "paper-1",
-          title: "Benchmark Corpus Paper",
+          title: "Configured Corpus Paper",
           authors: ["Alice Kim"]
         }
       ])
@@ -1611,7 +1730,7 @@ describe("collectPapers bibtex", () => {
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
     expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
-      query: "tabular classification baselines"
+      query: "configured method public task suite"
     });
     expect(streamSearchPapers.mock.calls[0]?.[0]?.filters).not.toHaveProperty("publicationDateOrYear");
   });
@@ -1625,8 +1744,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Recent Multi-Agent Collaboration Papers",
-      topic: "Multi-agent collaboration",
+      title: "Recent Configured Research Papers",
+      topic: "configured research topic",
       constraints: ["recent papers", "last 5 years"],
       objectiveMetric: "metric",
       status: "running",
@@ -1653,7 +1772,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 20,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1720,8 +1839,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "Multi-agent collaboration",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -1748,7 +1867,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 2,
               sort: { field: "relevance", order: "desc" }
             },
@@ -1801,7 +1920,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(result.summary).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).'
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment scheduled in background for 2 paper(s).'
     );
     await waitForCollectEnrichmentJob(runId);
     const observedTexts = eventStream
@@ -1813,7 +1932,7 @@ describe("collectPapers bibtex", () => {
       text.includes("Requesting Semantic Scholar batch 1/1.")
     );
     const collectedIndex = observedTexts.findIndex((text) =>
-      text.includes('Collected 2 paper(s) so far (2 new) for "Multi-Agent Collaboration".')
+      text.includes('Collected 2 paper(s) so far (2 new) for "configured research topic".')
     );
     const deferredIndex = observedTexts.findIndex((text) =>
       text.includes("Starting deferred enrichment for 2 paper(s) with concurrency 2.")
@@ -1852,6 +1971,156 @@ describe("collectPapers bibtex", () => {
     expect(await readRunContextValue(root, runId, "collect_papers.enrichment_last_error")).toBeNull();
   });
 
+  it("prevents a delayed enrichment attempt from overwriting a newer collection generation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-generation-race-"));
+    process.chdir(root);
+
+    const runId = "run-collect-generation-race";
+    const run = makeRun(runId);
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "collect_papers.request",
+          value: {
+            query: "first configured collection",
+            limit: 1,
+            sort: { field: "relevance", order: "desc" },
+            bibtexMode: "hybrid"
+          },
+          updatedAt: new Date().toISOString()
+        }]
+      }),
+      "utf8"
+    );
+
+    let releaseFirstEnrichment!: () => void;
+    let markFirstEnrichmentStarted!: () => void;
+    const firstEnrichmentGate = new Promise<void>((resolve) => {
+      releaseFirstEnrichment = resolve;
+    });
+    const firstEnrichmentStarted = new Promise<void>((resolve) => {
+      markFirstEnrichmentStarted = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(async (input: URL | RequestInfo) => {
+      if (String(input).includes("arxiv.org/pdf/")) {
+        markFirstEnrichmentStarted();
+        await firstEnrichmentGate;
+        return new Response("pdf", {
+          status: 200,
+          headers: { "content-type": "application/pdf" }
+        });
+      }
+      return new Response("", { status: 404 });
+    }));
+
+    const streamSearchPapers = vi.fn((request: { query: string }) => {
+      if (request.query === "first configured collection") {
+        return batchStream([{
+          paperId: "paper-first",
+          title: "First configured paper",
+          authors: ["First Author"],
+          arxivId: "2501.00001"
+        }]);
+      }
+      return batchStream([{
+        paperId: "paper-second",
+        title: "Second configured paper",
+        authors: ["Second Author"],
+        openAccessPdfUrl: "https://example.org/paper-second.pdf"
+      }]);
+    });
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 200 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const firstExecution = await node.execute({ run, graph: run.graph });
+    expect(firstExecution.status).toBe("success");
+    const firstResult = JSON.parse(
+      await readFile(path.join(root, ".autolabos", "runs", runId, "collect_result.json"), "utf8")
+    ) as { collect_attempt_id: string };
+    await firstEnrichmentStarted;
+
+    const contextPath = path.join(memoryDir, "run_context.json");
+    const context = JSON.parse(await readFile(contextPath, "utf8")) as {
+      version: number;
+      items: Array<{ key: string; value: unknown; updatedAt: string }>;
+    };
+    const requestItem = context.items.find((item) => item.key === "collect_papers.request");
+    expect(requestItem).toBeDefined();
+    requestItem!.value = {
+      query: "second configured collection",
+      limit: 1,
+      sort: { field: "relevance", order: "desc" },
+      bibtexMode: "generated"
+    };
+    requestItem!.updatedAt = new Date().toISOString();
+    await writeFile(contextPath, JSON.stringify(context), "utf8");
+
+    try {
+      const secondExecution = await node.execute({ run, graph: run.graph });
+      expect(secondExecution.status).toBe("success");
+    } finally {
+      releaseFirstEnrichment();
+    }
+    await waitForCollectEnrichmentJob(runId);
+
+    const finalResult = JSON.parse(
+      await readFile(path.join(root, ".autolabos", "runs", runId, "collect_result.json"), "utf8")
+    ) as { collect_attempt_id: string; query: string; enrichment?: { status?: string } };
+    expect(finalResult).toMatchObject({
+      query: "second configured collection",
+      enrichment: { status: "not_needed" }
+    });
+    expect(finalResult.collect_attempt_id).not.toBe(firstResult.collect_attempt_id);
+    const finalCorpus = await readFile(
+      path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"),
+      "utf8"
+    );
+    expect(finalCorpus).toContain('"paper_id":"paper-second"');
+    expect(finalCorpus).not.toContain('"paper_id":"paper-first"');
+    expect(
+      await readFile(
+        path.join(root, ".autolabos", "runs", runId, "collect_attempt_manifest.json"),
+        "utf8"
+      )
+    ).toContain(`"collect_attempt_id": "${finalResult.collect_attempt_id}"`);
+    expect(
+      await readRunContextValue(root, runId, "collect_papers.current_generation_id")
+    ).toBe(finalResult.collect_attempt_id);
+    const firstLatest = JSON.parse(
+      await readFile(
+        path.join(
+          root,
+          ".autolabos",
+          "runs",
+          runId,
+          "collect_attempts",
+          firstResult.collect_attempt_id,
+          "latest.json"
+        ),
+        "utf8"
+      )
+    ) as { revision_id?: string };
+    expect(firstLatest.revision_id).toMatch(/^enrichment-/u);
+  });
+
   it("uses llm-generated queries derived from the explicit brief topic instead of raw topic fallback", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-brief-topic-"));
     process.chdir(root);
@@ -1861,8 +2130,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Tabular Baselines",
-      topic: "Laptop-safe benchmarking of lightweight tabular classifiers versus logistic regression on small public datasets",
+      title: "Brief Topic Query",
+      topic: "fallback run topic that should not seed the query",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -1893,7 +2162,7 @@ describe("collectPapers bibtex", () => {
               "",
               "## Topic",
               "",
-              "Classical machine learning baselines for tabular classification."
+              "Acoustic event segmentation with limited labeled data."
             ].join("\n"),
             updatedAt: new Date().toISOString()
           }
@@ -1906,7 +2175,7 @@ describe("collectPapers bibtex", () => {
       batchStream([
         {
           paperId: "paper-1",
-          title: "Tabular Baselines",
+          title: "Acoustic Event Segmentation Study",
           authors: ["Alice Kim"]
         }
       ])
@@ -1922,7 +2191,7 @@ describe("collectPapers bibtex", () => {
       eventStream: new InMemoryEventStream(),
       llm: new JsonLLMClient(
         JSON.stringify({
-          queries: ['"tabular classification" +("classical machine learning" | baseline)'],
+          queries: ['("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"'],
           assumptions: ["Used the explicit brief topic as the search seed."]
         })
       ),
@@ -1946,7 +2215,7 @@ describe("collectPapers bibtex", () => {
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(2);
     expect(streamSearchPapers.mock.calls[0]?.[0]).toMatchObject({
-      query: '"tabular classification" +("classical machine learning" | baseline)'
+      query: '("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"'
     });
     await waitForCollectEnrichmentJob(runId);
   });
@@ -1960,10 +2229,10 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Budgeted Reasoning",
-      topic: "Investigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies",
+      title: "Configured Retry",
+      topic: "configured method evaluation on a public task suite",
       constraints: [],
-      objectiveMetric: "GSM8K accuracy",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -1987,13 +2256,13 @@ describe("collectPapers bibtex", () => {
         items: [
           {
             key: "run_brief.raw",
-            value: "# Research Brief\n\n## Topic\n\nInvestigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies\n",
+            value: "# Research Brief\n\n## Topic\n\nConfigured method evaluation on a public task suite\n",
             updatedAt: new Date().toISOString()
           },
           {
             key: "run_brief.extracted",
             value: {
-              topic: "Investigate how small language models can improve reasoning quality under constrained inference budgets through adaptive or structured test-time strategies"
+              topic: "Configured method evaluation on a public task suite"
             },
             updatedAt: new Date().toISOString()
           },
@@ -2005,7 +2274,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.last_result",
             value: {
-              query: '+"small language models" +"test-time reasoning"',
+              query: '+"configured method" +"public task suite"',
               fetchError: "Operation aborted by user",
               stored: 0
             },
@@ -2025,17 +2294,17 @@ describe("collectPapers bibtex", () => {
       yield [
         {
           paperId: "paper-1",
-          title: "Adaptive Test-Time Reasoning for Small Language Models",
+          title: "Configured Method Study A",
           authors: ["Alice Kim"]
         },
         {
           paperId: "paper-2",
-          title: "Structured Test-Time Reasoning for Small Language Models",
+          title: "Configured Method Study B",
           authors: ["Bob Lee"]
         },
         {
           paperId: "paper-3",
-          title: "Budget-Aware Test-Time Reasoning on GSM8K",
+          title: "Configured Method Study C",
           authors: ["Cara Park"]
         }
       ];
@@ -2080,8 +2349,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Tabular Baselines",
-      topic: "Resource-aware baselines for tabular classification on small public datasets",
+      title: "Deterministic Query Fallback",
+      topic: "fallback run topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -2108,18 +2377,19 @@ describe("collectPapers bibtex", () => {
           {
             key: "run_brief.raw",
             value: [
-              "Start a new research run on classical machine learning baselines for tabular classification.",
-              "Objective: improve macro-F1 over a logistic regression baseline while preserving reproducible local runtime and memory efficiency.",
-              "Constraints: CPU-only execution, lightweight Python dependencies."
+              "# Research Brief",
+              "",
+              "## Topic",
+              "Acoustic event segmentation with limited labeled data."
             ].join("\n"),
             updatedAt: new Date().toISOString()
           },
           {
             key: "run_brief.extracted",
             value: {
-              topic: "classical machine learning baselines for tabular classification.",
-              objectiveMetric: "macro-F1 over logistic regression",
-              constraints: ["CPU-only execution"]
+              topic: "Acoustic event segmentation with limited labeled data.",
+              objectiveMetric: "primary_score",
+              constraints: ["bounded local execution"]
             },
             updatedAt: new Date().toISOString()
           }
@@ -2132,7 +2402,7 @@ describe("collectPapers bibtex", () => {
       batchStream([
         {
           paperId: "paper-1",
-          title: "Classical tabular baseline survey",
+          title: "Acoustic Event Segmentation Survey",
           authors: ["Alice Kim"]
         }
       ])
@@ -2166,7 +2436,16 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
-    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toContain("tabular classification");
+    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe(
+      '+"acoustic event segmentation" +"limited labeled data"'
+    );
+    const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
+      queryAttempts?: Array<{ source?: string; sourceReason?: string }>;
+    } | undefined;
+    expect(lastResult?.queryAttempts?.[0]).toMatchObject({
+      source: "deterministic_query",
+      sourceReason: "LLM returned no usable Semantic Scholar queries."
+    });
   });
 
   it("does not broaden a narrow requested query after zero results", async () => {
@@ -2178,8 +2457,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Tabular Baselines",
-      topic: "Resource-aware baselines for tabular classification on small public datasets",
+      title: "Requested Query Boundary",
+      topic: "configured method evaluation on a public task suite",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -2206,7 +2485,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Resource-aware baselines for tabular classification on small public datasets",
+              query: "configured narrow query",
               limit: 1,
               sort: { field: "relevance", order: "desc" }
             },
@@ -2219,7 +2498,7 @@ describe("collectPapers bibtex", () => {
               "",
               "## Topic",
               "",
-              "Classical machine learning baselines for tabular classification."
+              "Acoustic event segmentation with limited labeled data."
             ].join("\n"),
             updatedAt: new Date().toISOString()
           }
@@ -2260,7 +2539,7 @@ describe("collectPapers bibtex", () => {
 
     expect(result.status).toBe("failure");
     expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([
-      "Resource-aware baselines for tabular classification on small public datasets"
+      "configured narrow query"
     ]);
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
@@ -2268,10 +2547,10 @@ describe("collectPapers bibtex", () => {
       queryAttempts?: Array<{ query?: string; fetched?: number }>;
       enrichment?: { blocking?: boolean; status?: string };
     } | undefined;
-    expect(lastResult?.query).toBe("Resource-aware baselines for tabular classification on small public datasets");
+    expect(lastResult?.query).toBe("configured narrow query");
     expect(lastResult?.queryAttempts).toEqual([
       expect.objectContaining({
-        query: "Resource-aware baselines for tabular classification on small public datasets",
+        query: "configured narrow query",
         fetched: 0
       })
     ]);
@@ -2282,19 +2561,19 @@ describe("collectPapers bibtex", () => {
     expect(result.error).toContain("Semantic Scholar returned 0 papers for the configured query plan.");
   });
 
-  it("filters obvious off-topic tail papers from a lightweight tabular raw corpus before selection", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-lightweight-tail-"));
+  it("preserves provider candidates for topic-aware selection instead of applying a collector-specific domain filter", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-provider-tail-"));
     process.chdir(root);
 
-    const runId = "run-collect-lightweight-tail";
+    const runId = "run-collect-provider-tail";
     const run: RunRecord = {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Tabular Baselines",
-      topic: "Classical machine learning baselines for tabular classification on small public datasets",
+      title: "Configured Candidate Collection",
+      topic: "configured method and reference condition on a public task suite",
       constraints: [],
-      objectiveMetric: "macro_f1",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -2319,7 +2598,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Classical machine learning baselines for tabular classification on small public datasets",
+              query: "configured method reference condition public task suite",
               limit: 8,
               sort: { field: "relevance", order: "desc" },
               bibtexMode: "generated"
@@ -2347,68 +2626,60 @@ describe("collectPapers bibtex", () => {
         streamSearchPapers: vi.fn(() =>
           batchStream([
             {
-              paperId: "relevant_svm",
-              title:
-                "Cross-Dataset Evaluation of Support Vector Machines: A Reproducible, Calibration-Aware Baseline for Tabular Classification",
-              abstract:
-                "A calibration-aware benchmark compares SVM, logistic regression, decision tree, and random forest on small tabular datasets.",
+              paperId: "candidate_a",
+              title: "Configured Method Evaluation A",
+              abstract: "A configured method is compared with a reference condition on a public task suite.",
               authors: ["Alice Kim"],
-              openAccessPdfUrl: "https://example.org/relevant_svm.pdf"
+              openAccessPdfUrl: "https://example.org/candidate_a.pdf"
             },
             {
-              paperId: "relevant_benchmark",
-              title: "Benchmarking classical baselines on structured datasets",
-              abstract:
-                "We compare logistic regression, random forests, and gradient boosting for tabular classification across small public benchmarks.",
+              paperId: "candidate_b",
+              title: "Configured Method Evaluation B",
+              abstract: "A second candidate is evaluated against the same reference condition.",
               authors: ["Bob Lee"],
-              openAccessPdfUrl: "https://example.org/relevant_benchmark.pdf"
+              openAccessPdfUrl: "https://example.org/candidate_b.pdf"
             },
             {
-              paperId: "relevant_pmlb",
-              title: "PMLBmini: A Tabular Classification Benchmark Suite for Data-Scarce Applications",
-              abstract:
-                "A benchmark suite for small tabular classification tasks compares classical linear baselines, AutoML, and tabular deep learning.",
+              paperId: "candidate_c",
+              title: "Public Task Suite Protocol",
+              abstract: "The task suite supports reproducible comparison of configured candidates.",
               authors: ["Cara Park"],
-              openAccessPdfUrl: "https://example.org/relevant_pmlb.pdf"
+              openAccessPdfUrl: "https://example.org/candidate_c.pdf"
             },
             {
-              paperId: "relevant_clinical",
-              title: "Resource-Efficient Small-Model Pipeline for Congestive Heart Failure Prediction",
-              abstract:
-                "We evaluate structured tabular clinical features on a public dataset and compare lightweight classification baselines.",
+              paperId: "candidate_d",
+              title: "Bounded Evaluation Pipeline",
+              abstract: "The pipeline reports a primary score for candidate and reference conditions.",
               authors: ["Daniel Choi"],
-              openAccessPdfUrl: "https://example.org/relevant_clinical.pdf"
+              openAccessPdfUrl: "https://example.org/candidate_d.pdf"
             },
             {
-              paperId: "off_topic_secret",
-              title: "Secret Breach Prevention in Software Issue Reports",
-              abstract:
-                "We evaluate entropy heuristics, classical machine learning, deep learning, and LLM-based methods for secret detection.",
+              paperId: "tail_a",
+              title: "Unrelated Study A",
+              abstract: "This study concerns a separate research question.",
               authors: ["Eve Han"],
-              openAccessPdfUrl: "https://example.org/off_topic_secret.pdf"
+              openAccessPdfUrl: "https://example.org/tail_a.pdf"
             },
             {
-              paperId: "off_topic_music",
-              title: "Emotional response to music: the Emotify + dataset",
+              paperId: "tail_b",
+              title: "Unrelated Study B",
               abstract: "Abstract unavailable.",
               authors: ["Finn Seo"],
-              openAccessPdfUrl: "https://example.org/off_topic_music.pdf"
+              openAccessPdfUrl: "https://example.org/tail_b.pdf"
             },
             {
-              paperId: "off_topic_sentiment",
-              title: "Application of Sentiment Analysis to Labeling Characters as Good or Evil",
+              paperId: "tail_c",
+              title: "Unrelated Study C",
               abstract: "Abstract unavailable.",
               authors: ["Grace Lim"],
-              openAccessPdfUrl: "https://example.org/off_topic_sentiment.pdf"
+              openAccessPdfUrl: "https://example.org/tail_c.pdf"
             },
             {
-              paperId: "off_topic_raman",
-              title:
-                "DeepRaman: Implementing surface-enhanced Raman scattering together with machine learning for bacterial endotoxin classification",
-              abstract:
-                "A classification pipeline for bacterial endotoxin differentiation using Raman scattering and machine learning.",
+              paperId: "tail_d",
+              title: "Unrelated Study D",
+              abstract: "This study uses a different task and evidence protocol.",
               authors: ["Henry Jung"],
-              openAccessPdfUrl: "https://example.org/off_topic_raman.pdf"
+              openAccessPdfUrl: "https://example.org/tail_d.pdf"
             }
           ])
         ),
@@ -2434,7 +2705,16 @@ describe("collectPapers bibtex", () => {
       .map((line) => JSON.parse(line) as { paper_id: string })
       .map((row) => row.paper_id);
     expect(new Set(corpusPaperIds)).toEqual(
-      new Set(["relevant_svm", "relevant_benchmark", "relevant_pmlb", "relevant_clinical"])
+      new Set([
+        "candidate_a",
+        "candidate_b",
+        "candidate_c",
+        "candidate_d",
+        "tail_a",
+        "tail_b",
+        "tail_c",
+        "tail_d"
+      ])
     );
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
@@ -2442,33 +2722,29 @@ describe("collectPapers bibtex", () => {
       fetched?: number;
     } | null;
     expect(lastResult?.fetched).toBe(8);
-    expect(lastResult?.stored).toBe(4);
+    expect(lastResult?.stored).toBe(8);
 
     expect(
       eventStream
         .history()
         .filter((event) => event.type === "OBS_RECEIVED")
-        .some((event) =>
-          String(event.payload?.text ?? "").includes(
-            "Lightweight corpus quality guard removed 4 off-topic tail paper(s) before selection."
-          )
-        )
-    ).toBe(true);
+        .some((event) => String(event.payload?.text ?? "").includes("corpus quality guard removed"))
+    ).toBe(false);
   });
 
-  it("does not trim broader tabular collections when the raw corpus is larger than the lightweight tail window", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-broad-tabular-"));
+  it("preserves provider candidates regardless of raw corpus size", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-broad-provider-set-"));
     process.chdir(root);
 
-    const runId = "run-collect-broad-tabular";
+    const runId = "run-collect-broad-provider-set";
     const run: RunRecord = {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Tabular Baselines",
-      topic: "Classical machine learning baselines for tabular classification on small public datasets",
+      title: "Configured Candidate Collection",
+      topic: "configured method and reference condition on a public task suite",
       constraints: [],
-      objectiveMetric: "macro_f1",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -2493,7 +2769,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Classical machine learning baselines for tabular classification on small public datasets",
+              query: "configured method reference condition public task suite",
               limit: 13,
               sort: { field: "relevance", order: "desc" },
               bibtexMode: "generated"
@@ -2508,11 +2784,11 @@ describe("collectPapers bibtex", () => {
     const eventStream = new InMemoryEventStream();
     const papers = Array.from({ length: 13 }, (_, index) => ({
       paperId: `paper-${index + 1}`,
-      title: index < 9 ? `Tabular baseline paper ${index + 1}` : `Off-topic paper ${index + 1}`,
+      title: index < 9 ? `Candidate paper ${index + 1}` : `Unrelated paper ${index + 1}`,
       abstract:
         index < 9
-          ? "Tabular classification benchmark comparing lightweight baselines on small public datasets."
-          : "This abstract is unrelated to tabular classification and only exists to fill the broader corpus tail.",
+          ? "A configured method is compared with a reference condition on a public task suite."
+          : "This abstract concerns a separate research question and fills the provider corpus tail.",
       authors: [`Author ${index + 1}`],
       openAccessPdfUrl: `https://example.org/paper-${index + 1}.pdf`
     }));
@@ -2567,8 +2843,8 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Multi-Agent Collaboration",
-      topic: "Multi-agent collaboration",
+      title: "Configured Research Topic",
+      topic: "configured research topic",
       constraints: [],
       objectiveMetric: "metric",
       status: "running",
@@ -2595,7 +2871,7 @@ describe("collectPapers bibtex", () => {
           {
             key: "collect_papers.request",
             value: {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               limit: 2,
               sort: { field: "relevance", order: "desc" }
             },
@@ -2607,7 +2883,7 @@ describe("collectPapers bibtex", () => {
     );
 
     const pendingSummary =
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).';
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment scheduled in background for 2 paper(s).';
     let storedRun = cloneRun({
       ...run,
       currentNode: "analyze_papers" as const,
@@ -2684,10 +2960,10 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
 
     expect(storedRun.graph.nodeStates.collect_papers.note).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
     );
     expect(storedRun.latestSummary).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment finished for 2 paper(s). PDF recovered 0; BibTeX enriched 0.'
     );
   });
 
@@ -2700,10 +2976,10 @@ describe("collectPapers bibtex", () => {
       version: 3,
       workflowVersion: 3,
       id: runId,
-      title: "Reasoning Query Generation",
-      topic: "Budget-aware test-time reasoning for small language models",
+      title: "Scientific Query Generation",
+      topic: "Acoustic event segmentation with limited labeled data",
       constraints: [],
-      objectiveMetric: "GSM8K accuracy",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -2731,10 +3007,10 @@ describe("collectPapers bibtex", () => {
               "# Research Brief",
               "",
               "## Topic",
-              "Budget-aware test-time reasoning for small language models",
+              "Acoustic event segmentation with limited labeled data",
               "",
               "## Research Question",
-              "Can adaptive test-time reasoning improve GSM8K accuracy for small language models?"
+              "Does the candidate condition improve primary_score over the reference condition?"
             ].join("\n"),
             updatedAt: new Date().toISOString()
           }
@@ -2747,17 +3023,17 @@ describe("collectPapers bibtex", () => {
       yield [
         {
           paperId: "paper-1",
-          title: "Adaptive Test-Time Reasoning for Small Language Models",
+          title: "Acoustic Event Segmentation Method A",
           authors: ["Alice Kim"]
         },
         {
           paperId: "paper-2",
-          title: "Structured Test-Time Reasoning for Small Language Models",
+          title: "Acoustic Event Segmentation Method B",
           authors: ["Bob Lee"]
         },
         {
           paperId: "paper-3",
-          title: "Budget-Aware Test-Time Reasoning on GSM8K",
+          title: "Limited-Label Acoustic Event Segmentation",
           authors: ["Cara Park"]
         }
       ];
@@ -2773,8 +3049,11 @@ describe("collectPapers bibtex", () => {
       eventStream: new InMemoryEventStream(),
       llm: new JsonLLMClient(
         JSON.stringify({
-          queries: ['("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"'],
-          assumptions: ["Used Semantic Scholar syntax to require the model family while allowing test-time strategy variants."]
+          queries: [
+            '("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"',
+            '"label-efficient acoustic segmentation" +evaluation'
+          ],
+          assumptions: ["Used Semantic Scholar syntax to preserve two equivalent task phrases and one data constraint."]
         })
       ),
       codex: {} as any,
@@ -2797,17 +3076,21 @@ describe("collectPapers bibtex", () => {
     expect(result.status).toBe("success");
     expect(streamSearchPapers).toHaveBeenCalledTimes(1);
     expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe(
-      '("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"'
+      '("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"'
     );
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
       query?: string;
       queryAttempts?: Array<{ query?: string; reason?: string }>;
     } | undefined;
-    expect(lastResult?.query).toBe('("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"');
+    expect(lastResult?.query).toBe(
+      '("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"'
+    );
     expect(lastResult?.queryAttempts?.[0]).toMatchObject({
-      query: '("adaptive test-time reasoning" | "structured test-time reasoning") +"small language models"',
-      reason: "llm_generated"
+      query: '("acoustic event segmentation" | "sound event segmentation") +"limited labeled data"',
+      reason: "llm_generated",
+      source: "llm_query_planner",
+      sourceReason: "llm_generated"
     });
 
     await waitForCollectEnrichmentJob(runId);
@@ -2823,9 +3106,9 @@ describe("collectPapers bibtex", () => {
       workflowVersion: 3,
       id: runId,
       title: "Low Yield Query Generation",
-      topic: "Efficient test-time reasoning for small language models on GSM8K",
+      topic: "Acoustic event segmentation with limited labeled data",
       constraints: [],
-      objectiveMetric: "accuracy",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -2844,8 +3127,8 @@ describe("collectPapers bibtex", () => {
     await mkdir(memoryDir, { recursive: true });
     await writeFile(path.join(memoryDir, "run_context.json"), JSON.stringify({ version: 1, items: [] }), "utf8");
 
-    const strictQuery = '+("test-time scaling" | "inference-time scaling" | "test-time compute") +("small language model" | "small language models") +("math word problems" | "arithmetic reasoning" | "GSM8K")';
-    const broaderQuery = '+"efficient test-time reasoning" +"small language models"';
+    const strictQuery = '+("acoustic event segmentation" | "sound event segmentation") +("limited labeled data" | "weak supervision")';
+    const broaderQuery = '+"acoustic event segmentation" +"limited labeled data"';
     const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
       if (request.query === strictQuery) {
         yield [{ paperId: "paper-1", title: "Strict query singleton", authors: ["Alice Kim"] }];
@@ -2853,9 +3136,9 @@ describe("collectPapers bibtex", () => {
       }
       if (request.query === broaderQuery) {
         yield [
-          { paperId: "paper-2", title: "Small language models and test-time reasoning", authors: ["Bob"] },
-          { paperId: "paper-3", title: "Budget-aware test-time reasoning for GSM8K", authors: ["Cara"] },
-          { paperId: "paper-4", title: "Adaptive reasoning control for small LMs", authors: ["Dana"] }
+          { paperId: "paper-2", title: "Acoustic event segmentation with limited labels", authors: ["Bob"] },
+          { paperId: "paper-3", title: "Sound event segmentation under weak supervision", authors: ["Cara"] },
+          { paperId: "paper-4", title: "Label-efficient acoustic segmentation", authors: ["Dana"] }
         ];
         return;
       }
@@ -2903,7 +3186,7 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
-  it("attempts llm-generated keyword bundles even when only the run topic is available", async () => {
+  it("uses the run topic seed with a role-valid topic-discovery scope", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-run-topic-llm-query-"));
     process.chdir(root);
 
@@ -2913,9 +3196,9 @@ describe("collectPapers bibtex", () => {
       workflowVersion: 3,
       id: runId,
       title: "Run Topic Query Generation",
-      topic: "Classical machine learning baselines for tabular classification on public datasets",
+      topic: "Acoustic event segmentation with limited labeled data",
       constraints: [],
-      objectiveMetric: "macro-F1",
+      objectiveMetric: "primary_score",
       status: "running",
       currentNode: "collect_papers",
       latestSummary: undefined,
@@ -2934,19 +3217,41 @@ describe("collectPapers bibtex", () => {
     await mkdir(memoryDir, { recursive: true });
     await writeFile(
       path.join(memoryDir, "run_context.json"),
-      JSON.stringify({ version: 1, items: [] }),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: buildTopicDiscoveryScopeBrief(
+              run.topic,
+              "acoustic event segmentation",
+              ["limited labels under class imbalance", "sensor noise under domain shift"]
+            ),
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
       "utf8"
     );
 
     const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
-      expect(request.query).toBe("classical machine learning baselines");
-      yield [
-        {
-          paperId: "paper-1",
-          title: "Classical Machine Learning Baselines for Tabular Data",
-          authors: ["Alice Kim"]
-        }
-      ];
+      if (request.query === '"acoustic event segmentation" limited labels') {
+        yield Array.from({ length: 4 }, (_, index) => ({
+          paperId: `paper-labels-${index + 1}`,
+          title: `Acoustic Event Segmentation with Limited Labels ${index + 1}`,
+          authors: ["Example Author"]
+        }));
+        return;
+      }
+      if (request.query === '"acoustic event segmentation" sensor noise') {
+        yield Array.from({ length: 4 }, (_, index) => ({
+          paperId: `paper-noise-${index + 1}`,
+          title: `Acoustic Event Segmentation under Sensor Noise ${index + 1}`,
+          authors: ["Example Author"]
+        }));
+        return;
+      }
+      throw new Error(`unexpected query: ${request.query}`);
     });
 
     const node = createCollectPapersNode({
@@ -2959,7 +3264,11 @@ describe("collectPapers bibtex", () => {
       eventStream: new InMemoryEventStream(),
       llm: new JsonLLMClient(
         JSON.stringify({
-          queries: ["classical machine learning baselines", "tabular classification public datasets"],
+          shared_anchor: "acoustic event segmentation",
+          families: [
+            { axis: "limited labels" },
+            { axis: "sensor noise" }
+          ],
           assumptions: ["Split the topic into smaller paper-title-style bundles."]
         })
       ),
@@ -2980,21 +3289,357 @@ describe("collectPapers bibtex", () => {
       graph: run.graph
     });
 
-    expect(result.status).toBe("success");
-    expect(streamSearchPapers).toHaveBeenCalledTimes(1);
-    expect(streamSearchPapers.mock.calls[0]?.[0]?.query).toBe("classical machine learning baselines");
+    expect(
+      result.status,
+      `${result.error ?? ""} ${result.summary ?? ""}`.trim()
+    ).toBe("success");
+    expect(streamSearchPapers).toHaveBeenCalledTimes(4);
+    expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([
+      '"acoustic event segmentation" limited labels',
+      '"acoustic event segmentation" limited labels',
+      '"acoustic event segmentation" sensor noise',
+      '"acoustic event segmentation" sensor noise'
+    ]);
 
     const lastResult = (await readRunContextValue(root, runId, "collect_papers.last_result")) as {
       query?: string;
-      queryAttempts?: Array<{ query?: string; reason?: string }>;
+      queryAttempts?: Array<{
+        query?: string;
+        reason?: string;
+        retrievalLane?: string;
+      }>;
     } | undefined;
-    expect(lastResult?.query).toBe("classical machine learning baselines");
-    expect(lastResult?.queryAttempts?.[0]).toMatchObject({
-      query: "classical machine learning baselines",
-      reason: "llm_generated"
-    });
+    expect(lastResult?.query).toBe('"acoustic event segmentation" sensor noise');
+    expect(lastResult?.queryAttempts).toEqual([
+      expect.objectContaining({
+        query: '"acoustic event segmentation" limited labels',
+        reason: "llm_generated",
+        retrievalLane: "recent_direct_prior"
+      }),
+      expect.objectContaining({
+        query: '"acoustic event segmentation" limited labels',
+        reason: "llm_generated",
+        retrievalLane: "broad_relevance"
+      }),
+      expect.objectContaining({
+        query: '"acoustic event segmentation" sensor noise',
+        reason: "llm_generated",
+        retrievalLane: "recent_direct_prior"
+      }),
+      expect.objectContaining({
+        query: '"acoustic event segmentation" sensor noise',
+        reason: "llm_generated",
+        retrievalLane: "broad_relevance"
+      })
+    ]);
 
     await waitForCollectEnrichmentJob(runId);
+    const finalCollectResult = JSON.parse(
+      await readFile(path.join(root, ".autolabos", "runs", runId, "collect_result.json"), "utf8")
+    ) as {
+      corpusQuality?: { version?: number; passed?: boolean };
+      enrichment?: { status?: string };
+    };
+    expect(finalCollectResult).toMatchObject({
+      corpusQuality: { version: TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION, passed: true },
+      enrichment: { status: "completed" }
+    });
+    const queryPlan = JSON.parse(
+      await readFile(path.join(root, ".autolabos", "runs", runId, "collect_query_plan.json"), "utf8")
+    ) as {
+      version?: number;
+      planner?: {
+        topic_discovery_plan?: { sharedAnchorTerms?: string[]; families?: unknown[] };
+        attempt_diagnostics?: Array<{ attempt?: number; status?: string }>;
+      };
+      selected_families?: Array<{ topic_discovery_family?: { familyId?: string } }>;
+    };
+    expect(queryPlan.version).toBe(TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.version);
+    expect(queryPlan.planner?.topic_discovery_plan).toMatchObject({
+      sharedAnchorTerms: ["acoustic", "event", "segmentation"],
+      families: expect.arrayContaining([
+        expect.objectContaining({ axisTerms: ["limited", "labels"] }),
+        expect.objectContaining({ axisTerms: ["sensor", "noise"] })
+      ])
+    });
+    expect(queryPlan.planner?.attempt_diagnostics).toEqual([
+      expect.objectContaining({ attempt: 1, status: "accepted" })
+    ]);
+    expect(
+      queryPlan.selected_families?.every((family) =>
+        Boolean(family.topic_discovery_family?.familyId)
+      )
+    ).toBe(true);
+  });
+
+  it("rejects only families below the per-family floor and preserves executed support", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-family-feedback-"));
+    process.chdir(root);
+
+    const runId = "run-collect-family-feedback";
+    const run: RunRecord = {
+      version: 3,
+      workflowVersion: 3,
+      id: runId,
+      title: "Family Feedback",
+      topic: "Document retrieval evaluation reliability",
+      constraints: [],
+      objectiveMetric: "primary_score",
+      status: "running",
+      currentNode: "collect_papers",
+      latestSummary: undefined,
+      nodeThreads: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      graph: createDefaultGraphState(),
+      memoryRefs: {
+        runContextPath: `.autolabos/runs/${runId}/memory/run_context.json`,
+        longTermPath: `.autolabos/runs/${runId}/memory/long_term.jsonl`,
+        episodePath: `.autolabos/runs/${runId}/memory/episodes.jsonl`
+      }
+    };
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "run_brief.raw",
+          value: buildTopicDiscoveryScopeBrief(
+            run.topic,
+            "document retrieval evaluation",
+            ["ranking stability under finite samples", "annotation disagreement across judges"]
+          ),
+          updatedAt: new Date().toISOString()
+        }]
+      }),
+      "utf8"
+    );
+
+    const supportedQuery = '"document retrieval evaluation" ranking stability';
+    const failedQuery = '"document retrieval evaluation" annotation disagreement';
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      if (request.query === supportedQuery) {
+        yield Array.from({ length: 8 }, (_, index) => ({
+          paperId: `paper-stability-${index + 1}`,
+          title: `Document Retrieval Evaluation Ranking Stability ${index + 1}`,
+          authors: ["Example Author"]
+        }));
+        return;
+      }
+      if (request.query === failedQuery) {
+        return;
+      }
+      throw new Error(`unexpected query: ${request.query}`);
+    });
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 200 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(JSON.stringify({
+        shared_anchor: "document retrieval evaluation",
+        families: [
+          { axis: "ranking stability" },
+          { axis: "annotation disagreement" }
+        ],
+        assumptions: []
+      })),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    const feedback = (await readRunContextValue(
+      root,
+      runId,
+      "collect_papers.llm_query_plan_feedback"
+    )) as {
+      rejectedQueries?: string[];
+      queryFamilies?: Array<{ query?: string; relevantPaperCount?: number }>;
+      supportedQueryFamilies?: Array<{ query?: string; relevantPaperCount?: number }>;
+    } | undefined;
+    expect(feedback?.rejectedQueries).toEqual([failedQuery]);
+    expect(feedback?.queryFamilies).toEqual(expect.arrayContaining([
+      expect.objectContaining({ query: supportedQuery, relevantPaperCount: 8 }),
+      expect.objectContaining({ query: failedQuery, relevantPaperCount: 0 })
+    ]));
+    expect(feedback?.supportedQueryFamilies).toEqual([
+      expect.objectContaining({ query: supportedQuery, relevantPaperCount: 8 })
+    ]);
+
+    const hints = JSON.parse(
+      await readFile(
+        path.join(root, ".autolabos", "runs", runId, "collect_query_reformulation_hints.json"),
+        "utf8"
+      )
+    ) as {
+      supported_query_families?: Array<{ query?: string; relevantPaperCount?: number }>;
+      rejected_query_families?: Array<{ query?: string; relevant_paper_count?: number }>;
+    };
+    expect(hints.supported_query_families).toEqual([
+      expect.objectContaining({ query: supportedQuery, relevantPaperCount: 8 })
+    ]);
+    expect(hints.rejected_query_families).toEqual([
+      expect.objectContaining({
+        query: failedQuery,
+        direct_support_paper_count: 0,
+        semantic_precision: 0
+      })
+    ]);
+  });
+
+  it.each([
+    {
+      label: "outage",
+      failSemanticAudit: true,
+      partialSemanticAudit: false,
+      errorText: "semantic review failed operationally",
+      failureClass: "semantic_review_operational_failure",
+      reviewStatus: "operational_failure"
+    },
+    {
+      label: "partial response",
+      failSemanticAudit: false,
+      partialSemanticAudit: true,
+      errorText: "semantic review was incomplete",
+      failureClass: "semantic_review_incomplete",
+      reviewStatus: "partial"
+    }
+  ])("does not learn query-plan rejection feedback from a semantic-review $label", async ({
+    failSemanticAudit,
+    partialSemanticAudit,
+    errorText,
+    failureClass,
+    reviewStatus
+  }) => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-review-outage-"));
+    process.chdir(root);
+
+    const runId = "run-collect-review-outage";
+    const run = makeRun(runId);
+    run.title = "Retrieval Reliability";
+    run.topic = "Document retrieval evaluation reliability";
+    const priorFeedback = {
+      version: 3,
+      candidateTitles: [],
+      rejectedQueries: [],
+      qualityReasons: [],
+      sharedAnchorTerms: [],
+      queryFamilies: [],
+      supportedQueryFamilies: [],
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    };
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [
+          {
+            key: "run_brief.raw",
+            value: buildTopicDiscoveryScopeBrief(
+              run.topic,
+              "document retrieval evaluation",
+              ["ranking stability under finite samples", "annotation disagreement across judges"]
+            ),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "collect_papers.llm_query_plan_feedback",
+            value: priorFeedback,
+            updatedAt: new Date().toISOString()
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const firstQuery = '"document retrieval evaluation" ranking stability';
+    const secondQuery = '"document retrieval evaluation" annotation disagreement';
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      const axis = request.query === firstQuery
+        ? "Ranking Stability"
+        : request.query === secondQuery
+          ? "Annotation Disagreement"
+          : undefined;
+      if (!axis) {
+        throw new Error(`unexpected query: ${request.query}`);
+      }
+      yield Array.from({ length: 4 }, (_, index) => ({
+        paperId: `${axis.toLowerCase().replace(/\s+/gu, "-")}-${index + 1}`,
+        title: `Document Retrieval Evaluation ${axis} ${index + 1}`,
+        authors: ["Example Author"]
+      }));
+    });
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 20 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new JsonLLMClient(JSON.stringify({
+        shared_anchor: "document retrieval evaluation",
+        families: [
+          { axis: "ranking stability" },
+          { axis: "annotation disagreement" }
+        ],
+        assumptions: []
+      }), failSemanticAudit, partialSemanticAudit),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.error).toContain(errorText);
+    expect(result).toMatchObject({ status: "failure", toolCallsUsed: 2 });
+    expect(await readRunContextValue(
+      root,
+      runId,
+      "collect_papers.llm_query_plan_feedback"
+    )).toEqual(priorFeedback);
+    const hints = JSON.parse(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "collect_query_reformulation_hints.json"),
+      "utf8"
+    )) as {
+      failure_class?: string;
+      feedback_applied?: boolean;
+      semantic_review_status?: string;
+    };
+    expect(hints).toMatchObject({
+      failure_class: failureClass,
+      feedback_applied: false,
+      semantic_review_status: reviewStatus
+    });
+    const semanticReview = JSON.parse(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "collect_semantic_review.json"),
+      "utf8"
+    )) as { status?: string; paper_evidence_allowed?: boolean };
+    expect(semanticReview).toMatchObject({
+      status: reviewStatus,
+      paper_evidence_allowed: false
+    });
+    expect(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"),
+      "utf8"
+    )).toBe("");
   });
 
   it("recovers a persisted deferred enrichment job after restart", async () => {
@@ -3003,7 +3648,7 @@ describe("collectPapers bibtex", () => {
 
     const runId = "run-collect-recover";
     const pendingSummary =
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment scheduled in background for 2 paper(s).';
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment scheduled in background for 2 paper(s).';
     const run = makeRun(runId);
     run.status = "paused";
     run.currentNode = "analyze_papers";
@@ -3061,7 +3706,7 @@ describe("collectPapers bibtex", () => {
       path.join(runDir, "collect_result.json"),
       JSON.stringify(
         {
-          query: "Multi-Agent Collaboration",
+          query: "configured research topic",
           limit: 2,
           fetched: 2,
           stored: 2,
@@ -3081,7 +3726,7 @@ describe("collectPapers bibtex", () => {
           fallbackSources: [],
           queryAttempts: [
             {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               reason: "requested",
               filtersRelaxed: false,
               fetched: 2,
@@ -3112,7 +3757,7 @@ describe("collectPapers bibtex", () => {
           status: "running",
           runId,
           request: {
-            query: "Multi-Agent Collaboration",
+            query: "configured research topic",
             limit: 2,
             sort: { field: "relevance", order: "desc" }
           },
@@ -3129,7 +3774,7 @@ describe("collectPapers bibtex", () => {
           pendingSummary,
           queryAttempts: [
             {
-              query: "Multi-Agent Collaboration",
+              query: "configured research topic",
               reason: "requested",
               filtersRelaxed: false,
               fetched: 2,
@@ -3202,7 +3847,7 @@ describe("collectPapers bibtex", () => {
     expect(enrichmentRaw).toContain('"paper_id":"paper-2"');
 
     expect(storedRun.latestSummary).toBe(
-      'Semantic Scholar stored 2 papers for "Multi-Agent Collaboration". Deferred enrichment finished for 2 paper(s). PDF recovered 1; BibTeX enriched 1.'
+      'Semantic Scholar stored 2 papers for "configured research topic". Deferred enrichment finished for 2 paper(s). PDF recovered 1; BibTeX enriched 1.'
     );
     expect(
       readPersistedRunEvents({
@@ -3215,5 +3860,142 @@ describe("collectPapers bibtex", () => {
         )
       )
     ).toBe(true);
+  });
+
+  it("quarantines a restart job whose attempt does not match the current collection generation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-recover-lineage-"));
+    process.chdir(root);
+
+    const runId = "run-collect-recover-lineage";
+    const run = makeRun(runId);
+    const currentAttemptId = "20260102030405678-currentattempt";
+    const staleAttemptId = "20260102030405678-staleattempt";
+    const runDir = path.join(root, ".autolabos", "runs", runId);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({ version: 1, items: [] }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_generation.json"),
+      JSON.stringify({
+        version: 1,
+        kind: "collect_generation",
+        run_id: runId,
+        collect_attempt_id: currentAttemptId,
+        started_at: new Date().toISOString()
+      }),
+      "utf8"
+    );
+    const originalCorpus = `${JSON.stringify({
+      paper_id: "paper-current",
+      title: "Current configured paper",
+      authors: ["Current Author"]
+    })}\n`;
+    await writeFile(path.join(runDir, "corpus.jsonl"), originalCorpus, "utf8");
+    const originalResult = JSON.stringify({
+      collect_attempt_id: currentAttemptId,
+      query: "current configured collection",
+      limit: 1,
+      fetched: 1,
+      stored: 1,
+      added: 1,
+      baseCount: 0,
+      completed: true,
+      mode: "replace",
+      source: "semantic_scholar",
+      attemptCount: 1,
+      attempts: [],
+      sort: { field: "relevance", order: "desc" },
+      filters: {},
+      bibtexMode: "generated",
+      pdfRecovered: 0,
+      bibtexEnriched: 0,
+      fallbackAttempts: 0,
+      fallbackSources: [],
+      queryAttempts: [],
+      enrichment: {
+        blocking: false,
+        status: "not_needed",
+        targetCount: 0,
+        processedCount: 0,
+        attemptedCount: 0,
+        updatedCount: 0
+      },
+      timestamp: new Date().toISOString()
+    }, null, 2);
+    await writeFile(path.join(runDir, "collect_result.json"), originalResult, "utf8");
+    await writeFile(
+      path.join(runDir, "collect_attempt_manifest.json"),
+      JSON.stringify({
+        version: 2,
+        kind: "collect_attempt_archive",
+        collect_attempt_id: currentAttemptId,
+        run_id: runId,
+        status: "quality_gate_passed",
+        phase: "collection",
+        revision_id: "collection-current",
+        files: []
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_background_job.json"),
+      JSON.stringify({
+        version: 1,
+        kind: "collect_deferred_enrichment",
+        status: "running",
+        runId,
+        request: {
+          query: "stale configured collection",
+          limit: 1,
+          sort: { field: "relevance", order: "desc" }
+        },
+        mode: "replace",
+        baseCount: 0,
+        bibtexMode: "hybrid",
+        paperIds: ["paper-stale"],
+        fetchedCount: 1,
+        diagnostics: { attemptCount: 1, attempts: [] },
+        newPaperIds: ["paper-stale"],
+        pendingSummary: "Stale configured collection pending.",
+        queryAttempts: [],
+        scheduledAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        recoveryCount: 0,
+        collectAttemptId: staleAttemptId,
+        corpusFingerprint: "stale-fingerprint"
+      }),
+      "utf8"
+    );
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const eventStream = new PersistedEventStream(path.join(root, ".autolabos", "runs"));
+    await recoverCollectEnrichmentJobs({
+      runStore: {
+        listRuns: vi.fn(async () => [cloneRun(run)])
+      } as any,
+      eventStream
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await readFile(path.join(runDir, "collect_result.json"), "utf8")).toBe(originalResult);
+    expect(await readFile(path.join(runDir, "corpus.jsonl"), "utf8")).toBe(originalCorpus);
+    const quarantinedJob = JSON.parse(
+      await readFile(path.join(runDir, "collect_background_job.json"), "utf8")
+    ) as { status?: string; lastError?: string; collectAttemptId?: string };
+    expect(quarantinedJob).toMatchObject({
+      status: "superseded",
+      lastError: "collect_recovery_lineage_job_attempt_mismatch",
+      collectAttemptId: staleAttemptId
+    });
+    expect(
+      await readFile(
+        path.join(runDir, "collect_attempts", staleAttemptId, "background_job.json"),
+        "utf8"
+      )
+    ).toContain("collect_recovery_lineage_job_attempt_mismatch");
   });
 });

@@ -1,0 +1,1566 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "sealed_heldout_census_and_adjudication",
+  "status": "complete",
+  "exhaustive_within_queries": true,
+  "group_id": "heldout_group_01",
+  "source_census": {
+    "source_path": "grader-conform-heldout-census-group1.json",
+    "source_sha256": "fe621d3bc1746592265a732429fb272ff257bd6532040c05bb508b45f4dba60e",
+    "source_bytes": 66450
+  },
+  "source_adjudications": [
+    {
+      "source_path": "grader-conform-group1-adjudication.json",
+      "source_sha256": "9bcb6eff8335a5bce48e05a02363cab0eaace1c97864f56014386b1423b1777d",
+      "source_bytes": 10330,
+      "declared_census_binding_present": false
+    }
+  ],
+  "outcome_observed": false,
+  "method_or_baseline_outcomes_included": false,
+  "candidate_accounting": {
+    "census_candidate_count": 7,
+    "admitted_candidate_count": 1,
+    "excluded_candidate_count": 6,
+    "search_exclusion_count": 81,
+    "every_candidate_adjudicated_exactly_once": true
+  },
+  "census_metadata": {
+    "schema_version": "1.0",
+    "status": "complete",
+    "generated_for_blind_census": true,
+    "outcome_observed": false,
+    "sources": [
+      {
+        "source_id": "toolsandbox",
+        "remote": {
+          "url": "https://github.com/apple/ToolSandbox.git",
+          "head_verified": "165848b9a78cead7ca7fe7c89c688b58e6501219",
+          "local_head_matches_remote_main": true
+        },
+        "license": {
+          "path": "LICENSE",
+          "identifier": "Apple source-code license terms (non-SPDX)",
+          "head_revision": "165848b9a78cead7ca7fe7c89c688b58e6501219",
+          "head_blob_oid": "31b0b9895eca483652d061be2aae1085880ea34a",
+          "verified_from_git_tree": true
+        },
+        "history": {
+          "scope": "all local refs reachable via git rev-list --all; remote main SHA independently matched",
+          "commit_count": 1,
+          "root_commits": [
+            "165848b9a78cead7ca7fe7c89c688b58e6501219"
+          ],
+          "oldest_commit_at": "2025-11-06T23:37:39-08:00",
+          "newest_commit_at": "2025-11-06T23:37:39-08:00",
+          "shallow": false,
+          "remote_ref_audit": {
+            "advertised_heads": 1,
+            "advertised_tags": 0,
+            "advertised_pull_refs": 4,
+            "canonical_heads_and_tags_present_locally": true,
+            "scope_note": "Queries cover all commits reachable from local canonical heads/tags; GitHub refs/pull review refs are not treated as canonical repository history."
+          }
+        }
+      },
+      {
+        "source_id": "appworld",
+        "remote": {
+          "url": "https://github.com/StonyBrookNLP/appworld.git",
+          "head_verified": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+          "local_head_matches_remote_main": true
+        },
+        "license": {
+          "path": "LICENSE",
+          "identifier": "Apache-2.0",
+          "head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+          "head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+          "introduced_in_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+          "verified_from_git_tree": true
+        },
+        "history": {
+          "scope": "all local refs reachable via git rev-list --all; remote main SHA independently matched",
+          "commit_count": 233,
+          "root_commits": [
+            "a9ea2b48562a842822688f8be005a5574901b693"
+          ],
+          "oldest_commit_at": "2024-06-24T07:49:27+09:00",
+          "newest_commit_at": "2026-02-17T14:41:39-08:00",
+          "shallow": false,
+          "remote_ref_audit": {
+            "advertised_heads": 1,
+            "advertised_tags": 5,
+            "advertised_pull_refs": 152,
+            "canonical_heads_and_tags_present_locally": true,
+            "scope_note": "Queries cover all commits reachable from local canonical heads/tags; GitHub refs/pull review refs are not treated as canonical repository history."
+          }
+        }
+      }
+    ],
+    "search_queries": [
+      {
+        "id": "Q1_subject_keywords",
+        "query": "all-ref commit subject regex: eval|evaluator|grader|score|metric|judge|parser|replay|state|reward|validation|validate|fix|bug"
+      },
+      {
+        "id": "Q2_changed_path_keywords",
+        "query": "all-ref changed-path regex: eval|evaluator|grader|score|metric|judge|parser|replay|state|reward|validat|fix|bug"
+      },
+      {
+        "id": "Q3_evaluator_symbol_pickaxe",
+        "query": "all-ref diff regex: answer_to_text|assert_plus|TestTracker|evaluate_(task|tasks|dataset)|task_goal_completion|scenario_goal_completion|grouped_strict|passes_fully"
+      },
+      {
+        "id": "Q4_adapter_replay_pickaxe",
+        "query": "all-ref diff regex: dump_predictions|serialize prediction|prediction_dump|raw_eval_results|successful_task|failed_task|hal-eval|parse_*log|environment_io|interaction score|class Metric|aggregate_evaluation"
+      },
+      {
+        "id": "Q5_state_input_pickaxe",
+        "query": "all-ref diff regex: ground_truth_mode|load_ground_truth|public_data|private_data|ModelCollectionPair|models_end_db_home_path|CachedDBHandler"
+      }
+    ],
+    "exhaustive_within_queries": true
+  },
+  "candidates": [
+    {
+      "id": "appworld-answer-normalization-ddf8b200",
+      "candidate_id": "appworld-answer-normalization-ddf8b200",
+      "source_id": "appworld",
+      "fix_commit": "ddf8b200179bfeba9a869257fa27c4e1d7fd9eca",
+      "parent_commit": "3f2d53c1a096805adc86bd05227463683cdc5154",
+      "direct_parent_commit": "3f2d53c1a096805adc86bd05227463683cdc5154",
+      "commit_subject": "Add a slight more normalization to answer (#209)",
+      "root_cause_cluster": "answer-normalization-text-and-number-equivalence",
+      "evaluator_paths": [
+        "src/appworld/common/evaluation.py"
+      ],
+      "parent_revision_test_paths": [
+        "tests/package/common/test_evaluation.py"
+      ],
+      "parent_revision_public_contract_paths": [
+        "src/appworld/common/evaluation.py",
+        "src/appworld/evaluator.py"
+      ],
+      "evidence_paths": [
+        "src/appworld/common/evaluation.py",
+        "tests/package/common/test_evaluation.py"
+      ],
+      "fault_family_guess": "answer_normalization_false_negative",
+      "public_contract_anchor": [
+        "answer_to_text",
+        "do_answers_match",
+        "TestTracker.answer"
+      ],
+      "inclusion_reason": "The parent evaluator lacked number-word and internal-whitespace normalization; the fix changes answer equivalence used by task pass/fail evaluation.",
+      "inclusion_evidence": {
+        "commit_message": "Add a slight more normalization to answer (#209)",
+        "changed_paths": [
+          "src/appworld/common/evaluation.py",
+          "tests/package/common/test_evaluation.py"
+        ],
+        "score_or_verdict_impact": "Adds text-to-number conversion and whitespace collapsing before equality, so semantically equivalent answers can change from mismatch to match."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "ddf8b200179bfeba9a869257fa27c4e1d7fd9eca",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "1774957a1ac2222ddd17ffc8c21c1e34136b4606",
+          "977a2fa94337a6326ddeb19cb97b0405642e784f"
+        ],
+        "resolution": "not_duplicate",
+        "rationale": "The bulk release introduced/moved evaluation helpers and the later typing commit changed annotations only; neither implements this number-word/whitespace equivalence fix."
+      },
+      "independence_risk": "low: focused evaluator hunk with dedicated regression assertions"
+    },
+    {
+      "id": "appworld-replay-budget-grouping-1774957a",
+      "candidate_id": "appworld-replay-budget-grouping-1774957a",
+      "source_id": "appworld",
+      "fix_commit": "1774957a1ac2222ddd17ffc8c21c1e34136b4606",
+      "parent_commit": "8e7c06397df0c6e6c851588e63e3e15545366aa1",
+      "direct_parent_commit": "8e7c06397df0c6e6c851588e63e3e15545366aa1",
+      "commit_subject": "Prepare for the upcoming release (sync with the internal repo) (#160)",
+      "root_cause_cluster": "parallel-subinteraction-replay-budget-grouping",
+      "evaluator_paths": [
+        "scripts/score_by_interaction_limits.py"
+      ],
+      "parent_revision_test_paths": [
+        "tests/package/test_appworld.py"
+      ],
+      "parent_revision_public_contract_paths": [
+        "scripts/score_by_interaction_limits.py",
+        "src/appworld/environment.py"
+      ],
+      "evidence_paths": [
+        "scripts/score_by_interaction_limits.py",
+        "tests/package/test_appworld.py"
+      ],
+      "fault_family_guess": "replay_budget_counts_log_rows_instead_of_interactions",
+      "public_contract_anchor": [
+        "score_by_interaction_limits CLI",
+        "AppWorld.parse_environment_io_log",
+        "TestTracker.success"
+      ],
+      "inclusion_reason": "Within the bulk sync, one bounded scorer/replay hunk replaces raw log-row slicing with grouping by the base interaction number, which changes states replayed at each interaction budget when parallel sub-interactions exist.",
+      "inclusion_evidence": {
+        "commit_message": "Prepare for the upcoming release (sync with the internal repo) (#160)",
+        "changed_paths": [
+          "scripts/score_by_interaction_limits.py"
+        ],
+        "score_or_verdict_impact": "The parent treated each environment log row as one budget unit; the fix selects rows by semantic interaction number, potentially changing every replayed success value and the plotted score curve for parallel calls."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "1774957a1ac2222ddd17ffc8c21c1e34136b4606",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "e889247dc67aaa6bca6bb3b729ba54051cfef19a",
+          "d47901fa7fd94e8dd4dfb6c16a9f7cbd454f9d5d"
+        ],
+        "resolution": "single_conservative_cluster",
+        "rationale": "The first commit introduced the script and the later commit changed only a plot label. This bulk commit is the sole history item changing replay selection semantics, so its relevant hunk is kept as one cluster."
+      },
+      "independence_risk": "high: behavior-changing hunk is inside a very large private-repo sync and has no dedicated scorer regression test"
+    },
+    {
+      "id": "appworld-hal-runner-paths-ccd5162c",
+      "candidate_id": "appworld-hal-runner-paths-ccd5162c",
+      "source_id": "appworld",
+      "fix_commit": "ccd5162c9728757477517cc08cc0b7c6721cd6e2",
+      "parent_commit": "441e8bb446a404ab904202939a40c521b384ac67",
+      "direct_parent_commit": "441e8bb446a404ab904202939a40c521b384ac67",
+      "commit_subject": "more hal integration fixes (#149)",
+      "root_cause_cluster": "hal-runner-working-directory-and-path-resolution",
+      "evaluator_paths": [
+        "scripts/run_via_hal.py"
+      ],
+      "parent_revision_test_paths": [],
+      "parent_revision_public_contract_paths": [
+        "scripts/run_via_hal.py"
+      ],
+      "evidence_paths": [
+        "scripts/run_via_hal.py"
+      ],
+      "fault_family_guess": "evaluation_harness_adapter_path_resolution",
+      "public_contract_anchor": [
+        "run_hal_eval",
+        "copy_hal_to_appworld_outputs",
+        "upload_hal_results"
+      ],
+      "inclusion_reason": "The existing HAL evaluation adapter invoked the harness from the wrong working directory and resolved agent/results paths against inconsistent roots; the fix makes the evaluation path root-explicit.",
+      "inclusion_evidence": {
+        "commit_message": "more hal integration fixes (#149)",
+        "changed_paths": [
+          "scripts/run_via_hal.py"
+        ],
+        "score_or_verdict_impact": "Corrects the directory and paths used to launch HAL evaluation and retrieve/upload its result artifacts, changing whether the requested evaluation path can execute and resolve its verdict outputs."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "ccd5162c9728757477517cc08cc0b7c6721cd6e2",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "829c5297baae7a0e1b493d17cd9a382e1cbb1897"
+        ],
+        "resolution": "not_duplicate",
+        "rationale": "The earlier commit intentionally introduced the HAL runner; this commit repairs its root/path assumptions and is the only fix for that cluster."
+      },
+      "independence_risk": "medium: focused adapter file but multiple related path corrections and no direct tests"
+    },
+    {
+      "id": "appworld-hal-export-schema-1ae6d174",
+      "candidate_id": "appworld-hal-export-schema-1ae6d174",
+      "source_id": "appworld",
+      "fix_commit": "1ae6d1744d65ffa28e45299711264831e460a331",
+      "parent_commit": "d87b158b9ceb93c681980fdcb23f1a2ef52b9593",
+      "direct_parent_commit": "d87b158b9ceb93c681980fdcb23f1a2ef52b9593",
+      "commit_subject": "fix script to convert appworld logs to hal (#120)",
+      "root_cause_cluster": "hal-evaluation-export-schema-drift",
+      "evaluator_paths": [
+        "scripts/appworld_to_hal_leaderboard.py"
+      ],
+      "parent_revision_test_paths": [],
+      "parent_revision_public_contract_paths": [
+        "scripts/appworld_to_hal_leaderboard.py",
+        "src/appworld/evaluator.py"
+      ],
+      "evidence_paths": [
+        "scripts/appworld_to_hal_leaderboard.py"
+      ],
+      "fault_family_guess": "evaluation_result_adapter_schema_drift",
+      "public_contract_anchor": [
+        "appworld_to_hal_log",
+        "evaluation.json aggregate/individual schema",
+        "HAL metrics successful_tasks/failed_tasks"
+      ],
+      "inclusion_reason": "The converter read stale config, evaluation, metadata, and LM-log shapes, including the wrong location for per-task success verdicts; the fix realigns the adapter to the evaluator output contract.",
+      "inclusion_evidence": {
+        "commit_message": "fix script to convert appworld logs to hal (#120)",
+        "changed_paths": [
+          "scripts/appworld_to_hal_leaderboard.py"
+        ],
+        "score_or_verdict_impact": "Moves per-task verdict reads from aggregate.individual to individual and repairs related schema paths used to emit HAL metrics and successful/failed task lists; stale reads could fail conversion or misroute verdict artifacts."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "1ae6d1744d65ffa28e45299711264831e460a331",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "f0498202e787ff51644c10c7a0d635a4bf374016"
+        ],
+        "resolution": "not_duplicate",
+        "rationale": "The earlier commit intentionally added the exporter. This fix is the single schema-drift repair and its several field changes are conservatively grouped as one adapter cluster."
+      },
+      "independence_risk": "medium: one adapter file and coherent schema-drift root cause, but several fields change together without a direct test"
+    },
+    {
+      "id": "appworld-pydantic2-evaluator-e146159d",
+      "candidate_id": "appworld-pydantic2-evaluator-e146159d",
+      "source_id": "appworld",
+      "fix_commit": "e146159df6b9bd3661ee8e94082fcf3b4c1e7a6e",
+      "parent_commit": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+      "direct_parent_commit": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+      "commit_subject": "Make environment server mode compatible with Pydantic 2",
+      "root_cause_cluster": "pydantic2-evaluator-decorator-server-compatibility",
+      "evaluator_paths": [
+        "src/appworld/evaluator.py"
+      ],
+      "parent_revision_test_paths": [
+        "tests/package/test_appworld.py"
+      ],
+      "parent_revision_public_contract_paths": [
+        "src/appworld/evaluator.py",
+        "src/appworld/serve/environment.py"
+      ],
+      "evidence_paths": [
+        "src/appworld/evaluator.py",
+        "tests/package/test_appworld.py"
+      ],
+      "fault_family_guess": "dependency_compatibility_blocks_evaluator_path",
+      "public_contract_anchor": [
+        "TestTracker.__init__",
+        "server-mode evaluate/evaluate_tasks"
+      ],
+      "inclusion_reason": "The evaluator module decorator path was incompatible with Pydantic 2 in server mode; the version-gated fix changes whether server evaluation can be imported and executed.",
+      "inclusion_evidence": {
+        "commit_message": "Make environment server mode compatible with Pydantic 2",
+        "changed_paths": [
+          "src/appworld/evaluator.py"
+        ],
+        "score_or_verdict_impact": "Version-gates validation decoration so the server-mode evaluator path is not blocked before task verdict computation under Pydantic 2."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "e146159df6b9bd3661ee8e94082fcf3b4c1e7a6e",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "c35fc8dddecb24f45e2a87af67311bcafff1002d"
+        ],
+        "resolution": "not_duplicate",
+        "rationale": "Both affect server evaluation availability, but this cluster is dependency/decorator compatibility in evaluator.py; c35fc8d is a separate missing-symbol import in the server adapter."
+      },
+      "independence_risk": "medium: focused compatibility fix with adjacent server-evaluation tests but no fix-specific regression assertion"
+    },
+    {
+      "id": "appworld-server-eval-import-c35fc8dd",
+      "candidate_id": "appworld-server-eval-import-c35fc8dd",
+      "source_id": "appworld",
+      "fix_commit": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+      "parent_commit": "e197a49375600206b7a7f79ddb235c0764455ad7",
+      "direct_parent_commit": "e197a49375600206b7a7f79ddb235c0764455ad7",
+      "commit_subject": "fix server evaluate_task, evaluate_tasks imports (#25)",
+      "root_cause_cluster": "server-evaluator-symbol-import",
+      "evaluator_paths": [
+        "src/appworld/serve/environment.py"
+      ],
+      "parent_revision_test_paths": [
+        "tests/package/test_appworld.py"
+      ],
+      "parent_revision_public_contract_paths": [
+        "src/appworld/serve/environment.py",
+        "src/appworld/evaluator.py"
+      ],
+      "evidence_paths": [
+        "src/appworld/serve/environment.py",
+        "tests/package/test_appworld.py"
+      ],
+      "fault_family_guess": "evaluation_endpoint_missing_dependency_import",
+      "public_contract_anchor": [
+        "server evaluate endpoint",
+        "server evaluate_tasks endpoint",
+        "evaluate_task",
+        "evaluate_tasks"
+      ],
+      "inclusion_reason": "The newly added server evaluation methods referenced evaluator functions without importing them; the one-line fix changes the endpoints from an undefined-symbol path to actual verdict computation.",
+      "inclusion_evidence": {
+        "commit_message": "fix server evaluate_task, evaluate_tasks imports (#25)",
+        "changed_paths": [
+          "src/appworld/serve/environment.py"
+        ],
+        "score_or_verdict_impact": "Imports the exact functions called by the server evaluation endpoints, unblocking task and batch verdict generation."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+        "fix_revision_license_present": true,
+        "fix_revision_license_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE exists at the fix revision and resolves to the same Apache-2.0 blob as source HEAD."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "e197a49375600206b7a7f79ddb235c0764455ad7",
+          "e146159df6b9bd3661ee8e94082fcf3b4c1e7a6e"
+        ],
+        "resolution": "not_duplicate",
+        "rationale": "e197a49 intentionally introduced the endpoints, while e146159 later fixes Pydantic 2 compatibility. The missing import is a distinct, directly evidenced defect."
+      },
+      "independence_risk": "low: single missing import with direct endpoint call sites in the same file"
+    },
+    {
+      "id": "appworld-minimal-ground-truth-0f819dd8",
+      "candidate_id": "appworld-minimal-ground-truth-0f819dd8",
+      "source_id": "appworld",
+      "fix_commit": "0f819dd8f495c933b808d174f429f8098f507fad",
+      "parent_commit": "b6d10ef1c6f05e11ff01124540a098035c2c9ae7",
+      "direct_parent_commit": "b6d10ef1c6f05e11ff01124540a098035c2c9ae7",
+      "commit_subject": "more small fixes and update bundle files",
+      "root_cause_cluster": "minimal-ground-truth-missing-evaluator-data",
+      "evaluator_paths": [
+        "src/appworld/ground_truth.py"
+      ],
+      "parent_revision_test_paths": [
+        "tests/package/test_appworld.py"
+      ],
+      "parent_revision_public_contract_paths": [
+        "src/appworld/ground_truth.py",
+        "src/appworld/task.py",
+        "src/appworld/evaluator.py"
+      ],
+      "evidence_paths": [
+        "src/appworld/ground_truth.py",
+        "src/appworld/task.py",
+        "tests/package/test_appworld.py"
+      ],
+      "fault_family_guess": "evaluator_input_adapter_omits_public_private_data",
+      "public_contract_anchor": [
+        "GroundTruth.load(mode=minimal)",
+        "Task.load ground_truth_mode",
+        "evaluate_task evaluation_module.evaluate inputs"
+      ],
+      "inclusion_reason": "After minimal became the default ground-truth mode, the parent loaded public_data/private_data only in full mode. The fix moves both loads outside that branch, changing the inputs supplied to evaluation code.",
+      "inclusion_evidence": {
+        "commit_message": "more small fixes and update bundle files",
+        "changed_paths": [
+          "src/appworld/ground_truth.py",
+          "src/appworld/task.py",
+          "src/appworld/environment.py"
+        ],
+        "score_or_verdict_impact": "Restores public/private evaluator inputs in minimal mode; absent values in the parent could cause evaluation exceptions or different requirement pass/fail decisions."
+      },
+      "license_evidence": {
+        "identifier": "Apache-2.0",
+        "source_license_path": "LICENSE",
+        "source_head_revision": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+        "source_head_blob_oid": "261eeb9e9f8b2b4b0d119366dda99c6fd7d35c64",
+        "fix_revision": "0f819dd8f495c933b808d174f429f8098f507fad",
+        "fix_revision_license_present": false,
+        "fix_revision_license_blob_oid": null,
+        "license_introduction_commit": "b99084a4b03ba5c5dbf39a76bea4d884982af848",
+        "evidence_note": "LICENSE is absent from the fix revision tree; the current source HEAD carries Apache-2.0, introduced later in history. No retroactive-license inference is made."
+      },
+      "duplicate_cluster_evidence": {
+        "potential_duplicate_commits": [
+          "b6d10ef1c6f05e11ff01124540a098035c2c9ae7",
+          "b417e864d7c6499d748b0ed1662e229f320df86d"
+        ],
+        "resolution": "single_conservative_cluster",
+        "rationale": "b6d10ef intentionally changed the default to minimal and is a precursor, not a fix. b417e86 later propagates partial mode for runtime/agent context. This candidate is limited to the missing evaluator-data load caused by the minimal-mode branch."
+      },
+      "independence_risk": "medium: clear evaluator-input hunk inside a broad bundle/runner commit and no dedicated regression test"
+    }
+  ],
+  "exclusions": [
+    {
+      "source_id": "appworld",
+      "commit": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+      "commit_subject": "Fix bundle files (#210)",
+      "exclusion_reason": "Generated app/test/data bundle payload repair; no reviewable evaluator/scorer/parser implementation change, so it is excluded as bundled data/artifact content.",
+      "reason": "Generated app/test/data bundle payload repair; no reviewable evaluator/scorer/parser implementation change, so it is excluded as bundled data/artifact content.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "06aae0ee161c6346fa06e11a6bd9cecc8ce3fc72",
+      "commit_subject": "minor compatibility fixes",
+      "exclusion_reason": "Dependency and app API compatibility edits; no evaluator, scorer, replay, or verdict adapter path changed.",
+      "reason": "Dependency and app API compatibility edits; no evaluator, scorer, replay, or verdict adapter path changed.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "3f2d53c1a096805adc86bd05227463683cdc5154",
+      "commit_subject": "Sync with the private repo (#208)",
+      "exclusion_reason": "Matched only a check-and-fix-broken-links path inside a private-repo sync; documentation/link validation is not evaluation logic.",
+      "reason": "Matched only a check-and-fix-broken-links path inside a private-repo sync; documentation/link validation is not evaluation logic.",
+      "matched_queries": [
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d51bece6d4ef6a2921e3a66e73d060bcc6260484",
+      "commit_subject": "Fix path parameter substitution containing `/`, `?`, `#`. (#202)",
+      "exclusion_reason": "Requester URL parameter substitution affects environment/API execution, not evaluator parsing or score/verdict computation; excluded as runtime/model-action behavior.",
+      "reason": "Requester URL parameter substitution affects environment/API execution, not evaluator parsing or score/verdict computation; excluded as runtime/model-action behavior.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "afc941710b91ab9260b95b7bdebb1179deba90cf",
+      "commit_subject": "Many new guides, more type checks and updated bundles (#191)",
+      "exclusion_reason": "Evaluator-adjacent edits are type relocation/casts alongside guides and bundles; static diff shows no score/verdict behavior change, so this is typing/docs/data maintenance.",
+      "reason": "Evaluator-adjacent edits are type relocation/casts alongside guides and bundles; static diff shows no score/verdict behavior change, so this is typing/docs/data maintenance.",
+      "matched_queries": [
+        "Q2_changed_path_keywords",
+        "Q3_evaluator_symbol_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "097c2231f6715b597f00a93da5e6dfa67755a221",
+      "commit_subject": "Path fix in verify installation (#188)",
+      "exclusion_reason": "Installation verification path repair in CLI; outside the evaluation implementation and verdict path.",
+      "reason": "Installation verification path repair in CLI; outside the evaluation implementation and verdict path.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b417e864d7c6499d748b0ed1662e229f320df86d",
+      "commit_subject": "Qwen price updates, fix partial ground-truth mode and minor beaker run fixes (#186)",
+      "exclusion_reason": "Propagates partial ground-truth mode in the runtime environment and also changes model pricing/Beaker setup; it affects agent context/configuration, not evaluator inputs or scoring semantics.",
+      "reason": "Propagates partial ground-truth mode in the runtime environment and also changes model pricing/Beaker setup; it affects agent context/configuration, not evaluator inputs or scoring semantics.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b757b2563b8019b01e0715eb41050f8f5f2eba26",
+      "commit_subject": "Reduce CI cost and improve experiment logs spot checking heuristics (#181)",
+      "exclusion_reason": "Experiment-log spot-check heuristics and CI cost reduction are monitoring/validation workflow changes, not the benchmark evaluator or score path.",
+      "reason": "Experiment-log spot-check heuristics and CI cost reduction are monitoring/validation workflow changes, not the benchmark evaluator or score path.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "977a2fa94337a6326ddeb19cb97b0405642e784f",
+      "commit_subject": "Add strict type checking and exhaustive model type stubs (#180)",
+      "exclusion_reason": "Strict typing and type-stub sweep; evaluator and tool-parser hunks change annotations/casts only, with no parsing or verdict behavior change.",
+      "reason": "Strict typing and type-stub sweep; evaluator and tool-parser hunks change annotations/casts only, with no parsing or verdict behavior change.",
+      "matched_queries": [
+        "Q2_changed_path_keywords",
+        "Q3_evaluator_symbol_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "775fdbb82e2da0f009ac7ce966045997e6236844",
+      "commit_subject": "Sync with the private repo (#178)",
+      "exclusion_reason": "Private-repo sync matched the semantic query through experiment log spot-check code; no evaluator/scorer implementation defect is repaired.",
+      "reason": "Private-repo sync matched the semantic query through experiment log spot-check code; no evaluator/scorer implementation defect is repaired.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "ba33afb327152803956fdc16f2c3b94a88377453",
+      "commit_subject": "Change null patching in safety guard to explicitly raised errors (#177)",
+      "exclusion_reason": "Safety-guard null patching and log spot-check handling affect model execution diagnostics, not evaluation score or verdict semantics.",
+      "reason": "Safety-guard null patching and log spot-check handling affect model execution diagnostics, not evaluation score or verdict semantics.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "58d1c7807a3dd2870f45da716f572909a0d33511",
+      "commit_subject": "Docker and windows support + verification in CI + appworld-agents lib (#174)",
+      "exclusion_reason": "Docker/Windows support, CI verification, and agent library introduction; ground-truth terms occur in test/runtime support rather than an evaluator defect.",
+      "reason": "Docker/Windows support, CI verification, and agent library introduction; ground-truth terms occur in test/runtime support rather than an evaluator defect.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d966d6f0734615c3b1b4e537b221d234168859ed",
+      "commit_subject": "Update bundle utils, haiku 4.5, CI 3.14 (#167)",
+      "exclusion_reason": "Bundle utilities, leaderboard packaging, CI, and model configuration update; no score/verdict computation change.",
+      "reason": "Bundle utilities, leaderboard packaging, CI, and model configuration update; no score/verdict computation change.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "fdd19d217f68de07819699ef56271dc64fe28960",
+      "commit_subject": "more fixes to get almost all configs to work (#151)",
+      "exclusion_reason": "Repairs experiment/model configurations and agent runners; excluded as model inference/configuration rather than evaluator logic.",
+      "reason": "Repairs experiment/model configurations and agent runners; excluded as model inference/configuration rather than evaluator logic.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "8a6ac4e0e4b82501266a922f9f725f4f9273d942",
+      "commit_subject": "fix issues in config generator script (#150)",
+      "exclusion_reason": "Config-generator and agent implementation fixes affect inference setup, not scoring or verdict evaluation.",
+      "reason": "Config-generator and agent implementation fixes affect inference setup, not scoring or verdict evaluation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "829c5297baae7a0e1b493d17cd9a382e1cbb1897",
+      "commit_subject": "Add hal experiment configs and cli script (#147)",
+      "exclusion_reason": "Intentional introduction of HAL experiment configs and runner adapter, not a defect fix; later path repairs are represented separately.",
+      "reason": "Intentional introduction of HAL experiment configs and runner adapter, not a defect fix; later path repairs are represented separately.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c4184cb2c71d46b91949343d2fded7e096dac44b",
+      "commit_subject": "minor fixes in the api source code parsing logic (#142)",
+      "exclusion_reason": "API source/test parsing utilities support task/API annotation and generation; they do not parse evaluator outputs or change scores.",
+      "reason": "API source/test parsing utilities support task/API annotation and generation; they do not parse evaluator outputs or change scores.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "1d55d8fbef96afca0fac5525981ed46008cb8145",
+      "commit_subject": "minor fixes in the new meta apis (#141)",
+      "exclusion_reason": "Meta/admin API implementation repair affects environment behavior, not evaluator/scorer/parser/replay logic.",
+      "reason": "Meta/admin API implementation repair affects environment behavior, not evaluator/scorer/parser/replay logic.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d06c5e2f0ce38f94dd162883e4ad517f9d050640",
+      "commit_subject": "fix the login swagger route (#139)",
+      "exclusion_reason": "Swagger login route correction is API documentation/route behavior, not evaluation logic.",
+      "reason": "Swagger login route correction is API documentation/route behavior, not evaluation logic.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "0fe857fc31d737077f2da74bbf6bae94f26ea1f0",
+      "commit_subject": "fix in supervisor id for the new /tasks api (#138)",
+      "exclusion_reason": "Supervisor identifier repair in the tasks API concerns task-management data, not score/verdict computation.",
+      "reason": "Supervisor identifier repair in the tasks API concerns task-management data, not score/verdict computation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "3f81db65062f0ddeda1bab35ba2e6061fed1781e",
+      "commit_subject": "fix new admin apis for resetting/getting tasks and supervisors (#137)",
+      "exclusion_reason": "New admin task/supervisor API fixes concern task state management endpoints, not evaluator implementation.",
+      "reason": "New admin task/supervisor API fixes concern task state management endpoints, not evaluator implementation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "63452271009bfadeb720698a9d2ef5e5e9dcd634",
+      "commit_subject": "add an option to evaluate on a single task (with warnings) (#134)",
+      "exclusion_reason": "Intentional public contract addition for evaluating one task, with warnings and file naming; not a correction of wrong scoring semantics.",
+      "reason": "Intentional public contract addition for evaluating one task, with warnings and file naming; not a correction of wrong scoring semantics.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q2_changed_path_keywords",
+        "Q3_evaluator_symbol_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e84ce1dcdc5c0b3f7ea152bedd9761cbca83f30c",
+      "commit_subject": "fix dockerignore (#129)",
+      "exclusion_reason": "Docker ignore configuration only; no evaluation implementation path.",
+      "reason": "Docker ignore configuration only; no evaluation implementation path.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d26aceb1b4f0d757cf6a52a61420b51a0aac44bd",
+      "commit_subject": "fix script to convert legacy to simplified configs (#105)",
+      "exclusion_reason": "Legacy-to-simplified experiment config migration fix; excluded as model/inference configuration tooling.",
+      "reason": "Legacy-to-simplified experiment config migration fix; excluded as model/inference configuration tooling.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b57fb13359e5762ab1ddf92f61c24451e78e8b5e",
+      "commit_subject": "fix typo in path store module (#101)",
+      "exclusion_reason": "Path-store typo repair for package layout; infrastructure path only, with no evaluator or verdict contract change.",
+      "reason": "Path-store typo repair for package layout; infrastructure path only, with no evaluator or verdict contract change.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e440e3114f8431d404a4607f965412168e0c3abf",
+      "commit_subject": "fix typo in experiments setup (#100)",
+      "exclusion_reason": "Experiment package setup typo; packaging-only.",
+      "reason": "Experiment package setup typo; packaging-only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "96ea040aeda3eb81099c2178b79606fe686c86f3",
+      "commit_subject": "Merge pull request #99 from StonyBrookNLP/experiments-package-fix",
+      "exclusion_reason": "Merge wrapper for experiment-package installation fixes with no independent first-parent changed paths; root cause belongs to packaging child commit, which is also excluded.",
+      "reason": "Merge wrapper for experiment-package installation fixes with no independent first-parent changed paths; root cause belongs to packaging child commit, which is also excluded.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b80fdfab7052112e2e43bc798d1123863c8983ae",
+      "commit_subject": "fix issues with experiment package installation",
+      "exclusion_reason": "Experiment package installation/layout repair; no evaluator/scorer implementation change.",
+      "reason": "Experiment package installation/layout repair; no evaluator/scorer implementation change.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c7c7db125e12ac77ea2a1cece0db704efe2da130",
+      "commit_subject": "fix typo in some experiment configs (#91)",
+      "exclusion_reason": "Typos in experiment model/agent configs; model inference setup only.",
+      "reason": "Typos in experiment model/agent configs; model inference setup only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "3a370ff8c5efa31afa593dcb9873e0f5efa0f9a4",
+      "commit_subject": "fix script to pull changes from remote repo (#88)",
+      "exclusion_reason": "Private/public synchronization script fix; repository maintenance, not evaluation behavior.",
+      "reason": "Private/public synchronization script fix; repository maintenance, not evaluation behavior.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c45fd5161fd9e176fa0d24a8ed8bd847d6707971",
+      "commit_subject": "minor readme fix (#86)",
+      "exclusion_reason": "README-only fix (merge/tree comparison yields no evaluator implementation path).",
+      "reason": "README-only fix (merge/tree comparison yields no evaluator implementation path).",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "2ff6530636875f06d6788641fa326f755f00cc0d",
+      "commit_subject": "minor readme fix (#85)",
+      "exclusion_reason": "README-only fix.",
+      "reason": "README-only fix.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "99c54a1097019f047a9d9deed7d2d4160fbf385d",
+      "commit_subject": "fix typo in readme (#83)",
+      "exclusion_reason": "README typo; semantic adapter query matched prose only, not executable evaluation code.",
+      "reason": "README typo; semantic adapter query matched prose only, not executable evaluation code.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b06d771211942972b217ba447951f1d04406ece8",
+      "commit_subject": "fix typo in readme (#82)",
+      "exclusion_reason": "README-only typo fix.",
+      "reason": "README-only typo fix.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "4ea7f7ed76bab5cf2b3659a518f59bb060ddb654",
+      "commit_subject": "Merge pull request #80 from StonyBrookNLP/env-server-fix",
+      "exclusion_reason": "Merge wrapper for environment-server error handling with no independent first-parent implementation change.",
+      "reason": "Merge wrapper for environment-server error handling with no independent first-parent implementation change.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "6e81e31ae885c981cb6841992901b78349114cee",
+      "commit_subject": "fix env server error response",
+      "exclusion_reason": "Environment-server error response transport and notebook handling; it changes error presentation, not score/verdict computation.",
+      "reason": "Environment-server error response transport and notebook handling; it changes error presentation, not score/verdict computation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "9a7672e6c071cbe6e8558053dbdf26dff24a9cd1",
+      "commit_subject": "fix dockerfile (#79)",
+      "exclusion_reason": "Dockerfile-only repair.",
+      "reason": "Dockerfile-only repair.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c07897a7de7300e64166e94bf664d1717dd272a4",
+      "commit_subject": "Add smolagent-based agents (#78)",
+      "exclusion_reason": "Intentional addition of smolagents-based agents; model inference path, not evaluator logic.",
+      "reason": "Intentional addition of smolagents-based agents; model inference path, not evaluator logic.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "91600c32e8c8549cf22657373a9e512233e8d4f0",
+      "commit_subject": "fix version number (#77)",
+      "exclusion_reason": "Version metadata correction only.",
+      "reason": "Version metadata correction only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "1c730a73219b72fbbcef199ed880e90d6bf0bfe8",
+      "commit_subject": "fix typo in pyproject depdencies (#76)",
+      "exclusion_reason": "Dependency metadata typo only.",
+      "reason": "Dependency metadata typo only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "1eec285d7c40908040fc572a97248152ae71601a",
+      "commit_subject": "fix run and eval cache (#73)",
+      "exclusion_reason": "GitHub workflow cache repair for run-and-eval CI; orchestration/cache only, not evaluator implementation.",
+      "reason": "GitHub workflow cache repair for run-and-eval CI; orchestration/cache only, not evaluator implementation.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "fe919fd862e965f7cdd22da895ff0b0e0fcf6776",
+      "commit_subject": "add appworld cache to gh workflow (#72)",
+      "exclusion_reason": "Intentional addition of cache configuration to a GitHub evaluation workflow; no scoring implementation change.",
+      "reason": "Intentional addition of cache configuration to a GitHub evaluation workflow; no scoring implementation change.",
+      "matched_queries": [
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "2d1d4f1b07baae278c3f8d94a78762dce7e20356",
+      "commit_subject": "bundling error fix again in gh workflow (#71)",
+      "exclusion_reason": "Bundle-check workflow repair; CI/packaging only.",
+      "reason": "Bundle-check workflow repair; CI/packaging only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d47901fa7fd94e8dd4dfb6c16a9f7cbd454f9d5d",
+      "commit_subject": "fix plot label typo (#69)",
+      "exclusion_reason": "Plot axis/label typo only; score values and replay selection are unchanged, so excluded as presentation/UI.",
+      "reason": "Plot axis/label typo only; score values and replay selection are unchanged, so excluded as presentation/UI.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b1c860efb4edb1885377d196a11d3bad47f770f5",
+      "commit_subject": "Add run and eval GitHub workflow (#68)",
+      "exclusion_reason": "Intentional run-and-eval workflow and experiment logging addition; contract/orchestration introduction, not a defect repair.",
+      "reason": "Intentional run-and-eval workflow and experiment logging addition; contract/orchestration introduction, not a defect repair.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e889247dc67aaa6bca6bb3b729ba54051cfef19a",
+      "commit_subject": "Add script show scores by interaction limits",
+      "exclusion_reason": "Intentional initial addition of the interaction-limit scoring script; not a fix commit and therefore excluded as contract introduction.",
+      "reason": "Intentional initial addition of the interaction-limit scoring script; not a fix commit and therefore excluded as contract introduction.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q2_changed_path_keywords",
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "f0498202e787ff51644c10c7a0d635a4bf374016",
+      "commit_subject": "Add script to make Hal logs from AppWorld logs",
+      "exclusion_reason": "Intentional initial addition of the AppWorld-to-HAL log exporter; later schema repair is represented as a candidate.",
+      "reason": "Intentional initial addition of the AppWorld-to-HAL log exporter; later schema repair is represented as a candidate.",
+      "matched_queries": [
+        "Q3_evaluator_symbol_pickaxe",
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "882fe653ab1d2fb749573b41fe873af20c91dde3",
+      "commit_subject": "Add simplified code for react, ipfuncall, fullcoderefl, agents (#63)",
+      "exclusion_reason": "Intentional addition of simplified agents and inference implementations; not evaluation logic.",
+      "reason": "Intentional addition of simplified agents and inference implementations; not evaluation logic.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "4016f8bd3339e006464a1ff8a5ddcdd359a3def0",
+      "commit_subject": "Fix typo in clone pr script (#55)",
+      "exclusion_reason": "Clone-PR helper typo; repository tooling only.",
+      "reason": "Clone-PR helper typo; repository tooling only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "8536f0bf7afebf5ff473a9e590626faa9e300c21",
+      "commit_subject": "Fix experiment output release script (#54)",
+      "exclusion_reason": "Experiment output release/packaging script repair; does not compute or adapt verdicts.",
+      "reason": "Experiment output release/packaging script repair; does not compute or adapt verdicts.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "073716d7a3381d78ed8ed94362920d1439d3ed98",
+      "commit_subject": "Fix readme typo (#51)",
+      "exclusion_reason": "README-only typo fix.",
+      "reason": "README-only typo fix.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "9ae7d5482ea7a986982cdc8dc76b58e375625b4c",
+      "commit_subject": "Fix compiled solution length when solution is not set to compile (#48)",
+      "exclusion_reason": "Ground-truth compiled-solution line-count statistic repair; task metadata/analysis only, not evaluator score or verdict.",
+      "reason": "Ground-truth compiled-solution line-count statistic repair; task metadata/analysis only, not evaluator score or verdict.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e587c40087ded686a5cfffb4899ea3b4e49f1714",
+      "commit_subject": "Fix security warning (#47)",
+      "exclusion_reason": "Dependency security-warning metadata fix; no evaluator logic.",
+      "reason": "Dependency security-warning metadata fix; no evaluator logic.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "7b8f5a39a4787c6f127a595b1ac4377aa467aa47",
+      "commit_subject": "fix duplication in readme",
+      "exclusion_reason": "README duplication fix only.",
+      "reason": "README duplication fix only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "4d55dd044427e5dffd6f770843b6b037e2081d00",
+      "commit_subject": "Release base DB generation and task instantiation (#45)",
+      "exclusion_reason": "Intentional release of base-DB generation and task instantiation code/data; task generation/annotation and bundles, not an evaluator defect.",
+      "reason": "Intentional release of base-DB generation and task instantiation code/data; task generation/annotation and bundles, not an evaluator defect.",
+      "matched_queries": [
+        "Q2_changed_path_keywords",
+        "Q4_adapter_replay_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "6a0fdef07252a1c47aa6ad178b5c3fde5fee83e8",
+      "commit_subject": "Release base DB generation and task instantiation scripts (#2)",
+      "exclusion_reason": "Intentional task/data generation release; evaluator-related words occur in generators/validation data rather than a historical evaluator fix.",
+      "reason": "Intentional task/data generation release; evaluator-related words occur in generators/validation data rather than a historical evaluator fix.",
+      "matched_queries": [
+        "Q2_changed_path_keywords",
+        "Q3_evaluator_symbol_pickaxe",
+        "Q4_adapter_replay_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "31f47335e2cdf5330e3e8820b6be41100f6bf2dd",
+      "commit_subject": "Support running AppWorld baseline agents from HAL evaluation harness (#31)",
+      "exclusion_reason": "Intentional support for running baseline agents through HAL; model runner/inference feature, not an evaluator defect repair.",
+      "reason": "Intentional support for running baseline agents through HAL; model runner/inference feature, not an evaluator defect repair.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b15520bf6f04f67a5f87f6bc3340893f619fea6d",
+      "commit_subject": "Add GPT 4o-mini and some O1-mini experiment configs (#32)",
+      "exclusion_reason": "Model experiment configuration addition; inference setup only.",
+      "reason": "Model experiment configuration addition; inference setup only.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "43c4e6a4ed2f1475cab0ba99d1ca2c3ff836c1ce",
+      "commit_subject": "upgrade uvloop to fix 3.13 build issue",
+      "exclusion_reason": "uvloop/Python build compatibility dependency update; no evaluator path.",
+      "reason": "uvloop/Python build compatibility dependency update; no evaluator path.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "81f2a20dc225a68d5d1d8b13973d0ff4e4486b3d",
+      "commit_subject": "ruff",
+      "exclusion_reason": "Ruff-only mechanical formatting in release-data code; no behavior change.",
+      "reason": "Ruff-only mechanical formatting in release-data code; no behavior change.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c101fb667f8de4e5233a23678c11094bce12d5a1",
+      "commit_subject": "add released data and experiment outputs scripts",
+      "exclusion_reason": "Intentional data and experiment-output release scripts; artifact packaging/transport, not score or verdict computation.",
+      "reason": "Intentional data and experiment-output release scripts; artifact packaging/transport, not score or verdict computation.",
+      "matched_queries": [
+        "Q4_adapter_replay_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "6675a03ebea0864f267dc3a014283e30c1a417e2",
+      "commit_subject": "fix typo in packing function; add inplace tests",
+      "exclusion_reason": "Bundle packing/in-place extraction typo and tests; leaderboard artifact packaging, not evaluator semantics.",
+      "reason": "Bundle packing/in-place extraction typo and tests; leaderboard artifact packaging, not evaluator semantics.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "4c225f1c3266d33625a4f1b0f6674b04a4361b9e",
+      "commit_subject": "leaderboard unpack fix.",
+      "exclusion_reason": "Leaderboard bundle unpack path validation; changes artifact placement/error detection but not score, verdict, or evaluation execution semantics.",
+      "reason": "Leaderboard bundle unpack path validation; changes artifact placement/error detection but not score, verdict, or evaluation execution semantics.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "4c3c34e104d4e912d403e7d1ab8f6eadda454a61",
+      "commit_subject": "fix blog link in readme",
+      "exclusion_reason": "README blog-link fix only.",
+      "reason": "README blog-link fix only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "aaaad0d5a36e89d796d567a0524df689409986af",
+      "commit_subject": "fix CI",
+      "exclusion_reason": "CI workflow repair only.",
+      "reason": "CI workflow repair only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e9099f9a807819afb78fea2759218fce6bb228ca",
+      "commit_subject": "apply ruff",
+      "exclusion_reason": "Ruff formatting/import-order sweep; evaluator file changes are mechanical and behavior-preserving.",
+      "reason": "Ruff formatting/import-order sweep; evaluator file changes are mechanical and behavior-preserving.",
+      "matched_queries": [
+        "Q2_changed_path_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "e197a49375600206b7a7f79ddb235c0764455ad7",
+      "commit_subject": "Add offline evaluation methods in server mode. (#24)",
+      "exclusion_reason": "Intentional introduction of offline server evaluation methods; not a defect fix. The subsequent missing-import repair is represented separately.",
+      "reason": "Intentional introduction of offline server evaluation methods; not a defect fix. The subsequent missing-import repair is represented separately.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q3_evaluator_symbol_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "5b29919a55a721615a9fe777f27abcaea2330658",
+      "commit_subject": "fix api log parsing",
+      "exclusion_reason": "API-call JSONL log parser repair is a runtime log inspection helper; the scoring replay path uses environment_io logs, so this does not change score/verdict evaluation.",
+      "reason": "API-call JSONL log parser repair is a runtime log inspection helper; the scoring replay path uses environment_io logs, so this does not change score/verdict evaluation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "31c7c9c004651656e0a6ba575e6ce5d8c49437d4",
+      "commit_subject": "Fix safety-based parsing error for xx.yy imports (#17)",
+      "exclusion_reason": "Safety parser fix for import syntax affects model-code execution guarding, not evaluator output parsing or scoring.",
+      "reason": "Safety parser fix for import syntax affects model-code execution guarding, not evaluator output parsing or scoring.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "af18c2a00f01629633b7c03491414f6e9d49d182",
+      "commit_subject": "Fixed variable and function names",
+      "exclusion_reason": "Behavior-preserving variable/function rename in the ReCoMA inference runner; no score/verdict change.",
+      "reason": "Behavior-preserving variable/function rename in the ReCoMA inference runner; no score/verdict change.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q4_adapter_replay_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "8ebe598b622a4fdeb8e6894277d94af52907dd9c",
+      "commit_subject": "fixed issues in keep_apis and remove_apis utils of ApiDocCollection (#3)",
+      "exclusion_reason": "ApiDocCollection filtering utility fix concerns API/task documentation supplied to agents, not evaluation.",
+      "reason": "ApiDocCollection filtering utility fix concerns API/task documentation supplied to agents, not evaluation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "ff32e1b6d23f9077d59e9e13cceeac2c55be997a",
+      "commit_subject": "Merge pull request #1 from shatu/recoma_fix",
+      "exclusion_reason": "Merge wrapper for the ReCoMA branch with no independent first-parent implementation change.",
+      "reason": "Merge wrapper for the ReCoMA branch with no independent first-parent implementation change.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "59c0ba1f82ca19c5706147a47de47299189f2325",
+      "commit_subject": "minor fix in serializing predictions",
+      "exclusion_reason": "Repairs serialization of ReCoMA model prediction artifacts; AppWorld verdicts are computed from environment DB state and this file does not invoke/modify the evaluator, so excluded as model inference output.",
+      "reason": "Repairs serialization of ReCoMA model prediction artifacts; AppWorld verdicts are computed from environment DB state and this file does not invoke/modify the evaluator, so excluded as model inference output.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "d59380a9cd99b414035b944359c3b60d1100dfdd",
+      "commit_subject": "bump version to fix minor typo",
+      "exclusion_reason": "Version/CLI typo metadata only.",
+      "reason": "Version/CLI typo metadata only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "837045d84af7a09fd7be48a0c2e05a812d3ebc21",
+      "commit_subject": "demo task load fix",
+      "exclusion_reason": "Demo-task loading change in an inference runner; no evaluator/scorer implementation path.",
+      "reason": "Demo-task loading change in an inference runner; no evaluator/scorer implementation path.",
+      "matched_queries": [
+        "Q1_subject_keywords",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "f26adc2648b6d878fa9ee1479e72071c8fdfe4ee",
+      "commit_subject": "prompt path and cli error message fix",
+      "exclusion_reason": "Agent prompt path and CLI error-message repair; model inference/UI path, not evaluation.",
+      "reason": "Agent prompt path and CLI error-message repair; model inference/UI path, not evaluation.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "b6d10ef1c6f05e11ff01124540a098035c2c9ae7",
+      "commit_subject": "minor",
+      "exclusion_reason": "Intentional default-contract change from full to minimal ground-truth loading plus runner adjustment; it introduces the mode policy rather than repairing evaluator semantics.",
+      "reason": "Intentional default-contract change from full to minimal ground-truth loading plus runner adjustment; it introduces the mode policy rather than repairing evaluator semantics.",
+      "matched_queries": [
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "ecb73d1ebafca9735436e059dc41c77e07e8947f",
+      "commit_subject": "minor fixes",
+      "exclusion_reason": "Mixed README/notebook/playground/download/verify cleanup; no evaluator/scorer implementation change.",
+      "reason": "Mixed README/notebook/playground/download/verify cleanup; no evaluator/scorer implementation change.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "c1c6d35e2c0af33dac5e11aa3d0cb9285eb083d3",
+      "commit_subject": "fix docker and installation",
+      "exclusion_reason": "Docker and installation repair only.",
+      "reason": "Docker and installation repair only.",
+      "matched_queries": [
+        "Q1_subject_keywords"
+      ]
+    },
+    {
+      "source_id": "appworld",
+      "commit": "49bf1c19ed2d7bc217b96d959327768ff3a9a227",
+      "commit_subject": "init",
+      "exclusion_reason": "Large intentional baseline import adding the evaluator and experiment stack; despite having a parent, it is an implementation introduction, not a defect fix.",
+      "reason": "Large intentional baseline import adding the evaluator and experiment stack; despite having a parent, it is an implementation introduction, not a defect fix.",
+      "matched_queries": [
+        "Q2_changed_path_keywords",
+        "Q3_evaluator_symbol_pickaxe",
+        "Q4_adapter_replay_pickaxe",
+        "Q5_state_input_pickaxe"
+      ]
+    },
+    {
+      "source_id": "toolsandbox",
+      "commit": "165848b9a78cead7ca7fe7c89c688b58e6501219",
+      "commit_subject": "init",
+      "exclusion_reason": "ToolSandbox has only this root init commit in verified main history; it has no parent and therefore cannot be a parent-vs-fix evaluator defect candidate.",
+      "reason": "ToolSandbox has only this root init commit in verified main history; it has no parent and therefore cannot be a parent-vs-fix evaluator defect candidate.",
+      "matched_queries": [
+        "Q2_changed_path_keywords"
+      ]
+    }
+  ],
+  "decisions": [
+    {
+      "candidate_id": "appworld-answer-normalization-ddf8b200",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Adds English number-word parsing and whitespace collapse to default answer equivalence. No independent pre-fix task/evaluator contract requires those forms to be equivalent; post-fix assertions show a new policy, not a demonstrated parent contract violation.",
+      "root_cause_family": "undocumented_default_answer_equivalence_policy_change",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-answer-normalization-ddf8b200",
+        "decision": "exclude",
+        "reason": "Adds English number-word parsing and whitespace collapse to default answer equivalence. No independent pre-fix task/evaluator contract requires those forms to be equivalent; post-fix assertions show a new policy, not a demonstrated parent contract violation.",
+        "verified_parent_fix": {
+          "fix_commit": "ddf8b200179bfeba9a869257fa27c4e1d7fd9eca",
+          "direct_parent_commit": "3f2d53c1a096805adc86bd05227463683cdc5154",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "undocumented answer-equivalence policy expansion",
+          "score_verdict_evaluation_path_impact": "Can change a task verdict, but required equivalence is not independently documented before the fix.",
+          "reconstructability": "Public source and dependency declaration exist, but cannot cure missing pre-existing contract evidence.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "Unique in group 1; exclusion is not based on duplication."
+        },
+        "fault_class": "undocumented_default_answer_equivalence_policy_change",
+        "independence_cluster": "answer-normalization-text-and-number-equivalence"
+      }
+    },
+    {
+      "candidate_id": "appworld-replay-budget-grouping-1774957a",
+      "source_id": "appworld",
+      "decision": "admit",
+      "reason": "Parent CLI scores by environment interaction limits but slices raw log rows. The fix selects entries by semantic interaction number before replay and evaluation. Parallel sub-interactions can create multiple rows per interaction, so parent can deterministically replay the wrong state and report a wrong budget-indexed score.",
+      "root_cause_family": "replay_budget_unit_mismatch_raw_rows_vs_semantic_interactions",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-replay-budget-grouping-1774957a",
+        "decision": "admit",
+        "reason": "Parent CLI scores by environment interaction limits but slices raw log rows. The fix selects entries by semantic interaction number before replay and evaluation. Parallel sub-interactions can create multiple rows per interaction, so parent can deterministically replay the wrong state and report a wrong budget-indexed score.",
+        "verified_parent_fix": {
+          "fix_commit": "1774957a1ac2222ddd17ffc8c21c1e34136b4606",
+          "direct_parent_commit": "8e7c06397df0c6e6c851588e63e3e15545366aa1",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "deterministic replay-budget implementation defect",
+          "score_verdict_evaluation_path_impact": "Raw rows rather than semantic interactions are replayed before world.evaluate, changing budget-indexed scores under parallel sub-interactions.",
+          "reconstructability": "Parent/fixed public script, public AppWorld runtime, and parsed environment-log interface are present; an interaction-numbered public trace can exercise the path without private source artifacts.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "No other group-1 candidate changes this replay-selection path."
+        },
+        "fault_class": "replay_budget_unit_mismatch_raw_rows_vs_semantic_interactions",
+        "independence_cluster": "parallel-subinteraction-replay-budget-grouping"
+      }
+    },
+    {
+      "candidate_id": "appworld-hal-runner-paths-ccd5162c",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Parameterizes an external HAL checkout root, shell working directory, and output paths. It is generic integration/path-resolution repair, not a diff-proven deterministic false accept, false reject, score, or verdict defect; the external checkout and artifact layout are not versioned here.",
+      "root_cause_family": "external_harness_path_resolution_compatibility",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-hal-runner-paths-ccd5162c",
+        "decision": "exclude",
+        "reason": "Parameterizes an external HAL checkout root, shell working directory, and output paths. It is generic integration/path-resolution repair, not a diff-proven deterministic false accept, false reject, score, or verdict defect; the external checkout and artifact layout are not versioned here.",
+        "verified_parent_fix": {
+          "fix_commit": "ccd5162c9728757477517cc08cc0b7c6721cd6e2",
+          "direct_parent_commit": "441e8bb446a404ab904202939a40c521b384ac67",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "external-harness working-directory and path compatibility",
+          "score_verdict_evaluation_path_impact": "May prevent launch or artifact lookup, but no documented deterministic evaluator-verdict error is proved.",
+          "reconstructability": "Insufficient: required external HAL checkout and result layout are not pinned.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "Unique cluster; exclusion is scope and reconstruction based."
+        },
+        "fault_class": "external_harness_path_resolution_compatibility",
+        "independence_cluster": "hal-runner-working-directory-and-path-resolution"
+      }
+    },
+    {
+      "candidate_id": "appworld-hal-export-schema-1ae6d174",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Updates multiple experiment-config, metadata, LM-log, and evaluation JSON field locations in a HAL exporter. It shows cross-tool schema adaptation, but no parent-visible documented schema or versioned input fixture proves a false success/failure under an unchanged contract.",
+      "root_cause_family": "unversioned_cross_tool_evaluation_export_schema_drift",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-hal-export-schema-1ae6d174",
+        "decision": "exclude",
+        "reason": "Updates multiple experiment-config, metadata, LM-log, and evaluation JSON field locations in a HAL exporter. It shows cross-tool schema adaptation, but no parent-visible documented schema or versioned input fixture proves a false success/failure under an unchanged contract.",
+        "verified_parent_fix": {
+          "fix_commit": "1ae6d1744d65ffa28e45299711264831e460a331",
+          "direct_parent_commit": "d87b158b9ceb93c681980fdcb23f1a2ef52b9593",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "unversioned cross-tool export schema compatibility drift",
+          "score_verdict_evaluation_path_impact": "Successful/failed task fields may differ, but required schema version is not independently pinned in parent source.",
+          "reconstructability": "Insufficient: relevant experiment outputs and HAL schema fixture are not versioned.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "Distinct from HAL runner paths; exclusion rests on contract evidence and reconstruction."
+        },
+        "fault_class": "unversioned_cross_tool_evaluation_export_schema_drift",
+        "independence_cluster": "hal-evaluation-export-schema-drift"
+      }
+    },
+    {
+      "candidate_id": "appworld-pydantic2-evaluator-e146159d",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Bypasses a Pydantic decorator in Pydantic-2 server mode. This is explicit dependency/server compatibility, not score or verdict computation; generic environment compatibility is outside the narrow boundary.",
+      "root_cause_family": "dependency_compatibility_pydantic_server_mode",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-pydantic2-evaluator-e146159d",
+        "decision": "exclude",
+        "reason": "Bypasses a Pydantic decorator in Pydantic-2 server mode. This is explicit dependency/server compatibility, not score or verdict computation; generic environment compatibility is outside the narrow boundary.",
+        "verified_parent_fix": {
+          "fix_commit": "e146159df6b9bd3661ee8e94082fcf3b4c1e7a6e",
+          "direct_parent_commit": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "dependency compatibility",
+          "score_verdict_evaluation_path_impact": "Evaluator module may fail to import under Pydantic 2, but no incorrect deterministic score/verdict is established.",
+          "reconstructability": "Public source reproduces dependency boundary, but it is out of scope.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "Distinct compatibility cluster; scope exclusion."
+        },
+        "fault_class": "dependency_compatibility_pydantic_server_mode",
+        "independence_cluster": "pydantic2-evaluator-decorator-server-compatibility"
+      }
+    },
+    {
+      "candidate_id": "appworld-server-eval-import-c35fc8dd",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Adds two missing imports to FastAPI server endpoints. It is symbol-import/server wiring; endpoint failure before evaluation is not a diff-proven false accept, false reject, or evaluator score defect. Generic symbol-import changes are excluded.",
+      "root_cause_family": "server_endpoint_missing_evaluator_import",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-server-eval-import-c35fc8dd",
+        "decision": "exclude",
+        "reason": "Adds two missing imports to FastAPI server endpoints. It is symbol-import/server wiring; endpoint failure before evaluation is not a diff-proven false accept, false reject, or evaluator score defect. Generic symbol-import changes are excluded.",
+        "verified_parent_fix": {
+          "fix_commit": "c35fc8dddecb24f45e2a87af67311bcafff1002d",
+          "direct_parent_commit": "e197a49375600206b7a7f79ddb235c0764455ad7",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "server symbol-import wiring",
+          "score_verdict_evaluation_path_impact": "Endpoint can raise before evaluation rather than compute an incorrect evaluator result.",
+          "reconstructability": "Public source can reproduce import failure, but it is out of scope.",
+          "license": "Apache-2.0 LICENSE exists in both parent and fix.",
+          "duplicate_root_cause": "Distinct server-import cluster; scope exclusion."
+        },
+        "fault_class": "server_endpoint_missing_evaluator_import",
+        "independence_cluster": "server-evaluator-symbol-import"
+      }
+    },
+    {
+      "candidate_id": "appworld-minimal-ground-truth-0f819dd8",
+      "source_id": "appworld",
+      "decision": "exclude",
+      "reason": "Changes default ground-truth storage/loading mode and task data availability. It is task-data packaging behavior, not a demonstrated evaluator/adapter/replay/metric implementation defect; the direct parent also has no LICENSE file, so its historical license is not verifiable.",
+      "root_cause_family": "task_data_packaging_minimal_mode_behavior",
+      "duplicate_of": null,
+      "adjudication_details": {
+        "candidate_id": "appworld-minimal-ground-truth-0f819dd8",
+        "decision": "exclude",
+        "reason": "Changes default ground-truth storage/loading mode and task data availability. It is task-data packaging behavior, not a demonstrated evaluator/adapter/replay/metric implementation defect; the direct parent also has no LICENSE file, so its historical license is not verifiable.",
+        "verified_parent_fix": {
+          "fix_commit": "0f819dd8f495c933b808d174f429f8098f507fad",
+          "direct_parent_commit": "b6d10ef1c6f05e11ff01124540a098035c2c9ae7",
+          "direct_parent_verified": true,
+          "single_parent_fix_commit": true
+        },
+        "verification": {
+          "implementation_defect_vs_contract_change": "task-data packaging and storage-mode behavior",
+          "score_verdict_evaluation_path_impact": "Can alter data availability to later code, but no direct false evaluator verdict is established.",
+          "reconstructability": "Exact historical task-data manifestation is not versioned.",
+          "license": "Fix has LICENSE; direct parent has no LICENSE, so historical parent license is unverified.",
+          "duplicate_root_cause": "Unique data-packaging cluster; scope and license both require exclusion."
+        },
+        "fault_class": "task_data_packaging_minimal_mode_behavior",
+        "independence_cluster": "minimal-ground-truth-missing-evaluator-data"
+      }
+    }
+  ]
+}

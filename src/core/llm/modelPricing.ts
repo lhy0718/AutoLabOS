@@ -1,14 +1,3 @@
-import {
-  DEFAULT_OLLAMA_CHAT_MODEL,
-  DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-  DEFAULT_OLLAMA_RESEARCH_MODEL,
-  DEFAULT_OLLAMA_VISION_MODEL,
-  OLLAMA_CHAT_MODEL_OPTIONS,
-  OLLAMA_EXPERIMENT_MODEL_OPTIONS,
-  OLLAMA_RESEARCH_MODEL_OPTIONS,
-  OLLAMA_VISION_MODEL_OPTIONS
-} from "../../integrations/ollama/modelCatalog.js";
-
 export interface TokenPricedModelBilling {
   kind: "token";
   inputUsdPer1MTokens: number;
@@ -29,6 +18,10 @@ export type ModelBilling = TokenPricedModelBilling | LocalModelBilling | Unprice
 export interface ResolvedModelBilling {
   modelId: string;
   billing: ModelBilling;
+}
+
+export interface ModelBillingContext {
+  provider?: "codex" | "openai" | "ollama";
 }
 
 const TOKEN_PRICED_MODELS: Record<string, TokenPricedModelBilling> = {
@@ -62,32 +55,21 @@ const UNPRICED_MODELS: Record<string, UnpricedModelBilling> = {
   }
 };
 
-const LOCAL_MODEL_IDS = new Set(
-  [
-    DEFAULT_OLLAMA_CHAT_MODEL,
-    DEFAULT_OLLAMA_RESEARCH_MODEL,
-    DEFAULT_OLLAMA_EXPERIMENT_MODEL,
-    DEFAULT_OLLAMA_VISION_MODEL,
-    ...OLLAMA_CHAT_MODEL_OPTIONS.map((option) => option.value),
-    ...OLLAMA_RESEARCH_MODEL_OPTIONS.map((option) => option.value),
-    ...OLLAMA_EXPERIMENT_MODEL_OPTIONS.map((option) => option.value),
-    ...OLLAMA_VISION_MODEL_OPTIONS.map((option) => option.value)
-  ].map((value) => value.trim().toLowerCase())
-);
-
 const KNOWN_MODEL_IDS = [
   ...Object.keys(TOKEN_PRICED_MODELS),
-  ...Object.keys(UNPRICED_MODELS),
-  ...LOCAL_MODEL_IDS
+  ...Object.keys(UNPRICED_MODELS)
 ].sort((left, right) => right.length - left.length);
 
-export function resolveModelBilling(model: string | undefined): ResolvedModelBilling | undefined {
+export function resolveModelBilling(
+  model: string | undefined,
+  context: ModelBillingContext = {}
+): ResolvedModelBilling | undefined {
   const normalized = normalizeModelForBilling(model);
   if (!normalized) {
     return undefined;
   }
 
-  if (LOCAL_MODEL_IDS.has(normalized)) {
+  if (context.provider === "ollama") {
     return {
       modelId: normalized,
       billing: { kind: "local" }
@@ -113,13 +95,6 @@ export function resolveModelBilling(model: string | undefined): ResolvedModelBil
       continue;
     }
 
-    if (LOCAL_MODEL_IDS.has(candidate)) {
-      return {
-        modelId: candidate,
-        billing: { kind: "local" }
-      };
-    }
-
     if (TOKEN_PRICED_MODELS[candidate]) {
       return {
         modelId: candidate,
@@ -143,9 +118,10 @@ export function computeModelUsageCostUsd(
   usage: {
     inputTokens?: number;
     outputTokens?: number;
-  }
+  },
+  context: ModelBillingContext = {}
 ): number | undefined {
-  const resolved = resolveModelBilling(model);
+  const resolved = resolveModelBilling(model, context);
   if (!resolved) {
     return undefined;
   }

@@ -332,7 +332,13 @@ describe("PaperWriterSessionManager", () => {
             evaluation: {
               summary: "Objective metric met: reproducibility_score=0.88 >= 0.8."
             }
-          }
+          },
+          metric_table: [
+            {
+              key: "legacy_metric_must_not_reach_prompt",
+              value: 0.88
+            }
+          ]
         }
       },
       constraintProfile: {
@@ -359,6 +365,15 @@ describe("PaperWriterSessionManager", () => {
       llm.prompts.some((prompt) =>
         prompt.includes("Keep these items in the main body when possible: main_result_tables, primary_ablation")
       )
+    ).toBe(true);
+    expect(
+      llm.prompts.some((prompt) =>
+        prompt.includes('"availability": "unavailable"')
+        && prompt.includes('"quantitative_claims_allowed": false')
+      )
+    ).toBe(true);
+    expect(
+      llm.prompts.every((prompt) => !prompt.includes("legacy_metric_must_not_reach_prompt"))
     ).toBe(true);
   });
 

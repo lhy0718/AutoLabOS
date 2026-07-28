@@ -12,6 +12,7 @@ import {
 
 const PROFILE_CACHE_KEY = "constraints.profile";
 const DEFAULT_CONSTRAINT_PROFILE_TIMEOUT_MS = 20_000;
+export const OLLAMA_CONSTRAINT_PROFILE_TIMEOUT_MS = 180_000;
 
 interface StoredConstraintProfile {
   fingerprint: string;
@@ -26,6 +27,7 @@ interface ResolveConstraintProfileInput {
   eventStream?: EventStream;
   node?: AutoLabOSEvent["node"];
   abortSignal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export async function resolveConstraintProfile(input: ResolveConstraintProfileInput): Promise<ConstraintProfile> {
@@ -52,7 +54,7 @@ export async function resolveConstraintProfile(input: ResolveConstraintProfileIn
           systemPrompt: buildConstraintSystemPrompt(),
           abortSignal: signal
         }),
-      resolveConstraintProfileTimeoutMs(),
+      resolveConstraintProfileTimeoutMs(input.timeoutMs),
       input.abortSignal
     );
     const parsed = parseConstraintProfileResponse(completion.text, input.run.constraints);
@@ -129,6 +131,7 @@ function buildConstraintPrompt(run: RunRecord): string {
     "",
     "Normalization rules:",
     "- Keep collect defaults generic. Explicit slash options will override these defaults later.",
+    "- fieldsOfStudy is a provider taxonomy filter. Set it only when a raw constraint explicitly names that field; never restate or infer the research topic as a field filter.",
     "- Do not set publicationTypes for generic phrases like 'papers', 'recent papers', or 'articles'. Only set specific types such as Review when explicitly requested.",
     "- Use targetVenue only for actual venue or paper-style constraints.",
     "- Use toneHint and lengthHint only when clearly stated.",
@@ -185,7 +188,10 @@ function buildConstraintFingerprint(run: RunRecord): string {
     .digest("hex");
 }
 
-function resolveConstraintProfileTimeoutMs(): number {
+function resolveConstraintProfileTimeoutMs(explicitTimeoutMs?: number): number {
+  if (Number.isFinite(explicitTimeoutMs) && (explicitTimeoutMs ?? 0) > 0) {
+    return Math.floor(explicitTimeoutMs as number);
+  }
   const configured = Number.parseInt(process.env.AUTOLABOS_CONSTRAINT_PROFILE_TIMEOUT_MS || "", 10);
   return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_CONSTRAINT_PROFILE_TIMEOUT_MS;
 }

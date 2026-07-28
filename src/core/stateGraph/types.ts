@@ -24,6 +24,7 @@ export interface GraphNodeContext {
 
 export interface GraphNodeResult {
   status: "success" | "failure" | "skipped";
+  failureKind?: "retryable" | "gate_blocked" | "environment";
   summary?: string;
   reason?: string;
   needsApproval?: boolean;

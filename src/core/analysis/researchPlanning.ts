@@ -1,19 +1,41 @@
 import { LLMClient, LLMProgressEvent } from "../llm/client.js";
 import { runTreeOfThoughts } from "../agents/runtime/tot.js";
 import { ConstraintProfile } from "../runConstraints.js";
-import { ObjectiveMetricProfile } from "../objectiveMetric.js";
+import { ObjectiveDirection, ObjectiveMetricProfile } from "../objectiveMetric.js";
+import {
+  type CandidateMetricScale,
+  type EffectCriterion,
+  isExplicitMetricScale,
+  isExplicitMetricUnit,
+  isEffectCriterion,
+  parseEffectCriterion,
+  readCandidateObjectiveProfileBinding
+} from "../effectCriterion.js";
 import { parseStructuredModelJsonObject } from "./modelJson.js";
 import { loadDesignExperimentsPromptSections, loadGenerateHypothesesPromptSections } from "../nodePrompts.js";
+import type { TopicProbeComputeBudgetLimits } from "../topicProbeComputeBudget.js";
+import type { ResearchOpportunityType } from "../researchOpportunity.js";
+import {
+  normalizeEstimatorProtocolDeclaration,
+  type EstimatorProtocolDeclaration
+} from "../estimatorProtocol.js";
 
 export interface HypothesisEvidenceSeed {
   evidence_id?: string;
   paper_id?: string;
+  canonical_work_id?: string;
   claim?: string;
   limitation_slot?: string;
+  limitation_kind?: "scientific" | "reporting" | "claim_caveat" | "source_visibility" | "operational_failure" | "unknown";
+  method_slot?: string;
+  result_slot?: string;
   dataset_slot?: string;
   metric_slot?: string;
+  evidence_span?: string;
   confidence?: number;
   source_type?: "full_text" | "abstract";
+  source_scope?: "abstract" | "full_text_excerpt" | "full_document";
+  grounding_status?: "grounded_span" | "ungrounded_span" | "fallback";
   confidence_reason?: string;
 }
 
@@ -33,10 +55,26 @@ export interface HypothesisCandidate {
   causal_clarity?: number;
   falsifiability?: number;
   experimentability?: number;
-  reproducibility_specificity?: number;
-  reproducibility_signals?: string[];
+  measurement_specificity?: number;
+  measurement_signals?: string[];
   measurement_hint?: string;
   boundary_condition?: string;
+  gap_statement?: string;
+  closest_prior_non_overlap?: string;
+  reviewer_absorption_objection?: string;
+  comparator?: string;
+  dataset_task_bench?: string;
+  primary_metric?: string;
+  metric_unit?: string;
+  metric_scale?: CandidateMetricScale;
+  metric_direction?: ObjectiveDirection;
+  effect_criterion?: EffectCriterion;
+  meaningful_effect?: string;
+  falsifier?: string;
+  local_budget?: string;
+  kill_signal?: string;
+  contribution_claim?: string;
+  minimum_publishable_evidence?: string;
   limitation_reflection?: number;
   measurement_readiness?: number;
   critique_summary?: string;
@@ -61,8 +99,8 @@ export interface HypothesisReview {
   causal_clarity: number;
   falsifiability: number;
   experimentability: number;
-  reproducibility_specificity: number;
-  reproducibility_signals: string[];
+  measurement_specificity: number;
+  measurement_signals: string[];
   measurement_hint?: string;
   limitation_reflection: number;
   measurement_readiness: number;
@@ -86,6 +124,12 @@ export interface HypothesisSelectionScore {
   final_score: number;
 }
 
+export interface HypothesisHardGateRejection {
+  generation_path: "staged" | "single_pass";
+  candidate_id: string;
+  reasons: string[];
+}
+
 export interface HypothesisLlmExchange {
   prompt: string;
   completion: string;
@@ -101,9 +145,10 @@ export interface HypothesisPlanningArtifacts {
   evidence_axes: HypothesisEvidenceAxis[];
   drafts: HypothesisCandidate[];
   reviews: HypothesisReview[];
-  selection: {
-    selected_ids: string[];
-    ranked_ids: string[];
+  hard_gate_rejections: HypothesisHardGateRejection[];
+  probe_shortlist: {
+    probe_candidate_ids: string[];
+    ranked_candidate_ids: string[];
     scores: HypothesisSelectionScore[];
   };
   llm_trace: {
@@ -122,7 +167,7 @@ export interface HypothesisPlanningResult {
   source: "llm" | "fallback";
   summary: string;
   candidates: HypothesisCandidate[];
-  selected: HypothesisCandidate[];
+  probe_candidates: HypothesisCandidate[];
   fallbackReason?: string;
   toolCallsUsed: number;
   artifacts: HypothesisPlanningArtifacts;
@@ -133,14 +178,31 @@ export interface DesignInputHypothesis {
   text: string;
   score?: number;
   evidence_links?: string[];
+  axis_ids?: string[];
   groundedness?: number;
   causal_clarity?: number;
   falsifiability?: number;
   experimentability?: number;
-  reproducibility_specificity?: number;
-  reproducibility_signals?: string[];
+  measurement_specificity?: number;
+  measurement_signals?: string[];
   measurement_hint?: string;
   boundary_condition?: string;
+  gap_statement?: string;
+  closest_prior_non_overlap?: string;
+  reviewer_absorption_objection?: string;
+  comparator?: string;
+  dataset_task_bench?: string;
+  primary_metric?: string;
+  metric_unit?: string;
+  metric_scale?: CandidateMetricScale;
+  metric_direction?: ObjectiveDirection;
+  effect_criterion?: EffectCriterion;
+  meaningful_effect?: string;
+  falsifier?: string;
+  local_budget?: string;
+  kill_signal?: string;
+  contribution_claim?: string;
+  minimum_publishable_evidence?: string;
   limitation_reflection?: number;
   measurement_readiness?: number;
   critique_summary?: string;
@@ -153,12 +215,24 @@ export interface ExperimentDesignCandidate {
   single_change?: string;
   plan_summary: string;
   datasets: string[];
+  primary_metric: string;
   metrics: string[];
   baselines: string[];
   implementation_notes: string[];
   evaluation_steps: string[];
   risks: string[];
   resource_notes: string[];
+  estimator_protocol?: EstimatorProtocolDeclaration;
+  declared_contract?: {
+    datasets: boolean;
+    primary_metric: boolean;
+    metrics: boolean;
+    baselines: boolean;
+    implementation_notes: boolean;
+    evaluation_steps: boolean;
+    resource_notes: boolean;
+    estimator_protocol?: boolean;
+  };
 }
 
 export interface ExperimentDesignResult {
@@ -197,6 +271,44 @@ export interface HypothesisPromptOverrides {
   reviewSystemPrompt?: string;
 }
 
+export interface HypothesisGenerationGovernance {
+  researchMode: "hypothesis_test" | "topic_discovery";
+  constraints: string[];
+  objectiveRule?: string;
+  researchQuestionRule?: string;
+  smallExperimentRule?: string;
+  comparatorRule?: string;
+  datasetTaskRule?: string;
+  targetComparisonRule?: string;
+  minimumEvidenceRule?: string;
+  disallowedShortcutsRule?: string;
+  allowedPassesRule?: string;
+  paperCeilingRule?: string;
+  failureConditionsRule?: string;
+  computeBudgetCeiling?: TopicProbeComputeBudgetLimits;
+  reviewedGapContracts?: Array<{
+    gap_id: string;
+    opportunity_type?: ResearchOpportunityType;
+    statement: string;
+    evidence_links: string[];
+  }>;
+  topicMemory?: {
+    ledger_sha256: string;
+    killed_formulations: Array<{
+      record_sha256: string;
+      kill_scope: "exact_formulation" | "topic_lineage";
+      disposition_category: string;
+      public_reason_codes: string[];
+      contribution_object: string;
+      method_mechanism: string;
+      data_task_scope: string;
+      evaluation_protocol: string;
+      claim_ceiling: string;
+      source_full_text_evidence_ids: string[];
+    }>;
+  };
+}
+
 export interface DesignPromptOverrides {
   systemPrompt?: string;
 }
@@ -215,7 +327,7 @@ const SINGLE_PASS_EVIDENCE_BATCH_SIZE = 2;
 interface RawHypothesisJson {
   summary?: unknown;
   candidates?: unknown;
-  selected_ids?: unknown;
+  probe_candidate_ids?: unknown;
 }
 
 interface RawHypothesisCandidate {
@@ -229,9 +341,25 @@ interface RawHypothesisCandidate {
   evidence_links?: unknown;
   rationale?: unknown;
   axis_ids?: unknown;
-  reproducibility_signals?: unknown;
+  measurement_signals?: unknown;
   measurement_hint?: unknown;
   boundary_condition?: unknown;
+  gap_statement?: unknown;
+  closest_prior_non_overlap?: unknown;
+  reviewer_absorption_objection?: unknown;
+  comparator?: unknown;
+  dataset_task_bench?: unknown;
+  primary_metric?: unknown;
+  metric_unit?: unknown;
+  metric_scale?: unknown;
+  metric_direction?: unknown;
+  effect_criterion?: unknown;
+  meaningful_effect?: unknown;
+  falsifier?: unknown;
+  local_budget?: unknown;
+  kill_signal?: unknown;
+  contribution_claim?: unknown;
+  minimum_publishable_evidence?: unknown;
 }
 
 interface RawHypothesisAxisJson {
@@ -261,8 +389,8 @@ interface RawHypothesisReview {
   causal_clarity?: unknown;
   falsifiability?: unknown;
   experimentability?: unknown;
-  reproducibility_specificity?: unknown;
-  reproducibility_signals?: unknown;
+  measurement_specificity?: unknown;
+  measurement_signals?: unknown;
   measurement_hint?: unknown;
   limitation_reflection?: unknown;
   measurement_readiness?: unknown;
@@ -286,12 +414,14 @@ interface RawDesignCandidate {
   single_change?: unknown;
   plan_summary?: unknown;
   datasets?: unknown;
+  primary_metric?: unknown;
   metrics?: unknown;
   baselines?: unknown;
   implementation_notes?: unknown;
   evaluation_steps?: unknown;
   risks?: unknown;
   resource_notes?: unknown;
+  estimator_protocol?: unknown;
 }
 
 class TimedLlmCompletionError extends Error {
@@ -301,6 +431,16 @@ class TimedLlmCompletionError extends Error {
   ) {
     super(message);
     this.name = "TimedLlmCompletionError";
+  }
+}
+
+class HypothesisHardGateError extends Error {
+  constructor(
+    message: string,
+    readonly rejections: HypothesisHardGateRejection[]
+  ) {
+    super(message);
+    this.name = "HypothesisHardGateError";
   }
 }
 
@@ -315,6 +455,7 @@ export async function generateHypothesesFromEvidence(args: {
   timeoutMs?: number;
   onProgress?: (message: string) => void;
   promptOverrides?: HypothesisPromptOverrides;
+  governance?: HypothesisGenerationGovernance;
 }): Promise<HypothesisPlanningResult> {
   const branchCount = Math.max(2, args.branchCount ?? 6);
   const topK = Math.max(1, args.topK ?? 2);
@@ -329,6 +470,7 @@ export async function generateHypothesesFromEvidence(args: {
     });
   } catch (stagedError) {
     const stagedReason = stagedError instanceof Error ? stagedError.message : String(stagedError);
+    const stagedHardGateRejections = extractHypothesisHardGateRejections(stagedError);
     const stagedPartialTrace = extractTimedLlmPartialTrace(stagedError);
     if (stagedPartialTrace.axes_partial?.completion) {
       args.onProgress?.("Captured partial evidence-axis output before the staged hypothesis timeout.");
@@ -361,7 +503,8 @@ export async function generateHypothesesFromEvidence(args: {
           args.objectiveMetric,
           evidenceBatch,
           requestedCount,
-          Math.min(topK, requestedCount)
+          Math.min(topK, requestedCount),
+          args.governance
         );
         const completion = await completeWithCapturedProgress({
           timeoutMs,
@@ -398,7 +541,6 @@ export async function generateHypothesesFromEvidence(args: {
         const normalized = normalizeHypothesisCandidates(
           parsed.candidates,
           requestedCount,
-          evidenceBatch,
           "single_pass",
           singlePassCandidates.filter((candidate) => candidate.generator_kind === "single_pass").length
         );
@@ -408,6 +550,10 @@ export async function generateHypothesesFromEvidence(args: {
       const gatedCandidates = applyHypothesisHardGates({
         candidates: singlePassCandidates,
         evidenceSeeds: args.evidenceSeeds,
+        evidenceAxes: [],
+        requireEvidenceAxisReferences:
+          args.governance?.researchMode === "topic_discovery",
+        generationPath: "single_pass",
         objectiveMetric: args.objectiveMetric
       });
       if (gatedCandidates.rejected.length > 0) {
@@ -423,16 +569,19 @@ export async function generateHypothesesFromEvidence(args: {
         args.evidenceSeeds
       );
       if (gatedCandidates.kept.length === 0 || selected.selected.length === 0) {
-        throw new Error("No valid hypothesis candidates were returned.");
+        throw new HypothesisHardGateError(
+          "No valid hypothesis candidates were returned.",
+          gatedCandidates.rejected
+        );
       }
       const summary =
         singlePassSummaries.at(-1) ||
-        buildHypothesisSelectionSummary(gatedCandidates.kept, selected.selected, [], "single-pass");
+        buildHypothesisProbeShortlistSummary(gatedCandidates.kept, selected.selected, [], "single-pass");
       return {
         source: "llm",
         summary,
         candidates: gatedCandidates.kept,
-        selected: selected.selected,
+        probe_candidates: selected.selected,
         fallbackReason: stagedReason,
         toolCallsUsed: singlePassPromptExchanges.length,
         artifacts: {
@@ -440,9 +589,13 @@ export async function generateHypothesesFromEvidence(args: {
           evidence_axes: [],
           drafts: gatedCandidates.kept,
           reviews: [],
-          selection: {
-            selected_ids: selected.selected.map((candidate) => candidate.id),
-            ranked_ids: selected.ranked.map((candidate) => candidate.id),
+          hard_gate_rejections: [
+            ...stagedHardGateRejections,
+            ...gatedCandidates.rejected
+          ],
+          probe_shortlist: {
+            probe_candidate_ids: selected.selected.map((candidate) => candidate.id),
+            ranked_candidate_ids: selected.ranked.map((candidate) => candidate.id),
             scores: selected.scores
           },
           llm_trace: {
@@ -454,6 +607,7 @@ export async function generateHypothesesFromEvidence(args: {
       };
     } catch (compatibilityError) {
       const compatibilityReason = compatibilityError instanceof Error ? compatibilityError.message : String(compatibilityError);
+      const singlePassHardGateRejections = extractHypothesisHardGateRejections(compatibilityError);
       const singlePassPartialTrace = extractTimedLlmPartialTrace(compatibilityError);
       if (singlePassPartialTrace.single_pass_partial?.completion) {
         args.onProgress?.("Captured partial single-pass hypothesis output before timeout.");
@@ -472,7 +626,7 @@ export async function generateHypothesesFromEvidence(args: {
         source: "fallback",
         summary: `Fallback generated ${fallback.candidates.length} hypothesis candidate(s).`,
         candidates: fallback.candidates,
-        selected: fallbackSelected,
+        probe_candidates: fallbackSelected,
         fallbackReason: `${stagedReason}; single_pass=${compatibilityReason}`,
         toolCallsUsed: 0,
         artifacts: {
@@ -480,9 +634,13 @@ export async function generateHypothesesFromEvidence(args: {
           evidence_axes: [],
           drafts: fallback.candidates,
           reviews: [],
-          selection: {
-            selected_ids: fallbackSelected.map((candidate) => candidate.id),
-            ranked_ids: fallbackSelection.ranked.map((candidate) => candidate.id),
+          hard_gate_rejections: [
+            ...stagedHardGateRejections,
+            ...singlePassHardGateRejections
+          ],
+          probe_shortlist: {
+            probe_candidate_ids: fallbackSelected.map((candidate) => candidate.id),
+            ranked_candidate_ids: fallbackSelection.ranked.map((candidate) => candidate.id),
             scores: fallbackSelection.scores
           },
           llm_trace: {
@@ -507,6 +665,7 @@ async function runStagedHypothesisPipeline(args: {
   timeoutMs: number;
   onProgress?: (message: string) => void;
   promptOverrides?: HypothesisPromptOverrides;
+  governance?: HypothesisGenerationGovernance;
 }): Promise<HypothesisPlanningResult> {
   const prompts = resolveHypothesisPrompts(args.promptOverrides);
   const evidencePanel = selectHypothesisEvidencePanel(args.evidenceSeeds, STAGED_HYPOTHESIS_EVIDENCE_PANEL_LIMIT);
@@ -525,7 +684,13 @@ async function runStagedHypothesisPipeline(args: {
     args.onProgress?.(
       `Synthesizing evidence axes from batch ${batchIndex + 1}/${axesBatches.length} (${evidenceBatch.length} curated evidence item(s)).`
     );
-    const axesPrompt = buildHypothesisAxesPrompt(args.runTitle, args.runTopic, args.objectiveMetric, evidenceBatch);
+    const axesPrompt = buildHypothesisAxesPrompt(
+      args.runTitle,
+      args.runTopic,
+      args.objectiveMetric,
+      evidenceBatch,
+      args.governance
+    );
     const axesCompletion = await completeWithCapturedProgress({
       timeoutMs: args.timeoutMs,
       label: "hypothesis_axes_timeout",
@@ -594,7 +759,8 @@ async function runStagedHypothesisPipeline(args: {
         args.objectiveMetric,
         axes,
         evidencePanel,
-        requestedCount
+        requestedCount,
+        args.governance
       );
       const completion = await completeWithCapturedProgress({
         timeoutMs: args.timeoutMs,
@@ -633,7 +799,6 @@ async function runStagedHypothesisPipeline(args: {
       const normalized = normalizeHypothesisCandidates(
         parsed.candidates,
         requestedCount,
-        evidencePanel,
         role.kind,
         draftCountsByKind.get(role.kind) ?? 0
       );
@@ -663,7 +828,8 @@ async function runStagedHypothesisPipeline(args: {
       axes,
       evidencePanel,
       draftBatch,
-      Math.min(args.topK, draftBatch.length)
+      Math.min(args.topK, draftBatch.length),
+      args.governance
     );
     const reviewCompletion = await completeWithCapturedProgress({
       timeoutMs: args.timeoutMs,
@@ -714,6 +880,10 @@ async function runStagedHypothesisPipeline(args: {
     candidates: reviewedCandidates,
     reviews,
     evidenceSeeds: evidencePanel,
+    evidenceAxes: axes,
+    requireEvidenceAxisReferences:
+      args.governance?.researchMode === "topic_discovery",
+    generationPath: "staged",
     objectiveMetric: args.objectiveMetric
   });
   if (gatedCandidates.rejected.length > 0) {
@@ -730,7 +900,7 @@ async function runStagedHypothesisPipeline(args: {
   );
 
   if (selection.selected.length === 0) {
-    throw new Error("no_selected_hypotheses");
+    throw new HypothesisHardGateError("no_probe_candidates", gatedCandidates.rejected);
   }
 
   return {
@@ -738,18 +908,19 @@ async function runStagedHypothesisPipeline(args: {
     summary:
       reviewSummaries.at(-1) ||
       axesSummaries.at(-1) ||
-      buildHypothesisSelectionSummary(gatedCandidates.kept, selection.selected, axes, "staged"),
+      buildHypothesisProbeShortlistSummary(gatedCandidates.kept, selection.selected, axes, "staged"),
     candidates: gatedCandidates.kept,
-    selected: selection.selected,
+    probe_candidates: selection.selected,
     toolCallsUsed,
     artifacts: {
       pipeline: "staged",
       evidence_axes: axes,
       drafts,
       reviews,
-      selection: {
-        selected_ids: selection.selected.map((candidate) => candidate.id),
-        ranked_ids: selection.ranked.map((candidate) => candidate.id),
+      hard_gate_rejections: gatedCandidates.rejected,
+      probe_shortlist: {
+        probe_candidate_ids: selection.selected.map((candidate) => candidate.id),
+        ranked_candidate_ids: selection.ranked.map((candidate) => candidate.id),
         scores: selection.scores
       },
       llm_trace: llmTrace
@@ -860,10 +1031,14 @@ function buildHypothesisPrompt(
   objectiveMetric: string,
   evidenceSeeds: HypothesisEvidenceSeed[],
   branchCount: number,
-  topK: number
+  topK: number,
+  governance?: HypothesisGenerationGovernance
 ): string {
   const lines = [
     "Generate hypothesis branches from the provided evidence.",
+    "Treat a candidate as absorbed when its contribution is already explained by the strongest practical baseline or the closest verified prior work.",
+    "State the exact contribution that survives that objection and the minimum evidence required before it could support a workshop-paper claim; a cheap probe may screen a candidate but must not be described as publishable evidence.",
+    "Use effect_criterion, never meaningful_effect prose, as the machine-readable practical-effect decision contract.",
     "Return JSON with this exact shape:",
     "{",
     '  "summary": "short string",',
@@ -878,20 +1053,43 @@ function buildHypothesisPrompt(
     '      "expected_gain": 0,',
     '      "evidence_links": ["ev_1"],',
     '      "rationale": "short rationale",',
-    '      "reproducibility_signals": ["run_to_run_variance"],',
+    '      "measurement_signals": ["primary_outcome", "uncertainty_estimate"],',
     '      "measurement_hint": "how to measure the claim",',
-    '      "boundary_condition": "when the effect may weaken or fail"',
+    '      "boundary_condition": "when the effect may weaken or fail",',
+    '      "gap_statement": "specific limitation or unresolved conflict in the linked evidence",',
+    '      "closest_prior_non_overlap": "specific distinction from the closest linked prior work",',
+    '      "reviewer_absorption_objection": "strongest reason a reviewer may consider the topic already solved",',
+    '      "comparator": "strongest practical baseline or comparator",',
+    '      "dataset_task_bench": "locally obtainable dataset, task, or benchmark",',
+    '      "primary_metric": "one primary outcome metric",',
+    '      "metric_unit": "explicit non-empty observed-value unit such as unitless, proportion, ms, or seconds",',
+    '      "metric_scale": "raw, proportion, percent, or percentage_point for observed metric values",',
+    '      "metric_direction": "maximize or minimize",',
+    '      "effect_criterion": {',
+    '        "basis": "delta_vs_reference",',
+    '        "magnitude": 0.05,',
+    '        "scale": "raw, proportion, percent, or percentage_point",',
+    '        "inclusive": true',
+    '      },',
+    '      "meaningful_effect": "optional human-readable explanation of the structured effect criterion",',
+    '      "falsifier": "observable outcome that would refute the hypothesis",',
+    `      "local_budget": ${JSON.stringify(localBudgetPromptHint(governance))},`,
+    '      "kill_signal": "early probe result that should stop further execution for this candidate",',
+    '      "contribution_claim": "specific method, resource, evaluation, analysis, system, or theory contribution not absorbed by the closest prior",',
+    '      "minimum_publishable_evidence": "minimum confirmatory comparisons, repetitions, uncertainty analysis, and failure analysis needed for the stated claim"',
     "    }",
     "  ],",
-    '  "selected_ids": ["cand_1"]',
+    '  "probe_candidate_ids": ["cand_1"]',
     "}",
     "",
     `Research title: ${runTitle}`,
     `Research topic: ${runTopic}`,
     `Objective metric: ${objectiveMetric || "none"}`,
-    `Need ${branchCount} candidate(s) and the best ${topK} selected candidate(s).`,
-    "Evidence seeds:"
+    `Need ${branchCount} candidate(s) and a bounded execution probe shortlist of up to ${topK} candidate(s).`
   ];
+
+  appendHypothesisGovernanceContext(lines, governance);
+  lines.push("Evidence seeds:");
 
   evidenceSeeds.forEach((seed, index) => {
     lines.push(renderHypothesisPromptEvidenceSeed(seed, index));
@@ -904,7 +1102,8 @@ function buildHypothesisAxesPrompt(
   runTitle: string,
   runTopic: string,
   objectiveMetric: string,
-  evidenceSeeds: HypothesisEvidenceSeed[]
+  evidenceSeeds: HypothesisEvidenceSeed[],
+  governance?: HypothesisGenerationGovernance
 ): string {
   const lines = [
     "Synthesize the evidence into 3-5 mechanism-oriented axes for hypothesis generation.",
@@ -915,7 +1114,7 @@ function buildHypothesisAxesPrompt(
     "    {",
     '      "id": "ax_1",',
     '      "label": "short axis name",',
-    '      "mechanism": "why this design choice could change reproducibility",',
+    '      "mechanism": "why this design choice could change the target outcome",',
     '      "intervention": "what a future experiment would change",',
     '      "boundary_condition": "when the effect may weaken or reverse",',
     '      "evaluation_hint": "what to measure",',
@@ -926,9 +1125,11 @@ function buildHypothesisAxesPrompt(
     "",
     `Research title: ${runTitle}`,
     `Research topic: ${runTopic}`,
-    `Objective metric: ${objectiveMetric || "none"}`,
-    "Evidence panel:"
+    `Objective metric: ${objectiveMetric || "none"}`
   ];
+
+  appendHypothesisGovernanceContext(lines, governance);
+  lines.push("Evidence panel:");
 
   evidenceSeeds.forEach((seed, index) => {
     lines.push(renderHypothesisPromptEvidenceSeed(seed, index));
@@ -944,17 +1145,21 @@ function buildHypothesisRolePrompt(
   objectiveMetric: string,
   axes: HypothesisEvidenceAxis[],
   evidenceSeeds: HypothesisEvidenceSeed[],
-  candidateCount: number
+  candidateCount: number,
+  governance?: HypothesisGenerationGovernance
 ): string {
   const roleInstruction =
     kind === "mechanism"
-      ? "Generate hypotheses that isolate the causal mechanism linking design choices to reproducibility."
+      ? "Generate hypotheses that isolate the causal mechanism linking one design choice to the target outcome."
       : kind === "contradiction"
         ? "Generate boundary-condition or counterfactual hypotheses from tensions, limitations, and task-dependent results."
         : "Generate intervention-first hypotheses that can be implemented directly as ablations or system changes.";
 
   const lines = [
     roleInstruction,
+    "Treat a candidate as absorbed when its contribution is already explained by the strongest practical baseline or the closest verified prior work.",
+    "State the exact contribution that survives that objection and the minimum evidence required before it could support a workshop-paper claim; a cheap probe may screen a candidate but must not be described as publishable evidence.",
+    "Use effect_criterion, never meaningful_effect prose, as the machine-readable practical-effect decision contract.",
     "Return JSON with this exact shape:",
     "{",
     '  "summary": "short string",',
@@ -970,9 +1175,30 @@ function buildHypothesisRolePrompt(
     '      "evidence_links": ["ev_1"],',
     '      "axis_ids": ["ax_1"],',
     '      "rationale": "why this hypothesis follows from the evidence",',
-    '      "reproducibility_signals": ["run_to_run_variance"],',
+    '      "measurement_signals": ["primary_outcome", "uncertainty_estimate"],',
     '      "measurement_hint": "how to measure the claim",',
-    '      "boundary_condition": "when the effect may weaken or fail"',
+    '      "boundary_condition": "when the effect may weaken or fail",',
+    '      "gap_statement": "specific limitation or unresolved conflict in the linked evidence",',
+    '      "closest_prior_non_overlap": "specific distinction from the closest linked prior work",',
+    '      "reviewer_absorption_objection": "strongest reason a reviewer may consider the topic already solved",',
+    '      "comparator": "strongest practical baseline or comparator",',
+    '      "dataset_task_bench": "locally obtainable dataset, task, or benchmark",',
+    '      "primary_metric": "one primary outcome metric",',
+    '      "metric_unit": "explicit non-empty observed-value unit such as unitless, proportion, ms, or seconds",',
+    '      "metric_scale": "raw, proportion, percent, or percentage_point for observed metric values",',
+    '      "metric_direction": "maximize or minimize",',
+    '      "effect_criterion": {',
+    '        "basis": "delta_vs_reference",',
+    '        "magnitude": 0.05,',
+    '        "scale": "raw, proportion, percent, or percentage_point",',
+    '        "inclusive": true',
+    '      },',
+    '      "meaningful_effect": "optional human-readable explanation of the structured effect criterion",',
+    '      "falsifier": "observable outcome that would refute the hypothesis",',
+    `      "local_budget": ${JSON.stringify(localBudgetPromptHint(governance))},`,
+    '      "kill_signal": "early probe result that should stop further execution for this candidate",',
+    '      "contribution_claim": "specific method, resource, evaluation, analysis, system, or theory contribution not absorbed by the closest prior",',
+    '      "minimum_publishable_evidence": "minimum confirmatory comparisons, repetitions, uncertainty analysis, and failure analysis needed for the stated claim"',
     "    }",
     "  ]",
     "}",
@@ -980,9 +1206,11 @@ function buildHypothesisRolePrompt(
     `Research title: ${runTitle}`,
     `Research topic: ${runTopic}`,
     `Objective metric: ${objectiveMetric || "none"}`,
-    `Need ${candidateCount} candidate(s).`,
-    "Evidence axes:"
+    `Need ${candidateCount} candidate(s).`
   ];
+
+  appendHypothesisGovernanceContext(lines, governance);
+  lines.push("Evidence axes:");
 
   axes.forEach((axis, index) => {
     lines.push(
@@ -1015,7 +1243,8 @@ function buildHypothesisReviewPrompt(
   axes: HypothesisEvidenceAxis[],
   evidenceSeeds: HypothesisEvidenceSeed[],
   candidates: HypothesisCandidate[],
-  topK: number
+  topK: number,
+  governance?: HypothesisGenerationGovernance
 ): string {
   const evidenceById = new Map(
     evidenceSeeds.map((seed, index) => [seed.evidence_id || `ev_${index + 1}`, seed] as const)
@@ -1023,9 +1252,11 @@ function buildHypothesisReviewPrompt(
   const lines = [
     "Review the hypothesis drafts skeptically.",
     "Reject unsupported or conflated hypotheses. Revise wording when the idea is salvageable.",
+    "Reject a candidate when the strongest practical baseline or closest verified prior absorbs its stated contribution.",
+    "Require a concrete surviving contribution and a minimum publishable-evidence contract that clearly separates a screening probe from confirmatory evidence.",
     "Prefer hypotheses that are grounded in evidence, isolate the intervention, and can be falsified by a concrete experiment.",
     "Use hard gates before allowing a draft to survive: require enough distinct evidence links, evidence-aware limitation handling, and an operational measurement plan.",
-    "If the objective metric is reproducibility, prefer hypotheses that explicitly predict repeated-run stability, variance reduction, artifact consistency, or failure-mode stability rather than raw performance alone.",
+    "Require every candidate to name its primary outcome, optimization direction, practical effect boundary, uncertainty signal, and measurement procedure.",
     "Return JSON with this exact shape:",
     "{",
     '  "summary": "short string",',
@@ -1037,9 +1268,9 @@ function buildHypothesisReviewPrompt(
     '      "causal_clarity": 0,',
     '      "falsifiability": 0,',
     '      "experimentability": 0,',
-    '      "reproducibility_specificity": 0,',
-    '      "reproducibility_signals": ["run_to_run_variance"],',
-    '      "measurement_hint": "how to operationalize the reproducibility outcome",',
+    '      "measurement_specificity": 0,',
+    '      "measurement_signals": ["primary_outcome", "uncertainty_estimate"],',
+    '      "measurement_hint": "how to operationalize the candidate outcome",',
     '      "limitation_reflection": 0,',
     '      "measurement_readiness": 0,',
     '      "strengths": ["short point"],',
@@ -1055,11 +1286,11 @@ function buildHypothesisReviewPrompt(
     `Research topic: ${runTopic}`,
     `Objective metric: ${objectiveMetric || "none"}`,
     `Selectable target count: ${topK}`,
-    isReproducibilityObjective(objectiveMetric)
-      ? "Review emphasis: reject hypotheses that fail to name a reproducibility signal such as repeated-run variance, trajectory stability, artifact consistency, or failure-mode stability."
-      : "Review emphasis: keep the hypothesis tightly aligned to the stated objective metric.",
-    "Evidence axes:"
+    "Review emphasis: reject hypotheses without a candidate-owned metric, direction, practical effect boundary, uncertainty signal, and executable measurement path."
   ];
+
+  appendHypothesisGovernanceContext(lines, governance);
+  lines.push("Evidence axes:");
 
   axes.forEach((axis, index) => {
     lines.push(
@@ -1093,7 +1324,30 @@ function buildHypothesisReviewPrompt(
           : undefined,
         candidate.rationale ? `rationale=${candidate.rationale}` : undefined,
         candidate.measurement_hint ? `measurement_hint=${candidate.measurement_hint}` : undefined,
-        candidate.boundary_condition ? `boundary_condition=${candidate.boundary_condition}` : undefined
+        candidate.boundary_condition ? `boundary_condition=${candidate.boundary_condition}` : undefined,
+        candidate.gap_statement ? `gap_statement=${candidate.gap_statement}` : undefined,
+        candidate.closest_prior_non_overlap
+          ? `closest_prior_non_overlap=${candidate.closest_prior_non_overlap}`
+          : undefined,
+        candidate.reviewer_absorption_objection
+          ? `reviewer_absorption_objection=${candidate.reviewer_absorption_objection}`
+          : undefined,
+        candidate.comparator ? `comparator=${candidate.comparator}` : undefined,
+        candidate.dataset_task_bench ? `dataset_task_bench=${candidate.dataset_task_bench}` : undefined,
+        candidate.primary_metric ? `primary_metric=${candidate.primary_metric}` : undefined,
+        candidate.metric_unit ? `metric_unit=${candidate.metric_unit}` : undefined,
+        candidate.metric_scale ? `metric_scale=${candidate.metric_scale}` : undefined,
+        candidate.metric_direction ? `metric_direction=${candidate.metric_direction}` : undefined,
+        candidate.effect_criterion
+          ? `effect_criterion=${JSON.stringify(candidate.effect_criterion)}`
+          : undefined,
+        candidate.falsifier ? `falsifier=${candidate.falsifier}` : undefined,
+        candidate.local_budget ? `local_budget=${candidate.local_budget}` : undefined,
+        candidate.kill_signal ? `kill_signal=${candidate.kill_signal}` : undefined,
+        candidate.contribution_claim ? `contribution_claim=${candidate.contribution_claim}` : undefined,
+        candidate.minimum_publishable_evidence
+          ? `minimum_publishable_evidence=${candidate.minimum_publishable_evidence}`
+          : undefined
       ]
         .filter(Boolean)
         .join(" | ")
@@ -1101,6 +1355,102 @@ function buildHypothesisReviewPrompt(
   });
 
   return lines.join("\n");
+}
+
+function appendHypothesisGovernanceContext(
+  lines: string[],
+  governance: HypothesisGenerationGovernance | undefined
+): void {
+  if (!governance) {
+    return;
+  }
+  lines.push("Research governance contract:");
+  lines.push(`research_mode=${governance.researchMode}`);
+  if (governance.researchMode === "topic_discovery") {
+    lines.push(
+      "The brief defines search and candidate-admissibility rules, not a preselected final experiment. Do not copy a broad brief objective into candidate metric fields."
+    );
+    lines.push(
+      "Each candidate must independently bind its final primary metric, explicit non-empty metric unit, observed metric scale, direction, structured effect_criterion, strongest feasible comparator, data/task scope, falsifier, kill signal, and a complete two-stage compute budget."
+    );
+    lines.push(
+      "local_budget must be a JSON-encoded object with bounded_probe and confirmatory objects. Each stage must contain positive numeric max_gpu_hours plus positive-integer max_concurrent_gpus and max_trials. Replace all schema hints with concrete values, and do not exceed any brief-owned limit."
+    );
+    if (governance.computeBudgetCeiling) {
+      lines.push(
+        `brief_compute_budget_ceiling=${JSON.stringify(governance.computeBudgetCeiling)}`
+      );
+    }
+    lines.push(
+      "metric_scale and effect_criterion.scale are separate explicit fields; effect_criterion must use basis=delta_vs_reference, a finite nonnegative numeric magnitude, an allowed effect scale, and an explicit inclusive boolean; meaningful_effect is explanatory prose only."
+    );
+    if ((governance.reviewedGapContracts?.length ?? 0) > 0) {
+      lines.push(
+        "A candidate may claim a reviewed gap only when evidence_links contains every evidence identifier required by that gap contract. Do not cite a single supporting row as if it represented the complete cross-paper gap."
+      );
+      lines.push(
+        `reviewed_gap_contracts=${JSON.stringify(governance.reviewedGapContracts)}`
+      );
+    }
+    if ((governance.topicMemory?.killed_formulations.length ?? 0) > 0) {
+      lines.push(
+        "Project topic memory is an exclusion boundary, not evidence. Do not regenerate an exact killed formulation or silently rename a killed topic lineage. A materially revised lineage requires a separate reentry ticket that identifies every changed axis and at least two new full-text evidence identifiers; candidate generation alone cannot waive this boundary."
+      );
+      lines.push(
+        `topic_memory_ledger_sha256=${governance.topicMemory?.ledger_sha256}`
+      );
+      lines.push(
+        `killed_topic_formulations=${JSON.stringify(governance.topicMemory?.killed_formulations)}`
+      );
+    }
+  } else {
+    lines.push("The brief defines the final hypothesis-test scope and its experiment contract.");
+  }
+  const fields: Array<[string, string | undefined]> = [
+    ["objective_rule", governance.objectiveRule],
+    ["research_question_rule", governance.researchQuestionRule],
+    ["small_experiment_rule", governance.smallExperimentRule],
+    ["comparator_rule", governance.comparatorRule],
+    ["dataset_task_rule", governance.datasetTaskRule],
+    ["target_comparison_rule", governance.targetComparisonRule],
+    ["minimum_evidence_rule", governance.minimumEvidenceRule],
+    ["disallowed_shortcuts_rule", governance.disallowedShortcutsRule],
+    ["allowed_passes_rule", governance.allowedPassesRule],
+    ["paper_ceiling_rule", governance.paperCeilingRule],
+    ["failure_conditions_rule", governance.failureConditionsRule]
+  ];
+  for (const [label, value] of fields) {
+    const compact = compactGovernanceText(value);
+    if (compact) {
+      lines.push(`${label}=${compact}`);
+    }
+  }
+  const constraints = governance.constraints
+    .map((item) => compactGovernanceText(item, 320))
+    .filter((item): item is string => Boolean(item))
+    .slice(0, 12);
+  if (constraints.length > 0) {
+    lines.push(`run_constraints=${constraints.join(" || ")}`);
+  }
+}
+
+function localBudgetPromptHint(
+  governance: HypothesisGenerationGovernance | undefined
+): string {
+  if (governance?.researchMode !== "topic_discovery") {
+    return "bounded budget with numeric quantities and execution units";
+  }
+  return governance.computeBudgetCeiling
+    ? `JSON-encoded object no greater than ${JSON.stringify(governance.computeBudgetCeiling)}; bounded_probe and confirmatory must each contain concrete positive max_gpu_hours, max_concurrent_gpus, and max_trials values`
+    : "JSON-encoded object: bounded_probe and confirmatory must each contain concrete positive max_gpu_hours, max_concurrent_gpus, and max_trials values; values must not exceed the research brief";
+}
+
+function compactGovernanceText(value: string | undefined, limit = 1_200): string | undefined {
+  const compact = value?.replace(/\s+/gu, " ").trim();
+  if (!compact) {
+    return undefined;
+  }
+  return compact.length > limit ? `${compact.slice(0, limit - 3)}...` : compact;
 }
 
 function buildDesignPrompt(
@@ -1115,8 +1465,8 @@ function buildDesignPrompt(
 ): string {
   const lines = [
     "Generate executable experiment design candidates.",
-    "Translate hypothesis measurement hints and reproducibility signals into explicit metrics, baselines, instrumentation notes, and repeated-run evaluation steps.",
-    "If the objective is reproducibility, include at least one repeated-run stability metric and a baseline representing the unmodified system.",
+    "Translate candidate-owned measurement contracts into explicit metrics, baselines, instrumentation notes, uncertainty estimates, and repeated-run evaluation steps.",
+    "Keep each design bound to one hypothesis and its declared primary metric; do not substitute the broad discovery objective for the candidate outcome.",
     "Return JSON with this exact shape:",
     "{",
     '  "summary": "short string",',
@@ -1128,12 +1478,26 @@ function buildDesignPrompt(
     '      "single_change": "one independent variable or condition factor changed by this design",',
     '      "plan_summary": "what will be tested and why",',
     '      "datasets": ["dataset"],',
+    '      "primary_metric": "stable_metric_id",',
     '      "metrics": ["metric"],',
     '      "baselines": ["baseline"],',
     '      "implementation_notes": ["note"],',
     '      "evaluation_steps": ["step"],',
     '      "risks": ["risk"],',
-    '      "resource_notes": ["resource note"]',
+    '      "resource_notes": ["resource note"],',
+    '      "estimator_protocol": {',
+    '        "schema_version": 1,',
+    '        "units": {"execution_unit":"unit","exposure_unit":"condition","outcome_unit":"response","analysis_unit":"comparison","independent_cluster_key":"cluster_id"},',
+    '        "arms": ["reference", "candidate"],',
+    '        "primary_contrast": ["candidate", "reference"],',
+    '        "pairing": {"mode":"paired","independent_clusters":40,"observations_per_arm_per_cluster":1},',
+    '        "outcome": {"type":"binary","attainable_resolution":0.025},',
+    '        "estimand": {"id":"primary_effect","type":"paired_risk_difference","scale":"proportion"},',
+    '        "estimator": {"family":"paired_risk_difference","covariance":"cluster_bootstrap","separation_policy":"not_applicable"},',
+    '        "power": {"alpha":0.05,"target_power":0.8,"minimum_detectable_effect":0.1,"assumed_standard_deviation":0.15,"sidedness":"two_sided"},',
+    '        "resampling": {"minimum_clusters":30,"replicates":2000},',
+    '        "multiplicity": {"primary_comparison_id":"primary_effect","family":["primary_effect"],"method":"none","family_alpha":0.05}',
+    "      }",
     "    }",
     "  ],",
     '  "selected_id": "plan_1"',
@@ -1147,9 +1511,8 @@ function buildDesignPrompt(
     "Objective metric profile:",
     JSON.stringify(objectiveProfile, null, 2),
     `Need ${candidateCount} candidate design(s).`,
-    isReproducibilityObjective(objectiveMetric)
-      ? "Design emphasis: operationalize reproducibility using repeated-run variance, consistency, stability, or agreement metrics in addition to raw task performance."
-      : "Design emphasis: align metrics and baselines tightly to the objective profile.",
+    "Design emphasis: align the metric, direction, baseline, uncertainty estimate, and stopping rule tightly to the selected hypothesis contract.",
+    "Estimator protocol discipline: declare units, every executed arm, the primary contrast, pairing, independent clusters, outcome type, estimand, estimator, resampling, multiplicity, and numeric power assumptions. Do not infer these from prose. For binary outcomes, attainable_resolution must equal 1 divided by the primary paired or per-arm denominator.",
     retryContext
       ? "Retry discipline: this is a redesign after a bounded local run. Preserve explicit comparators, do not repeat the same underpowered scope, and satisfy the retry directives below."
       : "Retry discipline: none.",
@@ -1168,14 +1531,26 @@ function buildDesignPrompt(
         typeof hypothesis.causal_clarity === "number" ? `causal_clarity=${hypothesis.causal_clarity}` : undefined,
         typeof hypothesis.falsifiability === "number" ? `falsifiability=${hypothesis.falsifiability}` : undefined,
         typeof hypothesis.experimentability === "number" ? `experimentability=${hypothesis.experimentability}` : undefined,
-        typeof hypothesis.reproducibility_specificity === "number"
-          ? `reproducibility_specificity=${hypothesis.reproducibility_specificity}`
+        typeof hypothesis.measurement_specificity === "number"
+          ? `measurement_specificity=${hypothesis.measurement_specificity}`
           : undefined,
-        hypothesis.reproducibility_signals?.length
-          ? `reproducibility_signals=${hypothesis.reproducibility_signals.join(",")}`
+        hypothesis.measurement_signals?.length
+          ? `measurement_signals=${hypothesis.measurement_signals.join(",")}`
           : undefined,
+        hypothesis.primary_metric ? `primary_metric=${hypothesis.primary_metric}` : undefined,
+        hypothesis.metric_unit ? `metric_unit=${hypothesis.metric_unit}` : undefined,
+        hypothesis.metric_scale ? `metric_scale=${hypothesis.metric_scale}` : undefined,
+        hypothesis.metric_direction ? `metric_direction=${hypothesis.metric_direction}` : undefined,
+        hypothesis.effect_criterion
+          ? `effect_criterion=${JSON.stringify(hypothesis.effect_criterion)}`
+          : undefined,
+        hypothesis.meaningful_effect ? `meaningful_effect=${hypothesis.meaningful_effect}` : undefined,
         hypothesis.measurement_hint ? `measurement_hint=${hypothesis.measurement_hint}` : undefined,
         hypothesis.boundary_condition ? `boundary_condition=${hypothesis.boundary_condition}` : undefined,
+        hypothesis.closest_prior_non_overlap
+          ? `closest_prior_non_overlap=${hypothesis.closest_prior_non_overlap}`
+          : undefined,
+        hypothesis.reviewer_absorption_objection ? `reviewer_absorption_objection=${hypothesis.reviewer_absorption_objection}` : undefined,
         typeof hypothesis.limitation_reflection === "number"
           ? `limitation_reflection=${hypothesis.limitation_reflection}`
           : undefined,
@@ -1316,14 +1691,13 @@ function parseDesignJson(text: string): RawDesignJson {
 function normalizeHypothesisCandidates(
   rawCandidates: unknown,
   branchCount: number,
-  evidenceSeeds: HypothesisEvidenceSeed[],
   generatorKind: HypothesisGeneratorKind,
   idOffset = 0
 ): HypothesisCandidate[] {
   const items = Array.isArray(rawCandidates) ? rawCandidates : [];
   const normalized = items
     .map((item, index) =>
-      normalizeHypothesisCandidate(item as RawHypothesisCandidate, index, evidenceSeeds, generatorKind, idOffset)
+      normalizeHypothesisCandidate(item as RawHypothesisCandidate, index, generatorKind, idOffset)
     )
     .filter((candidate): candidate is HypothesisCandidate => Boolean(candidate))
     .slice(0, branchCount);
@@ -1333,7 +1707,6 @@ function normalizeHypothesisCandidates(
 function normalizeHypothesisCandidate(
   raw: RawHypothesisCandidate,
   index: number,
-  evidenceSeeds: HypothesisEvidenceSeed[],
   generatorKind: HypothesisGeneratorKind,
   idOffset = 0
 ): HypothesisCandidate | undefined {
@@ -1342,7 +1715,6 @@ function normalizeHypothesisCandidate(
     return undefined;
   }
   const evidenceLinks = normalizeStringArray(raw.evidence_links).filter(Boolean);
-  const fallbackEvidence = evidenceLinks.length > 0 ? evidenceLinks : [evidenceSeeds[index % Math.max(1, evidenceSeeds.length)]?.evidence_id || "ev_1"];
   return {
     id: buildHypothesisCandidateId(generatorKind, index, idOffset),
     text,
@@ -1351,13 +1723,29 @@ function normalizeHypothesisCandidate(
     testability: clampScore(raw.testability),
     cost: clampScore(raw.cost),
     expected_gain: clampScore(raw.expected_gain),
-    evidence_links: dedupeStrings(fallbackEvidence),
+    evidence_links: dedupeStrings(evidenceLinks),
     rationale: toOptionalString(raw.rationale),
     generator_kind: generatorKind,
     axis_ids: normalizeStringArray(raw.axis_ids),
-    reproducibility_signals: normalizeStringArray(raw.reproducibility_signals),
+    measurement_signals: normalizeStringArray(raw.measurement_signals),
     measurement_hint: toOptionalString(raw.measurement_hint),
-    boundary_condition: toOptionalString(raw.boundary_condition)
+    boundary_condition: toOptionalString(raw.boundary_condition),
+    gap_statement: toOptionalString(raw.gap_statement),
+    closest_prior_non_overlap: toOptionalString(raw.closest_prior_non_overlap),
+    reviewer_absorption_objection: toOptionalString(raw.reviewer_absorption_objection),
+    comparator: toOptionalString(raw.comparator),
+    dataset_task_bench: toOptionalString(raw.dataset_task_bench),
+    primary_metric: toOptionalString(raw.primary_metric),
+    metric_unit: toOptionalString(raw.metric_unit),
+    metric_scale: isExplicitMetricScale(raw.metric_scale) ? raw.metric_scale : undefined,
+    metric_direction: normalizeObjectiveDirection(raw.metric_direction),
+    effect_criterion: parseEffectCriterion(raw.effect_criterion),
+    meaningful_effect: toOptionalString(raw.meaningful_effect),
+    falsifier: toOptionalString(raw.falsifier),
+    local_budget: toOptionalString(raw.local_budget),
+    kill_signal: toOptionalString(raw.kill_signal),
+    contribution_claim: toOptionalString(raw.contribution_claim),
+    minimum_publishable_evidence: toOptionalString(raw.minimum_publishable_evidence)
   };
 }
 
@@ -1365,10 +1753,18 @@ function normalizeHypothesisAxes(
   rawAxes: unknown,
   evidenceSeeds: HypothesisEvidenceSeed[]
 ): HypothesisEvidenceAxis[] {
+  const evidenceIds = new Set(
+    evidenceSeeds.map((seed, index) => seed.evidence_id || `ev_${index + 1}`)
+  );
   const items = Array.isArray(rawAxes) ? rawAxes : [];
   const normalized = items
-    .map((item, index) => normalizeHypothesisAxis(item as RawHypothesisAxis, index, evidenceSeeds))
+    .map((item, index) => normalizeHypothesisAxis(item as RawHypothesisAxis, index))
     .filter((axis): axis is HypothesisEvidenceAxis => Boolean(axis))
+    .filter(
+      (axis) =>
+        axis.evidence_links.length > 0
+        && axis.evidence_links.every((evidenceId) => evidenceIds.has(evidenceId))
+    )
     .slice(0, 5);
 
   return dedupeById(normalized, (axis) => axis.id);
@@ -1376,8 +1772,7 @@ function normalizeHypothesisAxes(
 
 function normalizeHypothesisAxis(
   raw: RawHypothesisAxis,
-  index: number,
-  evidenceSeeds: HypothesisEvidenceSeed[]
+  index: number
 ): HypothesisEvidenceAxis | undefined {
   const label = toOptionalString(raw.label);
   const mechanism = toOptionalString(raw.mechanism);
@@ -1386,10 +1781,6 @@ function normalizeHypothesisAxis(
     return undefined;
   }
   const evidenceLinks = normalizeStringArray(raw.evidence_links);
-  const fallbackEvidence =
-    evidenceLinks.length > 0
-      ? evidenceLinks
-      : [evidenceSeeds[index % Math.max(1, evidenceSeeds.length)]?.evidence_id || "ev_1"];
 
   return {
     id: toOptionalString(raw.id) || `ax_${index + 1}`,
@@ -1398,7 +1789,7 @@ function normalizeHypothesisAxis(
     intervention,
     boundary_condition: toOptionalString(raw.boundary_condition),
     evaluation_hint: toOptionalString(raw.evaluation_hint),
-    evidence_links: dedupeStrings(fallbackEvidence)
+    evidence_links: dedupeStrings(evidenceLinks)
   };
 }
 
@@ -1421,18 +1812,31 @@ function normalizeHypothesisReviews(
 
 function normalizeHypothesisReview(raw: RawHypothesisReview): HypothesisReview | undefined {
   const candidateId = toOptionalString(raw.candidate_id);
-  if (!candidateId) {
+  const requiredScores = [
+    raw.groundedness,
+    raw.causal_clarity,
+    raw.falsifiability,
+    raw.experimentability,
+    raw.measurement_specificity,
+    raw.limitation_reflection,
+    raw.measurement_readiness
+  ];
+  if (
+    !candidateId
+    || typeof raw.keep !== "boolean"
+    || requiredScores.some((value) => !isDeclaredReviewScore(value))
+  ) {
     return undefined;
   }
   return {
     candidate_id: candidateId,
-    keep: raw.keep === false ? false : true,
+    keep: raw.keep,
     groundedness: clampScore(raw.groundedness),
     causal_clarity: clampScore(raw.causal_clarity),
     falsifiability: clampScore(raw.falsifiability),
     experimentability: clampScore(raw.experimentability),
-    reproducibility_specificity: clampScore(raw.reproducibility_specificity),
-    reproducibility_signals: normalizeStringArray(raw.reproducibility_signals),
+    measurement_specificity: clampScore(raw.measurement_specificity),
+    measurement_signals: normalizeStringArray(raw.measurement_signals),
     measurement_hint: toOptionalString(raw.measurement_hint),
     limitation_reflection: clampScore(raw.limitation_reflection),
     measurement_readiness: clampScore(raw.measurement_readiness),
@@ -1442,6 +1846,10 @@ function normalizeHypothesisReview(raw: RawHypothesisReview): HypothesisReview |
     revised_text: toOptionalString(raw.revised_text),
     revised_rationale: toOptionalString(raw.revised_rationale)
   };
+}
+
+function isDeclaredReviewScore(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 5;
 }
 
 function applyHypothesisReviews(
@@ -1462,8 +1870,8 @@ function applyHypothesisReviews(
       causal_clarity: review.causal_clarity,
       falsifiability: review.falsifiability,
       experimentability: review.experimentability,
-      reproducibility_specificity: review.reproducibility_specificity,
-      reproducibility_signals: review.reproducibility_signals,
+      measurement_specificity: review.measurement_specificity,
+      measurement_signals: review.measurement_signals,
       measurement_hint: review.measurement_hint || candidate.measurement_hint,
       limitation_reflection: review.limitation_reflection,
       measurement_readiness: review.measurement_readiness,
@@ -1480,27 +1888,45 @@ function applyHypothesisHardGates(args: {
   candidates: HypothesisCandidate[];
   reviews?: HypothesisReview[];
   evidenceSeeds: HypothesisEvidenceSeed[];
+  evidenceAxes?: HypothesisEvidenceAxis[];
+  requireEvidenceAxisReferences?: boolean;
+  generationPath: HypothesisHardGateRejection["generation_path"];
   objectiveMetric?: string;
 }): {
   kept: HypothesisCandidate[];
-  rejected: Array<{ candidate_id: string; reasons: string[] }>;
+  rejected: HypothesisHardGateRejection[];
 } {
   const reviewMap = new Map((args.reviews || []).map((review) => [review.candidate_id, review] as const));
   const evidenceById = new Map(
     args.evidenceSeeds.map((seed, index) => [seed.evidence_id || `ev_${index + 1}`, seed] as const)
+  );
+  const evidenceAxisIds = new Set(
+    (args.evidenceAxes || []).map((axis) => axis.id)
   );
   const availableEvidenceCount = new Set(
     args.evidenceSeeds.map((seed, index) => seed.evidence_id || `ev_${index + 1}`)
   ).size;
   const minimumEvidenceLinks = availableEvidenceCount >= 3 ? 2 : 1;
   const kept: HypothesisCandidate[] = [];
-  const rejected: Array<{ candidate_id: string; reasons: string[] }> = [];
+  const rejected: HypothesisHardGateRejection[] = [];
 
   for (const candidate of args.candidates) {
     const review = reviewMap.get(candidate.id);
-    const reasons = evaluateHypothesisHardGate(candidate, review, evidenceById, minimumEvidenceLinks, args.objectiveMetric);
+    const reasons = evaluateHypothesisHardGate(
+      candidate,
+      review,
+      evidenceById,
+      evidenceAxisIds,
+      args.requireEvidenceAxisReferences === true,
+      minimumEvidenceLinks,
+      args.objectiveMetric
+    );
     if (reasons.length > 0) {
-      rejected.push({ candidate_id: candidate.id, reasons });
+      rejected.push({
+        generation_path: args.generationPath,
+        candidate_id: candidate.id,
+        reasons
+      });
       continue;
     }
     kept.push(candidate);
@@ -1509,17 +1935,35 @@ function applyHypothesisHardGates(args: {
   return { kept, rejected };
 }
 
+function extractHypothesisHardGateRejections(error: unknown): HypothesisHardGateRejection[] {
+  return error instanceof HypothesisHardGateError ? error.rejections : [];
+}
+
 function evaluateHypothesisHardGate(
   candidate: HypothesisCandidate,
   review: HypothesisReview | undefined,
   evidenceById: Map<string, HypothesisEvidenceSeed>,
+  evidenceAxisIds: Set<string>,
+  requireEvidenceAxisReferences: boolean,
   minimumEvidenceLinks: number,
   objectiveMetric?: string
 ): string[] {
   const reasons: string[] = [];
-  const evidenceLinkCount = dedupeStrings(candidate.evidence_links).length;
+  const evidenceLinks = dedupeStrings(candidate.evidence_links);
+  const unresolvedEvidenceLinks = evidenceLinks.filter((evidenceId) => !evidenceById.has(evidenceId));
+  const evidenceLinkCount = evidenceLinks.length - unresolvedEvidenceLinks.length;
   if (evidenceLinkCount < minimumEvidenceLinks) {
     reasons.push(`too_few_evidence_links:${evidenceLinkCount}<${minimumEvidenceLinks}`);
+  }
+  if (unresolvedEvidenceLinks.length > 0) {
+    reasons.push(`unresolved_evidence_links:${unresolvedEvidenceLinks.join(",")}`);
+  }
+  if (requireEvidenceAxisReferences) {
+    const unresolvedAxisIds = dedupeStrings(candidate.axis_ids || [])
+      .filter((axisId) => !evidenceAxisIds.has(axisId));
+    if (unresolvedAxisIds.length > 0) {
+      reasons.push(`unresolved_axis_ids:${unresolvedAxisIds.join(",")}`);
+    }
   }
 
   if (review) {
@@ -1548,8 +1992,23 @@ function evaluateHypothesisHardGate(
     reasons.push("measurement_not_operationalized");
   }
 
-  if (isReproducibilityObjective(objectiveMetric) && (candidate.reproducibility_signals?.length ?? 0) === 0) {
-    reasons.push("missing_reproducibility_signal");
+  if ((candidate.measurement_signals?.length ?? 0) === 0) {
+    reasons.push("missing_measurement_signal");
+  }
+  if (!candidate.primary_metric?.trim()) {
+    reasons.push("missing_primary_metric");
+  }
+  if (!isExplicitMetricUnit(candidate.metric_unit)) {
+    reasons.push("missing_metric_unit");
+  }
+  if (!isExplicitMetricScale(candidate.metric_scale)) {
+    reasons.push("missing_or_invalid_metric_scale");
+  }
+  if (!candidate.metric_direction) {
+    reasons.push("missing_metric_direction");
+  }
+  if (!isEffectCriterion(candidate.effect_criterion)) {
+    reasons.push("missing_or_invalid_effect_criterion");
   }
 
   return reasons;
@@ -1569,7 +2028,7 @@ function inferLimitationReflection(candidate: HypothesisCandidate): number {
 
 function inferMeasurementReadiness(candidate: HypothesisCandidate): number {
   let score = candidate.measurement_hint ? 3 : 0;
-  if ((candidate.reproducibility_signals?.length ?? 0) > 0) {
+  if ((candidate.measurement_signals?.length ?? 0) > 0) {
     score += 1;
   }
   if (candidate.testability >= 4) {
@@ -1908,7 +2367,7 @@ function dedupeHypothesisCandidates(candidates: HypothesisCandidate[]): Hypothes
   return [...byText.values()];
 }
 
-function buildHypothesisSelectionSummary(
+function buildHypothesisProbeShortlistSummary(
   candidates: HypothesisCandidate[],
   selected: HypothesisCandidate[],
   axes: HypothesisEvidenceAxis[],
@@ -1922,7 +2381,7 @@ function buildHypothesisSelectionSummary(
     selectedThemes.length > 0
       ? ` with the strongest bets centered on ${selectedThemes.slice(0, 3).join(", ")}`
       : "";
-  return `Generated ${candidates.length} reviewed hypothesis candidate(s) using the ${pipelineLabel} pipeline; selected ${selected.length}${themeText}.`;
+  return `Generated ${candidates.length} reviewed hypothesis candidate(s) using the ${pipelineLabel} pipeline; shortlisted ${selected.length} for bounded execution probes${themeText}. No final paper topic was selected.`;
 }
 
 function normalizeDesignCandidates(
@@ -1965,25 +2424,91 @@ function normalizeDesignCandidate(
   const guidance = mergeDesignGuidance(
     matchedHypotheses.map((hypothesis) => buildHypothesisDesignGuidance(hypothesis, objectiveProfile))
   );
+  const declaredDatasets = normalizeStringArray(raw.datasets);
+  const declaredPrimaryMetric = toOptionalString(raw.primary_metric);
+  const declaredMetrics = normalizeStringArray(raw.metrics);
+  const declaredBaselines = normalizeStringArray(raw.baselines);
+  const declaredImplementationNotes = normalizeStringArray(raw.implementation_notes);
+  const declaredEvaluationSteps = normalizeStringArray(raw.evaluation_steps);
+  const declaredResourceNotes = normalizeStringArray(raw.resource_notes);
+  const estimatorProtocolValidation = normalizeEstimatorProtocolDeclaration(
+    raw.estimator_protocol
+  );
+  const candidateObjective = readCandidateObjectiveProfileBinding(objectiveProfile);
+  const candidateDeltaMetric = candidateObjective
+    ? normalizeDesignMetricName(objectiveProfile.primaryMetric)
+    : undefined;
+  const metrics = normalizeDesignMetricList([
+    ...declaredMetrics,
+    ...(candidateObjective ? [candidateObjective.primary_metric] : []),
+    ...guidance.metrics
+  ]);
+  if (
+    candidateObjective
+    && declaredPrimaryMetric
+    && declaredPrimaryMetric !== candidateObjective.primary_metric
+    && declaredPrimaryMetric !== candidateDeltaMetric
+  ) {
+    return undefined;
+  }
+  if (
+    candidateObjective
+    && declaredBaselines.length > 0
+    && !declaredBaselines.includes(candidateObjective.comparator)
+  ) {
+    return undefined;
+  }
+  const primaryMetric = normalizeDesignMetricName(
+    candidateObjective
+      ? candidateDeltaMetric
+      : declaredPrimaryMetric || objectiveProfile.primaryMetric
+  );
+  if (!primaryMetric) {
+    return undefined;
+  }
   return {
     id: toOptionalString(raw.id) || `plan_${index + 1}`,
     title,
     hypothesis_ids: dedupeStrings(fallbackHypothesisIds),
     single_change: normalizeDesignSingleChange(toOptionalString(raw.single_change) || title),
     plan_summary: planSummary,
-    datasets: normalizeStringArray(raw.datasets),
-    metrics: normalizeDesignMetricList([...normalizeStringArray(raw.metrics), ...guidance.metrics]),
-    baselines: dedupeStrings([...normalizeStringArray(raw.baselines), ...guidance.baselines]),
+    datasets: declaredDatasets,
+    primary_metric: primaryMetric,
+    metrics: normalizeDesignMetricList([primaryMetric, ...metrics]),
+    baselines: candidateObjective
+      ? dedupeStrings([
+          candidateObjective.comparator,
+          ...declaredBaselines,
+          ...guidance.baselines
+        ])
+      : dedupeStrings(
+          declaredBaselines.length > 0 ? declaredBaselines : guidance.baselines
+        ),
     implementation_notes: dedupeStrings([
-      ...normalizeStringArray(raw.implementation_notes),
+      ...declaredImplementationNotes,
       ...guidance.implementationNotes
     ]),
-    evaluation_steps: dedupeStrings([...normalizeStringArray(raw.evaluation_steps), ...guidance.evaluationSteps]),
+    evaluation_steps: dedupeStrings([...declaredEvaluationSteps, ...guidance.evaluationSteps]),
     risks: normalizeStringArray(raw.risks),
     resource_notes:
-      normalizeStringArray(raw.resource_notes).length > 0
-        ? normalizeStringArray(raw.resource_notes)
-        : buildDefaultResourceNotes(constraintProfile)
+      declaredResourceNotes.length > 0
+        ? declaredResourceNotes
+        : buildDefaultResourceNotes(constraintProfile),
+    ...(estimatorProtocolValidation.valid && estimatorProtocolValidation.protocol
+      ? { estimator_protocol: estimatorProtocolValidation.protocol }
+      : {}),
+    declared_contract: {
+      datasets: declaredDatasets.length > 0,
+      primary_metric: Boolean(declaredPrimaryMetric),
+      metrics: declaredMetrics.length > 0,
+      baselines: declaredBaselines.length > 0,
+      implementation_notes: declaredImplementationNotes.length > 0,
+      evaluation_steps: declaredEvaluationSteps.length > 0,
+      resource_notes: declaredResourceNotes.length > 0,
+      estimator_protocol:
+        estimatorProtocolValidation.valid
+        && Boolean(estimatorProtocolValidation.protocol)
+    }
   };
 }
 
@@ -2010,17 +2535,12 @@ function normalizeDesignSingleChange(value: string | undefined): string | undefi
 }
 
 function buildFallbackSingleChange(
-  hypothesis: DesignInputHypothesis,
-  objectiveProfile: ObjectiveMetricProfile
+  hypothesis: DesignInputHypothesis
 ): string {
-  const text = [hypothesis.measurement_hint, hypothesis.text, objectiveProfile.primaryMetric].filter(Boolean).join(" ").toLowerCase();
-  if (/\b(?:repeat|replicat|variance|stability|consistent|reproducib)/u.test(text)) {
-    return "Condition-sweep factor under fixed execution budget";
-  }
-  if (/\b(?:baseline|comparator|control)\b/u.test(text)) {
-    return "Candidate condition factor against locked comparator";
-  }
-  return "Primary condition-sweep factor";
+  return truncateText(
+    hypothesis.measurement_hint || hypothesis.text || "Candidate intervention under a fixed comparison protocol",
+    96
+  );
 }
 
 function buildFallbackPlanSummary(objectiveMetric: string, retrySummary: string): string {
@@ -2055,6 +2575,7 @@ function buildFallbackDesigns(
   retryContext: DesignRetryContext | undefined,
   candidateCount: number
 ): { candidates: ExperimentDesignCandidate[]; selected: ExperimentDesignCandidate } {
+  const candidateObjective = readCandidateObjectiveProfileBinding(objectiveProfile);
   const base =
     hypotheses.length > 0
       ? hypotheses.slice(0, Math.max(1, candidateCount))
@@ -2063,7 +2584,7 @@ function buildFallbackDesigns(
     const guidance = buildHypothesisDesignGuidance(hypothesis, objectiveProfile);
     const retryNotes = buildFallbackRetryImplementationNotes(retryContext);
     const retrySummary = buildRetrySummary(retryContext, objectiveMetric);
-    const singleChange = buildFallbackSingleChange(hypothesis, objectiveProfile);
+    const singleChange = buildFallbackSingleChange(hypothesis);
     return {
       id: `plan_${index + 1}`,
       title: `Plan ${index + 1}: ${singleChange}`,
@@ -2071,8 +2592,9 @@ function buildFallbackDesigns(
       single_change: singleChange,
       plan_summary: buildFallbackPlanSummary(objectiveProfile.primaryMetric || objectiveMetric, retrySummary),
       datasets: buildFallbackDatasets(constraintProfile),
-      metrics: normalizeDesignMetricList([objectiveProfile.primaryMetric || objectiveMetric || "primary_metric", ...guidance.metrics]),
-      baselines: buildFallbackBaselines(guidance, retryContext),
+      primary_metric: normalizeDesignMetricName(objectiveProfile.primaryMetric || objectiveMetric) || "primary_outcome",
+      metrics: normalizeDesignMetricList([objectiveProfile.primaryMetric || objectiveMetric || "primary_outcome", ...guidance.metrics]),
+      baselines: buildFallbackBaselines(guidance, retryContext, candidateObjective?.comparator),
       implementation_notes: [
         ...constraintProfile.experiment.implementationNotes,
         ...guidance.implementationNotes,
@@ -2117,15 +2639,16 @@ function buildFallbackDatasets(constraintProfile: ConstraintProfile): string[] {
 
 function buildFallbackBaselines(
   guidance: DesignGuidance,
-  retryContext: DesignRetryContext | undefined
+  retryContext: DesignRetryContext | undefined,
+  candidateComparator?: string
 ): string[] {
-  const baselines = [
+  const declaredBaselines = [
+    candidateComparator,
     retryContext?.previous_baseline_name,
-    ...guidance.baselines.filter((baseline) => baseline !== "current_best_baseline"),
-    "locked_baseline",
-    "unmodified_system_baseline"
+    ...guidance.baselines.filter((baseline) => baseline !== "current_best_baseline")
   ].filter((baseline): baseline is string => Boolean(baseline?.trim()));
-  return dedupeStrings(baselines);
+  const uniqueDeclared = dedupeStrings(declaredBaselines);
+  return uniqueDeclared.length > 0 ? uniqueDeclared : ["configured_reference"];
 }
 
 function buildFallbackRetryImplementationNotes(retryContext: DesignRetryContext | undefined): string[] {
@@ -2216,7 +2739,6 @@ function buildHypothesisDesignGuidance(
   hypothesis: DesignInputHypothesis,
   objectiveProfile: ObjectiveMetricProfile
 ): DesignGuidance {
-  const text = hypothesis.text.toLowerCase();
   const guidance: DesignGuidance = {
     metrics: [],
     baselines: [],
@@ -2227,42 +2749,14 @@ function buildHypothesisDesignGuidance(
   if (objectiveProfile.primaryMetric) {
     guidance.metrics.push(objectiveProfile.primaryMetric);
   }
+  const candidateObjective = readCandidateObjectiveProfileBinding(objectiveProfile);
+  if (candidateObjective) {
+    guidance.metrics.push(candidateObjective.primary_metric);
+  }
   guidance.metrics.push(...objectiveProfile.preferredMetricKeys);
 
-  for (const signal of hypothesis.reproducibility_signals || []) {
-    switch (signal) {
-      case "run_to_run_variance":
-        guidance.metrics.push("run_to_run_variance");
-        guidance.evaluationSteps.push("Repeat each condition across multiple seeded runs and report run-to-run variance.");
-        break;
-      case "pass_rate_variance":
-        guidance.metrics.push("pass_rate_variance");
-        guidance.evaluationSteps.push("Compare pass-rate variance across repeated runs for each condition.");
-        break;
-      case "failure_mode_stability":
-        guidance.metrics.push("failure_mode_stability");
-        guidance.evaluationSteps.push("Track whether failure categories remain stable across repeated runs.");
-        break;
-      case "artifact_consistency":
-        guidance.metrics.push("artifact_consistency_rate");
-        guidance.evaluationSteps.push("Measure whether generated intermediate and final artifacts remain consistent across repeated runs.");
-        break;
-      case "trajectory_stability":
-        guidance.metrics.push("trace_stability");
-        guidance.evaluationSteps.push("Compare execution traces or agent trajectories across repeated runs.");
-        break;
-      case "output_consistency":
-        guidance.metrics.push("output_consistency_rate");
-        guidance.evaluationSteps.push("Measure output agreement across repeated runs under the same setup.");
-        break;
-      case "message_validity":
-        guidance.metrics.push("message_schema_validity");
-        guidance.evaluationSteps.push("Check the validity rate of messages against the expected schema.");
-        break;
-      default:
-        guidance.metrics.push(signal);
-        break;
-    }
+  for (const signal of hypothesis.measurement_signals || []) {
+    guidance.metrics.push(signal);
   }
 
   if (hypothesis.measurement_hint) {
@@ -2270,27 +2764,12 @@ function buildHypothesisDesignGuidance(
     guidance.evaluationSteps.push(`Operationalize the primary comparison as: ${hypothesis.measurement_hint}`);
   }
 
-  if (isReproducibilityObjective(objectiveProfile.raw)) {
-    guidance.metrics.push("reproducibility");
-    guidance.evaluationSteps.push("Run each condition with identical task inputs and multiple random seeds.");
-  }
+  guidance.evaluationSteps.push("Repeat matched conditions and report uncertainty for every declared primary comparison.");
 
-  if (/free-form chat|free form chat|unconstrained chat|dialogue|dialog/.test(text)) {
-    guidance.baselines.push("free_form_chat_baseline");
-  }
-  if (/schema|structured communication|typed message|message routing|subscription/.test(text)) {
-    guidance.baselines.push("unstructured_message_baseline");
-  }
-  if (/feedback|execute-test-repair|execute|test-repair|repair loop|bounded retr/.test(text)) {
-    guidance.baselines.push("no_feedback_baseline");
-    guidance.baselines.push("discussion_only_baseline");
-  }
-  if (/role|decomposition|solo|minimally collaborative|minimal collaboration/.test(text)) {
-    guidance.baselines.push("solo_baseline");
-    guidance.baselines.push("minimal_collaboration_baseline");
-  }
-
-  if (guidance.baselines.length === 0) {
+  const declaredComparator = hypothesis.comparator?.trim();
+  if (declaredComparator) {
+    guidance.baselines.push(declaredComparator);
+  } else {
     guidance.baselines.push("current_best_baseline");
   }
 
@@ -2337,14 +2816,12 @@ function hypothesisBaseScore(candidate: HypothesisCandidate, objectiveMetric?: s
     (candidate.limitation_reflection ?? 0) * 0.75 +
     (candidate.measurement_readiness ?? 0);
 
-  score += (candidate.reproducibility_specificity ?? 0) * 1.5;
+  score += (candidate.measurement_specificity ?? 0) * 1.5;
 
-  if (isReproducibilityObjective(objectiveMetric)) {
-    score += (candidate.reproducibility_signals?.length ?? 0) > 0 ? 1.25 : -2;
-    score += candidate.measurement_hint ? 1.25 : -1.5;
-    if ((candidate.reproducibility_specificity ?? 0) < 3) {
-      score -= 2;
-    }
+  score += (candidate.measurement_signals?.length ?? 0) > 0 ? 1.25 : -2;
+  score += candidate.measurement_hint ? 1.25 : -1.5;
+  if ((candidate.measurement_specificity ?? 0) < 3) {
+    score -= 2;
   }
 
   return score;
@@ -2529,7 +3006,7 @@ function hypothesisImplementationBonus(
   if (candidate.measurement_hint) {
     bonus += 0.75;
   }
-  if ((candidate.reproducibility_signals?.length ?? 0) >= 2) {
+  if ((candidate.measurement_signals?.length ?? 0) >= 2) {
     bonus += 0.5;
   }
   if (candidate.cost <= 4) {
@@ -2734,6 +3211,6 @@ function overlapCount(a: string[], b: string[]): number {
   return a.reduce((count, item) => count + (setB.has(item) ? 1 : 0), 0);
 }
 
-function isReproducibilityObjective(objectiveMetric?: string): boolean {
-  return /reproduc|재현/u.test(objectiveMetric || "");
+function normalizeObjectiveDirection(value: unknown): ObjectiveDirection | undefined {
+  return value === "maximize" || value === "minimize" ? value : undefined;
 }

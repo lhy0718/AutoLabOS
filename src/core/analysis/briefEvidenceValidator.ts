@@ -1,4 +1,8 @@
 import type { AnalysisReport } from "../resultAnalysis.js";
+import {
+  validateResultsArtifactV2,
+  type ResultsArtifactV2
+} from "./resultsTableSchema.js";
 import type { MarkdownRunBriefSections } from "../runs/runBriefParser.js";
 import {
   countExecutedPlannedConditions,
@@ -88,7 +92,8 @@ export function evaluateBriefEvidenceAgainstResults(input: {
     input.report.statistical_summary.executed_trials ??
     input.report.statistical_summary.total_trials ??
     input.report.overview.execution_runs;
-  const baselineCount = deriveActualBaselineCount(input.report);
+  const explicitEvidence = summarizeExplicitResultEvidence(input.report.results_artifact);
+  const baselineCount = explicitEvidence.baselineSeriesCount;
   const conditionRequirement = deriveRequiredPlannedConditionCount(
     briefSections,
     input.report.plan_context.selected_design
@@ -96,9 +101,7 @@ export function evaluateBriefEvidenceAgainstResults(input: {
   const requiredConditionCount = conditionRequirement?.conditionCount;
   const executedConditionCount = countExecutedPlannedConditions(asRecord(input.report.metrics), {
     tunedOnly: conditionRequirement?.tunedOnly,
-    fallbackComparisonCount: input.report.condition_comparisons.length > 0
-      ? input.report.condition_comparisons.length + 1
-      : 0
+    fallbackComparisonCount: explicitEvidence.executedSeriesCount
   });
   const confidenceIntervalCount = input.report.statistical_summary.confidence_intervals.length;
   const evidenceGapCount = countBlockingFailureCategory(input.report, "evidence_gap");
@@ -262,8 +265,34 @@ export function evaluateBriefEvidenceAgainstResults(input: {
   };
 }
 
-function deriveActualBaselineCount(report: AnalysisReport): number {
-  return report.condition_comparisons.length;
+function summarizeExplicitResultEvidence(artifact: unknown): {
+  baselineSeriesCount: number;
+  executedSeriesCount: number;
+} {
+  if (!validateResultsArtifactV2(artifact).valid) {
+    return { baselineSeriesCount: 0, executedSeriesCount: 0 };
+  }
+  const typedArtifact = artifact as ResultsArtifactV2;
+  const observationsById = new Map(
+    typedArtifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  const seriesById = new Map(
+    typedArtifact.series.map((series) => [series.id, series] as const)
+  );
+  const baselineSeriesIds = new Set<string>();
+  for (const comparison of typedArtifact.comparisons) {
+    const reference = observationsById.get(comparison.reference_observation_id);
+    const referenceSeries = reference ? seriesById.get(reference.series_id) : undefined;
+    if (referenceSeries?.role === "baseline") {
+      baselineSeriesIds.add(referenceSeries.id);
+    }
+  }
+  return {
+    baselineSeriesCount: baselineSeriesIds.size,
+    executedSeriesCount: new Set(
+      typedArtifact.observations.map((observation) => observation.series_id)
+    ).size
+  };
 }
 
 function parseRequiredBaselineCount(text: string): number {

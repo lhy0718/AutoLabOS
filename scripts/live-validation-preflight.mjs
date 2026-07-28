@@ -54,9 +54,84 @@ const optionalPythonModules = csvEnv("AUTOLABOS_VALIDATION_OPTIONAL_PYTHON_MODUL
 const hfCacheRoot = process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface");
 const codexModel = process.env.AUTOLABOS_VALIDATION_CODEX_MODEL || "gpt-5.5";
 const openAiModel = process.env.AUTOLABOS_VALIDATION_OPENAI_MODEL || codexModel;
+const validationLlmMode = normalizeValidationLlmMode(
+  process.env.AUTOLABOS_VALIDATION_LLM_MODE || "codex_chatgpt_only"
+);
+const ollamaBaseUrl = String(
+  process.env.AUTOLABOS_VALIDATION_OLLAMA_BASE_URL || "http://127.0.0.1:11434"
+).trim();
+const ollamaResearchModel = String(
+  process.env.AUTOLABOS_VALIDATION_OLLAMA_RESEARCH_MODEL || ""
+).trim();
+const ollamaChatModel = String(
+  process.env.AUTOLABOS_VALIDATION_OLLAMA_CHAT_MODEL || ollamaResearchModel
+).trim();
+const ollamaExperimentModel = String(
+  process.env.AUTOLABOS_VALIDATION_OLLAMA_EXPERIMENT_MODEL || ollamaResearchModel
+).trim();
+const ollamaVisionModel = String(
+  process.env.AUTOLABOS_VALIDATION_OLLAMA_VISION_MODEL || ollamaResearchModel
+).trim();
 const modelCacheCandidates = csvEnv("AUTOLABOS_VALIDATION_MODEL_CACHE_DIRS").map((name) => join(hfCacheRoot, "hub", name));
 const datasetCacheRoot = join(hfCacheRoot, "datasets");
 const expectedDatasets = csvEnv("AUTOLABOS_VALIDATION_EXPECTED_DATASET_CACHE_DIRS");
+
+if (validationLlmMode === "ollama" && !ollamaResearchModel) {
+  throw new Error(
+    "AUTOLABOS_VALIDATION_OLLAMA_RESEARCH_MODEL is required when " +
+    "AUTOLABOS_VALIDATION_LLM_MODE=ollama."
+  );
+}
+
+function normalizeValidationLlmMode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["codex", "codex_chatgpt_only", "openai_api", "ollama"].includes(normalized)) {
+    return normalized;
+  }
+  throw new Error(
+    `Unsupported AUTOLABOS_VALIDATION_LLM_MODE=${JSON.stringify(value)}. ` +
+    "Use codex, codex_chatgpt_only, openai_api, or ollama."
+  );
+}
+
+function yamlScalar(value) {
+  return JSON.stringify(String(value));
+}
+
+function providerConfigLines() {
+  const lines = [
+    "providers:",
+    `  llm_mode: ${validationLlmMode}`,
+    "  codex:",
+    `    model: ${yamlScalar(codexModel)}`,
+    `    chat_model: ${yamlScalar(codexModel)}`,
+    `    experiment_model: ${yamlScalar(codexModel)}`,
+    "    reasoning_effort: high",
+    "    chat_reasoning_effort: medium",
+    "    experiment_reasoning_effort: high",
+    "    auth_required: true",
+    "    fast_mode: false",
+    "  openai:",
+    `    model: ${yamlScalar(openAiModel)}`,
+    `    chat_model: ${yamlScalar(openAiModel)}`,
+    `    experiment_model: ${yamlScalar(openAiModel)}`,
+    "    reasoning_effort: medium",
+    "    chat_reasoning_effort: medium",
+    "    experiment_reasoning_effort: high",
+    "    api_key_required: true"
+  ];
+  if (validationLlmMode === "ollama") {
+    lines.push(
+      "  ollama:",
+      `    base_url: ${yamlScalar(ollamaBaseUrl)}`,
+      `    chat_model: ${yamlScalar(ollamaChatModel)}`,
+      `    research_model: ${yamlScalar(ollamaResearchModel)}`,
+      `    experiment_model: ${yamlScalar(ollamaExperimentModel)}`,
+      `    vision_model: ${yamlScalar(ollamaVisionModel)}`
+    );
+  }
+  return lines;
+}
 
 function run(command, args, options = {}) {
   try {
@@ -129,27 +204,9 @@ function ensureWorkspace() {
     [
       "version: 1",
       "project_name: live-validation",
-      "providers:",
-      "  llm_mode: codex_chatgpt_only",
-      "  codex:",
-      `    model: ${codexModel}`,
-      `    chat_model: ${codexModel}`,
-      `    experiment_model: ${codexModel}`,
-      "    reasoning_effort: high",
-      "    chat_reasoning_effort: medium",
-      "    experiment_reasoning_effort: high",
-      "    auth_required: true",
-      "    fast_mode: false",
-      "  openai:",
-      `    model: ${openAiModel}`,
-      `    chat_model: ${openAiModel}`,
-      `    experiment_model: ${openAiModel}`,
-      "    reasoning_effort: medium",
-      "    chat_reasoning_effort: medium",
-      "    experiment_reasoning_effort: high",
-      "    api_key_required: true",
+      ...providerConfigLines(),
       "analysis:",
-      `  responses_model: ${openAiModel}`,
+      `  responses_model: ${yamlScalar(openAiModel)}`,
       "papers:",
       "  max_results: 80",
       "  per_second_limit: 1",
@@ -218,12 +275,22 @@ async function doctorReport() {
     return { available: false, status: "fail", reason: "dist/core/doctor.js is missing; run npm run build first." };
   }
   const { runDoctorReport, getDoctorAggregateStatus, mapDoctorCheckForApi } = await import(doctorModulePath);
+  const pdfAnalysisMode = validationLlmMode === "openai_api"
+    ? "responses_api_pdf"
+    : validationLlmMode === "ollama"
+      ? "ollama_vision"
+      : "codex_text_image_hybrid";
   const report = await runDoctorReport(
     {},
     {
-      llmMode: "codex_chatgpt_only",
-      pdfAnalysisMode: "codex_text_image_hybrid",
+      llmMode: validationLlmMode,
+      pdfAnalysisMode,
+      openAiApiKeyConfigured: Boolean(String(process.env.OPENAI_API_KEY || "").trim()),
       codexResearchModel: codexModel,
+      ollamaBaseUrl,
+      ollamaChatModel,
+      ollamaResearchModel,
+      ollamaVisionModel,
       workspaceRoot,
       approvalMode: "manual",
       executionApprovalMode: "manual",
@@ -272,6 +339,11 @@ function buildChecks({ pythonReport, doctor }) {
   }
 
   const checks = [
+    {
+      id: "provider_profile_matches_request",
+      ok: doctor.readiness?.llmMode === validationLlmMode,
+      detail: `requested=${validationLlmMode}, diagnosed=${doctor.readiness?.llmMode || "unknown"}`
+    },
     {
       id: "validation_workspace_writable",
       ok: existsDirectory(workspaceRoot) && existsDirectory(join(workspaceRoot, ".autolabos", "runs")),
@@ -396,6 +468,7 @@ function markdownReport(summary) {
     "## Verdict",
     "",
     `- Profile: ${summary.preflightProfile}`,
+    `- LLM provider: ${summary.validationLlmMode}`,
     `- Ready for selected profile: ${summary.readyForSelectedProfile ? "yes" : "no"}`,
     `- Required blockers: ${requiredBlockers.length ? requiredBlockers.join(", ") : "none"}`,
     `- Warnings: ${warnings.length ? warnings.join(", ") : "none"}`,
@@ -433,6 +506,7 @@ async function main() {
   const summary = {
     generatedAt: new Date().toISOString(),
     preflightProfile,
+    validationLlmMode,
     repoRoot,
     validationRoot,
     workspaceRoot,

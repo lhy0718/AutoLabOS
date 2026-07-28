@@ -19,7 +19,11 @@ import type { FigureAuditSummary } from "../exploration/types.js";
 import type { BriefEvidenceAssessment, BriefEvidenceCeiling } from "./briefEvidenceValidator.js";
 import { GATE_THRESHOLDS } from "./paperGateThresholds.js";
 import { evaluatePaperScaleDiagnostics, type PaperScaleDiagnostic } from "./paperScaleDiagnostics.js";
-import { hasAtLeastOneCompleteResultsTableRow } from "./resultsTableSchema.js";
+import {
+  type ResultsArtifactV2,
+  validateResultsArtifactV2,
+  validateResultsPrimaryComparisonSelectionV2
+} from "./resultsTableSchema.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -106,36 +110,33 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
+  const explicitComparison = evaluateExplicitResultsArtifactComparison(input.report);
+
   // 3. At least one baseline or comparator is explicit
-  const hasBaselineOrComparator = input.presence.baselineSummaryPresent ||
-    (input.report.condition_comparisons?.length > 0);
+  const hasBaselineOrComparator = explicitComparison.passed;
   checks.push({
     id: "baseline_or_comparator",
     label: "Baseline or comparator is explicit",
     passed: hasBaselineOrComparator,
-    detail: hasBaselineOrComparator
-      ? input.presence.baselineSummaryPresent
-        ? "baseline_summary.json present"
-        : `${input.report.condition_comparisons.length} condition comparison(s) found`
-      : "No baseline_summary.json and no condition comparisons",
-    measured_value: input.presence.baselineSummaryPresent
-      ? "baseline_summary_present"
-      : input.report.condition_comparisons?.length ?? 0,
-    threshold_value: "baseline_summary_present_or_condition_comparisons>=1",
+    detail: explicitComparison.detail,
+    measured_value: explicitComparison.measuredValue,
+    threshold_value: "valid_explicit_results_artifact_comparison>=1",
     threshold_source: "docs/experiment-quality-bar.md#paper-scale-experiment-minimum-gate"
   });
 
   // 4. At least one executed comparison result exists
-  const hasExecutedResult = input.presence.metricsPresent;
+  const hasExecutedResult = input.presence.metricsPresent && explicitComparison.passed;
   checks.push({
     id: "executed_result",
     label: "Executed comparison result exists",
     passed: hasExecutedResult,
     detail: hasExecutedResult
-      ? "metrics.json present"
-      : "No metrics.json — no executed result evidence",
-    measured_value: hasExecutedResult,
-    threshold_value: true,
+      ? `metrics.json present; ${explicitComparison.detail}`
+      : !input.presence.metricsPresent
+        ? "No metrics.json — no executed result evidence"
+        : explicitComparison.detail,
+    measured_value: `metrics_present=${input.presence.metricsPresent};${explicitComparison.measuredValue}`,
+    threshold_value: "metrics_present=true;valid_explicit_results_artifact_comparison>=1",
     threshold_source: "docs/experiment-quality-bar.md#run_experiments-success-expectations"
   });
 
@@ -263,17 +264,14 @@ export function evaluateMinimumGate(input: MinimumGateInput): MinimumGateResult 
     threshold_source: "docs/paper-quality-bar.md#evidence-linkage-sanity"
   });
 
-  // 9. Results table includes explicit baseline/comparator values
-  const hasStructuredResultsTable = hasAtLeastOneCompleteResultsTableRow(input.report.results_table);
+  // 9. Results artifact includes a validated explicit observation comparison
   checks.push({
-    id: "results_table_schema",
-    label: "Results table includes at least one baseline/comparator row",
-    passed: hasStructuredResultsTable,
-    detail: hasStructuredResultsTable
-      ? "result_analysis.results_table contains at least one complete baseline/comparator row."
-      : "No result_analysis.results_table row has both baseline and comparator populated.",
-    measured_value: hasStructuredResultsTable,
-    threshold_value: true,
+    id: "results_artifact_comparison",
+    label: "Results artifact includes a valid explicit comparison",
+    passed: explicitComparison.passed,
+    detail: explicitComparison.detail,
+    measured_value: explicitComparison.measuredValue,
+    threshold_value: "valid_explicit_results_artifact_comparison>=1",
     threshold_source: "docs/experiment-quality-bar.md#result-table-expectation"
   });
 
@@ -366,6 +364,72 @@ function moreRestrictiveCeiling(
     blocked_for_paper_scale: 3
   };
   return ranking[left] >= ranking[right as MinimumGateCeiling] ? left : (right as MinimumGateCeiling);
+}
+
+interface ExplicitResultsArtifactComparisonAssessment {
+  passed: boolean;
+  detail: string;
+  measuredValue: string;
+}
+
+function evaluateExplicitResultsArtifactComparison(
+  report: AnalysisReport
+): ExplicitResultsArtifactComparisonAssessment {
+  const artifactValue = (report as { results_artifact?: unknown }).results_artifact;
+  const validation = validateResultsArtifactV2(artifactValue);
+  if (!validation.valid) {
+    const issuePreview = validation.issues.slice(0, 3).join(" ");
+    return {
+      passed: false,
+      detail: `result_analysis.results_artifact is invalid. ${issuePreview}`.trim(),
+      measuredValue: `invalid_results_artifact;issues=${validation.issues.length}`
+    };
+  }
+
+  const artifact = artifactValue as ResultsArtifactV2;
+  if (artifact.comparisons.length === 0) {
+    return {
+      passed: false,
+      detail: "ResultsArtifactV2 must include at least one explicit comparison.",
+      measuredValue: "valid_explicit_comparisons=0;declared_comparisons=0"
+    };
+  }
+
+  const reportPrimaryComparisonId = (report as { primary_comparison_id?: unknown })
+    .primary_comparison_id;
+  const primarySelectionValidation = validateResultsPrimaryComparisonSelectionV2({
+    comparisonIds: artifact.comparisons.map((comparison) => comparison.id),
+    comparisonCount: artifact.comparisons.length,
+    primaryComparisonId: reportPrimaryComparisonId,
+    primaryPath: "result_analysis.primary_comparison_id",
+    comparisonsPath: "result_analysis.results_artifact.comparisons"
+  });
+  if (!primarySelectionValidation.valid) {
+    return {
+      passed: false,
+      detail: primarySelectionValidation.issues.join(" "),
+      measuredValue: `invalid_primary_comparison_selection;declared_comparisons=${artifact.comparisons.length}`
+    };
+  }
+
+  const primaryComparisonId = reportPrimaryComparisonId as string;
+  const explicitComparison = artifact.comparisons.find(
+    (comparison) => comparison.id === primaryComparisonId
+  )!;
+  const observationsById = new Map(
+    artifact.observations.map((observation) => [observation.id, observation] as const)
+  );
+  const metricsById = new Map(
+    artifact.metrics.map((metric) => [metric.id, metric] as const)
+  );
+  const subject = observationsById.get(explicitComparison.subject_observation_id)!;
+  const reference = observationsById.get(explicitComparison.reference_observation_id)!;
+  const metric = metricsById.get(subject.metric_id)!;
+  return {
+    passed: true,
+    detail: `ResultsArtifactV2 comparison "${explicitComparison.id}" explicitly links subject observation "${subject.id}" to reference observation "${reference.id}" for metric "${metric.id}" (${metric.direction}); delta=${explicitComparison.delta} matches subject minus reference.`,
+    measuredValue: `valid_explicit_comparisons>=1;comparison_id=${explicitComparison.id}`
+  };
 }
 
 function deriveEvidenceDepth(report: AnalysisReport, diagnostics: PaperScaleDiagnostic[]): {

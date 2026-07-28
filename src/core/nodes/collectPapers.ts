@@ -1,7 +1,18 @@
+import { createHash } from "node:crypto";
+
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import { appendJsonl, safeRead, writeRunArtifact } from "./helpers.js";
 import { NodeExecutionDeps } from "./types.js";
-import { resolveGeneratedLiteratureQueries } from "../literatureQueryGeneration.js";
+import {
+  clearLiteratureQueryPlanRejection,
+  GeneratedTopicDiscoveryPlan,
+  recordLiteratureQueryPlanRejection,
+  resolveGeneratedLiteratureQueries
+} from "../literatureQueryGeneration.js";
+import type {
+  SupportedLiteratureQueryFamilyFeedback,
+  TopicDiscoveryContributionIntent
+} from "../literatureQueryGeneration.js";
 import { RunContextMemory } from "../memory/runContextMemory.js";
 import { LongTermStore } from "../memory/longTermStore.js";
 import {
@@ -9,17 +20,28 @@ import {
   SemanticScholarPaper,
   SemanticScholarSearchFilters,
   SemanticScholarSearchDiagnostics,
-  SemanticScholarSearchRequest
+  SemanticScholarSearchRequest,
+  TopicDiscoverySearchFamilyIntent
 } from "../../tools/semanticScholar.js";
 import { BibtexMode } from "../commands/collectOptions.js";
 import {
+  buildLiteratureQueryFamilySignature,
   buildLiteratureQueryCandidates,
   extractResearchBriefTopic,
+  extractLiteratureTermSequence,
   hasSemanticScholarSpecialSyntax,
   LiteratureQueryCandidate,
-  mergeCollectConstraintDefaults
+  mergeCollectConstraintDefaults,
+  normalizeTopicDiscoveryLiteratureQuery,
+  selectIndependentLiteratureQueryCandidates
 } from "../runConstraints.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
+import { resolveCollectPlanningTimeoutPolicy } from "../collectPlanningPolicy.js";
+import { parseResearchRunMode } from "../runs/runBriefParser.js";
+import {
+  loadResearchBriefSnapshot,
+  resolveResearchRunModeGuard
+} from "../runs/researchRunModeGuard.js";
 export { buildBibtexEntry, buildBibtexFile } from "../collection/bibtex.js";
 import { buildBibtexFile, scoreBibtexRichness } from "../collection/bibtex.js";
 import { enrichCollectedPaper, mergeStoredCorpusRows } from "../collection/enrichment.js";
@@ -40,83 +62,51 @@ import {
 import { loadGovernancePolicy } from "../../governance/policyLoader.js";
 import { ScreeningReport, screenEvidence } from "../../governance/evidenceIntakeFilter.js";
 import { appendGovernanceTrace } from "../../governance/governanceTrace.js";
+import {
+  assessTopicDiscoveryPaperRelevance,
+  assessTopicDiscoveryCorpusQuality,
+  buildTopicDiscoveryCorpusRelevanceProfile,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION,
+  TopicDiscoveryCorpusRelevanceProfile,
+  TopicDiscoveryCorpusQualityAudit,
+  TopicDiscoverySearchFamily
+} from "../collection/topicDiscoveryCorpusQuality.js";
+import {
+  runTopicDiscoverySemanticAudit,
+  TopicDiscoverySemanticAuditTrace
+} from "../collection/topicDiscoverySemanticAudit.js";
+import {
+  CollectAttemptArchivePhase,
+  CollectAttemptStatus,
+  createCollectAttemptId,
+  persistCollectAttemptArchive
+} from "../collection/collectAttemptArchive.js";
+import {
+  TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION,
+  TOPIC_DISCOVERY_SEMANTIC_REVIEW_INPUT_ARTIFACT_VERSION,
+  TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT
+} from "../collection/topicDiscoveryArtifactVersions.js";
+import {
+  buildCandidatePriorSearchReceipt,
+  validateCandidatePriorSearchPlanIntegrity,
+  type CandidatePriorSearchAttemptResult,
+  type CandidatePriorSearchPlan
+} from "../candidatePriorSearch.js";
 
 const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
-const LIGHTWEIGHT_TAIL_MIN_ROWS = 6;
-const LIGHTWEIGHT_TAIL_MAX_ROWS = 12;
 const LOW_YIELD_QUERY_MIN_RESULTS = 3;
-
-const COLLECT_STOPWORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "are",
-  "as",
-  "at",
-  "based",
-  "by",
-  "for",
-  "from",
-  "in",
-  "into",
-  "is",
-  "of",
-  "on",
-  "or",
-  "study",
-  "the",
-  "to",
-  "using",
-  "with"
-]);
-
-const LIGHTWEIGHT_TABULAR_SCOPE_TOKENS = new Set([
-  "baseline",
-  "baselines",
-  "benchmark",
-  "benchmarks",
-  "classification",
-  "classifier",
-  "classifiers",
-  "cpu",
-  "dataset",
-  "datasets",
-  "lightweight",
-  "logistic",
-  "public",
-  "regression",
-  "resource",
-  "small"
-]);
-
-const LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS = new Set(["tabular", "structured"]);
-const LIGHTWEIGHT_TABULAR_SUPPORT_TOKENS = new Set([
-  "baseline",
-  "baselines",
-  "benchmark",
-  "benchmarks",
-  "classification",
-  "classifier",
-  "classifiers",
-  "dataset",
-  "datasets",
-  "forest",
-  "forests",
-  "gradient",
-  "lightgbm",
-  "logistic",
-  "public",
-  "random",
-  "regression",
-  "small",
-  "structured",
-  "svm",
-  "tabular",
-  "tree",
-  "trees",
-  "xgboost"
-]);
+const TOPIC_DISCOVERY_MIN_QUERY_FAMILIES = 2;
+const TOPIC_DISCOVERY_MAX_QUERY_FAMILIES = 4;
+const TOPIC_DISCOVERY_SEARCH_LANES_PER_FAMILY = 2;
+const TOPIC_DISCOVERY_RETRIEVAL_OVERFETCH_MULTIPLIER = 2;
+const MAX_TOPIC_DISCOVERY_FEEDBACK_TITLES = 18;
+const TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT =
+  "collect_topic_discovery_candidates.jsonl";
+const CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT =
+  "collect_candidate_prior_search_plan.json";
+const CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT =
+  "collect_candidate_prior_search_receipt.json";
 
 interface CollectPapersNodeRequest {
   query?: string;
@@ -137,9 +127,11 @@ interface CollectPapersNodeRequest {
     openAccessPdf?: boolean;
   };
   bibtexMode?: BibtexMode;
+  candidatePriorSearchPlan?: CandidatePriorSearchPlan;
 }
 
 interface CollectResultMeta {
+  collect_attempt_id?: string;
   query: string;
   limit: number;
   fetched: number;
@@ -170,6 +162,7 @@ interface CollectResultMeta {
   fallbackSources: string[];
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
+  corpusQuality?: TopicDiscoveryCorpusQualityAudit;
   enrichment: CollectEnrichmentMeta;
   governance_warnings?: CollectGovernanceWarning[];
   timestamp: string;
@@ -185,13 +178,31 @@ interface CollectGovernanceWarning {
 
 interface CollectQueryAttemptMeta {
   query: string;
+  queryFamily: string;
+  retrievalLane: TopicDiscoveryRetrievalLane;
   reason: LiteratureQueryCandidate["reason"];
+  source:
+    | "requested_query"
+    | "llm_query_planner"
+    | "deterministic_query"
+    | "candidate_prior_plan";
+  sourceReason: string;
   filtersRelaxed: boolean;
+  allocatedLimit: number;
+  retrievalLimit: number;
   fetched: number;
+  relevantFetched: number;
+  selected: number;
   attemptCount: number;
   lastStatus?: number;
   retryAfterMs?: number;
+  providerDiagnostics?: PaperSearchProviderDiagnostics[];
 }
+
+type TopicDiscoveryRetrievalLane =
+  | "standard"
+  | "broad_relevance"
+  | "recent_direct_prior";
 
 interface CollectEnrichmentMeta {
   blocking: false;
@@ -205,7 +216,12 @@ interface CollectEnrichmentMeta {
 
 interface PlannedCollectSearch {
   request: SemanticScholarSearchRequest;
+  queryFamily: string;
+  retrievalLane: TopicDiscoveryRetrievalLane;
+  topicDiscoveryFamily?: TopicDiscoverySearchFamilyIntent;
   reason: LiteratureQueryCandidate["reason"];
+  source: CollectQueryAttemptMeta["source"];
+  sourceReason: string;
   filtersRelaxed: boolean;
 }
 
@@ -213,9 +229,18 @@ interface PreparedCollectRequestPlan {
   primaryRequest?: SemanticScholarSearchRequest;
   searchPlan: PlannedCollectSearch[];
   requestedQuery?: string;
+  strategy: "first_yield" | "topic_portfolio" | "candidate_prior_portfolio";
+  globalLimit: number;
+  suppressedFilters: Array<{
+    filter: "fieldsOfStudy";
+    values: string[];
+    reason: "topic_discovery_cross_provider_taxonomy_mismatch";
+  }>;
+  candidatePriorSearchPlan?: CandidatePriorSearchPlan;
 }
 
 const activeCollectEnrichmentJobs = new Map<string, Promise<void>>();
+const collectArtifactMutationQueues = new Map<string, Promise<void>>();
 
 interface CollectRunRef {
   id: string;
@@ -227,7 +252,7 @@ interface CollectRunRef {
 interface CollectBackgroundJobRecord {
   version: 1;
   kind: "collect_deferred_enrichment";
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "superseded";
   runId: string;
   request: SemanticScholarSearchRequest;
   mode: "replace" | "additional";
@@ -245,16 +270,123 @@ interface CollectBackgroundJobRecord {
   recoveryCount: number;
   lastRecoveredAt?: string;
   lastError?: string;
+  collectAttemptId?: string;
+  corpusFingerprint?: string;
 }
 
 const COLLECT_BACKGROUND_JOB_FILE = "collect_background_job.json";
+const COLLECT_GENERATION_FILE = "collect_generation.json";
+
+interface CollectGenerationRecord {
+  version: 1;
+  kind: "collect_generation";
+  run_id: string;
+  collect_attempt_id: string;
+  started_at: string;
+}
 
 export async function waitForCollectEnrichmentJob(runId: string): Promise<void> {
-  await activeCollectEnrichmentJobs.get(runId);
+  await Promise.all(
+    Array.from(activeCollectEnrichmentJobs.entries())
+      .filter(([key]) => key.startsWith(`${runId}:`))
+      .map(([, job]) => job)
+  );
 }
 
 export async function waitForAllCollectEnrichmentJobs(): Promise<void> {
   await Promise.all(Array.from(activeCollectEnrichmentJobs.values()));
+}
+
+function collectEnrichmentJobKey(runId: string, attemptId?: string): string {
+  return `${runId}:${attemptId || "unscoped"}`;
+}
+
+async function withCollectArtifactMutationLock<T>(
+  runId: string,
+  action: () => Promise<T>
+): Promise<T> {
+  const previous = collectArtifactMutationQueues.get(runId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  collectArtifactMutationQueues.set(runId, tail);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (collectArtifactMutationQueues.get(runId) === tail) {
+      collectArtifactMutationQueues.delete(runId);
+    }
+  }
+}
+
+async function readCollectGeneration(
+  run: { id: string }
+): Promise<CollectGenerationRecord | undefined> {
+  const raw = await safeRead(`.autolabos/runs/${run.id}/${COLLECT_GENERATION_FILE}`);
+  if (!raw.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<CollectGenerationRecord>;
+    return parsed.version === 1
+      && parsed.kind === "collect_generation"
+      && parsed.run_id === run.id
+      && typeof parsed.collect_attempt_id === "string"
+      ? parsed as CollectGenerationRecord
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function beginCollectGeneration(
+  run: CollectRunRef,
+  attemptId: string,
+  runContextMemory: RunContextMemory,
+  isolateTopicDiscoveryCorpus = false
+): Promise<void> {
+  await withCollectArtifactMutationLock(run.id, async () => {
+    const record: CollectGenerationRecord = {
+      version: 1,
+      kind: "collect_generation",
+      run_id: run.id,
+      collect_attempt_id: attemptId,
+      started_at: new Date().toISOString()
+    };
+    await writeRunArtifact(run as any, COLLECT_GENERATION_FILE, `${JSON.stringify(record, null, 2)}\n`);
+    if (isolateTopicDiscoveryCorpus) {
+      await writeRunArtifact(run as any, "corpus.jsonl", "");
+      await writeRunArtifact(run as any, "bibtex.bib", "");
+      await writeRunArtifact(run as any, "collect_corpus_quality.json", "");
+      await writeRunArtifact(run as any, "collect_semantic_review_input.json", "");
+      await writeRunArtifact(run as any, "collect_semantic_review.json", "");
+      await writeRunArtifact(run as any, "collect_query_reformulation_hints.json", "");
+      await writeRunArtifact(run as any, TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT, "");
+    }
+    await runContextMemory.put("collect_papers.current_generation_id", attemptId);
+    await runContextMemory.put("collect_papers.active_attempt_id", attemptId);
+  });
+}
+
+async function publishForCollectGeneration<T>(input: {
+  run: { id: string };
+  attemptId?: string;
+  action: () => Promise<T>;
+}): Promise<{ published: boolean; value?: T }> {
+  return withCollectArtifactMutationLock(input.run.id, async () => {
+    const generation = await readCollectGeneration(input.run);
+    const current = input.attemptId
+      ? generation?.collect_attempt_id === input.attemptId
+      : generation === undefined;
+    if (!current) {
+      return { published: false };
+    }
+    return { published: true, value: await input.action() };
+  });
 }
 
 export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandler {
@@ -262,20 +394,130 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
     id: "collect_papers",
     async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
+      const memoryRawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const snapshotBrief = await loadResearchBriefSnapshot(process.cwd(), run.id);
+      const researchModeGuard = await resolveResearchRunModeGuard({
+        workspaceRoot: process.cwd(),
+        runId: run.id,
+        rawBrief: memoryRawBrief,
+        run
+      });
+      const rawBrief = memoryRawBrief || snapshotBrief;
+      await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
+      await writeRunArtifact(
+        run,
+        "governance/research_mode_guard.json",
+        `${JSON.stringify(researchModeGuard, null, 2)}\n`
+      );
+      if (!researchModeGuard.valid) {
+        const error =
+          "collect_papers blocked because the persisted research mode and evidence lineage do not agree: "
+          + researchModeGuard.reasons.join(", ");
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
       const longTermStore = new LongTermStore(run.memoryRefs.longTermPath);
+      const planningTimeoutPolicy = resolveCollectPlanningTimeoutPolicy(deps.config);
+      deps.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {
+          text:
+            `Collect planning timeout policy: llm_mode=${planningTimeoutPolicy.llm_mode}, `
+            + `constraint_profile=${planningTimeoutPolicy.constraint_profile_timeout_ms}ms `
+            + `(${planningTimeoutPolicy.constraint_profile_source}), `
+            + `literature_query=${planningTimeoutPolicy.literature_query_timeout_ms}ms `
+            + `(${planningTimeoutPolicy.literature_query_source}).`
+        }
+      });
       const constraintProfile = await resolveConstraintProfile({
         run,
         runContextMemory,
         llm: deps.llm,
         eventStream: deps.eventStream,
         node: "collect_papers",
-        abortSignal
+        abortSignal,
+        timeoutMs: planningTimeoutPolicy.constraint_profile_timeout_ms
       });
       const requestFromContext = await runContextMemory.get<CollectPapersNodeRequest>("collect_papers.request");
-      const rawBrief = await runContextMemory.get<string>("run_brief.raw");
+      const researchMode = parseResearchRunMode(rawBrief || "");
+      const mode: "replace" | "additional" =
+        typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
+          ? "additional"
+          : "replace";
+      const candidatePriorSearchPlan = requestFromContext?.candidatePriorSearchPlan;
+      if (candidatePriorSearchPlan) {
+        const planValidation = validateCandidatePriorSearchPlanIntegrity(
+          candidatePriorSearchPlan
+        );
+        const sourceGeneration = await readCollectGeneration(run);
+        const sourceCorpusRaw = await safeRead(
+          `.autolabos/runs/${run.id}/corpus.jsonl`
+        );
+        const sourceCorpusSha256 = createHash("sha256")
+          .update(sourceCorpusRaw, "utf8")
+          .digest("hex");
+        const preflightReasons = [
+          ...planValidation.reasons,
+          ...(researchMode === "topic_discovery"
+            ? []
+            : ["candidate_prior_search_requires_topic_discovery"]),
+          ...(mode === "additional"
+            ? []
+            : ["candidate_prior_search_requires_additional_mode"]),
+          ...(requestFromContext?.query
+            || requestFromContext?.sort
+            || requestFromContext?.filters
+            ? ["candidate_prior_search_request_override_forbidden"]
+            : []),
+          ...(candidatePriorSearchPlan.run_id === run.id
+            ? []
+            : ["candidate_prior_search_run_mismatch"]),
+          ...(candidatePriorSearchPlan.research_cycle + 1
+              === run.graph.researchCycle
+            ? []
+            : ["candidate_prior_search_cycle_mismatch"]),
+          ...(sourceGeneration?.collect_attempt_id
+              === candidatePriorSearchPlan.source_corpus.collect_attempt_id
+            ? []
+            : ["candidate_prior_search_source_attempt_mismatch"]),
+          ...(candidatePriorSearchPlan.source_corpus.sha256
+              === sourceCorpusSha256
+            && candidatePriorSearchPlan.source_corpus.byte_length
+              === Buffer.byteLength(sourceCorpusRaw, "utf8")
+            ? []
+            : ["candidate_prior_search_source_corpus_mismatch"])
+        ];
+        if (preflightReasons.length > 0) {
+          const message =
+            "Candidate-conditioned prior collection was blocked before retrieval: "
+            + [...new Set(preflightReasons)].join(", ")
+            + ".";
+          await runContextMemory.put("collect_papers.last_error", message);
+          return {
+            status: "failure",
+            failureKind: "gate_blocked",
+            error: message,
+            summary: message,
+            toolCallsUsed: 0
+          };
+        }
+      }
+      const collectAttemptId = createCollectAttemptId();
+      await beginCollectGeneration(
+        run,
+        collectAttemptId,
+        runContextMemory,
+        researchMode === "topic_discovery" && mode === "replace"
+      );
       const extractedBrief = await runContextMemory.get<{ topic?: string }>("run_brief.extracted");
       const generatedQueries =
-        requestFromContext?.query
+        requestFromContext?.query || candidatePriorSearchPlan
           ? undefined
           : await resolveGeneratedLiteratureQueries({
               run,
@@ -285,7 +527,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               llm: deps.llm,
               eventStream: deps.eventStream,
               node: "collect_papers",
-              abortSignal
+              abortSignal,
+              timeoutMs: planningTimeoutPolicy.literature_query_timeout_ms,
+              plannerIdentity: resolveResearchLlmIdentity(deps.config)
             });
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
@@ -293,18 +537,169 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         rawBrief,
         extractedBriefTopic: extractedBrief?.topic,
         llmGeneratedQueries: generatedQueries?.queries,
+        llmTopicDiscoveryPlan: generatedQueries?.topicDiscoveryPlan,
+        llmPlanningFailure: generatedQueries?.failureReason,
         constraintProfile,
-        configuredLimit: deps.config.papers.max_results
+        configuredLimit: deps.config.papers.max_results,
+        asOfDate: run.createdAt
+      });
+      const collectQueryPlanArtifact = {
+            ...TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT,
+            collect_attempt_id: collectAttemptId,
+            research_mode: researchMode,
+            strategy: normalizedRequest.strategy,
+            planning_timeout_policy: planningTimeoutPolicy,
+            planner: generatedQueries
+              ? {
+                  source: generatedQueries.source,
+                  queries: generatedQueries.queries,
+                  assumptions: generatedQueries.assumptions,
+                  failure_reason: generatedQueries.failureReason,
+                  topic_discovery_plan: generatedQueries.topicDiscoveryPlan,
+                  attempt_diagnostics: generatedQueries.attemptDiagnostics,
+                  repair_diagnostic: generatedQueries.repairDiagnostic,
+                  scientific_scope_contract:
+                    generatedQueries.scientificScopeContract,
+                  scientific_scope_diagnostic:
+                    generatedQueries.scientificScopeDiagnostic
+                }
+              : candidatePriorSearchPlan
+                ? {
+                    source: "candidate_prior_plan",
+                    queries: candidatePriorSearchPlan.candidates.flatMap(
+                      (candidate) => candidate.families.map((family) => family.query)
+                    ),
+                    assumptions: [],
+                    candidate_prior_search_plan_sha256:
+                      candidatePriorSearchPlan.content_sha256
+                  }
+                : {
+                  source: requestFromContext?.query ? "requested_query" : "unavailable",
+                  queries: requestFromContext?.query ? [requestFromContext.query] : [],
+                  assumptions: []
+                },
+            candidate_prior_search_plan: candidatePriorSearchPlan,
+            selected_families: normalizedRequest.searchPlan.map((search) => ({
+              query: search.request.query,
+              query_family: search.queryFamily,
+              retrieval_lane: search.retrievalLane,
+              source: search.source,
+              source_reason: search.sourceReason,
+              reason: search.reason,
+              retrieval_intent: search.request.retrievalIntent ?? "default",
+              sort: search.request.sort,
+              filters: search.request.filters,
+              topic_discovery_family: search.topicDiscoveryFamily
+            })),
+            filter_policy: {
+              applied: normalizedRequest.primaryRequest?.filters ?? {},
+              suppressed: normalizedRequest.suppressedFilters
+            }
+          };
+      const collectQueryPlanContent = `${JSON.stringify(collectQueryPlanArtifact, null, 2)}\n`;
+      const collectAttemptArtifactContents: Record<string, string> = {
+        "collect_query_plan.json": collectQueryPlanContent,
+        ...(candidatePriorSearchPlan
+          ? {
+              [CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT]:
+                `${JSON.stringify(candidatePriorSearchPlan, null, 2)}\n`
+            }
+          : {})
+      };
+      const queryPlanPublication = await publishForCollectGeneration({
+        run,
+        attemptId: collectAttemptId,
+        action: async () => {
+          await writeRunArtifact(
+            run,
+            "collect_query_plan.json",
+            collectQueryPlanContent
+          );
+          if (candidatePriorSearchPlan) {
+            await writeRunArtifact(
+              run,
+              CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT,
+              `${JSON.stringify(candidatePriorSearchPlan, null, 2)}\n`
+            );
+          }
+        }
+      });
+      if (!queryPlanPublication.published) {
+        const message = `collect_papers attempt ${collectAttemptId} was superseded before its query plan could be published.`;
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
+      }
+      await archiveCurrentCollectAttempt({
+        run,
+        attemptId: collectAttemptId,
+        status: "planned",
+        phase: "planning",
+        includeTopicDiscoveryArtifacts: false,
+        includeCandidatePriorArtifacts: Boolean(candidatePriorSearchPlan),
+        artifactContents: {
+          "collect_query_plan.json": collectQueryPlanContent,
+          ...(candidatePriorSearchPlan
+            ? {
+                [CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT]:
+                  `${JSON.stringify(candidatePriorSearchPlan, null, 2)}\n`
+              }
+            : {})
+        }
       });
       if (!normalizedRequest.primaryRequest || normalizedRequest.searchPlan.length === 0) {
-        const queryPlanningFailure = buildCollectQueryPlanningFailureMessage(requestFromContext?.query);
-        await runContextMemory.put("collect_papers.last_request", null);
-        await runContextMemory.put("collect_papers.last_result", null);
-        await runContextMemory.put("collect_papers.last_attempt_count", 0);
-        await runContextMemory.put("collect_papers.count", 0);
-        await runContextMemory.put("collect_papers.source", "semantic_scholar");
-        await runContextMemory.put("collect_papers.last_error", queryPlanningFailure);
-        await runContextMemory.put("collect_papers.enrichment_last_error", null);
+        const queryPlanningFailure = buildCollectQueryPlanningFailureMessage(
+          requestFromContext?.query,
+          generatedQueries?.failureReason
+        );
+        if (
+          !requestFromContext?.query &&
+          researchMode === "topic_discovery" &&
+          generatedQueries?.failureReason
+        ) {
+          const finalAttempt = generatedQueries.attemptDiagnostics?.at(-1);
+          const planningFailureReason = generatedQueries.failureReason;
+          await publishForCollectGeneration({
+            run,
+            attemptId: collectAttemptId,
+            action: async () => recordLiteratureQueryPlanRejection(runContextMemory, {
+              rejectedQueries: finalAttempt?.usableQueries ?? generatedQueries.queries,
+              qualityReasons: [planningFailureReason],
+              sharedAnchorTerms: finalAttempt?.sharedAnchorTerms ?? [],
+              candidateTitles: [],
+              scientificScopeFingerprint:
+                generatedQueries.scientificScopeContract?.scopeFingerprint,
+              queryFamilies: (finalAttempt?.families ?? []).map((family) => ({
+                query: family.query ?? family.axisTerms.join(" "),
+                axisTerms: family.axisTerms
+              }))
+            })
+          });
+        }
+        await persistPlanningFailureSnapshot({
+          run,
+          attemptId: collectAttemptId,
+          researchMode,
+          error: queryPlanningFailure
+        });
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await runContextMemory.put("collect_papers.last_request", null);
+            await runContextMemory.put("collect_papers.last_result", null);
+            await runContextMemory.put("collect_papers.last_attempt_count", 0);
+            await runContextMemory.put("collect_papers.count", 0);
+            await runContextMemory.put("collect_papers.source", "semantic_scholar");
+            await runContextMemory.put("collect_papers.last_error", queryPlanningFailure);
+            await runContextMemory.put("collect_papers.enrichment_last_error", null);
+            await runContextMemory.put("collect_papers.last_attempt_id", collectAttemptId);
+            await runContextMemory.put("collect_papers.active_attempt_id", null);
+          }
+        });
         return {
           status: "failure",
           error: queryPlanningFailure,
@@ -312,10 +707,35 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           toolCallsUsed: 0
         };
       }
-      const mode: "replace" | "additional" =
-        typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
-          ? "additional"
-          : "replace";
+      if (normalizedRequest.strategy === "topic_portfolio" && mode === "additional") {
+        const message =
+          "Topic-discovery collection requires a full replace-and-reaudit pass; additional collection cannot preserve family provenance for the combined corpus.";
+        await persistPlanningFailureSnapshot({
+          run,
+          attemptId: collectAttemptId,
+          researchMode,
+          error: message
+        });
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await runContextMemory.put("collect_papers.last_request", null);
+            await runContextMemory.put("collect_papers.last_result", null);
+            await runContextMemory.put("collect_papers.last_attempt_count", 0);
+            await runContextMemory.put("collect_papers.count", 0);
+            await runContextMemory.put("collect_papers.last_error", message);
+            await runContextMemory.put("collect_papers.last_attempt_id", collectAttemptId);
+            await runContextMemory.put("collect_papers.active_attempt_id", null);
+          }
+        });
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: 0
+        };
+      }
       const additionalLimit =
         mode === "additional" && typeof requestFromContext?.additional === "number" && requestFromContext.additional > 0
           ? Math.floor(requestFromContext.additional)
@@ -341,12 +761,23 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       let diagnostics: SemanticScholarSearchDiagnostics = emptyCollectDiagnostics();
       let aggregationReport: PaperSearchAggregationReport | undefined;
       const queryAttempts: CollectQueryAttemptMeta[] = [];
+      const paperQueryFamilies = new Map<string, Set<string>>();
+      const candidatePriorAttemptPaperIds = new Map<string, Set<string>>();
+      const topicDiscoveryCandidatePaperIdsByFamily = new Map<string, string[]>();
+      const topicDiscoveryCandidateRows = new Map<string, StoredCorpusRow>();
+      const topicDiscoveryCandidatePapers = new Map<string, AggregatedSearchPaper>();
+      const topicDiscoveryLexicalRows = new Map<string, StoredCorpusRow>();
+      const topicDiscoveryRelevanceProfile = buildTopicDiscoveryRelevanceProfile(
+        normalizedRequest
+      );
       let effectiveRequest = normalizedRequest.primaryRequest;
       const searchProviders = buildSearchProviders(deps);
       await syncCollectRunContext({
+        run,
         runContextMemory,
         request: effectiveRequest,
         resultMeta: buildCollectResultMeta({
+          collectAttemptId,
           request: effectiveRequest,
           fetched: 0,
           stored: storedCount,
@@ -384,6 +815,26 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         let searchDiagnostics = emptyCollectDiagnostics();
         let searchFetched = 0;
         let currentAggregation: PaperSearchAggregationReport | undefined;
+        const remainingPortfolioQueries = normalizedRequest.searchPlan.length - searchIndex;
+        const remainingCapacity = Math.max(0, normalizedRequest.globalLimit - newPaperIds.size);
+        const newPaperLimitForSearch =
+          isMultiQueryPortfolioStrategy(normalizedRequest.strategy)
+            ? Math.max(1, Math.ceil(remainingCapacity / Math.max(1, remainingPortfolioQueries)))
+            : remainingCapacity;
+        const retrievalLimit =
+          isMultiQueryPortfolioStrategy(normalizedRequest.strategy)
+            ? resolveTopicDiscoveryRetrievalLimit(
+                newPaperLimitForSearch,
+                normalizedRequest.globalLimit
+              )
+            : effectiveRequest.limit;
+        const providerRequest =
+          isMultiQueryPortfolioStrategy(normalizedRequest.strategy)
+            ? { ...effectiveRequest, limit: retrievalLimit }
+            : effectiveRequest;
+        let newPapersStoredThisSearch = 0;
+        let relevantFetched = 0;
+        const selectedPaperIdsThisSearch = new Set<string>();
 
         try {
           const providerLabel = formatProviderList(searchProviders.map((provider) => provider.provider));
@@ -395,8 +846,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             payload: {
               text:
                 searchIndex === 0
-                  ? `Searching ${providerLabel} for "${effectiveRequest.query}" (${plannedSearch.reason}).`
-                  : `No papers found yet; retrying with broader query "${effectiveRequest.query}" across ${providerLabel}${plannedSearch.filtersRelaxed ? " and relaxed filters" : ""}.`
+                  ? `Searching ${providerLabel} for "${effectiveRequest.query}" (${plannedSearch.reason}; ${plannedSearch.source}).`
+                  : normalizedRequest.strategy === "topic_portfolio"
+                    ? `Expanding the topic-discovery portfolio with "${effectiveRequest.query}" across ${providerLabel}.`
+                    : normalizedRequest.strategy === "candidate_prior_portfolio"
+                      ? `Searching a candidate-bound direct-prior lane for "${effectiveRequest.query}" across ${providerLabel}.`
+                    : `No papers found yet; retrying with broader query "${effectiveRequest.query}" across ${providerLabel}${plannedSearch.filtersRelaxed ? " and relaxed filters" : ""}.`
             }
           });
           if (semanticScholarOnly) {
@@ -410,12 +865,15 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             });
           }
           const aggregated = await runAggregatedPaperSearch({
-            request: effectiveRequest,
+            request: providerRequest,
             providers: searchProviders,
             abortSignal
           });
           currentAggregation = aggregated.report;
-          aggregationReport = aggregated.report;
+          aggregationReport = mergePaperSearchAggregationReports(
+            aggregationReport,
+            aggregated.report
+          );
           searchDiagnostics = deps.semanticScholar.getLastSearchDiagnostics?.() ?? searchDiagnostics;
           diagnostics = mergeCollectDiagnostics(diagnostics, searchDiagnostics);
           searchFetched = aggregated.records.length;
@@ -465,21 +923,86 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 detail: screening.recommendation
               });
             }
-            fetchedPapers.set(record.paper.paperId, record.paper);
+            if (topicDiscoveryRelevanceProfile) {
+              rememberTopicDiscoveryCandidate({
+                rows: topicDiscoveryCandidateRows,
+                paperQueryFamilies,
+                paperIdsByFamily: topicDiscoveryCandidatePaperIdsByFamily,
+                row: record.row,
+                queryFamily: plannedSearch.queryFamily
+              });
+              topicDiscoveryCandidatePapers.set(record.row.paper_id, record.paper);
+              const relevance = assessTopicDiscoveryPaperRelevance({
+                row: record.row,
+                profile: topicDiscoveryRelevanceProfile,
+                eligibleQueryFamilies: new Set([plannedSearch.queryFamily])
+              });
+              if (!relevance.relevant) {
+                continue;
+              }
+              relevantFetched += 1;
+              topicDiscoveryLexicalRows.set(record.row.paper_id, record.row);
+            } else {
+              relevantFetched += 1;
+            }
             const currentRow = storedRows.get(record.paper.paperId);
             if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
               continue;
             }
-            const mergedRow = mergeStoredCorpusRows(currentRow, record.row);
+            if (
+              !currentRow &&
+              isMultiQueryPortfolioStrategy(normalizedRequest.strategy) &&
+              newPapersStoredThisSearch >= newPaperLimitForSearch
+            ) {
+              continue;
+            }
+            if (
+              !currentRow &&
+              mode === "replace" &&
+              newPaperIds.size >= normalizedRequest.globalLimit
+            ) {
+              continue;
+            }
+            fetchedPapers.set(record.paper.paperId, record.paper);
+            const incomingRow =
+              normalizedRequest.strategy === "candidate_prior_portfolio"
+                ? {
+                    ...record.row,
+                    query_families: [
+                      ...(record.row.query_families ?? []),
+                      plannedSearch.queryFamily
+                    ]
+                  }
+                : record.row;
+            const mergedRow =
+              normalizedRequest.strategy === "candidate_prior_portfolio"
+                && currentRow
+                ? {
+                    ...currentRow,
+                    query_families: Array.from(new Set([
+                      ...(currentRow.query_families ?? []),
+                      plannedSearch.queryFamily
+                    ])).sort()
+                  }
+                : mergeStoredCorpusRows(currentRow, incomingRow);
             const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
             const nextSerialized = JSON.stringify(mergedRow);
             if (!currentRow) {
               newPaperIds.add(record.paper.paperId);
+              newPapersStoredThisSearch += 1;
               changed = true;
             } else if (prevSerialized !== nextSerialized) {
               changed = true;
             }
             storedRows.set(record.paper.paperId, mergedRow);
+            selectedPaperIdsThisSearch.add(record.paper.paperId);
+          }
+
+          if (normalizedRequest.strategy === "candidate_prior_portfolio") {
+            candidatePriorAttemptPaperIds.set(
+              `${plannedSearch.queryFamily}::${plannedSearch.retrievalLane}`,
+              selectedPaperIdsThisSearch
+            );
           }
 
           for (const providerDiagnostic of aggregated.report.providerDiagnostics) {
@@ -503,6 +1026,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               mode,
               request: effectiveRequest,
               resultMeta: buildCollectResultMeta({
+                collectAttemptId,
                 request: effectiveRequest,
                 fetched: fetchedPapers.size,
                 stored: storedCount,
@@ -532,7 +1056,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               }),
               enrichmentLogs: Array.from(persistedEnrichmentLogs.values()),
               bibtexMode: normalizeBibtexMode(requestFromContext?.bibtexMode),
-              aggregationReport
+              aggregationReport,
+              writeCorpusArtifacts: normalizedRequest.strategy !== "topic_portfolio"
             });
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
@@ -558,6 +1083,19 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   : `Fetched ${searchFetched} paper(s) from Semantic Scholar.`
             }
           });
+          if (normalizedRequest.strategy === "topic_portfolio") {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text:
+                  `Topic-discovery relevance screening accepted ${relevantFetched} of ` +
+                  `${searchFetched} canonical candidate(s); selected ${newPapersStoredThisSearch} ` +
+                  `new paper(s) for this family.`
+              }
+            });
+          }
           if (semanticScholarOnly) {
             deps.eventStream.emit({
               type: "OBS_RECEIVED",
@@ -571,12 +1109,24 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
           queryAttempts.push({
             query: effectiveRequest.query,
+            queryFamily: plannedSearch.queryFamily,
+            retrievalLane: plannedSearch.retrievalLane,
             reason: plannedSearch.reason,
+            source: plannedSearch.source,
+            sourceReason: plannedSearch.sourceReason,
             filtersRelaxed: plannedSearch.filtersRelaxed,
+            allocatedLimit: newPaperLimitForSearch,
+            retrievalLimit: providerRequest.limit,
             fetched: searchFetched,
+            relevantFetched,
+            selected:
+              normalizedRequest.strategy === "candidate_prior_portfolio"
+                ? selectedPaperIdsThisSearch.size
+                : newPapersStoredThisSearch,
             attemptCount: searchDiagnostics.attemptCount,
             lastStatus: searchDiagnostics.lastStatus,
-            retryAfterMs: searchDiagnostics.retryAfterMs
+            retryAfterMs: searchDiagnostics.retryAfterMs,
+            providerDiagnostics: currentAggregation?.providerDiagnostics
           });
 
           const providerFailure = buildProviderFailureMessage(effectiveRequest.query, currentAggregation?.providerDiagnostics || []);
@@ -587,6 +1137,24 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           if (searchFetched === 0 && providerFailure) {
             fetchError = providerFailure;
             break;
+          }
+
+          const hasMorePortfolioQueries =
+            isMultiQueryPortfolioStrategy(normalizedRequest.strategy) &&
+            searchIndex < normalizedRequest.searchPlan.length - 1;
+          if (hasMorePortfolioQueries) {
+            deps.eventStream.emit({
+              type: "OBS_RECEIVED",
+              runId: run.id,
+              node: "collect_papers",
+              payload: {
+                text:
+                  `${normalizedRequest.strategy === "candidate_prior_portfolio" ? "Candidate-prior search" : "Topic discovery"} `
+                  + `stored ${newPapersStoredThisSearch} new paper(s) from "${effectiveRequest.query}". ` +
+                  "Continuing with the next literature retrieval lane."
+              }
+            });
+            continue;
           }
 
           if (shouldRetryBroaderAfterLowYieldCollect({
@@ -617,48 +1185,464 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           diagnostics = mergeCollectDiagnostics(diagnostics, searchDiagnostics);
           queryAttempts.push({
             query: effectiveRequest.query,
+            queryFamily: plannedSearch.queryFamily,
+            retrievalLane: plannedSearch.retrievalLane,
             reason: plannedSearch.reason,
+            source: plannedSearch.source,
+            sourceReason: plannedSearch.sourceReason,
             filtersRelaxed: plannedSearch.filtersRelaxed,
+            allocatedLimit: newPaperLimitForSearch,
+            retrievalLimit: providerRequest.limit,
             fetched: searchFetched,
+            relevantFetched,
+            selected: newPapersStoredThisSearch,
             attemptCount: searchDiagnostics.attemptCount,
             lastStatus: searchDiagnostics.lastStatus,
-            retryAfterMs: searchDiagnostics.retryAfterMs
+            retryAfterMs: searchDiagnostics.retryAfterMs,
+            providerDiagnostics: currentAggregation?.providerDiagnostics
           });
           break;
         }
       }
 
       if (!fetchError) {
-        await runContextMemory.put("collect_papers.requested_limit", null);
-        await runContextMemory.put("collect_papers.request", null);
-      }
-
-      const removedTailPaperIds = pruneLightweightOffTopicTail({
-        runTopic: run.topic,
-        requestedQuery: normalizedRequest.requestedQuery,
-        effectiveQuery: effectiveRequest.query,
-        sortField: effectiveRequest.sort?.field,
-        mode,
-        storedRows
-      });
-      if (removedTailPaperIds.length > 0) {
-        for (const paperId of removedTailPaperIds) {
-          newPaperIds.delete(paperId);
-        }
-        storedCount = storedRows.size;
-        deps.eventStream.emit({
-          type: "OBS_RECEIVED",
-          runId: run.id,
-          node: "collect_papers",
-          payload: {
-            text: `Lightweight corpus quality guard removed ${removedTailPaperIds.length} off-topic tail paper(s) before selection.`
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await runContextMemory.put("collect_papers.requested_limit", null);
+            await runContextMemory.put("collect_papers.request", null);
           }
         });
       }
 
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
+      let topicDiscoveryQualityAudit: TopicDiscoveryCorpusQualityAudit | undefined;
+      let topicDiscoverySemanticAudit: TopicDiscoverySemanticAuditTrace | undefined;
+      let topicDiscoveryQualityFailure: string | undefined;
+      if (normalizedRequest.strategy === "topic_portfolio" && mode === "replace") {
+        const topicDiscoveryRows = Array.from(topicDiscoveryLexicalRows.values());
+        const topicDiscoveryCandidatePoolRows = Array.from(
+          topicDiscoveryCandidateRows.values()
+        );
+        const plannedSearchFamilies: TopicDiscoverySearchFamily[] = normalizedRequest.searchPlan.map(
+          (search) => ({
+            queryFamily: search.queryFamily,
+            query: search.request.query,
+            source: search.source,
+            sharedAnchorTerms: search.topicDiscoveryFamily?.sharedAnchorTerms,
+            axisTerms: search.topicDiscoveryFamily?.axisTerms,
+            lens: search.topicDiscoveryFamily?.lens,
+            contributionIntent: search.topicDiscoveryFamily?.contributionIntent,
+            contractSource: search.topicDiscoveryFamily?.contractSource
+          })
+        );
+        const semanticRelevanceProfile = buildTopicDiscoveryCorpusRelevanceProfile(
+          plannedSearchFamilies
+        );
+        // Retrieval lanes are execution variants of one scientific family contract.
+        // Downstream reviewers must see each family exactly once.
+        const searchFamilies = semanticRelevanceProfile.families;
+        const candidatePoolAnchorProximatePaperIds = new Set<string>();
+        for (const row of topicDiscoveryCandidatePoolRows) {
+          const relevance = assessTopicDiscoveryPaperRelevance({
+            row,
+            profile: semanticRelevanceProfile,
+            eligibleQueryFamilies:
+              paperQueryFamilies.get(row.paper_id) ?? new Set<string>()
+          });
+          if (relevance.anchorProximate) {
+            candidatePoolAnchorProximatePaperIds.add(row.paper_id);
+          }
+        }
+        const lexicalMatchedFamilyIdsByPaper = new Map<string, Set<string>>();
+        for (const row of topicDiscoveryRows) {
+          const relevance = assessTopicDiscoveryPaperRelevance({
+            row,
+            profile: semanticRelevanceProfile,
+            eligibleQueryFamilies:
+              paperQueryFamilies.get(row.paper_id) ?? new Set<string>()
+          });
+          if (relevance.relevant) {
+            lexicalMatchedFamilyIdsByPaper.set(
+              row.paper_id,
+              new Set(relevance.matchedQueryFamilies)
+            );
+          }
+        }
+        topicDiscoverySemanticAudit = await runTopicDiscoverySemanticAudit({
+          llm: deps.llm,
+          rows: topicDiscoveryCandidatePoolRows,
+          searchFamilies: searchFamilies.map((family) => ({
+            queryFamily: family.queryFamily,
+            query: family.query,
+            axisTerms: family.axisTerms ?? [],
+            lens: family.lens ?? "",
+            contributionIntent: family.contributionIntent ?? ""
+          })),
+          lexicalMatchedFamilyIdsByPaper,
+          providerCandidatePaperIdsByFamily:
+            topicDiscoveryCandidatePaperIdsByFamily,
+          timeoutMs: resolveTopicDiscoverySemanticAuditTimeoutMs(),
+          abortSignal
+        });
+        const reviewerIdentity = resolveResearchLlmIdentity(deps.config);
+        const reviewerInputSha256 = createHash("sha256")
+          .update(JSON.stringify(topicDiscoverySemanticAudit.reviewer_input_payload), "utf8")
+          .digest("hex");
+        const semanticReviewInputContent = `${JSON.stringify({
+          version: TOPIC_DISCOVERY_SEMANTIC_REVIEW_INPUT_ARTIFACT_VERSION,
+          collect_attempt_id: collectAttemptId,
+          evidence_status: "semantic_review_input_only",
+          paper_evidence_allowed: false,
+          reviewer_identity: reviewerIdentity,
+          payload_sha256: reviewerInputSha256,
+          payload: topicDiscoverySemanticAudit.reviewer_input_payload
+        }, null, 2)}\n`;
+        const semanticReviewContent = `${JSON.stringify({
+          version: topicDiscoverySemanticAudit.version,
+          collect_attempt_id: collectAttemptId,
+          evidence_status: "semantic_review_judgment_only",
+          paper_evidence_allowed: false,
+          reviewer_identity: reviewerIdentity,
+          reviewer_input_sha256: reviewerInputSha256,
+          status: topicDiscoverySemanticAudit.status,
+          prompt_sha256: topicDiscoverySemanticAudit.prompt_sha256,
+          response_sha256: topicDiscoverySemanticAudit.response_sha256,
+          limits: topicDiscoverySemanticAudit.limits,
+          reviewer_input_bytes: topicDiscoverySemanticAudit.reviewer_input_bytes,
+          counts: topicDiscoverySemanticAudit.counts,
+          recall: topicDiscoverySemanticAudit.recall,
+          execution: topicDiscoverySemanticAudit.execution,
+          reasons: topicDiscoverySemanticAudit.reasons,
+          protocol_violations: topicDiscoverySemanticAudit.protocol_violations,
+          judgments: topicDiscoverySemanticAudit.judgments
+        }, null, 2)}\n`;
+        collectAttemptArtifactContents["collect_semantic_review_input.json"] =
+          semanticReviewInputContent;
+        collectAttemptArtifactContents["collect_semantic_review.json"] =
+          semanticReviewContent;
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await writeRunArtifact(
+              run,
+              "collect_semantic_review_input.json",
+              semanticReviewInputContent
+            );
+            await writeRunArtifact(
+              run,
+              "collect_semantic_review.json",
+              semanticReviewContent
+            );
+          }
+        });
+        const assessment = assessTopicDiscoveryCorpusQuality({
+          rows: topicDiscoveryCandidatePoolRows,
+          searchFamilies,
+          paperQueryFamilies,
+          semanticAudit: topicDiscoverySemanticAudit,
+          globalLimit: normalizedRequest.globalLimit
+        });
+        topicDiscoveryQualityAudit = {
+          ...assessment.audit,
+          collect_attempt_id: collectAttemptId
+        };
+        storedRows.clear();
+        fetchedPapers.clear();
+        newPaperIds.clear();
+        for (const [paperId, matchedQueryFamilies] of assessment.matchedQueryFamiliesByPaper) {
+          if (!assessment.retainedPaperIds.has(paperId)) {
+            continue;
+          }
+          const row = topicDiscoveryCandidateRows.get(paperId);
+          const paper = topicDiscoveryCandidatePapers.get(paperId);
+          if (!row || !paper) {
+            continue;
+          }
+          const queryFamilies = [...matchedQueryFamilies].sort();
+          storedRows.set(paperId, {
+            ...row,
+            query_families: queryFamilies
+          });
+          fetchedPapers.set(paperId, paper);
+          newPaperIds.add(paperId);
+        }
+        const corpusQualityContent = `${JSON.stringify(topicDiscoveryQualityAudit, null, 2)}\n`;
+        collectAttemptArtifactContents["collect_corpus_quality.json"] = corpusQualityContent;
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await writeRunArtifact(run, "collect_corpus_quality.json", corpusQualityContent);
+          }
+        });
+
+        for (const paperId of [...storedRows.keys()]) {
+          if (assessment.retainedPaperIds.has(paperId)) {
+            continue;
+          }
+          storedRows.delete(paperId);
+          fetchedPapers.delete(paperId);
+          newPaperIds.delete(paperId);
+        }
+        const retainedGovernanceWarnings = governanceWarnings.filter((warning) =>
+          assessment.retainedPaperIds.has(warning.paper_id)
+        );
+        governanceWarnings.splice(0, governanceWarnings.length, ...retainedGovernanceWarnings);
+        const semanticReviewSelectionsByPaper = new Map<
+          string,
+          Array<{
+            family_id: string;
+            selection_source:
+              | "lexical_match"
+              | "provider_provenance_floor";
+          }>
+        >();
+        for (const pair of topicDiscoverySemanticAudit.reviewer_input_payload.requested_pairs) {
+          const selections = semanticReviewSelectionsByPaper.get(pair.paper_id) ?? [];
+          selections.push({
+            family_id: pair.family_id,
+            selection_source: pair.selection_source
+          });
+          semanticReviewSelectionsByPaper.set(pair.paper_id, selections);
+        }
+        const candidatePoolContent = serializeJsonl(
+          topicDiscoveryCandidatePoolRows.map((row) => {
+            const paper = topicDiscoveryCandidatePapers.get(row.paper_id);
+            if (!paper) {
+              throw new Error("topic_discovery_candidate_provenance_missing");
+            }
+            const queryFamilies = [...(paperQueryFamilies.get(row.paper_id) || [])];
+            const familyRetrievalRanks = queryFamilies.map((familyId) => {
+              const rank = (
+                topicDiscoveryCandidatePaperIdsByFamily.get(familyId)
+                  ?.indexOf(row.paper_id) ?? -1
+              ) + 1;
+              if (rank <= 0) {
+                throw new Error("topic_discovery_candidate_family_rank_missing");
+              }
+              return { family_id: familyId, rank };
+            });
+            return {
+            ...row,
+            schema_version: TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION,
+            collect_attempt_id: collectAttemptId,
+            evidence_status: "semantic_screening_candidate_only",
+            paper_evidence_allowed: false,
+            retrieval_status: "retrieved_governance_usable",
+            query_families: queryFamilies,
+            family_retrieval_ranks: familyRetrievalRanks,
+            canonical_search_source: paper.canonicalSource,
+            search_providers: [...new Set(paper.searchProviders)],
+            lexical_matched_query_families: [
+              ...(lexicalMatchedFamilyIdsByPaper.get(row.paper_id) || [])
+            ],
+            semantic_review_selections:
+              semanticReviewSelectionsByPaper.get(row.paper_id) ?? [],
+            semantic_review_requested_query_families: (
+              semanticReviewSelectionsByPaper.get(row.paper_id) ?? []
+            ).map((selection) => selection.family_id),
+            semantic_review_requested:
+              (semanticReviewSelectionsByPaper.get(row.paper_id)?.length ?? 0) > 0,
+            selected_by_semantic_quality: assessment.retainedPaperIds.has(row.paper_id),
+            published_in_corpus:
+              assessment.audit.passed
+              && assessment.retainedPaperIds.has(row.paper_id)
+          }})
+        );
+
+        if (!topicDiscoveryQualityAudit.passed) {
+          const failedQualityAudit = topicDiscoveryQualityAudit;
+          const perFamilyFloor =
+            failedQualityAudit.thresholds.minimum_direct_support_per_family;
+          const precisionFloor =
+            failedQualityAudit.thresholds.minimum_semantic_precision_per_family;
+          const familyMeetsQualityFloor = (
+            family: TopicDiscoveryCorpusQualityAudit["query_families"][number]
+          ) =>
+            family.direct_support_paper_count >= perFamilyFloor
+            && family.semantic_precision >= precisionFloor;
+          const supportedQueryFamilies: SupportedLiteratureQueryFamilyFeedback[] =
+            failedQualityAudit.query_families
+            .filter(familyMeetsQualityFloor)
+            .map((family) => ({
+              queryFamily: family.query_family,
+              query: family.query,
+              axisTerms: family.axis_terms,
+              lens: family.lens,
+              contributionIntent: parseTopicDiscoveryContributionIntent(
+                family.contribution_intent
+              ),
+              contractSource: family.contract_source,
+              relevantPaperCount: family.direct_support_paper_count
+            }));
+          const rejectedQueryFamilies = failedQualityAudit.query_families
+            .filter((family) => !familyMeetsQualityFloor(family));
+          const candidateTitles = buildTopicDiscoveryCandidateTitleFeedback({
+            rows: topicDiscoveryCandidatePoolRows,
+            anchorProximatePaperIds: candidatePoolAnchorProximatePaperIds,
+            paperQueryFamilies,
+            audit: topicDiscoveryQualityAudit
+          });
+          const semanticOperationalFailure =
+            topicDiscoverySemanticAudit.status === "operational_failure";
+          const semanticRecoveryExhausted = topicDiscoverySemanticAudit.reasons
+            .includes("semantic_audit_timeout_partitions_exhausted");
+          const semanticReviewComplete = topicDiscoverySemanticAudit.status === "complete";
+          let accumulatedFeedback = {
+            candidateTitles: semanticReviewComplete ? candidateTitles : [],
+            rejectedQueries: semanticReviewComplete
+              ? rejectedQueryFamilies.map((family) => family.query)
+              : [],
+            supportedQueryFamilies: semanticReviewComplete ? supportedQueryFamilies : []
+          };
+          if (semanticReviewComplete) {
+            const feedbackPublication = await publishForCollectGeneration({
+              run,
+              attemptId: collectAttemptId,
+              action: async () => recordLiteratureQueryPlanRejection(runContextMemory, {
+                rejectedQueries: rejectedQueryFamilies.map(
+                  (family) => family.query
+                ),
+                qualityReasons: failedQualityAudit.reasons,
+                sharedAnchorTerms:
+                  failedQualityAudit.observed.shared_anchor_terms,
+                candidateTitles,
+                scientificScopeFingerprint:
+                  generatedQueries?.scientificScopeContract?.scopeFingerprint,
+                queryFamilies: failedQualityAudit.query_families.map(
+                  (family) => ({
+                    queryFamily: family.query_family,
+                    query: family.query,
+                    axisTerms: family.axis_terms,
+                    lens: family.lens,
+                    contributionIntent: parseTopicDiscoveryContributionIntent(
+                      family.contribution_intent
+                    ),
+                    contractSource: family.contract_source,
+                    relevantPaperCount: family.direct_support_paper_count
+                  })
+                ),
+                supportedQueryFamilies
+              })
+            });
+            if (feedbackPublication.value) {
+              accumulatedFeedback = {
+                candidateTitles: feedbackPublication.value.candidateTitles,
+                rejectedQueries: feedbackPublication.value.rejectedQueries,
+                supportedQueryFamilies:
+                  feedbackPublication.value.supportedQueryFamilies
+                  ?? supportedQueryFamilies
+              };
+            }
+          }
+          const reformulationHintsContent = `${JSON.stringify({
+              version: 2,
+              collect_attempt_id: collectAttemptId,
+              strategy: "anchor_proximate_title_pseudo_relevance_feedback",
+              evidence_status: "query_hint_only",
+              paper_evidence_allowed: false,
+              active: semanticReviewComplete,
+              failure_class: semanticReviewComplete
+                ? "query_quality_failure"
+                : semanticOperationalFailure
+                  ? "semantic_review_operational_failure"
+                  : "semantic_review_incomplete",
+              feedback_applied: semanticReviewComplete,
+              semantic_review_status: topicDiscoverySemanticAudit.status,
+              feedback_scope: "bounded_retry_history",
+              shared_anchor_terms: topicDiscoveryQualityAudit.observed.shared_anchor_terms,
+              candidate_titles: accumulatedFeedback.candidateTitles,
+              current_retrieval_candidate_titles: candidateTitles,
+              rejected_queries: accumulatedFeedback.rejectedQueries,
+              supported_query_families:
+                accumulatedFeedback.supportedQueryFamilies ?? supportedQueryFamilies,
+              current_retrieval_supported_query_families: supportedQueryFamilies,
+              rejected_query_families: rejectedQueryFamilies.map((family) => ({
+                query_family: family.query_family,
+                query: family.query,
+                axis_terms: family.axis_terms,
+                direct_support_paper_count: family.direct_support_paper_count,
+                semantic_precision: family.semantic_precision
+              }))
+            }, null, 2)}\n`;
+          collectAttemptArtifactContents["collect_query_reformulation_hints.json"] =
+            reformulationHintsContent;
+          collectAttemptArtifactContents[TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT] =
+            candidatePoolContent;
+          await publishForCollectGeneration({
+            run,
+            attemptId: collectAttemptId,
+            action: async () => {
+              await writeRunArtifact(
+                run,
+                "collect_query_reformulation_hints.json",
+                reformulationHintsContent
+              );
+              await writeRunArtifact(
+                run,
+                TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT,
+                candidatePoolContent
+              );
+            }
+          });
+          storedRows.clear();
+          fetchedPapers.clear();
+          newPaperIds.clear();
+          governanceWarnings.splice(0, governanceWarnings.length);
+          topicDiscoveryQualityFailure = semanticRecoveryExhausted
+            ? `topic_discovery_semantic_review_recovery_exhausted: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
+              + "The frozen semantic-review recovery budget is exhausted; do not rerun retrieval automatically."
+            : !semanticReviewComplete
+              ? `Topic-discovery semantic review ${semanticOperationalFailure ? "failed operationally" : "was incomplete"}: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
+                + "Retry the semantic review without learning from or revising the query plan."
+            : `Topic-discovery corpus quality gate failed: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
+              + "Revise the independent query families before this corpus can be approved.";
+        } else {
+          const reformulationHintsContent = `${JSON.stringify({
+              version: 2,
+              collect_attempt_id: collectAttemptId,
+              active: false,
+              evidence_status: "none",
+              paper_evidence_allowed: false,
+              candidate_titles: [],
+              rejected_queries: [],
+              supported_query_families: [],
+              current_retrieval_supported_query_families: [],
+              rejected_query_families: []
+            }, null, 2)}\n`;
+          collectAttemptArtifactContents["collect_query_reformulation_hints.json"] =
+            reformulationHintsContent;
+          collectAttemptArtifactContents[TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT] =
+            candidatePoolContent;
+          await publishForCollectGeneration({
+            run,
+            attemptId: collectAttemptId,
+            action: async () => {
+              await clearLiteratureQueryPlanRejection(runContextMemory);
+              await writeRunArtifact(
+                run,
+                "collect_query_reformulation_hints.json",
+                reformulationHintsContent
+              );
+              await writeRunArtifact(
+                run,
+                TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT,
+                candidatePoolContent
+              );
+            }
+          });
+        }
+      }
+
+      const collectToolCallsUsed = topicDiscoverySemanticAudit
+        ? 1 + topicDiscoverySemanticAudit.execution.calls_started
+        : 1;
+
       const zeroResultFailure =
-        !fetchError && mode === "replace" && storedRows.size === 0
+        !fetchError && !topicDiscoveryQualityFailure && mode === "replace" && storedRows.size === 0
           ? buildCollectZeroResultsMessage(
               queryAttempts,
               normalizedRequest.requestedQuery,
@@ -666,6 +1650,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             )
           : undefined;
       const papersToEnrich = zeroResultFailure
+        || topicDiscoveryQualityFailure
+        || normalizedRequest.strategy === "candidate_prior_portfolio"
         ? []
         : Array.from(fetchedPapers.values()).filter((paper) =>
             shouldEnrichStoredRow(storedRows.get(paper.paperId), bibtexMode)
@@ -673,6 +1659,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
 
       storedCount = storedRows.size;
       const resultMeta = buildCollectResultMeta({
+        collectAttemptId,
         request: effectiveRequest,
         fetched: fetchedPapers.size,
         stored: storedCount,
@@ -682,8 +1669,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         diagnostics,
         filters: effectiveRequest.filters || {},
         bibtexMode,
-        completed: !fetchError && !zeroResultFailure,
-        fetchError: fetchError || zeroResultFailure,
+        completed: !fetchError && !zeroResultFailure && !topicDiscoveryQualityFailure,
+        fetchError: fetchError || zeroResultFailure || topicDiscoveryQualityFailure,
         pdfRecovered,
         bibtexEnriched,
         aggregationReport,
@@ -691,6 +1678,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: normalizedRequest.requestedQuery,
         queryAttempts,
+        corpusQuality: topicDiscoveryQualityAudit,
         governanceWarnings,
         enrichment:
           papersToEnrich.length > 0
@@ -712,7 +1700,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               }
       });
 
-      await persistCollectSnapshot({
+      const collectionSnapshot = await persistCollectSnapshot({
         run,
         rows: Array.from(storedRows.values()),
         mode,
@@ -722,8 +1710,96 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         bibtexMode,
         aggregationReport
       });
+      if (
+        candidatePriorSearchPlan
+        && !fetchError
+        && !zeroResultFailure
+        && !topicDiscoveryQualityFailure
+      ) {
+        const resultCorpusRaw = collectionSnapshot.artifacts["corpus.jsonl"];
+        if (resultCorpusRaw === undefined) {
+          throw new Error("candidate_prior_search_result_corpus_missing");
+        }
+        const receiptAttempts: CandidatePriorSearchAttemptResult[] =
+          queryAttempts.map((attempt) => {
+            if (attempt.retrievalLane === "standard") {
+              throw new Error(
+                "candidate_prior_search_standard_lane_forbidden"
+              );
+            }
+            return {
+              familyId: attempt.queryFamily,
+              retrievalLane: attempt.retrievalLane,
+              query: attempt.query,
+              fetched: attempt.fetched,
+              selected: attempt.selected,
+              selectedPaperIds: [
+                ...(candidatePriorAttemptPaperIds.get(
+                  `${attempt.queryFamily}::${attempt.retrievalLane}`
+                ) ?? [])
+              ].sort()
+            };
+          });
+        const receipt = buildCandidatePriorSearchReceipt({
+          plan: candidatePriorSearchPlan,
+          collectAttemptId,
+          generatedAt: new Date().toISOString(),
+          resultCorpusSha256: createHash("sha256")
+            .update(resultCorpusRaw, "utf8")
+            .digest("hex"),
+          resultCorpusByteLength: Buffer.byteLength(resultCorpusRaw, "utf8"),
+          attempts: receiptAttempts
+        });
+        const receiptContent = `${JSON.stringify(receipt, null, 2)}\n`;
+        collectAttemptArtifactContents[CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT] =
+          receiptContent;
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => {
+            await writeRunArtifact(
+              run,
+              CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT,
+              receiptContent
+            );
+          }
+        });
+      }
+      await archiveCurrentCollectAttempt({
+        run,
+        attemptId: collectAttemptId,
+        status: resolveCollectAttemptStatus({
+          fetchError: fetchError || zeroResultFailure,
+          corpusQuality: topicDiscoveryQualityAudit
+        }),
+        phase: "collection",
+        includeTopicDiscoveryArtifacts: Boolean(topicDiscoveryQualityAudit),
+        includeCandidatePriorArtifacts: Boolean(candidatePriorSearchPlan),
+        artifactContents: {
+          ...collectAttemptArtifactContents,
+          ...collectionSnapshot.artifacts
+        }
+      });
+      if (!collectionSnapshot.published) {
+        const message = `collect_papers attempt ${collectAttemptId} was superseded before its collection snapshot could be published.`;
+        return {
+          status: "failure",
+          error: message,
+          summary: message,
+          toolCallsUsed: collectToolCallsUsed
+        };
+      }
+      await publishForCollectGeneration({
+        run,
+        attemptId: collectAttemptId,
+        action: async () => {
+          await runContextMemory.put("collect_papers.last_attempt_id", collectAttemptId);
+          await runContextMemory.put("collect_papers.active_attempt_id", null);
+        }
+      });
 
       await syncCollectRunContext({
+        run,
         runContextMemory,
         request: effectiveRequest,
         resultMeta,
@@ -739,7 +1815,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           }
         });
       }
-      if (fetchError || zeroResultFailure) {
+      if (fetchError || zeroResultFailure || topicDiscoveryQualityFailure) {
         // syncCollectRunContext already persisted the fetch/zero-result error.
       } else {
         await longTermStore.append({
@@ -759,7 +1835,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           papers: storedCount,
           query: effectiveRequest.query,
           requested_limit: effectiveRequest.limit,
-          fetch_error: fetchError || zeroResultFailure
+          fetch_error: fetchError || zeroResultFailure || topicDiscoveryQualityFailure
         }
       });
 
@@ -773,7 +1849,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           status: "failure",
           error: failureMessage,
           summary: failureMessage,
-          toolCallsUsed: 1
+          toolCallsUsed: collectToolCallsUsed
         };
       }
 
@@ -782,7 +1858,16 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           status: "failure",
           error: zeroResultFailure,
           summary: zeroResultFailure,
-          toolCallsUsed: 1
+          toolCallsUsed: collectToolCallsUsed
+        };
+      }
+
+      if (topicDiscoveryQualityFailure) {
+        return {
+          status: "failure",
+          error: topicDiscoveryQualityFailure,
+          summary: topicDiscoveryQualityFailure,
+          toolCallsUsed: collectToolCallsUsed
         };
       }
 
@@ -817,7 +1902,10 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           pendingSummary: buildCollectSummary(resultMeta),
           aggregationReport,
           requestedQuery: normalizedRequest.requestedQuery,
-          queryAttempts
+          queryAttempts,
+          corpusQuality: topicDiscoveryQualityAudit,
+          governanceWarnings,
+          collectAttemptId
         });
       }
 
@@ -825,10 +1913,63 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         status: "success",
         summary: buildCollectSummary(resultMeta),
         needsApproval: true,
-        toolCallsUsed: 1
+        toolCallsUsed: collectToolCallsUsed
       };
     }
   };
+}
+
+function buildTopicDiscoveryCandidateTitleFeedback(input: {
+  rows: StoredCorpusRow[];
+  anchorProximatePaperIds: ReadonlySet<string>;
+  paperQueryFamilies: ReadonlyMap<string, ReadonlySet<string>>;
+  audit: TopicDiscoveryCorpusQualityAudit;
+}): string[] {
+  const selected: string[] = [];
+  const seen = new Set<string>();
+  const push = (title: string) => {
+    const normalized = title.replace(/\s+/gu, " ").trim().slice(0, 240);
+    const key = normalized.toLowerCase();
+    if (normalized && !seen.has(key)) {
+      seen.add(key);
+      selected.push(normalized);
+    }
+  };
+
+  for (const family of input.audit.query_families) {
+    const axisTerms = new Set(family.axis_terms);
+    const ranked = input.rows
+      .filter((row) =>
+        input.anchorProximatePaperIds.has(row.paper_id)
+        && input.paperQueryFamilies.get(row.paper_id)?.has(family.query_family)
+      )
+      .map((row, index) => {
+        const terms = new Set(extractLiteratureTermSequence(`${row.title}\n${row.abstract}`));
+        const axisMatches = [...axisTerms].filter((term) => terms.has(term)).length;
+        return { row, index, axisMatches };
+      })
+      .sort((left, right) => right.axisMatches - left.axisMatches || left.index - right.index);
+    for (const candidate of ranked.slice(0, 6)) {
+      push(candidate.row.title);
+    }
+  }
+
+  for (const row of input.rows) {
+    if (selected.length >= MAX_TOPIC_DISCOVERY_FEEDBACK_TITLES) {
+      break;
+    }
+    if (input.anchorProximatePaperIds.has(row.paper_id)) {
+      push(row.title);
+    }
+  }
+  return selected.slice(0, MAX_TOPIC_DISCOVERY_FEEDBACK_TITLES);
+}
+
+function isMultiQueryPortfolioStrategy(
+  strategy: PreparedCollectRequestPlan["strategy"]
+): boolean {
+  return strategy === "topic_portfolio"
+    || strategy === "candidate_prior_portfolio";
 }
 
 function normalizeCollectRequest(input: {
@@ -837,8 +1978,11 @@ function normalizeCollectRequest(input: {
   rawBrief?: string;
   extractedBriefTopic?: string;
   llmGeneratedQueries?: string[];
+  llmTopicDiscoveryPlan?: GeneratedTopicDiscoveryPlan;
+  llmPlanningFailure?: string;
   constraintProfile: { collect: CollectPapersNodeRequest["filters"] };
   configuredLimit: number;
+  asOfDate: string;
 }): PreparedCollectRequestPlan {
   const configuredLimit = Math.max(1, input.configuredLimit);
   const request = input.request;
@@ -855,6 +1999,53 @@ function normalizeCollectRequest(input: {
   const sortField = request?.sort?.field ?? "relevance";
   const sortOrder = request?.sort?.order ?? (sortField === "paperId" ? "asc" : "desc");
   const requestedQuery = request?.query?.trim() || undefined;
+  const candidatePriorSearchPlan = request?.candidatePriorSearchPlan;
+  if (candidatePriorSearchPlan) {
+    const planValidation = validateCandidatePriorSearchPlanIntegrity(
+      candidatePriorSearchPlan
+    );
+    if (!planValidation.valid) {
+      throw new Error(
+        `candidate_prior_search_plan_invalid:${planValidation.reasons.join(",")}`
+      );
+    }
+    const searchPlan: PlannedCollectSearch[] =
+      candidatePriorSearchPlan.candidates.flatMap((candidate) =>
+        candidate.families.flatMap((family) =>
+          family.lanes.map((lane) => ({
+            request: {
+              query: family.query,
+              limit,
+              retrievalIntent: "topic_discovery" as const,
+              sort: lane.sort,
+              filters: lane.publication_date_range
+                ? {
+                    publicationDateOrYear:
+                      `${lane.publication_date_range.start_date}:`
+                      + lane.publication_date_range.end_date
+                  }
+                : {}
+            },
+            queryFamily: family.family_id,
+            retrievalLane: lane.retrieval_lane,
+            reason: "llm_generated" as const,
+            source: "candidate_prior_plan" as const,
+            sourceReason:
+              `candidate_prior:${candidate.candidate_id}:`
+              + `${family.query_intent}:${lane.retrieval_lane}`,
+            filtersRelaxed: false
+          }))
+        )
+      );
+    return {
+      primaryRequest: searchPlan[0]?.request,
+      searchPlan,
+      strategy: "candidate_prior_portfolio",
+      globalLimit: limit,
+      suppressedFilters: [],
+      candidatePriorSearchPlan
+    };
+  }
   const queryCandidates = buildLiteratureQueryCandidates({
     requestedQuery,
     runTopic: input.topic,
@@ -862,9 +2053,44 @@ function normalizeCollectRequest(input: {
     extractedBriefTopic: input.extractedBriefTopic,
     briefTopic: extractResearchBriefTopic(input.rawBrief)
   });
+  const researchMode = parseResearchRunMode(input.rawBrief || "");
+  const strategy: PreparedCollectRequestPlan["strategy"] =
+    researchMode === "topic_discovery"
+      ? "topic_portfolio"
+      : "first_yield";
+  const topicDiscoveryFamiliesByQuery = new Map(
+    (input.llmTopicDiscoveryPlan?.families ?? []).map((family) => [
+      family.query.toLowerCase(),
+      {
+        familyId: family.id,
+        sharedAnchorTerms: [...(input.llmTopicDiscoveryPlan?.sharedAnchorTerms ?? [])],
+        axisTerms: [...family.axisTerms],
+        lens: family.lens,
+        contributionIntent: family.contributionIntent,
+        contractSource: family.contractSource
+      } satisfies TopicDiscoverySearchFamilyIntent
+    ])
+  );
+  const selectedCandidates =
+    strategy === "topic_portfolio"
+      ? selectTopicDiscoveryQueryFamilies(queryCandidates)
+      : queryCandidates;
+  const structuredTopicCandidates =
+    strategy === "topic_portfolio"
+      ? selectedCandidates.filter((candidate) =>
+          topicDiscoveryFamiliesByQuery.has(candidate.query.toLowerCase())
+        )
+      : [];
+  const executableCandidates =
+    strategy === "topic_portfolio"
+      ? structuredTopicCandidates.length >= TOPIC_DISCOVERY_MIN_QUERY_FAMILIES
+        ? structuredTopicCandidates
+        : []
+      : selectedCandidates;
   const mergedFilters = buildSemanticScholarFilters(
     mergeCollectConstraintDefaults(request?.filters, input.constraintProfile.collect)
   );
+  const filterPolicy = resolveCollectSearchFilterPolicy(strategy, mergedFilters);
   const sort = {
     field: sortField,
     order: sortOrder
@@ -874,8 +2100,13 @@ function normalizeCollectRequest(input: {
   const pushSearch = (
     query: string,
     reason: LiteratureQueryCandidate["reason"],
+    source: PlannedCollectSearch["source"],
+    sourceReason: string,
     filters: SemanticScholarSearchFilters,
-    filtersRelaxed: boolean
+    filtersRelaxed: boolean,
+    topicDiscoveryFamily: TopicDiscoverySearchFamilyIntent | undefined,
+    retrievalLane: TopicDiscoveryRetrievalLane,
+    requestSort = sort
   ) => {
     const normalizedQuery = query.trim();
     if (!normalizedQuery) {
@@ -884,30 +2115,291 @@ function normalizeCollectRequest(input: {
     const candidateRequest: SemanticScholarSearchRequest = {
       query: normalizedQuery,
       limit,
-      sort,
+      ...(strategy === "topic_portfolio"
+        ? {
+            retrievalIntent: "topic_discovery" as const,
+            topicDiscoveryFamily
+          }
+        : {}),
+      sort: requestSort,
       filters
     };
-    const key = `${normalizedQuery.toLowerCase()}::${serializeSearchFilters(filters)}`;
+    const key = [
+      normalizedQuery.toLowerCase(),
+      serializeSearchFilters(filters),
+      requestSort.field,
+      requestSort.order
+    ].join("::");
     if (seen.has(key)) {
+      return;
+    }
+    const queryFamily =
+      topicDiscoveryFamily?.familyId ||
+      buildLiteratureQueryFamilySignature(normalizedQuery);
+    if (!queryFamily) {
       return;
     }
     seen.add(key);
     searchPlan.push({
       request: candidateRequest,
+      queryFamily,
+      retrievalLane,
+      topicDiscoveryFamily,
       reason,
+      source,
+      sourceReason,
       filtersRelaxed
     });
   };
 
-  for (const candidate of queryCandidates) {
-    pushSearch(candidate.query, candidate.reason, mergedFilters, false);
+  for (const candidate of executableCandidates) {
+    const source = resolveCollectQuerySource(candidate.reason);
+    const sourceReason =
+      source === "deterministic_query"
+        ? input.llmPlanningFailure ||
+          (input.llmGeneratedQueries?.length
+            ? strategy === "topic_portfolio"
+              ? "topic_discovery_portfolio_fill"
+              : "first_yield_low_yield_fallback"
+            : candidate.reason)
+        : candidate.reason;
+    const topicDiscoveryFamily = strategy === "topic_portfolio"
+      ? topicDiscoveryFamiliesByQuery.get(candidate.query.toLowerCase())
+      : undefined;
+    if (strategy === "topic_portfolio") {
+      pushSearch(
+        candidate.query,
+        candidate.reason,
+        source,
+        `${sourceReason}:recent_direct_prior`,
+        buildRecentDirectPriorFilters(filterPolicy.filters, input.asOfDate),
+        false,
+        topicDiscoveryFamily,
+        "recent_direct_prior",
+        { field: "publicationDate", order: "desc" }
+      );
+      pushSearch(
+        candidate.query,
+        candidate.reason,
+        source,
+        `${sourceReason}:broad_relevance`,
+        filterPolicy.filters,
+        false,
+        topicDiscoveryFamily,
+        "broad_relevance",
+        { field: "relevance", order: "desc" }
+      );
+    } else {
+      pushSearch(
+        candidate.query,
+        candidate.reason,
+        source,
+        sourceReason,
+        filterPolicy.filters,
+        false,
+        undefined,
+        "standard"
+      );
+    }
   }
 
   return {
     primaryRequest: searchPlan[0]?.request,
-    searchPlan: searchPlan.slice(0, 8),
-    requestedQuery
+    searchPlan:
+      strategy === "topic_portfolio"
+        ? searchPlan.slice(
+            0,
+            TOPIC_DISCOVERY_MAX_QUERY_FAMILIES
+              * TOPIC_DISCOVERY_SEARCH_LANES_PER_FAMILY
+          )
+        : searchPlan.slice(0, 8),
+    requestedQuery,
+    strategy,
+    globalLimit: limit,
+    suppressedFilters: filterPolicy.suppressedFilters
   };
+}
+
+function buildRecentDirectPriorFilters(
+  filters: SemanticScholarSearchFilters,
+  asOfDate: string
+): SemanticScholarSearchFilters {
+  if (filters.publicationDateOrYear || filters.year) {
+    return { ...filters };
+  }
+  const parsed = new Date(asOfDate);
+  if (!Number.isFinite(parsed.getTime())) {
+    return { ...filters };
+  }
+  const endDate = parsed.toISOString().slice(0, 10);
+  const startYear = parsed.getUTCFullYear() - 1;
+  return {
+    ...filters,
+    publicationDateOrYear: `${startYear}-01-01:${endDate}`
+  };
+}
+
+function selectTopicDiscoveryQueryFamilies(
+  candidates: LiteratureQueryCandidate[]
+): LiteratureQueryCandidate[] {
+  const normalizedCandidates = candidates.flatMap((candidate) => {
+    const query = normalizeTopicDiscoveryLiteratureQuery(candidate.query);
+    return query ? [{ ...candidate, query }] : [];
+  });
+  const llmCandidates = selectIndependentLiteratureQueryCandidates(
+    normalizedCandidates.filter((candidate) => candidate.reason === "llm_generated"),
+    TOPIC_DISCOVERY_MAX_QUERY_FAMILIES
+  );
+  if (llmCandidates.length >= TOPIC_DISCOVERY_MIN_QUERY_FAMILIES) {
+    return llmCandidates;
+  }
+
+  const deterministicCandidates = normalizedCandidates.filter(
+    (candidate) => candidate.reason !== "requested_query" && candidate.reason !== "llm_generated"
+  );
+  return selectIndependentLiteratureQueryCandidates(
+    [...llmCandidates, ...deterministicCandidates],
+    TOPIC_DISCOVERY_MAX_QUERY_FAMILIES
+  );
+}
+
+function buildTopicDiscoveryRelevanceProfile(
+  plan: PreparedCollectRequestPlan
+): TopicDiscoveryCorpusRelevanceProfile | undefined {
+  if (plan.strategy !== "topic_portfolio") {
+    return undefined;
+  }
+  return buildTopicDiscoveryCorpusRelevanceProfile(
+    plan.searchPlan.map((search) => ({
+      queryFamily: search.queryFamily,
+      query: search.request.query,
+      source: search.source,
+      sharedAnchorTerms: search.topicDiscoveryFamily?.sharedAnchorTerms,
+      axisTerms: search.topicDiscoveryFamily?.axisTerms,
+      lens: search.topicDiscoveryFamily?.lens,
+      contributionIntent: search.topicDiscoveryFamily?.contributionIntent,
+      contractSource: search.topicDiscoveryFamily?.contractSource
+    }))
+  );
+}
+
+function resolveResearchLlmIdentity(config: NodeExecutionDeps["config"]): string {
+  if (!config?.providers) {
+    return "unconfigured";
+  }
+  const mode = config.providers.llm_mode;
+  if (mode === "openai_api") {
+    return `${mode}:${config.providers.openai.model}:${config.providers.openai.reasoning_effort}`;
+  }
+  if (mode === "ollama") {
+    return `${mode}:${config.providers.ollama?.research_model || "unconfigured"}:${config.providers.ollama?.research_reasoning_effort || "default"}`;
+  }
+  return `${mode}:${config.providers.codex.model}:${config.providers.codex.reasoning_effort}`;
+}
+
+function resolveTopicDiscoverySemanticAuditTimeoutMs(): number | undefined {
+  const raw = process.env.AUTOLABOS_CORPUS_SEMANTIC_AUDIT_TIMEOUT_MS;
+  if (!raw?.trim()) {
+    return undefined;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function parseTopicDiscoveryContributionIntent(
+  value: string
+): TopicDiscoveryContributionIntent | undefined {
+  return value === "method"
+    || value === "measurement"
+    || value === "dataset_or_benchmark"
+    || value === "empirical_finding"
+    || value === "theory"
+    || value === "reproducibility"
+    ? value
+    : undefined;
+}
+
+function resolveTopicDiscoveryRetrievalLimit(
+  allocatedLimit: number,
+  globalLimit: number
+): number {
+  return Math.max(
+    1,
+    Math.min(
+      Math.max(1, Math.floor(globalLimit)),
+      Math.max(1, Math.floor(allocatedLimit)) *
+        TOPIC_DISCOVERY_RETRIEVAL_OVERFETCH_MULTIPLIER
+    )
+  );
+}
+
+function rememberTopicDiscoveryCandidate(input: {
+  rows: Map<string, StoredCorpusRow>;
+  paperQueryFamilies: Map<string, Set<string>>;
+  paperIdsByFamily: Map<string, string[]>;
+  row: StoredCorpusRow;
+  queryFamily: string;
+}): void {
+  input.rows.set(
+    input.row.paper_id,
+    mergeStoredCorpusRows(input.rows.get(input.row.paper_id), input.row)
+  );
+  const queryFamilies =
+    input.paperQueryFamilies.get(input.row.paper_id) ?? new Set<string>();
+  queryFamilies.add(input.queryFamily);
+  input.paperQueryFamilies.set(input.row.paper_id, queryFamilies);
+  const familyPaperIds = input.paperIdsByFamily.get(input.queryFamily) ?? [];
+  if (!familyPaperIds.includes(input.row.paper_id)) {
+    familyPaperIds.push(input.row.paper_id);
+    input.paperIdsByFamily.set(input.queryFamily, familyPaperIds);
+  }
+}
+
+function mergePaperSearchAggregationReports(
+  previous: PaperSearchAggregationReport | undefined,
+  next: PaperSearchAggregationReport
+): PaperSearchAggregationReport {
+  if (!previous) {
+    return {
+      ...next,
+      providers: [...next.providers],
+      providerDiagnostics: [...next.providerDiagnostics],
+      clusters: [...next.clusters]
+    };
+  }
+  const providers = [...new Set([...previous.providers, ...next.providers])];
+  const clusters = new Map(previous.clusters.map((cluster) => [cluster.paperId, cluster]));
+  for (const cluster of next.clusters) {
+    if (!clusters.has(cluster.paperId)) {
+      clusters.set(cluster.paperId, cluster);
+    }
+  }
+  return {
+    source:
+      providers.length === 1 && providers[0] === "semantic_scholar"
+        ? "semantic_scholar"
+        : "aggregated",
+    rawCandidateCount: previous.rawCandidateCount + next.rawCandidateCount,
+    canonicalCount: previous.canonicalCount + next.canonicalCount,
+    providers,
+    providerDiagnostics: [
+      ...previous.providerDiagnostics,
+      ...next.providerDiagnostics
+    ],
+    clusters: [...clusters.values()]
+  };
+}
+
+function resolveCollectQuerySource(
+  reason: LiteratureQueryCandidate["reason"]
+): CollectQueryAttemptMeta["source"] {
+  if (reason === "requested_query") {
+    return "requested_query";
+  }
+  if (reason === "llm_generated") {
+    return "llm_query_planner";
+  }
+  return "deterministic_query";
 }
 
 function buildSemanticScholarFilters(
@@ -926,6 +2418,32 @@ function buildSemanticScholarFilters(
     year: publicationDateOrYear ? undefined : filters.year,
     venue: filters.venues?.filter(Boolean),
     fieldsOfStudy: filters.fieldsOfStudy?.filter(Boolean)
+  };
+}
+
+function resolveCollectSearchFilterPolicy(
+  strategy: PreparedCollectRequestPlan["strategy"],
+  filters: SemanticScholarSearchFilters
+): {
+  filters: SemanticScholarSearchFilters;
+  suppressedFilters: PreparedCollectRequestPlan["suppressedFilters"];
+} {
+  if (strategy !== "topic_portfolio" || !filters.fieldsOfStudy?.length) {
+    return {
+      filters,
+      suppressedFilters: []
+    };
+  }
+  const { fieldsOfStudy, ...portableFilters } = filters;
+  return {
+    filters: portableFilters,
+    suppressedFilters: [
+      {
+        filter: "fieldsOfStudy",
+        values: [...fieldsOfStudy],
+        reason: "topic_discovery_cross_provider_taxonomy_mismatch"
+      }
+    ]
   };
 }
 
@@ -1097,77 +2615,9 @@ function shouldEnrichStoredRow(row: StoredCorpusRow | undefined, bibtexMode: Bib
   return scoreBibtexRichness(currentBibtex) < 10 && Boolean(row.doi || row.arxiv_id || row.landing_url);
 }
 
-function pruneLightweightOffTopicTail(input: {
-  runTopic: string;
-  requestedQuery?: string;
-  effectiveQuery: string;
-  sortField?: "relevance" | "citationCount" | "publicationDate" | "paperId";
-  mode: "replace" | "additional";
-  storedRows: Map<string, StoredCorpusRow>;
-}): string[] {
-  if (input.mode !== "replace" || input.sortField !== "relevance") {
-    return [];
-  }
-
-  const rows = Array.from(input.storedRows.values());
-  if (rows.length < LIGHTWEIGHT_TAIL_MIN_ROWS || rows.length > LIGHTWEIGHT_TAIL_MAX_ROWS) {
-    return [];
-  }
-
-  if (!isLightweightTabularCollectTopic([input.runTopic, input.requestedQuery, input.effectiveQuery].filter(Boolean).join(" "))) {
-    return [];
-  }
-
-  const keptRows = rows.filter((row) => isStrongLightweightTabularMatch(row));
-  if (keptRows.length < 3 || keptRows.length === rows.length) {
-    return [];
-  }
-
-  const keptIds = new Set(keptRows.map((row) => row.paper_id));
-  const removedPaperIds: string[] = [];
-  for (const row of rows) {
-    if (keptIds.has(row.paper_id)) {
-      continue;
-    }
-    input.storedRows.delete(row.paper_id);
-    removedPaperIds.push(row.paper_id);
-  }
-  return removedPaperIds;
-}
-
-function isLightweightTabularCollectTopic(text: string): boolean {
-  const tokenSet = new Set(tokenizeCollectText(text));
-  if (!hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS)) {
-    return false;
-  }
-  return hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_SCOPE_TOKENS);
-}
-
-function isStrongLightweightTabularMatch(row: StoredCorpusRow): boolean {
-  const tokenSet = new Set(tokenizeCollectText(`${row.title} ${row.abstract || ""}`));
-  const hasRequiredAnchor = hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_REQUIRED_TOKENS);
-  const hasSupportAnchor = hasAnyToken(tokenSet, LIGHTWEIGHT_TABULAR_SUPPORT_TOKENS);
-  return hasRequiredAnchor && hasSupportAnchor;
-}
-
-function hasAnyToken(tokenSet: Set<string>, candidates: Set<string>): boolean {
-  for (const token of candidates) {
-    if (tokenSet.has(token)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function tokenizeCollectText(text: string): string[] {
-  const matches = text.toLowerCase().match(/[a-z0-9]+/g);
-  if (!matches) {
-    return [];
-  }
-  return matches.filter((token) => token.length > 1 && !COLLECT_STOPWORDS.has(token));
-}
 
 async function runEnrichmentPass(input: {
+  collectAttemptId?: string;
   papers: SemanticScholarPaper[];
   storedRows: Map<string, StoredCorpusRow>;
   run: CollectRunRef;
@@ -1190,6 +2640,8 @@ async function runEnrichmentPass(input: {
   aggregationReport?: PaperSearchAggregationReport;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
+  corpusQuality?: TopicDiscoveryCorpusQualityAudit;
+  governanceWarnings?: CollectGovernanceWarning[];
   writeCorpusArtifactsOnProgress: boolean;
   runContextMemory: RunContextMemory;
   targetCount?: number;
@@ -1214,6 +2666,7 @@ async function runEnrichmentPass(input: {
       return;
     }
     const progressMeta = buildCollectResultMeta({
+      collectAttemptId: input.collectAttemptId,
       request: input.request,
       fetched: input.fetchedCount,
       stored: input.storedCount,
@@ -1231,15 +2684,17 @@ async function runEnrichmentPass(input: {
       fallbackSources: Array.from(input.fallbackSources),
       requestedQuery: input.requestedQuery,
       queryAttempts: input.queryAttempts,
-        enrichment: {
-          blocking: false,
-          status: "pending",
-          targetCount,
-          processedCount: Math.min(targetCount, processedOffset + processed),
-          attemptedCount: Math.min(targetCount, processedOffset + processed),
-          updatedCount: Math.min(targetCount, updatedOffset + updated)
-        }
-      });
+      corpusQuality: input.corpusQuality,
+      governanceWarnings: input.governanceWarnings,
+      enrichment: {
+        blocking: false,
+        status: "pending",
+        targetCount,
+        processedCount: Math.min(targetCount, processedOffset + processed),
+        attemptedCount: Math.min(targetCount, processedOffset + processed),
+        updatedCount: Math.min(targetCount, updatedOffset + updated)
+      }
+    });
     await persistCollectSnapshot({
       run: input.run,
       rows: Array.from(input.storedRows.values()),
@@ -1252,6 +2707,7 @@ async function runEnrichmentPass(input: {
       writeCorpusArtifacts: input.writeCorpusArtifactsOnProgress
     });
     await syncCollectRunContext({
+      run: input.run,
       runContextMemory: input.runContextMemory,
       request: input.request,
       resultMeta: progressMeta,
@@ -1299,7 +2755,16 @@ async function runEnrichmentPass(input: {
       }
       input.currentEnrichmentLogs.set(paper.paperId, enriched.log);
       input.persistedEnrichmentLogs.set(paper.paperId, enriched.log);
-      enrichedRow = mergeStoredCorpusRows(currentRow, enriched.row);
+      const mergedRow = mergeStoredCorpusRows(currentRow, enriched.row);
+      enrichedRow = input.corpusQuality?.version
+        === TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
+        ? {
+            ...mergedRow,
+            title: currentRow.title,
+            abstract: currentRow.abstract,
+            query_families: currentRow.query_families
+          }
+        : mergedRow;
     } catch (error) {
       const failedLog = {
         paper_id: paper.paperId,
@@ -1428,8 +2893,23 @@ async function readCollectBackgroundJob(run: { id: string }): Promise<CollectBac
 async function writeCollectBackgroundJob(
   run: CollectRunRef,
   record: CollectBackgroundJobRecord
-): Promise<void> {
-  await writeRunArtifact(run as any, COLLECT_BACKGROUND_JOB_FILE, JSON.stringify(record, null, 2));
+): Promise<boolean> {
+  const serialized = `${JSON.stringify(record, null, 2)}\n`;
+  if (record.collectAttemptId) {
+    await writeRunArtifact(
+      run as any,
+      `collect_attempts/${record.collectAttemptId}/background_job.json`,
+      serialized
+    );
+  }
+  const publication = await publishForCollectGeneration({
+    run,
+    attemptId: record.collectAttemptId,
+    action: async () => {
+      await writeRunArtifact(run as any, COLLECT_BACKGROUND_JOB_FILE, serialized);
+    }
+  });
+  return publication.published;
 }
 
 function buildCollectBackgroundJobRecord(input: {
@@ -1445,11 +2925,13 @@ function buildCollectBackgroundJobRecord(input: {
   pendingSummary: string;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
-  status: "running" | "completed" | "failed";
+  status: "running" | "completed" | "failed" | "superseded";
   scheduledAt?: string;
   recoveryCount?: number;
   lastRecoveredAt?: string;
   lastError?: string;
+  collectAttemptId?: string;
+  corpusFingerprint?: string;
 }): CollectBackgroundJobRecord {
   const now = new Date().toISOString();
   return {
@@ -1472,8 +2954,126 @@ function buildCollectBackgroundJobRecord(input: {
     updatedAt: now,
     recoveryCount: input.recoveryCount ?? 0,
     lastRecoveredAt: input.lastRecoveredAt,
-    lastError: input.lastError
+    lastError: input.lastError,
+    collectAttemptId: input.collectAttemptId,
+    corpusFingerprint: input.corpusFingerprint
   };
+}
+
+export function buildCollectCorpusFingerprint(rows: Iterable<StoredCorpusRow>): string {
+  const papers = Array.from(rows, (row) => ({
+    paper_id: row.paper_id,
+    title: row.title,
+    abstract: row.abstract ?? "",
+    query_families: [...(row.query_families ?? [])].sort()
+  })).sort((left, right) => left.paper_id.localeCompare(right.paper_id));
+  return createHash("sha256")
+    .update(JSON.stringify({ version: 2, papers }))
+    .digest("hex");
+}
+
+async function readCollectAttemptManifest(run: { id: string }): Promise<{
+  collect_attempt_id?: string;
+  status?: CollectAttemptStatus;
+} | undefined> {
+  const raw = await safeRead(`.autolabos/runs/${run.id}/collect_attempt_manifest.json`);
+  if (!raw.trim()) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(raw) as {
+      collect_attempt_id?: string;
+      status?: CollectAttemptStatus;
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+async function validateCollectRecoveryLineage(input: {
+  run: { id: string };
+  job: CollectBackgroundJobRecord;
+  resultMeta?: CollectResultMeta;
+  storedRows: StoredCorpusRow[];
+}): Promise<string | undefined> {
+  const generation = await readCollectGeneration(input.run);
+  const manifest = await readCollectAttemptManifest(input.run);
+  const hasModernLineage = Boolean(
+    generation
+    || input.job.collectAttemptId
+    || input.resultMeta?.collect_attempt_id
+    || manifest?.collect_attempt_id
+  );
+  if (!hasModernLineage) {
+    return undefined;
+  }
+  if (!generation) {
+    return "collect_recovery_lineage_missing_generation";
+  }
+  const expectedAttemptId = generation.collect_attempt_id;
+  if (input.job.collectAttemptId !== expectedAttemptId) {
+    return "collect_recovery_lineage_job_attempt_mismatch";
+  }
+  if (input.resultMeta?.collect_attempt_id !== expectedAttemptId) {
+    return "collect_recovery_lineage_result_attempt_mismatch";
+  }
+  if (manifest?.collect_attempt_id !== expectedAttemptId) {
+    return "collect_recovery_lineage_manifest_attempt_mismatch";
+  }
+  if (manifest.status !== "quality_gate_passed") {
+    return "collect_recovery_lineage_manifest_not_approved";
+  }
+  if (!input.job.corpusFingerprint) {
+    return "collect_recovery_lineage_missing_corpus_fingerprint";
+  }
+  if (input.job.corpusFingerprint !== buildCollectCorpusFingerprint(input.storedRows)) {
+    return "collect_recovery_lineage_corpus_fingerprint_mismatch";
+  }
+  return undefined;
+}
+
+async function quarantineCollectRecoveryJob(input: {
+  run: CollectRunRef;
+  job: CollectBackgroundJobRecord;
+  reason: string;
+}): Promise<void> {
+  const record = buildCollectBackgroundJobRecord({
+    runId: input.job.runId,
+    request: input.job.request,
+    mode: input.job.mode,
+    baseCount: input.job.baseCount,
+    bibtexMode: input.job.bibtexMode,
+    paperIds: input.job.paperIds,
+    fetchedCount: input.job.fetchedCount,
+    diagnostics: input.job.diagnostics,
+    newPaperIds: input.job.newPaperIds,
+    pendingSummary: input.job.pendingSummary,
+    requestedQuery: input.job.requestedQuery,
+    queryAttempts: input.job.queryAttempts,
+    status: "superseded",
+    scheduledAt: input.job.scheduledAt,
+    recoveryCount: input.job.recoveryCount,
+    lastRecoveredAt: input.job.lastRecoveredAt,
+    lastError: input.reason,
+    collectAttemptId: input.job.collectAttemptId,
+    corpusFingerprint: input.job.corpusFingerprint
+  });
+  const serialized = `${JSON.stringify(record, null, 2)}\n`;
+  if (input.job.collectAttemptId) {
+    await writeRunArtifact(
+      input.run as any,
+      `collect_attempts/${input.job.collectAttemptId}/background_job.json`,
+      serialized
+    );
+  }
+  const generation = await readCollectGeneration(input.run);
+  await publishForCollectGeneration({
+    run: input.run,
+    attemptId: generation?.collect_attempt_id,
+    action: async () => {
+      await writeRunArtifact(input.run as any, COLLECT_BACKGROUND_JOB_FILE, serialized);
+    }
+  });
 }
 
 function reconstructPaperFromStoredRow(row: StoredCorpusRow): SemanticScholarPaper {
@@ -1511,6 +3111,7 @@ function isCollectBackgroundJobRecord(value: unknown): value is CollectBackgroun
 }
 
 function buildCollectResultMeta(input: {
+  collectAttemptId?: string;
   request: SemanticScholarSearchRequest;
   fetched: number;
   stored: number;
@@ -1529,10 +3130,12 @@ function buildCollectResultMeta(input: {
   fallbackSources: string[];
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
+  corpusQuality?: TopicDiscoveryCorpusQualityAudit;
   enrichment: CollectEnrichmentMeta;
   governanceWarnings?: CollectGovernanceWarning[];
 }): CollectResultMeta {
   return {
+    collect_attempt_id: input.collectAttemptId,
     query: input.request.query,
     limit: input.request.limit,
     fetched: input.fetched,
@@ -1563,6 +3166,7 @@ function buildCollectResultMeta(input: {
     fallbackSources: input.fallbackSources,
     requestedQuery: input.requestedQuery,
     queryAttempts: input.queryAttempts,
+    corpusQuality: input.corpusQuality,
     enrichment: input.enrichment,
     governance_warnings: input.governanceWarnings ?? [],
     timestamp: new Date().toISOString()
@@ -1603,7 +3207,7 @@ function screeningInputSummary(record: AggregatedSearchRecord): string {
 }
 
 async function persistCollectSnapshot(input: {
-  run: { id: string };
+  run: CollectRunRef;
   rows: StoredCorpusRow[];
   mode: "replace" | "additional";
   request: SemanticScholarSearchRequest;
@@ -1612,47 +3216,217 @@ async function persistCollectSnapshot(input: {
   bibtexMode: BibtexMode;
   aggregationReport?: PaperSearchAggregationReport;
   writeCorpusArtifacts?: boolean;
-}): Promise<void> {
-  await writeRunArtifact(input.run as any, "collect_request.json", JSON.stringify(input.request, null, 2));
-  await writeRunArtifact(input.run as any, "collect_result.json", JSON.stringify(input.resultMeta, null, 2));
+}): Promise<{ published: boolean; artifacts: Record<string, string> }> {
+  const artifacts: Record<string, string> = {
+    "collect_request.json": JSON.stringify({
+      ...input.request,
+      ...(input.resultMeta.collect_attempt_id
+        ? { collect_attempt_id: input.resultMeta.collect_attempt_id }
+        : {})
+    }, null, 2),
+    "collect_result.json": JSON.stringify(input.resultMeta, null, 2),
+    "collect_enrichment.jsonl": serializeJsonl(input.enrichmentLogs)
+  };
   if (input.aggregationReport) {
-    await writeRunArtifact(
-      input.run as any,
-      "collect_search_aggregation.json",
-      JSON.stringify(input.aggregationReport, null, 2)
+    artifacts["collect_search_aggregation.json"] = JSON.stringify({
+      ...input.aggregationReport,
+      ...(input.resultMeta.collect_attempt_id
+        ? { collect_attempt_id: input.resultMeta.collect_attempt_id }
+        : {})
+    }, null, 2);
+  } else if (input.resultMeta.collect_attempt_id) {
+    artifacts["collect_search_aggregation.json"] = "";
+  }
+  if (input.writeCorpusArtifacts !== false) {
+    if (
+      input.mode === "replace"
+      && input.resultMeta.corpusQuality?.passed === false
+    ) {
+      artifacts["corpus.jsonl"] = "";
+      artifacts["bibtex.bib"] = "";
+    } else {
+      const shouldWriteArtifacts =
+        input.resultMeta.completed || input.mode === "additional" || input.rows.length > 0;
+      if (shouldWriteArtifacts) {
+        artifacts["corpus.jsonl"] = serializeJsonl(input.rows);
+        const bibtex = buildBibtexFile(input.rows, input.bibtexMode).trim();
+        artifacts["bibtex.bib"] = bibtex ? `${bibtex}\n` : "";
+      }
+    }
+  }
+
+  const publication = await publishForCollectGeneration({
+    run: input.run,
+    attemptId: input.resultMeta.collect_attempt_id,
+    action: async () => {
+      for (const [artifactPath, content] of Object.entries(artifacts)) {
+        await writeRunArtifact(input.run as any, artifactPath, content);
+      }
+    }
+  });
+  return { published: publication.published, artifacts };
+}
+
+function serializeJsonl(items: unknown[]): string {
+  const lines = items.map((item) => JSON.stringify(item)).join("\n");
+  return lines ? `${lines}\n` : "";
+}
+
+async function persistPlanningFailureSnapshot(input: {
+  run: CollectRunRef;
+  attemptId: string;
+  researchMode: ReturnType<typeof parseResearchRunMode>;
+  error: string;
+}): Promise<void> {
+  const artifacts: Record<string, string> = {
+    "collect_request.json": JSON.stringify({
+      version: 1,
+      collect_attempt_id: input.attemptId,
+      status: "planning_failed",
+      request: null
+    }, null, 2),
+    "collect_result.json": JSON.stringify({
+      version: 1,
+      collect_attempt_id: input.attemptId,
+      completed: false,
+      stored: 0,
+      added: 0,
+      fetchError: input.error,
+      queryAttempts: [],
+      timestamp: new Date().toISOString()
+    }, null, 2),
+    "collect_search_aggregation.json": "",
+    "collect_enrichment.jsonl": ""
+  };
+  if (input.researchMode === "topic_discovery") {
+    artifacts["collect_corpus_quality.json"] = "";
+    artifacts["collect_semantic_review_input.json"] = "";
+    artifacts["collect_semantic_review.json"] = "";
+    artifacts["collect_query_reformulation_hints.json"] = "";
+    artifacts[TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT] = "";
+    artifacts["corpus.jsonl"] = "";
+    artifacts["bibtex.bib"] = "";
+  }
+  await publishForCollectGeneration({
+    run: input.run,
+    attemptId: input.attemptId,
+    action: async () => {
+      for (const [artifactPath, content] of Object.entries(artifacts)) {
+        await writeRunArtifact(input.run as any, artifactPath, content);
+      }
+    }
+  });
+  await archiveCurrentCollectAttempt({
+    run: input.run,
+    attemptId: input.attemptId,
+    status: "planning_failed",
+    phase: "planning",
+    includeTopicDiscoveryArtifacts: input.researchMode === "topic_discovery",
+    artifactContents: artifacts
+  });
+}
+
+async function archiveCurrentCollectAttempt(input: {
+  run: CollectRunRef;
+  attemptId: string;
+  status: CollectAttemptStatus;
+  includeTopicDiscoveryArtifacts: boolean;
+  includeCandidatePriorArtifacts?: boolean;
+  phase?: CollectAttemptArchivePhase;
+  artifactContents?: Readonly<Record<string, string>>;
+}): Promise<void> {
+  const artifactPaths = [
+    "collect_query_plan.json",
+    "collect_request.json",
+    "collect_result.json",
+    "collect_search_aggregation.json",
+    "collect_enrichment.jsonl",
+    "corpus.jsonl",
+    "bibtex.bib"
+  ];
+  if (input.includeTopicDiscoveryArtifacts) {
+    artifactPaths.push(
+      "collect_corpus_quality.json",
+      "collect_semantic_review_input.json",
+      "collect_semantic_review.json",
+      "collect_query_reformulation_hints.json",
+      TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT
     );
   }
-  await appendJsonl(input.run as any, "collect_enrichment.jsonl", input.enrichmentLogs);
-  if (input.writeCorpusArtifacts === false) {
-    return;
+  if (input.includeCandidatePriorArtifacts) {
+    artifactPaths.push(
+      CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT,
+      CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT
+    );
   }
-  const shouldWriteArtifacts =
-    input.resultMeta.completed || input.mode === "additional" || input.rows.length > 0;
-  if (!shouldWriteArtifacts) {
+  const publication = await publishForCollectGeneration({
+    run: input.run,
+    attemptId: input.attemptId,
+    action: async () => persistCollectAttemptArchive({
+      run: input.run as any,
+      attemptId: input.attemptId,
+      status: input.status,
+      phase: input.phase,
+      artifactPaths,
+      artifactContents: input.artifactContents,
+      publishTopLevelLatest: true
+    })
+  });
+  if (publication.published) {
     return;
   }
 
-  await appendJsonl(input.run as any, "corpus.jsonl", input.rows);
-  const bibtex = buildBibtexFile(input.rows, input.bibtexMode).trim();
-  await writeRunArtifact(input.run as any, "bibtex.bib", bibtex ? `${bibtex}\n` : "");
+  const explicitArtifactPaths = Object.keys(input.artifactContents ?? {});
+  if (explicitArtifactPaths.length === 0) {
+    return;
+  }
+  await persistCollectAttemptArchive({
+    run: input.run as any,
+    attemptId: input.attemptId,
+    status: input.status,
+    phase: input.phase,
+    artifactPaths: explicitArtifactPaths,
+    artifactContents: input.artifactContents,
+    publishTopLevelLatest: false
+  });
+}
+
+function resolveCollectAttemptStatus(input: {
+  fetchError?: string;
+  corpusQuality?: TopicDiscoveryCorpusQualityAudit;
+}): CollectAttemptStatus {
+  if (input.fetchError) {
+    return "collection_failed";
+  }
+  if (input.corpusQuality?.passed === false) {
+    return "quality_gate_failed";
+  }
+  return "quality_gate_passed";
 }
 
 async function syncCollectRunContext(input: {
+  run: CollectRunRef;
   runContextMemory: RunContextMemory;
   request: SemanticScholarSearchRequest;
   resultMeta: CollectResultMeta;
   diagnostics: SemanticScholarSearchDiagnostics;
 }): Promise<void> {
-  await input.runContextMemory.put("collect_papers.last_request", input.request);
-  await input.runContextMemory.put("collect_papers.last_result", input.resultMeta);
-  await input.runContextMemory.put("collect_papers.last_attempt_count", input.diagnostics.attemptCount);
-  await input.runContextMemory.put("collect_papers.count", input.resultMeta.stored);
-  await input.runContextMemory.put("collect_papers.source", input.resultMeta.source);
-  await input.runContextMemory.put("collect_papers.last_error", deriveCollectRunContextError(input.resultMeta));
-  await input.runContextMemory.put(
-    "collect_papers.enrichment_last_error",
-    input.resultMeta.enrichment.status === "failed" ? input.resultMeta.enrichment.lastError || null : null
-  );
+  await publishForCollectGeneration({
+    run: input.run,
+    attemptId: input.resultMeta.collect_attempt_id,
+    action: async () => {
+      await input.runContextMemory.put("collect_papers.last_request", input.request);
+      await input.runContextMemory.put("collect_papers.last_result", input.resultMeta);
+      await input.runContextMemory.put("collect_papers.last_attempt_count", input.diagnostics.attemptCount);
+      await input.runContextMemory.put("collect_papers.count", input.resultMeta.stored);
+      await input.runContextMemory.put("collect_papers.source", input.resultMeta.source);
+      await input.runContextMemory.put("collect_papers.last_error", deriveCollectRunContextError(input.resultMeta));
+      await input.runContextMemory.put(
+        "collect_papers.enrichment_last_error",
+        input.resultMeta.enrichment.status === "failed" ? input.resultMeta.enrichment.lastError || null : null
+      );
+    }
+  });
 }
 
 function deriveCollectRunContextError(resultMeta: CollectResultMeta): string | null {
@@ -1766,11 +3540,15 @@ function buildCollectZeroResultsMessage(
   return `${prefix}${requested}${queries}`;
 }
 
-function buildCollectQueryPlanningFailureMessage(requestedQuery?: string): string {
+function buildCollectQueryPlanningFailureMessage(
+  requestedQuery?: string,
+  llmPlanningFailure?: string
+): string {
   if (requestedQuery?.trim()) {
     return `collect_papers could not build a Semantic Scholar query plan from the explicit query "${requestedQuery}".`;
   }
-  return "collect_papers could not build a Semantic Scholar query plan. Automatic topic fallback is disabled, so provide an explicit query or ensure LLM query generation succeeds.";
+  const plannerReason = llmPlanningFailure ? ` LLM planner reason: ${llmPlanningFailure}.` : "";
+  return `collect_papers could not build a Semantic Scholar query plan. Deterministic topic fallback produced no usable query.${plannerReason}`;
 }
 
 async function startDetachedEnrichment(input: {
@@ -1795,16 +3573,20 @@ async function startDetachedEnrichment(input: {
   aggregationReport?: PaperSearchAggregationReport;
   requestedQuery?: string;
   queryAttempts: CollectQueryAttemptMeta[];
+  corpusQuality?: TopicDiscoveryCorpusQualityAudit;
+  governanceWarnings?: CollectGovernanceWarning[];
   targetCount?: number;
   processedOffset?: number;
   updatedOffset?: number;
   recoveredFromCrash?: boolean;
   recoveryCount?: number;
+  collectAttemptId?: string;
 }): Promise<void> {
   if (input.papers.length === 0) {
     return;
   }
-  if (activeCollectEnrichmentJobs.has(input.run.id)) {
+  const jobKey = collectEnrichmentJobKey(input.run.id, input.collectAttemptId);
+  if (activeCollectEnrichmentJobs.has(jobKey)) {
     input.deps.eventStream.emit({
       type: "OBS_RECEIVED",
       runId: input.run.id,
@@ -1821,6 +3603,7 @@ async function startDetachedEnrichment(input: {
   const processedOffset = Math.max(0, input.processedOffset ?? 0);
   const updatedOffset = Math.max(0, input.updatedOffset ?? 0);
   const paperIds = input.papers.map((paper) => paper.paperId);
+  const corpusFingerprint = buildCollectCorpusFingerprint(input.storedRows.values());
   const lastRecoveredAt = input.recoveredFromCrash ? new Date().toISOString() : undefined;
   const scheduledAt = (await readCollectBackgroundJob(input.run))?.scheduledAt ?? new Date().toISOString();
   await writeCollectBackgroundJob(
@@ -1841,7 +3624,9 @@ async function startDetachedEnrichment(input: {
       status: "running",
       scheduledAt,
       recoveryCount: input.recoveryCount,
-      lastRecoveredAt
+      lastRecoveredAt,
+      collectAttemptId: input.collectAttemptId,
+      corpusFingerprint
     })
   );
   if (input.recoveredFromCrash) {
@@ -1869,6 +3654,7 @@ async function startDetachedEnrichment(input: {
   const job = (async () => {
     try {
       const enrichmentState = await runEnrichmentPass({
+        collectAttemptId: input.collectAttemptId,
         papers: input.papers,
         storedRows: input.storedRows,
         run: input.run,
@@ -1890,6 +3676,8 @@ async function startDetachedEnrichment(input: {
         aggregationReport: input.aggregationReport,
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
+        corpusQuality: input.corpusQuality,
+        governanceWarnings: input.governanceWarnings,
         writeCorpusArtifactsOnProgress: true,
         runContextMemory,
         targetCount,
@@ -1898,6 +3686,7 @@ async function startDetachedEnrichment(input: {
       });
 
       const completionMeta = buildCollectResultMeta({
+        collectAttemptId: input.collectAttemptId,
         request: input.request,
         fetched: input.fetchedCount,
         stored: enrichmentState.storedCount,
@@ -1915,6 +3704,8 @@ async function startDetachedEnrichment(input: {
         fallbackSources: Array.from(input.fallbackSources),
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
+        corpusQuality: input.corpusQuality,
+        governanceWarnings: input.governanceWarnings,
         enrichment: {
           blocking: false,
           status: "completed",
@@ -1925,7 +3716,7 @@ async function startDetachedEnrichment(input: {
         }
       });
 
-      await persistCollectSnapshot({
+      const completionSnapshot = await persistCollectSnapshot({
         run: input.run,
         rows: Array.from(input.storedRows.values()),
         mode: input.mode,
@@ -1935,7 +3726,18 @@ async function startDetachedEnrichment(input: {
         bibtexMode: input.bibtexMode,
         aggregationReport: input.aggregationReport
       });
+      if (input.collectAttemptId) {
+        await archiveCurrentCollectAttempt({
+          run: input.run,
+          attemptId: input.collectAttemptId,
+          status: "quality_gate_passed",
+          phase: "enrichment",
+          includeTopicDiscoveryArtifacts: Boolean(input.corpusQuality),
+          artifactContents: completionSnapshot.artifacts
+        });
+      }
       await syncCollectRunContext({
+        run: input.run,
         runContextMemory,
         request: input.request,
         resultMeta: completionMeta,
@@ -1944,6 +3746,7 @@ async function startDetachedEnrichment(input: {
       await syncCollectRunRecord({
         runStore: input.deps.runStore,
         runId: input.run.id,
+        collectAttemptId: input.collectAttemptId,
         summary: buildCollectSummary(completionMeta),
         replaceLatestSummaryIf: input.pendingSummary
       });
@@ -1965,7 +3768,9 @@ async function startDetachedEnrichment(input: {
           status: "completed",
           scheduledAt,
           recoveryCount: input.recoveryCount,
-          lastRecoveredAt
+          lastRecoveredAt,
+          collectAttemptId: input.collectAttemptId,
+          corpusFingerprint
         })
       );
 
@@ -1980,6 +3785,7 @@ async function startDetachedEnrichment(input: {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failureMeta = buildCollectResultMeta({
+        collectAttemptId: input.collectAttemptId,
         request: input.request,
         fetched: input.fetchedCount,
         stored: input.storedCount,
@@ -1997,6 +3803,8 @@ async function startDetachedEnrichment(input: {
         fallbackSources: Array.from(input.fallbackSources),
         requestedQuery: input.requestedQuery,
         queryAttempts: input.queryAttempts,
+        corpusQuality: input.corpusQuality,
+        governanceWarnings: input.governanceWarnings,
         enrichment: {
           blocking: false,
           status: "failed",
@@ -2008,7 +3816,7 @@ async function startDetachedEnrichment(input: {
         }
       });
 
-      await persistCollectSnapshot({
+      const failureSnapshot = await persistCollectSnapshot({
         run: input.run,
         rows: Array.from(input.storedRows.values()),
         mode: input.mode,
@@ -2019,7 +3827,18 @@ async function startDetachedEnrichment(input: {
         aggregationReport: input.aggregationReport,
         writeCorpusArtifacts: false
       });
+      if (input.collectAttemptId) {
+        await archiveCurrentCollectAttempt({
+          run: input.run,
+          attemptId: input.collectAttemptId,
+          status: "collection_failed",
+          phase: "enrichment",
+          includeTopicDiscoveryArtifacts: Boolean(input.corpusQuality),
+          artifactContents: failureSnapshot.artifacts
+        });
+      }
       await syncCollectRunContext({
+        run: input.run,
         runContextMemory,
         request: input.request,
         resultMeta: failureMeta,
@@ -2028,6 +3847,7 @@ async function startDetachedEnrichment(input: {
       await syncCollectRunRecord({
         runStore: input.deps.runStore,
         runId: input.run.id,
+        collectAttemptId: input.collectAttemptId,
         summary: buildCollectSummary(failureMeta),
         replaceLatestSummaryIf: input.pendingSummary
       });
@@ -2050,7 +3870,9 @@ async function startDetachedEnrichment(input: {
           scheduledAt,
           recoveryCount: input.recoveryCount,
           lastRecoveredAt,
-          lastError: message
+          lastError: message,
+          collectAttemptId: input.collectAttemptId,
+          corpusFingerprint
         })
       );
 
@@ -2063,11 +3885,11 @@ async function startDetachedEnrichment(input: {
         }
       });
     } finally {
-      activeCollectEnrichmentJobs.delete(input.run.id);
+      activeCollectEnrichmentJobs.delete(jobKey);
     }
   })();
 
-  activeCollectEnrichmentJobs.set(input.run.id, job);
+  activeCollectEnrichmentJobs.set(jobKey, job);
 }
 
 export async function recoverCollectEnrichmentJobs(input: {
@@ -2077,7 +3899,8 @@ export async function recoverCollectEnrichmentJobs(input: {
   const runs = await input.runStore.listRuns();
   for (const run of runs) {
     const job = await readCollectBackgroundJob(run);
-    if (!job || job.status !== "running" || activeCollectEnrichmentJobs.has(run.id)) {
+    const jobKey = collectEnrichmentJobKey(run.id, job?.collectAttemptId);
+    if (!job || job.status !== "running" || activeCollectEnrichmentJobs.has(jobKey)) {
       continue;
     }
 
@@ -2087,14 +3910,37 @@ export async function recoverCollectEnrichmentJobs(input: {
         runContextPath: run.memoryRefs.runContextPath
       }
     };
+    const storedCorpus = await readExistingCorpus(run);
     const storedRows = new Map<string, StoredCorpusRow>(
-      (await readExistingCorpus(run)).map((row) => [row.paper_id, row])
+      storedCorpus.map((row) => [row.paper_id, row])
     );
     const persistedEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(
       (await readExistingEnrichmentLogs(run)).map((entry) => [entry.paper_id, entry])
     );
     const currentEnrichmentLogs = new Map<string, CollectEnrichmentLogEntry>(persistedEnrichmentLogs);
     const resultMeta = await readCollectResultMeta(run);
+    const lineageError = await validateCollectRecoveryLineage({
+      run,
+      job,
+      resultMeta,
+      storedRows: storedCorpus
+    });
+    if (lineageError) {
+      await quarantineCollectRecoveryJob({
+        run: runRef,
+        job,
+        reason: lineageError
+      });
+      input.eventStream.emit({
+        type: "OBS_RECEIVED",
+        runId: run.id,
+        node: "collect_papers",
+        payload: {
+          text: `Deferred enrichment recovery was quarantined: ${lineageError}.`
+        }
+      });
+      continue;
+    }
     const fallbackSources = new Set(resultMeta?.fallbackSources ?? []);
     const newPaperIds = new Set(job.newPaperIds);
     const processedOffset = Math.max(
@@ -2123,7 +3969,9 @@ export async function recoverCollectEnrichmentJobs(input: {
           status: "completed",
           scheduledAt: job.scheduledAt,
           recoveryCount: job.recoveryCount,
-          lastRecoveredAt: job.lastRecoveredAt
+          lastRecoveredAt: job.lastRecoveredAt,
+          collectAttemptId: job.collectAttemptId,
+          corpusFingerprint: job.corpusFingerprint
         })
       );
       continue;
@@ -2149,7 +3997,9 @@ export async function recoverCollectEnrichmentJobs(input: {
           scheduledAt: job.scheduledAt,
           recoveryCount: job.recoveryCount,
           lastRecoveredAt: job.lastRecoveredAt,
-          lastError: resultMeta.enrichment.lastError
+          lastError: resultMeta.enrichment.lastError,
+          collectAttemptId: job.collectAttemptId,
+          corpusFingerprint: job.corpusFingerprint
         })
       );
       continue;
@@ -2157,6 +4007,7 @@ export async function recoverCollectEnrichmentJobs(input: {
 
     if (pendingPaperIds.length === 0) {
       const completionMeta = buildCollectResultMeta({
+        collectAttemptId: job.collectAttemptId,
         request: job.request,
         fetched: job.fetchedCount,
         stored: storedRows.size,
@@ -2174,6 +4025,8 @@ export async function recoverCollectEnrichmentJobs(input: {
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: job.requestedQuery,
         queryAttempts: job.queryAttempts,
+        corpusQuality: resultMeta?.corpusQuality,
+        governanceWarnings: resultMeta?.governance_warnings,
         enrichment: {
           blocking: false,
           status: "completed",
@@ -2184,7 +4037,7 @@ export async function recoverCollectEnrichmentJobs(input: {
         }
       });
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      await persistCollectSnapshot({
+      const recoveryCompletionSnapshot = await persistCollectSnapshot({
         run: runRef,
         rows: Array.from(storedRows.values()),
         mode: job.mode,
@@ -2194,7 +4047,18 @@ export async function recoverCollectEnrichmentJobs(input: {
         bibtexMode: job.bibtexMode,
         aggregationReport: extractAggregationReport(resultMeta)
       });
+      if (job.collectAttemptId) {
+        await archiveCurrentCollectAttempt({
+          run: runRef,
+          attemptId: job.collectAttemptId,
+          status: "quality_gate_passed",
+          phase: "recovery",
+          includeTopicDiscoveryArtifacts: Boolean(resultMeta?.corpusQuality),
+          artifactContents: recoveryCompletionSnapshot.artifacts
+        });
+      }
       await syncCollectRunContext({
+        run: runRef,
         runContextMemory,
         request: job.request,
         resultMeta: completionMeta,
@@ -2203,6 +4067,7 @@ export async function recoverCollectEnrichmentJobs(input: {
       await syncCollectRunRecord({
         runStore: input.runStore,
         runId: run.id,
+        collectAttemptId: job.collectAttemptId,
         summary: buildCollectSummary(completionMeta),
         replaceLatestSummaryIf: job.pendingSummary
       });
@@ -2224,7 +4089,9 @@ export async function recoverCollectEnrichmentJobs(input: {
           status: "completed",
           scheduledAt: job.scheduledAt,
           recoveryCount: job.recoveryCount,
-          lastRecoveredAt: job.lastRecoveredAt
+          lastRecoveredAt: job.lastRecoveredAt,
+          collectAttemptId: job.collectAttemptId,
+          corpusFingerprint: job.corpusFingerprint
         })
       );
       input.eventStream.emit({
@@ -2242,6 +4109,7 @@ export async function recoverCollectEnrichmentJobs(input: {
     if (missingPaperIds.length > 0) {
       const message = `Deferred enrichment recovery could not reconstruct ${missingPaperIds.length} queued paper(s): ${missingPaperIds.join(", ")}`;
       const failureMeta = buildCollectResultMeta({
+        collectAttemptId: job.collectAttemptId,
         request: job.request,
         fetched: job.fetchedCount,
         stored: storedRows.size,
@@ -2259,6 +4127,8 @@ export async function recoverCollectEnrichmentJobs(input: {
         fallbackSources: Array.from(fallbackSources),
         requestedQuery: job.requestedQuery,
         queryAttempts: job.queryAttempts,
+        corpusQuality: resultMeta?.corpusQuality,
+        governanceWarnings: resultMeta?.governance_warnings,
         enrichment: {
           blocking: false,
           status: "failed",
@@ -2270,7 +4140,7 @@ export async function recoverCollectEnrichmentJobs(input: {
         }
       });
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      await persistCollectSnapshot({
+      const recoveryFailureSnapshot = await persistCollectSnapshot({
         run: runRef,
         rows: Array.from(storedRows.values()),
         mode: job.mode,
@@ -2281,7 +4151,18 @@ export async function recoverCollectEnrichmentJobs(input: {
         aggregationReport: extractAggregationReport(resultMeta),
         writeCorpusArtifacts: false
       });
+      if (job.collectAttemptId) {
+        await archiveCurrentCollectAttempt({
+          run: runRef,
+          attemptId: job.collectAttemptId,
+          status: "collection_failed",
+          phase: "recovery",
+          includeTopicDiscoveryArtifacts: Boolean(resultMeta?.corpusQuality),
+          artifactContents: recoveryFailureSnapshot.artifacts
+        });
+      }
       await syncCollectRunContext({
+        run: runRef,
         runContextMemory,
         request: job.request,
         resultMeta: failureMeta,
@@ -2290,6 +4171,7 @@ export async function recoverCollectEnrichmentJobs(input: {
       await syncCollectRunRecord({
         runStore: input.runStore,
         runId: run.id,
+        collectAttemptId: job.collectAttemptId,
         summary: buildCollectSummary(failureMeta),
         replaceLatestSummaryIf: job.pendingSummary
       });
@@ -2312,7 +4194,9 @@ export async function recoverCollectEnrichmentJobs(input: {
           scheduledAt: job.scheduledAt,
           recoveryCount: job.recoveryCount,
           lastRecoveredAt: job.lastRecoveredAt,
-          lastError: message
+          lastError: message,
+          collectAttemptId: job.collectAttemptId,
+          corpusFingerprint: job.corpusFingerprint
         })
       );
       input.eventStream.emit({
@@ -2348,16 +4232,33 @@ export async function recoverCollectEnrichmentJobs(input: {
       aggregationReport: extractAggregationReport(resultMeta),
       requestedQuery: job.requestedQuery,
       queryAttempts: job.queryAttempts,
+      corpusQuality: resultMeta?.corpusQuality,
+      governanceWarnings: resultMeta?.governance_warnings,
       targetCount: job.paperIds.length,
       processedOffset,
       updatedOffset,
       recoveredFromCrash: true,
-      recoveryCount: job.recoveryCount + 1
+      recoveryCount: job.recoveryCount + 1,
+      collectAttemptId: job.collectAttemptId
     });
   }
 }
 
 async function syncCollectRunRecord(input: {
+  runStore: Pick<NodeExecutionDeps["runStore"], "getRun" | "updateRun"> | undefined;
+  runId: string;
+  collectAttemptId?: string;
+  summary: string;
+  replaceLatestSummaryIf?: string;
+}): Promise<void> {
+  await publishForCollectGeneration({
+    run: { id: input.runId },
+    attemptId: input.collectAttemptId,
+    action: async () => syncCollectRunRecordUnsafe(input)
+  });
+}
+
+async function syncCollectRunRecordUnsafe(input: {
   runStore: Pick<NodeExecutionDeps["runStore"], "getRun" | "updateRun"> | undefined;
   runId: string;
   summary: string;

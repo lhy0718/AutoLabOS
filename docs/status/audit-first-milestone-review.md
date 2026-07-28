@@ -60,7 +60,7 @@ The demo is a governance/product validation path. It is not a scientific benchma
 - [x] `npm test` - 171 files and 1801 tests passed; web suite 1 file and 14 tests passed
 - [x] `npm run build` - TypeScript and web build passed
 - [x] `npm run validate:harness` - issue log and harness structure passed
-- [x] Historical blocker smoke validation - missing-comparison and fallback-evidence cases were blocked; current coverage lives in `tests/paperReadinessAudit.test.ts` and `tests/promotionBenchmarkSystems.test.ts`
+- [x] Historical blocker smoke validation - missing-comparison and fallback-evidence cases were blocked; current coverage lives in `tests/paperReadinessAudit.test.ts`
 - [x] Portability scan on changed docs, scripts, tests, and source files - no machine-local path matches
 
 ## Review Notes

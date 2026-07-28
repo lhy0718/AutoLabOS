@@ -195,7 +195,7 @@ export function buildPreDraftCritique(input: PreDraftCritiqueInput): PaperCritiq
     "planned_execution_coverage",
     "training_budget_depth",
     "result_artifacts",
-    "results_table_schema"
+    "results_artifact_comparison"
   ]);
   const needsStatistics =
     blockingIssues.some((i) => i.category === "statistical_adequacy")

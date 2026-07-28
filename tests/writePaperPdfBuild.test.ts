@@ -14,6 +14,11 @@ import {
   stabilizePaperManuscriptForSubmission,
   type PaperManuscript
 } from "../src/core/analysis/paperManuscript.js";
+import type {
+  ResultsArtifactV2,
+  ResultsPlanV2,
+  ResultsTableDirection
+} from "../src/core/analysis/resultsTableSchema.js";
 import {
   buildPublicAnalysisDir,
   buildPublicPaperDir,
@@ -43,13 +48,179 @@ class SequencedLLMClient extends MockLLMClient implements LLMClient {
   }
 }
 
+const PRIMARY_METRIC_ID = "outcome_score";
+const PRIMARY_METRIC_LABEL = "Outcome score";
+const PRIMARY_COMPARISON_ID = "comparison-primary-outcome";
+const SUBJECT_SERIES_ID = "series-subject";
+const REFERENCE_SERIES_ID = "series-reference";
+const SUBJECT_OBSERVATION_ID = "observation-subject";
+const REFERENCE_OBSERVATION_ID = "observation-reference";
+const SUBJECT_SERIES_LABEL = "Evaluated workflow";
+const REFERENCE_SERIES_LABEL = "Reference workflow";
+const EVALUATION_SCOPE = { partition: "held-out partition" } as const;
+
+interface ResultsContractFixtureOptions {
+  metricId?: string;
+  metricLabel?: string;
+  direction?: ResultsTableDirection;
+  unit?: string;
+  subjectValue?: number;
+  referenceValue?: number;
+  subjectLabel?: string;
+  referenceLabel?: string;
+  includeResourceMetrics?: boolean;
+}
+
+function buildResultsContractFixture(
+  options: ResultsContractFixtureOptions = {}
+): {
+  primary_comparison_id: string;
+  results_artifact: ResultsArtifactV2;
+  results_plan: ResultsPlanV2;
+} {
+  const metric = {
+    id: options.metricId ?? PRIMARY_METRIC_ID,
+    label: options.metricLabel ?? PRIMARY_METRIC_LABEL,
+    direction: options.direction ?? "higher_better",
+    unit: options.unit ?? "points"
+  };
+  const subjectValue = options.subjectValue ?? 0.76;
+  const referenceValue = options.referenceValue ?? 0.71;
+  const subjectLabel = options.subjectLabel ?? SUBJECT_SERIES_LABEL;
+  const referenceLabel = options.referenceLabel ?? REFERENCE_SERIES_LABEL;
+  const resourceMetrics: ResultsArtifactV2["metrics"] = options.includeResourceMetrics
+    ? [
+        {
+          id: "runtime_seconds",
+          label: "Runtime",
+          direction: "lower_better",
+          unit: "seconds"
+        },
+        {
+          id: "peak_memory_mb",
+          label: "Peak memory",
+          direction: "lower_better",
+          unit: "MB"
+        }
+      ]
+    : [];
+  const resourceObservations: ResultsArtifactV2["observations"] = options.includeResourceMetrics
+    ? [
+        {
+          id: "observation-subject-runtime",
+          series_id: SUBJECT_SERIES_ID,
+          metric_id: "runtime_seconds",
+          scope: EVALUATION_SCOPE,
+          value: 1.05,
+          evidence_refs: ["latest_results.json"]
+        },
+        {
+          id: "observation-reference-runtime",
+          series_id: REFERENCE_SERIES_ID,
+          metric_id: "runtime_seconds",
+          scope: EVALUATION_SCOPE,
+          value: 1.08,
+          evidence_refs: ["latest_results.json"]
+        },
+        {
+          id: "observation-subject-memory",
+          series_id: SUBJECT_SERIES_ID,
+          metric_id: "peak_memory_mb",
+          scope: EVALUATION_SCOPE,
+          value: 149,
+          evidence_refs: ["latest_results.json"]
+        },
+        {
+          id: "observation-reference-memory",
+          series_id: REFERENCE_SERIES_ID,
+          metric_id: "peak_memory_mb",
+          scope: EVALUATION_SCOPE,
+          value: 151,
+          evidence_refs: ["latest_results.json"]
+        }
+      ]
+    : [];
+  const results_artifact: ResultsArtifactV2 = {
+    schema_version: "2.0",
+    metrics: [metric, ...resourceMetrics],
+    series: [
+      {
+        id: SUBJECT_SERIES_ID,
+        label: subjectLabel,
+        role: "primary",
+        dimensions: { evaluation_phase: "confirmed" }
+      },
+      {
+        id: REFERENCE_SERIES_ID,
+        label: referenceLabel,
+        role: "baseline",
+        dimensions: { evaluation_phase: "confirmed" }
+      }
+    ],
+    observations: [
+      {
+        id: SUBJECT_OBSERVATION_ID,
+        series_id: SUBJECT_SERIES_ID,
+        metric_id: metric.id,
+        scope: EVALUATION_SCOPE,
+        value: subjectValue,
+        evidence_refs: ["result_analysis.json", "latest_results.json"]
+      },
+      {
+        id: REFERENCE_OBSERVATION_ID,
+        series_id: REFERENCE_SERIES_ID,
+        metric_id: metric.id,
+        scope: EVALUATION_SCOPE,
+        value: referenceValue,
+        evidence_refs: ["result_analysis.json", "latest_results.json"]
+      },
+      ...resourceObservations
+    ],
+    comparisons: [
+      {
+        id: PRIMARY_COMPARISON_ID,
+        subject_observation_id: SUBJECT_OBSERVATION_ID,
+        reference_observation_id: REFERENCE_OBSERVATION_ID,
+        delta: subjectValue - referenceValue,
+        evidence_refs: ["result_analysis.json", "latest_results.json"]
+      }
+    ]
+  };
+  const results_plan: ResultsPlanV2 = {
+    schema_version: "2.0",
+    required_metrics: results_artifact.metrics.map((item) => ({ ...item })),
+    minimum_series_count: 2,
+    minimum_comparison_count: 1,
+    required_series: [
+      { id: SUBJECT_SERIES_ID, role: "primary" },
+      { id: REFERENCE_SERIES_ID, role: "baseline" }
+    ],
+    required_comparisons: [
+      {
+        id: PRIMARY_COMPARISON_ID,
+        subject_series_id: SUBJECT_SERIES_ID,
+        reference_series_id: REFERENCE_SERIES_ID,
+        metric_id: metric.id,
+        scope: EVALUATION_SCOPE
+      }
+    ],
+    primary_comparison_id: PRIMARY_COMPARISON_ID
+  };
+
+  return {
+    primary_comparison_id: PRIMARY_COMPARISON_ID,
+    results_artifact,
+    results_plan
+  };
+}
+
 function makeRun(runId: string): RunRecord {
   return {
     version: 3,
     workflowVersion: 3,
     id: runId,
-    title: "PDF-backed Paper Writer",
-    topic: "agent collaboration",
+    title: "Configured Evaluation Report",
+    topic: "configured workflow evaluation",
     constraints: [],
     objectiveMetric: "",
     status: "running",
@@ -79,15 +250,15 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     path.join(runDir, "paper_summaries.jsonl"),
     `${JSON.stringify({
       paper_id: "paper_1",
-      title: "Schema Bench",
+      title: "Declared Evaluation Protocol",
       source_type: "full_text",
-      summary: "Persistent state improves revisability.",
-      key_findings: ["Persistent state improves revisability."],
+      summary: "Explicit comparison roles improve result traceability.",
+      key_findings: ["Declared subject and reference roles keep comparisons auditable."],
       limitations: [],
-      datasets: ["AgentBench-mini"],
-      metrics: ["reproducibility_score"],
-      novelty: "Thread-backed drafting",
-      reproducibility_notes: ["Includes repeated drafting runs."]
+      datasets: ["evaluation_suite"],
+      metrics: [PRIMARY_METRIC_ID],
+      novelty: "Role-bound comparison reporting",
+      reproducibility_notes: ["Includes repeated evaluations with explicit evidence links."]
     })}\n`,
     "utf8"
   );
@@ -96,16 +267,16 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     `${JSON.stringify({
       evidence_id: "ev_1",
       paper_id: "paper_1",
-      claim: "Persistent state improves revisability.",
-      method_slot: "thread-backed drafting",
-      result_slot: "higher revision stability",
-      limitation_slot: "small benchmark",
-      dataset_slot: "AgentBench-mini",
-      metric_slot: "reproducibility_score",
-      evidence_span: "Repeated drafting runs remained stable across revisions.",
+      claim: "Explicit comparison roles improve result traceability.",
+      method_slot: "configured workflow comparison",
+      result_slot: "bounded primary outcome difference",
+      limitation_slot: "single evaluation suite",
+      dataset_slot: "evaluation_suite",
+      metric_slot: PRIMARY_METRIC_ID,
+      evidence_span: "Repeated evaluations preserved the declared subject and reference links.",
       source_type: "full_text",
       confidence: 0.92,
-      confidence_reason: "The evidence comes from one benchmark, so external validity remains limited."
+      confidence_reason: "The evidence comes from one evaluation suite, so external validity remains limited."
     })}\n`,
     "utf8"
   );
@@ -113,7 +284,7 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     path.join(runDir, "hypotheses.jsonl"),
     `${JSON.stringify({
       hypothesis_id: "h_1",
-      text: "Thread-backed drafting improves revisability.",
+      text: "The evaluated workflow differs from the declared reference on the primary outcome.",
       evidence_links: ["ev_1"]
     })}\n`,
     "utf8"
@@ -122,8 +293,8 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     path.join(runDir, "corpus.jsonl"),
     `${JSON.stringify({
       paper_id: "paper_1",
-      title: "Schema Bench",
-      abstract: "Persistent state improves revisability.",
+      title: "Declared Evaluation Protocol",
+      abstract: "Explicit comparison roles improve result traceability.",
       authors: ["Alice Doe"],
       year: 2025,
       venue: "ACL"
@@ -134,25 +305,31 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
     path.join(runDir, "experiment_plan.yaml"),
     [
       "selected_design:",
-      '  title: "Thread-backed drafting benchmark"',
-      '  summary: "Compare persistent drafting support across repeated revisions."'
+      '  title: "Configured workflow comparison"',
+      '  summary: "Compare an evaluated workflow with its declared reference under a fixed protocol."',
+      "  datasets:",
+      '    - "evaluation_suite"',
+      "  metrics:",
+      `    - "${PRIMARY_METRIC_ID}"`
     ].join("\n"),
     "utf8"
   );
+  const resultsContract = buildResultsContractFixture();
   await writeFile(
     path.join(runDir, "result_analysis.json"),
     JSON.stringify(
       {
         overview: {
           objective_status: "observed",
-          selected_design_title: "Thread-backed drafting benchmark"
+          selected_design_title: "Configured workflow comparison"
         },
         execution_summary: {
-          observation_count: 1
+          observation_count: resultsContract.results_artifact.observations.length
         },
         statistical_summary: {
-          notes: ["Stability remained consistent across repeated runs."]
-        }
+          notes: ["The declared comparison remained consistent across repeated evaluations."]
+        },
+        ...resultsContract
       },
       null,
       2
@@ -164,32 +341,32 @@ async function seedRun(root: string, run: RunRecord): Promise<string> {
 
 function buildSessionResponses(): string[] {
   const outline = JSON.stringify({
-    title: "PDF-backed Paper Writer",
-    abstract_focus: ["persistent drafting", "revisability"],
+    title: "Configured Evaluation Report",
+    abstract_focus: ["configured evaluation", "result traceability"],
     section_headings: ["Introduction", "Method", "Results", "Conclusion"],
-    key_claim_themes: ["Thread-backed drafting improves revisability."],
+    key_claim_themes: ["The evaluated workflow improves result traceability."],
     citation_plan: ["paper_1"]
   });
   const draft = JSON.stringify({
-    title: "PDF-backed Paper Writer",
+    title: "Configured Evaluation Report",
     abstract: "A paper-writing workflow with PDF compilation and repair support.",
-    keywords: ["agent collaboration", "paper writing"],
+    keywords: ["configured workflow evaluation", "paper writing"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        paragraphs: ["This paper studies PDF-backed drafting for configured workflow evaluation workflows."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Method",
-        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Results",
-        paragraphs: ["Persistent drafting support improved revision stability in repeated runs."],
+        paragraphs: ["The declared primary comparison remained traceable across repeated evaluations."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -203,7 +380,7 @@ function buildSessionResponses(): string[] {
     claims: [
       {
         claim_id: "c1",
-        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        statement: "The declared primary comparison remained traceable across repeated evaluations.",
         section_heading: "Results",
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
@@ -223,7 +400,7 @@ function buildSessionResponses(): string[] {
 function buildExternalCitationResponses(): string[] {
   const outline = JSON.stringify({
     title: "Externally Verified Citation Paper",
-    abstract_focus: ["persistent drafting", "citation verification"],
+    abstract_focus: ["configured evaluation", "citation verification"],
     section_headings: ["Introduction", "Method", "Results", "Conclusion"],
     key_claim_themes: ["External citation verification repairs missing corpus references."],
     citation_plan: ["Recovered External Title"]
@@ -231,7 +408,7 @@ function buildExternalCitationResponses(): string[] {
   const draft = JSON.stringify({
     title: "Externally Verified Citation Paper",
     abstract: "A paper-writing workflow that can recover missing citations through bounded external verification.",
-    keywords: ["agent collaboration", "citation verification"],
+    keywords: ["configured workflow evaluation", "citation verification"],
     sections: [
       {
         heading: "Introduction",
@@ -241,7 +418,7 @@ function buildExternalCitationResponses(): string[] {
       },
       {
         heading: "Method",
-        paragraphs: ["The manuscript cites a missing reference and lets the registry repair it conservatively."],
+        paragraphs: ["The manuscript cites a missing reference and lets the registry repair it conservatively while Evaluated workflow (primary role) and Reference workflow (baseline role) retain the same protocol."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["Recovered External Title"]
       },
@@ -280,26 +457,26 @@ function buildExternalCitationResponses(): string[] {
 
 function buildValidationRepairResponses(): string[] {
   const outline = JSON.stringify({
-    title: "PDF-backed Paper Writer",
-    abstract_focus: ["persistent drafting", "revisability"],
+    title: "Configured Evaluation Report",
+    abstract_focus: ["configured evaluation", "result traceability"],
     section_headings: ["Introduction", "Method", "Results", "Conclusion"],
-    key_claim_themes: ["Thread-backed drafting improves revisability."],
+    key_claim_themes: ["The evaluated workflow improves result traceability."],
     citation_plan: ["paper_1"]
   });
   const flawedDraft = JSON.stringify({
-    title: "PDF-backed Paper Writer",
+    title: "Configured Evaluation Report",
     abstract: "A paper-writing workflow with validation-aware repair support.",
-    keywords: ["agent collaboration", "paper writing"],
+    keywords: ["configured workflow evaluation", "paper writing"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        paragraphs: ["This paper studies PDF-backed drafting for configured workflow evaluation workflows."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Method",
-        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -307,7 +484,7 @@ function buildValidationRepairResponses(): string[] {
         heading: "Results",
         paragraphs: [
           {
-            text: "Persistent drafting support improved revision stability in repeated runs.",
+            text: "The declared primary comparison remained traceable across repeated evaluations.",
             evidence_ids: [],
             citation_paper_ids: []
           }
@@ -325,7 +502,7 @@ function buildValidationRepairResponses(): string[] {
     claims: [
       {
         claim_id: "c1",
-        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        statement: "The declared primary comparison remained traceable across repeated evaluations.",
         section_heading: "Results",
         evidence_ids: [],
         citation_paper_ids: []
@@ -340,19 +517,19 @@ function buildValidationRepairResponses(): string[] {
     missing_citations: ["Results"]
   });
   const repairedDraft = JSON.stringify({
-    title: "PDF-backed Paper Writer",
+    title: "Configured Evaluation Report",
     abstract: "A paper-writing workflow with validation-aware repair support.",
-    keywords: ["agent collaboration", "paper writing"],
+    keywords: ["configured workflow evaluation", "paper writing"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        paragraphs: ["This paper studies PDF-backed drafting for configured workflow evaluation workflows."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Method",
-        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -360,7 +537,7 @@ function buildValidationRepairResponses(): string[] {
         heading: "Results",
         paragraphs: [
           {
-            text: "Persistent drafting support improved revision stability in repeated runs.",
+            text: "The declared primary comparison remained traceable across repeated evaluations.",
             evidence_ids: ["ev_1"],
             citation_paper_ids: ["paper_1"]
           }
@@ -378,7 +555,7 @@ function buildValidationRepairResponses(): string[] {
     claims: [
       {
         claim_id: "c1",
-        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        statement: "The declared primary comparison remained traceable across repeated evaluations.",
         section_heading: "Results",
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
@@ -390,20 +567,20 @@ function buildValidationRepairResponses(): string[] {
 
 function buildRelatedWorkScoutResponses(): string[] {
   const outline = JSON.stringify({
-    title: "PDF-backed Paper Writer",
-    abstract_focus: ["persistent drafting", "related work coverage"],
+    title: "Configured Evaluation Report",
+    abstract_focus: ["configured evaluation", "related work coverage"],
     section_headings: ["Introduction", "Related Work", "Method", "Results", "Conclusion"],
-    key_claim_themes: ["Thread-backed drafting improves revisability."],
+    key_claim_themes: ["The evaluated workflow improves result traceability."],
     citation_plan: ["paper_1", "paper_scout_1"]
   });
   const draft = JSON.stringify({
-    title: "PDF-backed Paper Writer",
+    title: "Configured Evaluation Report",
     abstract: "A paper-writing workflow with related-work scouting support.",
-    keywords: ["agent collaboration", "paper writing", "related work"],
+    keywords: ["configured workflow evaluation", "paper writing", "related work"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["This paper studies PDF-backed drafting for agent collaboration workflows."],
+        paragraphs: ["This paper studies PDF-backed drafting for configured workflow evaluation workflows."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -411,7 +588,7 @@ function buildRelatedWorkScoutResponses(): string[] {
         heading: "Related Work",
         paragraphs: [
           {
-            text: "Recent related-work scouting highlights complementary literature on revision stability and related evidence synthesis.",
+            text: "Recent related-work scouting highlights complementary literature on outcome score and related evidence synthesis.",
             evidence_ids: ["ev_1"],
             citation_paper_ids: ["paper_1", "paper_scout_1", "paper_scout_2"]
           }
@@ -421,13 +598,13 @@ function buildRelatedWorkScoutResponses(): string[] {
       },
       {
         heading: "Method",
-        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."],
+        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Results",
-        paragraphs: ["Persistent drafting support improved revision stability in repeated runs."],
+        paragraphs: ["The declared primary comparison remained traceable across repeated evaluations."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -441,7 +618,7 @@ function buildRelatedWorkScoutResponses(): string[] {
     claims: [
       {
         claim_id: "c1",
-        statement: "Persistent drafting support improved revision stability in repeated runs.",
+        statement: "The declared primary comparison remained traceable across repeated evaluations.",
         section_heading: "Results",
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
@@ -460,9 +637,9 @@ function buildRelatedWorkScoutResponses(): string[] {
 
 function buildSubmissionValidationFailureResponses(): string[] {
   const manuscript = JSON.stringify({
-    title: "PDF-backed Paper Writer",
+    title: "Configured Evaluation Report",
     abstract: "A submission draft that should fail validation before PDF build.",
-    keywords: ["agent collaboration", "paper writing"],
+    keywords: ["configured workflow evaluation", "paper writing"],
     sections: [
       {
         heading: "Introduction",
@@ -470,11 +647,11 @@ function buildSubmissionValidationFailureResponses(): string[] {
       },
       {
         heading: "Method",
-        paragraphs: ["The workflow stages outline, drafting, review, and finalization before compiling LaTeX."]
+        paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition before compiling LaTeX."]
       },
       {
         heading: "Results",
-        paragraphs: ["Persistent drafting support improved revision stability in repeated runs."]
+        paragraphs: ["The declared primary comparison remained traceable across repeated evaluations."]
       },
       {
         heading: "Conclusion",
@@ -550,71 +727,71 @@ function buildManuscriptReviewAuditResponse(input?: {
 
 function buildPolishedManuscriptResponse(overrides?: Partial<any>): string {
   return JSON.stringify({
-    title: "Thread-Backed Drafting for More Stable Manuscript Revision",
+    title: "Role-Bound Reporting for Auditable Workflow Evaluation",
     abstract:
-      "We study the problem of manuscript generation for agent collaboration workflows. We evaluate a thread-backed drafting pipeline against a stateless baseline on AgentBench-mini. Across repeated runs, the thread-backed pipeline improves revision stability by 0.05. These results suggest that persistent drafting support can improve revisability within the tested workflow setting.",
-    keywords: ["agent collaboration", "paper writing"],
+      "We study auditable reporting for a configured workflow comparison. The evaluated and reference workflows are measured under the same repeated protocol, and the observed outcome remains bounded to the declared evaluation scope.",
+    keywords: ["workflow evaluation", "result traceability"],
     sections: [
       {
         heading: "Introduction",
         paragraphs: [
-          "The central problem in manuscript generation for agent collaboration workflows is that revisions often drift away from grounded evidence and earlier decisions.",
-          "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
-          "The main gap is that current artifacts often expose headline outcomes without a venue-aware writing structure that separates core claims from supporting detail. The working hypothesis is that thread-backed drafting improves revisability.."
+          "Research reports can lose the explicit links among declared series, observations, and comparison claims during revision.",
+          "This study evaluates whether role-bound result artifacts preserve those links through the paper-writing workflow.",
+          "The contribution is a bounded evaluation of traceable comparison reporting under a fixed protocol, without extending the claim beyond the inspected suite."
         ]
       },
       {
         heading: "Related Work",
         paragraphs: [
-          "Prior work studies collaborative revision stability, while workflow benchmarking studies orchestration quality at the system level.",
-          "Compared with those strands, this study focuses on whether persistent drafting state improves revisability under the same workflow setting."
+          "Prior work separates result-schema validation, workflow evaluation, and evidence-grounded scientific reporting into distinct lines of study.",
+          "Compared with those strands, this study examines how explicit series roles and observation links constrain a primary comparison during manuscript production."
         ]
       },
       {
         heading: "Method",
         paragraphs: [
-          "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark dataset.",
-          "When the supporting result-analysis artifact uses a tabular baseline, logistic regression is treated as the named baseline for those numeric comparisons and is reported separately from the drafting-workflow comparator.",
-          "Both conditions use the same staged paper-writing pipeline within the same evaluation setup, and revision stability is the primary metric.",
-          "Preprocessing details remain limited in the current artifacts and should be read conservatively. Model selection and reporting metrics remain partially specified in the current artifacts.",
-          "Cross-validation and repetition details remain partially specified in the current artifacts."
+          "The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) on evaluation_suite under the held-out partition.",
+          "Both series use the same preprocessing order, fold-internal fitting scope, and fixed selection procedure.",
+          "The primary outcome, runtime, and peak-memory measurements are linked to explicit observations rather than inferred from labels or array order.",
+          "Repeated stratified evaluations use declared seeds, an outer evaluation loop, and an inner selection loop.",
+          "The configured search space, execution budget, and reporting units remain fixed across both series."
         ]
       },
       {
         heading: "Results",
         paragraphs: [
-          "On AgentBench-mini, the thread-backed condition improves revision stability by 0.05 relative to the stateless baseline.",
-          "The main table preserves the exact dataset-level comparison and keeps the claim conservative.",
-          "Stability remained consistent across repeated runs."
+          "The declared primary comparison reports a bounded subject-minus-reference difference for the held-out partition.",
+          "The main table preserves the exact linked observations, while the figure visualizes only the same role-bound comparison.",
+          "Repeated measurements and the reported interval support a cautious interpretation of the observed difference."
         ]
       },
       {
         heading: "Discussion",
         paragraphs: [
-          "The result suggests that persistent drafting state reduces avoidable revision drift without implying broad generalization beyond the tested workflow.",
-          "This interpretation matters because the gain is useful even though the evaluation setting remains narrow."
+          "The result suggests that explicit comparison semantics can keep quantitative reporting auditable without implying broad generalization beyond the tested workflow.",
+          "The practical value lies in preserving the declared roles, scope, and evidence references across manuscript revisions."
         ]
       },
       {
         heading: "Limitations",
         paragraphs: [
-          "The evaluation is limited to one workflow benchmark and a small comparator set, so broader claims would require additional tasks and baselines."
+          "The evaluation is limited to one configured suite and one declared comparison, so broader claims require additional tasks, references, and execution settings."
         ]
       },
       {
         heading: "Conclusion",
         paragraphs: [
-          "Within the tested workflow setting, thread-backed drafting improves revision stability and supports more consistent manuscript revision.",
-          "The paper therefore reports a dense but cautious empirical narrative grounded in the available artifacts. Detailed protocol and repeat-level evidence are routed to the appendix so the main paper can retain its central logic."
+          "Within the tested workflow setting, the role-bound artifact supports a traceable and conservatively scoped primary comparison.",
+          "The paper keeps the central comparison in the main body and routes detailed protocol and repeat-level evidence to the appendix."
         ]
       }
     ],
     tables: [
       {
-        caption: "Exact numeric comparison for revision stability.",
+        caption: "Declared primary comparison for the outcome score.",
         rows: [
-          { label: "Stateless baseline", value: 0.71 },
-          { label: "Thread-backed drafting", value: 0.76 }
+          { label: "Reference workflow", value: 0.71 },
+          { label: "Evaluated workflow", value: 0.76 }
         ]
       }
     ],
@@ -680,14 +857,14 @@ function buildManuscriptRepairOnceResponses(): string[] {
 function buildSectionTransitionAdjacentRepairResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[3].paragraphs[0] =
-    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, using the same evaluation setup as the baseline.";
+    "The Results section first states the declared role-bound comparison under the common evaluation protocol.";
   initial.sections[3].paragraphs[1] =
     "The next results paragraph repeats setup details instead of moving into interpretation, so the local transition currently feels abrupt.";
   const repaired = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repaired.sections[3].paragraphs[0] =
-    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, establishing the quantitative comparison before interpretation.";
+    "The Results section first states the declared role-bound comparison before moving into interpretation.";
   repaired.sections[3].paragraphs[1] =
-    "This local transition matters because the next paragraph can now interpret the modest gain without reintroducing the setup.";
+    "This local transition lets the next paragraph interpret the bounded difference without reintroducing the setup.";
   return [
     ...buildSessionResponses(),
     JSON.stringify(initial),
@@ -724,16 +901,16 @@ function buildSectionTransitionAdjacentRepairResponses(): string[] {
 function buildSectionTransitionRepairWithGlobalCleanupNoiseResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[2].paragraphs[2] =
-    "The executed run used the selected backbone as the selected backbone. Extra method details remain conservative.";
+    "The executed run repeated the configured setup as the configured setup. Extra method details remain conservative.";
   initial.sections[3].paragraphs[0] =
-    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, using the same evaluation setup as the baseline.";
+    "The Results section first states the declared role-bound comparison under the common evaluation protocol.";
   initial.sections[3].paragraphs[1] =
     "The next results paragraph repeats setup details instead of moving into interpretation, so the local transition currently feels abrupt.";
   const repaired = structuredClone(initial);
   repaired.sections[3].paragraphs[0] =
-    "The thread-backed condition improves revision stability by 0.05 relative to the stateless baseline on AgentBench-mini, establishing the quantitative comparison before interpretation.";
+    "The Results section first states the declared role-bound comparison before moving into interpretation.";
   repaired.sections[3].paragraphs[1] =
-    "This local transition matters because the next paragraph can now interpret the modest gain without reintroducing the setup.";
+    "This local transition lets the next paragraph interpret the bounded difference without reintroducing the setup.";
   return [
     ...buildSessionResponses(),
     JSON.stringify(initial),
@@ -770,14 +947,14 @@ function buildSectionTransitionRepairWithGlobalCleanupNoiseResponses(): string[]
 function buildIntroductionAlignmentAdjacentRepairResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[0].paragraphs[0] =
-    "Manuscript generation for agent collaboration workflows is difficult because revisions can drift away from grounded evidence and leave the overall story misaligned.";
+    "Manuscript generation for configured workflow evaluation workflows is difficult because revisions can drift away from grounded evidence and leave the overall story misaligned.";
   initial.sections[0].paragraphs[1] =
-    "This paper evaluates whether thread-backed drafting can stabilize revision behavior, but the local framing does not yet line up tightly with the abstract and conclusion.";
+    "This paper evaluates whether the evaluated workflow can preserve explicit evidence links, but the local framing does not yet line up tightly with the abstract and conclusion.";
   const repaired = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repaired.sections[0].paragraphs[0] =
-    "Manuscript generation for agent collaboration workflows is difficult because revisions can drift away from grounded evidence and obscure the tested contribution.";
+    "Manuscript generation for configured workflow evaluation workflows is difficult because revisions can drift away from grounded evidence and obscure the tested contribution.";
   repaired.sections[0].paragraphs[1] =
-    "This paper therefore evaluates whether thread-backed drafting stabilizes revision behavior within the tested workflow setting, matching the abstract and conclusion without broadening the claim.";
+    "This paper therefore evaluates whether the evaluated workflow preserves explicit evidence links within the tested workflow setting, matching the abstract and conclusion without broadening the claim.";
   return [
     ...buildSessionResponses(),
     JSON.stringify(initial),
@@ -813,26 +990,26 @@ function buildIntroductionAlignmentAdjacentRepairResponses(): string[] {
 
 function buildVisualRedundancyPairRepairResponses(): string[] {
   const sharedTableRows = [
-    { label: "Stateless baseline", value: 0.71 },
-    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Reference workflow", value: 0.71 },
+    { label: "The evaluated workflow", value: 0.76 },
     { label: "Observed delta", value: 0.05 }
   ];
   const preservedTradeoffBars = [
-    { label: "Latency-optimized", value: 0.52 },
-    { label: "Accuracy-optimized", value: 0.61 },
-    { label: "Balanced operating point", value: 0.57 }
+    { label: "Auxiliary observation A", value: 0.52 },
+    { label: "Auxiliary observation B", value: 0.61 },
+    { label: "Auxiliary observation C", value: 0.57 }
   ];
   const initial = JSON.parse(
     buildPolishedManuscriptResponse({
       tables: [
         {
-          caption: "Exact numeric comparison for revision stability.",
+          caption: "Exact numeric comparison for outcome score.",
           rows: sharedTableRows
         }
       ],
       figures: [
         {
-          caption: "A redundant bar chart restating the exact revision-stability comparison.",
+          caption: "A redundant bar chart restating the exact role-bound outcome comparison.",
           bars: sharedTableRows
         },
         {
@@ -846,7 +1023,7 @@ function buildVisualRedundancyPairRepairResponses(): string[] {
     buildPolishedManuscriptResponse({
       tables: [
         {
-          caption: "Exact numeric comparison for revision stability.",
+          caption: "Exact numeric comparison for outcome score.",
           rows: sharedTableRows
         }
       ]
@@ -854,11 +1031,11 @@ function buildVisualRedundancyPairRepairResponses(): string[] {
   ) as any;
   repaired.figures = [
     {
-      caption: "A trend-focused figure highlighting the relative stability gap without restating the full table.",
+      caption: "A trend-focused figure highlighting the subject-reference difference without restating the full table.",
       bars: [
-        { label: "Relative stability gap", value: 0.05 },
-        { label: "Thread-backed drafting", value: 0.76 },
-        { label: "Stateless baseline", value: 0.71 }
+        { label: "Subject-reference difference", value: 0.05 },
+        { label: "The evaluated workflow", value: 0.76 },
+        { label: "Reference workflow", value: 0.71 }
       ]
     },
     {
@@ -904,28 +1081,28 @@ function buildVisualRedundancyPairRepairResponses(): string[] {
   ];
 }
 
-function buildVisualCaptionOverclaimStopResponses(): string[] {
+function buildVisualCaptionOverclaimRepairResponses(): string[] {
   const sharedTableRows = [
-    { label: "Stateless baseline", value: 0.71 },
-    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Reference workflow", value: 0.71 },
+    { label: "The evaluated workflow", value: 0.76 },
     { label: "Observed delta", value: 0.05 }
   ];
   const preservedTradeoffBars = [
-    { label: "Latency-optimized", value: 0.52 },
-    { label: "Accuracy-optimized", value: 0.61 },
-    { label: "Balanced operating point", value: 0.57 }
+    { label: "Auxiliary observation A", value: 0.52 },
+    { label: "Auxiliary observation B", value: 0.61 },
+    { label: "Auxiliary observation C", value: 0.57 }
   ];
   const initial = JSON.parse(
     buildPolishedManuscriptResponse({
       tables: [
         {
-          caption: "Exact numeric comparison for revision stability.",
+          caption: "Exact numeric comparison for outcome score.",
           rows: sharedTableRows
         }
       ],
       figures: [
         {
-          caption: "A redundant bar chart restating the exact revision-stability comparison.",
+          caption: "A redundant bar chart restating the exact role-bound outcome comparison.",
           bars: sharedTableRows
         },
         {
@@ -939,7 +1116,7 @@ function buildVisualCaptionOverclaimStopResponses(): string[] {
     buildPolishedManuscriptResponse({
       tables: [
         {
-          caption: "Exact numeric comparison for revision stability.",
+          caption: "Exact numeric comparison for outcome score.",
           rows: sharedTableRows
         }
       ]
@@ -949,9 +1126,9 @@ function buildVisualCaptionOverclaimStopResponses(): string[] {
     {
       caption: "This figure clearly demonstrates broad applicability across domains.",
       bars: [
-        { label: "Relative stability gap", value: 0.05 },
-        { label: "Thread-backed drafting", value: 0.76 },
-        { label: "Stateless baseline", value: 0.71 }
+        { label: "Subject-reference difference", value: 0.05 },
+        { label: "The evaluated workflow", value: 0.76 },
+        { label: "Reference workflow", value: 0.71 }
       ]
     },
     {
@@ -984,26 +1161,7 @@ function buildVisualCaptionOverclaimStopResponses(): string[] {
     buildWrappedRepairResponse(repaired, {
       changed_location_keys: ["figure:0"]
     }),
-    buildManuscriptReviewResponse({
-      decision: "stop",
-      issues: [
-        {
-          code: "rhetorical_overreach",
-          severity: "fail",
-          section: "Results",
-          repairable: false,
-          message: "The changed figure caption now claims broad applicability beyond the tested workflow setting.",
-          fix_recommendation: "Constrain the figure caption to the observed workflow setting and the specific visual takeaway.",
-          visual_targets: [
-            {
-              kind: "figure",
-              index: 0,
-              rationale: "Figure 1 caption is the local overclaiming surface after repair."
-            }
-          ]
-        }
-      ]
-    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
     buildManuscriptReviewAuditResponse()
   ];
 }
@@ -1087,17 +1245,17 @@ function buildAppendixBackstopRepairResponses(): string[] {
   ];
 }
 
-function buildTableCaptionOverclaimStopResponses(): string[] {
+function buildTableCaptionOverclaimRepairResponses(): string[] {
   const sharedTableRows = [
-    { label: "Stateless baseline", value: 0.71 },
-    { label: "Thread-backed drafting", value: 0.76 },
+    { label: "Reference workflow", value: 0.71 },
+    { label: "The evaluated workflow", value: 0.76 },
     { label: "Observed delta", value: 0.05 }
   ];
   const initial = JSON.parse(
     buildPolishedManuscriptResponse({
       tables: [
         {
-          caption: "Exact numeric comparison for revision stability.",
+          caption: "Exact numeric comparison for outcome score.",
           rows: sharedTableRows
         }
       ]
@@ -1134,34 +1292,21 @@ function buildTableCaptionOverclaimStopResponses(): string[] {
     buildWrappedRepairResponse(repaired, {
       changed_location_keys: ["table:0"]
     }),
-    buildManuscriptReviewResponse({
-      decision: "stop",
-      issues: [
-        {
-          code: "rhetorical_overreach",
-          severity: "fail",
-          section: "Results",
-          repairable: false,
-          message: "The changed table caption now claims broad applicability beyond the tested workflow setting.",
-          fix_recommendation: "Constrain the table caption to the observed numeric comparison within the tested setting.",
-          visual_targets: [{ kind: "table", index: 0, rationale: "Table 1 caption is now the overclaiming surface." }]
-        }
-      ]
-    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
     buildManuscriptReviewAuditResponse()
   ];
 }
 
-function buildVisualLabelOverclaimStopResponses(): string[] {
+function buildVisualLabelOverclaimRepairResponses(): string[] {
   const initial = JSON.parse(
     buildPolishedManuscriptResponse({
       figures: [
         {
-          caption: "A trend-focused figure highlighting the relative stability gap.",
+          caption: "A trend-focused figure highlighting the subject-reference difference.",
           bars: [
-            { label: "Relative stability gap", value: 0.05 },
-            { label: "Thread-backed drafting", value: 0.76 },
-            { label: "Stateless baseline", value: 0.71 }
+            { label: "Subject-reference difference", value: 0.05 },
+            { label: "The evaluated workflow", value: 0.76 },
+            { label: "Reference workflow", value: 0.71 }
           ]
         }
       ]
@@ -1171,11 +1316,11 @@ function buildVisualLabelOverclaimStopResponses(): string[] {
     buildPolishedManuscriptResponse({
       figures: [
         {
-          caption: "A trend-focused figure highlighting the relative stability gap.",
+          caption: "A trend-focused figure highlighting the subject-reference difference.",
           bars: [
             { label: "Broad applicability across domains", value: 0.05 },
-            { label: "Thread-backed drafting", value: 0.76 },
-            { label: "Stateless baseline", value: 0.71 }
+            { label: "The evaluated workflow", value: 0.76 },
+            { label: "Reference workflow", value: 0.71 }
           ]
         }
       ]
@@ -1193,7 +1338,7 @@ function buildVisualLabelOverclaimStopResponses(): string[] {
           section: "Results",
           repairable: true,
           message: "Figure 1 should keep a scoped label for the changed trend bar.",
-          fix_recommendation: "Keep the figure focused on the observed stability pattern within the tested setting.",
+          fix_recommendation: "Keep the figure focused on the observed comparison pattern within the tested setting.",
           visual_targets: [{ kind: "figure", index: 0, rationale: "Figure 1 is the local repair surface." }]
         }
       ]
@@ -1202,20 +1347,7 @@ function buildVisualLabelOverclaimStopResponses(): string[] {
     buildWrappedRepairResponse(repaired, {
       changed_location_keys: ["figure:0"]
     }),
-    buildManuscriptReviewResponse({
-      decision: "stop",
-      issues: [
-        {
-          code: "rhetorical_overreach",
-          severity: "fail",
-          section: "Results",
-          repairable: false,
-          message: "The changed figure label now overstates the scope of the observed pattern.",
-          fix_recommendation: "Replace the changed label with a descriptive, scoped pattern label.",
-          visual_targets: [{ kind: "figure", index: 0, rationale: "Figure 1 label is the local overclaiming surface." }]
-        }
-      ]
-    }),
+    buildManuscriptReviewResponse({ decision: "pass" }),
     buildManuscriptReviewAuditResponse()
   ];
 }
@@ -1225,19 +1357,20 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
   auditIssueSeverity?: "warning" | "fail";
   followupIssueSeverity?: "warning" | "fail";
 }): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair1.sections[0].paragraphs[1] =
-    "The introduction now frames the contribution around revision stability in the tested workflow setting.";
+    "The introduction now frames the contribution around the declared primary outcome in the tested workflow setting.";
   const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair2.sections[0].paragraphs[1] = repair1.sections[0].paragraphs[1];
   repair2.sections[1].paragraphs = [
-    "Prior work studies revision stability and workflow benchmarking as separate concerns.",
-    "Compared with those strands, this study isolates the persistent drafting-state comparison within one workflow setting, making the comparison axis explicit."
+    "Prior work studies outcome score and workflow benchmarking as separate concerns.",
+    "Compared with those strands, this study isolates the configured evaluation-state comparison within one workflow setting, making the comparison axis explicit."
   ];
   const auditIssueCode = options?.auditIssueCode ?? "insufficient_grounding";
   return [
     ...buildSessionResponses(),
-    buildPolishedManuscriptResponse(),
+    JSON.stringify(initial),
     buildManuscriptReviewResponse({
       decision: "repair",
       issues: [
@@ -1252,7 +1385,7 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
             {
               section: "Introduction",
               paragraph_index: 1,
-              excerpt: "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
+              excerpt: initial.sections[0].paragraphs[1],
               reason: "This paragraph repeats the abstract framing too closely."
             }
           ]
@@ -1277,7 +1410,7 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
             {
               section: "Related Work",
               paragraph_index: 1,
-              excerpt: "Compared with those strands, this study focuses on whether persistent drafting state improves revisability under the same workflow setting.",
+              excerpt: repair1.sections[1].paragraphs[1],
               reason: "The comparison axis is still usable but underspecified."
             }
           ]
@@ -1315,14 +1448,15 @@ function buildPartiallyGroundedRepairStopResponses(options?: {
 }
 
 function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?: boolean }): string[] {
+  const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair1.sections[0].paragraphs[1] =
-    "The introduction frames the contribution around revision stability in the tested workflow setting, rather than repeating the abstract framing.";
+    "The introduction frames the contribution around outcome score in the tested workflow setting, rather than repeating the abstract framing.";
   const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair2.sections[0].paragraphs[1] = repair1.sections[0].paragraphs[1];
   repair2.sections[1].paragraphs = [
-    "Prior work studies collaborative revision stability, while workflow benchmarking studies orchestration quality at the system level.",
-    "Compared with those strands, the current study isolates persistent drafting state within a single workflow setting, making the comparison axis explicit rather than leaving it implied."
+    "Prior work studies explicit result semantics, while workflow benchmarking studies orchestration quality at the system level.",
+    "Compared with those strands, the current study isolates configured evaluation state within a single workflow setting, making the comparison axis explicit rather than leaving it implied."
   ];
   const finalDecision = options?.unresolvedAfterSecond
     ? buildManuscriptReviewResponse({
@@ -1341,7 +1475,7 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
     : buildManuscriptReviewResponse({ decision: "pass" });
   return [
     ...buildSessionResponses(),
-    buildPolishedManuscriptResponse(),
+    JSON.stringify(initial),
     buildManuscriptReviewResponse({
       decision: "repair",
       issues: [
@@ -1356,7 +1490,7 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
             {
               section: "Introduction",
               paragraph_index: 1,
-              excerpt: "This paper evaluates whether thread-backed drafting can stabilize revision behavior while preserving evidence-grounded writing.",
+              excerpt: initial.sections[0].paragraphs[1],
               reason: "The contribution framing is too close to the abstract."
             }
           ]
@@ -1400,18 +1534,18 @@ function buildManuscriptRepairTwiceResponses(options?: { unresolvedAfterSecond?:
 function buildNarrowBlockingRepairAfterNetImprovementResponses(): string[] {
   const initial = JSON.parse(buildPolishedManuscriptResponse()) as any;
   initial.sections[2].paragraphs[0] =
-    "We compare a thread-backed drafting workflow with a stateless baseline, but the realized setup is not stated cleanly enough for reconstruction.";
+    "The Method names the evaluated and reference workflows, but the realized setup is not stated cleanly enough for reconstruction.";
   initial.sections[4].paragraphs[0] = initial.sections[0].paragraphs[0];
 
   const repair1 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair1.sections[2].paragraphs[0] =
-    "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark, but the realized backbone description remains ambiguous.";
+    "The Method compares Evaluated workflow (primary role) with Reference workflow (baseline role) on evaluation_suite, but the realized execution setting remains ambiguous.";
   repair1.sections[4].paragraphs[0] =
-    "The result is best interpreted as a narrow revision-stability comparison within the tested workflow setting.";
+    "The result is best interpreted as a narrow role-bound outcome comparison within the tested workflow setting.";
 
   const repair2 = JSON.parse(buildPolishedManuscriptResponse()) as any;
   repair2.sections[2].paragraphs[0] =
-    "We compare a thread-backed drafting workflow with a stateless baseline on the AgentBench-mini benchmark using the same realized evaluation setup for both conditions.";
+    "The Method compares Evaluated workflow (primary role) with Reference workflow (baseline role) on evaluation_suite using the same realized evaluation setup for both series.";
 
   return [
     ...buildSessionResponses(),
@@ -1490,7 +1624,7 @@ function buildNarrowBlockingRepairAfterNetImprovementResponses(): string[] {
 function buildRepeatedLintRepairResponses(): string[] {
   const contaminated = JSON.parse(buildPolishedManuscriptResponse({
     abstract:
-      "We study the problem of manuscript generation for agent collaboration workflows. We evaluate a thread-backed drafting pipeline against a stateless baseline on AgentBench-mini. Across repeated runs, the thread-backed pipeline improves revision stability by 0.05. These results clearly demonstrate broad applicability beyond the tested workflow setting."
+      "We study auditable reporting for a configured workflow comparison. The evaluated and reference workflows use the same repeated protocol. These results clearly demonstrate broad applicability beyond the tested workflow setting."
   })) as any;
   return [
     ...buildSessionResponses(),
@@ -1631,26 +1765,26 @@ async function writeLatestResults(run: RunRecord, payload: Record<string, unknow
 
 function buildWeakScientificResponses(): string[] {
   const outline = JSON.stringify({
-    title: "Weak Benchmark Note",
-    abstract_focus: ["weak evidence", "cautious benchmark framing"],
+    title: "Weak Evaluation Note",
+    abstract_focus: ["weak evidence", "cautious evaluation framing"],
     section_headings: ["Introduction", "Method", "Results", "Conclusion"],
-    key_claim_themes: ["The benchmark suggests a small positive delta."],
+    key_claim_themes: ["The result suggests a small positive difference."],
     citation_plan: ["paper_1"]
   });
   const draft = JSON.stringify({
-    title: "Weak Benchmark Note",
+    title: "Weak Evaluation Note",
     abstract: "A short benchmark note.",
     keywords: ["benchmark"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["We study a small benchmark run."],
+        paragraphs: ["We study a small configured evaluation."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
       {
         heading: "Method",
-        paragraphs: ["We compare two workflows on one public dataset."],
+        paragraphs: ["We compare Evaluated workflow (primary role) with Reference workflow (baseline role) on one evaluation suite."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1"]
       },
@@ -1679,27 +1813,27 @@ function buildWeakScientificResponses(): string[] {
   });
   const review = JSON.stringify({
     summary: "The draft is cautious but still terse.",
-    revision_notes: ["Keep the benchmark framing explicit."],
+    revision_notes: ["Keep the bounded evaluation framing explicit."],
     unsupported_claims: [],
     missing_sections: [],
     missing_citations: []
   });
   const manuscript = JSON.stringify({
-    title: "Weak Benchmark Note",
-    abstract: "This study demonstrates significant improvement on the benchmark.",
+    title: "Weak Evaluation Note",
+    abstract: "This study demonstrates significant improvement on the evaluation.",
     keywords: ["benchmark"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["We study a small benchmark run."]
+        paragraphs: ["We study a small configured evaluation."]
       },
       {
         heading: "Method",
-        paragraphs: ["We compare two workflows on one public dataset."]
+        paragraphs: ["We compare Evaluated workflow (primary role) with Reference workflow (baseline role) on one evaluation suite."]
       },
       {
         heading: "Results",
-        paragraphs: ["The benchmark suggests a positive delta under this benchmark."]
+        paragraphs: ["The evaluation suggests a positive difference within its declared scope."]
       },
       {
         heading: "Conclusion",
@@ -1712,23 +1846,23 @@ function buildWeakScientificResponses(): string[] {
 
 function buildMediumScientificResponses(): string[] {
   const outline = JSON.stringify({
-    title: "Repeated Tabular Benchmark",
-    abstract_focus: ["nested evaluation", "resource-aware results", "appendix-aware paper"],
+    title: "Repeated Workflow Evaluation",
+    abstract_focus: ["declared comparison", "resource-aware results", "appendix-aware paper"],
     section_headings: ["Introduction", "Related Work", "Method", "Results", "Discussion", "Limitations", "Conclusion"],
-    key_claim_themes: ["The benchmark suggests small positive deltas under repeated evaluation."],
+    key_claim_themes: ["The declared primary comparison shows a bounded outcome difference under repeated evaluation."],
     citation_plan: ["paper_1", "paper_2", "paper_3"]
   });
   const sharedParagraph =
-    "The manuscript keeps claims scoped to the available repeated-evaluation artifacts while still describing protocol choices, resource measurements, and dataset-specific behavior in enough detail for a full paper.";
+    "The manuscript keeps claims scoped to the available repeated-evaluation artifacts while describing protocol choices, resource measurements, and scope-specific behavior in enough detail for a full paper.";
   const draft = JSON.stringify({
-    title: "Repeated Tabular Benchmark",
-    abstract: "A richer benchmark manuscript with appendix-aware reporting.",
-    keywords: ["benchmark", "tabular", "reproducibility"],
+    title: "Repeated Workflow Evaluation",
+    abstract: "A richer workflow-evaluation manuscript with appendix-aware reporting.",
+    keywords: ["workflow evaluation", "result traceability", "reproducibility"],
     sections: [
       {
         heading: "Introduction",
         paragraphs: [
-          "We study repeated tabular benchmarking under constrained compute settings.",
+          "We study role-bound result reporting under a constrained execution budget.",
           sharedParagraph
         ],
         evidence_ids: ["ev_1"],
@@ -1737,8 +1871,8 @@ function buildMediumScientificResponses(): string[] {
       {
         heading: "Related Work",
         paragraphs: [
-          "Prior work spans nested validation, CPU-only tree baselines, and reproducibility notes for repeated evaluation.",
-          "The closest prior work reports smaller empirical scopes, while the present study emphasizes cautious positioning rather than broad novelty."
+          "Prior work spans explicit result schemas, repeated evaluation protocols, and evidence-grounded scientific reporting.",
+          "The closest prior work separates these concerns, while the present study evaluates their interaction under one declared comparison."
         ],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1", "paper_2", "paper_3"]
@@ -1746,8 +1880,9 @@ function buildMediumScientificResponses(): string[] {
       {
         heading: "Method",
         paragraphs: [
-          "We evaluate breast_cancer and iris with explicit preprocessing, nested cross-validation, and fixed seeds.",
-          "The protocol fits preprocessing within each fold and records runtime and peak memory for the compared workflows.",
+          "The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) on evaluation_suite under the held-out partition.",
+          "Preprocessing is fit within each fold, and repeated stratified evaluations use fixed seeds with outer evaluation and inner selection loops.",
+          "Runtime and peak memory are recorded alongside the primary outcome under the same execution budget.",
           sharedParagraph
         ],
         evidence_ids: ["ev_1"],
@@ -1756,8 +1891,8 @@ function buildMediumScientificResponses(): string[] {
       {
         heading: "Results",
         paragraphs: [
-          "The strongest workflow yields a small positive macro-F1 delta over logistic regression.",
-          "Dataset-level behavior varies, so the study reports uncertainty, runtime, and memory together with the main score.",
+          "The declared primary comparison yields a small subject-minus-reference outcome difference.",
+          "Scope-specific behavior varies, so the study reports an interval, runtime, and memory together with the primary outcome.",
           sharedParagraph
         ],
         evidence_ids: ["ev_1"],
@@ -1766,7 +1901,7 @@ function buildMediumScientificResponses(): string[] {
       {
         heading: "Discussion",
         paragraphs: [
-          "The outcome is best framed as a benchmark note with bounded empirical scope.",
+          "The outcome is best framed as a bounded workflow evaluation rather than a broad method claim.",
           sharedParagraph
         ],
         evidence_ids: ["ev_1"],
@@ -1774,13 +1909,13 @@ function buildMediumScientificResponses(): string[] {
       },
       {
         heading: "Limitations",
-        paragraphs: ["The dataset scope is narrow and repeated CV does not justify broad inferential language."],
+        paragraphs: ["The evaluation scope is narrow, and repeated measurements do not justify universal inferential language."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_3"]
       },
       {
         heading: "Conclusion",
-        paragraphs: ["The paper keeps its central logic in the main body while routing detailed repeat-level artifacts to the appendix."],
+        paragraphs: ["The paper keeps its central comparison in the main body while routing detailed repeat-level evidence to the appendix."],
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1", "paper_2", "paper_3"]
       }
@@ -1788,7 +1923,7 @@ function buildMediumScientificResponses(): string[] {
     claims: [
       {
         claim_id: "c1",
-        statement: "The strongest workflow suggests a small positive delta under repeated evaluation.",
+        statement: "The declared primary comparison shows a bounded outcome difference under repeated evaluation.",
         section_heading: "Results",
         evidence_ids: ["ev_1"],
         citation_paper_ids: ["paper_1", "paper_3"]
@@ -1797,60 +1932,61 @@ function buildMediumScientificResponses(): string[] {
   });
   const review = JSON.stringify({
     summary: "The draft is grounded and uses the appendix appropriately.",
-    revision_notes: ["Keep the discussion cautious and preserve the main-body result table."],
+    revision_notes: ["Keep the discussion cautious and preserve the main-body comparison table."],
     unsupported_claims: [],
     missing_sections: [],
     missing_citations: []
   });
   const manuscript = JSON.stringify({
-    title: "Repeated Tabular Benchmark",
-    abstract: "A richer benchmark manuscript with appendix-aware reporting.",
-    keywords: ["benchmark", "tabular", "reproducibility"],
+    title: "Repeated Workflow Evaluation",
+    abstract: "A richer workflow-evaluation manuscript with appendix-aware reporting.",
+    keywords: ["workflow evaluation", "result traceability", "reproducibility"],
     sections: [
       {
         heading: "Introduction",
         paragraphs: [
-          "We study repeated tabular benchmarking under constrained compute settings.",
+          "We study role-bound result reporting under a constrained execution budget.",
           sharedParagraph
         ]
       },
       {
         heading: "Related Work",
         paragraphs: [
-          "Prior work spans nested validation, CPU-only tree baselines, and reproducibility notes for repeated evaluation.",
-          "The closest prior work reports smaller empirical scopes, while the present study emphasizes cautious positioning rather than broad novelty."
+          "Prior work spans explicit result schemas, repeated evaluation protocols, and evidence-grounded scientific reporting.",
+          "The closest prior work separates these concerns, while the present study evaluates their interaction under one declared comparison."
         ]
       },
       {
         heading: "Method",
         paragraphs: [
-          "We evaluate breast_cancer and iris with explicit preprocessing, nested cross-validation, and fixed seeds.",
-          "The protocol fits preprocessing within each fold and records runtime and peak memory for the compared workflows.",
+          "The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) on evaluation_suite under the held-out partition.",
+          "Preprocessing is fit within each fold, and repeated stratified evaluations use fixed seeds with outer evaluation and inner selection loops.",
+          "Runtime and peak memory are recorded alongside the primary outcome under the same execution budget.",
           sharedParagraph
         ]
       },
       {
         heading: "Results",
         paragraphs: [
-          "The strongest workflow yields a small positive macro-F1 delta over logistic regression.",
-          "Dataset-level behavior varies, so the study reports uncertainty, runtime, and memory together with the main score.",
+          "The declared primary comparison yields a small subject-minus-reference outcome difference.",
+          "Scope-specific behavior varies, so the study reports an interval, runtime, and memory together with the primary outcome.",
           sharedParagraph
         ]
       },
       {
         heading: "Discussion",
         paragraphs: [
-          "The outcome is best framed as a benchmark note with bounded empirical scope.",
+          "The outcome is best framed as a bounded workflow evaluation rather than a broad method claim.",
           sharedParagraph
         ]
       },
       {
         heading: "Limitations",
-        paragraphs: ["The dataset scope is narrow and repeated CV does not justify broad inferential language."]
+        paragraphs: ["The evaluation scope is narrow, and repeated measurements do not justify universal inferential language."]
       },
       {
         heading: "Conclusion",
-        paragraphs: ["The paper keeps its central logic in the main body while routing detailed repeat-level artifacts to the appendix."]
+        paragraphs: ["The paper keeps its central comparison in the main body while routing detailed repeat-level evidence to the appendix."]
       }
     ]
   });
@@ -1860,25 +1996,27 @@ function buildMediumScientificResponses(): string[] {
 function buildInconsistentScientificResponses(): string[] {
   const base = buildMediumScientificResponses();
   const inconsistentManuscript = JSON.stringify({
-    title: "Repeated Tabular Benchmark",
-    abstract: "We improve macro-F1 by 0.2 across 8 datasets.",
-    keywords: ["benchmark", "tabular", "reproducibility"],
+    title: "Repeated Workflow Evaluation",
+    abstract: "The Outcome score difference is 0.20 points across 8 repeated evaluations.",
+    keywords: ["workflow evaluation", "result traceability", "reproducibility"],
     sections: [
       {
         heading: "Introduction",
-        paragraphs: ["We study repeated tabular benchmarking under constrained compute settings."]
+        paragraphs: ["We study role-bound result reporting under a constrained execution budget."]
       },
       {
         heading: "Method",
-        paragraphs: ["We evaluate 2 datasets with outer 5-fold CV, inner 3-fold tuning, and 3 repeats."]
+        paragraphs: [
+          "The protocol uses 3 repeated evaluations with an outer five-fold loop and an inner three-fold loop. Evaluated workflow (primary role) and Reference workflow (baseline role) use the same setup."
+        ]
       },
       {
         heading: "Results",
-        paragraphs: ["The strongest workflow yields a macro-F1 delta of 0.026 across 2 datasets."]
+        paragraphs: ["The Outcome score difference is 0.05 points across 2 repeated evaluations."]
       },
       {
         heading: "Conclusion",
-        paragraphs: ["The study shows significant improvement across 8 datasets."]
+        paragraphs: ["The Outcome score difference is 0.30 points across 8 repeated evaluations."]
       }
     ]
   });
@@ -1886,73 +2024,77 @@ function buildInconsistentScientificResponses(): string[] {
 }
 
 function buildMediumResultAnalysis(): Record<string, unknown> {
+  const contract = buildResultsContractFixture({ includeResourceMetrics: true });
   return {
+    ...contract,
     objective_metric: {
       evaluation: {
-        summary: "Observed a small positive macro-F1 delta over logistic regression on the strongest workflow."
+        summary: "The declared primary comparison shows a small positive outcome difference."
       },
       profile: {
-        preferred_metric_keys: ["macro_f1_delta_vs_logreg"]
+        preferred_metric_keys: [PRIMARY_METRIC_ID]
       }
     },
     metric_table: [
-      { key: "macro_f1_delta_vs_logreg", value: 0.026 },
-      { key: "pairwise_ranking_agreement", value: 0.885 },
-      { key: "runtime_seconds_mean", value: 1.05 },
-      { key: "peak_memory_mb_mean", value: 149 },
-      { key: "raw_result.baseline_rows_by_seed.42.train_metadata.train_dataset_token_count", value: 5068 }
+      { key: PRIMARY_METRIC_ID, value: 0.05 },
+      { key: "pairwise_agreement", value: 0.885 },
+      { key: "runtime_seconds", value: 1.05 },
+      { key: "peak_memory_mb", value: 149 },
+      { key: "sample_count", value: 240 }
     ],
     primary_findings: [
-      "The strongest workflow suggests a small positive macro-F1 delta over logistic regression.",
+      "The declared primary comparison shows a small positive outcome difference.",
       "Runtime and memory remain close across the compared workflows."
     ],
     limitations: [
-      "The delta is small and varies by dataset.",
-      "Repeated CV does not justify strong inferential language."
+      "The observed difference is small and limited to the declared evaluation scope.",
+      "Repeated measurements do not justify universal inferential language."
     ],
     statistical_summary: {
+      executed_trials: 6,
+      total_trials: 6,
       notes: [
-        "Dispersion across repeated runs is moderate rather than negligible.",
-        "Heterogeneity remains visible across datasets."
+        "Dispersion across repeated evaluations is moderate rather than negligible.",
+        "Scope-specific heterogeneity remains visible."
       ],
       confidence_intervals: [
         {
-          metric_key: "macro_f1_delta_vs_logreg",
-          label: "Macro-F1 delta",
-          lower: 0.015,
-          upper: 0.036,
+          metric_key: PRIMARY_METRIC_ID,
+          label: "Outcome score difference",
+          lower: 0.02,
+          upper: 0.08,
           level: 0.95,
-          source: "metrics",
-          summary: "The 95% interval for the macro-F1 delta spans 0.015 to 0.036."
+          source: "results_artifact",
+          summary: "The 95% interval for the outcome difference spans 0.02 to 0.08 points."
         }
       ],
       effect_estimates: [
         {
-          comparison_id: "non_nested_vs_nested",
-          metric_key: "macro_f1_delta_vs_logreg",
-          delta: 0.026,
+          comparison_id: PRIMARY_COMPARISON_ID,
+          metric_key: PRIMARY_METRIC_ID,
+          delta: 0.05,
           direction: "positive",
-          summary: "The estimated macro-F1 delta remains positive but modest."
+          summary: "The estimated outcome difference remains positive but modest."
         }
       ]
     },
     figure_specs: [
       {
-        id: "delta_overview",
-        title: "Dataset-level macro-F1 deltas",
-        path: "figures/delta.svg",
-        metric_keys: ["macro_f1_delta_vs_logreg"],
-        summary: "Dataset-level macro-F1 deltas with uncertainty-aware interpretation."
+        id: "primary-outcome-overview",
+        title: "Declared outcome comparison",
+        path: "figures/primary-outcome.svg",
+        metric_keys: [PRIMARY_METRIC_ID],
+        summary: "The declared primary outcome with uncertainty-aware interpretation."
       }
     ],
     synthesis: {
       source: "fallback",
       discussion_points: [
-        "The observed gain is consistent with a benchmark note rather than a broad method claim."
+        "The observed difference supports a bounded evaluation claim rather than a broad method claim."
       ],
       failure_analysis: [],
       follow_up_actions: [],
-      confidence_statement: "Confidence is moderate because repeated evaluations exist, but dataset scope remains narrow."
+      confidence_statement: "Confidence is moderate because repeated evaluations exist, but the declared scope remains narrow."
     }
   };
 }
@@ -1960,130 +2102,30 @@ function buildMediumResultAnalysis(): Record<string, unknown> {
 function buildMediumLatestResults(): Record<string, unknown> {
   return {
     protocol: {
-      dataset_source: "OpenML",
-      datasets: ["breast_cancer", "iris"],
-      models: ["logreg", "extra_trees"],
-      workflows: ["nested", "non_nested"],
+      dataset_source: "fixture registry",
+      datasets: ["evaluation_suite"],
+      workflows: ["evaluated_workflow", "reference_workflow"],
       repeats: 3,
       seed_schedule: [100, 101, 102],
-      n_samples: 569,
-      n_features: 30,
-      n_classes: 2
+      n_samples: 240,
+      n_features: 12,
+      n_classes: 3
     },
     dataset_summaries: [
       {
-        dataset: "breast_cancer",
-        workflows: {
-          non_nested: {
-            models: {
-              logreg: { mean_test_macro_f1: 0.91 },
-              extra_trees: { mean_test_macro_f1: 0.944, mean_delta_vs_logreg: 0.034 }
-            },
-            pairwise_ranking_agreement: 0.9,
-            winner_consistency: 1,
-            runtime_seconds_mean: 0.95,
-            peak_memory_mb_mean: 151
-          }
-        }
-      },
-      {
-        dataset: "iris",
-        workflows: {
-          non_nested: {
-            models: {
-              logreg: { mean_test_macro_f1: 0.89 },
-              extra_trees: { mean_test_macro_f1: 0.918, mean_delta_vs_logreg: 0.028 }
-            },
-            pairwise_ranking_agreement: 0.88,
-            winner_consistency: 1,
-            runtime_seconds_mean: 0.82,
-            peak_memory_mb_mean: 150
-          }
-        }
+        dataset: "evaluation_suite",
+        observations: [
+          { series_id: SUBJECT_SERIES_ID, metric_id: PRIMARY_METRIC_ID, value: 0.76 },
+          { series_id: REFERENCE_SERIES_ID, metric_id: PRIMARY_METRIC_ID, value: 0.71 }
+        ],
+        runtime_seconds_mean: 1.05,
+        peak_memory_mb_mean: 149
       }
     ],
     repeat_records: [
-      {
-        repeat_index: 0,
-        datasets: [
-          {
-            dataset: "breast_cancer",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.91 },
-                  extra_trees: { test_macro_f1: 0.945 }
-                }
-              }
-            }
-          },
-          {
-            dataset: "iris",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.89 },
-                  extra_trees: { test_macro_f1: 0.919 }
-                }
-              }
-            }
-          }
-        ]
-      },
-      {
-        repeat_index: 1,
-        datasets: [
-          {
-            dataset: "breast_cancer",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.91 },
-                  extra_trees: { test_macro_f1: 0.944 }
-                }
-              }
-            }
-          },
-          {
-            dataset: "iris",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.89 },
-                  extra_trees: { test_macro_f1: 0.918 }
-                }
-              }
-            }
-          }
-        ]
-      },
-      {
-        repeat_index: 2,
-        datasets: [
-          {
-            dataset: "breast_cancer",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.91 },
-                  extra_trees: { test_macro_f1: 0.943 }
-                }
-              }
-            }
-          },
-          {
-            dataset: "iris",
-            workflows: {
-              non_nested: {
-                models: {
-                  logreg: { test_macro_f1: 0.89 },
-                  extra_trees: { test_macro_f1: 0.917 }
-                }
-              }
-            }
-          }
-        ]
-      }
+      { repeat_index: 0, seed: 100, comparison_id: PRIMARY_COMPARISON_ID },
+      { repeat_index: 1, seed: 101, comparison_id: PRIMARY_COMPARISON_ID },
+      { repeat_index: 2, seed: 102, comparison_id: PRIMARY_COMPARISON_ID }
     ]
   };
 }
@@ -2093,62 +2135,62 @@ async function seedMediumScientificRun(run: RunRecord): Promise<void> {
     "paper_summaries.jsonl": [
       {
         paper_id: "paper_1",
-        title: "Nested Validation for Tabular Baselines",
+        title: "Role-Bound Result Schemas",
         source_type: "full_text",
-        summary: "Nested validation stabilizes model selection in small tabular benchmarks.",
-        key_findings: ["Nested validation reduces selection optimism."],
-        limitations: ["Compute cost rises with repeated evaluation."],
-        datasets: ["breast_cancer", "iris"],
-        metrics: ["macro_f1"],
-        novelty: "Evaluation and benchmarking for small tabular datasets",
-        reproducibility_notes: ["Explicit seeds and folds are reported."]
+        summary: "Explicit series roles and observation links make quantitative comparisons auditable.",
+        key_findings: ["Role-bound comparisons resist label- and order-based inference."],
+        limitations: ["Schema validity does not establish empirical generality."],
+        datasets: ["evaluation_suite"],
+        metrics: [PRIMARY_METRIC_ID],
+        novelty: "Explicit comparison semantics",
+        reproducibility_notes: ["Series roles, scopes, and evidence references are reported."]
       },
       {
         paper_id: "paper_2",
-        title: "CPU-Only Tree Baselines",
+        title: "Repeated Evaluation Protocols",
         source_type: "full_text",
-        summary: "Tree ensembles offer small gains over logistic regression on public datasets.",
-        key_findings: ["Extra trees produce small positive deltas on some datasets."],
-        limitations: ["Gains vary by dataset."],
-        datasets: ["breast_cancer", "iris"],
-        metrics: ["macro_f1_delta_vs_logreg"],
-        novelty: "Classical model comparison under CPU-only constraints",
-        reproducibility_notes: ["OpenML datasets and seed schedules are listed."]
+        summary: "Repeated evaluation supports cautious interpretation of bounded workflow comparisons.",
+        key_findings: ["Fixed seeds and nested selection expose outcome variability."],
+        limitations: ["Repeated evaluation does not imply broad transfer."],
+        datasets: ["evaluation_suite"],
+        metrics: [PRIMARY_METRIC_ID, "runtime_seconds", "peak_memory_mb"],
+        novelty: "Resource-aware repeated evaluation",
+        reproducibility_notes: ["Seeds, loops, runtime, and memory are listed."]
       },
       {
         paper_id: "paper_3",
-        title: "Reproducibility Notes for Repeated CV",
+        title: "Evidence-Grounded Scientific Reporting",
         source_type: "full_text",
-        summary: "Repeated CV supports cautious, not universal, claims about ranking stability.",
-        key_findings: ["Repeated evaluation exposes heterogeneity."],
-        limitations: ["Repeated CV does not justify strong inferential language."],
-        datasets: ["OpenML tabular suites"],
-        metrics: ["pairwise_ranking_agreement"],
-        novelty: "Reproducibility framing for repeated evaluation",
-        reproducibility_notes: ["Intervals and heterogeneity are emphasized."]
+        summary: "Primary claims should remain linked to explicit artifacts and conservative scope statements.",
+        key_findings: ["Claim ceilings reduce unsupported generalization."],
+        limitations: ["Reporting discipline cannot replace broader experiments."],
+        datasets: ["evaluation_suite"],
+        metrics: [PRIMARY_METRIC_ID],
+        novelty: "Traceable claim-to-evidence reporting",
+        reproducibility_notes: ["Intervals and scope limitations are emphasized."]
       }
     ].map((row) => JSON.stringify(row)).join("\n") + "\n",
     "corpus.jsonl": [
       {
         paper_id: "paper_1",
-        title: "Nested Validation for Tabular Baselines",
-        abstract: "Nested validation stabilizes model selection in small tabular benchmarks.",
+        title: "Role-Bound Result Schemas",
+        abstract: "Explicit series roles and observation links make quantitative comparisons auditable.",
         authors: ["Alice Doe"],
         year: 2025,
         venue: "ACL Findings"
       },
       {
         paper_id: "paper_2",
-        title: "CPU-Only Tree Baselines",
-        abstract: "Tree ensembles offer small gains over logistic regression on public datasets.",
+        title: "Repeated Evaluation Protocols",
+        abstract: "Repeated evaluation supports cautious interpretation of bounded workflow comparisons.",
         authors: ["Bob Doe"],
         year: 2024,
         venue: "EMNLP"
       },
       {
         paper_id: "paper_3",
-        title: "Reproducibility Notes for Repeated CV",
-        abstract: "Repeated CV supports cautious, not universal, claims about ranking stability.",
+        title: "Evidence-Grounded Scientific Reporting",
+        abstract: "Primary claims should remain linked to explicit artifacts and conservative scope statements.",
         authors: ["Cara Doe"],
         year: 2024,
         venue: "TMLR"
@@ -2156,27 +2198,26 @@ async function seedMediumScientificRun(run: RunRecord): Promise<void> {
     ].map((row) => JSON.stringify(row)).join("\n") + "\n",
     "experiment_plan.yaml": [
       "selected_design:",
-      '  title: "Repeated CPU-only tabular baseline comparison"',
+      '  title: "Repeated configured workflow comparison"',
       "  datasets:",
-      '    - "breast_cancer"',
-      '    - "iris"',
+      '    - "evaluation_suite"',
       "  metrics:",
-      '    - "macro_f1_delta_vs_logreg"',
-      '    - "pairwise_ranking_agreement"',
+      "    - " + JSON.stringify(PRIMARY_METRIC_ID),
+      '    - "runtime_seconds"',
+      '    - "peak_memory_mb"',
       "  baselines:",
-      '    - "logistic regression"',
-      '    - "extra trees"',
+      '    - "Reference workflow"',
       "  implementation_notes:",
-      '    - "OpenML datasets with 569 samples, 30 features, and 2 classes are used."',
-      '    - "Standardize numeric columns, impute missing values, and fit preprocessing within each fold."',
-      '    - "Class imbalance is tracked explicitly."',
+      '    - "The fixture registry supplies 240 samples, 12 features, and 3 classes."',
+      '    - "Normalize numeric inputs, impute missing values, and fit preprocessing within each fold."',
+      '    - "Class imbalance and missingness are tracked explicitly."',
       "  evaluation_steps:",
-      '    - "Run outer 5-fold CV with inner 3-fold tuning."',
+      '    - "Run an outer five-fold evaluation with an inner three-fold selection loop."',
       '    - "Use stratified splits and repeat each workflow across fixed random seeds."',
       "  resource_notes:",
-      '    - "Hyperparameter grid includes max_depth, n_estimators, and C."'
+      '    - "The hyperparameter search space includes a configured depth and iteration budget."'
     ].join("\n"),
-    "result_analysis.json": `${JSON.stringify(buildMediumResultAnalysis(), null, 2)}\n`
+    "result_analysis.json": JSON.stringify(buildMediumResultAnalysis(), null, 2) + "\n"
   });
   await writeLatestResults(run, buildMediumLatestResults());
 }
@@ -2300,151 +2341,181 @@ async function exists(filePath: string): Promise<boolean> {
 }
 
 describe("writePaper PDF build", () => {
-  it("replaces noisy authored result visuals with condition-summary evidence during stabilization", () => {
-    const conditionResults = Array.from({ length: 12 }, (_entry, index) => ({
-      label: index === 0 ? "baseline_family" : `candidate_family_${index}`,
-      condition_parameter_x: index % 4,
-      condition_parameter_y: Math.floor(index / 4),
-      average_accuracy: 0.46 + index * 0.001,
-      accuracy_delta_vs_baseline: index === 0 ? 0 : index * 0.001,
-      evaluation: {
-        task_a: { accuracy: 0.5 },
-        task_b: { accuracy: 0.42 + index * 0.001 }
-      }
-    }));
+  it("blocks a bounded topic-probe parent before loading any paper bundle", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-bounded-parent-"));
+    process.chdir(root);
+    const run = makeRun("run-bounded-parent");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    await mkdir(path.join(runDir, "brief"), { recursive: true });
+    await mkdir(path.join(runDir, "hypothesis_generation"), { recursive: true });
+    await writeFile(
+      path.join(runDir, "memory", "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "run_brief.raw",
+          value: "# Research Brief\n\n## Research Mode\ntopic_discovery\n\n## Topic\nBounded search."
+        }]
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "brief", "source_brief.md"),
+      "# Research Brief\n\n## Research Mode\ntopic_discovery\n\n## Topic\nBounded search.\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "hypothesis_generation", "topic_portfolio.json"),
+      "{}\n",
+      "utf8"
+    );
+    const node = createWritePaperNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      pdfTextLlm: {} as any,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {} as any
+    } as any);
 
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("bounded_probe_parent_cannot_draft_paper");
+    await expect(access(path.join(runDir, "paper", "input_validation.json"))).rejects.toThrow();
+  });
+
+  it("replaces authored visuals with the declared V2 primary comparison", () => {
+    const contract = buildResultsContractFixture();
     const manuscript: PaperManuscript = {
-      title: "Compact Condition Study",
-      abstract: "A compact comparison reports a small baseline-relative gain.",
-      keywords: ["condition comparison"],
+      title: "Declared Comparison Study",
+      abstract: "An authored summary contains an unverified directional claim.",
+      keywords: ["comparison reporting"],
       sections: [
-        { heading: "Introduction", paragraphs: ["We compare a locked baseline with candidate conditions."] },
-        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
-        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] },
-        { heading: "Conclusion", paragraphs: ["The leading condition is a follow-up candidate."] }
+        { heading: "Method", paragraphs: ["The comparison protocol is fixed before execution."] },
+        { heading: "Results", paragraphs: ["The authored ranking claims a leading series without explicit links."] }
       ],
       tables: [
         {
-          caption: "Screening threshold, accuracy signal, and evaluation coverage.",
+          caption: "Authored summary mixing outcome and coverage counts.",
           rows: [
-            { label: "Screening threshold", value: 0.01 },
-            { label: "Best-condition accuracy", value: 0.48 },
-            { label: "Best-condition correct predictions", value: 138 },
-            { label: "Best-condition total predictions", value: 288 }
+            { label: "Unverified outcome", value: 0.99 },
+            { label: "Coverage count", value: 288 }
           ]
         }
       ],
       figures: [
         {
-          caption: "Mixed outcome and coverage summary.",
+          caption: "Authored ranking without comparison metadata.",
           bars: [
-            { label: "Accuracy delta vs baseline", value: 0.02 },
-            { label: "Best condition accuracy", value: 0.48 },
-            { label: "Best condition sample size", value: 288 }
+            { label: "Unverified leader", value: 0.99 },
+            { label: "Unverified reference", value: 0.2 }
           ]
         }
       ]
     };
 
     const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
-      resultAnalysis: {
-        metrics: {
-          condition_results: conditionResults
-        }
-      } as any
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
     });
 
     expect(stabilized.tables).toHaveLength(1);
-    expect(stabilized.tables?.[0]?.caption).toMatch(/Condition-level mean accuracy/);
-    expect(stabilized.tables?.[0]?.rows.length).toBeLessThanOrEqual(8);
-    expect(stabilized.tables?.[0]?.rows.map((row) => row.label)).toContain("Archived reference condition (factor x=0, factor y=0)");
-    expect(stabilized.tables?.[0]?.rows.some((row) => row.condition_parameter_x === 1 && row.condition_parameter_y === 0)).toBe(true);
-    expect(stabilized.tables?.[0]?.rows.some((row) => /correct|total|threshold|sample/i.test(row.label))).toBe(false);
-    expect(stabilized.figures?.length).toBeGreaterThanOrEqual(1);
-    expect(stabilized.figures?.[0]?.caption).toMatch(/Task-level score differences/);
-    expect(stabilized.figures?.[0]?.bars).toHaveLength(2);
-    expect(stabilized.figures?.[0]?.bars.some((row) => Math.abs(row.value) > 1)).toBe(false);
+    expect(stabilized.tables?.[0]?.caption).toContain(`Declared primary comparison for ${PRIMARY_METRIC_LABEL}`);
+    expect(stabilized.tables?.[0]?.rows).toMatchObject([
+      {
+        label: "Evaluated workflow (primary role, subject)",
+        comparison_id: PRIMARY_COMPARISON_ID,
+        observation_id: SUBJECT_OBSERVATION_ID,
+        metric_id: PRIMARY_METRIC_ID,
+        series_id: SUBJECT_SERIES_ID,
+        series_role: "primary",
+        comparison_side: "subject"
+      },
+      {
+        label: "Reference workflow (baseline role, reference)",
+        observation_id: REFERENCE_OBSERVATION_ID,
+        series_role: "baseline",
+        comparison_side: "reference"
+      },
+      {
+        label: "Subject-minus-reference difference",
+        comparison_side: "difference"
+      }
+    ]);
+    expect(stabilized.figures?.[0]?.bars).toMatchObject([
+      { observation_id: SUBJECT_OBSERVATION_ID, comparison_side: "subject" },
+      { observation_id: REFERENCE_OBSERVATION_ID, comparison_side: "reference" }
+    ]);
+    expect(stabilized.tables?.[0]?.source_refs).toEqual(
+      expect.arrayContaining([{ kind: "artifact", id: DERIVED_MAIN_TABLE_SOURCE_REF_ID }])
+    );
+    expect(stabilized.figures?.[0]?.source_refs).toEqual(
+      expect.arrayContaining([{ kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID }])
+    );
+    expect(JSON.stringify(stabilized)).not.toMatch(/Coverage count|Unverified leader/iu);
   });
 
-  it("recovers structured condition metadata from compact labels and drops repair-note appendix sections", () => {
+  it("uses complete V2 evidence while dropping repair-note appendix sections", () => {
+    const contract = buildResultsContractFixture();
     const manuscript: PaperManuscript = {
-      title: "Compact Condition Study",
-      abstract: "A compact comparison reports a small baseline-relative gain.",
-      keywords: ["condition comparison"],
+      title: "Declared Comparison Study",
+      abstract: "A bounded comparison is backed by explicit observations.",
+      keywords: ["comparison reporting"],
       sections: [
-        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
-        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+        { heading: "Method", paragraphs: ["The protocol declares subject and reference roles."] },
+        { heading: "Results", paragraphs: ["The result is reported from linked observations."] }
       ],
-      tables: [],
-      figures: [],
       appendix_sections: [
         {
           heading: "Recommended Additions for a Complete Reproducibility Appendix",
-          paragraphs: [
-            "The available evidence package does not include a complete per-condition table containing all low-level fields."
-          ]
+          paragraphs: ["The available package should include more internal fields."]
         },
         {
           heading: "Recommended Follow-up Reporting",
-          paragraphs: [
-            "The most important unresolved item is the mapping between the registered baseline and the reported objective delta."
-          ]
+          paragraphs: ["A future revision should explain the internal repair process."]
         },
         {
           heading: "Supplementary Protocol",
-          paragraphs: ["The executed comparison exposes the measured condition summaries for reader inspection."]
+          paragraphs: ["The executed protocol exposes repeated-measure details for reader inspection."]
         }
       ]
     };
 
     const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
-      resultAnalysis: {
-        metrics: {
-          condition_results: [
-            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } },
-            { label: "4 parameter 0 05", average_accuracy: 0.455, accuracy_delta_vs_baseline: 0.005, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.45 } } },
-            { label: "16 parameter 0 05", average_accuracy: 0.47, accuracy_delta_vs_baseline: 0.02, evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.47 } } },
-            { label: "32 parameter 0 1", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.49 } } }
-          ]
-        }
-      } as any
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
     });
 
-    const rows = stabilized.tables?.[0]?.rows || [];
-    expect(rows.find((row) => row.label.includes("factor x=4"))).toMatchObject({
-      condition_parameter_x: 4,
-      condition_parameter_y: 0.05
-    });
-    expect(rows.find((row) => row.label.includes("factor x=32"))).toMatchObject({
-      condition_parameter_x: 32,
-      condition_parameter_y: 0.1
-    });
-    expect(rows.map((row) => row.label).join(" ")).not.toContain("4 parameter 0 05");
-    expect(stabilized.figures?.[0]?.bars.map((bar) => bar.label)).toEqual([
-      "Benchmark Task A task difference",
-      "Benchmark Task B task difference"
+    expect(stabilized.tables?.[0]?.rows).toHaveLength(3);
+    expect(stabilized.figures?.[0]?.bars).toHaveLength(2);
+    expect(stabilized.appendix_sections?.map((section) => section.heading)).toEqual([
+      "Supplementary Protocol"
     ]);
-    expect(stabilized.appendix_sections?.map((section) => section.heading)).toEqual(["Supplementary Protocol"]);
   });
 
   it("dedupes repeated related-work axis paragraphs during manuscript stabilization", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "Parameterized Condition Study",
-      abstract: "A compact condition-parameter comparison reports a bounded screening signal.",
-      keywords: ["configuration tuning"],
+      title: "Configured Evaluation Study",
+      abstract: "A bounded comparison is reported under a fixed protocol.",
+      keywords: ["workflow evaluation"],
       sections: [
         {
           heading: "Related Work",
           paragraphs: [
-            "A first axis in parameter-efficient fine-tuning research is the adaptation mechanism and the allocation of trainable capacity. Mechanism-oriented studies vary how configuration updates are parameterized.",
-            "A second axis is evaluation context. Evaluation-centered benchmarks vary tasks and instruction-tuning regimes.",
-            "A third axis is resource awareness. Local or budget-constrained fine-tuning work motivates reporting accuracy together with runtime and memory behavior.",
-            "A third axis is resource awareness. Work on local or budget-constrained fine-tuning motivates the need to report not only accuracy but also compute and memory behavior."
+            "A first strand studies explicit result schemas and comparison provenance.",
+            "A second strand studies evaluation protocols and bounded empirical claims.",
+            "A third strand is resource awareness. Budget-constrained evaluation motivates reporting outcome, runtime, and memory together.",
+            "A third strand is resource awareness. Resource-conscious evaluation motivates joint reporting of outcome, runtime, and memory."
           ]
         },
         {
           heading: "Method",
-          paragraphs: ["The method studies an parameterized condition grid with parameter x and parameter y factors. Evaluation reports Benchmark Task A and Benchmark Task B."]
+          paragraphs: ["The method evaluates a declared subject and reference under one fixed protocol."]
         }
       ],
       tables: [],
@@ -2452,26 +2523,23 @@ describe("writePaper PDF build", () => {
     });
 
     const related = stabilized.sections.find((section) => section.heading === "Related Work");
-    expect(related?.paragraphs.filter((paragraph) => /\bthird axis\b/iu.test(paragraph))).toHaveLength(1);
+    expect(related?.paragraphs.filter((paragraph) => /\bthird strand\b/iu.test(paragraph))).toHaveLength(1);
   });
 
   it("removes draft-facing citation and reporting instructions from reader sections", () => {
     const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "Compact Condition Study",
-      abstract: "A bounded condition comparison reports a screening result.",
+      title: "Configured Evaluation Study",
+      abstract: "A bounded comparison reports one declared outcome.",
       keywords: [],
       sections: [
         {
           heading: "Method",
-          paragraphs: [
-            "The experimental design uses the configured condition grid from the study design, with the baseline or comparator identified from the study metadata. The primary reported score and per-task, resource, and completion metrics are retained according to the run record.",
-            "The executed run used the selected local backbone and fixed training settings."
-          ]
+          paragraphs: ["The executed protocol uses fixed preprocessing and evaluation settings."]
         },
         {
           heading: "Limitations",
           paragraphs: [
-            "Several related-work notes available to this draft are conservative summaries rather than fully validated extraction records, so they should not be used as quantitative baselines. The final manuscript should cite stable sources for the base model and evaluation harness.",
+            "Several related-work notes available to this draft are not validated. The final manuscript should cite stable sources for the evaluation protocol.",
             "The available summary does not expose complete resource traces, so resource-efficiency claims remain outside the evidence ceiling."
           ]
         }
@@ -2480,8 +2548,7 @@ describe("writePaper PDF build", () => {
         {
           heading: "Supplementary Reporting Requirements for Replication",
           paragraphs: [
-            "The uncertainty analysis should be reported at the level of baseline-relative contrasts. A final analysis should make clear whether intervals are computed over seeds or evaluated items.",
-            "The compact record lists the planned condition grid and execution counts."
+            "The final analysis should make clear how intervals are computed. The protocol record lists planned execution counts."
           ]
         }
       ],
@@ -2491,28 +2558,27 @@ describe("writePaper PDF build", () => {
 
     const text = JSON.stringify(stabilized);
     expect(text).not.toMatch(/available to this draft|final manuscript should cite|stable sources/iu);
-    expect(text).not.toMatch(/configured condition grid from the study design|retained according to the run record/iu);
     expect(text).not.toMatch(/final analysis should make clear/iu);
     expect(text).toContain("resource-efficiency claims remain outside the evidence ceiling");
-    expect(text).toContain("planned condition grid and execution counts");
+    expect(text).toContain("protocol record lists planned execution counts");
   });
 
-  it("enriches provided condition summaries with structured result-analysis metadata", () => {
+  it("replaces provided summary rows with explicit V2 observation links", () => {
+    const contract = buildResultsContractFixture();
     const manuscript: PaperManuscript = {
       title: "Provided Summary Study",
-      abstract: "A compact comparison reports a small baseline-relative gain.",
-      keywords: ["condition comparison"],
+      abstract: "An authored summary is reconciled with the canonical comparison.",
+      keywords: ["comparison reporting"],
       sections: [
-        { heading: "Method", paragraphs: ["The method uses a fixed comparison grid."] },
-        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+        { heading: "Method", paragraphs: ["The protocol fixes the comparison before execution."] },
+        { heading: "Results", paragraphs: ["Table 1 presents the declared comparison."] }
       ],
       tables: [
         {
-          caption: "Condition-level mean accuracy for the executed comparison grid.",
+          caption: "Provided summary in display order.",
           rows: [
-            { label: "Compatibility comparison row", value: 0.45, average_accuracy: 0.45, is_comparator: true },
-            { label: "4 parameter 0 05", value: 0.455, average_accuracy: 0.455 },
-            { label: "8 parameter 0 0", value: 0.45, average_accuracy: 0.45 }
+            { label: "Reference shown first", value: 0.71 },
+            { label: "Subject shown second", value: 0.76 }
           ]
         }
       ],
@@ -2520,228 +2586,128 @@ describe("writePaper PDF build", () => {
     };
 
     const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
-      conditionSummaries: [
-        { label: "Compatibility comparison row", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_comparator: true },
-        { label: "4 parameter 0 05", average_accuracy_mean: 0.455, accuracy_delta_vs_baseline_mean: 0.005 },
-        { label: "8 parameter 0 0", average_accuracy_mean: 0.45, accuracy_delta_vs_baseline_mean: 0, is_baseline: true }
-      ],
-      resultAnalysis: {
-        metrics: {
-          baseline_condition_marker: "8 parameter 0 0",
-          condition_results: [
-            { label: "4 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } },
-            { label: "4 parameter 0 05", average_accuracy: 0.455, accuracy_delta_vs_baseline: 0.005, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.45 } } },
-            { label: "8 parameter 0 0", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } } }
-          ]
-        }
-      } as any
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
     });
-
     const rows = stabilized.tables?.[0]?.rows || [];
+
+    expect(rows.map((row) => row.comparison_side)).toEqual(["subject", "reference", "difference"]);
     expect(rows[0]).toMatchObject({
-      label: "Archived reference condition (factor x=4, factor y=0)",
-      condition_parameter_x: 4,
-      condition_parameter_y: 0,
-      is_comparator: true
+      value: 0.76,
+      series_id: SUBJECT_SERIES_ID,
+      series_role: "primary",
+      observation_id: SUBJECT_OBSERVATION_ID
     });
     expect(rows[1]).toMatchObject({
-      label: "Condition B (factor x=4, factor y=0.05)",
-      condition_parameter_x: 4,
-      condition_parameter_y: 0.05
+      value: 0.71,
+      series_id: REFERENCE_SERIES_ID,
+      series_role: "baseline",
+      observation_id: REFERENCE_OBSERVATION_ID
     });
     expect(rows[2]).toMatchObject({
-      label: "Registered baseline condition, not delta reference (factor x=8, factor y=0)",
-      condition_parameter_x: 8,
-      condition_parameter_y: 0,
-      is_registered_baseline: true
+      value: expect.closeTo(0.05, 10),
+      comparison_id: PRIMARY_COMPARISON_ID,
+      metric_id: PRIMARY_METRIC_ID
     });
-    expect(rows.map((row) => row.label).join(" ")).not.toContain("4 parameter 0 05");
+    expect(rows.map((row) => row.label).join(" ")).not.toContain("shown first");
   });
 
-  it("uses reader-facing axis and task labels when manuscript context names them", () => {
-    const manuscript: PaperManuscript = {
-      title: "Parameterized Condition Study",
-      abstract: "The run varies condition parameter x and condition parameter y under a fixed budget.",
-      keywords: ["condition comparison"],
-      sections: [
-        { heading: "Method", paragraphs: ["The method varies condition parameter x and condition parameter y. Evaluation uses Task Alpha and Task Beta."] },
-        { heading: "Results", paragraphs: ["Table 1 anchors the comparison and Figure 1 decomposes the task-level change."] }
-      ],
-      tables: [],
-      figures: []
-    };
-
-    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
-      resultAnalysis: {
-        metrics: {
-          baseline_condition_marker: "8 parameter 0 0",
-          condition_results: [
-            { label: "4 parameter 0 0", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
-            { label: "8 parameter 0 0", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.45, accuracy_delta_vs_baseline: 0, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.44 } } },
-            { label: "12 parameter 0 05", condition_axis_x_label: "condition parameter x", condition_axis_y_label: "condition parameter y", average_accuracy: 0.48, accuracy_delta_vs_baseline: 0.03, evaluation: { task_alpha: { accuracy: 0.46 }, task_beta: { accuracy: 0.50 } } }
-          ]
-        }
-      } as any
+  it("uses fixture-supplied metric and series labels on reader-facing visuals", () => {
+    const contract = buildResultsContractFixture({
+      metricId: "declared_measure",
+      metricLabel: "Declared measure",
+      subjectLabel: "Candidate workflow",
+      referenceLabel: "Control workflow",
+      subjectValue: 12,
+      referenceValue: 15,
+      direction: "lower_better",
+      unit: "units"
     });
-
-    const rows = stabilized.tables?.[0]?.rows || [];
-    expect(rows[0]?.label).toContain("condition parameter x=4");
-    expect(rows[0]?.label).toContain("condition parameter y=0");
-    expect(stabilized.tables?.[0]?.condition_axis_x_label).toBe("condition parameter x");
-    expect(stabilized.tables?.[0]?.condition_axis_y_label).toBe("condition parameter y");
-    expect(rows.map((row) => row.label).join(" ")).not.toContain("factor x");
-    expect(stabilized.figures?.[0]?.bars.map((bar) => bar.label)).toEqual([
-      "Task Alpha task difference",
-      "Task Beta task difference"
-    ]);
-    expect(stabilized.figures?.[0]?.caption).toContain("condition parameter x=12");
-  });
-
-  it("keeps registered baseline separate from the archived reference condition", () => {
-    const conditionResults = [
-      {
-        label: "comparison_family",
-        condition_marker: "comparison_row_marker",
-        condition_parameter_x: 2,
-        condition_parameter_y: 0,
-        average_accuracy: 0.45,
-        accuracy_delta_vs_baseline: 0,
-        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } }
-      },
-      {
-        label: "registered_family",
-        condition_marker: "registered_row_marker",
-        condition_parameter_x: 4,
-        condition_parameter_y: 0,
-        average_accuracy: 0.45,
-        accuracy_delta_vs_baseline: 0,
-        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.44 } }
-      },
-      {
-        label: "candidate_family_a",
-        condition_marker: "candidate_row_a_marker",
-        condition_parameter_x: 6,
-        condition_parameter_y: 0,
-        average_accuracy: 0.46,
-        accuracy_delta_vs_baseline: 0.01,
-        evaluation: { task_a: { accuracy: 0.46 }, task_b: { accuracy: 0.46 } }
-      },
-      {
-        label: "candidate_family_b",
-        condition_marker: "candidate_row_b_marker",
-        condition_parameter_x: 6,
-        condition_parameter_y: 0.1,
-        average_accuracy: 0.47,
-        accuracy_delta_vs_baseline: 0.02,
-        evaluation: { task_a: { accuracy: 0.47 }, task_b: { accuracy: 0.47 } }
-      }
-    ];
 
     const stabilized = stabilizePaperManuscriptForSubmission({
-      title: "Compact Condition Study",
-      abstract: "The aggregate result summary reports that the primary point-estimate objective was met.",
+      title: "Reader-Facing Comparison",
+      abstract: "A configured comparison uses labels supplied by its result contract.",
       keywords: [],
-      sections: [
-        { heading: "Method", paragraphs: ["The method uses a fixed condition-parameter comparison grid."] },
-        {
-          heading: "Results",
-          paragraphs: [
-            "The aggregate result table reports a positive value for the primary accuracy objective. The baseline row has mean accuracy 0.450000, while the best reported comparator row has mean accuracy 0.470000. This exceeds the predefined numerical threshold of +0.01."
-          ]
-        }
-      ],
-      tables: [],
-      figures: []
+      sections: [{ heading: "Results", paragraphs: ["The linked observations determine the display."] }]
     }, {
-      resultAnalysis: {
-        metrics: {
-          baseline_condition_marker: "comparison_row_marker",
-          condition_results: conditionResults
-        },
-        plan_context: {
-          selected_design: {
-            baselines: ["Primary trained baseline: factor x=4/factor y=0.0 with matched training budget."]
-          }
-        }
-      } as any
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
     });
 
-    const rows = stabilized.tables?.[0]?.rows || [];
-    expect(stabilized.abstract).toContain("primary baseline-relative objective is therefore not accepted as met");
-    const results = stabilized.sections.find((section) => section.heading === "Results")?.paragraphs.join(" ") || "";
-    expect(results).toContain("registered-baseline objective is not accepted as met");
-    expect(results).not.toContain("primary accuracy objective");
-    expect(rows.find((row) => row.is_comparator)?.label).toBe("Archived reference condition (factor x=2, factor y=0)");
-    expect(rows.find((row) => row.is_registered_baseline)?.label).toBe("Registered baseline condition, not delta reference (factor x=4, factor y=0)");
-    expect(rows.find((row) => row.is_comparator)?.is_baseline).toBeUndefined();
-    expect(rows.find((row) => row.is_comparator)?.accuracy_delta_vs_baseline).toBeUndefined();
-    expect(rows.find((row) => row.is_comparator)?.accuracy_delta_vs_comparator).toBe(0);
-    expect(stabilized.figures?.[0]?.caption).toContain("registered baseline and delta-reference row are kept separate");
-    expect(stabilized.figures?.[0]?.caption).not.toContain("relative to the registered baseline");
-    expect(stabilized.figures?.[0]?.bars.map((row) => row.label)).toContain("Registered baseline, not reference");
+    expect(stabilized.tables?.[0]?.caption).toContain("Declared measure under Partition=held-out partition");
+    expect(stabilized.tables?.[0]?.caption).toContain("lower values preferred");
+    expect(stabilized.tables?.[0]?.rows.map((row) => row.label)).toEqual([
+      "Candidate workflow (primary role, subject)",
+      "Control workflow (baseline role, reference)",
+      "Subject-minus-reference difference"
+    ]);
+    expect(stabilized.figures?.[0]?.caption).toContain("Declared measure under Partition=held-out partition");
+  });
 
-    const restabilizedWithoutPlanContext = stabilizePaperManuscriptForSubmission(stabilized, {
-      resultAnalysis: {
-        metrics: {
-          baseline_condition_marker: "comparison_row_marker",
-          condition_results: conditionResults
-        }
-      } as any
+  it("preserves declared roles without inferring them from labels, order, or values", () => {
+    const contract = buildResultsContractFixture({
+      subjectLabel: "Configured subject",
+      referenceLabel: "Declared baseline",
+      subjectValue: 12,
+      referenceValue: 9,
+      direction: "lower_better",
+      unit: "units"
     });
-    const preservedRows = restabilizedWithoutPlanContext.tables?.[0]?.rows || [];
-    expect(preservedRows.find((row) => row.is_comparator)?.label).toBe(
-      "Archived reference condition (factor x=2, factor y=0)"
-    );
-    expect(preservedRows.find((row) => row.is_registered_baseline)?.label).toBe(
-      "Registered baseline condition, not delta reference (factor x=4, factor y=0)"
-    );
-    expect(restabilizedWithoutPlanContext.figures?.[0]?.source_refs).toEqual(
-      expect.arrayContaining([{ kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID }])
-    );
-    expect(restabilizedWithoutPlanContext.figures?.[0]?.caption).toContain("registered baseline and delta-reference row are kept separate");
+    contract.results_artifact.series.reverse();
+    contract.results_artifact.observations.reverse();
 
-    const stabilizedFromStaleDerivedVisual = stabilizePaperManuscriptForSubmission({
-      title: "Compact Condition Study",
-      abstract: "A compact comparison reports a small baseline-relative gain.",
+    const manuscript: PaperManuscript = {
+      title: "Role-Bound Comparison",
+      abstract: "The display follows explicit links rather than observed ranking.",
       keywords: [],
       sections: [
-        { heading: "Method", paragraphs: ["The method uses a fixed condition-parameter comparison grid."] },
-        { heading: "Results", paragraphs: ["Table 1 anchors the comparison."] }
+        { heading: "Method", paragraphs: ["Roles and scope are declared before execution."] },
+        { heading: "Results", paragraphs: ["The primary comparison remains role-bound."] }
       ],
       tables: [
         {
-          caption: "Stale condition table.",
-          rows: [
-            {
-              label: "Registered baseline condition (factor x=2, factor y=0)",
-              value: 0.45,
-              is_baseline: true,
-              is_registered_baseline: true
-            }
-          ],
+          caption: "Stale derived table.",
+          rows: [{ label: "Incorrect inferred winner", value: 9 }],
           source_refs: [{ kind: "artifact", id: DERIVED_MAIN_TABLE_SOURCE_REF_ID }]
         }
       ],
       figures: []
-    }, {
-      resultAnalysis: {
-        metrics: {
-          baseline_condition_marker: "comparison_row_marker",
-          condition_results: conditionResults
-        },
-        plan_context: {
-          selected_design: {
-            baselines: ["Primary trained baseline: factor x=4/factor y=0.0 with matched training budget."]
-          }
-        }
-      } as any
+    };
+
+    const stabilized = stabilizePaperManuscriptForSubmission(manuscript, {
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
     });
-    const restabilizedRows = stabilizedFromStaleDerivedVisual.tables?.[0]?.rows || [];
-    expect(restabilizedRows.find((row) => row.is_comparator)?.label).toBe(
-      "Archived reference condition (factor x=2, factor y=0)"
-    );
-    expect(restabilizedRows.find((row) => row.is_registered_baseline)?.label).toBe(
-      "Registered baseline condition, not delta reference (factor x=4, factor y=0)"
+    const rows = stabilized.tables?.[0]?.rows || [];
+
+    expect(rows[0]).toMatchObject({
+      label: "Configured subject (primary role, subject)",
+      value: 12,
+      comparison_side: "subject"
+    });
+    expect(rows[1]).toMatchObject({
+      label: "Declared baseline (baseline role, reference)",
+      value: 9,
+      comparison_side: "reference"
+    });
+    expect(rows[2]).toMatchObject({ value: 3, comparison_side: "difference" });
+    expect(stabilized.figures?.[0]?.bars.map((row) => row.comparison_side)).toEqual([
+      "subject",
+      "reference"
+    ]);
+    expect(JSON.stringify(stabilized)).not.toContain("Incorrect inferred winner");
+
+    const restabilized = stabilizePaperManuscriptForSubmission(stabilized, {
+      resultsArtifact: contract.results_artifact,
+      resultsPlan: contract.results_plan
+    });
+    expect(restabilized.tables?.[0]?.rows.map((row) => row.comparison_side)).toEqual([
+      "subject",
+      "reference",
+      "difference"
+    ]);
+    expect(restabilized.figures?.[0]?.source_refs).toEqual(
+      expect.arrayContaining([{ kind: "artifact", id: DERIVED_MAIN_FIGURE_SOURCE_REF_ID }])
     );
   });
 
@@ -2798,19 +2764,19 @@ describe("writePaper PDF build", () => {
             summary: `Full-text summary for ${pdfUrl}.`,
             key_findings: ["Full-text related-work analysis recovered a grounded positioning signal."],
             limitations: ["The PDF analysis focuses on related-work positioning rather than experimental reproduction."],
-            datasets: ["AgentBench-mini"],
-            metrics: ["reproducibility_score"],
+            datasets: ["evaluation_suite"],
+            metrics: [PRIMARY_METRIC_ID],
             novelty: "Full-text scout enrichment for related work",
             reproducibility_notes: ["The PDF source was read directly during write_paper."],
             evidence_items: [
               {
-                claim: "The paper frames revision stability as a coordination problem.",
+                claim: "The paper frames the primary outcome through explicit comparison semantics.",
                 method_slot: "related-work framing",
                 result_slot: "positioning evidence",
                 limitation_slot: "bounded enrichment",
-                dataset_slot: "AgentBench-mini",
-                metric_slot: "reproducibility_score",
-                evidence_span: "The full paper highlights revision stability and coordination tradeoffs.",
+                dataset_slot: "evaluation_suite",
+                metric_slot: PRIMARY_METRIC_ID,
+                evidence_span: "The full paper highlights explicit outcome links and bounded comparison scope.",
                 confidence: 0.78,
                 confidence_reason: "The enrichment is grounded in the full PDF input."
               }
@@ -2822,16 +2788,16 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(requests).toHaveLength(2);
-    expect(requests[0]?.query).toContain("agent collaboration");
-    expect(requests[0]?.query).toContain("Thread-backed drafting benchmark");
-    expect(requests[1]?.query).toContain("agent collaboration");
+    expect(requests[0]?.query).toContain("configured workflow evaluation");
+    expect(requests[0]?.query).toContain("Configured workflow comparison");
+    expect(requests[1]?.query).toContain("configured workflow evaluation");
 
     const scoutRequest = JSON.parse(
       await readFile(path.join(runDir, "paper", "related_work_scout", "request.json"), "utf8")
     ) as { query: string; planned_queries: Array<{ id: string }> };
-    expect(scoutRequest.query).toContain("agent collaboration");
+    expect(scoutRequest.query).toContain("configured workflow evaluation");
     expect(scoutRequest.planned_queries.length).toBeGreaterThanOrEqual(2);
 
     const scoutPlan = JSON.parse(
@@ -2972,7 +2938,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
 
     const verifiedRegistry = JSON.parse(
       await readFile(path.join(runDir, "paper", "verified_registry.json"), "utf8")
@@ -3039,7 +3005,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(result.summary).toContain("after one automatic validation repair (1 -> 0)");
 
     const validation = JSON.parse(await readFile(path.join(runDir, "paper", "validation.json"), "utf8")) as {
@@ -3100,9 +3066,10 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(result.summary).toContain("PDF: built successfully");
     expect(aci.commands).toEqual([
+      "python3 render_paper_figures.py",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "bibtex main",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
@@ -3157,7 +3124,7 @@ describe("writePaper PDF build", () => {
     );
   });
 
-  it("fails before PDF build when submission validation catches raw evidence ids", async () => {
+  it("fails before LaTeX compilation when submission validation catches raw evidence ids", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-submission-validation-"));
     process.chdir(root);
 
@@ -3184,7 +3151,7 @@ describe("writePaper PDF build", () => {
     expect(result.status).toBe("failure");
     expect(result.error).toContain("submission-quality validation failed");
     expect(result.error).toContain("raw evidence identifier");
-    expect(aci.commands).toHaveLength(0);
+    expect(aci.commands).toEqual(["python3 render_paper_figures.py"]);
     expect(await exists(path.join(runDir, "paper", "main.pdf"))).toBe(false);
 
     const submissionValidation = JSON.parse(
@@ -3202,7 +3169,7 @@ describe("writePaper PDF build", () => {
     expect(await memory.get("write_paper.pdf_path")).toBe(null);
   });
 
-  it("omits auto-generated visuals when metrics are uninformative", async () => {
+  it("rejects uninformative unstructured metrics before generating paper visuals", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-visual-gate-"));
     process.chdir(root);
 
@@ -3214,13 +3181,13 @@ describe("writePaper PDF build", () => {
         {
           objective_metric: {
             evaluation: {
-              summary: "Objective metric met: reproducibility_score=1.0."
+              summary: "A unstructured scalar summary is present without an explicit comparison."
             }
           },
           metric_table: [
-            { key: "confirmatory_metrics.json", value: 1 },
-            { key: "quick_check_metrics.json", value: 1 },
-            { key: "metrics.json", value: 1 }
+            { key: "unstructured_summary_a.json", value: 1 },
+            { key: "unstructured_summary_b.json", value: 1 },
+            { key: "unstructured_summary_c.json", value: 1 }
           ]
         },
         null,
@@ -3245,10 +3212,9 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
-    const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).not.toContain("\\begin{table}[t]");
-    expect(tex).not.toContain("\\begin{figure}[t]");
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("requires AnalysisReport.results_artifact V2");
+    expect(await exists(path.join(runDir, "paper", "main.tex"))).toBe(false);
   });
 
   it("repairs LaTeX once after a failed compile and retries the PDF build", async () => {
@@ -3260,7 +3226,7 @@ describe("writePaper PDF build", () => {
     const aci = createPdfBuildAci({ failFirstCompile: true });
     const llm = new SequencedLLMClient([
       ...buildSessionResponses(),
-      "\\documentclass{article}\n\\begin{document}\nRepaired paper draft.\n\\end{document}\n"
+      "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\nRepaired paper draft.\n\\includegraphics{figures/main-result-figure-1.pdf}\n\\end{document}\n"
     ]);
 
     const node = createWritePaperNode({
@@ -3281,9 +3247,10 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(result.summary).toContain("after one automatic repair");
     expect(aci.commands).toEqual([
+      "python3 render_paper_figures.py",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "bibtex main",
@@ -3370,9 +3337,14 @@ describe("writePaper PDF build", () => {
     expect(await readFile(path.join(runDir, "run_completeness_checklist.json"), "utf8")).toContain(
       '"validation_scope": "full_run"'
     );
-    expect(await readFile(path.join(publicRunDir, "results", "run_status.json"), "utf8")).toContain(
-      '"operator_label": "Research memo"'
-    );
+    const publicRunStatus = JSON.parse(
+      await readFile(path.join(publicRunDir, "results", "run_status.json"), "utf8")
+    ) as { run_id: string; current_node: string; validation_scope: string };
+    expect(publicRunStatus).toMatchObject({
+      run_id: run.id,
+      current_node: "write_paper",
+      validation_scope: "full_run"
+    });
     expect(await readFile(path.join(publicRunDir, "results", "run_completeness_checklist.json"), "utf8")).toContain(
       `"run_id": "${run.id}"`
     );
@@ -3390,14 +3362,14 @@ describe("writePaper PDF build", () => {
       [
         "\\pdfoutput=1",
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\section{Introduction}",
         "\\end{document}"
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(path.join(root, "acl.sty"), "% mock ACL style\n", "utf8");
     await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
 
     const run = makeRun("run-paper-pdf-template-repair-reject");
@@ -3443,8 +3415,9 @@ describe("writePaper PDF build", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
+    expect(await exists(path.join(runDir, "paper", "main.tex")), result.error).toBe(true);
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).toContain("\\usepackage[review]{acl}");
     expect(tex).not.toContain("Template-stripped repair.");
     expect(await readFile(path.join(runDir, "paper", "latex_repair.tex"), "utf8")).toContain(
       "Template-stripped repair."
@@ -3459,7 +3432,7 @@ describe("writePaper PDF build", () => {
     expect(report.repaired).toBe(false);
     expect(report.repair_error).toContain("latex repair would remove requested template surface");
     expect(report.warnings).toEqual(
-      expect.arrayContaining([expect.stringContaining("\\usepackage[review]{ACL2023}")])
+      expect.arrayContaining([expect.stringContaining("\\usepackage[review]{acl}")])
     );
   });
 
@@ -3489,7 +3462,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const compiledPageValidation = JSON.parse(
       await readFile(path.join(runDir, "paper", "compiled_page_validation.json"), "utf8")
     ) as {
@@ -3708,6 +3681,7 @@ describe("writePaper PDF build", () => {
     expect(result.error).toContain("configured PDF build failed");
     expect(result.error).toContain("Undefined control sequence");
     expect(aci.commands).toEqual([
+      "python3 render_paper_figures.py",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex",
       "pdflatex -interaction=nonstopmode -halt-on-error -file-line-error main.tex"
     ]);
@@ -3746,18 +3720,19 @@ describe("writePaper PDF build", () => {
     await overwriteRunArtifacts(run, {
       "experiment_plan.yaml": [
         "selected_design:",
-        '  title: "Small benchmark note"',
+        '  title: "Small configured evaluation"',
         "  datasets:",
-        '    - "AgentBench-mini"'
+        '    - "evaluation_suite"'
       ].join("\n"),
       "result_analysis.json": JSON.stringify(
         {
+          ...buildResultsContractFixture({ subjectValue: 0.72, referenceValue: 0.71 }),
           objective_metric: {
             evaluation: {
-              summary: "Observed a small positive delta on a single benchmark artifact."
+              summary: "Observed a small positive difference in one configured evaluation."
             }
           },
-          metric_table: [{ key: "macro_f1_delta_vs_logreg", value: 0.01 }],
+          metric_table: [{ key: PRIMARY_METRIC_ID, value: 0.01 }],
           statistical_summary: {
             notes: ["Only a single weak artifact is available."]
           }
@@ -3768,16 +3743,16 @@ describe("writePaper PDF build", () => {
     });
     await writeLatestResults(run, {
       protocol: {
-        datasets: ["AgentBench-mini"],
-        models: ["baseline", "method"]
+        datasets: ["evaluation_suite"],
+        workflows: [SUBJECT_SERIES_ID, REFERENCE_SERIES_ID]
       },
       dataset_summaries: [
         {
-          dataset: "AgentBench-mini",
-          models: {
-            baseline: { macro_f1: 0.71 },
-            method: { macro_f1: 0.72, macro_f1_delta_vs_logreg: 0.01 }
-          }
+          dataset: "evaluation_suite",
+          observations: [
+            { series_id: SUBJECT_SERIES_ID, metric_id: PRIMARY_METRIC_ID, value: 0.72 },
+            { series_id: REFERENCE_SERIES_ID, metric_id: PRIMARY_METRIC_ID, value: 0.71 }
+          ]
         }
       ]
     });
@@ -3799,7 +3774,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(result.summary).toContain("Scientific gate: warn");
     const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
       status: string;
@@ -3836,15 +3811,15 @@ describe("writePaper PDF build", () => {
     await overwriteRunArtifacts(run, {
       "experiment_plan.yaml": [
         "selected_design:",
-        '  title: "Small benchmark note"',
+        '  title: "Small configured evaluation"',
         "  datasets:",
-        '    - "AgentBench-mini"'
+        '    - "evaluation_suite"'
       ].join("\n")
     });
     await writeLatestResults(run, {
       protocol: {
-        datasets: ["AgentBench-mini"],
-        models: ["baseline", "method"]
+        datasets: ["evaluation_suite"],
+        workflows: [SUBJECT_SERIES_ID, REFERENCE_SERIES_ID]
       },
       dataset_summaries: []
     });
@@ -3923,7 +3898,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const gateDecision = JSON.parse(await readFile(path.join(runDir, "paper", "gate_decision.json"), "utf8")) as {
       status: string;
       classification_summary: { auto_repair_count: number };
@@ -3938,14 +3913,20 @@ describe("writePaper PDF build", () => {
     expect(manuscript.sections.find((section) => section.heading === "Method")?.paragraphs.length).toBeGreaterThanOrEqual(3);
     expect(manuscript.sections.find((section) => section.heading === "Results")?.paragraphs.length).toBeGreaterThanOrEqual(4);
     expect(manuscript.appendix_sections?.length).toBeGreaterThan(0);
-    expect(manuscript.appendix_sections?.map((section) => section.heading)).toContain(
-      "Supplementary Experimental Details"
+    expect(manuscript.appendix_sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          heading: expect.stringMatching(/^Supplementary /),
+          paragraphs: expect.arrayContaining([expect.stringMatching(/run|repeat|protocol|resource/i)])
+        })
+      ])
     );
     const manuscriptText = [...manuscript.sections, ...(manuscript.appendix_sections || [])]
       .flatMap((section) => section.paragraphs)
       .join(" ");
-    expect(manuscriptText).toContain("training-token count was 5068");
-    expect(manuscriptText).not.toContain("5068 dataset");
+    expect(manuscriptText).toContain("Evaluated workflow (primary role)");
+    expect(manuscriptText).toContain("Reference workflow (baseline role)");
+    expect(manuscriptText).not.toMatch(/results_artifact\.(?:comparison|observation)|observation-subject|series-subject/iu);
     const traceability = JSON.parse(await readFile(path.join(runDir, "paper", "traceability.json"), "utf8")) as {
       paragraphs: Array<{ source_refs?: Array<{ kind: string; id: string }> }>;
     };
@@ -3991,7 +3972,7 @@ describe("writePaper PDF build", () => {
       classification_summary: { contradiction_count: number };
     };
     expect(gateDecision.status).toBe("fail");
-    expect(gateDecision.failure_reasons.some((message) => /structured results|datasets|significant improvement/i.test(message))).toBe(true);
+    expect(gateDecision.failure_reasons.some((message) => /conflict|contradict|inconsisten/i.test(message))).toBe(true);
     expect(gateDecision.classification_summary.contradiction_count).toBeGreaterThan(0);
     const consistency = JSON.parse(await readFile(path.join(runDir, "paper", "consistency_lint.json"), "utf8")) as {
       manuscript: { issues: Array<{ kind: string; involved_sections?: string[] }> };
@@ -4148,7 +4129,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(await exists(path.join(runDir, "paper", "manuscript_review.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_review_validation.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_review_audit.json"))).toBe(true);
@@ -4205,21 +4186,27 @@ describe("writePaper PDF build", () => {
     expect(readinessRisks.summary_lines.length).toBeGreaterThan(0);
   });
 
-  it("grounds experiment result claims with run-owned artifacts when draft evidence ids are absent", async () => {
+  it("grounds unlinked result claims in the canonical V2 analysis artifact", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-run-artifact-claims-"));
     process.chdir(root);
 
     const run = makeRun("run-artifact-claim-grounding");
     const runDir = await seedRun(root, run);
+    const runArtifactContract = buildResultsContractFixture({ subjectValue: 0.56, referenceValue: 0.51 });
+    const primaryComparison = runArtifactContract.results_artifact.comparisons.find(
+      (comparison) => comparison.id === runArtifactContract.primary_comparison_id
+    )!;
+    const primaryMetric = runArtifactContract.results_artifact.metrics.find(
+      (metric) => metric.id === PRIMARY_METRIC_ID
+    )!;
+    const metricClaim = `The declared primary comparison reports a ${primaryMetric.label} difference of ${primaryComparison.delta.toFixed(2)} ${primaryMetric.unit}.`;
     await writeFile(
-      path.join(runDir, "result_table.json"),
+      path.join(runDir, "result_analysis.json"),
       JSON.stringify(
         {
-          columns: ["condition", "average_accuracy"],
-          rows: [
-            { condition: "baseline", average_accuracy: 0.51 },
-            { condition: "thread-backed", average_accuracy: 0.56 }
-          ]
+          overview: { objective_status: "observed" },
+          execution_summary: { observation_count: runArtifactContract.results_artifact.observations.length },
+          ...runArtifactContract
         },
         null,
         2
@@ -4227,13 +4214,18 @@ describe("writePaper PDF build", () => {
       "utf8"
     );
     await writeFile(
+      path.join(runDir, "result_table.json"),
+      JSON.stringify(runArtifactContract, null, 2),
+      "utf8"
+    );
+    await writeFile(
       path.join(runDir, "metrics.json"),
       JSON.stringify(
         {
           status: "completed",
-          average_accuracy_delta: 0.05,
-          baseline_average_accuracy: 0.51,
-          winning_average_accuracy: 0.56
+          subject_minus_reference_difference: 0.05,
+          reference_outcome_score: 0.51,
+          subject_outcome_score: 0.56
         },
         null,
         2
@@ -4245,7 +4237,7 @@ describe("writePaper PDF build", () => {
       title: "Run Artifact Claim Grounding",
       abstract_focus: ["baseline comparison", "run artifacts"],
       section_headings: ["Introduction", "Method", "Results", "Discussion", "Limitations", "Conclusion"],
-      key_claim_themes: ["The repeated run improved average accuracy over the baseline."],
+      key_claim_themes: [metricClaim],
       citation_plan: []
     });
     const draft = JSON.stringify({
@@ -4261,13 +4253,13 @@ describe("writePaper PDF build", () => {
         },
         {
           heading: "Method",
-          paragraphs: ["The protocol compares a thread-backed condition with a baseline condition."],
+          paragraphs: ["The protocol compares Evaluated workflow (primary role) with Reference workflow (baseline role) under the held-out partition."],
           evidence_ids: [],
           citation_paper_ids: []
         },
         {
           heading: "Results",
-          paragraphs: ["The repeated run improved average accuracy by 0.05 over the baseline."],
+          paragraphs: [metricClaim],
           evidence_ids: [],
           citation_paper_ids: []
         },
@@ -4293,7 +4285,7 @@ describe("writePaper PDF build", () => {
       claims: [
         {
           claim_id: "c_run_result",
-          statement: "The repeated run improved average accuracy by 0.05 over the baseline.",
+          statement: metricClaim,
           section_heading: "Results",
           evidence_ids: [],
           citation_paper_ids: []
@@ -4346,7 +4338,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const claimEvidence = JSON.parse(
       await readFile(path.join(runDir, "paper", "claim_evidence_table.json"), "utf8")
     ) as { claims: Array<{ claim_id: string; artifact_refs: string[]; strength: string }> };
@@ -4366,23 +4358,17 @@ describe("writePaper PDF build", () => {
     };
 
     const evidenceRow = claimEvidence.claims.find((claim) => claim.claim_id === "c_run_result");
-    expect(evidenceRow?.artifact_refs).toEqual(
-      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
-    );
+    expect(evidenceRow?.artifact_refs).toEqual(["result_analysis.json"]);
     expect(evidenceRow?.strength).not.toBe("low");
 
     const evidenceLinkRow = evidenceLinks.claims.find((claim) => claim.claim_id === "c_run_result");
-    expect(evidenceLinkRow?.evidence_ids).toEqual(
-      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
-    );
+    expect(evidenceLinkRow?.evidence_ids).toEqual(["result_analysis.json"]);
 
     const statusRow = claimStatus.claims.find((claim) => claim.claim_id === "c_run_result");
-    expect(statusRow?.status).not.toBe("unverified");
+    expect(statusRow?.status).toBe("verified");
     expect(statusRow?.primary_source_present).toBe(true);
     expect(statusRow?.run_artifact_present).toBe(true);
-    expect(statusRow?.artifact_refs).toEqual(
-      expect.arrayContaining(["result_analysis.json", "result_table.json", "metrics.json"])
-    );
+    expect(statusRow?.artifact_refs).toEqual(["result_analysis.json"]);
 
     const literatureRow = claimEvidence.claims.find((claim) => claim.claim_id === "c_literature_context");
     expect(literatureRow?.artifact_refs).toEqual(["ev_1"]);
@@ -4415,7 +4401,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const validation = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_review_validation.json"), "utf8")
     ) as { ok: boolean; retry_requested: boolean; artifact_reliability: string };
@@ -4457,7 +4443,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_plan_1.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_verification_1.json"))).toBe(true);
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_1_report.json"))).toBe(true);
@@ -4549,7 +4535,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const repairPlan = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
     ) as { targets: Array<{ section: string; edit_scope: string; allowed_location_keys: string[] }> };
@@ -4596,7 +4582,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as { locality_ok: boolean; out_of_scope_changes: string[]; changed_location_keys: string[] };
@@ -4631,7 +4617,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const repairPlan = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_plan_1.json"), "utf8")
     ) as { targets: Array<{ section: string; edit_scope: string; allowed_location_keys: string[] }> };
@@ -4655,7 +4641,7 @@ describe("writePaper PDF build", () => {
     );
   });
 
-  it("narrows visual redundancy repair targets to the redundant table/figure pair only", async () => {
+  it("narrows visual redundancy repair targets to the canonical V2 table/figure pair", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-pair-repair-"));
     process.chdir(root);
 
@@ -4678,13 +4664,19 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const sessionManuscript = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript.session.json"), "utf8")
-    ) as { tables?: Array<{ rows: Array<{ label: string }> }>; figures?: Array<{ bars: Array<{ label: string }> }> };
+    ) as {
+      tables?: Array<{ rows: Array<{ label: string; comparison_side?: string; series_role?: string }> }>;
+      figures?: Array<{ bars: Array<{ label: string; comparison_side?: string; series_role?: string }> }>;
+    };
     expect(sessionManuscript.tables?.[0]?.rows).toHaveLength(3);
-    expect(sessionManuscript.figures?.[0]?.bars).toHaveLength(3);
-    expect(sessionManuscript.figures?.[1]?.bars).toHaveLength(3);
+    expect(sessionManuscript.figures).toHaveLength(1);
+    expect(sessionManuscript.figures?.[0]?.bars).toMatchObject([
+      { comparison_side: "subject", series_role: "primary" },
+      { comparison_side: "reference", series_role: "baseline" }
+    ]);
 
     const styleLint = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
@@ -4697,21 +4689,8 @@ describe("writePaper PDF build", () => {
         redundant_visual_pair?: { table_index: number; figure_index: number };
       }>;
     };
-    expect(styleLint.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "visual_redundancy",
-          coverage_status: "backstop_only",
-          covered_by_review_issue_code: "visual_redundancy",
-          redundant_visual_pair: expect.objectContaining({ table_index: 0, figure_index: 0 })
-        })
-      ])
-    );
-    expect(styleLint.summary).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/visual-redundancy finding\(s\).*backstop-only/i)
-      ])
-    );
+    expect(styleLint.issues.some((issue) => issue.code === "visual_redundancy")).toBe(false);
+    expect(styleLint.summary.join(" ")).not.toMatch(/visual-redundancy finding\(s\).*backstop-only/i);
 
     const round0Review = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_review_round_0.json"), "utf8")
@@ -4754,45 +4733,40 @@ describe("writePaper PDF build", () => {
       visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
     };
     expect(verification.locality_ok).toBe(true);
-    expect(verification.changed_location_keys).toEqual(expect.arrayContaining(["figure:0"]));
+    expect(verification.changed_location_keys).toEqual([]);
     expect(verification.out_of_scope_changes).toHaveLength(0);
     expect(verification.visual_caption_conservatism_ok).toBe(true);
-    expect(verification.visual_caption_checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          location_key: "figure:0",
-          conservative: true,
-          concerns: []
-        })
-      ])
-    );
+    expect(verification.visual_caption_checks).toEqual([]);
 
     const finalManuscript = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")
-    ) as { figures?: Array<{ caption: string; bars: Array<{ label: string }> }> };
-    expect(finalManuscript.figures).toHaveLength(2);
-    expect(finalManuscript.figures?.[0]?.caption).toContain("trend-focused");
-    expect(finalManuscript.figures?.[0]?.bars).toHaveLength(3);
-    expect(finalManuscript.figures?.[1]?.caption).toContain("remain unchanged");
-    expect(finalManuscript.figures?.[1]?.bars).toHaveLength(3);
+    ) as {
+      figures?: Array<{
+        caption: string;
+        bars: Array<{ label: string; comparison_side?: string; series_role?: string }>;
+      }>;
+    };
+    expect(finalManuscript.figures).toHaveLength(1);
+    expect(finalManuscript.figures?.[0]?.caption).toContain(`primary comparison for ${PRIMARY_METRIC_LABEL}`);
+    expect(finalManuscript.figures?.[0]?.bars).toMatchObject([
+      { comparison_side: "subject", series_role: "primary" },
+      { comparison_side: "reference", series_role: "baseline" }
+    ]);
+    expect(JSON.stringify(finalManuscript.figures)).not.toMatch(/trend-focused|remain unchanged/iu);
   });
 
-  it("stops after visual repair when the changed figure caption overclaims beyond the evidence", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-caption-stop-"));
+  it("restores the canonical V2 figure when a repair proposes an overclaiming caption", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-caption-canonical-"));
     process.chdir(root);
 
-    const run = makeRun("run-manuscript-visual-caption-stop");
+    const run = makeRun("run-manuscript-visual-caption-canonical");
     const runDir = await seedRun(root, run);
 
     const node = createWritePaperNode({
-      config: {
-        paper: {
-          build_pdf: false
-        }
-      } as any,
+      config: { paper: { build_pdf: false } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new SequencedLLMClient(buildVisualCaptionOverclaimStopResponses()),
+      llm: new SequencedLLMClient(buildVisualCaptionOverclaimRepairResponses()),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any
@@ -4800,115 +4774,31 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
-    expect(result.error).toContain("manuscript-quality gate failed");
+    expect(result.status, result.error).toBe("success");
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(false);
 
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as {
+      changed_location_keys: string[];
       visual_caption_conservatism_ok: boolean;
       visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
     };
-    expect(verification.visual_caption_conservatism_ok).toBe(false);
-    expect(verification.visual_caption_checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          location_key: "figure:0",
-          conservative: false,
-          concerns: expect.arrayContaining([
-            "The visual wording claims broad applicability beyond the tested setting."
-          ])
-        })
-      ])
-    );
+    expect(verification.changed_location_keys).toEqual([]);
+    expect(verification.visual_caption_conservatism_ok).toBe(true);
+    expect(verification.visual_caption_checks).toEqual([]);
 
-    const gate = JSON.parse(
-      await readFile(path.join(runDir, "paper", "manuscript_quality_gate.json"), "utf8")
-    ) as { stop_or_continue_reason: string; summary_lines: string[] };
-    expect(gate.stop_or_continue_reason).toMatch(/visual caption|bounded local repair loop/i);
-    expect(gate.summary_lines).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/Action:\s+stop/i),
-        expect.stringMatching(/Decision stage:\s+post-repair gate after pass 1/i),
-        expect.stringMatching(/Triggered by:/i)
-      ])
-    );
-
-    const round1Review = JSON.parse(
-      await readFile(path.join(runDir, "paper", "manuscript_review_round_1.json"), "utf8")
-    ) as {
-      issues: Array<{
-        code: string;
-        visual_targets?: Array<{ kind: string; index: number }>;
-      }>;
-    };
-    expect(round1Review.issues).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "rhetorical_overreach",
-          visual_targets: expect.arrayContaining([expect.objectContaining({ kind: "figure", index: 0 })])
-        })
-      ])
-    );
+    const manuscript = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")
+    ) as { figures?: Array<{ caption: string }> };
+    expect(manuscript.figures).toHaveLength(1);
+    expect(manuscript.figures?.[0]?.caption).toContain(`primary comparison for ${PRIMARY_METRIC_LABEL}`);
+    expect(JSON.stringify(manuscript.figures)).not.toMatch(/broad applicability/iu);
 
     const repairReport = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
-    ) as {
-      verification_summary: string;
-      verification_findings: Array<{ code: string; location_keys: string[]; concerns?: string[] }>;
-      stop_or_continue_reason: string;
-    };
-    expect(repairReport.verification_summary).toMatch(/changed visual surfaces/i);
-    expect(repairReport.verification_findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "visual_caption_overclaim",
-          location_keys: ["figure:0"],
-          concerns: expect.arrayContaining([
-            "The visual wording claims broad applicability beyond the tested setting."
-          ])
-        })
-      ])
-    );
-    expect(repairReport.stop_or_continue_reason).toMatch(/visual caption|bounded local repair loop/i);
-
-    const failureArtifact = JSON.parse(
-      await readFile(path.join(runDir, "paper", "manuscript_quality_failure.json"), "utf8")
-    ) as {
-      summary_lines: string[];
-      lint_findings: Array<{ code: string; gate_role?: string }>;
-      reviewer_missed_policy_findings: Array<{ code: string }>;
-      reviewer_covered_backstop_findings: Array<{ code: string; covered_by_review_issue_code?: string }>;
-    };
-    expect(failureArtifact.summary_lines).toEqual(
-      expect.arrayContaining([
-        expect.stringMatching(/Stop reason:/i),
-        expect.stringMatching(/Review reliability:/i),
-        expect.stringMatching(/Triggered by:/i)
-      ])
-    );
-    expect(Array.isArray(failureArtifact.lint_findings)).toBe(true);
-    expect(failureArtifact.reviewer_missed_policy_findings).toEqual([]);
-    expect(Array.isArray(failureArtifact.reviewer_covered_backstop_findings)).toBe(true);
-    expect(
-      failureArtifact.reviewer_covered_backstop_findings.every((issue) => issue.gate_role === "backstop_only")
-    ).toBe(true);
-
-    const paperReadiness = JSON.parse(
-      await readFile(path.join(runDir, "paper", "paper_readiness.json"), "utf8")
-    ) as {
-      paper_ready: boolean;
-      readiness_state: string;
-      reason: string;
-      triggered_by: string[];
-      manuscript_quality_action: string;
-    };
-    expect(paperReadiness.paper_ready).toBe(false);
-    expect(paperReadiness.readiness_state).toBe("paper_scale_candidate");
-    expect(paperReadiness.reason).toMatch(/manuscript-quality gate/i);
-    expect(paperReadiness.triggered_by).toContain("manuscript_quality");
-    expect(paperReadiness.manuscript_quality_action).toBe("stop");
+    ) as { verification_findings: Array<{ code: string }> };
+    expect(repairReport.verification_findings.some((finding) => finding.code === "visual_caption_overclaim")).toBe(false);
   });
 
   it("stops immediately when appendix contamination is missed by the reviewer and remains a hard-stop policy finding", async () => {
@@ -5007,7 +4897,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const round0Lint = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_style_lint_round_0.json"), "utf8")
     ) as {
@@ -5037,22 +4927,18 @@ describe("writePaper PDF build", () => {
     );
   });
 
-  it("stops after repair when a changed table caption overclaims beyond the evidence", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-table-caption-stop-"));
+  it("restores the canonical V2 table when a repair proposes an overclaiming caption", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-table-caption-canonical-"));
     process.chdir(root);
 
-    const run = makeRun("run-manuscript-table-caption-stop");
+    const run = makeRun("run-manuscript-table-caption-canonical");
     const runDir = await seedRun(root, run);
 
     const node = createWritePaperNode({
-      config: {
-        paper: {
-          build_pdf: false
-        }
-      } as any,
+      config: { paper: { build_pdf: false } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new SequencedLLMClient(buildTableCaptionOverclaimStopResponses()),
+      llm: new SequencedLLMClient(buildTableCaptionOverclaimRepairResponses()),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any
@@ -5060,7 +4946,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
+    expect(result.status, result.error).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as {
@@ -5068,37 +4954,30 @@ describe("writePaper PDF build", () => {
       visual_caption_checks: Array<{ location_key: string; conservative: boolean; concerns: string[] }>;
       visual_conservatism_ok: boolean;
     };
-    expect(verification.visual_caption_conservatism_ok).toBe(false);
-    expect(verification.visual_conservatism_ok).toBe(false);
-    expect(verification.visual_caption_checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          location_key: "table:0",
-          conservative: false,
-          concerns: expect.arrayContaining([
-            "The visual wording claims broad applicability beyond the tested setting."
-          ])
-        })
-      ])
-    );
+    expect(verification.visual_caption_conservatism_ok).toBe(true);
+    expect(verification.visual_conservatism_ok).toBe(true);
+    expect(verification.visual_caption_checks).toEqual([]);
+
+    const manuscript = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")
+    ) as { tables?: Array<{ caption: string }> };
+    expect(manuscript.tables).toHaveLength(1);
+    expect(manuscript.tables?.[0]?.caption).toContain(`Declared primary comparison for ${PRIMARY_METRIC_LABEL}`);
+    expect(JSON.stringify(manuscript.tables)).not.toMatch(/broad applicability/iu);
   });
 
-  it("stops after repair when a changed visual label overclaims beyond the evidence", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-label-stop-"));
+  it("restores canonical V2 labels when a repair proposes an overclaiming visual label", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-manuscript-visual-label-canonical-"));
     process.chdir(root);
 
-    const run = makeRun("run-manuscript-visual-label-stop");
+    const run = makeRun("run-manuscript-visual-label-canonical");
     const runDir = await seedRun(root, run);
 
     const node = createWritePaperNode({
-      config: {
-        paper: {
-          build_pdf: false
-        }
-      } as any,
+      config: { paper: { build_pdf: false } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new SequencedLLMClient(buildVisualLabelOverclaimStopResponses()),
+      llm: new SequencedLLMClient(buildVisualLabelOverclaimRepairResponses()),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any
@@ -5106,7 +4985,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("failure");
+    expect(result.status, result.error).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as {
@@ -5114,32 +4993,23 @@ describe("writePaper PDF build", () => {
       visual_label_checks: Array<{ location_key: string; conservative: boolean; concerns: string[]; labels: string[] }>;
       visual_conservatism_ok: boolean;
     };
-    expect(verification.visual_label_conservatism_ok).toBe(false);
-    expect(verification.visual_conservatism_ok).toBe(false);
-    expect(verification.visual_label_checks).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          location_key: "figure:0",
-          conservative: false,
-          labels: expect.arrayContaining(["Broad Applicability Across Domains"]),
-          concerns: expect.arrayContaining([
-            "The visual wording claims broad applicability beyond the tested setting."
-          ])
-        })
-      ])
-    );
+    expect(verification.visual_label_conservatism_ok).toBe(true);
+    expect(verification.visual_conservatism_ok).toBe(true);
+    expect(verification.visual_label_checks).toEqual([]);
+
+    const manuscript = JSON.parse(
+      await readFile(path.join(runDir, "paper", "manuscript.json"), "utf8")
+    ) as { figures?: Array<{ bars: Array<{ label: string; series_role?: string }> }> };
+    expect(manuscript.figures?.[0]?.bars).toMatchObject([
+      { label: "Evaluated workflow (primary role, subject)", series_role: "primary" },
+      { label: "Reference workflow (baseline role, reference)", series_role: "baseline" }
+    ]);
+    expect(JSON.stringify(manuscript.figures)).not.toMatch(/broad applicability/iu);
 
     const repairReport = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_1_report.json"), "utf8")
-    ) as { verification_findings: Array<{ code: string; location_keys: string[] }> };
-    expect(repairReport.verification_findings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          code: "visual_label_overclaim",
-          location_keys: ["figure:0"]
-        })
-      ])
-    );
+    ) as { verification_findings: Array<{ code: string }> };
+    expect(repairReport.verification_findings.some((finding) => finding.code === "visual_label_overclaim")).toBe(false);
   });
 
   it("does not allow a second repair when the follow-up review is only partially grounded", async () => {
@@ -5213,7 +5083,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
 
     const round1Gate = JSON.parse(
@@ -5250,7 +5120,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     expect(await exists(path.join(runDir, "paper", "manuscript_repair_2_report.json"))).toBe(true);
 
     const gate = JSON.parse(
@@ -5289,7 +5159,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const verification = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_repair_verification_1.json"), "utf8")
     ) as { locality_ok: boolean; unexpected_changed_sections: string[]; out_of_scope_changes: string[] };
@@ -5391,7 +5261,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const round1Gate = JSON.parse(
       await readFile(path.join(runDir, "paper", "manuscript_quality_gate_round_1.json"), "utf8")
     ) as { action: string; improvement_detected: boolean; stop_or_continue_reason: string };
@@ -5480,10 +5350,10 @@ describe("writePaper PDF build", () => {
         buildPolishedManuscriptResponse({
           figures: [
             {
-              caption: "Python-rendered comparison of revision stability.",
+              caption: "Python-rendered comparison of outcome score.",
               bars: [
-                { label: "Stateless baseline", value: 0.71 },
-                { label: "Thread-backed drafting", value: 0.76 }
+                { label: "Reference workflow", value: 0.71 },
+                { label: "The evaluated workflow", value: 0.76 }
               ]
             }
           ]
@@ -5498,7 +5368,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\documentclass[twocolumn]{article}");
     expect(tex).toContain("\\usepackage{amsmath}");
@@ -5572,10 +5442,10 @@ describe("writePaper PDF build", () => {
         buildPolishedManuscriptResponse({
           figures: [
             {
-              caption: "Python-rendered comparison of revision stability.",
+              caption: "Python-rendered comparison of outcome score.",
               bars: [
-                { label: "Stateless baseline", value: 0.71 },
-                { label: "Thread-backed drafting", value: 0.76 }
+                { label: "Reference workflow", value: 0.71 },
+                { label: "The evaluated workflow", value: 0.76 }
               ]
             }
           ]
@@ -5590,7 +5460,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\pdfoutput=1");
     expect(tex).toContain("\\usepackage[review]{xcolor,acl}");
@@ -5602,8 +5472,10 @@ describe("writePaper PDF build", () => {
     expect(await exists(path.join(runDir, "paper", "figures", "main-result-figure-1.pdf"))).toBe(true);
     const figureRenderer = await readFile(path.join(runDir, "paper", "figures", "render_paper_figures.py"), "utf8");
     expect(figureRenderer).toContain("matplotlib");
-    expect(figureRenderer).toContain("Task-level accuracy");
-    expect(figureRenderer).toContain("Accuracy across condition grid");
+    expect(figureRenderer).toContain("comparison_side");
+    expect(figureRenderer).toContain("metric_unit");
+    expect(figureRenderer).toContain("subject");
+    expect(figureRenderer).toContain("reference");
     expect(figureRenderer).not.toContain("return figure[\"output_pdf\"]");
     expect(await exists(path.join(buildPublicPaperDir(root, run), "figures", "main-result-figure-1.pdf"))).toBe(true);
     expect(await exists(staleRunFigure)).toBe(false);
@@ -5637,7 +5509,7 @@ describe("writePaper PDF build", () => {
       [
         "\\pdfoutput=1",
         "\\documentclass[11pt]{article}",
-        "\\usepackage[review]{ACL2023}",
+        "\\usepackage[review]{acl}",
         "\\begin{document}",
         "\\section{Introduction}",
         "\\section{Results}",
@@ -5645,7 +5517,7 @@ describe("writePaper PDF build", () => {
       ].join("\n"),
       "utf8"
     );
-    await writeFile(path.join(root, "ACL2023.sty"), "% mock ACL style\n", "utf8");
+    await writeFile(path.join(root, "acl.sty"), "% mock ACL style\n", "utf8");
     await writeFile(path.join(root, "acl_natbib.bst"), "ENTRY{}{}{} FUNCTION{default.type}{} READ\n", "utf8");
     await seedMediumScientificRun(run);
     const memory = new RunContextMemory(run.memoryRefs.runContextPath);
@@ -5678,10 +5550,10 @@ describe("writePaper PDF build", () => {
         buildPolishedManuscriptResponse({
           figures: [
             {
-              caption: "Python-rendered comparison of revision stability.",
+              caption: "Python-rendered comparison of outcome score.",
               bars: [
-                { label: "Stateless baseline", value: 0.71 },
-                { label: "Thread-backed drafting", value: 0.76 }
+                { label: "Reference workflow", value: 0.71 },
+                { label: "The evaluated workflow", value: 0.76 }
               ]
             }
           ]
@@ -5697,8 +5569,9 @@ describe("writePaper PDF build", () => {
     const result = await node.execute({ run, graph: run.graph });
 
     expect(result.status).toBe("failure");
+    expect(await exists(path.join(runDir, "paper", "main.tex")), result.error).toBe(true);
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
-    expect(tex).toContain("\\usepackage[review]{ACL2023}");
+    expect(tex).toContain("\\usepackage[review]{acl}");
     expect(tex).not.toContain("\\textbf{Keywords:}");
     expect(tex).toContain("\\includegraphics[width=\\columnwidth]{figures/main-result-figure-1.pdf}");
     expect(tex).not.toContain("\\makebox[4.2em][l]");
@@ -5760,7 +5633,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\usepackage{amssymb}");
     expect(tex).not.toContain("\\usepackage[margin=0.75in]{geometry}");
@@ -5808,7 +5681,7 @@ describe("writePaper PDF build", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.status).toBe("success");
+    expect(result.status, result.error).toBe("success");
     const tex = await readFile(path.join(runDir, "paper", "main.tex"), "utf8");
     expect(tex).toContain("\\documentclass[twocolumn]{article}");
     expect(tex).toContain("\\usepackage[margin=0.75in]{geometry}");

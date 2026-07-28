@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -15,6 +16,36 @@ import { RunRecord } from "../src/types.js";
 import { LLMCompleteOptions, MockLLMClient } from "../src/core/llm/client.js";
 import { ResponsesPdfAnalysisClient } from "../src/integrations/openai/responsesPdfAnalysisClient.js";
 import { RunContextMemory } from "../src/core/memory/runContextMemory.js";
+import { persistCollectAttemptArchive } from "../src/core/collection/collectAttemptArchive.js";
+import { makeTopicProbeComputeBudgetDeclaration } from "./support/topicProbeComputeBudget.js";
+import {
+  buildTopicDiscoveryCandidateFamilySignature,
+  TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+  TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
+} from "../src/core/topicDiscoveryScientificTerms.js";
+import {
+  buildTopicDiscoverySemanticAuditPrompt,
+  TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
+  TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
+  TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
+  TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY
+} from "../src/core/collection/topicDiscoverySemanticAudit.js";
+import {
+  assessTopicDiscoveryPaperRelevance,
+  buildTopicDiscoveryCorpusRelevanceProfile,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_STRATEGY,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
+} from "../src/core/collection/topicDiscoveryCorpusQuality.js";
+import {
+  TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION,
+  TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT
+} from "../src/core/collection/topicDiscoveryArtifactVersions.js";
+import {
+  buildCandidatePriorSearchPlan,
+  buildCandidatePriorSearchReceipt
+} from "../src/core/candidatePriorSearch.js";
+import { buildPriorAbsorptionCandidateContract } from "../src/core/priorAbsorption.js";
+import type { HypothesisCandidate } from "../src/core/analysis/researchPlanning.js";
 
 const tempDirs: string[] = [];
 const originalCwd = process.cwd();
@@ -440,7 +471,7 @@ function makeRun(runId: string): RunRecord {
     title: "Multi-Agent Collaboration",
     topic: "Multi-Agent Collaboration",
     constraints: [],
-    objectiveMetric: "accuracy >= 0.9",
+    objectiveMetric: "primary_score >= 0.9",
     status: "running",
     currentNode: "analyze_papers",
     latestSummary: undefined,
@@ -482,6 +513,600 @@ async function writeCollectResult(runId: string, value: unknown): Promise<void> 
   await writeFile(path.join(dir, "collect_result.json"), `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function writeTopicDiscoveryCollectLineage(input: {
+  run: RunRecord;
+  collectAttemptId: string;
+  rows: Array<{
+    paper_id: string;
+    title: string;
+    abstract: string;
+    query_families?: string[];
+    lexical_query_families?: string[];
+  }>;
+  candidateRows?: Array<{
+    paper_id: string;
+    title: string;
+    abstract: string;
+    query_families?: string[];
+    lexical_query_families?: string[];
+  }>;
+  sharedAnchorTerms?: string[];
+  families: Array<{
+    queryFamily: string;
+    query: string;
+    axisTerms: string[];
+    lens: string;
+    contributionIntent: string;
+  }>;
+  reviewedPairs?: Array<{
+    paper_id: string;
+    family_id: string;
+    selection_source?: "lexical_match" | "provider_provenance_floor";
+  }>;
+  queryPlanContractOverrides?: {
+    version?: number;
+    term_normalization_version?: number;
+    candidate_recall_semantics_version?: number;
+  };
+}): Promise<void> {
+  const runDir = path.join(".autolabos", "runs", input.run.id);
+  const sharedAnchorTerms = input.sharedAnchorTerms ?? ["document", "retrieval"];
+  const candidateRows = input.candidateRows ?? input.rows;
+  const reviewedPairs = (input.reviewedPairs ?? candidateRows.flatMap((row) =>
+    (row.query_families ?? []).map((familyId) => ({
+      paper_id: row.paper_id,
+      family_id: familyId
+    }))
+  )).map((pair) => ({
+    ...pair,
+    selection_source: pair.selection_source ?? "lexical_match" as const
+  }));
+  const reviewedPaperIds = new Set(reviewedPairs.map((pair) => pair.paper_id));
+  const lexicalFamiliesByPaper = new Map(
+    candidateRows.map((row) => [
+      row.paper_id,
+      row.lexical_query_families ?? row.query_families ?? []
+    ] as const)
+  );
+  const lexicalPaperIds = new Set(
+    candidateRows
+      .filter((row) => (lexicalFamiliesByPaper.get(row.paper_id)?.length ?? 0) > 0)
+      .map((row) => row.paper_id)
+  );
+  const candidateByPaper = new Map(
+    candidateRows.map((row) => [row.paper_id, row] as const)
+  );
+  const titleByPaper = new Map(
+    candidateRows.map((row) => [row.paper_id, row.title] as const)
+  );
+  const judgments = reviewedPairs.map((pair) => ({
+    paper_id: pair.paper_id,
+    family_id: pair.family_id,
+    verdict: "direct_support",
+    reason: "The supplied title directly supports the family contract.",
+    evidence_span: titleByPaper.get(pair.paper_id) ?? ""
+  }));
+  const payload = {
+    version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
+    term_normalization_version: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
+    candidate_recall_semantics_version:
+      TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+    papers: Array.from(reviewedPaperIds).map((paperId) => {
+      const row = candidateByPaper.get(paperId);
+      if (!row) {
+        throw new Error("semantic_review_candidate_fixture_missing");
+      }
+      return {
+        paper_id: row.paper_id,
+        title: row.title,
+        abstract: Array.from(row.abstract).slice(0, 2_000).join("")
+      };
+    }),
+    family_contracts: input.families.map((family) => ({
+      family_id: family.queryFamily,
+      query: family.query,
+      axis_terms: family.axisTerms,
+      lens: family.lens,
+      contribution_intent: family.contributionIntent
+    })),
+    requested_pairs: reviewedPairs
+  };
+  const payloadSha256 = createHash("sha256")
+    .update(JSON.stringify(payload), "utf8")
+    .digest("hex");
+  const reviewerInputBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+  const promptSha256 = createHash("sha256")
+    .update(buildTopicDiscoverySemanticAuditPrompt(payload), "utf8")
+    .digest("hex");
+  const responseSha256 = "d".repeat(64);
+  const execution = {
+    policy: TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY,
+    maximum_calls: TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
+    maximum_fallback_partitions:
+      TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
+    total_deadline_ms: 120_000,
+    fallback_partition_size: Math.max(
+      1,
+      Math.ceil(reviewedPairs.length / TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS)
+    ),
+    calls_started: 1,
+    calls_completed: 1,
+    cumulative_reviewer_input_bytes: reviewerInputBytes,
+    calls: [{
+      call_index: 1,
+      mode: "primary",
+      pair_start_index: 0,
+      pair_end_index_exclusive: reviewedPairs.length,
+      requested_pair_count: reviewedPairs.length,
+      reviewer_input_sha256: payloadSha256,
+      reviewer_input_bytes: reviewerInputBytes,
+      prompt_sha256: promptSha256,
+      response_sha256: responseSha256,
+      outcome: "complete"
+    }]
+  };
+  const counts = {
+    requested_pairs: reviewedPairs.length,
+    reviewed_pairs: reviewedPairs.length,
+    budget_excluded_pairs: 0,
+    returned_judgments: reviewedPairs.length,
+    direct_support: reviewedPairs.length,
+    application_only: 0,
+    uncertain: 0,
+    omitted_judgments: 0,
+    duplicate_judgments: 0,
+    conflicting_judgments: 0,
+    invented_judgments: 0,
+    malformed_judgments: 0,
+    protocol_violations: 0
+  };
+  const familyCounts = new Map(
+    input.families.map((family) => [
+      family.queryFamily,
+      reviewedPairs.filter((pair) => pair.family_id === family.queryFamily).length
+    ] as const)
+  );
+  const lexicalFamilyCounts = new Map(
+    input.families.map((family) => [
+      family.queryFamily,
+      candidateRows.filter((row) =>
+        lexicalFamiliesByPaper.get(row.paper_id)?.includes(family.queryFamily)
+      ).length
+    ] as const)
+  );
+  const providerFamilyCounts = new Map(
+    input.families.map((family) => [
+      family.queryFamily,
+      reviewedPairs.filter((pair) =>
+        pair.family_id === family.queryFamily
+        && pair.selection_source === "provider_provenance_floor"
+      ).length
+    ] as const)
+  );
+  const lexicalRequestedPairCount = reviewedPairs.filter(
+    (pair) => pair.selection_source === "lexical_match"
+  ).length;
+  const providerRequestedPairCount = reviewedPairs.length - lexicalRequestedPairCount;
+  const coveredQueryFamilies = input.families.filter(
+    (family) => (familyCounts.get(family.queryFamily) ?? 0) >= 2
+  ).length;
+  const relevanceProfile = buildTopicDiscoveryCorpusRelevanceProfile(
+    input.families.map((family) => ({
+      queryFamily: family.queryFamily,
+      query: family.query,
+      source: "llm_query_planner",
+      sharedAnchorTerms,
+      axisTerms: family.axisTerms,
+      lens: family.lens,
+      contributionIntent: family.contributionIntent,
+      contractSource: "planner_declared" as const
+    }))
+  );
+  const candidateRelevance = candidateRows.map((row) =>
+    assessTopicDiscoveryPaperRelevance({
+      row: { ...row, authors: [] },
+      profile: relevanceProfile,
+      eligibleQueryFamilies: new Set(row.query_families ?? [])
+    })
+  );
+  const corpusQuality = {
+    version: TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION,
+    term_normalization_version: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
+    candidate_recall_semantics_version:
+      TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+    collect_attempt_id: input.collectAttemptId,
+    research_mode: "topic_discovery",
+    strategy: TOPIC_DISCOVERY_CORPUS_QUALITY_STRATEGY,
+    generated_at: new Date().toISOString(),
+    passed: true,
+    reasons: [],
+    thresholds: {
+      minimum_shared_anchor_terms: 2,
+      minimum_relevant_papers: 8,
+      minimum_covered_query_families: 2,
+      minimum_relevant_papers_per_family: 2,
+      minimum_direct_support_per_family: 2,
+      minimum_semantic_precision_per_family: 0.5,
+      maximum_anchor_window_tokens: 12,
+      minimum_axis_term_matches: 2,
+      minimum_axis_term_match_ratio: 2 / 3,
+      maximum_anchor_axis_window_tokens: 24
+    },
+    observed: {
+      total_papers: candidateRows.length,
+      relevant_papers: reviewedPaperIds.size,
+      relevant_share: candidateRows.length > 0
+        ? reviewedPaperIds.size / candidateRows.length
+        : 0,
+      lexical_relevant_papers: lexicalPaperIds.size,
+      semantic_requested_papers: reviewedPaperIds.size,
+      direct_support_papers: reviewedPaperIds.size,
+      application_only_pairs: 0,
+      uncertain_pairs: 0,
+      shared_anchor_terms: sharedAnchorTerms,
+      required_anchor_matches_per_paper: sharedAnchorTerms.length,
+      anchor_proximate_papers: candidateRelevance.filter(
+        (relevance) => relevance.anchorProximate
+      ).length,
+      anchor_axis_proximate_papers: candidateRelevance.filter(
+        (relevance) => relevance.anchorAxisProximate
+      ).length,
+      covered_query_families: coveredQueryFamilies
+    },
+    query_families: input.families.map((family) => ({
+      query_family: family.queryFamily,
+      query: family.query,
+      source: "llm_query_planner",
+      positive_terms: family.axisTerms,
+      axis_terms: family.axisTerms,
+      lens: family.lens,
+      contribution_intent: family.contributionIntent,
+      contract_source: "planner_declared",
+      canonical_family_signature: buildTopicDiscoveryCandidateFamilySignature({
+        sharedAnchorTerms,
+        axisTerms: family.axisTerms
+      }),
+      required_axis_matches: family.axisTerms.length,
+      lexical_relevant_paper_count:
+        lexicalFamilyCounts.get(family.queryFamily) ?? 0,
+      semantic_reviewed_paper_count: familyCounts.get(family.queryFamily) ?? 0,
+      provider_recall_paper_count:
+        providerFamilyCounts.get(family.queryFamily) ?? 0,
+      direct_support_paper_count: familyCounts.get(family.queryFamily) ?? 0,
+      application_only_paper_count: 0,
+      uncertain_paper_count: 0,
+      semantic_precision: 1,
+      retained_paper_count: familyCounts.get(family.queryFamily) ?? 0,
+      relevant_paper_count: familyCounts.get(family.queryFamily) ?? 0
+    })),
+    semantic_review: {
+      version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
+      status: "complete",
+      prompt_sha256: promptSha256,
+      response_sha256: responseSha256,
+      reviewer_input_sha256: payloadSha256,
+      reviewer_input_bytes: reviewerInputBytes,
+      limits: {
+        max_pairs: 64,
+        max_input_bytes: 131_072,
+        abstract_chars: 2_000,
+        timeout_ms: 30_000
+      },
+      counts,
+      recall: {
+        provider_recall_floor_per_family: 4,
+        lexical_requested_pairs: lexicalRequestedPairCount,
+        provider_provenance_requested_pairs: providerRequestedPairCount
+      },
+      execution,
+      reasons: [],
+      protocol_violations: []
+    },
+    semantic_judgments: judgments,
+    retained_paper_ids: Array.from(reviewedPaperIds),
+    excluded_paper_ids: candidateRows
+      .map((row) => row.paper_id)
+      .filter((paperId) => !reviewedPaperIds.has(paperId))
+  };
+  await writeFile(path.join(runDir, "collect_generation.json"), JSON.stringify({
+    version: 1,
+    kind: "collect_generation",
+    run_id: input.run.id,
+    collect_attempt_id: input.collectAttemptId,
+    started_at: new Date().toISOString()
+  }), "utf8");
+  await writeFile(path.join(runDir, "collect_query_plan.json"), JSON.stringify({
+    ...TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT,
+    ...input.queryPlanContractOverrides,
+    collect_attempt_id: input.collectAttemptId,
+    research_mode: "topic_discovery",
+    strategy: "topic_portfolio",
+    selected_families: input.families.map((family) => ({
+      query: family.query,
+      query_family: family.queryFamily,
+      source: "llm_query_planner",
+      topic_discovery_family: {
+        familyId: family.queryFamily,
+        sharedAnchorTerms,
+        axisTerms: family.axisTerms,
+        lens: family.lens,
+        contributionIntent: family.contributionIntent,
+        contractSource: "planner_declared"
+      }
+    }))
+  }), "utf8");
+  await writeFile(path.join(runDir, "collect_semantic_review_input.json"), JSON.stringify({
+    version: 1,
+    collect_attempt_id: input.collectAttemptId,
+    evidence_status: "semantic_review_input_only",
+    paper_evidence_allowed: false,
+    reviewer_identity: "fixture",
+    payload_sha256: payloadSha256,
+    payload
+  }), "utf8");
+  await writeFile(path.join(runDir, "collect_semantic_review.json"), JSON.stringify({
+    version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
+    collect_attempt_id: input.collectAttemptId,
+    evidence_status: "semantic_review_judgment_only",
+    paper_evidence_allowed: false,
+    reviewer_identity: "fixture",
+    reviewer_input_sha256: payloadSha256,
+    status: "complete",
+    prompt_sha256: promptSha256,
+    response_sha256: responseSha256,
+    limits: {
+      max_pairs: 64,
+      max_input_bytes: 131_072,
+      abstract_chars: 2_000,
+      timeout_ms: 30_000
+    },
+    reviewer_input_bytes: reviewerInputBytes,
+    counts,
+    recall: {
+      provider_recall_floor_per_family: 4,
+      lexical_requested_pairs: lexicalRequestedPairCount,
+      provider_provenance_requested_pairs: providerRequestedPairCount
+    },
+    execution,
+    reasons: [],
+    protocol_violations: [],
+    judgments
+  }), "utf8");
+  await writeFile(path.join(runDir, "collect_result.json"), JSON.stringify({
+    collect_attempt_id: input.collectAttemptId,
+    completed: true,
+    fetched: candidateRows.length,
+    stored: input.rows.length,
+    corpusQuality
+  }), "utf8");
+  await writeFile(
+    path.join(runDir, "collect_corpus_quality.json"),
+    JSON.stringify(corpusQuality),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "collect_topic_discovery_candidates.jsonl"),
+    `${candidateRows.map((row) => {
+      const selections = reviewedPairs
+        .filter((pair) => pair.paper_id === row.paper_id)
+        .map((pair) => ({
+          family_id: pair.family_id,
+          selection_source: pair.selection_source
+        }));
+      return JSON.stringify({
+        ...row,
+        schema_version: TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION,
+        collect_attempt_id: input.collectAttemptId,
+        evidence_status: "semantic_screening_candidate_only",
+        paper_evidence_allowed: false,
+        retrieval_status: "retrieved_governance_usable",
+        query_families: row.query_families ?? [],
+        family_retrieval_ranks: (row.query_families ?? []).map((familyId) => ({
+          family_id: familyId,
+          rank: candidateRows
+            .filter((candidate) =>
+              candidate.query_families?.includes(familyId)
+            )
+            .findIndex((candidate) => candidate.paper_id === row.paper_id) + 1
+        })),
+        canonical_search_source: "semantic_scholar",
+        search_providers: ["semantic_scholar"],
+        lexical_matched_query_families:
+          lexicalFamiliesByPaper.get(row.paper_id) ?? [],
+        semantic_review_selections: selections,
+        semantic_review_requested_query_families:
+          selections.map((selection) => selection.family_id),
+        semantic_review_requested: selections.length > 0,
+        selected_by_semantic_quality: reviewedPaperIds.has(row.paper_id),
+        published_in_corpus: reviewedPaperIds.has(row.paper_id)
+      });
+    }).join("\n")}\n`,
+    "utf8"
+  );
+  await persistCollectAttemptArchive({
+    run: input.run,
+    attemptId: input.collectAttemptId,
+    status: "quality_gate_passed",
+    phase: "collection",
+    artifactPaths: [
+      "collect_query_plan.json",
+      "collect_corpus_quality.json",
+      "collect_semantic_review_input.json",
+      "collect_semantic_review.json",
+      "collect_topic_discovery_candidates.jsonl",
+      "corpus.jsonl"
+    ]
+  });
+  const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+  await runContext.put("collect_papers.current_generation_id", input.collectAttemptId);
+  await runContext.put("collect_papers.active_attempt_id", null);
+}
+
+async function writeCandidatePriorCollectLineage(input: {
+  run: RunRecord;
+  sourceAttemptId: string;
+  collectAttemptId: string;
+  corpusRaw: string;
+  candidateId: string;
+  researchCycle: number;
+}): Promise<void> {
+  const runDir = path.join(".autolabos", "runs", input.run.id);
+  const candidate: HypothesisCandidate = {
+    id: input.candidateId,
+    text: "Typed boundary tracing tests a falsifiable relation over structured records.",
+    novelty: 0.7,
+    feasibility: 0.8,
+    testability: 0.9,
+    cost: 0.3,
+    expected_gain: 0.2,
+    evidence_links: ["evidence_reference"],
+    contribution_claim: "Improved support for findings over structured records.",
+    dataset_task_bench: "held out structured records",
+    comparator: "post hoc verification",
+    primary_metric: "supported finding rate",
+    meaningful_effect: "a prespecified reduction in unsupported findings",
+    minimum_publishable_evidence: "bounded repeated comparisons",
+    falsifier: "no measurable change in unsupported findings"
+  };
+  const plan = buildCandidatePriorSearchPlan({
+    runId: input.run.id,
+    researchCycle: input.researchCycle,
+    generatedAt: "2026-07-28T08:30:00.000Z",
+    asOfDate: "2026-07-28",
+    sourceCorpus: {
+      collect_attempt_id: input.sourceAttemptId,
+      sha256: createHash("sha256").update(input.corpusRaw, "utf8").digest("hex"),
+      byte_length: Buffer.byteLength(input.corpusRaw, "utf8")
+    },
+    candidates: [{
+      candidate,
+      candidateContract: buildPriorAbsorptionCandidateContract(candidate)
+    }]
+  });
+  const receipt = buildCandidatePriorSearchReceipt({
+    plan,
+    collectAttemptId: input.collectAttemptId,
+    generatedAt: "2026-07-28T08:35:00.000Z",
+    resultCorpusSha256: createHash("sha256")
+      .update(input.corpusRaw, "utf8")
+      .digest("hex"),
+    resultCorpusByteLength: Buffer.byteLength(input.corpusRaw, "utf8"),
+    attempts: plan.candidates.flatMap((plannedCandidate) =>
+      plannedCandidate.families.flatMap((family) =>
+        family.lanes.map((lane) => ({
+          familyId: family.family_id,
+          retrievalLane: lane.retrieval_lane,
+          query: family.query,
+          fetched: 0,
+          selected: 0,
+          selectedPaperIds: []
+        }))
+      )
+    )
+  });
+  const queryPlan = {
+    collect_attempt_id: input.collectAttemptId,
+    research_mode: "topic_discovery",
+    strategy: "candidate_prior_portfolio",
+    candidate_prior_search_plan: plan
+  };
+  await writeFile(
+    path.join(runDir, "collect_generation.json"),
+    JSON.stringify({
+      version: 1,
+      kind: "collect_generation",
+      run_id: input.run.id,
+      collect_attempt_id: input.collectAttemptId,
+      started_at: "2026-07-28T08:34:00.000Z"
+    }),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "collect_query_plan.json"),
+    JSON.stringify(queryPlan),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "collect_candidate_prior_search_plan.json"),
+    JSON.stringify(plan),
+    "utf8"
+  );
+  await writeFile(
+    path.join(runDir, "collect_candidate_prior_search_receipt.json"),
+    JSON.stringify(receipt),
+    "utf8"
+  );
+  await writeFile(path.join(runDir, "corpus.jsonl"), input.corpusRaw, "utf8");
+  await writeFile(
+    path.join(runDir, "collect_result.json"),
+    JSON.stringify({
+      collect_attempt_id: input.collectAttemptId,
+      completed: true,
+      fetched: 0,
+      stored: input.corpusRaw.trim().split("\n").filter(Boolean).length
+    }),
+    "utf8"
+  );
+  await persistCollectAttemptArchive({
+    run: input.run,
+    attemptId: input.collectAttemptId,
+    status: "quality_gate_passed",
+    phase: "collection",
+    artifactPaths: [
+      "collect_query_plan.json",
+      "collect_candidate_prior_search_plan.json",
+      "collect_candidate_prior_search_receipt.json",
+      "corpus.jsonl"
+    ]
+  });
+  const runContext = new RunContextMemory(input.run.memoryRefs.runContextPath);
+  await runContext.put("collect_papers.current_generation_id", input.collectAttemptId);
+  await runContext.put("collect_papers.active_attempt_id", null);
+}
+
+async function writeTopicDiscoveryBrief(run: RunRecord): Promise<void> {
+  const rawBrief = [
+    "# Research Brief",
+    "",
+    "## Research Mode",
+    "topic_discovery",
+    ""
+  ].join("\n");
+  const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+  await runContext.put("run_brief.raw", rawBrief);
+  const briefDir = path.join(".autolabos", "runs", run.id, "brief");
+  await mkdir(briefDir, { recursive: true });
+  await writeFile(path.join(briefDir, "source_brief.md"), rawBrief, "utf8");
+}
+
+function completeTopicDiscoveryLineageFixture() {
+  const families = [
+    {
+      queryFamily: "query_family_measurement",
+      query: '"document retrieval" measurement reliability',
+      axisTerms: ["measurement", "reliability"],
+      lens: "Direct measurement of research reliability",
+      contributionIntent: "measurement"
+    },
+    {
+      queryFamily: "query_family_robustness",
+      query: '"document retrieval" robustness evaluation',
+      axisTerms: ["robustness", "evaluation"],
+      lens: "Direct evaluation of research robustness",
+      contributionIntent: "empirical_finding"
+    }
+  ];
+  const rows = families.flatMap((family, familyIndex) =>
+    Array.from({ length: 4 }, (_, paperIndex) => ({
+      paper_id: `paper_${familyIndex + 1}_${paperIndex + 1}`,
+      title: `Document retrieval ${family.axisTerms.join(" ")} study ${paperIndex + 1}`,
+      abstract: `Direct evidence for ${family.lens.toLowerCase()}.`,
+      query_families: [family.queryFamily]
+    }))
+  );
+  return { families, rows };
+}
+
 function overwriteCorpusSync(runId: string, rows: unknown[]): void {
   const dir = path.join(".autolabos", "runs", runId);
   writeFileSync(path.join(dir, "corpus.jsonl"), `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
@@ -504,7 +1129,7 @@ function overwriteCollectResultSync(runId: string, value: unknown): void {
 function writeCachedPaperTextSync(runId: string, paperId: string, text: string): void {
   const cacheDir = path.join(".autolabos", "runs", runId, "analysis_cache", "texts");
   mkdirSync(cacheDir, { recursive: true });
-  writeFileSync(path.join(cacheDir, `${paperId}.txt`), text, "utf8");
+  writeFileSync(path.join(cacheDir, `${paperId}.v2.txt`), text, "utf8");
 }
 
 function writeCachedPageImagesSync(runId: string, paperId: string, count: number): void {
@@ -539,6 +1164,26 @@ function jsonOutput(summary: string, claim: string): string {
   });
 }
 
+function topicMeasurementContract() {
+  return {
+    primary_metric: "primary_score",
+    metric_direction: "maximize" as const,
+    meaningful_effect: "At least 0.05 over the declared comparator.",
+    measurement_signals: ["primary_score", "uncertainty_interval"],
+    measurement_hint: "Compare the primary score with uncertainty across repeated matched runs.",
+    gap_statement: "Prior evaluations omit an independently matched context.",
+    closest_prior_non_overlap: "The candidate measures a boundary absent from the linked prior work.",
+    reviewer_absorption_objection: "A reviewer may absorb the candidate into the strongest matched comparator.",
+    comparator: "Matched-budget comparator",
+    dataset_task_bench: "evaluation_fixture",
+    falsifier: "The prespecified interval includes the null margin.",
+    local_budget: makeTopicProbeComputeBudgetDeclaration(),
+    kill_signal: "Stop if the comparator cannot execute or the effect misses the prespecified floor.",
+    contribution_claim: "The comparison identifies a prespecified boundary absent from the closest priors.",
+    minimum_publishable_evidence: "Repeated comparisons with uncertainty intervals and failure analysis."
+  };
+}
+
 function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
   return [
     JSON.stringify({
@@ -565,7 +1210,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           expected_gain: 5,
           evidence_links: [evidenceId],
           axis_ids: ["ax_1"],
-          rationale: "Directly operationalizes the recovered evidence."
+          rationale: "Directly operationalizes the recovered evidence.",
+          ...topicMeasurementContract()
         }
       ]
     }),
@@ -581,7 +1227,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           expected_gain: 2,
           evidence_links: [evidenceId],
           axis_ids: ["ax_1"],
-          rationale: "Captures a plausible boundary condition."
+          rationale: "Captures a plausible boundary condition.",
+          ...topicMeasurementContract()
         }
       ]
     }),
@@ -597,7 +1244,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           expected_gain: 5,
           evidence_links: [evidenceId],
           axis_ids: ["ax_1"],
-          rationale: "Turns evidence into a concrete, testable intervention."
+          rationale: "Turns evidence into a concrete, testable intervention.",
+          ...topicMeasurementContract()
         }
       ]
     }),
@@ -611,8 +1259,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           causal_clarity: 5,
           falsifiability: 5,
           experimentability: 5,
-          reproducibility_specificity: 4,
-          reproducibility_signals: ["repeatability"],
+          measurement_specificity: 4,
+          measurement_signals: ["repeatability"],
           measurement_hint: "Measure repeated-run failure variance on the repaired benchmark.",
           limitation_reflection: 4,
           measurement_readiness: 5,
@@ -627,8 +1275,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           causal_clarity: 3,
           falsifiability: 3,
           experimentability: 2,
-          reproducibility_specificity: 2,
-          reproducibility_signals: [],
+          measurement_specificity: 2,
+          measurement_signals: [],
           limitation_reflection: 2,
           measurement_readiness: 1,
           strengths: ["Reasonable boundary condition."],
@@ -642,8 +1290,8 @@ function hypothesisPipelineOutputs(evidenceId = "ev_p1_1"): string[] {
           causal_clarity: 5,
           falsifiability: 5,
           experimentability: 5,
-          reproducibility_specificity: 5,
-          reproducibility_signals: ["repeated runs", "variance reduction"],
+          measurement_specificity: 5,
+          measurement_signals: ["repeated runs", "variance reduction"],
           measurement_hint: "Compare repeated-run variance against discussion-only retries.",
           limitation_reflection: 4,
           measurement_readiness: 5,
@@ -744,11 +1392,24 @@ describe("analyzePapers node", () => {
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const gapMapRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis", "gap_map.json"),
+      "utf8"
+    );
     const manifest = JSON.parse(manifestRaw);
+    const gapMap = JSON.parse(gapMapRaw) as {
+      gaps: Array<{ epistemic_status?: string }>;
+      gates: Array<{ code?: string; status?: string }>;
+    };
 
     expect(summariesRaw).toContain('"source_type":"abstract"');
     expect(summariesRaw).toContain('"summary":"summary 1"');
     expect(evidenceRaw).toContain('"claim":"claim 1"');
+    expect(gapMap.gaps).toHaveLength(2);
+    expect(gapMap.gaps.every((gap) => gap.epistemic_status === "provisional_candidate")).toBe(true);
+    expect(
+      gapMap.gates.find((gate) => gate.code === "independent_gap_support_present")?.status
+    ).toBe("block");
     expect(manifestRaw).toContain('"status": "completed"');
     expect(manifest.papers.p1.table_reference_count).toBe(1);
     expect(manifest.papers.p1.figure_reference_count).toBe(1);
@@ -773,7 +1434,7 @@ describe("analyzePapers node", () => {
       title: "Multi-Agent Collaboration",
       topic: "Multi-Agent Collaboration",
       constraints: [],
-      objectiveMetric: "accuracy >= 0.9"
+      objectiveMetric: "primary_score >= 0.9"
     });
     run.status = "running";
     run.currentNode = "analyze_papers";
@@ -828,7 +1489,7 @@ describe("analyzePapers node", () => {
       title: "Tabular Baseline Benchmarking",
       topic: "Tabular Baseline Benchmarking",
       constraints: [],
-      objectiveMetric: "accuracy >= 0.9"
+      objectiveMetric: "primary_score >= 0.9"
     });
     run.status = "running";
     run.currentNode = "analyze_papers";
@@ -891,7 +1552,7 @@ describe("analyzePapers node", () => {
       title: "Budgeted Reasoning",
       topic: "Budgeted Reasoning",
       constraints: [],
-      objectiveMetric: "accuracy >= 0.9"
+      objectiveMetric: "primary_score >= 0.9"
     });
     run.status = "running";
     run.currentNode = "analyze_papers";
@@ -1040,6 +1701,10 @@ describe("analyzePapers node", () => {
     expect(first.status).toBe("success");
     expect(first.needsApproval).toBe(true);
     expect(first.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(first.transitionRecommendation?.targetNode).toBeUndefined();
+    expect(first.transitionRecommendation?.suggestedCommands).not.toEqual(
+      expect.arrayContaining([expect.stringContaining("generate_hypotheses")])
+    );
     expect(first.summary).toContain("Preserved partial analysis");
 
     const summariesAfterFirst = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
@@ -1203,16 +1868,1012 @@ describe("analyzePapers node", () => {
     expect(loggedTexts.some((text) => text.includes("Resetting summaries/evidence"))).toBe(false);
   });
 
-  it("preserves pre-retarget artifacts when selection regresses under the same request after a corpus change", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-retarget-regression-"));
+  it("blocks stale analysis reuse when the latest collection generation failed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-collect-lineage-"));
     tempDirs.push(root);
     process.chdir(root);
 
-    const runId = "run-analyze-retarget-regression";
+    const runId = "run-analyze-collect-lineage";
     const run = makeRun(runId);
     await writeCorpus(runId, [
-      { paper_id: "p1", title: "Paper 1", abstract: "Abstract 1", authors: ["Alice"] },
-      { paper_id: "p2", title: "Paper 2", abstract: "Abstract 2", authors: ["Bob"] }
+      {
+        paper_id: "paper-prior",
+        title: "Prior configured paper",
+        abstract: "Prior configured abstract",
+        authors: ["Prior Author"]
+      }
+    ]);
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([jsonOutput("prior summary", "prior claim")]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+    expect((await firstNode.execute({ run, graph: run.graph })).status).toBe("success");
+
+    const runDir = path.join(".autolabos", "runs", runId);
+    const priorSummaries = await readFile(path.join(runDir, "paper_summaries.jsonl"), "utf8");
+    const priorEvidence = await readFile(path.join(runDir, "evidence_store.jsonl"), "utf8");
+    await writeFile(path.join(runDir, "corpus.jsonl"), "", "utf8");
+    const failedAttemptId = "20260102030405678-failedattempt";
+    await writeFile(
+      path.join(runDir, "collect_generation.json"),
+      JSON.stringify({
+        version: 1,
+        kind: "collect_generation",
+        run_id: runId,
+        collect_attempt_id: failedAttemptId,
+        started_at: new Date().toISOString()
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_result.json"),
+      JSON.stringify({
+        collect_attempt_id: failedAttemptId,
+        completed: false,
+        stored: 0,
+        fetchError: "configured collection failed"
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(runDir, "collect_attempt_manifest.json"),
+      JSON.stringify({
+        version: 2,
+        kind: "collect_attempt_archive",
+        collect_attempt_id: failedAttemptId,
+        run_id: runId,
+        status: "collection_failed",
+        phase: "collection",
+        revision_id: "collection-failed",
+        files: []
+      }),
+      "utf8"
+    );
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("collect_papers.current_generation_id", failedAttemptId);
+    await runContext.put("collect_papers.active_attempt_id", null);
+
+    const llm = new CountingJsonLLM(["should-not-be-used"]);
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+    const result = await secondNode.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.needsApproval).not.toBe(true);
+    expect(result.error).toContain("collect_lineage_result_incomplete");
+    expect(result.error).toContain("collect_lineage_quality_gate_not_passed");
+    expect(llm.callCount).toBe(0);
+    expect(await readFile(path.join(runDir, "paper_summaries.jsonl"), "utf8")).toBe(priorSummaries);
+    expect(await readFile(path.join(runDir, "evidence_store.jsonl"), "utf8")).toBe(priorEvidence);
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "analysis", "collect_lineage_gate.json"), "utf8")
+    ) as { valid?: boolean; collect_attempt_id?: string; reasons?: string[] };
+    expect(gate).toMatchObject({
+      valid: false,
+      collect_attempt_id: failedAttemptId,
+      reasons: expect.arrayContaining([
+        "collect_lineage_result_incomplete",
+        "collect_lineage_result_failed",
+        "collect_lineage_quality_gate_not_passed"
+      ])
+    });
+  });
+
+  it("fails closed for an authoritative topic-discovery brief when every lineage sidecar is missing", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-missing-topic-lineage-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-missing-topic-lineage";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-missing-topic-lineage",
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const collectResultPath = path.join(runDir, "collect_result.json");
+    const collectResult = JSON.parse(
+      await readFile(collectResultPath, "utf8")
+    ) as Record<string, unknown>;
+    delete collectResult.corpusQuality;
+    await writeFile(collectResultPath, JSON.stringify(collectResult), "utf8");
+    await Promise.all([
+      "collect_query_plan.json",
+      "collect_corpus_quality.json",
+      "collect_semantic_review_input.json",
+      "collect_semantic_review.json",
+      "collect_topic_discovery_candidates.jsonl"
+    ].map((fileName) => rm(path.join(runDir, fileName), { force: true })));
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("collect_lineage_topic_query_plan_mode_mismatch");
+    expect(result.error).toContain("collect_lineage_topic_family_quality_missing");
+    expect(result.error).toContain("collect_lineage_topic_semantic_review_input_invalid");
+    expect(result.error).toContain("collect_lineage_topic_semantic_review_not_complete");
+    expect(llm.callCount).toBe(0);
+    const modeGuard = JSON.parse(
+      await readFile(path.join(runDir, "governance", "research_mode_guard.json"), "utf8")
+    ) as { effectiveMode?: string; valid?: boolean };
+    expect(modeGuard).toMatchObject({ effectiveMode: "topic_discovery", valid: true });
+  });
+
+  it("validates two candidate-prior augmentations back to the original semantic audit", async () => {
+    const root = await mkdtemp(path.join(
+      tmpdir(),
+      "autolabos-analyze-recursive-candidate-prior-"
+    ));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-recursive-candidate-prior";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    const baseAttemptId = "collect-attempt-topic-base";
+    const firstCandidateAttemptId = "collect-attempt-candidate-prior-first";
+    const secondCandidateAttemptId = "collect-attempt-candidate-prior-second";
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: baseAttemptId,
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const corpusRaw = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+    await writeCandidatePriorCollectLineage({
+      run,
+      sourceAttemptId: baseAttemptId,
+      collectAttemptId: firstCandidateAttemptId,
+      corpusRaw,
+      candidateId: "candidate_first",
+      researchCycle: 0
+    });
+    await writeCandidatePriorCollectLineage({
+      run,
+      sourceAttemptId: firstCandidateAttemptId,
+      collectAttemptId: secondCandidateAttemptId,
+      corpusRaw,
+      candidateId: "candidate_second",
+      researchCycle: 1
+    });
+
+    const llm = new CountingJsonLLM(
+      Array.from({ length: 20 }, () => "invalid-json")
+    );
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "ollama" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(llm.callCount, result.error).toBeGreaterThan(0);
+    expect(result.error ?? "").not.toContain("collect_lineage_");
+    const gate = JSON.parse(await readFile(
+      path.join(runDir, "analysis", "collect_lineage_gate.json"),
+      "utf8"
+    )) as { valid?: boolean; collect_attempt_id?: string; reasons?: string[] };
+    expect(gate).toMatchObject({
+      valid: true,
+      collect_attempt_id: secondCandidateAttemptId,
+      reasons: []
+    });
+  });
+
+  it.each([
+    {
+      caseId: "artifact-version",
+      overrides: {
+        version: TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.version - 1
+      }
+    },
+    {
+      caseId: "term-normalization",
+      overrides: {
+        term_normalization_version:
+          TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.term_normalization_version + 1
+      }
+    },
+    {
+      caseId: "candidate-recall-semantics",
+      overrides: {
+        candidate_recall_semantics_version:
+          TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.candidate_recall_semantics_version + 1
+      }
+    }
+  ])("fails closed when the topic-discovery query-plan $caseId is stale", async ({
+    caseId,
+    overrides
+  }) => {
+    const root = await mkdtemp(path.join(
+      tmpdir(),
+      `autolabos-analyze-query-plan-${caseId}-`
+    ));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = `run-analyze-query-plan-${caseId}`;
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: `collect-attempt-query-plan-${caseId}`,
+      queryPlanContractOverrides: overrides,
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+
+    const llm = new CountingJsonLLM(["unused"]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "ollama" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_topic_query_plan_semantics_unsupported"
+    );
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("accepts provider-provenance semantic candidates without relabeling them as lexical matches", async () => {
+    const root = await mkdtemp(path.join(
+      tmpdir(),
+      "autolabos-analyze-provider-provenance-lineage-"
+    ));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-provider-provenance-lineage";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    const rows = fixture.rows.map((row, index) => ({
+      ...row,
+      title: `Document retrieval controlled comparison study ${index + 1}`,
+      abstract: "The study directly examines calibration consistency under bounded evidence.",
+      authors: [],
+      lexical_query_families: []
+    }));
+    const reviewedPairs = rows.map((row) => ({
+      paper_id: row.paper_id,
+      family_id: row.query_families[0]!,
+      selection_source: "provider_provenance_floor" as const
+    }));
+    await writeCorpus(runId, rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-provider-provenance-lineage",
+      rows,
+      candidateRows: rows,
+      families: fixture.families,
+      reviewedPairs
+    });
+    await writeTopicDiscoveryBrief(run);
+
+    const llm = new CountingJsonLLM(
+      Array.from({ length: 20 }, () => "invalid-json")
+    );
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "ollama" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(llm.callCount, result.error).toBeGreaterThan(0);
+    expect(result.error ?? "").not.toContain(
+      "collect_lineage_topic_family_quality_observed_mismatch"
+    );
+  });
+
+  it("rejects a one-family v5 artifact that lowers its own topic-discovery thresholds", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-lowered-topic-thresholds-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-lowered-topic-thresholds";
+    const run = makeRun(runId);
+    const family = {
+      queryFamily: "query_family_measurement",
+      query: '"configured research" measurement reliability',
+      axisTerms: ["measurement", "reliability"],
+      lens: "Direct measurement of research reliability",
+      contributionIntent: "measurement"
+    };
+    const rows = Array.from({ length: 2 }, (_, index) => ({
+      paper_id: `paper_measurement_${index + 1}`,
+      title: `Configured research measurement reliability study ${index + 1}`,
+      abstract: "Direct evidence for measurement reliability.",
+      query_families: [family.queryFamily]
+    }));
+    await writeCorpus(runId, rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-lowered-topic-thresholds",
+      rows,
+      families: [family]
+    });
+    await writeTopicDiscoveryBrief(run);
+    const qualityPath = path.join(
+      ".autolabos",
+      "runs",
+      runId,
+      "collect_corpus_quality.json"
+    );
+    const quality = JSON.parse(await readFile(qualityPath, "utf8")) as {
+      thresholds?: Record<string, number>;
+    };
+    Object.assign(quality.thresholds ?? {}, {
+      minimum_relevant_papers: 1,
+      minimum_covered_query_families: 1,
+      minimum_relevant_papers_per_family: 1,
+      minimum_direct_support_per_family: 1,
+      minimum_semantic_precision_per_family: 0
+    });
+    await writeFile(qualityPath, JSON.stringify(quality), "utf8");
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_topic_family_quality_thresholds_invalid"
+    );
+    expect(result.error).toContain("collect_lineage_topic_family_quality_floor_not_met");
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("rejects equivalent surface families as one independent coverage family", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-equivalent-families-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-equivalent-families";
+    const run = makeRun(runId);
+    const families = [
+      {
+        queryFamily: "query_family_finite",
+        query: '"configured research" finite sample uncertainty',
+        axisTerms: ["finite", "sample", "uncertainty"],
+        lens: "finite sample uncertainty",
+        contributionIntent: "measurement"
+      },
+      {
+        queryFamily: "query_family_limited",
+        query: '"configured research" limited sample uncertainty',
+        axisTerms: ["limited", "sample", "uncertainty"],
+        lens: "limited sample uncertainty",
+        contributionIntent: "measurement"
+      }
+    ];
+    const rows = families.flatMap((family, familyIndex) =>
+      Array.from({ length: 4 }, (_, index) => ({
+        paper_id: `paper_${familyIndex + 1}_${index + 1}`,
+        title: `Configured research ${family.axisTerms.join(" ")} study ${index + 1}`,
+        abstract: "Direct controlled evidence for the declared measurement family.",
+        query_families: [family.queryFamily]
+      }))
+    );
+    await writeCorpus(runId, rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-equivalent-families",
+      rows,
+      families
+    });
+    await writeTopicDiscoveryBrief(run);
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("collect_lineage_topic_family_quality_floor_not_met");
+    expect(result.error).toContain("collect_lineage_topic_family_quality_observed_mismatch");
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("rejects a hash-consistent semantic family contract tamper against the v4 query plan", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-family-contract-tamper-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-family-contract-tamper";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-family-contract-tamper",
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const semanticInputPath = path.join(runDir, "collect_semantic_review_input.json");
+    const semanticInput = JSON.parse(await readFile(semanticInputPath, "utf8")) as {
+      payload_sha256?: string;
+      payload?: {
+        family_contracts?: Array<{ query?: string }>;
+      };
+    };
+    const familyContract = semanticInput.payload?.family_contracts?.[0];
+    if (!semanticInput.payload || !familyContract) {
+      throw new Error("semantic_family_contract_fixture_missing");
+    }
+    familyContract.query = '"altered research" measurement reliability';
+    const payloadRaw = JSON.stringify(semanticInput.payload);
+    const payloadSha256 = createHash("sha256").update(payloadRaw, "utf8").digest("hex");
+    const payloadBytes = Buffer.byteLength(payloadRaw, "utf8");
+    semanticInput.payload_sha256 = payloadSha256;
+    await writeFile(semanticInputPath, JSON.stringify(semanticInput), "utf8");
+
+    const semanticReviewPath = path.join(runDir, "collect_semantic_review.json");
+    const semanticReview = JSON.parse(await readFile(semanticReviewPath, "utf8")) as {
+      reviewer_input_sha256?: string;
+      reviewer_input_bytes?: number;
+    };
+    semanticReview.reviewer_input_sha256 = payloadSha256;
+    semanticReview.reviewer_input_bytes = payloadBytes;
+    await writeFile(semanticReviewPath, JSON.stringify(semanticReview), "utf8");
+
+    const qualityPath = path.join(runDir, "collect_corpus_quality.json");
+    const quality = JSON.parse(await readFile(qualityPath, "utf8")) as {
+      semantic_review?: {
+        reviewer_input_sha256?: string;
+        reviewer_input_bytes?: number;
+      };
+    };
+    if (!quality.semantic_review) {
+      throw new Error("quality_semantic_review_fixture_missing");
+    }
+    quality.semantic_review.reviewer_input_sha256 = payloadSha256;
+    quality.semantic_review.reviewer_input_bytes = payloadBytes;
+    await writeFile(qualityPath, JSON.stringify(quality), "utf8");
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_topic_semantic_family_contract_mismatch"
+    );
+    expect(result.error).not.toContain("collect_lineage_topic_semantic_review_hash_mismatch");
+    expect(llm.callCount).toBe(0);
+  });
+
+  it.each([
+    {
+      field: "version",
+      expectedReason: "collect_lineage_manifest_contract_invalid",
+      mutate: (manifest: Record<string, unknown>) => {
+        manifest.version = 1;
+      }
+    },
+    {
+      field: "kind",
+      expectedReason: "collect_lineage_manifest_contract_invalid",
+      mutate: (manifest: Record<string, unknown>) => {
+        manifest.kind = "collect_attempt_snapshot";
+      }
+    },
+    {
+      field: "run_id",
+      expectedReason: "collect_lineage_manifest_contract_invalid",
+      mutate: (manifest: Record<string, unknown>) => {
+        manifest.run_id = "run-unrelated";
+      }
+    },
+    {
+      field: "revision_id",
+      expectedReason: "collect_lineage_manifest_revision_mismatch",
+      mutate: (manifest: Record<string, unknown>) => {
+        const previousRevisionId = manifest.revision_id;
+        const forgedRevisionId = `collection-${"0".repeat(20)}`;
+        manifest.revision_id = forgedRevisionId;
+        for (const file of Array.isArray(manifest.files) ? manifest.files : []) {
+          if (
+            file
+            && typeof file === "object"
+            && typeof (file as Record<string, unknown>).archived_path === "string"
+            && typeof previousRevisionId === "string"
+          ) {
+            (file as Record<string, unknown>).archived_path = (
+              (file as Record<string, unknown>).archived_path as string
+            ).replace(previousRevisionId, forgedRevisionId);
+          }
+        }
+      }
+    },
+    {
+      field: "files",
+      expectedReason: "collect_lineage_topic_archive_file_missing",
+      mutate: (manifest: Record<string, unknown>) => {
+        manifest.files = (Array.isArray(manifest.files) ? manifest.files : []).filter(
+          (file) =>
+            !file
+            || typeof file !== "object"
+            || (file as Record<string, unknown>).source_path
+              !== "collect_topic_discovery_candidates.jsonl"
+        );
+      }
+    }
+  ])("rejects a topic-discovery archive manifest with invalid $field", async ({
+    field,
+    expectedReason,
+    mutate
+  }) => {
+    const root = await mkdtemp(path.join(tmpdir(), `autolabos-analyze-manifest-${field}-`));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = `run-analyze-manifest-${field}`;
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: `collect-attempt-manifest-${field.replaceAll("_", "-")}`,
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+    const manifestPath = path.join(
+      ".autolabos",
+      "runs",
+      runId,
+      "collect_attempt_manifest.json"
+    );
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    mutate(manifest);
+    await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(expectedReason);
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("rejects a required topic-discovery artifact changed inside its immutable revision", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-archive-integrity-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-archive-integrity";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-archive-integrity",
+      ...fixture
+    });
+    await writeTopicDiscoveryBrief(run);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const manifest = JSON.parse(
+      await readFile(path.join(runDir, "collect_attempt_manifest.json"), "utf8")
+    ) as {
+      files?: Array<{ source_path?: string; archived_path?: string }>;
+    };
+    const archivedQualityPath = manifest.files?.find(
+      (file) => file.source_path === "collect_corpus_quality.json"
+    )?.archived_path;
+    if (!archivedQualityPath) {
+      throw new Error("archived_quality_fixture_missing");
+    }
+    await writeFile(
+      path.join(runDir, archivedQualityPath),
+      `${await readFile(path.join(runDir, archivedQualityPath), "utf8")} `,
+      "utf8"
+    );
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_manifest_immutable_artifact_mismatch"
+    );
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("rejects coordinated semantic pair omission from the declared lexical universe", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pair-universe-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-pair-universe";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    const omittedCandidate = {
+      paper_id: "paper_measurement_extra",
+      title: "Configured research measurement reliability extension",
+      abstract: "Direct evidence for measurement reliability.",
+      query_families: [fixture.families[0]!.queryFamily]
+    };
+    await writeCorpus(runId, fixture.rows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-pair-universe",
+      ...fixture,
+      candidateRows: [...fixture.rows, omittedCandidate],
+      reviewedPairs: fixture.rows.flatMap((row) =>
+        (row.query_families ?? []).map((familyId) => ({
+          paper_id: row.paper_id,
+          family_id: familyId
+        }))
+      )
+    });
+    await writeTopicDiscoveryBrief(run);
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("collect_lineage_topic_candidate_pool_invalid");
+    expect(result.error).toContain("collect_lineage_topic_semantic_pair_universe_mismatch");
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("blocks topic-discovery analysis when corpus family provenance diverges from collection quality", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-family-lineage-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-family-lineage";
+    const run = makeRun(runId);
+    const fixture = completeTopicDiscoveryLineageFixture();
+    const corpusRows = fixture.rows.map((row, index) => index === 0
+      ? { ...row, authors: ["Fixture Author"], query_families: undefined }
+      : { ...row, authors: ["Fixture Author"] }
+    );
+    await writeCorpus(runId, corpusRows);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const collectAttemptId = "20260102030405678-familylineage";
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId,
+      ...fixture
+    });
+
+    const llm = new CountingJsonLLM([jsonOutput("unused summary", "unused claim")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain("collect_lineage_topic_family_missing");
+    expect(result.error).toContain("collect_lineage_topic_family_count_mismatch");
+    expect(llm.callCount).toBe(0);
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "analysis", "collect_lineage_gate.json"), "utf8")
+    ) as { reasons?: string[] };
+    expect(gate.reasons).toEqual(expect.arrayContaining([
+      "collect_lineage_topic_family_missing",
+      "collect_lineage_topic_family_count_mismatch"
+    ]));
+  });
+
+  it("blocks unsupported v3 topic-discovery quality semantics even when the artifact says passed", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-v3-quality-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-v3-quality";
+    const run = makeRun(runId);
+    const corpusRows = [
+      {
+        paper_id: "version3_p1",
+        title: "Configured research reliability one",
+        abstract: "A direct reliability study.",
+        query_families: ["query_family_reliability"]
+      },
+      {
+        paper_id: "version3_p2",
+        title: "Configured research reliability two",
+        abstract: "A second direct reliability study.",
+        query_families: ["query_family_reliability"]
+      }
+    ];
+    await writeCorpus(runId, corpusRows);
+    const collectAttemptId = "collect-attempt-v3-quality";
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId,
+      rows: corpusRows,
+      families: [{
+        queryFamily: "query_family_reliability",
+        query: '"configured research" reliability measurement',
+        axisTerms: ["reliability", "measurement"],
+        lens: "Direct measurement of research reliability",
+        contributionIntent: "measurement"
+      }]
+    });
+    const qualityPath = path.join(
+      ".autolabos",
+      "runs",
+      runId,
+      "collect_corpus_quality.json"
+    );
+    const versionThreeQuality = JSON.parse(await readFile(qualityPath, "utf8")) as {
+      version?: number;
+    };
+    versionThreeQuality.version = 3;
+    await writeFile(qualityPath, JSON.stringify(versionThreeQuality), "utf8");
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_topic_family_quality_semantics_unsupported"
+    );
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("blocks topic-discovery analysis when semantic judgments are altered after collection", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-semantic-tamper-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-semantic-tamper";
+    const run = makeRun(runId);
+    const corpusRows = [
+      {
+        paper_id: "tamper_p1",
+        title: "Configured research measurement one",
+        abstract: "A direct measurement study.",
+        query_families: ["query_family_measurement"]
+      },
+      {
+        paper_id: "tamper_p2",
+        title: "Configured research measurement two",
+        abstract: "A second direct measurement study.",
+        query_families: ["query_family_measurement"]
+      }
+    ];
+    await writeCorpus(runId, corpusRows);
+    const collectAttemptId = "20260102030405678-semantictamper";
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId,
+      rows: corpusRows,
+      families: [{
+        queryFamily: "query_family_measurement",
+        query: '"configured research" measurement validity',
+        axisTerms: ["measurement", "validity"],
+        lens: "Direct study of measurement validity",
+        contributionIntent: "measurement"
+      }]
+    });
+    const reviewPath = path.join(
+      ".autolabos",
+      "runs",
+      runId,
+      "collect_semantic_review.json"
+    );
+    const semanticReview = JSON.parse(await readFile(reviewPath, "utf8")) as {
+      judgments?: Array<{ verdict?: string }>;
+    };
+    if (semanticReview.judgments?.[0]) {
+      semanticReview.judgments[0].verdict = "application_only";
+    }
+    await writeFile(reviewPath, JSON.stringify(semanticReview), "utf8");
+
+    const llm = new CountingJsonLLM([jsonOutput("unused", "unused")]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "collect_lineage_topic_semantic_review_pair_mismatch"
+    );
+    expect(result.error).toContain(
+      "collect_lineage_topic_semantic_direct_support_mismatch"
+    );
+    expect(llm.callCount).toBe(0);
+  });
+
+  it("reanalyzes a changed non-empty corpus when paper IDs stay the same", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-same-id-corpus-change-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-same-id-corpus-change";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      { paper_id: "retained_paper", title: "Retained Paper", abstract: "Initial abstract.", authors: ["Author"] }
     ]);
 
     const firstNode = createAnalyzePapersNode({
@@ -1224,7 +2885,7 @@ describe("analyzePapers node", () => {
       } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new SequenceJsonLLM([jsonOutput("summary 1", "claim 1"), jsonOutput("summary 2", "claim 2")]),
+      llm: new SequenceJsonLLM([jsonOutput("stale summary", "stale claim")]),
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any,
@@ -1233,10 +2894,21 @@ describe("analyzePapers node", () => {
 
     const first = await firstNode.execute({ run, graph: run.graph });
     expect(first.status).toBe("success");
+    const firstManifest = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    ) as { corpusFingerprint?: string };
 
-    await writeCorpus(runId, [{ paper_id: "p3", title: "Paper 3", abstract: "Abstract 3", authors: ["Carol"] }]);
+    await writeCorpus(runId, [
+      {
+        paper_id: "retained_paper",
+        title: "Retained Paper",
+        abstract: "Updated abstract from the replacement corpus.",
+        authors: ["Author"]
+      }
+    ]);
 
     const eventStream = new InMemoryEventStream();
+    const secondLlm = new CountingJsonLLM([jsonOutput("fresh summary", "fresh claim")]);
     const secondNode = createAnalyzePapersNode({
       config: {
         providers: { llm_mode: "openai_api" },
@@ -1246,7 +2918,7 @@ describe("analyzePapers node", () => {
       } as any,
       runStore: {} as any,
       eventStream,
-      llm: new SequenceJsonLLM(["should-not-be-used"]),
+      llm: secondLlm,
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {} as any,
@@ -1255,21 +2927,114 @@ describe("analyzePapers node", () => {
 
     const second = await secondNode.execute({ run, graph: run.graph });
     expect(second.status).toBe("success");
-    expect(second.needsApproval).toBe(true);
-    expect(second.summary).toContain("Preserving 2 summary row(s) and 2 evidence row(s)");
-    expect(second.transitionRecommendation?.action).toBe("pause_for_human");
+    expect(secondLlm.callCount).toBeGreaterThan(0);
 
-    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
-    const manifest = JSON.parse(manifestRaw) as { selectedPaperIds: string[] };
-    expect(manifest.selectedPaperIds).toEqual(["p1", "p2"]);
+    const secondManifest = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    ) as { corpusFingerprint?: string; selectedPaperIds: string[] };
+    expect(secondManifest.selectedPaperIds).toEqual(["retained_paper"]);
+    expect(secondManifest.corpusFingerprint).toEqual(expect.any(String));
+    expect(secondManifest.corpusFingerprint).not.toBe(firstManifest.corpusFingerprint);
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
-    expect(summariesRaw.trim().split("\n")).toHaveLength(2);
-    expect(evidenceRaw.trim().split("\n")).toHaveLength(2);
+    expect(summariesRaw.trim().split("\n")).toHaveLength(1);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
+    expect(summariesRaw).toContain('"summary":"fresh summary"');
+    expect(evidenceRaw).toContain('"claim":"fresh claim"');
+    expect(summariesRaw).not.toContain("stale summary");
+    expect(evidenceRaw).not.toContain("stale claim");
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
-    expect(loggedTexts.some((text) => text.includes("Preserving 2 summary row(s) and 2 evidence row(s)"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Collected corpus fingerprint changed"))).toBe(true);
+  });
+
+  it("reanalyzes a changed non-empty corpus when paper IDs are replaced", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-retarget-regression-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-retarget-regression";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      { paper_id: "prior_paper_one", title: "Prior Paper One", abstract: "Initial abstract one.", authors: ["Author"] },
+      { paper_id: "prior_paper_two", title: "Prior Paper Two", abstract: "Initial abstract two.", authors: ["Author"] }
+    ]);
+
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([
+        jsonOutput("stale summary one", "stale claim one"),
+        jsonOutput("stale summary two", "stale claim two")
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+    const firstManifest = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    ) as { corpusFingerprint?: string };
+
+    await writeCorpus(runId, [
+      {
+        paper_id: "replacement_paper",
+        title: "Replacement Paper",
+        abstract: "Replacement corpus abstract.",
+        authors: ["Author"]
+      }
+    ]);
+
+    const eventStream = new InMemoryEventStream();
+    const secondLlm = new CountingJsonLLM([jsonOutput("fresh replacement summary", "fresh replacement claim")]);
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: {
+          responses_model: "gpt-5.4"
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: secondLlm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(secondLlm.callCount).toBeGreaterThan(0);
+
+    const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
+    const manifest = JSON.parse(manifestRaw) as { corpusFingerprint?: string; selectedPaperIds: string[] };
+    expect(manifest.selectedPaperIds).toEqual(["replacement_paper"]);
+    expect(manifest.corpusFingerprint).toEqual(expect.any(String));
+    expect(manifest.corpusFingerprint).not.toBe(firstManifest.corpusFingerprint);
+
+    const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8");
+    const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
+    expect(summariesRaw.trim().split("\n")).toHaveLength(1);
+    expect(evidenceRaw.trim().split("\n")).toHaveLength(1);
+    expect(summariesRaw).toContain('"paper_id":"replacement_paper"');
+    expect(summariesRaw).toContain('"summary":"fresh replacement summary"');
+    expect(evidenceRaw).toContain('"claim":"fresh replacement claim"');
+    expect(summariesRaw).not.toContain("stale summary");
+    expect(evidenceRaw).not.toContain("stale claim");
+
+    const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(loggedTexts.some((text) => text.includes("Collected corpus fingerprint changed"))).toBe(true);
   });
 
   it("pauses with preserved partial evidence when retries stop shrinking the failed subset", async () => {
@@ -1669,7 +3434,7 @@ describe("analyzePapers node", () => {
     writeCachedPaperTextSync(
       runId,
       "p1",
-      "Cached article body describing a general candidate-comparison protocol. The system was evaluated on Benchmark Task A and Benchmark Task B with accuracy and runtime metrics under a fixed budget."
+      "Cached article body describing a general candidate-comparison protocol. The system was evaluated on Benchmark Task A and Benchmark Task B under a fixed budget. Metrics: outcome_quality and elapsed_time."
     );
     writeCachedPageImagesSync(runId, "p1", 3);
 
@@ -1713,7 +3478,7 @@ describe("analyzePapers node", () => {
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8");
     expect(evidenceRaw).toContain('"source_type":"full_text"');
     expect(evidenceRaw).toContain("Benchmark Task A and Benchmark Task B");
-    expect(evidenceRaw).toContain('"metric_slot":"accuracy; runtime"');
+    expect(evidenceRaw).toContain('"metric_slot":"outcome_quality; elapsed_time"');
     expect(evidenceRaw).toContain('"confidence":0.62');
 
     const manifestRaw = await readFile(
@@ -2076,7 +3841,7 @@ describe("analyzePapers node", () => {
 
     await mkdir(path.join(".autolabos", "runs", runId, "analysis_cache", "texts"), { recursive: true });
     await writeFile(
-      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.txt"),
+      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v2.txt"),
       "This study presents a structured literature review of machine learning applications in African economies and digital transformation.",
       "utf8"
     );
@@ -2118,9 +3883,69 @@ describe("analyzePapers node", () => {
     const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
     expect(await runContext.get("analyze_papers.summary_count")).toBe(0);
     expect(await runContext.get("analyze_papers.evidence_count")).toBe(0);
+    const gapMap = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis", "gap_map.json"), "utf8")
+    ) as { gaps?: unknown[]; evidence_byte_length?: number };
+    expect(gapMap.gaps).toEqual([]);
+    expect(gapMap.evidence_byte_length).toBe(0);
   }, 10000);
 
-  it("revalidates local full-text identity after Responses API fallback before running LLM extraction", async () => {
+  it("does not treat an ordinary bibliographic metadata discrepancy as a source-identity mismatch", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-metadata-discrepancy-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-metadata-discrepancy";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Evaluation records across publication indexes",
+        abstract: "The study compares bibliographic records across publication indexes.",
+        authors: ["Alice"]
+      }
+    ]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new SequenceJsonLLM([
+        jsonOutput(
+          "A bibliographic metadata mismatch across indexes is reported as a limitation.",
+          "metadata discrepancy"
+        )
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const summariesRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"),
+      "utf8"
+    );
+    expect(summariesRaw).toContain("bibliographic metadata mismatch");
+    const quarantineRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis_quarantine.jsonl"),
+      "utf8"
+    ).catch(() => "");
+    expect(quarantineRaw).toBe("");
+    const manifestRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "analysis_manifest.json"),
+      "utf8"
+    );
+    expect(manifestRaw).toContain('"status": "completed"');
+    expect(manifestRaw).not.toContain("analysis_content_mismatch");
+  });
+
+  it("validates local full-text identity before spending a Responses API call", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-pdf-fallback-mismatch-"));
     tempDirs.push(root);
     process.chdir(root);
@@ -2139,13 +3964,14 @@ describe("analyzePapers node", () => {
 
     await mkdir(path.join(".autolabos", "runs", runId, "analysis_cache", "texts"), { recursive: true });
     await writeFile(
-      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.txt"),
+      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v2.txt"),
       "This source text is actually an unrelated paper about economic transformation in Africa and digital inclusion.",
       "utf8"
     );
 
     const llm = new CountingJsonLLM([jsonOutput("should not run", "should not run")]);
     const pdfTextLlm = new CountingJsonLLM([jsonOutput("should not run", "should not run")]);
+    let responsesPdfCalls = 0;
     const eventStream = new InMemoryEventStream();
     const node = createAnalyzePapersNode({
       config: {
@@ -2164,6 +3990,7 @@ describe("analyzePapers node", () => {
       responsesPdfAnalysis: {
         hasApiKey: async () => true,
         analyzePdf: async () => {
+          responsesPdfCalls += 1;
           throw new Error(
             'Responses API request failed: 400 { "error": { "message": "Timeout while downloading https://example.com/p1.pdf" } }'
           );
@@ -2177,6 +4004,7 @@ describe("analyzePapers node", () => {
     expect(result.transitionRecommendation?.action).toBe("pause_for_human");
     expect(llm.callCount).toBe(0);
     expect(pdfTextLlm.callCount).toBe(0);
+    expect(responsesPdfCalls).toBe(0);
 
     const summariesRaw = await readFile(path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"), "utf8").catch(() => "");
     const evidenceRaw = await readFile(path.join(".autolabos", "runs", runId, "evidence_store.jsonl"), "utf8").catch(() => "");
@@ -2188,7 +4016,7 @@ describe("analyzePapers node", () => {
     expect(quarantineRaw).toContain("source_content_mismatch");
 
     const loggedTexts = eventStream.history().map((event) => String(event.payload?.text ?? ""));
-    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(true);
+    expect(loggedTexts.some((text) => text.includes("Responses API could not download the remote PDF"))).toBe(false);
     expect(loggedTexts.some((text) => text.includes("source-identity mismatch"))).toBe(true);
   });
 
@@ -2200,14 +4028,14 @@ describe("analyzePapers node", () => {
     const runId = "run-analyze-fallback-guard";
     const run = {
       ...makeRun(runId),
-      title: "Classical machine learning baselines for tabular classification",
-      topic: "Classical machine learning baselines for tabular classification"
+      title: "Bounded baseline comparisons for structured records",
+      topic: "Bounded baseline comparisons for structured records"
     };
     await writeCorpus(runId, [
       {
         paper_id: "p1",
-        title: "Classical machine learning baselines for tabular classification",
-        abstract: "Baseline comparison on tabular datasets with logistic regression and random forests.",
+        title: "Bounded baseline comparisons for structured records",
+        abstract: "Baseline comparison on structured records with two declared reference systems.",
         authors: ["Alice"],
         citation_count: 5,
         year: 2022,
@@ -2224,8 +4052,8 @@ describe("analyzePapers node", () => {
       },
       {
         paper_id: "p3",
-        title: "Baseline tree ensembles for structured tabular data",
-        abstract: "Tabular classification baseline study on structured datasets.",
+        title: "Reference comparisons for structured records",
+        abstract: "Baseline study on held-out structured records.",
         authors: ["Cara"],
         citation_count: 10,
         year: 2023,
@@ -3313,6 +5141,268 @@ describe("analyzePapers node", () => {
     expect(manifestRaw).toContain('"selectionFingerprint"');
   });
 
+  it("preserves topic-family coverage in the selected papers and analysis manifest", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-family-coverage-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-family-coverage";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Evidence-grounded evaluation with established protocols",
+        abstract: "A common evaluation protocol.",
+        authors: ["Alice"],
+        citation_count: 100,
+        year: 2025,
+        query_families: ["topic_family_common"]
+      },
+      {
+        paper_id: "p2",
+        title: "Reliable evaluation with repeated measurements",
+        abstract: "Another common measurement design.",
+        authors: ["Bob"],
+        citation_count: 80,
+        year: 2025,
+        query_families: ["topic_family_common"]
+      },
+      {
+        paper_id: "p3",
+        title: "Bounded-resource evaluation failure analysis",
+        abstract: "A rare failure axis under limited resources.",
+        authors: ["Carol"],
+        citation_count: 1,
+        year: 2024,
+        query_families: ["topic_family_rare"]
+      }
+    ]);
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 2,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+    const eventStream = new InMemoryEventStream();
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream,
+      llm: new SequenceJsonLLM([
+        JSON.stringify({ ordered_paper_ids: ["p1", "p2", "p3"] }),
+        jsonOutput("summary common", "claim common"),
+        jsonOutput("summary rare", "claim rare")
+      ]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const manifest = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    ) as {
+      selectedPaperIds?: string[];
+      topicFamilyCoverage?: {
+        selectedFamilies?: string[];
+        uncoveredFamilies?: string[];
+        addedPaperIds?: string[];
+        coverageComplete?: boolean;
+      };
+      papers?: Record<string, { query_families?: string[] }>;
+    };
+    expect(manifest.selectedPaperIds).toEqual(["p1", "p3"]);
+    expect(manifest.topicFamilyCoverage).toMatchObject({
+      selectedFamilies: ["topic_family_common", "topic_family_rare"],
+      uncoveredFamilies: [],
+      addedPaperIds: ["p3"],
+      coverageComplete: true
+    });
+    expect(manifest.papers?.p3?.query_families).toEqual(["topic_family_rare"]);
+    expect(
+      eventStream.history().some((event) =>
+        String(event.payload?.text ?? "").includes("Topic-family coverage selected 2/2")
+      )
+    ).toBe(true);
+  });
+
+  it("records query feedback and backtracks to collection when a family has no analysis-eligible paper", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-family-backtrack-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-family-backtrack";
+    const run = makeRun(runId);
+    const corpusRows = [
+      {
+        paper_id: "p1",
+        title: "Multi-agent collaboration with structured coordination",
+        abstract: "A direct study of multi-agent collaboration.",
+        authors: ["Alice"],
+        citation_count: 30,
+        year: 2025,
+        query_families: ["query_family_primary"]
+      },
+      {
+        paper_id: "p2",
+        title: "Multi-agent collaboration under repeated evaluation",
+        abstract: "A second structured coordination study of multi-agent collaboration.",
+        authors: ["Bob"],
+        citation_count: 20,
+        year: 2024,
+        query_families: ["query_family_primary"]
+      },
+      {
+        paper_id: "p3",
+        title: "Agricultural irrigation scheduling",
+        abstract: "A crop water study using multi-agent collaboration transfer calibration.",
+        authors: ["Carol"],
+        citation_count: 1,
+        year: 2023,
+        query_families: ["query_family_secondary"]
+      },
+      {
+        paper_id: "p4",
+        title: "Agricultural soil moisture scheduling",
+        abstract: "A second crop study using multi-agent collaboration transfer calibration.",
+        authors: ["Dana"],
+        citation_count: 1,
+        year: 2022,
+        query_families: ["query_family_secondary"]
+      },
+      {
+        paper_id: "p5",
+        title: "Multi-agent collaboration with explicit role allocation",
+        abstract: "A third structured coordination study of collaboration.",
+        authors: ["Evan"],
+        citation_count: 15,
+        year: 2024,
+        query_families: ["query_family_primary"]
+      },
+      {
+        paper_id: "p6",
+        title: "Multi-agent collaboration with bounded coordination",
+        abstract: "A fourth structured coordination study of collaboration.",
+        authors: ["Fran"],
+        citation_count: 10,
+        year: 2023,
+        query_families: ["query_family_primary"]
+      },
+      {
+        paper_id: "p7",
+        title: "Agricultural irrigation allocation",
+        abstract: "A third crop study using multi-agent collaboration transfer calibration.",
+        authors: ["Gale"],
+        citation_count: 1,
+        year: 2022,
+        query_families: ["query_family_secondary"]
+      },
+      {
+        paper_id: "p8",
+        title: "Agricultural soil water allocation",
+        abstract: "A fourth crop study using multi-agent collaboration transfer calibration.",
+        authors: ["Hari"],
+        citation_count: 1,
+        year: 2021,
+        query_families: ["query_family_secondary"]
+      }
+    ];
+    await writeCorpus(runId, corpusRows);
+    const runDir = path.join(".autolabos", "runs", runId);
+    const collectAttemptId = "20260102030405678-familybacktrack";
+    const secondaryQuery = '"multi agent collaboration" transfer calibration';
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId,
+      rows: corpusRows,
+      sharedAnchorTerms: ["multi", "agent", "collaboration"],
+      families: [
+        {
+          queryFamily: "query_family_primary",
+          query: '"multi agent collaboration" structured coordination',
+          axisTerms: ["structured", "coordination"],
+          lens: "Direct study of structured coordination",
+          contributionIntent: "method"
+        },
+        {
+          queryFamily: "query_family_secondary",
+          query: secondaryQuery,
+          axisTerms: ["transfer", "calibration"],
+          lens: "Direct study of transfer calibration",
+          contributionIntent: "measurement"
+        }
+      ]
+    });
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 2,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+    const llm = new CountingJsonLLM(["not-json"]);
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "openai_api" },
+        analysis: { responses_model: "gpt-5.4" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result).toMatchObject({
+      status: "success",
+      needsApproval: true,
+      toolCallsUsed: 0,
+      transitionRecommendation: {
+        action: "backtrack_to_collection",
+        targetNode: "collect_papers",
+        autoExecutable: true
+      }
+    });
+    expect(llm.callCount).toBe(1);
+    const gate = JSON.parse(
+      await readFile(path.join(runDir, "analysis", "topic_family_coverage_gate.json"), "utf8")
+    ) as {
+      topic_family_coverage?: { uncoveredFamilies?: string[] };
+      family_candidates?: Array<{
+        query_family?: string;
+        candidates?: Array<{ paper_id?: string; eligible_after_quality_guard?: boolean }>;
+      }>;
+      query_plan_feedback?: { rejectedQueries?: string[] };
+    };
+    expect(gate.topic_family_coverage?.uncoveredFamilies).toEqual(["query_family_secondary"]);
+    expect(
+      gate.family_candidates
+        ?.find((family) => family.query_family === "query_family_secondary")
+        ?.candidates
+    ).toContainEqual(expect.objectContaining({
+      paper_id: "p3",
+      eligible_after_quality_guard: false
+    }));
+    expect(gate.query_plan_feedback?.rejectedQueries).toContain(secondaryQuery);
+    const queryFeedback = await runContext.get<{
+      rejectedQueries?: string[];
+      supportedQueryFamilies?: Array<{ query?: string }>;
+    }>("collect_papers.llm_query_plan_feedback");
+    expect(queryFeedback?.rejectedQueries).toContain(secondaryQuery);
+    expect(queryFeedback?.supportedQueryFamilies).toContainEqual(
+      expect.objectContaining({ query: '"multi agent collaboration" structured coordination' })
+    );
+  });
+
   it("auto-gates a large corpus to top 30 when no explicit selection request is stored", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-auto-top30-"));
     tempDirs.push(root);
@@ -3482,6 +5572,121 @@ describe("analyzePapers node", () => {
     const manifestRaw = await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8");
     expect(manifestRaw).toContain('"selectionRequestFingerprint"');
     expect(manifestRaw).toContain('"corpusFingerprint"');
+  });
+
+  it("keeps the cached paper selection while reanalyzing after an analysis fingerprint change", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-analyze-selection-stability-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-selection-stability";
+    const run = makeRun(runId);
+    await writeCorpus(runId, [
+      {
+        paper_id: "p1",
+        title: "Adaptive decision systems study 1",
+        abstract: "A matched evaluation of adaptive decision systems.",
+        authors: ["Alice"],
+        pdf_url: "https://example.com/p1.pdf"
+      },
+      {
+        paper_id: "p2",
+        title: "Adaptive decision systems study 2",
+        abstract: "A second matched evaluation of adaptive decision systems.",
+        authors: ["Bob"],
+        pdf_url: "https://example.com/p2.pdf"
+      },
+      {
+        paper_id: "p3",
+        title: "Adaptive decision systems study 3",
+        abstract: "A third matched evaluation of adaptive decision systems.",
+        authors: ["Cara"],
+        pdf_url: "https://example.com/p3.pdf"
+      }
+    ]);
+
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("analyze_papers.request", {
+      topN: 1,
+      selectionMode: "top_n",
+      selectionPolicy: "hybrid_title_citation_recency_pdf_v2"
+    });
+
+    const firstRerankLlm = new CountingJsonLLM([
+      JSON.stringify({ ordered_paper_ids: ["p2", "p1", "p3"] })
+    ]);
+    const firstNode = createAnalyzePapersNode({
+      config: {
+        providers: {
+          llm_mode: "openai_api",
+          openai: { model: "model-version-a" }
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: firstRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => ({ text: jsonOutput("summary before", "claim before") })
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const first = await firstNode.execute({ run, graph: run.graph });
+    expect(first.status).toBe("success");
+    expect(firstRerankLlm.callCount).toBe(1);
+
+    const secondRerankLlm = new CountingJsonLLM(["selection should be reused"]);
+    const secondEventStream = new InMemoryEventStream();
+    let secondAnalysisCalls = 0;
+    const secondNode = createAnalyzePapersNode({
+      config: {
+        providers: {
+          llm_mode: "openai_api",
+          openai: { model: "model-version-b" }
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: secondEventStream,
+      llm: secondRerankLlm,
+      pdfTextLlm: new SequenceJsonLLM([]),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: {
+        hasApiKey: async () => true,
+        analyzePdf: async () => {
+          secondAnalysisCalls += 1;
+          return { text: jsonOutput("summary after", "claim after") };
+        }
+      } as unknown as ResponsesPdfAnalysisClient
+    });
+
+    const second = await secondNode.execute({ run, graph: run.graph });
+    expect(second.status).toBe("success");
+    expect(secondRerankLlm.callCount).toBe(0);
+    expect(secondAnalysisCalls).toBe(1);
+
+    const manifest = JSON.parse(
+      await readFile(path.join(".autolabos", "runs", runId, "analysis_manifest.json"), "utf8")
+    ) as { selectedPaperIds: string[] };
+    expect(manifest.selectedPaperIds).toEqual(["p2"]);
+
+    const summariesRaw = await readFile(
+      path.join(".autolabos", "runs", runId, "paper_summaries.jsonl"),
+      "utf8"
+    );
+    expect(summariesRaw).toContain('"paper_id":"p2"');
+    expect(summariesRaw).toContain('"summary":"summary after"');
+    expect(summariesRaw).not.toContain('"summary":"summary before"');
+
+    const secondLogs = secondEventStream.history().map((event) => String(event.payload?.text ?? ""));
+    expect(secondLogs.some((text) => text.includes("Reusing cached paper rerank from analysis_manifest.json"))).toBe(true);
+    expect(secondLogs.some((text) => text.includes("Analysis settings changed since the previous run."))).toBe(true);
+    expect(secondLogs.some((text) => text.includes("Preparing LLM rerank for"))).toBe(false);
   });
 
   it("reuses deterministic fallback selection on re-entry (rerankApplied=false)", async () => {

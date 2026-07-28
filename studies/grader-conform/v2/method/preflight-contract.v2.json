@@ -1,0 +1,324 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "grader_conform_v2_structural_preflight_contract",
+  "status": "preflight_open_not_frozen",
+  "execution_authorized": false,
+  "paper_scale_claim_authorized": false,
+  "v1_status": "killed_preserved_as_audit_trail",
+  "research_question": "Under equal parent-only information, model, tool, and execution budgets, does a structured contract-to-metamorphic-test procedure produce more independently replayable executable reproducers for retained historical agent-evaluator implementation faults than a prior-work-anchored audit-to-reproducer procedure, direct example regression, or free-form property-test generation?",
+  "claim_boundary": {
+    "population": "the 178 retained candidates in the sealed frame",
+    "search_exclusion_count": 6792,
+    "search_exclusions_reaudited": false,
+    "broader_repository_or_field_prevalence_claim_allowed": false,
+    "new_metamorphic_testing_principle_claim_allowed": false,
+    "allowed_contribution": "a blinded equal-information empirical comparison on historical agent-evaluator faults"
+  },
+  "verified_bindings": [
+    {
+      "artifact_id": "sealed_evidence_manifest",
+      "path": "studies/grader-conform/corpus/heldout-evidence/manifest.json",
+      "sha256": "710fe64a20efad590ae397d9626f0cf73a3a999e9592fb4021667d992c297475"
+    },
+    {
+      "artifact_id": "v2_frame_bundle_manifest",
+      "path": "studies/grader-conform/v2/corpus/eligibility-adjudication-frame.v2/manifest.json",
+      "sha256": "83d97a87ebb4c9d0bcc20c71a3c56e5603b7ec8f76dcbc9d14fb861a0a0788b3"
+    },
+    {
+      "artifact_id": "v2_controller_frame",
+      "path": "studies/grader-conform/v2/corpus/eligibility-adjudication-frame.v2/controller-frame.json",
+      "sha256": "657c8ee8e9c8f929c39862caf7a34134fc120a803aab1228bc139fbf262edef3",
+      "content_sha256": "a226bb5cbd563c188191ef1ddbe198df89773e876d7d98a324d0f13adc1810ab"
+    },
+    {
+      "artifact_id": "v2_reviewer_frame",
+      "path": "studies/grader-conform/v2/corpus/eligibility-adjudication-frame.v2/reviewer-frame.json",
+      "sha256": "cefca0c1bd3b1ab7e91dea02e9d4d15ad811c8a2c6425ee11c79326e5faadd9b",
+      "content_sha256": "9831fd6f442aac9b3868d29eeadc9707aca081af462a8c0511a9987d6ed91d9d"
+    },
+    {
+      "artifact_id": "local_resource_envelope",
+      "path": "studies/grader-conform/v2/preflight/local-resource-envelope.v2.json",
+      "sha256": "6719d187e8850d8d3aa15a6643b4064f7d03f39054931da574f788bd72bebd90"
+    },
+    {
+      "artifact_id": "v2_retained_source_freeze",
+      "path": "studies/grader-conform/v2/corpus/retained-source-freeze.v2.json",
+      "sha256": "34be3285f8748780b93f640b03edc993e3ae737b06682c41a6de66f65d3806b5"
+    },
+    {
+      "artifact_id": "v2_residual_claim_matrix",
+      "path": "studies/grader-conform/v2/literature/residual-claim-matrix.v2.json",
+      "sha256": "4555332efb7a3169a7d158ff6973224865ec35205cf2f14a5e2253a62beddf98"
+    }
+  ],
+  "frame_contract": {
+    "retained_candidate_count": 178,
+    "retained_repository_count": 9,
+    "retained_independence_cluster_count": 7,
+    "old_v1_decisions_allowed": false,
+    "old_v1_admission_count_used_as_denominator": false,
+    "controller_frame_allowed_for_integrity_mapping_only": true,
+    "reviewer_input": "v2_reviewer_frame",
+    "opaque_candidate_ids_required": true,
+    "relation_or_template_applicability_allowed_for_eligibility": false
+  },
+  "eligibility_adjudication": {
+    "decisions_required": 178,
+    "isolated_reviewers_per_candidate": 2,
+    "disagreement_resolver": "third_isolated_reviewer",
+    "unresolved_action": "exclude",
+    "required_gold_anchor": "upstream fix plus parent-visible contract or regression evidence",
+    "ambiguous_model_only_label_allowed": false,
+    "required_decision_values": [
+      "eligible_historical_evaluator_fault",
+      "ineligible_not_evaluator_fault",
+      "ineligible_not_replayable",
+      "ineligible_insufficient_contract_evidence",
+      "ineligible_duplicate_root_cause",
+      "ineligible_license_or_distribution"
+    ],
+    "forbidden_reviewer_fields": [
+      "old_v1_decision",
+      "original_candidate_id",
+      "inclusion_reason",
+      "fault_family_guess",
+      "root_cause_cluster",
+      "duplicate_cluster_evidence",
+      "independence_risk",
+      "relation_applicability",
+      "template_applicability",
+      "method_outcome",
+      "baseline_outcome"
+    ],
+    "decision_artifact_required_fields": [
+      "opaque_candidate_id",
+      "reviewer_id",
+      "decision",
+      "contract_evidence_paths",
+      "contract_evidence_spans",
+      "fix_evidence_paths",
+      "reason_codes",
+      "input_reviewer_frame_sha256",
+      "outcomes_observed"
+    ]
+  },
+  "fault_sampling": {
+    "selected_faults": 24,
+    "minimum_repositories": 6,
+    "minimum_independence_clusters": 6,
+    "minimum_eligible_faults_per_selected_cluster": 2,
+    "initial_quota_per_cluster": 2,
+    "maximum_faults_per_cluster": 6,
+    "duplicate_root_causes_allowed": false,
+    "replacement_after_freeze": false,
+    "selection_order": "sha256(external_future_randomness || adjudication_registry_sha256 || opaque_candidate_id)",
+    "selection_before_all_178_decisions": "forbidden"
+  },
+  "control_sampling": {
+    "total": 36,
+    "classes": [
+      {
+        "id": "normal_behavior",
+        "count": 12,
+        "minimum_repositories": 6,
+        "minimum_independence_clusters": 6
+      },
+      {
+        "id": "unrelated_change",
+        "count": 12,
+        "minimum_repositories": 6,
+        "minimum_independence_clusters": 6
+      },
+      {
+        "id": "intentional_contract_change",
+        "count": 12,
+        "minimum_repositories": 6,
+        "minimum_independence_clusters": 6
+      }
+    ],
+    "selected_fault_fixed_revisions_count_as_controls": false,
+    "overlap_with_fault_pairs": "forbidden",
+    "dual_oracle_agreement_required": true,
+    "control_selection_before_fault_sampling_freeze": "forbidden"
+  },
+  "arm_contract": {
+    "primary_arm": "structured_contract_metamorphic",
+    "baseline_arms": [
+      "direct_example_contract_regression",
+      "freeform_contract_property",
+      "prior_work_anchored_auditor_to_executable_reproducer"
+    ],
+    "primary_comparator_arm": "prior_work_anchored_auditor_to_executable_reproducer",
+    "prior_work_anchored_auditor_sources": [
+      "park2026tvb",
+      "tu2026benchguard",
+      "wang2026aba"
+    ],
+    "structured_arm_required_intermediate": "machine-readable contract atoms, transformation relation, and relation oracle",
+    "auditor_arm_required_intermediate": "evidence-linked defect diagnosis before executable reproducer compilation",
+    "semantic_arm_distinction_required": true,
+    "authoring_replicates_per_item_arm": 3,
+    "candidate_specific_inputs_identical": true,
+    "parent_only_snapshot_required": true,
+    "fix_history_access_during_authoring": "forbidden",
+    "network_access_during_authoring": "forbidden",
+    "model_snapshot_identical": true,
+    "runtime_and_tool_inventory_identical": true,
+    "prompt_role_information_symmetric": true,
+    "calls_per_item_arm_replicate": 3,
+    "maximum_output_tokens_per_call": 1536,
+    "maximum_sut_test_executions": 6,
+    "maximum_wall_seconds": 1200,
+    "repair_rounds": 1,
+    "eligible_output": "an executable deterministic reproducer with a machine-checkable oracle",
+    "infrastructure_failure_treatment": "retained_as_not_detected"
+  },
+  "resource_budget": {
+    "structural_preflight_wall_hours": 12,
+    "full_study_wall_hours": 72,
+    "maximum_gpu_hours": 48,
+    "maximum_cpu_core_hours": 192,
+    "maximum_ram_gib": 96,
+    "maximum_additional_storage_gib": 120,
+    "minimum_remaining_storage_gib": 80,
+    "authoring_sessions": 720,
+    "maximum_model_calls": 2160,
+    "live_storage_recheck_required_before_execution": true
+  },
+  "analysis_plan": {
+    "detection_definition": "The frozen executable reproducer fails on the parent revision, passes on the fixed revision, and receives the same verdict from both independent replay implementations.",
+    "primary_comparator": "prior_work_anchored_auditor_to_executable_reproducer",
+    "primary_unit": "source_selection_independence_cluster",
+    "primary_endpoint": "unweighted cluster mean paired detection difference",
+    "primary_test": "two_sided_exact_cluster_sign_flip",
+    "alpha": 0.05,
+    "other_baseline_tests": "holm_corrected",
+    "cluster_bootstrap": "descriptive_only",
+    "leave_one_cluster_out_required": true,
+    "positive_superiority_claim_requires": {
+      "minimum_structured_minus_primary_comparator": 0.1,
+      "maximum_primary_p_value": 0.05,
+      "leave_one_cluster_out_sign_must_remain_positive": true,
+      "minimum_structured_only_faults": 4,
+      "minimum_structured_only_clusters": 4,
+      "maximum_total_control_false_alarms": 2,
+      "maximum_false_alarms_per_control_class": 1
+    },
+    "comparative_or_negative_workshop_paper_requires": {
+      "minimum_any_arm_detected_faults": 8,
+      "minimum_detected_fault_clusters": 4,
+      "minimum_discordant_faults": 6,
+      "minimum_discordant_clusters": 4,
+      "arm_level_error_analysis_required": true,
+      "claim_must_not_assert_superiority": true
+    }
+  },
+  "independent_replay": {
+    "implementation_count": 2,
+    "runner_sources_distinct": true,
+    "container_builds_distinct": true,
+    "replay_all_final_tests": true,
+    "required_verdict_agreement": 1.0,
+    "unresolved_nondeterminism_allowed": false,
+    "raw_transcripts_and_receipts_required": true
+  },
+  "freeze_contract": {
+    "git_commit_required": true,
+    "external_timestamp_or_preregistration_required": true,
+    "required_bound_inputs": [
+      "frame_bundle",
+      "source_identity_freeze",
+      "closest_prior_and_residual_claim_matrix",
+      "eligibility_adjudication_registry",
+      "fault_sample",
+      "control_registry",
+      "arm_prompts",
+      "model_and_runtime_lock",
+      "budget_lock",
+      "primary_runner",
+      "independent_replay_runner",
+      "analysis_program"
+    ],
+    "post_freeze_method_change_action": "restart_full_v2",
+    "arm_authoring_before_external_timestamp": "forbidden",
+    "result_observation_before_external_timestamp": "forbidden"
+  },
+  "preflight_gates": [
+    {
+      "id": "outcome_blind_178_candidate_frame",
+      "status": "pass",
+      "evidence_artifact_id": "v2_frame_bundle_manifest"
+    },
+    {
+      "id": "local_resource_envelope_fits",
+      "status": "pass",
+      "evidence_artifact_id": "local_resource_envelope"
+    },
+    {
+      "id": "closest_prior_and_residual_claim_matrix",
+      "status": "pass",
+      "evidence_artifact_id": "v2_residual_claim_matrix"
+    },
+    {
+      "id": "portable_v2_source_identity_freeze",
+      "status": "pass",
+      "evidence_artifact_id": "v2_retained_source_freeze"
+    },
+    {
+      "id": "all_178_independently_adjudicated",
+      "status": "blocked",
+      "reason": "No v2 eligibility decisions have been executed."
+    },
+    {
+      "id": "fault_sample_contract_satisfied",
+      "status": "blocked",
+      "reason": "Sampling is forbidden before all eligibility decisions and future randomness are frozen."
+    },
+    {
+      "id": "three_control_classes_satisfied",
+      "status": "blocked",
+      "reason": "Independent controls have not been curated or dual-oracle adjudicated."
+    },
+    {
+      "id": "equal_information_and_budget_arms_frozen",
+      "status": "blocked",
+      "reason": "Prompts, model snapshot, tool inventory, and per-arm budgets are not yet frozen."
+    },
+    {
+      "id": "two_independent_runners_validated",
+      "status": "blocked",
+      "reason": "The independent replay implementation does not yet exist."
+    },
+    {
+      "id": "external_pre_outcome_timestamp",
+      "status": "blocked",
+      "reason": "No external timestamp or preregistration receipt is bound."
+    }
+  ],
+  "all_preflight_gates_pass": false,
+  "kill_criteria": [
+    "The 178 retained candidates cannot all be re-adjudicated without old v1 decisions or method applicability.",
+    "Fewer than 24 eligible faults remain or fewer than 6 independence clusters provide at least 2 eligible faults.",
+    "Any control class cannot supply 12 controls across at least 6 repositories and 6 clusters.",
+    "Candidate information, model, token, tool, repair, SUT-execution, or wall-time budgets differ across arms.",
+    "Infrastructure failure exceeds 10 percent in any arm.",
+    "Arm authoring or result observation begins before the external timestamp.",
+    "Independent replay verdict agreement is below 1.0.",
+    "The 12-hour structural preflight expires with any required gate blocked."
+  ],
+  "fallback_route": {
+    "topic_id": "aries_atomic_obligation_alignment",
+    "trigger": "any structural v2 kill criterion",
+    "minimum_experiment": "Compare atomic-obligation alignment against lexical retrieval, embedding retrieval, premise expansion, and direct local-model alignment on the public ARIES expert test comments.",
+    "primary_metric": "paper-clustered micro-F1",
+    "minimum_gain_over_strongest_baseline": 0.05,
+    "maximum_precision_drop": 0.02,
+    "maximum_wall_hours": 36,
+    "maximum_gpu_hours": 12,
+    "maximum_cpu_core_hours": 40,
+    "maximum_additional_storage_gib": 20
+  },
+  "failure_action": "Kill this formulation, append a governed topic disposition, and instantiate the ARIES fallback brief without asking the user to choose."
+}

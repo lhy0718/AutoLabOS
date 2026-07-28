@@ -206,6 +206,232 @@ export interface RunJobFailureAggregate {
   remediation: string;
 }
 
+export interface ResearchFunnelProjection {
+  research_mode: "topic_discovery";
+  lifecycle_stage:
+    | "discovery"
+    | "probe_authorized"
+    | "outcome_decided"
+    | "followup_required"
+    | "reviewed"
+    | "invalid_chain";
+  bounded_probe_paper_evidence_allowed: false;
+  collection_state:
+    | "unmeasured"
+    | "collecting"
+    | "quality_gate_failed"
+    | "quality_gate_exhausted"
+    | "quality_gate_passed"
+    | "failed";
+  collection_node_attempt?: number;
+  collection_node_max_attempts?: number;
+  query_plan_attempt?: number;
+  collection_quality_failure_reasons: string[];
+  collection_reformulation_hint?: {
+    evidence_status: "query_hint_only";
+    paper_evidence_allowed: false;
+    shared_anchor_terms: string[];
+    candidate_titles: string[];
+    axes: Array<{
+      query_family?: string;
+      query?: string;
+      axis_terms: string[];
+      relevant_paper_count?: number;
+    }>;
+    artifact_ref?: { label: string; path: string };
+  };
+  gap_evidence_audit?: {
+    status: "unmeasured" | "verified" | "blocked";
+    construction_mode?: "legacy_exact_grouping" | "reviewed_semantic_synthesis" | "deterministic_safe_fallback" | "deferred_partial_analysis";
+    synthesis_status?: "completed" | "safe_fallback";
+    analysis_coverage?: {
+      selected_paper_count: number;
+      completed_paper_count: number;
+      failed_paper_ids: string[];
+      complete: boolean;
+    };
+    total_evidence_count: number;
+    scientific_evidence_count: number;
+    grounded_scientific_evidence_count: number;
+    synthesis_eligible_evidence_count: number;
+    synthesis_excluded_evidence_count: number;
+    accepted_cluster_count: number;
+    malformed_evidence_row_count: number;
+    source_scope_counts: Record<"abstract" | "full_text_excerpt" | "full_document" | "unknown", number>;
+    grounding_status_counts: Record<"grounded_span" | "ungrounded_span" | "fallback" | "unknown", number>;
+  };
+  candidate_count: number;
+  cluster_count: number;
+  candidate_prior_search: {
+    status: "unmeasured" | "search_required" | "complete" | "exhausted" | "blocked";
+    trusted: boolean;
+    action?: "request_collection" | "already_searched" | "exhausted" | "not_required" | "blocked_invalid_lineage";
+    completed_rounds: number;
+    max_rounds: number;
+    current_receipt_status: "unmeasured" | "not_applicable" | "valid" | "invalid";
+    candidate_count: number;
+    selected_candidate_count: number;
+    broad_lane_attempt_count: number;
+    recent_lane_attempt_count: number;
+    fetched_count: number;
+    selected_paper_count: number;
+    covered_candidate_ids: string[];
+    plan_sha256?: string;
+    receipt_sha256?: string;
+    reason_codes: string[];
+    artifact_refs: Array<{ label: string; path: string }>;
+  };
+  estimator_feasibility: {
+    status: "unmeasured" | "pass" | "blocked" | "invalid";
+    trusted: boolean;
+    execution_authorized: boolean;
+    estimand_type?: string;
+    estimator_family?: string;
+    independent_cluster_count?: number;
+    primary_denominator?: number;
+    attainable_resolution?: number;
+    planned_minimum_detectable_effect?: number;
+    computed_minimum_detectable_effect?: number;
+    reason_codes: string[];
+    artifact_refs: Array<{ label: string; path: string }>;
+  };
+  topic_memory: {
+    status: "unmeasured" | "verified" | "blocked";
+    trusted: boolean;
+    ledger_sha256?: string;
+    record_count: number;
+    blocked_candidate_count: number;
+    reentry_required_count: number;
+    reentry_allowed_count: number;
+    audit_artifact_ref?: { label: string; path: string };
+    update_artifact_ref?: { label: string; path: string };
+  };
+  diagnostics_trusted: boolean;
+  authorization_trusted: boolean;
+  probe_candidate_count: number;
+  probe_candidate_ids: string[];
+  probe_candidate_statements: string[];
+  active_candidate_id?: string;
+  active_topic_id?: string;
+  active_candidate_hash?: string;
+  active_primary_metric?: string;
+  active_metric_unit?: string;
+  active_metric_scale?: "raw" | "proportion" | "percent" | "percentage_point";
+  active_metric_direction?: "maximize" | "minimize";
+  active_effect_criterion?: {
+    basis: "delta_vs_reference";
+    magnitude: number;
+    scale: "raw" | "proportion" | "percent" | "percentage_point";
+    inclusive: boolean;
+  };
+  active_objective_raw?: string;
+  active_meaningful_effect?: string;
+  active_evidence_stage?: "bounded_probe";
+  active_deferred_candidate_ids?: string[];
+  authorization_disposition: "probe_authorized" | "backtrack_to_hypotheses" | "unmeasured";
+  authorization_probe_allowed: boolean;
+  effective_execution_authorized: boolean;
+  execution_authorization: {
+    status: "unmeasured" | "pending" | "authorized" | "blocked" | "invalid";
+    trusted: boolean;
+    authorized: boolean;
+    base_funnel_authorized: boolean;
+    candidate_prior_search_authorized: boolean;
+    estimator_authorized: boolean;
+    required_candidate_ids: string[];
+    covered_candidate_ids: string[];
+    reason_codes: string[];
+  };
+  outcome_disposition?: "promote_to_confirmatory" | "reject_candidate" | "repeat_probe" | "blocked_invalid_evidence";
+  outcome_next_action?: "start_confirmatory_run" | "try_deferred_candidate" | "refresh_topic_portfolio" | "repeat_bounded_probe" | "repair_probe_evidence";
+  outcome_gate: {
+    status: "unmeasured" | "decided" | "blocked_invalid_artifact_chain" | "invalid";
+    trusted: boolean;
+    reason_codes: string[];
+    content_sha256?: string;
+    artifact_ref?: { label: string; path: string };
+  };
+  followup_handoff: {
+    status: "unmeasured" | "ready" | "invalid";
+    trusted: boolean;
+    recommended_followup_mode?: "hypothesis_test" | "topic_discovery";
+    evidence_stage?: "confirmatory" | "bounded_probe" | "topic_refresh";
+    content_sha256?: string;
+    artifact_ref?: { label: string; path: string };
+  };
+  review_gate: {
+    status: "unmeasured" | "followup_required" | "blocked_invalid_artifact_chain" | "invalid";
+    trusted: boolean;
+    paper_drafting_allowed: false;
+    reason_codes: string[];
+    content_sha256?: string;
+    artifact_ref?: { label: string; path: string };
+  };
+  invalid_chain_blockers: string[];
+  reason_codes: string[];
+  gates: Array<{
+    scope: "gap_map" | "gap_candidate" | "topic_portfolio" | "topic_candidate";
+    code: string;
+    status: "pass" | "block";
+    message: string;
+    trusted: boolean;
+    candidate_id?: string;
+  }>;
+  dissent: Array<{
+    source: "portfolio_review" | "design_panel";
+    candidate_id: string;
+    hard_block: boolean;
+    summary: string;
+    findings: string[];
+    trusted: boolean;
+    reviewer_id?: string;
+    reviewer_label?: string;
+  }>;
+  literature_queries: Array<{
+    query: string;
+    source: "requested_query" | "llm_query_planner" | "deterministic_query" | "unknown";
+    source_reason: string;
+    reason: string;
+    fallback: boolean;
+    filters_relaxed: boolean;
+    allocated_limit?: number;
+    retrieval_limit?: number;
+    fetched?: number;
+    relevant_fetched?: number;
+    selected?: number;
+  }>;
+  query_fallback_used: boolean;
+  query_fallback_reasons: string[];
+  hashes: {
+    gap_map?: string;
+    topic_portfolio?: string;
+    topic_decision?: string;
+    active_topic_probe_contract?: string;
+    topic_probe_outcome?: string;
+    topic_probe_outcome_gate?: string;
+    topic_probe_followup_handoff?: string;
+    topic_probe_review_gate?: string;
+  };
+  artifact_refs: Array<{
+    label: string;
+    path: string;
+  }>;
+  integrity_status: "unmeasured" | "partial" | "complete" | "mismatch";
+}
+
+export interface EvidenceReadinessProjection {
+  status: "unmeasured" | "missing" | "available" | "invalid";
+  evidence_ready: boolean;
+  trusted: boolean;
+  comparison_count: number;
+  primary_comparison_id?: string;
+  warnings: string[];
+  artifact_ref?: {
+    label: string;
+    path: string;
+  };
+}
+
 export interface RunJobProjection {
   run_id: string;
   title: string;
@@ -230,6 +456,8 @@ export interface RunJobProjection {
   warning_reasons?: string[];
   network_dependency?: RunOperatorStatusArtifact["network_dependency"];
   validation_scope?: RunValidationScope;
+  research_funnel?: ResearchFunnelProjection;
+  evidence_readiness?: EvidenceReadinessProjection;
 }
 
 export interface RunJobsSnapshot {
@@ -316,7 +544,44 @@ export interface RunRecord {
       suggestedCommands: string[];
       generatedAt: string;
     };
+    transitionHistory?: Array<{
+      action: string;
+      sourceNode: NodeId;
+      fromNode: NodeId;
+      toNode?: NodeId;
+      reason: string;
+      confidence: number;
+      autoExecutable: boolean;
+      appliedAt: string;
+    }>;
+    lastAppliedTransition?: {
+      action: string;
+      sourceNode: NodeId;
+      fromNode: NodeId;
+      toNode?: NodeId;
+      reason: string;
+      confidence: number;
+      autoExecutable: boolean;
+      appliedAt: string;
+    };
   };
+}
+
+export interface ResearchBriefStartGate {
+  requested: boolean;
+  canStart: boolean;
+  blocked: boolean;
+  effectiveAutoStart: boolean;
+  missingFields: string[];
+  validationErrors: string[];
+  validationWarnings: string[];
+}
+
+export interface WebRunCreationResponse {
+  run: RunRecord;
+  session: WebSessionState;
+  runs: RunRecord[];
+  briefStartGate: ResearchBriefStartGate;
 }
 
 export interface ConfigSummary {

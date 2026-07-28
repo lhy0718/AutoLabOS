@@ -203,15 +203,16 @@ Brief는 단순한 시작 문서가 아닙니다. 한 run의 governed contract�
 /brief start --latest
 ```
 
-Brief에는 연구 의도와 거버넌스 제약이 함께 들어가야 합니다. topic, objective metric, baseline 또는 comparator, minimum acceptable evidence, disallowed shortcuts, evidence가 약할 때의 paper ceiling이 여기에 포함됩니다.
+Brief에는 연구 의도와 거버넌스 제약이 함께 들어가야 합니다. research mode, topic, objective metric, baseline 또는 comparator, minimum acceptable evidence, disallowed shortcuts, evidence가 약할 때의 paper ceiling이 여기에 포함됩니다. `topic_discovery`에서는 이 섹션들이 최종 실험값이 아니라 탐색 범위와 후보 적격 규칙을 정의하며, 각 후보가 bounded probe 전에 자체 metric, direction, effect boundary, comparator, data scope, falsifier를 제공해야 합니다.
 
 <details>
 <summary><strong>Brief 섹션과 grading</strong></summary>
 
 | 섹션 | 상태 | 목적 |
 |---|---|---|
+| `## Research Mode` | 선택 | 기본 `hypothesis_test` 또는 거버넌스된 주제 탐색용 `topic_discovery` |
 | `## Topic` | 필수 | 연구 질문을 1-3문장으로 정의 |
-| `## Objective Metric` | 필수 | 핵심 성공 지표 |
+| `## Objective Metric` | 필수 | 최종 성공 지표 또는 discovery 모드의 후보 승격 목적 |
 | `## Constraints` | 권장 | compute budget, dataset 제한, reproducibility 규칙 |
 | `## Plan` | 권장 | 단계별 실험 계획 |
 | `## Target Comparison` | Governance | 제안 방법과 명시적 baseline 비교 |

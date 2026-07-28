@@ -30,6 +30,95 @@ A top-level workflow change is allowed only when all of the following are true:
 
 Until those conditions are met, treat the governed workflow shape as fixed.
 
+### Workflow-native topic discovery
+
+The public plugin intent `research:discover` is implemented inside the fixed
+reference workflow, not as a CLI-backed command or a new top-level node. It
+starts from a complete `ResearchBrief` whose `Research Mode` is
+`topic_discovery` and uses this existing node sequence:
+
+`collect_papers -> analyze_papers -> generate_hypotheses -> design_experiments`
+
+- `collect_papers` gathers literature under the brief's broad search scope,
+  admissibility constraints, evidence floor, and failure conditions. The brief
+  must not pretend that a final intervention, dataset, or metric has already
+  been selected. It builds multiple independent query families, and every
+  family carries a scientific lens plus a contribution intent. Retrieval
+  candidates are only a screening pool: each lexically eligible paper-family
+  pair must receive a bounded `direct_support`, `application_only`, or
+  `uncertain` judgment before the paper can enter the analysis corpus. The
+  retrieved candidate universe, lexically eligible pair universe, semantic
+  review universe, and bounded retained corpus remain distinct and auditable;
+  the corpus cap never removes a lexical pair before semantic precision is
+  computed. A partial or unavailable reviewer causes a reviewer-only retry and
+  must not train query reformulation feedback.
+  Before retrieval, the node freezes a role-bearing scientific-scope contract.
+  A `topic_discovery` brief should declare `Scientific Scope` with separate
+  `Scientific Object`, `Empirical Problems`, `Scientific Relations`,
+  `Prior-Work Probes`, constraints, process rules, publication goals, and
+  exclusions. Only empirical problems and scientific relations authorize query
+  axes; the scientific object authorizes the immutable shared anchor, while
+  prior-work probes remain a separate closest-prior lane. Briefs without this
+  explicit section receive deterministic role classification and fail closed when authority is
+  insufficient. Every family must retain at least two terms from one frozen
+  source axis unless two deduplicated candidate titles establish queryability;
+  free-form lens prose never counts as lineage, and candidate-title vocabulary
+  may support a technical refinement but cannot create a replacement problem or
+  direct-support evidence. A brief-declared anchor is immutable before the first
+  retrieval. Planning fails closed when the brief does not expose enough
+  role-authorized scientific material, and
+  feedback from a different scope fingerprint is quarantined instead of merged.
+- `analyze_papers` materializes `ResearchGapMap` from evidence-linked
+  typed research opportunities and retains supported versus provisional
+  epistemic status. The admissible opportunity types are explicit scientific
+  limitations, cross-paper result disagreements under a shared comparison
+  frame, boundary or transfer mismatches, grounded comparator/control
+  omissions, and grounded reproducibility omissions. Every type has its own
+  deterministic evidence conditions and adversarial reviewer conditions;
+  topic similarity and empty-field inference are never sufficient.
+- `generate_hypotheses` materializes `TopicPortfolio` with 5-7 candidates
+  spanning at least 3 distinct nonempty evidence-axis clusters. Each candidate
+  records closest-prior non-overlap, the strongest-baseline absorption objection,
+  primary metric, explicit metric unit and numeric scale, optimization direction, a structured
+  delta-versus-reference practical-effect criterion,
+  comparator, data/task scope, local budget, falsifier, kill signal, and
+  minimum publishable evidence.
+- `design_experiments` validates the portfolio, materializes
+  `TopicProbeDecision`, binds exactly one authorized candidate in a hash-bound
+  `ActiveTopicProbeContract`, and explicitly defers the other authorized
+  candidates until that probe is resolved.
+
+A validated candidate rejection may route a successor run back to portfolio
+refresh, but refresh is not permission to relabel the same study. The
+`topic_probe_successor_route_target` binds the rejected candidate's topic-memory
+descriptor and a deterministic divergence policy. A refreshed candidate must:
+
+- change the contribution object;
+- change at least three of contribution object, method mechanism, data/task
+  scope, and evaluation protocol;
+- receive a `clear` decision against the project topic-memory ledger; and
+- carry a new complete candidate-owned experimental contract.
+
+Changing only an identifier, wording, dataset, or metric does not satisfy this
+contract. The changed-axis check is a deterministic minimum, not proof of
+scientific novelty. Closest-prior search, full-text absorption review, and the
+topic-memory decision remain required before a refreshed candidate can be
+probe-eligible.
+
+This workflow intent first reaches closed-chain probe authorization, a
+pre-probe gate. That decision admits one candidate to experiment design; it is not final topic selection and is not executable
+authority. `effective_execution_authorized=true` is a separate fail-closed
+decision that additionally requires a valid candidate-conditioned direct-prior
+receipt covering the active candidate and a passing estimator contract that was
+promoted byte-for-byte to `experiment_contract.json`. Candidate-prior
+collection plans are created before backtracking, so a completed plan must bind
+to the immediately preceding research cycle. Its broad-discovery parent corpus,
+semantic review, and query plan must remain valid in the immutable collection
+archive. Missing or tampered parent lineage, wrong-candidate coverage, an
+unpromoted experiment contract, or estimator failure blocks implementation and
+execution. Neither authorization state establishes final topic selection,
+research completion, confirmatory evidence, or paper readiness.
+
 ## 2) Shared runtime surfaces
 
 - TUI (`autolabos`) and local web ops UI (`autolabos web`) share the same interaction/runtime layer.
@@ -54,6 +143,74 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 - Design/execution experiment contracts live in `experiment_portfolio.json` and `run_manifest.json`.
 - Managed-bundle matrix slices, when materialized, are persisted as `trial_group_matrix.json` plus per-slice `trial_group_metrics/*.json`.
 - Transition/gate decisions remain inspectable through artifacts such as `transition_recommendation.json`, `analysis/evidence_scale_assessment.json`, `review/*`, a bound `ModelReviewBundle` when used, and `paper/write_paper_eligibility.json`.
+
+Workflow-native topic discovery has a distinct run-scoped artifact class:
+
+- `collect_query_plan.json` version 4 records the versioned query-family
+  contracts, their stable identifiers, the hash-bound scientific-scope
+  contract, sentence-role audit units, and per-family scope-lineage diagnostics.
+  The scope artifact uses
+  a brief fingerprint, an anchor-independent scope fingerprint, and an
+  anchor-bound contract fingerprint so resumed planning cannot silently reuse
+  stale feedback or replace the executed anchor.
+- `collect_topic_discovery_candidates.jsonl` preserves the retrieval candidate
+  universe with retrieval-family, lexical-match, semantic-selection, and
+  final-corpus publication states. It always has
+  `paper_evidence_allowed=false`; it is diagnostic input, not paper evidence.
+- `collect_semantic_review_input.json` preserves the exact bounded reviewer
+  input and its hash, while `collect_semantic_review.json` preserves pair-level
+  judgments and reviewer identity without promoting the candidate pool.
+- `collect_corpus_quality.json` version 4 admits only direct-support pairs,
+  exposes application-only and uncertain counts plus per-family semantic
+  precision, and fails closed when the review is partial or operationally
+  unavailable.
+- `ResearchGapMap` at `analysis/gap_map.json`
+- `TopicPortfolio` at `hypothesis_generation/topic_portfolio.json`
+- `TopicProbeDecision` at `design_experiments_panel/topic_decision.json`
+- `ActiveTopicProbeContract` at `design_experiments_panel/active_topic_probe_contract.json`
+- candidate direct-prior plan and receipt at
+  `collect_candidate_prior_search_plan.json` and
+  `collect_candidate_prior_search_receipt.json`
+- estimator candidate, contract, and report under `design_experiments_panel/`
+- the recomputed execution gate at
+  `governance/topic_probe_execution_authorization.json`
+
+These are workflow artifacts, not executable CLI intents. `TopicPortfolio`
+binds the verified gap map, `TopicProbeDecision` binds the validated portfolio,
+and `ActiveTopicProbeContract` binds one candidate and its candidate-owned
+measurement contract for a bounded probe. Their presence or a passing probe
+decision does not establish final topic selection or paper readiness.
+
+The jobs API, Web UI, TUI, `implement_experiments`, direct implementation
+manager entry, and `run_experiments` all consume the same recomputed execution
+authorization. Persisted pre-probe booleans and estimator status are diagnostic
+components and must never be treated independently as execution permission.
+
+`analyze_papers` revalidates the collection generation, query plan, reviewer
+input hash, pair judgments, retained paper IDs, family counts, and semantic
+precision floors. A retired quality artifact, a changed judgment, or a corpus
+whose family provenance diverges from the direct-support pairs blocks analysis
+instead of being treated as a recoverable presentation warning.
+
+`analysis/gap_synthesis.json` binds every accepted opportunity to its exact
+`opportunity_type`, independent canonical works, grounded full-text evidence,
+and the type-specific reviewer conditions. The gap map replays the same typed
+eligibility from `evidence_store.jsonl`; a rehashed accepted cluster cannot
+substitute for missing reviewer conditions. One grounded evidence row may
+support more than one independently reviewed opportunity type, but it cannot
+be used for a type it did not deterministically qualify for.
+
+The active candidate measurement contract must carry the metric identifier,
+non-empty unit, numeric scale, optimization direction, comparator, and machine-readable effect
+criterion without reconstructing them from prose at execution time.
+
+`design_experiments` must translate that candidate-owned contract into the
+frozen `ResultsPlanV2`: `primary_comparison_id` selects the exact declared
+subject/reference pair, and `primary_effect_criterion` binds that same
+comparison to the raw candidate metric, its numeric scale, optimization
+direction, and structured threshold. `ExperimentContract` persistence,
+analysis, review, and writing must preserve this binding. A merely positive
+delta cannot replace a candidate's declared minimum effect.
 
 Quality checks should be deterministic and file-based whenever possible.
 
@@ -133,9 +290,23 @@ Page-budget semantics should also remain explicit:
 
 A governed run should begin from a research brief that defines the execution contract.
 
+`Research Mode` determines who owns the final experimental contract:
+
+- In `hypothesis_test`, the brief owns the research question, primary metric,
+  direction, practical-effect boundary, comparator, and data/task scope.
+- In `topic_discovery`, the brief owns the broad search scope, candidate
+  admissibility rules, resource ceiling, evidence floor, and failure rules.
+  Each shortlisted candidate must own its final metric, direction,
+  practical-effect boundary, comparator, data/task scope, falsifier, and local
+  budget. The broad brief objective must not overwrite those candidate fields.
+
+An explicitly unsupported mode is a validation error. Only an absent mode
+defaults to `hypothesis_test`.
+
 At minimum, the brief structure should align with `docs/research-brief-template.md`, including:
 
 - Topic
+- Research Mode (optional only because omission means `hypothesis_test`)
 - Objective Metric
 - Constraints
 - Plan

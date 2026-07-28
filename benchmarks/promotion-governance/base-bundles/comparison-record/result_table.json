@@ -1,9 +1,0 @@
-[
-  {
-    "metric": "primary_score",
-    "baseline": 0.6,
-    "comparator": 0.7,
-    "delta": 0.1,
-    "direction": "higher_better"
-  }
-]

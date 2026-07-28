@@ -59,14 +59,14 @@ Always report:
 - Do not break canonical runtime paths while cleaning structure.
 - Distinguish between "artifact exists" and "artifact is correctly wired and usable".
 - Do not treat a fallback built-in preamble as equivalent to the requested submission template.
-- Do not treat `template_applied=true` as sufficient if the final rendered `main.tex` no longer preserves the requested template package/class (for example `\usepackage[review]{ACL2023}`) or if required sibling `.sty`/`.bst` files were not copied into the paper build directory.
+- Do not treat `template_applied=true` as sufficient if the final rendered `main.tex` no longer preserves the requested template package/class (for example `\usepackage[review]{acl}`) or if required sibling `.sty`/`.bst` files were not copied into the paper build directory.
 - Do not inject template-absent front-matter elements such as an explicit `Keywords:` line when a concrete manuscript template is supplied, unless the template itself asks for that surface.
 - If the template package name and available `.sty` filename differ by case, call it out as a build-risk and fix it in the workspace before rerunning.
 - Do not mark paper-generation complete until rendered inspection has checked the concrete complaints or quality criteria the user raised.
 
 ## Citation and Reference Hygiene
 - Treat hardcoded `\bibliographystyle{plain}` as a defect for submission-template output unless the template explicitly asks for it; plain can make numeric references appear alphabetically instead of in first-citation order.
-- For ACL-style templates preserving `\usepackage[review]{ACL2023}`, the generated TeX should preserve or infer an ACL-compatible bibliography style such as `acl_natbib`, and the build directory should include the sibling `.bst` file when available.
+- For the official ACL template using `\usepackage[review]{acl}`, do not emit a second `\bibliographystyle{...}` command because `acl.sty` selects `acl_natbib`; copy the sibling `acl_natbib.bst` into the build directory.
 - If a concrete template contains `\bibliographystyle{...}`, preserve that exact style in the generated paper unless the user explicitly requests a different one.
 - Repeated citation bundles are a render-quality issue: the same `\cite{a,b,c}` should not be appended to many paragraphs in the same section as a traceability fallback.
 - `paper/render_validation.json`, `paper/citation_consistency.json`, and review artifacts should expose bibliography-style mismatches and repeated citation bundles so meta-harness can route the problem back to the responsible node instead of treating it as cosmetic paper polish.

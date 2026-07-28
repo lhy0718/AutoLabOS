@@ -1,0 +1,23 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "v2_eligibility_adjudication_frame_bundle_manifest",
+  "closed_inventory": true,
+  "candidate_count": 178,
+  "artifacts": [
+    {
+      "artifact_id": "controller_frame",
+      "path": "controller-frame.json",
+      "sha256": "657c8ee8e9c8f929c39862caf7a34134fc120a803aab1228bc139fbf262edef3",
+      "bytes": 579741,
+      "content_sha256": "a226bb5cbd563c188191ef1ddbe198df89773e876d7d98a324d0f13adc1810ab"
+    },
+    {
+      "artifact_id": "reviewer_frame",
+      "path": "reviewer-frame.json",
+      "sha256": "cefca0c1bd3b1ab7e91dea02e9d4d15ad811c8a2c6425ee11c79326e5faadd9b",
+      "bytes": 201528,
+      "content_sha256": "9831fd6f442aac9b3868d29eeadc9707aca081af462a8c0511a9987d6ed91d9d"
+    }
+  ],
+  "content_sha256": "861ed2a93e1cbecd614ef681fb319292d7ab449db05532e8d4820ff27846d0f2"
+}

@@ -19,13 +19,15 @@ Public source and tests must describe general AutoLabOS behavior, not one histor
 ## Rules
 
 - Do not hardcode one-off runner names, model IDs, dataset names, benchmark names, or condition markers as system defaults or test contracts.
-- Use neutral fixture names such as `run_parameterized_study`, `benchmark_task_a`, `benchmark_task_b`, `baseline_condition`, and `candidate_condition_a`.
+- Use fixture-supplied semantic identifiers such as `control_condition`, `candidate_condition`, `validation_partition`, and `held_out_partition`.
 - Keep real experiment names inside run artifacts or user-provided inputs, not reusable source logic.
 - If compatibility behavior for older artifacts is still needed, express it through generic alias/adapter behavior rather than naming a specific old experiment.
 - Do not allow paper-writing fallbacks to invent a specific model, benchmark pair, method setting, or condition marker.
 - When a leak is found, extend the public-code sanitization guard with the exact newly discovered identifier family so source, tests, and local skills cannot reintroduce it.
 - Treat reader-visible fixture labels with numeric condition values as leaks too; public tests should use baseline/candidate labels unless the values are supplied by the test input being validated.
-- Prefer neutral callable/file names such as run_condition_sweep_experiment.py, run_locked_condition_sweep, and benchmark_task_a/benchmark_task_b over method-, model-, or dataset-specific names in public fixtures.
+- Prefer neutral callable/file names such as `run_configured_experiment.py` and `run_declared_comparison`; task, condition, metric, and dimension identifiers must come from fixture inputs.
+- Do not encode a fixed number of tasks, conditions, metrics, or experimental dimensions through names such as `task_a`/`task_b`, `parameter_x`/`parameter_y`, or first/second-item fallbacks.
+- Do not infer baseline, comparator, primary, or winning roles from labels or observed performance. Require explicit roles or declared references in the input contract.
 - Treat generated condition-marker families as leaks, not only individual strings. For example, public code should reject reusable method-specific numeric condition-marker families unless those values come from user/run artifacts being inspected.
 - Keep cached-paper, planner-timeout, and fallback-text fixtures method-neutral. Avoid embedding a concrete method-family recipe phrase unless the method name is the explicit subject of the behavior under test.
 - Generic metric vocabularies such as accuracy, F1, BLEU, ROUGE, perplexity, runtime, latency, memory, and throughput are allowed when they are part of reusable metric extraction logic rather than a one-off experiment fixture.

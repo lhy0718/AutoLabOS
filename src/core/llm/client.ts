@@ -170,7 +170,12 @@ export class OllamaLLMClient implements LLMClient {
     prompt: string,
     opts?: LLMCompleteOptions
   ): Promise<LLMCompletion> {
-    const model = opts?.model || this.defaults.model || "qwen3.5:35b-a3b";
+    const model = (opts?.model || this.defaults.model || "").trim();
+    if (!model) {
+      throw new Error(
+        "Ollama model is not configured. Select an installed model or enter a model identifier before continuing."
+      );
+    }
     opts?.onProgress?.({ type: "status", text: `Submitting request to Ollama (${model}).` });
 
     const hasImages = opts?.inputImagePaths && opts.inputImagePaths.length > 0;

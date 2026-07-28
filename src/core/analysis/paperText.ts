@@ -7,6 +7,7 @@ import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_SOURCE_CHARS = 16_000;
+const TEXT_CACHE_SEMANTICS_VERSION = 2;
 const THUMBNAIL_SCALE = 160;
 const DEFAULT_HYBRID_PAGE_IMAGE_LIMIT = 12;
 
@@ -14,7 +15,7 @@ const HYBRID_PAGE_PRIORITY_PATTERNS: Array<{ pattern: RegExp; score: number }> =
   { pattern: /\babstract\b|\bintroduction\b/i, score: 3 },
   { pattern: /\bmethod\b|\bmethods\b|\bapproach\b|\bsetup\b|\bpreprocess/i, score: 4 },
   { pattern: /\bexperiment\b|\bexperiments\b|\bresult\b|\bresults\b|\bevaluation\b|\bbenchmark\b/i, score: 6 },
-  { pattern: /\btable\b|\bfigure\b|\bdataset\b|\bmetric\b|\baccuracy\b|\bf1\b|\bauc\b/i, score: 5 },
+  { pattern: /\btable\b|\bfigure\b|\bdataset\b|\bmetric\b|\bmeasure\b|\bscore\b|\bconfidence interval\b|\bcomparison\b/i, score: 5 },
   { pattern: /\bdiscussion\b|\bconclusion\b|\blimitation\b|\blimitations\b/i, score: 3 }
 ];
 
@@ -27,6 +28,7 @@ export interface AnalysisCorpusRow {
   paper_id: string;
   title: string;
   abstract: string;
+  query_families?: string[];
   year?: number;
   venue?: string;
   url?: string;
@@ -42,10 +44,13 @@ export interface AnalysisCorpusRow {
 export interface ResolvedPaperSource {
   sourceType: "full_text" | "abstract";
   text: string;
+  groundingText?: string;
+  analysisScope?: "abstract" | "full_text_excerpt" | "full_document";
   fullTextAvailable: boolean;
   pdfUrl?: string;
   pdfCachePath?: string;
   textCachePath?: string;
+  groundingTextCachePath?: string;
   pageImagePaths?: string[];
   pageImagePages?: number[];
   fallbackReason?: string;
@@ -83,6 +88,7 @@ export async function resolvePaperTextSource(args: {
     return {
       sourceType: "abstract",
       text: fallback,
+      analysisScope: "abstract",
       fullTextAvailable: false,
       fallbackReason: "no_pdf_url"
     };
@@ -90,27 +96,44 @@ export async function resolvePaperTextSource(args: {
 
   const cacheDir = path.join(".autolabos", "runs", args.runId, "analysis_cache");
   const pdfCachePath = path.join(cacheDir, "pdfs", `${sanitizeFileStem(args.paper.paper_id)}.pdf`);
-  const textCachePath = path.join(cacheDir, "texts", `${sanitizeFileStem(args.paper.paper_id)}.txt`);
+  const textCachePath = path.join(
+    cacheDir,
+    "texts",
+    `${sanitizeFileStem(args.paper.paper_id)}.v${TEXT_CACHE_SEMANTICS_VERSION}.txt`
+  );
+  const groundingTextCachePath = path.join(
+    cacheDir,
+    "texts",
+    `${sanitizeFileStem(args.paper.paper_id)}.v${TEXT_CACHE_SEMANTICS_VERSION}.grounding.txt`
+  );
   const pageImageDir = path.join(cacheDir, "page_images", sanitizeFileStem(args.paper.paper_id));
 
   const cachedText = await readCachedText(textCachePath);
+  const cachedGroundingText = await readCachedText(groundingTextCachePath);
   const cachedPageImages = includePageImages ? await readCachedPageImages(pageImageDir) : emptyCachedPageImages();
+  const cachedPdfExists = await fileExists(pdfCachePath);
   const cachedPdfPageCount =
-    includePageImages && (await fileExists(pdfCachePath)) ? await readPdfPageCount(pdfCachePath, args.abortSignal) : 0;
+    includePageImages && cachedPdfExists ? await readPdfPageCount(pdfCachePath, args.abortSignal) : 0;
   if (cachedText) {
     args.onProgress?.("Reusing cached extracted full text.");
     if (
-      !includePageImages ||
-      (cachedPageImages.paths.length > 0 &&
-        (cachedPdfPageCount === 0 || hasCompletePageImageSet(cachedPageImages.pages, cachedPdfPageCount)))
+      (cachedGroundingText || !cachedPdfExists)
+      && (
+        !includePageImages ||
+        (cachedPageImages.paths.length > 0 &&
+          (cachedPdfPageCount === 0 || hasCompletePageImageSet(cachedPageImages.pages, cachedPdfPageCount)))
+      )
     ) {
       return {
         sourceType: "full_text",
         text: cachedText,
+        groundingText: cachedGroundingText,
+        analysisScope: "full_text_excerpt",
         fullTextAvailable: true,
         pdfUrl,
         pdfCachePath,
         textCachePath,
+        groundingTextCachePath,
         pageImagePaths: cachedPageImages.paths,
         pageImagePages: cachedPageImages.pages
       };
@@ -132,10 +155,13 @@ export async function resolvePaperTextSource(args: {
       return {
         sourceType: "full_text",
         text: cachedText,
+        groundingText: cachedGroundingText,
+        analysisScope: "full_text_excerpt",
         fullTextAvailable: true,
         pdfUrl,
         pdfCachePath,
-        textCachePath
+        textCachePath,
+        groundingTextCachePath
       };
     }
 
@@ -145,10 +171,12 @@ export async function resolvePaperTextSource(args: {
     return {
       sourceType: "abstract",
       text: fallback,
+      analysisScope: "abstract",
       fullTextAvailable: false,
       pdfUrl,
       pdfCachePath,
       textCachePath,
+      groundingTextCachePath,
       fallbackReason: error instanceof Error ? error.message : String(error)
     };
   }
@@ -156,13 +184,22 @@ export async function resolvePaperTextSource(args: {
   try {
     const pageTexts = await extractPdfPageTexts(pdfCachePath, args.abortSignal);
     let extracted = cachedText;
+    let groundingText = cachedGroundingText;
     if (!cachedText) {
       args.onProgress?.("Extracting text from downloaded PDF.");
-      extracted = truncateText(pageTexts.filter(Boolean).join("\n\n"), MAX_SOURCE_CHARS) || undefined;
+      extracted = buildSectionAwarePdfText(pageTexts, MAX_SOURCE_CHARS) || undefined;
       if (extracted) {
         await ensureDir(path.dirname(textCachePath));
         await fs.writeFile(textCachePath, extracted, "utf8");
         args.onProgress?.("PDF text extraction completed.");
+      }
+    }
+    if (!groundingText) {
+      groundingText = buildFullPdfGroundingText(pageTexts) || undefined;
+      if (groundingText) {
+        await ensureDir(path.dirname(groundingTextCachePath));
+        await fs.writeFile(groundingTextCachePath, groundingText, "utf8");
+        args.onProgress?.("Lossless PDF grounding text extraction completed.");
       }
     }
 
@@ -188,10 +225,13 @@ export async function resolvePaperTextSource(args: {
       return {
         sourceType: "full_text",
         text: extracted,
+        groundingText,
+        analysisScope: "full_text_excerpt",
         fullTextAvailable: true,
         pdfUrl,
         pdfCachePath,
         textCachePath,
+        groundingTextCachePath,
         pageImagePaths: pageImages.paths,
         pageImagePages: pageImages.pages
       };
@@ -205,10 +245,12 @@ export async function resolvePaperTextSource(args: {
     return {
       sourceType: "abstract",
       text: fallback,
+      analysisScope: "abstract",
       fullTextAvailable: false,
       pdfUrl,
       pdfCachePath,
       textCachePath,
+      groundingTextCachePath,
       pageImagePaths: pageImages.paths,
       pageImagePages: pageImages.pages,
       fallbackReason: "pdf_extract_failed"
@@ -220,15 +262,28 @@ export async function resolvePaperTextSource(args: {
     return {
       sourceType: "abstract",
       text: fallback,
+      analysisScope: "abstract",
       fullTextAvailable: false,
       pdfUrl,
       pdfCachePath,
       textCachePath,
+      groundingTextCachePath,
       pageImagePaths: cachedPageImages.paths,
       pageImagePages: cachedPageImages.pages,
       fallbackReason: error instanceof Error ? error.message : String(error)
     };
   }
+}
+
+export function buildFullPdfGroundingText(pageTexts: string[]): string {
+  return pageTexts
+    .map((pageText, index) => {
+      const normalized = normalizeWhitespace(pageText);
+      return normalized ? `[PAGE ${index + 1}]\n${normalized}` : "";
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .trim();
 }
 
 export function selectHybridPdfPageNumbers(args: {
@@ -292,6 +347,56 @@ export function selectHybridPdfPageNumbers(args: {
   }
 
   return Array.from(selected).sort((left, right) => left - right);
+}
+
+export function buildSectionAwarePdfText(
+  pageTexts: string[],
+  maxChars = MAX_SOURCE_CHARS
+): string {
+  const normalizedPages = pageTexts.map((text) => normalizeWhitespace(text));
+  const nonemptyPages = normalizedPages
+    .map((text, index) => ({ page: index + 1, text }))
+    .filter((entry) => Boolean(entry.text));
+  if (nonemptyPages.length === 0 || maxChars <= 0) {
+    return "";
+  }
+
+  const completeText = nonemptyPages
+    .map((entry) => `[PAGE ${entry.page}]\n${entry.text}`)
+    .join("\n\n");
+  if (completeText.length <= maxChars) {
+    return completeText;
+  }
+
+  const selectedPages = selectHybridPdfPageNumbers({
+    pageTexts: normalizedPages,
+    pageCount: normalizedPages.length,
+    maxImages: DEFAULT_HYBRID_PAGE_IMAGE_LIMIT
+  }).filter((page) => Boolean(normalizedPages[page - 1]));
+  const marker = `\n[SECTION-AWARE EXCERPT: ${selectedPages.length}/${normalizedPages.length} PAGES]\n`;
+  const headerChars = selectedPages.reduce(
+    (total, page) => total + `[PAGE ${page}]\n`.length + 2,
+    0
+  );
+  const availableBodyChars = Math.max(
+    selectedPages.length * 120,
+    maxChars - marker.length - headerChars
+  );
+  const perPageBudget = Math.max(120, Math.floor(availableBodyChars / selectedPages.length));
+  const parts = selectedPages.map((page) => {
+    const text = normalizedPages[page - 1] ?? "";
+    return `[PAGE ${page}]\n${selectPageExcerpt(text, perPageBudget)}`;
+  });
+  return `${parts.join("\n\n")}${marker}`.slice(0, maxChars).trim();
+}
+
+function selectPageExcerpt(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return text;
+  }
+  const headChars = Math.max(80, Math.floor(maxChars * 0.72));
+  const tailChars = Math.max(40, maxChars - headChars - 18);
+  return `${text.slice(0, headChars).trimEnd()}\n[PAGE EXCERPT]\n${text.slice(-tailChars).trimStart()}`;
 }
 
 function buildEvenlySpacedPageNumbers(totalPages: number, count: number): number[] {

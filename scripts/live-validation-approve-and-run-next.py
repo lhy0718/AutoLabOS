@@ -43,6 +43,19 @@ STOP_BOUNDARY_STABLE_SECONDS = 2.0
 HANDOFF_GRACE_SECONDS = 5.0
 MAX_TRANSCRIPT_CHARS = 2_000_000
 MAX_SEARCH_CHARS = 200_000
+WORKFLOW_NODE_ORDER = (
+    "collect_papers",
+    "analyze_papers",
+    "generate_hypotheses",
+    "design_experiments",
+    "implement_experiments",
+    "run_experiments",
+    "analyze_results",
+    "figure_audit",
+    "review",
+    "write_paper",
+)
+WORKFLOW_NODES = set(WORKFLOW_NODE_ORDER)
 
 
 class WaitTimeout(Exception):
@@ -785,34 +798,72 @@ def should_accept_node_status_error_text(
     return should_accept_text_stop_boundary(record, node, initial_signature)
 
 
+def validate_next_node(next_node: str) -> None:
+    if not next_node:
+        raise ValueError("AUTOLABOS_VALIDATION_NEXT_NODE must not be empty")
+    if next_node not in WORKFLOW_NODES:
+        raise ValueError(
+            f"AUTOLABOS_VALIDATION_NEXT_NODE is not a workflow node: {next_node}"
+        )
+
+
+def run_node_command(next_node: str, run_id: str, node_args: str) -> str:
+    command = f"/agent run {next_node} {run_id}"
+    if node_args:
+        command = f"{command} {node_args}"
+    return command
+
+
+def canonical_successor(node: str) -> str:
+    try:
+        index = WORKFLOW_NODE_ORDER.index(node)
+    except ValueError:
+        return ""
+    if index + 1 >= len(WORKFLOW_NODE_ORDER):
+        return ""
+    return WORKFLOW_NODE_ORDER[index + 1]
+
+
 def build_continue_command(record: dict, run_id: str, next_node: str, node_args: str) -> str:
+    validate_next_node(next_node)
     current = current_node(record)
     current_status = node_status(record, current)
     target_status = node_status(record, next_node)
+
+    if current == next_node and current_status == "needs_approval":
+        return run_node_command(next_node, run_id, node_args)
+
+    if current != next_node and current_status == "needs_approval":
+        transition_target = pending_transition_target(record)
+        expected_target = transition_target or canonical_successor(current)
+        if expected_target != next_node:
+            if transition_target:
+                target_description = (
+                    "persisted pendingTransition.targetNode "
+                    f"is {transition_target}"
+                )
+            else:
+                target_description = (
+                    f"canonical workflow successor of {current or '<empty>'} "
+                    f"is {expected_target or '<none>'}"
+                )
+            raise ValueError(
+                f"refusing approval because {target_description}, "
+                f"not requested node {next_node}"
+            )
+        return "/approve"
 
     if current == next_node and node_has_persisted_failure(record, current):
         return f"/agent retry {next_node} {run_id}"
 
     if current == next_node and current_status in {"pending", "running", "failed"}:
-        command = f"/agent run {next_node} {run_id}"
-        if node_args:
-            command = f"{command} {node_args}"
-        return command
-
-    if current == next_node and current_status == "needs_approval":
-        return "/approve"
-
-    if current_status == "needs_approval":
-        return "/approve"
+        return run_node_command(next_node, run_id, node_args)
 
     if target_status in {"running", "failed"} and node_has_persisted_failure(record, next_node):
         return f"/agent retry {next_node} {run_id}"
 
     if target_status in {"pending", "running", "failed"}:
-        command = f"/agent run {next_node} {run_id}"
-        if node_args:
-            command = f"{command} {node_args}"
-        return command
+        return run_node_command(next_node, run_id, node_args)
 
     return f"/agent status {run_id}"
 
@@ -822,6 +873,19 @@ def expand_command_override(raw_command: str, run_id: str, next_node: str) -> st
 
 def command_override_replaces_continue_command(raw_command: str) -> bool:
     return raw_command.lstrip().startswith("/")
+
+
+def select_continue_command(
+    record: dict,
+    run_id: str,
+    next_node: str,
+    node_args: str,
+    command_override: str,
+) -> str:
+    validate_next_node(next_node)
+    if command_override and command_override_replaces_continue_command(command_override):
+        return expand_command_override(command_override, run_id, next_node)
+    return build_continue_command(record, run_id, next_node, node_args)
 
 
 def pending_transition_target(record: dict) -> str:
@@ -987,6 +1051,16 @@ def run_selftest() -> int:
     collect_needs_approval = {
         "currentNode": "collect_papers",
         "graph": {
+            "pendingTransition": {"targetNode": "analyze_papers"},
+            "nodeStates": {
+                "collect_papers": {"status": "needs_approval"},
+                "analyze_papers": {"status": "pending"},
+            }
+        },
+    }
+    ordinary_collect_needs_approval = {
+        "currentNode": "collect_papers",
+        "graph": {
             "nodeStates": {
                 "collect_papers": {"status": "needs_approval"},
                 "analyze_papers": {"status": "pending"},
@@ -1008,12 +1082,76 @@ def run_selftest() -> int:
             "/agent retry analyze_papers run-validation",
         ),
         (build_continue_command(collect_needs_approval, run_id, "analyze_papers", args), "/approve"),
-        (build_continue_command(analyze_needs_approval, run_id, "analyze_papers", args), "/approve"),
+        (
+            build_continue_command(
+                ordinary_collect_needs_approval,
+                run_id,
+                "analyze_papers",
+                args,
+            ),
+            "/approve",
+        ),
+        (
+            build_continue_command(analyze_needs_approval, run_id, "analyze_papers", args),
+            "/agent run analyze_papers run-validation --top-n 12",
+        ),
     ]
     for actual, expected in expectations:
         if actual != expected:
             print(f"FAIL: expected {expected!r}, got {actual!r}")
             return 1
+    mismatched_transition = {
+        "currentNode": "collect_papers",
+        "graph": {
+            "pendingTransition": {"targetNode": "analyze_papers"},
+            "nodeStates": {"collect_papers": {"status": "needs_approval"}},
+        },
+    }
+    try:
+        build_continue_command(
+            mismatched_transition,
+            run_id,
+            "generate_hypotheses",
+            args,
+        )
+    except ValueError as exc:
+        if "pendingTransition.targetNode" not in str(exc):
+            print(f"FAIL: mismatched transition returned an unclear rejection: {exc}")
+            return 1
+    else:
+        print("FAIL: mismatched transition was not rejected")
+        return 1
+    try:
+        build_continue_command(
+            ordinary_collect_needs_approval,
+            run_id,
+            "generate_hypotheses",
+            args,
+        )
+    except ValueError as exc:
+        if "canonical workflow successor" not in str(exc):
+            print(f"FAIL: mismatched canonical successor returned an unclear rejection: {exc}")
+            return 1
+    else:
+        print("FAIL: mismatched canonical successor was not rejected")
+        return 1
+    for invalid_node in ("", "not_a_workflow_node"):
+        try:
+            build_continue_command(analyze_running, run_id, invalid_node, args)
+        except ValueError:
+            pass
+        else:
+            print(f"FAIL: invalid workflow node was not rejected: {invalid_node!r}")
+            return 1
+    if select_continue_command(
+        mismatched_transition,
+        run_id,
+        "generate_hypotheses",
+        args,
+        "/approve",
+    ) != "/approve":
+        print("FAIL: explicit /approve command override did not preserve override semantics")
+        return 1
     if not is_active_running(analyze_running):
         print("FAIL: active-running run was not detected")
         return 1
@@ -1641,6 +1779,11 @@ def main() -> int:
     handoff_grace_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_HANDOFF_GRACE_SEC", str(HANDOFF_GRACE_SECONDS)))
     stale_running_seconds = float(os.environ.get("AUTOLABOS_VALIDATION_STALE_RUNNING_SEC", "3600"))
     dist_main = repo_root / "dist" / "cli" / "main.js"
+    try:
+        validate_next_node(next_node)
+    except ValueError as exc:
+        print(f"FAIL: {exc}")
+        return 1
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"live-validation-continue-{next_node}-output.txt"
 
@@ -1665,6 +1808,18 @@ def main() -> int:
     active_running_before = should_observe_active_running(record_before, force_run_active=force_run_active)
     if force_run_active and is_active_running(record_before):
         next_node = current_node(record_before) or next_node
+    if not active_running_before:
+        try:
+            select_continue_command(
+                record_before,
+                run_id,
+                next_node,
+                node_args,
+                command_override,
+            )
+        except ValueError as exc:
+            print(f"FAIL: {exc}")
+            return 1
 
     env = os.environ.copy()
     env["COLUMNS"] = "220"
@@ -1687,6 +1842,7 @@ def main() -> int:
     wait_node = next_node
     sent_command_override = False
     sent_text_command_override = False
+    sent_commands: list[str] = []
     try:
         buffer_text = wait_for(
             master_fd,
@@ -1705,6 +1861,7 @@ def main() -> int:
             if command_override:
                 command = expand_command_override(command_override, run_id, wait_node)
                 send_line(master_fd, command)
+                sent_commands.append(command)
                 sent_command_override = True
                 sent_text_command_override = not command_override_replaces_continue_command(command_override)
                 print(f"INFO: {wait_node} is already running; sent command override and observing until the next stop boundary.")
@@ -1716,14 +1873,21 @@ def main() -> int:
                 buffer_text = wait_for(master_fd, DOCTOR_READY_PATTERN, 60, buffer_text)
                 buffer_text = wait_for(master_fd, DOCTOR_HARNESS_PATTERN, 60, buffer_text)
             record_before_command = load_run_record(workspace, run_id)
-            command = (
-                expand_command_override(command_override, run_id, next_node)
-                if command_override and command_override_replaces_continue_command(command_override)
-                else build_continue_command(record_before_command, run_id, next_node, node_args)
-            )
+            try:
+                command = select_continue_command(
+                    record_before_command,
+                    run_id,
+                    next_node,
+                    node_args,
+                    command_override,
+                )
+            except ValueError as exc:
+                print(f"FAIL: {exc}")
+                return 1
             wait_node = node_to_observe_after_command(record_before_command, next_node, command)
             initial_signature = record_boundary_signature(record_before_command, wait_node)
             send_line(master_fd, command)
+            sent_commands.append(command)
             sent_command_override = bool(command_override and command_override_replaces_continue_command(command_override))
             sent_text_command_override = False
         buffer_text = wait_for_stop_boundary(
@@ -1762,6 +1926,7 @@ def main() -> int:
             if command_override and not sent_command_override:
                 command = expand_command_override(command_override, run_id, wait_node)
                 send_line(master_fd, command)
+                sent_commands.append(command)
                 sent_command_override = True
                 sent_text_command_override = not command_override_replaces_continue_command(command_override)
                 print(f"INFO: {wait_node} is already running after the prior boundary; sent command override and observing the handoff.")
@@ -1803,7 +1968,11 @@ def main() -> int:
             pass
 
     output_path.write_text(buffer_text, encoding="utf-8")
-    print(f"PASS: Validation approved current gate and attempted {next_node}; output={output_path}")
+    command_summary = repr(sent_commands) if sent_commands else "none (observed active run)"
+    print(
+        f"PASS: Validation requested node {next_node}; sent commands={command_summary}; "
+        f"final observed node={wait_node}; output={output_path}"
+    )
     return 0
 
 

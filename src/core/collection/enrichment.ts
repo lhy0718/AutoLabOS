@@ -361,6 +361,14 @@ export function mergeStoredCorpusRows(existing: StoredCorpusRow | undefined, inc
     landing_url: mergePreferredSourceUrl(existing.landing_url, incoming.landing_url),
     authors: mergePreferredAuthors(existing.authors, incoming.authors, preserveExistingMetadata, preferIncomingMetadata)
   };
+  const queryFamilies = Array.from(
+    new Set(
+      [...(existing.query_families ?? []), ...(incoming.query_families ?? [])]
+        .map((queryFamily) => queryFamily.trim())
+        .filter(Boolean)
+    )
+  ).sort();
+  merged.query_families = queryFamilies.length > 0 ? queryFamilies : undefined;
   merged.citation_count = incoming.citation_count ?? existing.citation_count;
   merged.influential_citation_count =
     incoming.influential_citation_count ?? existing.influential_citation_count;

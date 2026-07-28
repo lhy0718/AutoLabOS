@@ -10,12 +10,13 @@ import { resolveExperimentLlmProfile } from "../src/core/experimentLlmProfile.js
 import { InMemoryEventStream } from "../src/core/events.js";
 import { RunStore } from "../src/core/runs/runStore.js";
 import { InteractionSession } from "../src/interaction/InteractionSession.js";
-import { DEFAULT_OLLAMA_BASE_URL, DEFAULT_OLLAMA_CHAT_MODEL } from "../src/integrations/ollama/modelCatalog.js";
+import { DEFAULT_OLLAMA_BASE_URL } from "../src/integrations/ollama/modelCatalog.js";
 import { CodexNativeClient } from "../src/integrations/codex/codexCliClient.js";
 import { TerminalApp } from "../src/tui/TerminalApp.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_FAKE_OLLAMA = process.env.AUTOLABOS_FAKE_OLLAMA_RESPONSE;
+const OLLAMA_CHAT_MODEL = "local-model-a:latest";
 
 afterEach(() => {
   if (ORIGINAL_FAKE_OLLAMA === undefined) {
@@ -59,10 +60,10 @@ function makeOllamaConfig(): AppConfig {
       },
       ollama: {
         base_url: DEFAULT_OLLAMA_BASE_URL,
-        chat_model: DEFAULT_OLLAMA_CHAT_MODEL,
-        research_model: "qwen3.5:35b-a3b",
-        experiment_model: "qwen3.5-coder:30b-a3b",
-        vision_model: "qwen3.5:35b-a3b"
+        chat_model: OLLAMA_CHAT_MODEL,
+        research_model: "local-model-b:latest",
+        experiment_model: "local-model-c:latest",
+        vision_model: "local-model-b:latest"
       }
     },
     analysis: {
@@ -72,7 +73,7 @@ function makeOllamaConfig(): AppConfig {
     papers: { max_results: 100, per_second_limit: 1 },
     research: {
       default_topic: "Efficient Test-Time Reasoning for Small Language Models",
-      default_constraints: ["recent papers"],
+      default_constraints: ["declared literature scope"],
       default_objective_metric: "accuracy"
     },
     workflow: { mode: "agent_approval", wizard_enabled: true, approval_mode: "minimal" },
@@ -108,7 +109,7 @@ describe("provider routing consistency", () => {
     const profile = resolveExperimentLlmProfile(makeOllamaConfig());
     expect(profile).toEqual({
       provider: "ollama",
-      model: "qwen3.5-coder:30b-a3b",
+      model: "local-model-c:latest",
       reasoningEffort: "medium",
       fastMode: false
     });

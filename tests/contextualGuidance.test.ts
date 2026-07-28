@@ -171,6 +171,38 @@ describe("buildContextualGuidance", () => {
     expect(guidance?.items[1]?.label).toBe("run");
   });
 
+  it("describes a stored backtrack as applying the transition instead of forward approval", () => {
+    const run = makeRun({
+      id: "run-stored-backtrack",
+      currentNode: "design_experiments",
+      status: "paused"
+    });
+    run.graph.currentNode = "design_experiments";
+    run.graph.nodeStates.design_experiments.status = "needs_approval";
+    run.graph.pendingTransition = {
+      action: "backtrack_to_hypotheses",
+      sourceNode: "design_experiments",
+      targetNode: "generate_hypotheses",
+      reason: "The candidate prior lineage is incomplete.",
+      confidence: 0.98,
+      autoExecutable: true,
+      evidence: ["candidate_prior_search_decision"],
+      suggestedCommands: ["/approve"],
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    };
+
+    const guidance = buildContextualGuidance({ run });
+
+    expect(guidance?.title).toBe("Stored transition");
+    expect(guidance?.items[0]).toEqual({
+      label: "apply backtrack",
+      description:
+        "Apply backtrack_to_hypotheses to generate_hypotheses: The candidate prior lineage is incomplete.",
+      applyValue: "/approve"
+    });
+    expect(guidance?.items[0]?.description).not.toContain("continue the workflow");
+  });
+
   it("keeps usage-limit guidance on run while mentioning /model in the description", () => {
     const run = makeRun({
       id: "run-usage-limit",

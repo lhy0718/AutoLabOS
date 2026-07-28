@@ -1,0 +1,75 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "heldout_evidence_seal_plan",
+  "frozen_at": "2026-07-28T11:27:58+09:00",
+  "frozen_before_probe_design": true,
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "purpose": "Bind the complete pre-outcome census and independent eligibility decisions before constructing the held-out lineage registry.",
+  "groups": [
+    {
+      "group_id": "heldout_group_01",
+      "census": {
+        "path": "grader-conform-heldout-census-group1.json",
+        "sha256": "fe621d3bc1746592265a732429fb272ff257bd6532040c05bb508b45f4dba60e"
+      },
+      "adjudications": [
+        {
+          "path": "grader-conform-group1-adjudication.json",
+          "sha256": "9bcb6eff8335a5bce48e05a02363cab0eaace1c97864f56014386b1423b1777d"
+        }
+      ]
+    },
+    {
+      "group_id": "heldout_group_02",
+      "census": {
+        "path": "grader-conform-heldout-census-group2.json",
+        "sha256": "202236b5f62c534b1160ab35d09ee6b451c6e5bc260a5bbdef377e3b4e0b2995"
+      },
+      "adjudications": [
+        {
+          "path": "grader-conform-group2-browser-terminal-adjudication.json",
+          "sha256": "43bd89e4dee1cde5944abfac794fc097c93e53fb31aeb2a2adf8dd59a73406fe"
+        },
+        {
+          "path": "grader-conform-group2-swe-bench-adjudication.json",
+          "sha256": "b959c1b7ee064cf4336eafc37acf85c16cc3527ff6857466c3933a452e5cf2ea"
+        }
+      ]
+    },
+    {
+      "group_id": "heldout_group_03",
+      "census": {
+        "path": "grader-conform-heldout-census-group3.json",
+        "sha256": "12543bc178b59f4072c6547413760482059a015c5fa973dabdbed50d8400f31c"
+      },
+      "adjudications": [
+        {
+          "path": "grader-conform-group3-adjudication.json",
+          "sha256": "c3114e8dc1b331be97d1d0fe5f2551b792330a65773d89459ee8008a31ca4ba9"
+        }
+      ]
+    },
+    {
+      "group_id": "heldout_group_04",
+      "census": {
+        "path": "grader-conform-heldout-census-group4.json",
+        "sha256": "a3c635cfa2a722d96eaf427d6aa760a4c140e807e551127a0b59c2d6cb596930"
+      },
+      "adjudications": [
+        {
+          "path": "grader-conform-group4-inspect-evals-adjudication.json",
+          "sha256": "934efbf2db59121c91135a69951fed83a935188c879b9df275b0cbd8f2f2f4bb"
+        },
+        {
+          "path": "grader-conform-group4-inspect-ai-adjudication.json",
+          "sha256": "e908918291d4b428d8627efe0c822dd0bf04cf4ae98b2fcf765e20c871f61b5f"
+        },
+        {
+          "path": "grader-conform-group4-helm-adjudication.json",
+          "sha256": "b7ad25796891abe309970d4f2de1ca8632a0eb12cc451121e28ae64e2a49e098"
+        }
+      ]
+    }
+  ]
+}

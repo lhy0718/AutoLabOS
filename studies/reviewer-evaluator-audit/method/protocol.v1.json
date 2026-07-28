@@ -1,0 +1,284 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "reviewer_evaluator_audit_frozen_protocol",
+  "study_slug": "reviewer-evaluator-audit",
+  "frozen_at": "2026-07-28T15:42:48+09:00",
+  "working_title": "Evaluator Sensitivity in Scientific Error Localization: A Reproducibility Audit of FLAWS",
+  "evidence_stage": "confirmatory_independent_rejudging_after_exploratory_code_audit",
+  "research_object": "The 115 error instances and 575 released identification-model outputs in the pinned public non-ML CS extension of FLAWS.",
+  "research_questions": [
+    {
+      "id": "RQ1",
+      "question": "Do released lexical decisions reproduce under the pinned implementation and the metric described in the paper?",
+      "analysis_status": "exploratory_known_before_freeze"
+    },
+    {
+      "id": "RQ2",
+      "question": "How much do cell decisions and model rankings change when unchanged context is removed from modified-text ground truth while all separately localized error excerpts are retained?",
+      "analysis_status": "exploratory_known_before_freeze"
+    },
+    {
+      "id": "RQ3",
+      "question": "How stable are cell decisions and adjusted model rankings when the insertion-model judge is replaced by two blinded open-weight judge lineages?",
+      "analysis_status": "confirmatory_not_observed_at_freeze"
+    },
+    {
+      "id": "RQ4",
+      "question": "How sensitive are conclusions to a liberal OR rule, component-wise decisions, and a three-component majority rule?",
+      "analysis_status": "confirmatory_not_observed_at_freeze"
+    }
+  ],
+  "claim_ceiling": {
+    "maximum": "Benchmark-specific evaluator sensitivity and reproducibility findings for the pinned public non-ML FLAWS extension.",
+    "forbidden": [
+      "Claiming that any evaluator is more valid without independent human labels on the 115-instance extension.",
+      "Claiming generic LLM-judge bias, self-preference, or generator-evaluator contamination from disagreement alone.",
+      "Generalizing rankings or effect sizes to the 713-instance main FLAWS benchmark.",
+      "Describing local open-weight judgments as human annotation."
+    ]
+  },
+  "frozen_inputs": {
+    "preflight_contract_path": "studies/reviewer-evaluator-audit/method/preflight-contract.v1.json",
+    "preflight_contract_file_sha256": "c49eb988f5ed9b0651d45fce0d02d3721acf52717326952fced530223204dad4",
+    "corpus_audit_path": "studies/reviewer-evaluator-audit/preflight/corpus-audit.v1.json",
+    "corpus_audit_file_sha256": "e70a6d0e8a15747d5e9b6f9ad3ac0b379791605c6cc3878a28873950a56055c5",
+    "exploratory_rescore_path": "studies/reviewer-evaluator-audit/results/public-rescore.v1.json",
+    "exploratory_rescore_file_sha256": "d4b0e7ef1d044161e404588969ea7d959cc295ed1c0dc22266b72fa77f7ad7a9",
+    "official_paper_arxiv_id": "2511.21843v1",
+    "official_paper_source_main_tex_sha256": "844eb1f58ec61396f3de283fd53bfce925bbba19fcd266371a50240c118c23a8",
+    "official_code_commit": "80309b1948c45a43ab6b9c128247eecdf4c4db0e",
+    "dataset_revision": "a20a57860ed4afc8a046a73abab6bd1222068762"
+  },
+  "units": {
+    "error_instance": "bundle_id + paper_id + claim_index",
+    "evaluation_cell": "error_instance + identification_model",
+    "retrieval_depths": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "uncertainty_cluster": "paper_id",
+    "expected_error_instances": 115,
+    "expected_unique_paper_clusters": 68,
+    "expected_evaluation_cells": 575
+  },
+  "ground_truth_sets": [
+    {
+      "id": "broad_truth",
+      "definition": "All modified_text chunks plus every official location_error excerpt, normalized and deduplicated.",
+      "role": "official_evaluation_reproduction"
+    },
+    {
+      "id": "focal_truth",
+      "definition": "Sentences in modified_text that are absent from the paired original_text, plus every official location_error excerpt, normalized and deduplicated.",
+      "role": "context-reduced sensitivity condition",
+      "invariant": "No official location_error excerpt may be dropped merely because it was not directly edited."
+    }
+  ],
+  "deterministic_evaluator_conditions": [
+    {
+      "id": "stored_published_lexical",
+      "truth": "broad_truth",
+      "status": "exploratory",
+      "definition": "Released score files parsed at each cumulative k."
+    },
+    {
+      "id": "replayed_published_code_lexical",
+      "truth": "broad_truth",
+      "status": "exploratory",
+      "definition": "Exact behavioral replay of the pinned evaluation implementation, including its observed suffix enumeration, final-row maximum, non-strict threshold, and empty-output behavior."
+    },
+    {
+      "id": "paper_specified_broad_lexical",
+      "truth": "broad_truth",
+      "status": "exploratory",
+      "definition": "Symmetric all-contiguous-sentence-span normalized word Levenshtein similarity with a strict greater-than 0.5 threshold."
+    },
+    {
+      "id": "paper_specified_focal_lexical",
+      "truth": "focal_truth",
+      "status": "exploratory",
+      "definition": "The paper-specified lexical metric applied to focal_truth."
+    },
+    {
+      "id": "published_insertion_judge",
+      "truth": "broad_truth",
+      "status": "exploratory",
+      "definition": "Released per-candidate insertion-model judge verdicts."
+    },
+    {
+      "id": "published_combined",
+      "truth": "broad_truth",
+      "status": "reference",
+      "definition": "stored_published_lexical OR published_insertion_judge."
+    }
+  ],
+  "independent_judges": [
+    {
+      "id": "judge_lineage_qwen",
+      "runtime": "ollama",
+      "model_tag": "qwen3.5:35b-a3b",
+      "resolved_model_digest_required": true
+    },
+    {
+      "id": "judge_lineage_mistral",
+      "runtime": "ollama",
+      "model_tag": "mistral-small3.2:24b",
+      "resolved_model_digest_required": true
+    }
+  ],
+  "independent_judge_contract": {
+    "truth": "focal_truth",
+    "blind_fields": [
+      "identification_model",
+      "insertion_model",
+      "published_evaluator_decisions",
+      "deterministic_evaluator_decisions"
+    ],
+    "task": "For every candidate excerpt, decide only whether it is the same paper excerpt as at least one reference excerpt, allowing subset, superset, LaTeX, whitespace, and plain-text formatting differences. Scientific correctness and semantic plausibility are out of scope.",
+    "batching": "One error instance per request, with five anonymized candidate lists and at most ten excerpts per list.",
+    "output_schema": {
+      "cells": [
+        {
+          "cell_id": "opaque identifier",
+          "verdicts": [
+            {
+              "candidate_index": 0,
+              "match": true,
+              "reference_index": 0,
+              "reason_code": "same_excerpt"
+            }
+          ]
+        }
+      ]
+    },
+    "allowed_reason_codes": [
+      "same_excerpt",
+      "formatting_equivalent",
+      "no_same_excerpt"
+    ],
+    "generation_options": {
+      "temperature": 0,
+      "top_p": 1,
+      "num_ctx": 16384,
+      "repeat_count": 2,
+      "repeat_seeds": [
+        20260728,
+        20260729
+      ],
+      "disagreement_tiebreak_seed": 20260730
+    },
+    "adjudication": "Use candidate-level majority. Run a third identical-format judgment only for candidate verdicts that disagree across the first two repeats.",
+    "malformed_output_policy": "One format-only retry is allowed. A second malformed output is missing, never positive. Confirmatory analysis is blocked until every expected cell has a valid final verdict.",
+    "timeout_policy": "Timeouts are missing, never positive.",
+    "provider_isolation": "No web browsing, repository context, prior conversation, private memory, or model/inserter identity is supplied to the judge."
+  },
+  "primary_conditions": [
+    {
+      "id": "published_combined",
+      "role": "reference"
+    },
+    {
+      "id": "focal_lexical_or_qwen",
+      "definition": "paper_specified_focal_lexical OR final judge_lineage_qwen verdict"
+    },
+    {
+      "id": "focal_lexical_or_mistral",
+      "definition": "paper_specified_focal_lexical OR final judge_lineage_mistral verdict"
+    },
+    {
+      "id": "independent_majority",
+      "definition": "At least two positives among paper_specified_focal_lexical, final judge_lineage_qwen, and final judge_lineage_mistral"
+    }
+  ],
+  "secondary_conditions": [
+    "paper_specified_focal_lexical",
+    "final_judge_lineage_qwen",
+    "final_judge_lineage_mistral",
+    "independent_any",
+    "independent_unanimous",
+    "stored_published_lexical",
+    "replayed_published_code_lexical",
+    "paper_specified_broad_lexical",
+    "published_insertion_judge"
+  ],
+  "outcomes": {
+    "cell_level": [
+      "top-k cumulative positive rate",
+      "paired top-10 decision flip rate relative to published_combined",
+      "directional top-10 rate difference relative to published_combined",
+      "judge test-retest agreement before tiebreak"
+    ],
+    "model_level": [
+      "raw top-k positive rate",
+      "insertion-family-adjusted identification coefficient at each k",
+      "mean adjusted identification coefficient over k=1..10",
+      "rank and top-1 model"
+    ],
+    "ranking_sensitivity": [
+      "Kendall tau-b relative to published_combined",
+      "pairwise model-order reversals",
+      "bootstrap top-1 probability",
+      "bootstrap pairwise order probability"
+    ]
+  },
+  "adjusted_ranking_model": {
+    "form": "logit(P(y=1)) = fixed_intercept + identification_model_effect + insertion_family_effect",
+    "fixed_intercept": -3,
+    "insertion_reference": "insertion_family_b",
+    "exclusion": "Exclude cells where the identification model is the same released model as the insertion model.",
+    "aggregate": "Mean identification_model_effect over k=1..10.",
+    "convergence_policy": "Report non-convergence or separation; do not silently replace the estimator or condition."
+  },
+  "uncertainty": {
+    "method": "percentile cluster bootstrap",
+    "cluster": "paper_id",
+    "resamples": 2000,
+    "seed": 20260728,
+    "confidence_level": 0.95,
+    "sampling": "Sample the 68 unique paper IDs with replacement and retain every associated insertion instance and identification-model cell with cluster multiplicity."
+  },
+  "confirmatory_hypotheses": [
+    {
+      "id": "H1",
+      "statement": "Each independent judge replacement changes at least 5 percent of top-10 cell decisions relative to published_combined."
+    },
+    {
+      "id": "H2",
+      "statement": "The two independent judge replacements share at least one pairwise model-order reversal relative to published_combined."
+    },
+    {
+      "id": "H3",
+      "statement": "At least one primary independent condition changes either the top-1 model or Kendall tau-b below 0.9 relative to published_combined."
+    }
+  ],
+  "paper_worthiness_gate": {
+    "workshop_candidate_if": [
+      "The pinned code and paper specification yield a mechanically verified decision discrepancy affecting at least 5 percent of cells and at least one model-order reversal; or",
+      "Both independent judge replacements share a model-order reversal and at least one primary independent condition changes the top-1 model or has Kendall tau-b below 0.9."
+    ],
+    "downgrade_if": [
+      "All primary conditions preserve the same top-1 model.",
+      "Every primary independent condition has Kendall tau-b at least 0.9.",
+      "Each primary independent condition changes at most 5 percent of top-10 cell decisions.",
+      "No common pairwise order reversal appears across the two judge lineages."
+    ],
+    "downgrade_genre": "benchmark reproducibility note or negative measurement report",
+    "next_action_after_downgrade": "Return to the governed topic portfolio instead of polishing a paper-scale claim."
+  },
+  "reporting_requirements": [
+    "Separate exploratory findings known before protocol freeze from confirmatory independent-judge findings.",
+    "Report all frozen primary and secondary conditions, including null and contradictory results.",
+    "Report counts as well as percentages.",
+    "Report cluster-aware uncertainty and the 68-paper effective cluster count.",
+    "Publish the exact prompts, model digests, generation options, raw structured verdicts, retries, timeouts, and content hashes.",
+    "Keep model names in scientific result artifacts but never hardcode them into reusable AutoLabOS runtime contracts or public-code fixtures."
+  ]
+}

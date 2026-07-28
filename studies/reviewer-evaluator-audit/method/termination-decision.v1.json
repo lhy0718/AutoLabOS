@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "research_candidate_termination_decision",
+  "decided_at": "2026-07-28T16:16:00+09:00",
+  "decision": "kill_current_formulation",
+  "candidate_status": "terminated_before_confirmatory_analysis",
+  "decision_basis": [
+    {
+      "code": "closest_prior_absorbs_core_question",
+      "detail": "Yang et al. (2026), arXiv:2607.08535, already studies fixed-output measurement changes under evaluator replacement across four judgment datasets and requires protocol audit trails. A FLAWS-only application is not a sufficient residual contribution."
+    },
+    {
+      "code": "primary_comparison_confounded",
+      "detail": "The reference and proposed primary conditions simultaneously change truth granularity, lexical implementation, judge lineage, and aggregation, so a difference cannot be attributed to evaluator replacement."
+    },
+    {
+      "code": "cross_system_context_added",
+      "detail": "The proposed request batches five anonymized system outputs together, whereas the released evaluator judges one identification model at a time. This adds an uncontrolled context intervention."
+    },
+    {
+      "code": "primary_estimator_not_identifiable",
+      "detail": "The frozen fixed-intercept logistic MLE separates at k=1 on the released rows after the declared same-model exclusions, blocking the adjusted rankings required by the hypotheses."
+    },
+    {
+      "code": "exploratory_effect_below_gate",
+      "detail": "The paper-versus-code discrepancy changes 8 of 575 cells, below the frozen 5 percent materiality threshold, while the larger context-granularity effect does not establish evaluator validity."
+    },
+    {
+      "code": "validity_reference_absent",
+      "detail": "The 115-instance public extension has no released instance-level human labels, preventing claims that a replacement judge or aggregation rule is more valid."
+    }
+  ],
+  "superseded_artifacts": [
+    "method/protocol.v1.json",
+    "method/execution-bindings.v1.json",
+    "method/analysis-contract.v1.json"
+  ],
+  "partial_run_quarantine": {
+    "verdict_content_inspected": false,
+    "confirmatory_use_forbidden": true,
+    "storage": "external_nonrepository_cache",
+    "artifacts": [
+      {
+        "filename": "judge-lineage-qwen.v1.json",
+        "file_sha256": "17237dc382986037ab821586a5a9e5fb8b1b575c73177538eb6d05a2e0b3a1eb",
+        "expected_instance_count": 115,
+        "observed_instance_count": 2,
+        "complete_instance_count": 1,
+        "confirmatory_eligible": false
+      },
+      {
+        "filename": "judge-lineage-mistral.v1.json",
+        "file_sha256": "0f0a047212dd7074fe2b2117e642834f197385e1f804aedc60027ca86e6e7c0d",
+        "expected_instance_count": 115,
+        "observed_instance_count": 3,
+        "complete_instance_count": 3,
+        "confirmatory_eligible": false
+      }
+    ]
+  },
+  "repair_decision": {
+    "allowed_in_principle": true,
+    "selected": false,
+    "reason": "A factorial redesign, three complete repeats, a new estimable ranking model, and human adjudication would still leave the central evaluator-replacement question substantially absorbed by newer work. The expected workshop value does not justify that budget."
+  },
+  "next_action": "Return to the governed topic portfolio, absorb the newly discovered prior, and select a locally testable candidate with a distinct research object, intervention, evaluation unit, and claim."
+}

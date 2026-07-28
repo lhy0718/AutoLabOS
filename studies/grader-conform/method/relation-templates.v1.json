@@ -1,0 +1,150 @@
+{
+  "schema_version": "1.0",
+  "artifact_type": "evaluator_conformance_relation_template_registry",
+  "frozen_at": "2026-07-28T09:34:40+09:00",
+  "heldout_candidate_details_observed_before_freeze": false,
+  "heldout_behavioral_outcomes_observed_before_freeze": false,
+  "development_evidence": {
+    "lineage_count": 14,
+    "source_ids": ["source_a", "source_b", "source_c"],
+    "outcome_signature_sha256": "08f9badf0429e1852f143fb82cd622f7acfd5f2356222eebba53ea605049a0f1"
+  },
+  "preregistration_deviation": {
+    "planned_development_lineages": 12,
+    "observed_development_lineages": 14,
+    "reason": "All fourteen lineages admitted before the first behavioral run were retained; none was replaced or removed after outcomes were observed.",
+    "confirmatory_minimum_heldout_lineages_unchanged": 24
+  },
+  "selection_rule": "A held-out probe author may instantiate one or more frozen templates only from a public task schema, evaluator specification, or cross-entrypoint contract visible in a parent-only packet. If no template applies without the fix diff, the lineage is recorded as undetected.",
+  "templates": [
+    {
+      "id": "representation_equivalence",
+      "applicable_targets": ["graded artifact", "agent response", "execution trace", "terminal state"],
+      "preconditions": [
+        "Two encodings denote the same value under an independently published schema or language semantics.",
+        "The transformation does not add, remove, or change task-relevant information."
+      ],
+      "transformation": "Replace one admissible representation with another contract-equivalent representation.",
+      "oracle": "The deterministic verdict or terminal graded state is identical for both representations.",
+      "prohibited_adaptations": [
+        "Choosing a representation pair from the fix diff.",
+        "Treating approximate semantic similarity as equivalence.",
+        "Normalizing the grader source."
+      ]
+    },
+    {
+      "id": "execution_path_equivalence",
+      "applicable_targets": ["execution trace", "terminal state", "evaluator invocation context"],
+      "preconditions": [
+        "Two documented entrypoints or modes evaluate the same stored or live execution.",
+        "Any mode-specific state representation is preserved."
+      ],
+      "transformation": "Evaluate the same semantic execution through the paired entrypoints or documented modes.",
+      "oracle": "The component set, terminal state, and deterministic reward agree up to explicitly documented mode-specific fields.",
+      "prohibited_adaptations": [
+        "Injecting a mode marker not present in the graded artifact.",
+        "Dropping a reward component to obtain agreement.",
+        "Selecting an entrypoint pair only after observing the fix."
+      ]
+    },
+    {
+      "id": "benign_state_invariance",
+      "applicable_targets": ["execution trace", "terminal state", "evaluator invocation context"],
+      "preconditions": [
+        "The added action or state field is documented as read-only, observational, or irrelevant to the scored task.",
+        "The transformed execution remains valid."
+      ],
+      "transformation": "Add, remove, or vary only the independently irrelevant action or state component.",
+      "oracle": "The task-relevant terminal state and verdict remain unchanged.",
+      "prohibited_adaptations": [
+        "Calling a state mutation benign without a public contract.",
+        "Ignoring a changed task-relevant field.",
+        "Using the fixed implementation to define irrelevance."
+      ]
+    },
+    {
+      "id": "complete_item_validation",
+      "applicable_targets": ["agent response", "graded artifact"],
+      "preconditions": [
+        "The contract requires every submitted item or call to satisfy the same criterion.",
+        "Items can be varied independently while preserving response validity."
+      ],
+      "transformation": "Add, duplicate, permute, or invalidate one item while holding all other items fixed.",
+      "oracle": "Acceptance is invariant to benign cardinality changes and becomes rejection when any required item is invalid.",
+      "prohibited_adaptations": [
+        "Using a special item count from the historical fix.",
+        "Changing multiple item values in one diagnostic case.",
+        "Treating order as irrelevant when the contract makes it meaningful."
+      ]
+    },
+    {
+      "id": "invalid_input_non_repair",
+      "applicable_targets": ["agent response", "execution trace"],
+      "preconditions": [
+        "The public schema distinguishes the valid and invalid input types or structures.",
+        "The adapter is part of the evaluation path rather than model-facing prompt construction."
+      ],
+      "transformation": "Change one valid field into a schema-invalid value while retaining the surrounding response.",
+      "oracle": "The invalid response stays distinguishable and cannot become accepted through evaluator-side coercion.",
+      "prohibited_adaptations": [
+        "Inferring the invalid type from the fix.",
+        "Changing the prompt or model input.",
+        "Counting parser failure as correct rejection without a deterministic verdict."
+      ]
+    },
+    {
+      "id": "execution_isolation",
+      "applicable_targets": ["evaluator invocation context", "terminal state"],
+      "preconditions": [
+        "Two evaluations are contractually independent.",
+        "Each evaluation succeeds in a fresh process or isolated invocation."
+      ],
+      "transformation": "Execute the same evaluations sequentially in both orders within the supported worker boundary.",
+      "oracle": "Each verdict equals its isolated verdict regardless of order.",
+      "prohibited_adaptations": [
+        "Resetting undocumented global state between sequential cases.",
+        "Using process restart as the tested treatment.",
+        "Selecting colliding identifiers from the fix diff."
+      ]
+    },
+    {
+      "id": "environment_context_binding",
+      "applicable_targets": ["evaluator invocation context", "terminal state"],
+      "preconditions": [
+        "The task semantics are explicitly relative to the evaluated environment.",
+        "Host and target environment context can be varied independently."
+      ],
+      "transformation": "Change the target environment context while holding the grader host context fixed, then reverse the control.",
+      "oracle": "The verdict follows the documented target context and is invariant to irrelevant host context.",
+      "prohibited_adaptations": [
+        "Using wall-clock time without a frozen clock.",
+        "Calling host context irrelevant when the task specifies it.",
+        "Reading context-selection logic from the fix."
+      ]
+    },
+    {
+      "id": "equivalent_state_recovery",
+      "applicable_targets": ["graded artifact", "terminal state", "evaluator invocation context"],
+      "preconditions": [
+        "The primary helper artifact is optional or derivative.",
+        "An independently documented source exposes the same canonical state."
+      ],
+      "transformation": "Remove the optional helper artifact while preserving the equivalent canonical state source.",
+      "oracle": "Evaluation recovers the same state and verdict, or fails only when both equivalent sources are absent.",
+      "prohibited_adaptations": [
+        "Inventing a fallback not documented by the environment.",
+        "Writing the missing helper before evaluation.",
+        "Selecting the fallback path from the fix diff."
+      ]
+    }
+  ],
+  "heldout_policy": {
+    "minimum_lineages": 24,
+    "minimum_new_repositories": 2,
+    "repository_overlap_with_development": "forbidden",
+    "parent_packet_must_exclude": ["fix commit", "fix diff", "post-fix tests", "post-fix documentation"],
+    "template_instantiation_must_be_hashed_before_unblinding": true,
+    "failed_or_inapplicable_lineages_remain_in_denominator": true,
+    "paper_scale_claim_authorized": false
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "schema_version": "2.0",
+  "artifact_type": "grader_conform_v2_structural_preflight_audit",
+  "audited_at": "2026-07-28T12:59:38+09:00",
+  "outcome_blind": true,
+  "method_outcomes_observed": false,
+  "baseline_outcomes_observed": false,
+  "bindings": {
+    "preflight_contract_sha256": "ae63cc72da595b3347acde6af104e921aa803578056e781dea0cbd74a4ced691",
+    "reviewer_frame_sha256": "cefca0c1bd3b1ab7e91dea02e9d4d15ad811c8a2c6425ee11c79326e5faadd9b",
+    "source_freeze_sha256": "34be3285f8748780b93f640b03edc993e3ae737b06682c41a6de66f65d3806b5"
+  },
+  "recomputed_frame_diagnostics": {
+    "candidate_count": 178,
+    "empty_evidence_paths": 91,
+    "empty_parent_revision_test_paths": 58,
+    "empty_both": 23,
+    "identical_evaluator_path_signature_groups": 29,
+    "candidates_in_identical_evaluator_path_signature_groups": 85,
+    "same_parent_commit_groups": 7,
+    "candidates_in_same_parent_commit_groups": 18
+  },
+  "source_revision_audit": {
+    "source_count": 9,
+    "all_pinned_origins_heads_and_trees_match": true,
+    "all_178_parent_and_fix_commits_exist": true,
+    "parent_path_failures": [
+      {
+        "opaque_candidate_id": "v2cand_b2a817750d57e25b8e48",
+        "path": "src/inspect_evals/chembench/mae_scorer.py",
+        "reason": "The path is introduced by the fix commit and does not exist in the parent revision."
+      },
+      {
+        "opaque_candidate_id": "v2cand_d9f7c10c265f96e50131",
+        "path": "src/inspect_evals/frontier_cs/__init__.py",
+        "reason": "The path is introduced by the fix commit and does not exist in the parent revision."
+      },
+      {
+        "opaque_candidate_id": "v2cand_d9f7c10c265f96e50131",
+        "path": "src/inspect_evals/frontier_cs/dataset.py",
+        "reason": "The path is introduced by the fix commit and does not exist in the parent revision."
+      },
+      {
+        "opaque_candidate_id": "v2cand_d9f7c10c265f96e50131",
+        "path": "src/inspect_evals/frontier_cs/frontier_cs.py",
+        "reason": "The path is introduced by the fix commit and does not exist in the parent revision."
+      },
+      {
+        "opaque_candidate_id": "v2cand_d9f7c10c265f96e50131",
+        "path": "src/inspect_evals/frontier_cs/scorer.py",
+        "reason": "The path is introduced by the fix commit and does not exist in the parent revision."
+      }
+    ]
+  },
+  "contract_defects": [
+    {
+      "severity": "blocking",
+      "id": "individual_reviewer_required_to_decide_global_duplicate",
+      "finding": "The eligibility decision vocabulary includes ineligible_duplicate_root_cause while duplicate and root-cause evidence are forbidden to isolated per-candidate reviewers.",
+      "required_repair": "Separate per-candidate eligibility from a later blinded global root-cause adjudication."
+    },
+    {
+      "severity": "blocking",
+      "id": "reviewer_frame_is_linkable",
+      "finding": "frame_index, controller_record_sha256, and public commit identifiers make the reviewer frame directly linkable to adjacent controller and repository history.",
+      "required_repair": "Create isolated candidate packets without controller linkage and record an enforceable mount and network isolation receipt."
+    },
+    {
+      "severity": "blocking",
+      "id": "controls_not_instantiated",
+      "finding": "The protocol declares quotas for 36 controls but has no closed control universe, revision pairs, source evidence, deterministic oracle, adjudication registry, or frozen sample."
+    },
+    {
+      "severity": "blocking",
+      "id": "validator_trusts_self_assertions",
+      "finding": "The validator checks declared hashes and statuses but does not verify path existence, direct-parent relations, blob hashes, reviewer projection, gate-specific artifact schemas, control contamination, or execution isolation."
+    }
+  ],
+  "gate_summary": {
+    "declared_pass": 4,
+    "declared_blocked": 6,
+    "execution_authorized": false,
+    "independent_verdict": "blocked"
+  },
+  "bounded_preflight_feasibility": {
+    "required_but_missing": [
+      "356 isolated primary eligibility judgments plus disagreement resolution",
+      "global root-cause clustering and deduplication",
+      "a closed and dual-oracle-adjudicated 36-control registry",
+      "isolated candidate packets with source blobs and line spans",
+      "fault and control sampling receipts",
+      "arm runners, model and budget locks, and an external freeze receipt"
+    ],
+    "twelve_hour_closeout_possible": false
+  },
+  "audit_decision": "kill_before_any_study_arm_execution"
+}

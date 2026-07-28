@@ -1,6 +1,13 @@
 import { createHash } from "node:crypto";
 
 import { EventStream } from "./events.js";
+import {
+  candidateRawDeltaMetricKey,
+  isCandidateObjectiveProfileBinding,
+  objectiveComparatorForEffectCriterion,
+  signedRawDeltaTargetForEffectCriterion,
+  type CandidateObjectiveProfileBinding
+} from "./effectCriterion.js";
 import { LLMClient } from "./llm/client.js";
 import { RunContextMemory } from "./memory/runContextMemory.js";
 import { RunRecord } from "../types.js";
@@ -8,6 +15,26 @@ import { RunRecord } from "../types.js";
 export type ObjectiveDirection = "maximize" | "minimize";
 export type ObjectiveComparator = ">=" | ">" | "<=" | "<" | "==";
 export type ObjectiveEvaluationStatus = "met" | "not_met" | "observed" | "missing" | "unknown";
+export type ObjectiveMetricScale = "raw" | "proportion" | "percent" | "percentage_point";
+
+export interface ObjectiveMetricComparison {
+  baselineId: string;
+  candidateId: string;
+  metricKey?: string;
+}
+
+export interface ObjectiveResourceLimits {
+  runtimeRatioMax?: number;
+  memoryRatioMax?: number;
+}
+
+export interface ObjectiveMetricDeltaContract {
+  output_metric_key: string;
+  source_metric_key: string;
+  raw_delta_definition: "subject_minus_reference";
+  comparator: Exclude<ObjectiveComparator, "==">;
+  signed_target: number;
+}
 
 export interface ObjectiveMetricProfile {
   source: "llm" | "heuristic_fallback";
@@ -18,6 +45,14 @@ export interface ObjectiveMetricProfile {
   comparator?: ObjectiveComparator;
   targetValue?: number;
   targetDescription?: string;
+  unit?: string;
+  scale?: ObjectiveMetricScale;
+  targetUnit?: string;
+  targetScale?: ObjectiveMetricScale;
+  comparison?: ObjectiveMetricComparison;
+  resourceLimits?: ObjectiveResourceLimits;
+  candidate_contract?: CandidateObjectiveProfileBinding;
+  delta_contract?: ObjectiveMetricDeltaContract;
   analysisFocus: string[];
   paperEmphasis: string[];
   assumptions: string[];
@@ -32,6 +67,10 @@ export interface ObjectiveMetricEvaluation {
   direction?: ObjectiveDirection;
   comparator?: ObjectiveComparator;
   targetValue?: number;
+  unit?: string;
+  scale?: ObjectiveMetricScale;
+  targetUnit?: string;
+  targetScale?: ObjectiveMetricScale;
   observedValue?: number;
   status: ObjectiveEvaluationStatus;
   summary: string;
@@ -61,6 +100,14 @@ interface PartialObjectiveMetricProfile {
   comparator?: unknown;
   targetValue?: unknown;
   targetDescription?: unknown;
+  unit?: unknown;
+  scale?: unknown;
+  targetUnit?: unknown;
+  targetScale?: unknown;
+  comparison?: unknown;
+  resourceLimits?: unknown;
+  candidate_contract?: unknown;
+  delta_contract?: unknown;
   analysisFocus?: unknown;
   paperEmphasis?: unknown;
   assumptions?: unknown;
@@ -124,28 +171,17 @@ export async function resolveObjectiveMetricProfile(
 
 export function buildHeuristicObjectiveMetricProfile(rawObjectiveMetric: string): ObjectiveMetricProfile {
   const raw = rawObjectiveMetric.trim();
-  const normalized = raw.toLowerCase();
-  const relativeBaseline = inferRelativeBaselineObjective(raw, normalized);
-  const metricDef = detectMetricDefinition(normalized);
   const threshold = parseThreshold(raw);
-  const primaryMetric = relativeBaseline?.primaryMetric || metricDef?.primaryMetric;
-  const preferredMetricKeys = dedupe([
-    ...(relativeBaseline?.preferredMetricKeys || []),
-    ...(metricDef?.preferredMetricKeys || [])
-  ]);
-  const direction =
-    relativeBaseline?.direction || metricDef?.direction || inferDirectionFromComparator(threshold?.comparator);
-  // When a relative-baseline interpretation is available, its comparator and
-  // targetValue are semantically correct (delta comparison). The raw
-  // parseThreshold result would be an absolute number that makes no sense
-  // as a delta (e.g. 1.5 instead of 0.015).
-  const comparator = relativeBaseline?.comparator || threshold?.comparator;
-  const targetValue = relativeBaseline?.targetValue ?? threshold?.targetValue;
+  const declaredMetricKey = detectDeclaredMetricKey(raw);
+  const primaryMetric = declaredMetricKey;
+  const preferredMetricKeys = declaredMetricKey ? [declaredMetricKey] : [];
+  const direction = inferDirectionFromComparator(threshold?.comparator);
+  const comparator = threshold?.comparator;
+  const targetValue = threshold?.targetValue;
   const targetDescription =
-    relativeBaseline?.targetDescription ||
-    (typeof targetValue === "number" && comparator
+    typeof targetValue === "number" && comparator
       ? `${comparator} ${targetValue}`
-      : undefined);
+      : undefined;
 
   const analysisFocus: string[] = [];
   const paperEmphasis: string[] = [];
@@ -168,10 +204,28 @@ export function buildHeuristicObjectiveMetricProfile(rawObjectiveMetric: string)
     comparator,
     targetValue,
     targetDescription,
+    unit: threshold?.targetUnit,
+    scale: threshold?.targetScale,
+    targetUnit: threshold?.targetUnit,
+    targetScale: threshold?.targetScale,
     analysisFocus,
     paperEmphasis,
     assumptions: []
   };
+}
+
+function detectDeclaredMetricKey(text: string): string | undefined {
+  const matches = [
+    ...text.matchAll(/\b(?:metric|objective_metric)\s*[:=]\s*([a-z][a-z0-9]*(?:_[a-z0-9]+)*)\b/giu),
+    ...text.matchAll(/\b([a-z][a-z0-9]*(?:_[a-z0-9]+)*)\b\s*(?=>=|>|<=|<|==)/giu),
+    ...text.matchAll(/^\s*([a-z][a-z0-9]*(?:_[a-z0-9]+)*)\b\s+(?=at\s+least|more\s+than|greater\s+than|above|at\s+most|less\s+than|below|under|exactly|equal\s+to)/giu)
+  ];
+  const bareIdentifier = text.trim().match(/^([a-z][a-z0-9]*(?:_[a-z0-9]+)+)$/iu)?.[1];
+  const keys = dedupe([
+    ...matches.map((match) => match[1]),
+    ...(bareIdentifier ? [bareIdentifier] : [])
+  ]);
+  return keys.length === 1 ? keys[0] : undefined;
 }
 
 export function normalizeObjectiveMetricProfile(
@@ -179,37 +233,99 @@ export function normalizeObjectiveMetricProfile(
   rawObjectiveMetric: string
 ): ObjectiveMetricProfile {
   const fallback = buildHeuristicObjectiveMetricProfile(rawObjectiveMetric);
-  const relativeBaseline = inferRelativeBaselineObjective(rawObjectiveMetric, rawObjectiveMetric.trim().toLowerCase());
   const partial = input || {};
+  const primaryMetric = hasOwn(partial, "primaryMetric")
+    ? cleanString(partial.primaryMetric)
+    : fallback.primaryMetric;
+  const preferredMetricKeys = hasOwn(partial, "preferredMetricKeys")
+    ? dedupe(normalizeStringArray(partial.preferredMetricKeys))
+    : fallback.preferredMetricKeys;
+  const direction = hasOwn(partial, "direction")
+    ? normalizeDirection(partial.direction)
+    : fallback.direction;
+  const comparator = hasOwn(partial, "comparator")
+    ? normalizeComparator(partial.comparator)
+    : fallback.comparator;
+  const targetValue = hasOwn(partial, "targetValue")
+    ? normalizeNumber(partial.targetValue)
+    : fallback.targetValue;
+  const targetDescription = hasOwn(partial, "targetDescription")
+    ? cleanString(partial.targetDescription)
+    : fallback.targetDescription;
+  const unit = hasOwn(partial, "unit") ? cleanString(partial.unit) : fallback.unit;
+  const scale = hasOwn(partial, "scale") ? normalizeScale(partial.scale) : fallback.scale;
+  const targetUnit = hasOwn(partial, "targetUnit")
+    ? cleanString(partial.targetUnit)
+    : fallback.targetUnit;
+  const targetScale = hasOwn(partial, "targetScale")
+    ? normalizeScale(partial.targetScale)
+    : fallback.targetScale;
+  const comparison = hasOwn(partial, "comparison")
+    ? normalizeComparison(partial.comparison)
+    : fallback.comparison;
+  const resourceLimits = hasOwn(partial, "resourceLimits")
+    ? normalizeResourceLimits(partial.resourceLimits)
+    : fallback.resourceLimits;
+  const candidateContract = hasOwn(partial, "candidate_contract")
+    ? normalizeCandidateObjectiveContract(partial.candidate_contract)
+    : undefined;
+  const deltaContract = hasOwn(partial, "delta_contract")
+    ? normalizeObjectiveDeltaContract(partial.delta_contract, candidateContract)
+    : undefined;
+  if (candidateContract && !deltaContract) {
+    throw new Error("candidate_objective_delta_contract_missing");
+  }
+  if (deltaContract && !candidateContract) {
+    throw new Error("candidate_objective_profile_binding_missing");
+  }
+  const analysisFocus = hasOwn(partial, "analysisFocus")
+    ? normalizeStringArray(partial.analysisFocus)
+    : fallback.analysisFocus;
+  const paperEmphasis = hasOwn(partial, "paperEmphasis")
+    ? normalizeStringArray(partial.paperEmphasis)
+    : fallback.paperEmphasis;
+  const assumptions = hasOwn(partial, "assumptions")
+    ? normalizeStringArray(partial.assumptions)
+    : fallback.assumptions;
 
-  const primaryMetric = relativeBaseline?.primaryMetric || cleanString(partial.primaryMetric) || fallback.primaryMetric;
-  const preferredMetricKeys = dedupe([
-    ...(relativeBaseline?.preferredMetricKeys || []),
-    ...normalizeStringArray(partial.preferredMetricKeys),
-    ...fallback.preferredMetricKeys
-  ]);
-  const direction = relativeBaseline?.direction || normalizeDirection(partial.direction) || fallback.direction;
-  const comparator = relativeBaseline?.comparator || normalizeComparator(partial.comparator) || fallback.comparator;
-  const targetValue = relativeBaseline?.targetValue ?? normalizeNumber(partial.targetValue) ?? fallback.targetValue;
-  const targetDescription =
-    relativeBaseline?.targetDescription || cleanString(partial.targetDescription) || fallback.targetDescription;
+  if (candidateContract && rawObjectiveMetric.trim() !== candidateContract.objective_raw) {
+    throw new Error("candidate_objective_raw_mismatch");
+  }
+  const candidateMetricKey = candidateContract
+    ? candidateRawDeltaMetricKey(candidateContract.primary_metric)
+    : undefined;
+  const candidateComparison = candidateContract
+    ? {
+        baselineId: comparison?.baselineId || candidateContract.comparator,
+        candidateId: comparison?.candidateId || candidateContract.candidate_id,
+        metricKey: candidateContract.primary_metric
+      }
+    : comparison;
 
   return {
     source: partial.source === "llm" ? "llm" : fallback.source,
     raw: rawObjectiveMetric.trim(),
-    primaryMetric,
-    preferredMetricKeys: preferredMetricKeys.length > 0 ? preferredMetricKeys : fallback.preferredMetricKeys,
-    direction,
-    comparator,
-    targetValue,
+    primaryMetric: candidateMetricKey || primaryMetric,
+    preferredMetricKeys: candidateMetricKey
+      ? [candidateMetricKey]
+      : preferredMetricKeys.length > 0
+        ? preferredMetricKeys
+        : fallback.preferredMetricKeys,
+    direction: candidateContract?.metric_direction || direction,
+    comparator: deltaContract?.comparator || comparator,
+    targetValue: deltaContract?.signed_target ?? targetValue,
     targetDescription,
-    analysisFocus: normalizeStringArray(partial.analysisFocus).length > 0
-      ? normalizeStringArray(partial.analysisFocus)
-      : fallback.analysisFocus,
-    paperEmphasis: normalizeStringArray(partial.paperEmphasis).length > 0
-      ? normalizeStringArray(partial.paperEmphasis)
-      : fallback.paperEmphasis,
-    assumptions: normalizeStringArray(partial.assumptions)
+    unit: candidateContract?.metric_unit || unit,
+    scale: candidateContract?.metric_scale || scale,
+    targetUnit: candidateContract?.metric_unit || targetUnit,
+    targetScale: candidateContract?.effect_criterion.scale || targetScale,
+    comparison: candidateComparison,
+    resourceLimits,
+    candidate_contract: candidateContract,
+    delta_contract: deltaContract,
+    analysisFocus,
+    paperEmphasis,
+    assumptions
   };
 }
 
@@ -255,15 +371,14 @@ export function evaluateObjectiveMetric(
   profile: ObjectiveMetricProfile,
   rawObjectiveMetric: string
 ): ObjectiveMetricEvaluation {
-  const enrichedMetrics = synthesizeRelativeMetrics(metrics);
+  const enrichedMetrics = synthesizeRelativeMetrics(metrics, profile);
   const withPrimary = promotePrimaryMetric(enrichedMetrics);
   const flattened = flattenNumericMetrics(withPrimary);
-  const basePreferredKeys = dedupe([
+  const preferredKeys = dedupe([
     ...profile.preferredMetricKeys,
     ...(profile.primaryMetric ? [profile.primaryMetric] : [])
   ]);
-  const preferredKeys = prioritizePrimaryMetricRelativeKeys(enrichedMetrics, metrics, basePreferredKeys);
-  const relativeObjective = isRelativeObjectiveMetricRequest(preferredKeys, rawObjectiveMetric);
+  const relativeObjective = isRelativeObjectiveMetricRequest(profile, preferredKeys, rawObjectiveMetric);
   const matchableMetrics = relativeObjective
     ? flattened.filter((metric) => isRelativeMetricKey(metric.key))
     : flattened;
@@ -280,22 +395,8 @@ export function evaluateObjectiveMetric(
           matched: directPreferred
         }),
         metrics,
-        rawObjectiveMetric
-      );
-    }
-
-    const inferred = inferBestEffortMetricMatch(flattened, preferredKeys, rawObjectiveMetric);
-    if (inferred) {
-      return applyObjectiveRequirementChecks(
-        buildObjectiveEvaluation({
-          rawObjectiveMetric,
-          profile,
-          preferredKeys,
-          matched: inferred.metric,
-          summaryPrefix: inferred.summaryPrefix
-        }),
-        metrics,
-        rawObjectiveMetric
+        rawObjectiveMetric,
+        profile
       );
     }
     return {
@@ -306,6 +407,10 @@ export function evaluateObjectiveMetric(
       direction: profile.direction,
       comparator: profile.comparator,
       targetValue: profile.targetValue,
+      unit: profile.unit,
+      scale: profile.scale,
+      targetUnit: profile.targetUnit,
+      targetScale: profile.targetScale,
       status: preferredKeys.length > 0 ? "missing" : "unknown",
       summary:
         preferredKeys.length > 0
@@ -322,336 +427,330 @@ export function evaluateObjectiveMetric(
       matched
     }),
     metrics,
-    rawObjectiveMetric
+    rawObjectiveMetric,
+    profile
   );
 }
 
-const BASELINE_PATTERN = /baseline|single.pass|control|reference|vanilla/iu;
-const SYNTHESIZE_METRIC_KEYS = [
-  "accuracy_pass_at_1",
-  "accuracy",
-  "acc",
-  "f1",
-  "macro_f1",
-  "exact_match",
-  "pass_at_1",
-  "bleu",
-  "rouge",
-  "rouge_l",
-  "success_rate",
-  "mean_accuracy",
-  "primary_mean_accuracy",
-  "average_accuracy",
-  "mean_zero_shot_accuracy",
-  "zero_shot_accuracy",
-  "benchmark_task_a_accuracy",
-  "benchmark_task_b_accuracy"
-];
+interface ExplicitComparisonPair {
+  baselineId: string;
+  candidateId: string;
+  baselineRecord: Record<string, unknown>;
+  candidateRecord: Record<string, unknown>;
+  metricKey?: string;
+}
+
+interface ComparisonArtifact {
+  baselineId?: string;
+  candidateId?: string;
+  metricKey?: string;
+  outputMetricKey?: string;
+  baselineValue?: number;
+  candidateValue?: number;
+  delta?: number;
+  baselineRecord?: Record<string, unknown>;
+  candidateRecord?: Record<string, unknown>;
+}
 
 /**
- * Compute delta metrics from the `conditions` array in metrics.json.
- * For each known metric, synthesize `<metric>_delta_vs_baseline` = best_non_baseline - baseline.
- * Also handles the `baseline_metrics` + `routed_metrics` (or `*_metrics`) structure.
+ * Compute relative metrics only when one comparison pair is explicitly declared.
+ * Labels, row order, and observed performance never determine comparison roles.
  */
 export function synthesizeRelativeMetrics(
-  metrics: Record<string, unknown>
+  metrics: Record<string, unknown>,
+  profile?: ObjectiveMetricProfile
 ): Record<string, unknown> {
-  // Strategy 1: conditions array
-  const conditions = metrics.conditions;
-  if (Array.isArray(conditions) && conditions.length >= 2) {
-    const conditionRecords = conditions.filter(
-      (c: unknown): c is Record<string, unknown> =>
-        !!c && typeof c === "object" && !Array.isArray(c)
-    );
-    const baseline =
-      conditionRecords.find((record) => record.baseline === true || record.is_baseline === true) ||
-      conditionRecords.find((record) => baselineConditionScore(conditionArrayLabel(record), record) > 0);
-    if (baseline) {
-      const nonBaseline = conditionRecords.filter((c: unknown) => c !== baseline);
-      const enriched: Record<string, unknown> = { ...metrics };
-      for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-        const baseVal = getConditionMetricValue(baseline, metricKey);
-        if (baseVal === undefined) continue;
-        let bestDelta = -Infinity;
-        for (const cond of nonBaseline) {
-          if (!cond || typeof cond !== "object") continue;
-          const condRecord = cond as Record<string, unknown>;
-          const val = getConditionMetricValue(condRecord, metricKey);
-          if (val === undefined) continue;
-          const delta = val - baseVal;
-          if (delta > bestDelta) bestDelta = delta;
-        }
-        if (Number.isFinite(bestDelta)) {
-          enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-          enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
-          if (metricKey.includes("accuracy")) {
-            enriched.accuracy_delta_vs_baseline = bestDelta;
-            enriched.accuracy_improvement_over_baseline = bestDelta;
-          }
-        }
-      }
-      return enriched;
-    }
+  const artifact = resolveComparisonArtifact(metrics, profile);
+  const enriched: Record<string, unknown> = { ...metrics };
+  if (artifact?.metricKey && typeof artifact.delta === "number") {
+    addRelativeMetric(enriched, artifact.metricKey, artifact.delta, artifact.outputMetricKey);
+    return enriched;
   }
 
-  // Strategy 1b: conditions object map with nested evaluation payloads.
-  if (conditions && typeof conditions === "object" && !Array.isArray(conditions)) {
-    const conditionEntries = Object.entries(conditions as Record<string, unknown>).filter(
-      ([, value]) => value && typeof value === "object" && !Array.isArray(value)
-    ) as Array<[string, Record<string, unknown>]>;
-    if (conditionEntries.length >= 2) {
-      const baselineEntry = selectBaselineConditionEntry(conditionEntries);
-      if (baselineEntry) {
-        const [, baselineRecord] = baselineEntry;
-        const nonBaselineEntries = selectEligibleTreatmentConditionEntries(
-          conditionEntries.filter((entry) => entry !== baselineEntry)
-        );
-        const enriched: Record<string, unknown> = { ...metrics };
-        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-          const baseVal = getConditionMetricValue(baselineRecord, metricKey);
-          if (baseVal === undefined) continue;
-          let bestDelta = -Infinity;
-          for (const [, treatmentRecord] of nonBaselineEntries) {
-            const val = getConditionMetricValue(treatmentRecord, metricKey);
-            if (val === undefined) continue;
-            const delta = val - baseVal;
-            if (delta > bestDelta) bestDelta = delta;
-          }
-          if (Number.isFinite(bestDelta)) {
-            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
-            if (metricKey.includes("accuracy")) {
-              enriched.accuracy_delta_vs_baseline = bestDelta;
-              enriched.accuracy_improvement_over_baseline = bestDelta;
-            }
-          }
-        }
-        return enriched;
-      }
-    }
+  const pair = resolveExplicitComparisonPair(metrics, profile, artifact);
+  if (!pair) {
+    return metrics;
   }
 
-  // Strategy 2: baseline_metrics + routed_metrics (or other *_metrics objects)
-  const baselineObj = metrics.baseline_metrics;
-  if (baselineObj && typeof baselineObj === "object" && !Array.isArray(baselineObj)) {
-    const baseMetrics = baselineObj as Record<string, unknown>;
-    // Find the first non-baseline *_metrics object
-    const treatmentKeys = Object.keys(metrics).filter(
-      (k) =>
-        k.endsWith("_metrics") &&
-        k !== "baseline_metrics" &&
-        metrics[k] &&
-        typeof metrics[k] === "object" &&
-        !Array.isArray(metrics[k])
-    );
-    if (treatmentKeys.length > 0) {
-      const enriched: Record<string, unknown> = { ...metrics };
-      for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-        const baseVal = typeof baseMetrics[metricKey] === "number" ? (baseMetrics[metricKey] as number) : undefined;
-        if (baseVal === undefined) continue;
-        let bestDelta = -Infinity;
-        for (const tk of treatmentKeys) {
-          const treatObj = metrics[tk] as Record<string, unknown>;
-          const val = typeof treatObj[metricKey] === "number" ? (treatObj[metricKey] as number) : undefined;
-          if (val === undefined) continue;
-          const delta = val - baseVal;
-          if (delta > bestDelta) bestDelta = delta;
-        }
-        if (Number.isFinite(bestDelta)) {
-          enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-          enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
-        }
-      }
-      return enriched;
+  const baselineMetrics = collectComparableMetrics(pair.baselineRecord);
+  const candidateMetrics = collectComparableMetrics(pair.candidateRecord);
+  const metricKeys = pair.metricKey
+    ? [pair.metricKey]
+    : [...baselineMetrics.keys()].filter((key) => candidateMetrics.has(key));
+  for (const metricKey of metricKeys) {
+    const baselineValue = baselineMetrics.get(metricKey) ?? getConditionMetricValue(pair.baselineRecord, metricKey);
+    const candidateValue = candidateMetrics.get(metricKey) ?? getConditionMetricValue(pair.candidateRecord, metricKey);
+    if (baselineValue === undefined || candidateValue === undefined) {
+      continue;
+    }
+    addRelativeMetric(enriched, metricKey, candidateValue - baselineValue, artifact?.outputMetricKey);
+  }
+  return enriched;
+}
+
+function addRelativeMetric(
+  metrics: Record<string, unknown>,
+  metricKey: string,
+  delta: number,
+  outputMetricKey?: string
+): void {
+  const keys = outputMetricKey
+    ? [outputMetricKey]
+    : [`${metricKey}_delta_vs_baseline`, `${metricKey}_improvement_over_baseline`];
+  for (const key of keys) {
+    if (typeof metrics[key] !== "number") {
+      metrics[key] = delta;
     }
   }
+}
 
-  // Strategy 3: baseline_method + methods object
-  const baselineMethod = typeof metrics.baseline_method === "string" ? metrics.baseline_method : undefined;
-  const methodsObj = metrics.methods;
+function resolveComparisonArtifact(
+  metrics: Record<string, unknown>,
+  profile?: ObjectiveMetricProfile
+): ComparisonArtifact | undefined {
+  if (profile?.comparison) {
+    return {
+      baselineId: profile.comparison.baselineId,
+      candidateId: profile.comparison.candidateId,
+      metricKey: profile.comparison.metricKey
+    };
+  }
+  const singular = [metrics.objective_comparison, metrics.comparison]
+    .map(asOptionalRecord)
+    .filter((value): value is Record<string, unknown> => Boolean(value));
+  const plural = Array.isArray(metrics.comparisons)
+    ? metrics.comparisons
+        .map(asOptionalRecord)
+        .filter((value): value is Record<string, unknown> => Boolean(value))
+    : [];
+  const artifacts = [...singular, ...plural];
+  if (artifacts.length !== 1) {
+    return undefined;
+  }
+  return normalizeComparisonArtifact(artifacts[0]);
+}
+
+function normalizeComparisonArtifact(value: Record<string, unknown>): ComparisonArtifact {
+  const metricKey = firstCleanString(value.metric_key, value.metricKey);
+  const baselineValue = firstFiniteNumber(value.baseline_value, value.reference_value);
+  const candidateValue = firstFiniteNumber(value.candidate_value, value.treatment_value);
+  const explicitDelta = firstFiniteNumber(value.delta, value.delta_value, value.observed_delta);
+  return {
+    baselineId: firstCleanString(value.baseline_id, value.reference_id, value.comparator_id, value.baselineId),
+    candidateId: firstCleanString(value.candidate_id, value.treatment_id, value.candidateId),
+    metricKey,
+    outputMetricKey: firstCleanString(value.output_metric_key, value.delta_metric_key, value.outputMetricKey),
+    baselineValue,
+    candidateValue,
+    delta:
+      explicitDelta ??
+      (baselineValue !== undefined && candidateValue !== undefined ? candidateValue - baselineValue : undefined),
+    baselineRecord: asOptionalRecord(value.baseline) || asOptionalRecord(value.reference),
+    candidateRecord: asOptionalRecord(value.candidate) || asOptionalRecord(value.treatment)
+  };
+}
+
+function resolveExplicitComparisonPair(
+  metrics: Record<string, unknown>,
+  profile?: ObjectiveMetricProfile,
+  artifact = resolveComparisonArtifact(metrics, profile)
+): ExplicitComparisonPair | undefined {
+  if (artifact?.baselineRecord && artifact.candidateRecord) {
+    return {
+      baselineId: artifact.baselineId || "declared_baseline",
+      candidateId: artifact.candidateId || "declared_candidate",
+      baselineRecord: artifact.baselineRecord,
+      candidateRecord: artifact.candidateRecord,
+      metricKey: artifact.metricKey
+    };
+  }
   if (
-    baselineMethod &&
-    methodsObj &&
-    typeof methodsObj === "object" &&
-    !Array.isArray(methodsObj)
+    artifact?.metricKey &&
+    artifact.baselineValue !== undefined &&
+    artifact.candidateValue !== undefined
   ) {
-    const methodMetrics = methodsObj as Record<string, unknown>;
-    const baselineRecord = methodMetrics[baselineMethod];
-    if (baselineRecord && typeof baselineRecord === "object" && !Array.isArray(baselineRecord)) {
-      const nonBaselineEntries = Object.entries(methodMetrics).filter(
-        ([name, value]) =>
-          name !== baselineMethod &&
-          value &&
-          typeof value === "object" &&
-          !Array.isArray(value)
-      );
-      if (nonBaselineEntries.length > 0) {
-        const baseMetrics = baselineRecord as Record<string, unknown>;
-        const enriched: Record<string, unknown> = { ...metrics };
-        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-          const baseVal = typeof baseMetrics[metricKey] === "number" ? (baseMetrics[metricKey] as number) : undefined;
-          if (baseVal === undefined) continue;
-          let bestDelta = -Infinity;
-          for (const [, treatmentValue] of nonBaselineEntries) {
-            const treatMetrics = treatmentValue as Record<string, unknown>;
-            const val = typeof treatMetrics[metricKey] === "number" ? (treatMetrics[metricKey] as number) : undefined;
-            if (val === undefined) continue;
-            const delta = val - baseVal;
-            if (delta > bestDelta) bestDelta = delta;
-          }
-          if (Number.isFinite(bestDelta)) {
-            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
+    return {
+      baselineId: artifact.baselineId || "declared_baseline",
+      candidateId: artifact.candidateId || "declared_candidate",
+      baselineRecord: { [artifact.metricKey]: artifact.baselineValue },
+      candidateRecord: { [artifact.metricKey]: artifact.candidateValue },
+      metricKey: artifact.metricKey
+    };
+  }
+
+  const entries = comparisonEntriesFromMetrics(metrics);
+  if (artifact?.baselineId && artifact.candidateId) {
+    const baseline = findEntryById(entries, artifact.baselineId);
+    const candidate = findEntryById(entries, artifact.candidateId);
+    if (baseline && candidate && baseline !== candidate) {
+      return {
+        baselineId: baseline[0],
+        candidateId: candidate[0],
+        baselineRecord: baseline[1],
+        candidateRecord: candidate[1],
+        metricKey: artifact.metricKey
+      };
+    }
+    return undefined;
+  }
+
+  const referencePairs = entries.flatMap((candidate) => {
+    const referenceId = explicitReferenceId(candidate[1]);
+    const baseline = referenceId ? findEntryById(entries, referenceId) : undefined;
+    return baseline && baseline !== candidate ? [{ baseline, candidate }] : [];
+  });
+  if (referencePairs.length === 1) {
+    const [{ baseline, candidate }] = referencePairs;
+    return {
+      baselineId: baseline[0],
+      candidateId: candidate[0],
+      baselineRecord: baseline[1],
+      candidateRecord: candidate[1],
+      metricKey: artifact?.metricKey
+    };
+  }
+  if (referencePairs.length > 1) {
+    return undefined;
+  }
+
+  const baselines = entries.filter(([, record]) => hasExplicitBaselineRole(record));
+  const candidates = entries.filter(([, record]) => hasExplicitCandidateRole(record));
+  if (baselines.length !== 1 || candidates.length !== 1 || baselines[0] === candidates[0]) {
+    return undefined;
+  }
+  return {
+    baselineId: baselines[0][0],
+    candidateId: candidates[0][0],
+    baselineRecord: baselines[0][1],
+    candidateRecord: candidates[0][1],
+    metricKey: artifact?.metricKey
+  };
+}
+
+function comparisonEntriesFromMetrics(
+  metrics: Record<string, unknown>
+): Array<[string, Record<string, unknown>]> {
+  const entries: Array<[string, Record<string, unknown>]> = [];
+  for (const collectionKey of ["conditions", "results"]) {
+    const collection = metrics[collectionKey];
+    if (Array.isArray(collection)) {
+      collection.forEach((item, index) => {
+        const record = asOptionalRecord(item);
+        if (record) {
+          entries.push([recordIdentity(record) || `${collectionKey}_${index + 1}`, record]);
+        }
+      });
+    } else {
+      const recordMap = asOptionalRecord(collection);
+      if (recordMap) {
+        for (const [id, item] of Object.entries(recordMap)) {
+          const record = asOptionalRecord(item);
+          if (record) {
+            entries.push([id, record]);
           }
         }
-        return enriched;
       }
     }
   }
+  const methods = asOptionalRecord(metrics.methods);
+  if (methods) {
+    for (const [id, item] of Object.entries(methods)) {
+      const record = asOptionalRecord(item);
+      if (record) {
+        entries.push([id, record]);
+      }
+    }
+  }
+  const baselineMetrics = asOptionalRecord(metrics.baseline_metrics);
+  const candidateMetrics = asOptionalRecord(metrics.candidate_metrics);
+  if (baselineMetrics && candidateMetrics) {
+    entries.push(["baseline_metrics", { ...baselineMetrics, role: "baseline" }]);
+    entries.push(["candidate_metrics", { ...candidateMetrics, role: "candidate" }]);
+  }
+  return entries;
+}
 
-  // Strategy 4: recipe/condition result rows that emit
-  // `results: [{ recipe, kind, mean_zero_shot_accuracy, ... }]`.
-  const results = metrics.results;
-  if (Array.isArray(results) && results.length >= 2) {
-    const records = results.filter(
-      (item: unknown): item is Record<string, unknown> =>
-        !!item && typeof item === "object" && !Array.isArray(item)
+function findEntryById(
+  entries: Array<[string, Record<string, unknown>]>,
+  id: string
+): [string, Record<string, unknown>] | undefined {
+  const matches = entries.filter(([entryId, record]) => {
+    const identities = [entryId, recordIdentity(record)].filter(
+      (value): value is string => Boolean(value)
     );
-    const baseline = records.find((record) => isBaselineResultRecord(record));
-    if (baseline) {
-      const nonBaseline = records.filter((record) => record !== baseline);
-      if (nonBaseline.length > 0) {
-        const enriched: Record<string, unknown> = { ...metrics };
-        for (const metricKey of SYNTHESIZE_METRIC_KEYS) {
-          const baseVal = typeof baseline[metricKey] === "number" ? (baseline[metricKey] as number) : undefined;
-          if (baseVal === undefined) continue;
-          let bestDelta = -Infinity;
-          for (const record of nonBaseline) {
-            const val = typeof record[metricKey] === "number" ? (record[metricKey] as number) : undefined;
-            if (val === undefined) continue;
-            const delta = val - baseVal;
-            if (delta > bestDelta) bestDelta = delta;
-          }
-          if (Number.isFinite(bestDelta)) {
-            enriched[`${metricKey}_delta_vs_baseline`] = bestDelta;
-            enriched[`${metricKey}_improvement_over_baseline`] = bestDelta;
-            if (metricKey.includes("accuracy")) {
-              enriched.accuracy_delta_vs_baseline = bestDelta;
-              enriched.accuracy_improvement_over_baseline = bestDelta;
-            }
-          }
-        }
-        return enriched;
-      }
+    return identities.includes(id);
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+function recordIdentity(record: Record<string, unknown>): string | undefined {
+  return firstCleanString(record.id, record.condition_id, record.method_id, record.name);
+}
+
+function explicitReferenceId(record: Record<string, unknown>): string | undefined {
+  return firstCleanString(record.reference_id, record.baseline_id, record.comparator_id);
+}
+
+function hasExplicitBaselineRole(record: Record<string, unknown>): boolean {
+  if (record.baseline === true || record.is_baseline === true) {
+    return true;
+  }
+  const role = cleanString(record.role)?.toLowerCase();
+  return role === "baseline" || role === "comparator" || role === "control" || role === "reference";
+}
+
+function hasExplicitCandidateRole(record: Record<string, unknown>): boolean {
+  if (record.candidate === true || record.is_candidate === true) {
+    return true;
+  }
+  const role = cleanString(record.role)?.toLowerCase();
+  return role === "candidate" || role === "treatment" || role === "intervention";
+}
+
+function collectComparableMetrics(record: Record<string, unknown>): Map<string, number> {
+  const metrics = new Map<string, number>();
+  collectNumericRecordEntries(record, metrics);
+  for (const nestedKey of ["evaluation", "metrics", "summary"]) {
+    const nested = asOptionalRecord(record[nestedKey]);
+    if (nested) {
+      collectNumericRecordEntries(nested, metrics);
     }
   }
-
   return metrics;
 }
 
-function isBaselineResultRecord(record: Record<string, unknown>): boolean {
-  const labels = ["name", "recipe", "condition", "method", "kind", "label"]
-    .map((key) => record[key])
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  return BASELINE_PATTERN.test(labels);
-}
-
-function selectBaselineConditionEntry(
-  entries: Array<[string, Record<string, unknown>]>
-): [string, Record<string, unknown>] | undefined {
-  return entries
-    .map((entry, index) => ({
-      entry,
-      index,
-      score: baselineConditionScore(entry[0], entry[1])
-    }))
-    .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.entry;
-}
-
-function selectEligibleTreatmentConditionEntries(
-  entries: Array<[string, Record<string, unknown>]>
-): Array<[string, Record<string, unknown>]> {
-  const nonBaselineEntries = entries.filter(([name, record]) => !isBaselineConditionRecord(name, record));
-  return nonBaselineEntries.length > 0 ? nonBaselineEntries : entries;
-}
-
-function isBaselineConditionRecord(name: string, record: Record<string, unknown>): boolean {
-  if (baselineConditionScore(name, record) > 0) {
-    return true;
+function collectNumericRecordEntries(record: Record<string, unknown>, target: Map<string, number>): void {
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === "number" && Number.isFinite(value) && !target.has(key)) {
+      target.set(key, value);
+    }
   }
-  const labels = conditionLabelText(name, record);
-  return BASELINE_PATTERN.test(labels);
-}
-
-function baselineConditionScore(name: string, record: Record<string, unknown>): number {
-  const labels = conditionLabelText(name, record).toLowerCase();
-  const referenceBaseline =
-    /(?:^|[_\s-])(?:unmodified|pretrained|zero[_\s-]?shot|untuned|no[_\s-]?tuning|base)(?:[_\s-]|$)/u.test(labels);
-  const explicitBaseline = /(?:^|[_\s-])baseline(?:[_\s-]|$)/u.test(labels);
-  const tunedBaseline =
-    /(?:^|[_\s-])(?:tuned|locked|configured)[\w\s-]*baseline(?:[_\s-]|$)/u.test(labels) ||
-    /(?:^|[_\s-])baseline[\w\s-]*(?:tuned|locked|configured)(?:[_\s-]|$)/u.test(labels);
-
-  if (tunedBaseline && !referenceBaseline) {
-    return 4;
-  }
-  if (explicitBaseline && !referenceBaseline) {
-    return 3;
-  }
-  if (explicitBaseline) {
-    return 2;
-  }
-  return referenceBaseline ? 1 : 0;
-}
-
-function conditionLabelText(name: string, record: Record<string, unknown>): string {
-  const labels = [
-    name,
-    record.name,
-    record.condition,
-    record.condition_id,
-    record.condition_type,
-    record.type,
-    record.kind,
-    record.label
-  ]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
-  return labels;
-}
-
-function conditionArrayLabel(record: Record<string, unknown>): string {
-  return [
-    record.name,
-    record.condition_marker,
-    record.condition,
-    record.condition_id,
-    record.recipe,
-    record.method,
-    record.label
-  ]
-    .filter((value): value is string => typeof value === "string")
-    .join(" ");
 }
 
 function getConditionMetricValue(record: Record<string, unknown>, metricKey: string): number | undefined {
-  const direct = record[metricKey];
-  if (typeof direct === "number" && Number.isFinite(direct)) {
+  const direct = readNumericPath(record, metricKey.split("."));
+  if (direct !== undefined) {
     return direct;
   }
   for (const nestedKey of ["evaluation", "metrics", "summary"]) {
-    const nested = record[nestedKey];
-    if (!nested || typeof nested !== "object" || Array.isArray(nested)) {
-      continue;
-    }
-    const value = (nested as Record<string, unknown>)[metricKey];
-    if (typeof value === "number" && Number.isFinite(value)) {
+    const nested = asOptionalRecord(record[nestedKey]);
+    const value = nested ? readNumericPath(nested, metricKey.split(".")) : undefined;
+    if (value !== undefined) {
       return value;
     }
   }
   return undefined;
+}
+
+function readNumericPath(record: Record<string, unknown>, path: string[]): number | undefined {
+  let current: unknown = record;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "number" && Number.isFinite(current) ? current : undefined;
 }
 
 function buildObjectiveMetricSystemPrompt(): string {
@@ -673,14 +772,22 @@ function buildObjectiveMetricPrompt(run: RunRecord): string {
     '  "comparator": ">="|">"|"<="|"<"|"=="|null,',
     '  "targetValue": number|null,',
     '  "targetDescription": string|null,',
+    '  "unit": string|null,',
+    '  "scale": "raw"|"proportion"|"percent"|"percentage_point"|null,',
+    '  "targetUnit": string|null,',
+    '  "targetScale": "raw"|"proportion"|"percent"|"percentage_point"|null,',
+    '  "comparison": {"baselineId": string, "candidateId": string, "metricKey": string|null}|null,',
+    '  "resourceLimits": {"runtimeRatioMax": number|null, "memoryRatioMax": number|null}|null,',
     '  "analysisFocus": string[],',
     '  "paperEmphasis": string[],',
     '  "assumptions": string[]',
     "}",
     "",
     "Guidance:",
-    "- preferredMetricKeys should list plausible metrics.json keys.",
+    "- preferredMetricKeys must list declared metrics.json keys; do not rank any metric by default.",
     "- If the objective metric says things like 'under 200ms', extract comparator and targetValue.",
+    "- Preserve signed targets and declare units/scales when the text states them.",
+    "- Declare comparison IDs only when the objective explicitly identifies them.",
     "- If the objective metric is conceptual (e.g. reproducibility), keep the profile conservative and explain assumptions.",
     "",
     `Run topic: ${run.topic}`,
@@ -711,7 +818,7 @@ function parseObjectiveMetricProfileResponse(
     throw new Error("Objective metric profile JSON must decode to an object.");
   }
 
-  return normalizeObjectiveMetricProfile(parsed as PartialObjectiveMetricProfile, objectiveMetric);
+  return parsed as Partial<ObjectiveMetricProfile>;
 }
 
 function extractJsonObject(raw: string): string | undefined {
@@ -804,27 +911,6 @@ function findMatchingMetric(
   return undefined;
 }
 
-function prioritizePrimaryMetricRelativeKeys(
-  enrichedMetrics: Record<string, unknown>,
-  originalMetrics: Record<string, unknown>,
-  preferredKeys: string[]
-): string[] {
-  const primaryMetric = typeof originalMetrics.primary_metric === "string"
-    ? originalMetrics.primary_metric.trim()
-    : "";
-  if (!primaryMetric || !preferredKeys.some((key) => /(?:^|_)accuracy(?:_|$)/iu.test(key))) {
-    return preferredKeys;
-  }
-  const scopedKeys = [
-    `${primaryMetric}_delta_vs_baseline`,
-    `${primaryMetric}_improvement_over_baseline`
-  ].filter((key) => typeof enrichedMetrics[key] === "number");
-  if (scopedKeys.length === 0) {
-    return preferredKeys;
-  }
-  return dedupe([...scopedKeys, ...preferredKeys]);
-}
-
 function buildObjectiveEvaluation(input: {
   rawObjectiveMetric: string;
   profile: ObjectiveMetricProfile;
@@ -833,19 +919,27 @@ function buildObjectiveEvaluation(input: {
   summaryPrefix?: string;
 }): ObjectiveMetricEvaluation {
   if (input.profile.comparator && typeof input.profile.targetValue === "number") {
-    let effectiveTarget = input.profile.targetValue;
-
-    // Plausibility guard: if the target exceeds 1.0 but the observed metric
-    // is on a 0–1 scale, the target was likely specified in percentage-point
-    // units. Rescale it to match the observed proportion scale.
-    if (
-      effectiveTarget > 1 &&
-      Math.abs(input.matched.value) <= 1 &&
-      (input.profile.comparator === ">=" || input.profile.comparator === ">")
-    ) {
-      effectiveTarget = effectiveTarget / 100;
+    const targetResolution = resolveComparableTarget(input.profile);
+    if (!targetResolution.ok) {
+      return {
+        rawObjectiveMetric: input.rawObjectiveMetric,
+        profileSource: input.profile.source,
+        primaryMetric: input.profile.primaryMetric,
+        preferredMetricKeys: input.preferredKeys,
+        matchedMetricKey: input.matched.key,
+        direction: input.profile.direction,
+        comparator: input.profile.comparator,
+        targetValue: input.profile.targetValue,
+        unit: input.profile.unit,
+        scale: input.profile.scale,
+        targetUnit: input.profile.targetUnit,
+        targetScale: input.profile.targetScale,
+        observedValue: input.matched.value,
+        status: "missing",
+        summary: targetResolution.summary
+      };
     }
-
+    const effectiveTarget = targetResolution.value;
     const met = compareObjectiveValue(input.matched.value, input.profile.comparator, effectiveTarget);
     const baseSummary = met
       ? `Objective metric met: ${input.matched.key}=${input.matched.value} ${input.profile.comparator} ${effectiveTarget}.`
@@ -859,6 +953,10 @@ function buildObjectiveEvaluation(input: {
       direction: input.profile.direction,
       comparator: input.profile.comparator,
       targetValue: effectiveTarget,
+      unit: input.profile.unit,
+      scale: input.profile.scale,
+      targetUnit: input.profile.targetUnit,
+      targetScale: input.profile.targetScale,
       observedValue: input.matched.value,
       status: met ? "met" : "not_met",
       summary: input.summaryPrefix ? `${input.summaryPrefix} ${baseSummary}` : baseSummary
@@ -875,24 +973,119 @@ function buildObjectiveEvaluation(input: {
     direction: input.profile.direction,
     comparator: input.profile.comparator,
     targetValue: input.profile.targetValue,
+    unit: input.profile.unit,
+    scale: input.profile.scale,
+    targetUnit: input.profile.targetUnit,
+    targetScale: input.profile.targetScale,
     observedValue: input.matched.value,
     status: "observed",
     summary: input.summaryPrefix ? `${input.summaryPrefix} ${baseSummary}` : baseSummary
   };
 }
 
+function resolveComparableTarget(
+  profile: ObjectiveMetricProfile
+): { ok: true; value: number } | { ok: false; summary: string } {
+  const targetValue = profile.targetValue as number;
+  if (profile.targetUnit && !profile.unit) {
+    return {
+      ok: false,
+      summary: `Objective target unit "${profile.targetUnit}" cannot be aligned without an observed metric unit.`
+    };
+  }
+  if (profile.targetUnit && profile.unit && normalizeUnit(profile.targetUnit) !== normalizeUnit(profile.unit)) {
+    const converted = convertUnit(targetValue, profile.targetUnit, profile.unit);
+    if (converted === undefined) {
+      return {
+        ok: false,
+        summary: `Objective target unit "${profile.targetUnit}" is incompatible with metric unit "${profile.unit}".`
+      };
+    }
+    const scaled = convertScale(converted, profile.targetScale, profile.scale);
+    if (profile.targetScale && profile.scale && scaled === undefined) {
+      return {
+        ok: false,
+        summary: `Objective target scale "${profile.targetScale}" is incompatible with metric scale "${profile.scale}".`
+      };
+    }
+    return { ok: true, value: scaled ?? converted };
+  }
+  if (profile.targetScale && !profile.scale) {
+    return {
+      ok: false,
+      summary: `Objective target scale "${profile.targetScale}" cannot be aligned without an observed metric scale.`
+    };
+  }
+  const scaled = convertScale(targetValue, profile.targetScale, profile.scale);
+  if (profile.targetScale && profile.scale && scaled === undefined) {
+    return {
+      ok: false,
+      summary: `Objective target scale "${profile.targetScale}" is incompatible with metric scale "${profile.scale}".`
+    };
+  }
+  return { ok: true, value: scaled ?? targetValue };
+}
+
+function convertScale(
+  value: number,
+  from: ObjectiveMetricScale | undefined,
+  to: ObjectiveMetricScale | undefined
+): number | undefined {
+  if (!from || !to || from === to || from === "raw" || to === "raw") {
+    return from === "raw" && to && to !== "raw" || to === "raw" && from && from !== "raw"
+      ? undefined
+      : value;
+  }
+  const fromHundred = from === "percent" || from === "percentage_point";
+  const toHundred = to === "percent" || to === "percentage_point";
+  if (fromHundred && to === "proportion") {
+    return value / 100;
+  }
+  if (from === "proportion" && toHundred) {
+    return value * 100;
+  }
+  return fromHundred && toHundred ? value : undefined;
+}
+
+function convertUnit(value: number, from: string, to: string): number | undefined {
+  const source = normalizeUnit(from);
+  const target = normalizeUnit(to);
+  if (source === target) {
+    return value;
+  }
+  if (source === "s" && target === "ms") {
+    return value * 1000;
+  }
+  if (source === "ms" && target === "s") {
+    return value / 1000;
+  }
+  return undefined;
+}
+
+function normalizeUnit(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (["millisecond", "milliseconds", "msec", "ms"].includes(normalized)) {
+    return "ms";
+  }
+  if (["second", "seconds", "sec", "s"].includes(normalized)) {
+    return "s";
+  }
+  return normalized;
+}
+
 function applyObjectiveRequirementChecks(
   evaluation: ObjectiveMetricEvaluation,
   metrics: Record<string, unknown>,
-  rawObjectiveMetric: string
+  rawObjectiveMetric: string,
+  profile: ObjectiveMetricProfile
 ): ObjectiveMetricEvaluation {
-  const requirements = collectObjectiveRequirements(metrics, rawObjectiveMetric, evaluation);
+  const requirements = collectObjectiveRequirements(metrics, rawObjectiveMetric, profile);
   if (requirements.length === 0) {
     return evaluation;
   }
 
   let status = evaluation.status;
-  if (status === "met") {
+  if (status === "met" || status === "observed") {
     if (requirements.some((item) => item.status === "not_met")) {
       status = "not_met";
     } else if (requirements.some((item) => item.status === "missing")) {
@@ -908,66 +1101,18 @@ function applyObjectiveRequirementChecks(
   };
 }
 
-function inferBestEffortMetricMatch(
-  metrics: Array<{ key: string; value: number }>,
+function isRelativeObjectiveMetricRequest(
+  profile: ObjectiveMetricProfile,
   preferredKeys: string[],
   rawObjectiveMetric: string
-): {
-  metric: { key: string; value: number };
-  summaryPrefix: string;
-} | undefined {
-  if (metrics.length === 0) {
-    return undefined;
+): boolean {
+  if (preferredKeys.some(isRelativeMetricKey) || profile.comparison) {
+    return true;
   }
-  const relativeObjective = isRelativeObjectiveMetricRequest(preferredKeys, rawObjectiveMetric);
-  const candidateMetrics = relativeObjective
-    ? metrics.filter((metric) => isRelativeMetricKey(metric.key))
-    : metrics;
-  const objectiveTokens = tokenizeMetricText(rawObjectiveMetric).filter((token) => !GENERIC_OBJECTIVE_TOKENS.has(token));
-  if (candidateMetrics.length === 0) {
-    if (preferredKeys.length === 0 && metrics.length === 1 && objectiveTokens.length === 0) {
-      return {
-        metric: metrics[0],
-        summaryPrefix: `Best-effort objective match inferred from the sole numeric metric "${metrics[0].key}".`
-      };
-    }
-    return undefined;
+  if (profile.source !== "heuristic_fallback") {
+    return false;
   }
-
-  const scored = candidateMetrics
-    .map((metric) => {
-      const metricTokens = tokenizeMetricText(metric.key);
-      const sharedTokens = metricTokens.filter((token) => objectiveTokens.includes(token));
-      return {
-        metric,
-        sharedTokens,
-        score: sharedTokens.length
-      };
-    })
-    .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.metric.key.localeCompare(right.metric.key));
-
-  const top = scored[0];
-  const runnerUp = scored[1];
-  if (top && top.score > (runnerUp?.score ?? 0)) {
-    return {
-      metric: top.metric,
-      summaryPrefix: `Best-effort objective match inferred from overlapping metric terms (${top.sharedTokens.join(", ")}).`
-    };
-  }
-
-  if (!relativeObjective && preferredKeys.length === 0 && metrics.length === 1) {
-    return {
-      metric: metrics[0],
-      summaryPrefix: `Best-effort objective match inferred from the sole numeric metric "${metrics[0].key}".`
-    };
-  }
-
-  return undefined;
-}
-
-function isRelativeObjectiveMetricRequest(preferredKeys: string[], rawObjectiveMetric: string): boolean {
-  const text = `${preferredKeys.join(" ")} ${rawObjectiveMetric}`.toLowerCase();
+  const text = rawObjectiveMetric.toLowerCase();
   return /\b(delta|improvement|improve|gain|lift)\b/u.test(text) || /\b(vs|versus|over)\s+(?:a\s+|the\s+)?baseline\b/u.test(text);
 }
 
@@ -978,32 +1123,6 @@ function isRelativeMetricKey(key: string): boolean {
 
 function normalizeMetricKey(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
-}
-
-const GENERIC_OBJECTIVE_TOKENS = new Set([
-  "overall",
-  "improvement",
-  "metric",
-  "metrics",
-  "objective",
-  "target",
-  "result",
-  "results",
-  "performance",
-  "primary",
-  "main",
-  "score",
-  "scores",
-  "success"
-]);
-
-function tokenizeMetricText(value: string): string[] {
-  return value
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/g)
-    .map((token) => token.trim())
-    .filter((token) => token.length > 1);
 }
 
 function compareObjectiveValue(
@@ -1027,201 +1146,62 @@ function compareObjectiveValue(
   }
 }
 
-function detectMetricDefinition(text: string): {
-  primaryMetric?: string;
-  preferredMetricKeys: string[];
-  direction?: ObjectiveDirection;
-} | undefined {
-  const defs: Array<{
-    pattern: RegExp;
-    primaryMetric: string;
-    preferredMetricKeys: string[];
-    direction: ObjectiveDirection;
-  }> = [
-    { pattern: /\baccuracy\b|\bacc\b/iu, primaryMetric: "accuracy", preferredMetricKeys: ["accuracy", "acc"], direction: "maximize" },
-    { pattern: /\bf1(?:[-_\s]?score)?\b/iu, primaryMetric: "f1", preferredMetricKeys: ["f1", "f1_score"], direction: "maximize" },
-    { pattern: /\bprecision\b/iu, primaryMetric: "precision", preferredMetricKeys: ["precision"], direction: "maximize" },
-    { pattern: /\brecall\b/iu, primaryMetric: "recall", preferredMetricKeys: ["recall"], direction: "maximize" },
-    { pattern: /\bloss\b/iu, primaryMetric: "loss", preferredMetricKeys: ["loss", "eval_loss"], direction: "minimize" },
-    { pattern: /\blatency\b|\bresponse time\b|지연/u, primaryMetric: "latency", preferredMetricKeys: ["latency", "latency_ms", "response_time_ms"], direction: "minimize" },
-    { pattern: /\bthroughput\b/iu, primaryMetric: "throughput", preferredMetricKeys: ["throughput", "samples_per_sec"], direction: "maximize" },
-    { pattern: /\bexact match\b|\bem\b/iu, primaryMetric: "exact_match", preferredMetricKeys: ["exact_match", "em"], direction: "maximize" },
-    { pattern: /\bbleu\b/iu, primaryMetric: "bleu", preferredMetricKeys: ["bleu"], direction: "maximize" },
-    { pattern: /\brouge\b/iu, primaryMetric: "rouge", preferredMetricKeys: ["rouge", "rouge_l"], direction: "maximize" },
-    { pattern: /\bsuccess rate\b|성공률/u, primaryMetric: "success_rate", preferredMetricKeys: ["success_rate", "successRate"], direction: "maximize" },
-    { pattern: /\brobustness\b|강건/u, primaryMetric: "robustness", preferredMetricKeys: ["robustness", "robustness_score"], direction: "maximize" },
-    { pattern: /\breproducibility\b|재현/u, primaryMetric: "reproducibility", preferredMetricKeys: ["reproducibility", "reproducibility_score"], direction: "maximize" }
-  ];
-
-  for (const def of defs) {
-    if (def.pattern.test(text)) {
-      return {
-        primaryMetric: def.primaryMetric,
-        preferredMetricKeys: def.preferredMetricKeys,
-        direction: def.direction
-      };
-    }
-  }
-  return undefined;
-}
-
-function inferRelativeBaselineObjective(
-  rawObjectiveMetric: string,
-  normalized: string
-): {
-  primaryMetric?: string;
-  preferredMetricKeys: string[];
-  direction: ObjectiveDirection;
+function parseThreshold(text: string): {
   comparator: ObjectiveComparator;
   targetValue: number;
-  targetDescription: string;
+  targetUnit?: string;
+  targetScale?: ObjectiveMetricScale;
 } | undefined {
-  const indicatesImprovement =
-    /\b(improv(?:e|ement|ing)?|outperform|beat|better|higher|exceed|gain)\b/iu.test(rawObjectiveMetric) ||
-    /\bimprov(?:e|ement|ing)?\b/iu.test(normalized) ||
-    // "+X.Y" with a plus sign inherently indicates improvement
-    /\+\d+(?:\.\d+)?/.test(rawObjectiveMetric) ||
-    // "X points/pp over" inherently indicates a delta comparison
-    /\d+\s*(?:\w+\s+)?(?:points?|pp)\s+(?:over|above|beyond)\b/iu.test(rawObjectiveMetric);
-  const indicatesBaselineComparison =
-    /\b(over|vs\.?|versus|than|relative to|against)\b/iu.test(rawObjectiveMetric) ||
-    /\bbaseline\b/iu.test(rawObjectiveMetric) ||
-    /\blogistic regression\b/iu.test(rawObjectiveMetric);
-  if (!indicatesImprovement || !indicatesBaselineComparison) {
-    return undefined;
-  }
-
-  const mentionsMacroF1 = /\bmacro[-_\s]?f1\b|\bf1\b/iu.test(rawObjectiveMetric);
-  const mentionsAccuracy = /\baccuracy\b|\bacc\b/iu.test(rawObjectiveMetric);
-  const mentionsLogreg = /\blogistic regression\b|\blogreg\b/iu.test(rawObjectiveMetric);
-  if (!mentionsMacroF1 && !mentionsAccuracy) {
-    return undefined;
-  }
-
-  if (mentionsMacroF1 && mentionsLogreg) {
-    return {
-      primaryMetric: "macro_f1_delta_vs_logreg",
-      preferredMetricKeys: [
-        "macro_f1_delta_vs_logreg",
-        "mean_macro_f1_improvement_over_logreg",
-        "mean_delta_vs_logreg",
-        "delta_vs_logreg",
-        "value"
-      ],
-      direction: "maximize",
-      comparator: ">",
-      targetValue: 0,
-      targetDescription: "> 0 relative to the logistic regression baseline"
-    };
-  }
-
-  if (mentionsAccuracy && mentionsLogreg) {
-    return {
-      primaryMetric: "accuracy_delta_vs_logreg",
-      preferredMetricKeys: [
-        "accuracy_delta_vs_logreg",
-        "mean_accuracy_improvement_over_logreg",
-        "mean_delta_vs_logreg",
-        "delta_vs_logreg",
-        "value"
-      ],
-      direction: "maximize",
-      comparator: ">",
-      targetValue: 0,
-      targetDescription: "> 0 relative to the logistic regression baseline"
-    };
-  }
-
-  // General accuracy + any baseline (non-logreg)
-  if (mentionsAccuracy) {
-    const deltaAmount = parseDeltaAmount(rawObjectiveMetric);
-    const targetVal = deltaAmount ?? 0;
-    return {
-      primaryMetric: "accuracy_delta_vs_baseline",
-      preferredMetricKeys: [
-        "accuracy_delta_vs_baseline",
-        "accuracy_pass_at_1_delta_vs_baseline",
-        "accuracy_improvement_over_baseline",
-        "accuracy_pass_at_1_improvement_over_baseline",
-        "improvement_over_baseline",
-        "delta_vs_baseline",
-        "value"
-      ],
-      direction: "maximize",
-      comparator: deltaAmount !== undefined ? ">=" : ">",
-      targetValue: targetVal,
-      targetDescription:
-        deltaAmount !== undefined
-          ? `>= ${targetVal} improvement over baseline`
-          : "> 0 relative to baseline"
-    };
-  }
-
-  // General macro-F1 + any baseline (non-logreg)
-  if (mentionsMacroF1) {
-    const deltaAmount = parseDeltaAmount(rawObjectiveMetric);
-    const targetVal = deltaAmount ?? 0;
-    return {
-      primaryMetric: "macro_f1_delta_vs_baseline",
-      preferredMetricKeys: [
-        "macro_f1_delta_vs_baseline",
-        "f1_delta_vs_baseline",
-        "macro_f1_improvement_over_baseline",
-        "f1_improvement_over_baseline",
-        "improvement_over_baseline",
-        "delta_vs_baseline",
-        "value"
-      ],
-      direction: "maximize",
-      comparator: deltaAmount !== undefined ? ">=" : ">",
-      targetValue: targetVal,
-      targetDescription:
-        deltaAmount !== undefined
-          ? `>= ${targetVal} improvement over baseline`
-          : "> 0 relative to baseline"
-    };
-  }
-
-  return undefined;
-}
-
-/**
- * Parse a delta amount from text like "+1.5 accuracy points", "1.5pp",
- * "1.5 percentage points". Converts percentage-point notation to 0–1 proportion.
- */
-function parseDeltaAmount(text: string): number | undefined {
-  const pointsMatch = text.match(
-    /([+-]?\d+(?:\.\d+)?)\s*(?:accuracy\s+)?(?:points?|pp|percentage\s+points?)\b/iu
-  );
-  if (pointsMatch) {
-    return Math.abs(Number(pointsMatch[1])) / 100;
-  }
-  return undefined;
-}
-
-function parseThreshold(text: string): { comparator: ObjectiveComparator; targetValue: number } | undefined {
+  const number = "([+-]?\\d+(?:\\.\\d+)?)";
   const patterns: Array<[RegExp, ObjectiveComparator]> = [
-    [/(?:at\s+least|greater\s+than\s+or\s+equal\s+to|no\s+less\s+than|이상)\s*(\d+(?:\.\d+)?)/iu, ">="],
-    [/(?:more\s+than|greater\s+than|above|초과)\s*(\d+(?:\.\d+)?)/iu, ">"],
-    [/(?:at\s+most|less\s+than\s+or\s+equal\s+to|no\s+more\s+than|이하)\s*(\d+(?:\.\d+)?)/iu, "<="],
-    [/(?:less\s+than|below|under|미만)\s*(\d+(?:\.\d+)?)/iu, "<"],
-    [/(?:exactly|equal\s+to|같은)\s*(\d+(?:\.\d+)?)/iu, "=="],
-    [/>=\s*(\d+(?:\.\d+)?)/u, ">="],
-    [/>+\s*(\d+(?:\.\d+)?)/u, ">"],
-    [/<=\s*(\d+(?:\.\d+)?)/u, "<="],
-    [/<\s*(\d+(?:\.\d+)?)/u, "<"]
+    [new RegExp(`(?:at\\s+least|greater\\s+than\\s+or\\s+equal\\s+to|no\\s+less\\s+than|이상)\\s*${number}`, "iu"), ">="],
+    [new RegExp(`(?:more\\s+than|greater\\s+than|above|초과)\\s*${number}`, "iu"), ">"],
+    [new RegExp(`(?:at\\s+most|less\\s+than\\s+or\\s+equal\\s+to|no\\s+more\\s+than|이하)\\s*${number}`, "iu"), "<="],
+    [new RegExp(`(?:less\\s+than|below|under|미만)\\s*${number}`, "iu"), "<"],
+    [new RegExp(`(?:exactly|equal\\s+to|같은)\\s*${number}`, "iu"), "=="],
+    [new RegExp(`>=\\s*${number}`, "u"), ">="],
+    [new RegExp(`>\\s*${number}`, "u"), ">"],
+    [new RegExp(`<=\\s*${number}`, "u"), "<="],
+    [new RegExp(`<\\s*${number}`, "u"), "<"]
   ];
 
-  for (const [pattern, comparator] of patterns) {
-    const match = text.match(pattern);
-    if (match) {
-      return {
+  const matches = patterns.flatMap(([pattern, comparator]) => {
+    const globalPattern = new RegExp(pattern.source, pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`);
+    return [...text.matchAll(globalPattern)].map((match) => ({
         comparator,
-        targetValue: Number(match[1])
-      };
-    }
+        targetValue: Number(match[1]),
+        ...parseExplicitTargetUnit(text.slice((match.index || 0) + match[0].length))
+      }));
+  });
+  const uniqueMatches = matches.filter((candidate, index) =>
+    matches.findIndex((other) =>
+      other.comparator === candidate.comparator &&
+      other.targetValue === candidate.targetValue &&
+      other.targetUnit === candidate.targetUnit &&
+      other.targetScale === candidate.targetScale
+    ) === index
+  );
+  if (uniqueMatches.length === 1) {
+    return uniqueMatches[0];
   }
   return undefined;
+}
+
+function parseExplicitTargetUnit(suffix: string): { targetUnit?: string; targetScale?: ObjectiveMetricScale } {
+  const unit = suffix
+    .trim()
+    .match(/^(percentage\s+points?|pp|%|percent(?:age)?|unitless|milliseconds?|ms|seconds?|s)(?:\b|$)/iu)?.[1];
+  if (!unit) {
+    return {};
+  }
+  const normalized = unit.toLowerCase();
+  if (normalized === "%" || normalized.startsWith("percent")) {
+    return { targetScale: normalized.startsWith("percentage point") ? "percentage_point" : "percent" };
+  }
+  if (normalized === "pp") {
+    return { targetScale: "percentage_point" };
+  }
+  return { targetUnit: normalized };
 }
 
 function inferDirectionFromComparator(comparator: ObjectiveComparator | undefined): ObjectiveDirection | undefined {
@@ -1250,6 +1230,143 @@ function normalizeNumber(value: unknown): number | undefined {
   return Number.isFinite(num) ? num : undefined;
 }
 
+function normalizeScale(value: unknown): ObjectiveMetricScale | undefined {
+  return value === "raw" || value === "proportion" || value === "percent" || value === "percentage_point"
+    ? value
+    : undefined;
+}
+
+function normalizeComparison(value: unknown): ObjectiveMetricComparison | undefined {
+  const record = asOptionalRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const baselineId = firstCleanString(record.baselineId, record.baseline_id, record.referenceId, record.reference_id);
+  const candidateId = firstCleanString(record.candidateId, record.candidate_id, record.treatmentId, record.treatment_id);
+  if (!baselineId || !candidateId || baselineId === candidateId) {
+    return undefined;
+  }
+  return {
+    baselineId,
+    candidateId,
+    metricKey: firstCleanString(record.metricKey, record.metric_key)
+  };
+}
+
+function normalizeResourceLimits(value: unknown): ObjectiveResourceLimits | undefined {
+  const record = asOptionalRecord(value);
+  if (!record) {
+    return undefined;
+  }
+  const runtimeRatioMax = firstPositiveNumber(
+    record.runtimeRatioMax,
+    record.runtime_ratio_max,
+    record.max_runtime_ratio
+  );
+  const memoryRatioMax = firstPositiveNumber(
+    record.memoryRatioMax,
+    record.memory_ratio_max,
+    record.max_memory_ratio
+  );
+  return runtimeRatioMax !== undefined || memoryRatioMax !== undefined
+    ? { runtimeRatioMax, memoryRatioMax }
+    : undefined;
+}
+
+function normalizeCandidateObjectiveContract(
+  value: unknown
+): CandidateObjectiveProfileBinding | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!isCandidateObjectiveProfileBinding(value)) {
+    throw new Error("candidate_objective_profile_binding_invalid");
+  }
+  return {
+    ...value,
+    effect_criterion: { ...value.effect_criterion }
+  };
+}
+
+function normalizeObjectiveDeltaContract(
+  value: unknown,
+  binding: CandidateObjectiveProfileBinding | undefined
+): ObjectiveMetricDeltaContract | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  const record = asOptionalRecord(value);
+  if (!record || !binding) {
+    throw new Error("candidate_objective_delta_contract_invalid");
+  }
+  const expected: ObjectiveMetricDeltaContract = {
+    output_metric_key: candidateRawDeltaMetricKey(binding.primary_metric),
+    source_metric_key: binding.primary_metric,
+    raw_delta_definition: "subject_minus_reference",
+    comparator: objectiveComparatorForEffectCriterion(
+      binding.metric_direction,
+      binding.effect_criterion
+    ),
+    signed_target: signedRawDeltaTargetForEffectCriterion(
+      binding.metric_direction,
+      binding.effect_criterion
+    )
+  };
+  const knownFields = new Set([
+    "output_metric_key",
+    "source_metric_key",
+    "raw_delta_definition",
+    "comparator",
+    "signed_target"
+  ]);
+  const valid =
+    Object.keys(record).every((key) => knownFields.has(key))
+    && record.output_metric_key === expected.output_metric_key
+    && record.source_metric_key === expected.source_metric_key
+    && record.raw_delta_definition === expected.raw_delta_definition
+    && record.comparator === expected.comparator
+    && record.signed_target === expected.signed_target;
+  if (!valid) {
+    throw new Error("candidate_objective_delta_contract_invalid");
+  }
+  return expected;
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function asOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function firstCleanString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const cleaned = cleanString(value);
+    if (cleaned) {
+      return cleaned;
+    }
+  }
+  return undefined;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const number = normalizeNumber(value);
+    if (number !== undefined) {
+      return number;
+    }
+  }
+  return undefined;
+}
+
+function firstPositiveNumber(...values: unknown[]): number | undefined {
+  const number = firstFiniteNumber(...values);
+  return number !== undefined && number > 0 ? number : undefined;
+}
+
 function cleanString(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -1274,7 +1391,7 @@ function dedupe(values: string[]): string[] {
 function collectObjectiveRequirements(
   metrics: Record<string, unknown>,
   rawObjectiveMetric: string,
-  evaluation?: ObjectiveMetricEvaluation
+  profile: ObjectiveMetricProfile
 ): Array<{ status: "met" | "not_met" | "missing"; summary: string }> {
   const requirements: Array<{ status: "met" | "not_met" | "missing"; summary: string }> = [];
   if (/\bcpu[-\s]?only\b/iu.test(rawObjectiveMetric)) {
@@ -1284,7 +1401,7 @@ function collectObjectiveRequirements(
     requirements.push(describeBooleanRequirement("Reproducibility requirement", resolveReproducibilityEvidence(metrics)));
   }
   if (requiresResourceRegressionCheck(rawObjectiveMetric)) {
-    requirements.push(describeResourceRegressionRequirement(metrics, rawObjectiveMetric, evaluation));
+    requirements.push(describeResourceRegressionRequirement(metrics, rawObjectiveMetric, profile));
   }
   return requirements;
 }
@@ -1325,25 +1442,17 @@ function resolveReproducibilityEvidence(metrics: Record<string, unknown>): boole
   if (protocolFlag !== undefined) {
     return protocolFlag;
   }
-  const samplingProfile = asRecord(metrics.sampling_profile);
-  const executedTrials = normalizeNumber(samplingProfile.executed_trials);
-  if (typeof executedTrials === "number" && executedTrials > 1) {
-    return true;
-  }
-  const stabilitySignals = [
-    normalizeNumber(metrics.run_to_run_variance),
-    normalizeNumber(metrics.seed_sensitivity),
-    normalizeNumber(metrics.rank_stability),
-    normalizeNumber(metrics.fold_to_fold_stability)
-  ].filter((value): value is number => typeof value === "number");
-  if (stabilitySignals.length > 0) {
-    return true;
+  for (const key of ["reproducibility_evidence", "reproducibility_contract"]) {
+    const evidence = asOptionalRecord(metrics[key]);
+    const verified = evidence
+      ? asBoolean(evidence.verified) ?? asBoolean(evidence.reproducible) ?? asBoolean(evidence.met)
+      : undefined;
+    if (verified !== undefined) {
+      return verified;
+    }
   }
   return undefined;
 }
-
-const RESOURCE_REGRESSION_RATIO_LIMIT = 1.5;
-const STRICT_RESOURCE_REGRESSION_RATIO_LIMIT = 1.05;
 
 interface ResourceRegressionMetric {
   kind: "runtime" | "memory";
@@ -1369,34 +1478,45 @@ function requiresResourceRegressionCheck(rawObjectiveMetric: string): boolean {
 function describeResourceRegressionRequirement(
   metrics: Record<string, unknown>,
   rawObjectiveMetric: string,
-  evaluation?: ObjectiveMetricEvaluation
+  profile: ObjectiveMetricProfile
 ): { status: "met" | "not_met" | "missing"; summary: string } {
-  const comparison = selectResourceRegressionComparison(metrics, evaluation);
-  if (!comparison) {
+  const comparison = selectResourceRegressionComparison(metrics, profile);
+  const limits = resolveResourceLimits(metrics, profile);
+  if (!comparison || !limits) {
     return {
       status: "missing",
-      summary: "Resource regression requirement could not be verified from metrics.json."
+      summary: "Resource regression requirement needs one explicit comparison pair and explicit ratio thresholds."
     };
   }
 
-  const limit = resourceRegressionRatioLimit(rawObjectiveMetric);
   const requiredKinds = requiredResourceKinds(rawObjectiveMetric);
   const relevantMetrics = comparison.metrics.filter((metric) => requiredKinds.has(metric.kind));
-  const missingMetrics = relevantMetrics.filter((metric) => metric.ratio === undefined);
-  const failedMetrics = relevantMetrics.filter((metric) => typeof metric.ratio === "number" && metric.ratio > limit);
+  const limitFor = (kind: ResourceRegressionMetric["kind"]): number | undefined =>
+    kind === "runtime" ? limits.runtimeRatioMax : limits.memoryRatioMax;
+  const missingMetrics = relevantMetrics.filter(
+    (metric) => metric.ratio === undefined || limitFor(metric.kind) === undefined
+  );
+  const failedMetrics = relevantMetrics.filter((metric) => {
+    const limit = limitFor(metric.kind);
+    return typeof metric.ratio === "number" && typeof limit === "number" && metric.ratio > limit;
+  });
   const ratioSummary = relevantMetrics
-    .map((metric) =>
-      typeof metric.ratio === "number"
-        ? `${metric.kind} ${formatRatio(metric.ratio)}`
-        : `${metric.kind} unavailable`
-    )
+    .map((metric) => {
+      const limit = limitFor(metric.kind);
+      if (typeof metric.ratio !== "number") {
+        return `${metric.kind} unavailable`;
+      }
+      return typeof limit === "number"
+        ? `${metric.kind} ${formatRatio(metric.ratio)} (limit ${formatRatio(limit)})`
+        : `${metric.kind} ${formatRatio(metric.ratio)} (threshold undeclared)`;
+    })
     .join(", ");
   const pair = `${comparison.candidateName} vs ${comparison.baselineName}`;
 
   if (failedMetrics.length > 0) {
     return {
       status: "not_met",
-      summary: `Resource regression requirement not satisfied for ${pair}: ${ratioSummary}; allowed limit is ${formatRatio(limit)}.`
+      summary: `Resource regression requirement not satisfied for ${pair}: ${ratioSummary}.`
     };
   }
   if (missingMetrics.length > 0) {
@@ -1407,19 +1527,31 @@ function describeResourceRegressionRequirement(
   }
   return {
     status: "met",
-    summary: `Resource regression requirement satisfied for ${pair}: ${ratioSummary}; allowed limit is ${formatRatio(limit)}.`
+    summary: `Resource regression requirement satisfied for ${pair}: ${ratioSummary}.`
   };
 }
 
-function resourceRegressionRatioLimit(rawObjectiveMetric: string): number {
-  const normalized = rawObjectiveMetric.toLowerCase();
-  if (
-    /\b(?:no|zero)\b[\s\S]{0,40}\b(?:regression|worse)\b/u.test(normalized) &&
-    !/\b(?:unacceptable|material|substantial)\b/u.test(normalized)
-  ) {
-    return STRICT_RESOURCE_REGRESSION_RATIO_LIMIT;
+function resolveResourceLimits(
+  metrics: Record<string, unknown>,
+  profile: ObjectiveMetricProfile
+): ObjectiveResourceLimits | undefined {
+  if (profile.resourceLimits) {
+    return profile.resourceLimits;
   }
-  return RESOURCE_REGRESSION_RATIO_LIMIT;
+  const resourceRegression = asOptionalRecord(metrics.resource_regression);
+  const candidates = [
+    asOptionalRecord(metrics.resource_limits),
+    resourceRegression ? asOptionalRecord(resourceRegression.limits) : undefined,
+    resourceRegression ? asOptionalRecord(resourceRegression.thresholds) : undefined,
+    resourceRegression
+  ].filter((value): value is Record<string, unknown> => Boolean(value));
+  if (candidates.length === 0) {
+    return undefined;
+  }
+  const limits = normalizeResourceLimits(candidates[0]);
+  return limits && (limits.runtimeRatioMax !== undefined || limits.memoryRatioMax !== undefined)
+    ? limits
+    : undefined;
 }
 
 function requiredResourceKinds(rawObjectiveMetric: string): Set<ResourceRegressionMetric["kind"]> {
@@ -1439,102 +1571,20 @@ function requiredResourceKinds(rawObjectiveMetric: string): Set<ResourceRegressi
 
 function selectResourceRegressionComparison(
   metrics: Record<string, unknown>,
-  evaluation?: ObjectiveMetricEvaluation
+  profile: ObjectiveMetricProfile
 ): ResourceRegressionComparison | undefined {
-  const entries = conditionEntriesFromMetrics(metrics);
-  if (entries.length < 2) {
+  const pair = resolveExplicitComparisonPair(metrics, profile);
+  if (!pair) {
     return undefined;
   }
-  const baselineEntry = selectBaselineConditionEntry(entries);
-  if (!baselineEntry) {
-    return undefined;
-  }
-  const treatmentEntries = selectEligibleTreatmentConditionEntries(entries.filter((entry) => entry !== baselineEntry));
-  if (treatmentEntries.length === 0) {
-    return undefined;
-  }
-
-  const [, baselineRecord] = baselineEntry;
-  const scoreMetricKeys = scoreMetricKeysForEvaluation(evaluation);
-  const candidates = scoreMetricKeys.flatMap((metricKey, metricIndex) => {
-    const baselineValue = getConditionMetricValue(baselineRecord, metricKey);
-    if (baselineValue === undefined) {
-      return [];
-    }
-    return treatmentEntries.flatMap(([candidateName, candidateRecord], candidateIndex) => {
-      const candidateValue = getConditionMetricValue(candidateRecord, metricKey);
-      if (candidateValue === undefined) {
-        return [];
-      }
-      const delta = candidateValue - baselineValue;
-      return [
-        {
-          entry: [candidateName, candidateRecord] as [string, Record<string, unknown>],
-          delta,
-          exactObservedMatch:
-            typeof evaluation?.observedValue === "number" &&
-            Math.abs(delta - evaluation.observedValue) <= 1e-9,
-          metricIndex,
-          candidateIndex
-        }
-      ];
-    });
-  });
-
-  const selected = candidates.sort(
-    (left, right) =>
-      Number(right.exactObservedMatch) - Number(left.exactObservedMatch) ||
-      right.delta - left.delta ||
-      left.metricIndex - right.metricIndex ||
-      left.candidateIndex - right.candidateIndex
-  )[0];
-  if (!selected) {
-    return undefined;
-  }
-
-  const [candidateName, candidateRecord] = selected.entry;
-  const [baselineName] = baselineEntry;
   return {
-    baselineName: humanizeConditionName(baselineName),
-    candidateName: humanizeConditionName(candidateName),
+    baselineName: pair.baselineId,
+    candidateName: pair.candidateId,
     metrics: [
-      compareResourceMetric("runtime", "runtime", baselineRecord, candidateRecord),
-      compareResourceMetric("memory", "memory", baselineRecord, candidateRecord)
+      compareResourceMetric("runtime", "runtime", pair.baselineRecord, pair.candidateRecord),
+      compareResourceMetric("memory", "memory", pair.baselineRecord, pair.candidateRecord)
     ]
   };
-}
-
-function conditionEntriesFromMetrics(metrics: Record<string, unknown>): Array<[string, Record<string, unknown>]> {
-  const conditions = metrics.conditions;
-  if (Array.isArray(conditions)) {
-    return conditions
-      .filter((item): item is Record<string, unknown> => item && typeof item === "object" && !Array.isArray(item))
-      .map((record, index) => [
-        cleanString(record.name) || cleanString(record.condition_id) || cleanString(record.condition) || `condition_${index + 1}`,
-        record
-      ]);
-  }
-  if (conditions && typeof conditions === "object") {
-    return Object.entries(conditions as Record<string, unknown>).filter(
-      (entry): entry is [string, Record<string, unknown>] =>
-        Boolean(entry[1]) && typeof entry[1] === "object" && !Array.isArray(entry[1])
-    );
-  }
-  return [];
-}
-
-function scoreMetricKeysForEvaluation(evaluation?: ObjectiveMetricEvaluation): string[] {
-  const matchedMetricKey = evaluation?.matchedMetricKey || "";
-  const stripped = matchedMetricKey
-    .replace(/_improvement_over_baseline$/iu, "")
-    .replace(/_delta_vs_baseline$/iu, "")
-    .replace(/_gain_vs_baseline$/iu, "")
-    .replace(/_lift_vs_baseline$/iu, "");
-  const preferred = stripped && stripped !== matchedMetricKey ? [stripped] : [];
-  const accuracyKeys = /accuracy|acc/iu.test(matchedMetricKey)
-    ? ["mean_zero_shot_accuracy", "primary_mean_accuracy", "mean_accuracy", "accuracy", "acc"]
-    : [];
-  return dedupe([...accuracyKeys, ...preferred, ...SYNTHESIZE_METRIC_KEYS]);
 }
 
 function compareResourceMetric(
@@ -1602,10 +1652,6 @@ function readFirstNumericPath(
     }
   }
   return undefined;
-}
-
-function humanizeConditionName(value: string): string {
-  return value.replace(/[_-]+/gu, " ").trim() || value;
 }
 
 function formatRatio(value: number): string {
