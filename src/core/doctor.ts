@@ -29,6 +29,7 @@ export interface DoctorRunOptions {
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   openAiApiKeyConfigured?: boolean;
   openAlexApiKeyConfigured?: boolean;
+  semanticScholarApiKeyConfigured?: boolean;
   codexResearchModel?: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
@@ -274,6 +275,17 @@ export async function runDoctorReport(
       detail: opts.openAlexApiKeyConfigured
         ? "OPENALEX_API_KEY detected"
         : "OPENALEX_API_KEY missing; OpenAlex discovery may be rate limited, but fallback providers remain available."
+    });
+  }
+
+  if (typeof opts?.semanticScholarApiKeyConfigured === "boolean") {
+    checks.push({
+      name: "semantic-scholar-api-key",
+      ok: true,
+      status: opts.semanticScholarApiKeyConfigured ? "ok" : "warning",
+      detail: opts.semanticScholarApiKeyConfigured
+        ? "SEMANTIC_SCHOLAR_API_KEY detected"
+        : "SEMANTIC_SCHOLAR_API_KEY missing; Semantic Scholar discovery may be rate limited, but fallback providers remain available."
     });
   }
 

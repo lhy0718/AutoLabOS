@@ -66,6 +66,31 @@ describe("runDoctorReport", () => {
     );
   });
 
+  it("warns without blocking when the optional Semantic Scholar API key is missing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-semantic-scholar-key-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        semanticScholarApiKeyConfigured: false,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("semantic-scholar-api-key");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "semantic-scholar-api-key",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("fallback providers remain available")
+      })
+    );
+  });
+
   it("includes harness diagnostics for current workspace runs", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-harness-");
     await seedDoctorTooling(workspace);

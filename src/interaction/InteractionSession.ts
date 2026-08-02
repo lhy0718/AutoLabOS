@@ -1280,6 +1280,7 @@ export class InteractionSession {
       pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean),
       openAlexApiKeyConfigured: await resolveOpenAlexApiKey(this.workspaceRoot).then(Boolean),
+      semanticScholarApiKeyConfigured: this.semanticScholarApiKeyConfigured,
       codexResearchModel: this.config.providers.codex.model,
       ollamaBaseUrl: this.config.providers.ollama?.base_url,
       ollamaChatModel: this.config.providers.ollama?.chat_model,

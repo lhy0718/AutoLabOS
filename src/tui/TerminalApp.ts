@@ -3262,6 +3262,7 @@ export class TerminalApp {
       pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean),
       openAlexApiKeyConfigured: await resolveOpenAlexApiKey(process.cwd()).then(Boolean),
+      semanticScholarApiKeyConfigured: this.semanticScholarApiKeyConfigured,
       codexResearchModel: this.config.providers.codex.model,
       ollamaBaseUrl: this.config.providers.ollama?.base_url,
       ollamaChatModel: this.config.providers.ollama?.chat_model,
