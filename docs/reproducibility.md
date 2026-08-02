@@ -16,6 +16,9 @@ Reproducibility claims must be backed by concrete artifacts.
   when at least half of three or more configured providers are unavailable in
   every lane, the artifact must record `retrieval_provider_coverage_degraded`
   with `feedback_applied=false` while the scientific quality gate remains failed
+- Provider request diagnostics must never persist credentials. In particular,
+  authenticated OpenAlex requests may include `OPENALEX_API_KEY` at execution
+  time, but every recorded endpoint must omit the `api_key` query parameter
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
 - Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)

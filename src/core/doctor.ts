@@ -28,6 +28,7 @@ export interface DoctorRunOptions {
   llmMode?: "codex" | "codex_chatgpt_only" | "openai_api" | "ollama";
   pdfAnalysisMode?: "codex_text_image_hybrid" | "responses_api_pdf" | "ollama_vision";
   openAiApiKeyConfigured?: boolean;
+  openAlexApiKeyConfigured?: boolean;
   codexResearchModel?: string;
   ollamaBaseUrl?: string;
   ollamaChatModel?: string;
@@ -262,6 +263,17 @@ export async function runDoctorReport(
           : opts?.llmMode === "openai_api"
             ? "OPENAI_API_KEY missing (required for OpenAI API provider mode)"
             : "OPENAI_API_KEY missing (required for Responses API PDF analysis)"
+    });
+  }
+
+  if (typeof opts?.openAlexApiKeyConfigured === "boolean") {
+    checks.push({
+      name: "openalex-api-key",
+      ok: true,
+      status: opts.openAlexApiKeyConfigured ? "ok" : "warning",
+      detail: opts.openAlexApiKeyConfigured
+        ? "OPENALEX_API_KEY detected"
+        : "OPENALEX_API_KEY missing; OpenAlex discovery may be rate limited, but fallback providers remain available."
     });
   }
 

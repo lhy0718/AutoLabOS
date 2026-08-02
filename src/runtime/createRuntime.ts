@@ -6,6 +6,7 @@ import {
   hasSemanticScholarApiKey,
   loadConfig,
   resolveOpenAiApiKey,
+  resolveOpenAlexApiKey,
   resolveSemanticScholarApiKey,
   resolveAppPaths,
   runSetupWizard,
@@ -259,7 +260,9 @@ export async function createAutoLabOSRuntime(
     perSecondLimit: config.papers.per_second_limit,
     maxRetries: 3
   });
-  const openAlex = new OpenAlexClient();
+  const openAlex = new OpenAlexClient({
+    apiKey: await resolveOpenAlexApiKey(paths.cwd)
+  });
   const crossref = new CrossrefClient();
   const arxiv = new ArxivClient();
   const responsesPdfAnalysis = new ResponsesPdfAnalysisClient(() => resolveOpenAiApiKey(paths.cwd));

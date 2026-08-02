@@ -96,7 +96,11 @@ import {
   COLLECT_USAGE,
   parseCollectArgs
 } from "../core/commands/collectOptions.js";
-import { normalizeResearchRunInputs, resolveOpenAiApiKey } from "../config.js";
+import {
+  normalizeResearchRunInputs,
+  resolveOpenAiApiKey,
+  resolveOpenAlexApiKey
+} from "../config.js";
 import {
   DEFAULT_OLLAMA_BASE_URL,
   requireOllamaModel
@@ -1275,6 +1279,7 @@ export class InteractionSession {
       llmMode: this.config.providers.llm_mode,
       pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(this.workspaceRoot).then(Boolean),
+      openAlexApiKeyConfigured: await resolveOpenAlexApiKey(this.workspaceRoot).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
       ollamaBaseUrl: this.config.providers.ollama?.base_url,
       ollamaChatModel: this.config.providers.ollama?.chat_model,

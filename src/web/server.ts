@@ -34,6 +34,7 @@ import {
   normalizeResearchRunInputs,
   type ResearchRunInputs,
   ensureScaffold,
+  hasOpenAlexApiKey,
   hasOpenAiApiKey,
   resolveOpenAiApiKey,
   resolveSemanticScholarApiKey,
@@ -547,6 +548,7 @@ class AutoLabOSWebController {
           const report = await runDoctorReport(codex, {
             workspaceRoot: this.cwd,
             openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
+            openAlexApiKeyConfigured: await hasOpenAlexApiKey(this.cwd),
             includeHarnessValidation: true,
             includeHarnessTestRecords: false,
             maxHarnessFindings: 40,
@@ -569,6 +571,7 @@ class AutoLabOSWebController {
           llmMode: this.runtime.config.providers.llm_mode,
           pdfAnalysisMode: getPdfAnalysisModeForConfig(this.runtime.config),
           openAiApiKeyConfigured: await hasOpenAiApiKey(this.cwd),
+          openAlexApiKeyConfigured: await hasOpenAlexApiKey(this.cwd),
           codexResearchModel: this.runtime.config.providers.codex.model,
           ollamaBaseUrl: this.runtime.config.providers.ollama?.base_url,
           ollamaChatModel: this.runtime.config.providers.ollama?.chat_model,

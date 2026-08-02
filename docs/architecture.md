@@ -57,6 +57,11 @@ starts from a complete `ResearchBrief` whose `Research Mode` is
   every retrieval lane, the attempt remains quality-gate failed but is
   classified as degraded retrieval coverage. Rejected-query and candidate-title
   feedback from that incomplete retrieval universe must not be learned.
+  Provider credentials are optional workspace/runtime inputs, not research
+  artifacts. OpenAlex requests use `OPENALEX_API_KEY` when configured, while
+  persisted provider diagnostics must omit the `api_key` query parameter.
+  Missing optional discovery credentials may produce a doctor warning but do
+  not block the workflow while independent fallback providers remain available.
   Before retrieval, the node freezes a role-bearing scientific-scope contract.
   A `topic_discovery` brief should declare `Scientific Scope` with separate
   `Scientific Object`, `Empirical Problems`, `Scientific Relations`,

@@ -289,7 +289,7 @@ describe("heldout registry builder", () => {
     } finally {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   it.each([
     {

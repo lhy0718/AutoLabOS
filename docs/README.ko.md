@@ -181,7 +181,8 @@ autolabos web    # Web UI
 
 | 항목 | 필요한 경우 | 비고 |
 |---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | 항상 | 논문 탐색 및 메타데이터 수집 |
+| `SEMANTIC_SCHOLAR_API_KEY` | 권장 | Semantic Scholar 논문 탐색 및 메타데이터 한도 향상 |
+| `OPENALEX_API_KEY` | 권장 | 인증된 OpenAlex 탐색 및 비인증 요청 속도 제한 방지 |
 | `OPENAI_API_KEY` | provider가 `api`일 때 | OpenAI API 모델 실행 |
 | Codex CLI 로그인 | provider가 `codex`일 때 | 로컬 Codex 세션 사용 |
 

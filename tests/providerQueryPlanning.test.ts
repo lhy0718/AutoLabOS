@@ -111,6 +111,33 @@ describe("provider query planning", () => {
     });
   });
 
+  it("authenticates OpenAlex requests without persisting the API key in diagnostics", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ results: [] })
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new OpenAlexClient({ apiKey: "test-openalex-secret" });
+    await client.searchPapers({ query: "retrieval evaluation", limit: 1 });
+
+    const requestUrl = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requestUrl.searchParams.get("api_key")).toBe("test-openalex-secret");
+
+    const diagnostics = client.getLastSearchDiagnostics();
+    expect(diagnostics.attempts[0]?.endpoint).not.toContain("test-openalex-secret");
+    expect(new URL(diagnostics.attempts[0]!.endpoint!).searchParams.has("api_key")).toBe(false);
+
+    fetchMock.mockRejectedValueOnce(
+      new Error("request failed: https://api.openalex.org/works?api_key=test-openalex-secret")
+    );
+    await client.searchPapers({ query: "retrieval evaluation", limit: 1 });
+
+    expect(JSON.stringify(client.getLastSearchDiagnostics())).not.toContain("test-openalex-secret");
+    expect(client.getLastSearchDiagnostics().error).toContain("[redacted]");
+  });
+
   it("uses relevance search for topic discovery while preserving the phrase query for other providers", async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,

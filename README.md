@@ -215,7 +215,8 @@ Notes:
 
 | Item | When needed | Notes |
 |---|---|---|
-| `SEMANTIC_SCHOLAR_API_KEY` | Always | Paper discovery and metadata |
+| `SEMANTIC_SCHOLAR_API_KEY` | Recommended | Higher-capacity Semantic Scholar discovery and metadata access |
+| `OPENALEX_API_KEY` | Recommended | Authenticated OpenAlex discovery; avoids unauthenticated rate limits |
 | `OPENAI_API_KEY` | When provider is `api` | OpenAI API model execution |
 | Codex CLI login | When provider is `codex` | Uses your local Codex session |
 

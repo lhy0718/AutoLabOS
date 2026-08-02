@@ -845,6 +845,19 @@ export async function hasSemanticScholarApiKey(cwd: string): Promise<boolean> {
   return Boolean(await resolveSemanticScholarApiKey(cwd));
 }
 
+export async function resolveOpenAlexApiKey(cwd: string): Promise<string | undefined> {
+  const fileEnv = await loadWorkspaceDotEnv(cwd);
+  const openAlexApiKey =
+    fileEnv.OPENALEX_API_KEY ||
+    process.env.OPENALEX_API_KEY;
+  const normalized = openAlexApiKey?.trim();
+  return normalized ? normalized : undefined;
+}
+
+export async function hasOpenAlexApiKey(cwd: string): Promise<boolean> {
+  return Boolean(await resolveOpenAlexApiKey(cwd));
+}
+
 export async function resolveOpenAiApiKey(cwd: string): Promise<string | undefined> {
   const fileEnv = await loadWorkspaceDotEnv(cwd);
   const openAiApiKey =

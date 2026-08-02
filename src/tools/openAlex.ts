@@ -61,9 +61,18 @@ interface OpenAlexResponse {
 
 const OPENALEX_MAX_RESULTS = 50;
 
+export interface OpenAlexClientOptions {
+  apiKey?: string;
+}
+
 export class OpenAlexClient {
   readonly provider = "openalex";
   private lastSearchDiagnostics: PaperSearchProviderDiagnostics = emptyDiagnostics("");
+  private readonly apiKey?: string;
+
+  constructor(options: OpenAlexClientOptions = {}) {
+    this.apiKey = options.apiKey?.trim() || undefined;
+  }
 
   async searchPapers(
     request: SemanticScholarSearchRequest,
@@ -106,7 +115,14 @@ export class OpenAlexClient {
     let firstError: string | undefined;
 
     for (const queryVariant of queryVariants) {
-      const endpoint = buildOpenAlexEndpoint(request, queryVariant, providerLimit, filterValues);
+      const endpoint = buildOpenAlexEndpoint(
+        request,
+        queryVariant,
+        providerLimit,
+        filterValues,
+        this.apiKey
+      );
+      const diagnosticEndpoint = buildDiagnosticEndpoint(endpoint);
       const attempt = this.lastSearchDiagnostics.attempts.length + 1;
 
       try {
@@ -122,7 +138,7 @@ export class OpenAlexClient {
           attempt,
           ok: response.ok,
           status: response.status,
-          endpoint: endpoint.toString()
+          endpoint: diagnosticEndpoint
         });
         this.lastSearchDiagnostics.attemptCount = attempt;
         this.lastSearchDiagnostics.lastStatus = response.status;
@@ -137,12 +153,13 @@ export class OpenAlexClient {
             .filter((candidate): candidate is PaperSearchCandidate => Boolean(candidate))
         );
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const message = sanitizeDiagnosticText(rawMessage, this.apiKey);
         this.lastSearchDiagnostics.attempts.push({
           provider: "openalex",
           attempt,
           ok: false,
-          endpoint: endpoint.toString(),
+          endpoint: diagnosticEndpoint,
           errorMessage: message
         });
         this.lastSearchDiagnostics.attemptCount = attempt;
@@ -269,9 +286,13 @@ function buildOpenAlexEndpoint(
   request: SemanticScholarSearchRequest,
   query: string,
   limit: number,
-  filterValues: string[]
+  filterValues: string[],
+  apiKey?: string
 ): URL {
   const endpoint = new URL("https://api.openalex.org/works");
+  if (apiKey) {
+    endpoint.searchParams.set("api_key", apiKey);
+  }
   endpoint.searchParams.set("search", query);
   endpoint.searchParams.set("per-page", String(limit));
   endpoint.searchParams.set(
@@ -310,6 +331,21 @@ function buildOpenAlexEndpoint(
   }
 
   return endpoint;
+}
+
+function buildDiagnosticEndpoint(endpoint: URL): string {
+  const sanitized = new URL(endpoint);
+  sanitized.searchParams.delete("api_key");
+  return sanitized.toString();
+}
+
+function sanitizeDiagnosticText(value: string, apiKey: string | undefined): string {
+  if (!apiKey) {
+    return value;
+  }
+  return [apiKey, encodeURIComponent(apiKey)]
+    .filter((candidate, index, values) => candidate && values.indexOf(candidate) === index)
+    .reduce((sanitized, candidate) => sanitized.split(candidate).join("[redacted]"), value);
 }
 
 function buildOpenAlexFilterValues(

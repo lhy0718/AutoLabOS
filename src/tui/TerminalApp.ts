@@ -81,6 +81,7 @@ import {
   getDefaultPdfAnalysisModeForLlmMode,
   getPdfAnalysisModeForConfig,
   normalizeResearchRunInputs,
+  resolveOpenAlexApiKey,
   resolveOpenAiApiKey,
   upsertEnvVar
 } from "../config.js";
@@ -3260,6 +3261,7 @@ export class TerminalApp {
       llmMode: this.config.providers.llm_mode,
       pdfAnalysisMode: getPdfAnalysisModeForConfig(this.config),
       openAiApiKeyConfigured: await resolveOpenAiApiKey(process.cwd()).then(Boolean),
+      openAlexApiKeyConfigured: await resolveOpenAlexApiKey(process.cwd()).then(Boolean),
       codexResearchModel: this.config.providers.codex.model,
       ollamaBaseUrl: this.config.providers.ollama?.base_url,
       ollamaChatModel: this.config.providers.ollama?.chat_model,

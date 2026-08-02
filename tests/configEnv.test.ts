@@ -8,11 +8,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ensureScaffold,
   getDefaultPdfAnalysisModeForLlmMode,
+  hasOpenAlexApiKey,
   hasOpenAiApiKey,
   hasSemanticScholarApiKey,
   hydrateProcessEnvFromWorkspace,
   loadConfig,
   resolveAppPaths,
+  resolveOpenAlexApiKey,
   resolveOpenAiApiKey,
   resolveSemanticScholarApiKey,
   runNonInteractiveSetup,
@@ -25,6 +27,7 @@ import * as codexOAuthAuth from "../src/integrations/codex/oauthAuth.js";
 import { AppConfig } from "../src/types.js";
 
 const ORIGINAL_SEMANTIC_SCHOLAR_API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY;
+const ORIGINAL_OPENALEX_API_KEY = process.env.OPENALEX_API_KEY;
 const ORIGINAL_OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS = process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
 const OLLAMA_CHAT_MODEL = "local-model-a:latest";
@@ -184,6 +187,12 @@ afterEach(() => {
     process.env.OPENAI_API_KEY = ORIGINAL_OPENAI_API_KEY;
   }
 
+  if (ORIGINAL_OPENALEX_API_KEY === undefined) {
+    delete process.env.OPENALEX_API_KEY;
+  } else {
+    process.env.OPENALEX_API_KEY = ORIGINAL_OPENALEX_API_KEY;
+  }
+
   if (ORIGINAL_ANALYSIS_PLANNER_TIMEOUT_MS === undefined) {
     delete process.env.AUTOLABOS_ANALYSIS_PLANNER_TIMEOUT_MS;
   } else {
@@ -317,6 +326,15 @@ describe("config .env overrides", () => {
 
     expect("semantic_scholar_api_key" in config.papers).toBe(false);
     await expect(resolveSemanticScholarApiKey(cwd)).resolves.toBe("file-env-key");
+  });
+
+  it("resolves OPENALEX_API_KEY from .env before process.env", async () => {
+    process.env.OPENALEX_API_KEY = "process-openalex-key";
+    const { cwd } = await createWorkspace();
+    await fs.writeFile(path.join(cwd, ".env"), "OPENALEX_API_KEY=file-openalex-key\n", "utf8");
+
+    await expect(resolveOpenAlexApiKey(cwd)).resolves.toBe("file-openalex-key");
+    await expect(hasOpenAlexApiKey(cwd)).resolves.toBe(true);
   });
 
   it("upserts SEMANTIC_SCHOLAR_API_KEY into .env without removing other entries", async () => {

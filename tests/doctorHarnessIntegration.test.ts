@@ -22,6 +22,50 @@ afterEach(() => {
 });
 
 describe("runDoctorReport", () => {
+  it("warns without blocking when the optional OpenAlex API key is missing", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-openalex-key-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        openAlexApiKeyConfigured: false,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.blocked).toBe(false);
+    expect(report.readiness.warningChecks).toContain("openalex-api-key");
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        name: "openalex-api-key",
+        ok: true,
+        status: "warning",
+        detail: expect.stringContaining("fallback providers remain available")
+      })
+    );
+  });
+
+  it("passes the OpenAlex API key check without exposing the credential", async () => {
+    const workspace = createTempWorkspace("autolabos-doctor-openalex-key-configured-");
+    await seedDoctorTooling(workspace);
+    await seedDoctorWorkspace(workspace);
+
+    const report = await withWorkspacePath(workspace, () =>
+      doctorModule.runDoctorReport(createCodexStub(), {
+        workspaceRoot: workspace,
+        openAlexApiKeyConfigured: true,
+        includeHarnessValidation: false
+      })
+    );
+
+    expect(report.readiness.warningChecks).not.toContain("openalex-api-key");
+    expect(report.checks.find((check) => check.name === "openalex-api-key")).toEqual(
+      expect.objectContaining({ ok: true, status: "ok", detail: "OPENALEX_API_KEY detected" })
+    );
+  });
+
   it("includes harness diagnostics for current workspace runs", async () => {
     const workspace = createTempWorkspace("autolabos-doctor-harness-");
     await seedDoctorTooling(workspace);
