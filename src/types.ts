@@ -569,6 +569,32 @@ export interface RunEvidenceAdequacyProjection {
   artifact_refs: RunEvidenceAdequacyArtifactRef[];
 }
 
+export type RunReviewAssuranceStatus =
+  | "not_started"
+  | "missing"
+  | "valid"
+  | "invalid";
+
+export interface RunReviewAssuranceArtifactRef {
+  kind: "input_snapshot" | "input_manifest" | "gate_report" | "assurance" | "handoff" | "model_review_bundle";
+  label: string;
+  path: string;
+}
+
+export interface RunReviewAssuranceProjection {
+  status: RunReviewAssuranceStatus;
+  trusted: boolean;
+  paper_ready_eligible: boolean;
+  input_manifest_valid: boolean;
+  gate_report_valid: boolean;
+  assurance_valid: boolean;
+  handoff_valid: boolean;
+  model_review_bundle_valid: boolean;
+  required_for_paper_ready: boolean;
+  reason_codes: string[];
+  artifact_refs: RunReviewAssuranceArtifactRef[];
+}
+
 export interface RunStatusFailureSeed {
   key: string;
   summary: string;
@@ -609,6 +635,7 @@ export interface RunOperatorStatusArtifact {
     operator_label?: string;
   };
   evidence_adequacy: RunEvidenceAdequacyProjection;
+  review_assurance: RunReviewAssuranceProjection;
   network_dependency: {
     enabled: boolean;
     policy?: ExperimentNetworkPolicy;
@@ -983,6 +1010,7 @@ export interface RunJobProjection {
   research_funnel?: RunResearchFunnelProjection;
   evidence_readiness?: RunEvidenceReadinessProjection;
   evidence_adequacy?: RunEvidenceAdequacyProjection;
+  review_assurance?: RunReviewAssuranceProjection;
 }
 
 export interface RunJobsSnapshot {

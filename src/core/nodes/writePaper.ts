@@ -12,7 +12,11 @@ import {
   renderOperatorHistoryMarkdown,
   renderOperatorSummaryMarkdown
 } from "../operatorSummary.js";
-import { PaperProfileConfig, TransitionRecommendation } from "../../types.js";
+import {
+  PaperProfileConfig,
+  TransitionRecommendation,
+  type RunReviewAssuranceProjection
+} from "../../types.js";
 import { resolveConstraintProfile } from "../constraintProfile.js";
 import { ensureDir, fileExists } from "../../utils/fs.js";
 import { buildPublicPaperDir } from "../publicArtifacts.js";
@@ -117,6 +121,7 @@ import type { BriefEvidenceAssessment } from "../analysis/briefEvidenceValidator
 import type { ManuscriptType } from "../paperCritique.js";
 import { buildRunOperatorStatus } from "../runs/runStatus.js";
 import { buildRunCompletenessChecklist } from "../runs/runCompletenessChecklist.js";
+import { inspectReviewAssuranceArtifacts } from "../reviewInputManifest.js";
 import {
   deriveLatexTemplatePolicy,
   loadLatexTemplate,
@@ -478,7 +483,7 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       await runContextMemory.put("research_governance.mode_guard", researchModeGuard);
       await writeRunArtifact(
         run,
-        "governance/research_mode_guard.json",
+        "paper/research_mode_guard_reassessment.json",
         `${JSON.stringify(researchModeGuard, null, 2)}\n`
       );
       if (!researchModeGuard.paperDraftingAllowed) {
@@ -521,12 +526,18 @@ export function createWritePaperNode(deps: NodeExecutionDeps): GraphNodeHandler 
       const resultsContract = bundleResult.resultsContract;
       await runContextMemory.put("write_paper.last_error", null);
       const preDraftCritique = await loadPreDraftCritique(run.id);
+      const reviewAssurance = await inspectReviewAssuranceArtifacts({
+        runDir: path.join(".autolabos", "runs", run.id),
+        runId: run.id,
+        researchCycle: run.graph.researchCycle ?? 0
+      });
       const briefEvidenceAssessment =
         (await runContextMemory.get<BriefEvidenceAssessment>("analyze_results.brief_evidence_assessment")) ?? undefined;
       const writeEligibility = evaluateWritePaperEligibility({
         preDraftCritique,
         briefEvidenceAssessment,
-        reviewRequired: Boolean(deps.config.workflow)
+        reviewRequired: Boolean(deps.config.workflow),
+        reviewAssurance
       });
       await writeRunArtifact(
         run,
@@ -7403,12 +7414,15 @@ function evaluateWritePaperEligibility(input: {
   preDraftCritique: PaperCritique | null;
   briefEvidenceAssessment?: BriefEvidenceAssessment;
   reviewRequired?: boolean;
+  reviewAssurance?: RunReviewAssuranceProjection;
 }): {
   generated_at: string;
   allowed: boolean;
   reason: string;
   manuscript_type?: ManuscriptType;
   brief_evidence_status?: BriefEvidenceAssessment["status"];
+  review_assurance_status?: RunReviewAssuranceProjection["status"];
+  review_assurance_reason_codes?: string[];
 } {
   if (input.reviewRequired && !input.preDraftCritique) {
     return {
@@ -7416,6 +7430,22 @@ function evaluateWritePaperEligibility(input: {
       allowed: false,
       reason: "write_paper blocked because review/paper_critique.json is required before drafting.",
       brief_evidence_status: input.briefEvidenceAssessment?.status
+    };
+  }
+
+  if (input.reviewRequired && !input.reviewAssurance?.paper_ready_eligible) {
+    const reasonCodes = input.reviewAssurance?.reason_codes.length
+      ? input.reviewAssurance.reason_codes
+      : ["review_assurance_missing"];
+    const assuranceStatus = input.reviewAssurance?.status ?? "missing";
+    return {
+      generated_at: new Date().toISOString(),
+      allowed: false,
+      reason: `write_paper blocked because review assurance is ${assuranceStatus}: ${reasonCodes.join(", ")}.`,
+      manuscript_type: input.preDraftCritique?.manuscript_type,
+      brief_evidence_status: input.briefEvidenceAssessment?.status,
+      review_assurance_status: assuranceStatus,
+      review_assurance_reason_codes: reasonCodes
     };
   }
 
@@ -7462,7 +7492,9 @@ function evaluateWritePaperEligibility(input: {
       ? `write_paper allowed: pre-draft critique classified the run as ${manuscriptType}.`
       : "write_paper allowed: no pre-draft critique was available, so no critique-based gate was applied.",
     manuscript_type: manuscriptType ?? undefined,
-    brief_evidence_status: input.briefEvidenceAssessment?.status
+    brief_evidence_status: input.briefEvidenceAssessment?.status,
+    review_assurance_status: input.reviewAssurance?.status,
+    review_assurance_reason_codes: input.reviewAssurance?.reason_codes ?? []
   };
 }
 

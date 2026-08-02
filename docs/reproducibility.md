@@ -45,6 +45,14 @@ provenance are inspectable:
   a generic missing-count message is not a reproducible inventory.
 - Record a closed, ordered input manifest with path, media type, source kind,
   byte count, and SHA-256 for every reviewed artifact.
+- Persist the runtime review chain:
+  `review_input_snapshot.json`, `review_input_manifest.json`,
+  `review_gate_report.json`, `review_assurance.json`, and
+  `review_handoff.json`. The handoff must bind the exact assurance,
+  pre-draft critique, review decision, and review packet bytes.
+- Revalidate that chain immediately before `write_paper`. Any changed bound
+  input or review output blocks drafting and requires a fresh review; downstream
+  checks must not overwrite review-bound upstream artifacts.
 - Bind each of the five required initial role outputs to the same gate and input
   hashes. Record `initial_output_shared=false`, distinct execution IDs, and one
   parallel-group ID; no initial input may contain peer output.

@@ -55,6 +55,7 @@ After drafting, `write_paper` emits a post-draft critique that can:
 `write_paper` should fail fast before drafting when either of the following is already known:
 - the pre-draft critique classifies the run below `paper_scale_candidate`
 - the brief-governed evidence assessment says minimum acceptable evidence was not met
+- the review input, assurance, or output handoff no longer matches the exact bytes approved by `review`
 
 In that case the correct action is upstream repair/backtrack, not spending drafting or PDF-compilation effort on a manuscript that should still be blocked.
 

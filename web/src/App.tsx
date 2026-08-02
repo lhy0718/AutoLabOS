@@ -1401,6 +1401,38 @@ function EvidenceBoard(props: ResearchWorkbenchProps) {
         {props.selectedJob?.review_gate_status ? (
           <article><span>Review gate</span><strong>{props.selectedJob.review_gate_label || formatReviewGateStatus(props.selectedJob.review_gate_status, props.selectedJob.review_decision_outcome, props.selectedJob.review_recommended_transition)}</strong></article>
         ) : null}
+        {props.selectedJob?.review_assurance ? (
+          <article>
+            <span>Review assurance</span>
+            <strong>{formatReviewAssuranceStatus(props.selectedJob.review_assurance.status)}</strong>
+            <p>{formatReviewAssuranceSummary(props.selectedJob.review_assurance)}</p>
+          </article>
+        ) : null}
+        {props.selectedJob?.review_assurance?.reason_codes.length ? (
+          <article>
+            <span>Review assurance reasons</span>
+            <strong><code>{props.selectedJob.review_assurance.reason_codes.join(", ")}</code></strong>
+          </article>
+        ) : null}
+        {props.selectedJob?.review_assurance?.artifact_refs.length ? (
+          <article>
+            <span>Review assurance artifacts</span>
+            <div className="decision-actions">
+              {props.selectedJob.review_assurance.artifact_refs.map((artifact) => (
+                <button
+                  key={`${artifact.kind}-${artifact.path}`}
+                  className="button button-secondary button-small"
+                  type="button"
+                  disabled={props.isBusy}
+                  onClick={() => props.onOpenInsightReference(artifact.path)}
+                  aria-label={`Open ${artifact.label}`}
+                >
+                  {artifact.kind.replaceAll("_", " ")}
+                </button>
+              ))}
+            </div>
+          </article>
+        ) : null}
         {props.selectedJob?.paper_readiness_state ? (
           <article><span>Paper state</span><strong>{props.selectedJob.paper_gate_label || props.selectedJob.paper_readiness_state}</strong></article>
         ) : null}
@@ -3769,6 +3801,36 @@ function formatReviewGateStatus(
     case "missing":
       return "Missing";
   }
+}
+
+function formatReviewAssuranceStatus(
+  status: NonNullable<RunJobProjection["review_assurance"]>["status"]
+): string {
+  switch (status) {
+    case "not_started":
+      return "Not started";
+    case "missing":
+      return "Missing";
+    case "valid":
+      return "Verified";
+    case "invalid":
+      return "Invalid";
+  }
+}
+
+function formatReviewAssuranceSummary(
+  assurance: NonNullable<RunJobProjection["review_assurance"]>
+): string {
+  if (assurance.status === "not_started") {
+    return "Review has not started.";
+  }
+  if (assurance.status === "missing") {
+    return "Review artifacts are missing · Paper blocked";
+  }
+  return `Paper ${assurance.paper_ready_eligible ? "eligible" : "blocked"}`
+    + ` · Manifest ${assurance.input_manifest_valid ? "valid" : "invalid"}`
+    + ` · Gate ${assurance.gate_report_valid ? "valid" : "invalid"}`
+    + ` · Handoff ${assurance.handoff_valid ? "valid" : "invalid"}`;
 }
 
 function formatDoctorBackendSummary(readiness: NonNullable<DoctorResponse["readiness"]>): string {

@@ -335,6 +335,10 @@ async function runAssuredPanel(options: {
       artifact_id: "review.minimum_gate",
       sha256: "a".repeat(64)
     },
+    inputManifestBinding: {
+      artifact_id: "review.input_manifest",
+      sha256: "b".repeat(64)
+    },
     requireIndependentReview: true
   });
 }
@@ -417,13 +421,20 @@ describe("review system primary comparison binding", () => {
       isolation_evidence: "runtime_attested",
       model_review_bundle_valid: true,
       paper_ready_eligible: true,
-      reason_codes: []
+      reason_codes: [],
+      gate_report_content_sha256: "a".repeat(64),
+      review_input_manifest_content_sha256: "b".repeat(64)
     });
     expect(panel.model_review_bundle?.reviewers).toHaveLength(5);
     expect(panel.meta_review?.source).toBe("llm+heuristic");
     expect(specialistLlm.prompts).toHaveLength(5);
     expect(metaLlm.prompts).toHaveLength(1);
     expect(specialistLlm.prompts.every((prompt) => !prompt.includes("heuristic_baseline"))).toBe(true);
+    expect(specialistLlm.prompts.every((prompt) =>
+      prompt.includes('"deterministic_gate"')
+      && prompt.includes('"review_input_manifest"')
+      && prompt.includes("b".repeat(64))
+    )).toBe(true);
   });
 
   it("fails closed when one specialist falls back and never runs the meta reviewer", async () => {

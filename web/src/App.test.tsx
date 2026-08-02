@@ -3067,6 +3067,70 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "Open Review evidence reassessment" })).toBeInTheDocument();
   });
 
+  it("renders review assurance trust, paper eligibility, reasons, and artifact refs", async () => {
+    renderAppWithResearchFunnel(
+      {},
+      undefined,
+      [],
+      undefined,
+      undefined,
+      {
+        status: "invalid",
+        trusted: false,
+        paper_ready_eligible: false,
+        input_manifest_valid: false,
+        gate_report_valid: true,
+        assurance_valid: false,
+        handoff_valid: false,
+        model_review_bundle_valid: false,
+        required_for_paper_ready: true,
+        reason_codes: ["review_input_changed:result_analysis.json"],
+        artifact_refs: [{
+          kind: "input_manifest",
+          label: "Review input manifest",
+          path: "review/review_input_manifest.json"
+        }]
+      }
+    );
+
+    const assuranceLabel = await screen.findByText("Review assurance");
+    const assuranceCard = assuranceLabel.closest("article");
+    expect(assuranceCard).not.toBeNull();
+    expect(within(assuranceCard!).getByText("Invalid")).toBeInTheDocument();
+    expect(within(assuranceCard!).getByText("Paper blocked · Manifest invalid · Gate valid · Handoff invalid")).toBeInTheDocument();
+    expect(screen.getByText("review_input_changed:result_analysis.json")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Review input manifest" })).toBeInTheDocument();
+  });
+
+  it("distinguishes review not started from invalid assurance", async () => {
+    renderAppWithResearchFunnel(
+      {},
+      undefined,
+      [],
+      undefined,
+      undefined,
+      {
+        status: "not_started",
+        trusted: false,
+        paper_ready_eligible: false,
+        input_manifest_valid: false,
+        gate_report_valid: false,
+        assurance_valid: false,
+        handoff_valid: false,
+        model_review_bundle_valid: false,
+        required_for_paper_ready: false,
+        reason_codes: [],
+        artifact_refs: []
+      }
+    );
+
+    const assuranceLabel = await screen.findByText("Review assurance");
+    const assuranceCard = assuranceLabel.closest("article");
+    expect(assuranceCard).not.toBeNull();
+    expect(within(assuranceCard!).getByText("Not started")).toBeInTheDocument();
+    expect(within(assuranceCard!).getByText("Review has not started.")).toBeInTheDocument();
+  });
+
   it("keeps the latest applied backtrack reason visible from the compact run index", async () => {
     renderAppWithResearchFunnel({}, undefined, [], {
       action: "backtrack_to_hypotheses",
@@ -3420,7 +3484,8 @@ function renderAppWithResearchFunnel(
   evidenceReadiness?: RunJobProjection["evidence_readiness"],
   transitionHistory: NonNullable<RunRecord["graph"]["transitionHistory"]> = [],
   lastAppliedTransition?: NonNullable<RunRecord["graph"]["lastAppliedTransition"]>,
-  evidenceAdequacy?: RunJobProjection["evidence_adequacy"]
+  evidenceAdequacy?: RunJobProjection["evidence_adequacy"],
+  reviewAssurance?: RunJobProjection["review_assurance"]
 ): void {
   const funnel: ResearchFunnelProjection = {
     research_mode: "topic_discovery",
@@ -3568,7 +3633,8 @@ function renderAppWithResearchFunnel(
             paper_ready: false,
             research_funnel: funnel,
             evidence_readiness: evidenceReadiness,
-            evidence_adequacy: evidenceAdequacy
+            evidence_adequacy: evidenceAdequacy,
+            review_assurance: reviewAssurance
           }],
           top_failures: []
         },

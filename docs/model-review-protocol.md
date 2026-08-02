@@ -71,6 +71,27 @@ review or when the review target is paper-scale:
 Individual specialist outputs have `A1` authority. A complete meta review may
 have `A2` authority only after deterministic verification of the bundle.
 
+AutoLabOS runtime review persists this chain under the run directory:
+
+- `review/review_input_snapshot.json` records the resolved inputs used to build
+  the reviewer prompts.
+- `review/review_input_manifest.json` records the closed, ordered input
+  inventory with byte lengths and SHA-256 bindings.
+- `review/review_gate_report.json` binds the exact deterministic minimum gate
+  and input-manifest bytes.
+- `review/review_assurance.json` records the deterministic/model assurance
+  outcome and its gate and manifest bindings.
+- `review/review_handoff.json` binds the exact assurance, pre-draft critique,
+  review decision, and review packet consumed downstream.
+
+The runtime validates the input manifest before dispatching any specialist.
+`write_paper` revalidates the complete chain before drafting. A changed
+bound upstream input,
+critique, decision, packet, assurance, or binding invalidates the handoff and
+requires a fresh review. Downstream nodes preserve the review-bound upstream
+artifacts; a drafting-time research-mode check is written separately as
+`paper/research_mode_guard_reassessment.json`.
+
 ## `ModelReviewBundle` field contract
 
 The bundle is a strict JSON sidecar supplied to `research review` with

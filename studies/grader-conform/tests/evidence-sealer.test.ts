@@ -53,7 +53,7 @@ function createFixture(options: {
       candidate_id: "candidate_one",
       source_id: "source_one",
       root_cause_cluster: "parser_contract",
-      evidence: options.candidatePathLeak ? "/home/private/evidence.json" : "src/evaluator.ts",
+      evidence: options.candidatePathLeak ? "/home/example/evidence.json" : "src/evaluator.ts",
       inclusion_evidence: {
         score_or_verdict_impact: "Equivalent answers can change from mismatch to match.",
         false_positive_class: "Historical evaluator defect, not a study detection outcome.",

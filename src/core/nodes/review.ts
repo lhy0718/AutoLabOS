@@ -1,5 +1,4 @@
 import path from "node:path";
-import { createHash } from "node:crypto";
 
 import { GraphNodeHandler } from "../stateGraph/types.js";
 import {
@@ -76,13 +75,28 @@ import {
   type EvidenceAdequacyAuthorization
 } from "../analysis/evidenceAdequacyArtifacts.js";
 import { resolveReviewActorProfiles } from "../reviewModelProfile.js";
+import {
+  buildModelReviewGateBinding,
+  buildReviewGateReport,
+  buildReviewHandoff,
+  buildReviewInputManifest,
+  buildReviewInputManifestBinding,
+  REVIEW_GATE_REPORT_RELATIVE_PATH,
+  REVIEW_HANDOFF_RELATIVE_PATH,
+  REVIEW_INPUT_MANIFEST_RELATIVE_PATH,
+  REVIEW_INPUT_SNAPSHOT_RELATIVE_PATH,
+  serializeReviewGateReport,
+  serializeReviewHandoff,
+  serializeReviewInputManifest,
+  validateReviewInputManifestAtRest
+} from "../reviewInputManifest.js";
 
 export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
   return {
     id: "review",
     async execute({ run, abortSignal }) {
       const runContextMemory = new RunContextMemory(run.memoryRefs.runContextPath);
-      const loadedReport = await loadAnalysisReport(run.id, runContextMemory);
+      const loadedReport = await loadAnalysisReport(run.id);
       if (!loadedReport) {
         return {
           status: "failure",
@@ -269,10 +283,130 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       });
       const minimumGateBytes = `${JSON.stringify(minimumGate, null, 2)}\n`;
       await writeRunArtifact(run, "review/minimum_gate.json", minimumGateBytes);
-      const minimumGateBinding = {
-        artifact_id: "review.minimum_gate",
-        sha256: createHash("sha256").update(minimumGateBytes).digest("hex")
+      const orphanCitations = Array.isArray(citationConsistencyArtifact?.orphan_citations)
+        ? citationConsistencyArtifact.orphan_citations.filter(
+            (value): value is string => typeof value === "string"
+          )
+        : [];
+      const reviewRiskSignals: RiskSignal[] = [
+        ...(Array.isArray(riskSignalsArtifact)
+          ? riskSignalsArtifact.filter((value): value is RiskSignal => {
+              if (!value || typeof value !== "object" || Array.isArray(value)) {
+                return false;
+              }
+              const candidate = value as Partial<RiskSignal>;
+              return (
+                typeof candidate.type === "string"
+                && (candidate.severity === "warn" || candidate.severity === "critical")
+                && typeof candidate.detail === "string"
+              );
+            })
+          : []),
+        ...(topicProbeReviewState
+          ? [{
+              type: "bounded_topic_probe_not_paper_evidence",
+              severity: "critical" as const,
+              detail: topicProbeReviewState.valid
+                ? `Bounded probe disposition ${topicProbeReviewState.decision?.disposition} delegates a machine-governed successor run; write_paper is forbidden in the parent run.`
+                : `Topic-probe artifact validation failed: ${topicProbeReviewState.reasons.join(", ")}. write_paper is forbidden.`
+            }]
+          : []),
+        ...(evidenceAdequacyPassed
+          ? []
+          : [{
+              type: "evidence_adequacy_reassessment_failed",
+              severity: "critical" as const,
+              detail:
+                evidenceAdequacyReassessment.issues.join(" ")
+                || "No frozen evidence adequacy contract and verified assessment are available."
+            }])
+      ];
+      const reviewInputSnapshot = {
+        schema_version: 1,
+        artifact_kind: "review_input_snapshot",
+        run: {
+          run_id: run.id,
+          title: run.title,
+          topic: run.topic,
+          objective_metric: run.objectiveMetric,
+          constraints: run.constraints,
+          research_cycle: run.graph.researchCycle ?? 0,
+          checkpoint_seq: run.graph.checkpointSeq ?? 0,
+          previous_write_paper_error: run.graph.nodeStates.write_paper?.lastError ?? null
+        },
+        report,
+        artifact_presence: presence,
+        orphan_citations: orphanCitations,
+        paper_surface_issues: paperSurfaceIssues,
+        risk_signals: reviewRiskSignals,
+        figure_audit_summary: figureAuditSummary ?? null,
+        minimum_gate: minimumGate,
+        brief_evidence_assessment: briefEvidenceAssessment ?? null,
+        prior_scientific_validation_signal: priorScientificValidationSignal ?? null,
+        evidence_adequacy_reassessment: evidenceAdequacyReviewArtifact,
+        research_mode_guard: researchModeGuard,
+        topic_probe_review_state: topicProbeReviewState
+          ? {
+              valid: topicProbeReviewState.valid,
+              reasons: topicProbeReviewState.reasons,
+              decision: topicProbeReviewState.decision ?? null,
+              gate: topicProbeReviewState.gate,
+              handoff: topicProbeReviewState.handoff ?? null
+            }
+          : null
       };
+      const reviewInputSnapshotPath = await writeRunArtifact(
+        run,
+        REVIEW_INPUT_SNAPSHOT_RELATIVE_PATH,
+        `${JSON.stringify(reviewInputSnapshot, null, 2)}\n`
+      );
+      const reviewInputManifest = await buildReviewInputManifest({
+        runDir,
+        runId: run.id,
+        researchCycle: run.graph.researchCycle,
+        checkpointSeq: run.graph.checkpointSeq
+      });
+      const reviewInputManifestBytes = serializeReviewInputManifest(reviewInputManifest);
+      const reviewInputManifestPath = await writeRunArtifact(
+        run,
+        REVIEW_INPUT_MANIFEST_RELATIVE_PATH,
+        reviewInputManifestBytes
+      );
+      const reviewInputManifestValidation =
+        await validateReviewInputManifestAtRest({
+          runDir,
+          runId: run.id,
+          researchCycle: run.graph.researchCycle ?? 0,
+          checkpointSeq: run.graph.checkpointSeq ?? 0
+        });
+      if (!reviewInputManifestValidation.valid) {
+        const error =
+          "review blocked because the closed input manifest is invalid: "
+          + reviewInputManifestValidation.reason_codes.join(", ");
+        await runContextMemory.put(
+          "review.input_manifest_validation",
+          reviewInputManifestValidation
+        );
+        return {
+          status: "failure",
+          error,
+          summary: error,
+          toolCallsUsed: 0
+        };
+      }
+      const reviewGateReport = await buildReviewGateReport({
+        runDir,
+        runId: run.id
+      });
+      const reviewGateReportBytes = serializeReviewGateReport(reviewGateReport);
+      const reviewGateReportPath = await writeRunArtifact(
+        run,
+        REVIEW_GATE_REPORT_RELATIVE_PATH,
+        reviewGateReportBytes
+      );
+      const reviewGateBinding = buildModelReviewGateBinding(reviewGateReportBytes);
+      const reviewInputManifestBinding =
+        buildReviewInputManifestBinding(reviewInputManifestBytes);
       const reviewActorProfiles = resolveReviewActorProfiles(deps.config);
       const requireIndependentReview = Boolean(deps.config.providers?.llm_mode);
       const panel = await runReviewPanel({
@@ -280,43 +414,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         node: "review",
         report,
         presence,
-        orphanCitations: Array.isArray(citationConsistencyArtifact?.orphan_citations)
-          ? citationConsistencyArtifact.orphan_citations.filter((value): value is string => typeof value === "string")
-          : [],
+        orphanCitations,
         paperSurfaceIssues,
-        riskSignals: [
-          ...(Array.isArray(riskSignalsArtifact)
-            ? riskSignalsArtifact.filter((value): value is RiskSignal => {
-                if (!value || typeof value !== "object" || Array.isArray(value)) {
-                  return false;
-                }
-                const candidate = value as Partial<RiskSignal>;
-                return (
-                  typeof candidate.type === "string"
-                  && (candidate.severity === "warn" || candidate.severity === "critical")
-                  && typeof candidate.detail === "string"
-                );
-              })
-            : []),
-          ...(topicProbeReviewState
-            ? [{
-                type: "bounded_topic_probe_not_paper_evidence",
-                severity: "critical" as const,
-                detail: topicProbeReviewState.valid
-                  ? `Bounded probe disposition ${topicProbeReviewState.decision?.disposition} delegates a machine-governed successor run; write_paper is forbidden in the parent run.`
-                  : `Topic-probe artifact validation failed: ${topicProbeReviewState.reasons.join(", ")}. write_paper is forbidden.`
-              }]
-            : []),
-          ...(evidenceAdequacyPassed
-            ? []
-            : [{
-                type: "evidence_adequacy_reassessment_failed",
-                severity: "critical" as const,
-                detail:
-                  evidenceAdequacyReassessment.issues.join(" ")
-                  || "No frozen evidence adequacy contract and verified assessment are available."
-              }])
-        ],
+        riskSignals: reviewRiskSignals,
         figureAuditSummary,
         llm: deps.llm,
         specialistAgent: requireIndependentReview
@@ -325,7 +425,8 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         metaReviewer: requireIndependentReview
           ? { llm: deps.experimentLlm ?? deps.llm, profile: reviewActorProfiles.meta_reviewer }
           : undefined,
-        gateBinding: requireIndependentReview ? minimumGateBinding : undefined,
+        gateBinding: reviewGateBinding,
+        inputManifestBinding: reviewInputManifestBinding,
         requireIndependentReview,
         eventStream: deps.eventStream,
         abortSignal
@@ -540,6 +641,10 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           { label: "Paper critique", path: "review/paper_critique.json" },
           { label: "Review decision", path: "review/decision.json" },
           { label: "Review assurance", path: "review/review_assurance.json" },
+          { label: "Review input snapshot", path: REVIEW_INPUT_SNAPSHOT_RELATIVE_PATH },
+          { label: "Review input manifest", path: REVIEW_INPUT_MANIFEST_RELATIVE_PATH },
+          { label: "Review gate report", path: REVIEW_GATE_REPORT_RELATIVE_PATH },
+          { label: "Review handoff", path: REVIEW_HANDOFF_RELATIVE_PATH },
           ...(modelReviewBundlePath
             ? [{ label: "Model review bundle", path: "review/model_review_bundle.json" }]
             : []),
@@ -574,6 +679,15 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
         renderOperatorHistoryMarkdown(operatorSummaryInput)
       );
       const reviewPacketPath = await writeRunArtifact(run, "review/review_packet.json", `${JSON.stringify(packet, null, 2)}\n`);
+      const reviewHandoff = await buildReviewHandoff({
+        runDir,
+        runId: run.id
+      });
+      const reviewHandoffPath = await writeRunArtifact(
+        run,
+        REVIEW_HANDOFF_RELATIVE_PATH,
+        serializeReviewHandoff(reviewHandoff)
+      );
       const checklistPath = await writeRunArtifact(run, "review/checklist.md", markdown);
       const runStatus = await buildRunOperatorStatus({
         workspaceRoot: process.cwd(),
@@ -599,6 +713,22 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
           {
             sourcePath: path.join(runDir, "review", "pre_review_summary.json"),
             targetRelativePath: "pre_review_summary.json"
+          },
+          {
+            sourcePath: reviewInputSnapshotPath,
+            targetRelativePath: "review_input_snapshot.json"
+          },
+          {
+            sourcePath: reviewInputManifestPath,
+            targetRelativePath: "review_input_manifest.json"
+          },
+          {
+            sourcePath: reviewGateReportPath,
+            targetRelativePath: "review_gate_report.json"
+          },
+          {
+            sourcePath: reviewHandoffPath,
+            targetRelativePath: "review_handoff.json"
           },
           {
             sourcePath: reviewPacketPath,
@@ -724,6 +854,9 @@ export function createReviewNode(deps: NodeExecutionDeps): GraphNodeHandler {
       await runContextMemory.put("review.last_findings_count", effectivePanel.findings.length);
       await runContextMemory.put("review.last_panel_agreement", panel.consistency.panel_agreement);
       await runContextMemory.put("review.assurance", effectivePanel.assurance);
+      await runContextMemory.put("review.input_snapshot", reviewInputSnapshot);
+      await runContextMemory.put("review.input_manifest", reviewInputManifest);
+      await runContextMemory.put("review.gate_report", reviewGateReport);
       await runContextMemory.put("review.meta_review", effectivePanel.meta_review || null);
       await runContextMemory.put("review.paper_critique", preDraftCritique);
       await runContextMemory.put("review.manuscript_type", preDraftCritique.manuscript_type);
@@ -1670,15 +1803,8 @@ async function resolveReviewArtifactPresence(
 }
 
 async function loadAnalysisReport(
-  runId: string,
-  runContextMemory: RunContextMemory
+  runId: string
 ): Promise<AnalysisReport | undefined> {
-  const cached = await runContextMemory.get<unknown>("analyze_results.last_summary");
-  const cachedReport = parseStoredAnalysisReport(cached);
-  if (cachedReport) {
-    return cachedReport;
-  }
-
   const raw = await safeRead(path.join(".autolabos", "runs", runId, "result_analysis.json"));
   return raw ? parseStoredAnalysisReport(raw) : undefined;
 }

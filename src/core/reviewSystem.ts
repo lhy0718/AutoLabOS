@@ -215,6 +215,8 @@ export interface ReviewAssurance {
   paper_ready_eligible: boolean;
   reason_codes: string[];
   model_review_bundle_content_sha256: string | null;
+  gate_report_content_sha256: string | null;
+  review_input_manifest_content_sha256: string | null;
   content_sha256: string;
 }
 
@@ -231,6 +233,7 @@ interface ReviewPanelArgs {
   specialistAgent?: ReviewAgentBinding;
   metaReviewer?: ReviewAgentBinding;
   gateBinding?: ModelReviewGateBinding;
+  inputManifestBinding?: ModelReviewGateBinding;
   requireIndependentReview?: boolean;
   eventStream?: EventStream;
   abortSignal?: AbortSignal;
@@ -388,6 +391,8 @@ export async function runReviewPanel(args: ReviewPanelArgs): Promise<ReviewPanel
     gateBindingPresent: Boolean(args.gateBinding),
     metaReviewerPresent: Boolean(args.metaReviewer),
     transportReceiptFailureRoles,
+    gateBinding: args.gateBinding,
+    inputManifestBinding: args.inputManifestBinding,
     metaTransportReceiptFailed,
     requireIndependentReview: args.requireIndependentReview === true
   });
@@ -439,7 +444,9 @@ async function refineReviewerWithLlm(
     args.orphanCitations,
     args.paperSurfaceIssues,
     args.riskSignals,
-    args.figureAuditSummary
+    args.figureAuditSummary,
+    args.gateBinding,
+    args.inputManifestBinding
   );
   const systemPrompt = buildReviewerSystemPrompt(spec);
   const invocationAttemptId = randomUUID();
@@ -693,6 +700,8 @@ function buildReviewAssurance(input: {
   gateBindingPresent: boolean;
   metaReviewerPresent: boolean;
   transportReceiptFailureRoles: ModelReviewRole[];
+  gateBinding?: ModelReviewGateBinding;
+  inputManifestBinding?: ModelReviewGateBinding;
   metaTransportReceiptFailed: boolean;
   requireIndependentReview: boolean;
 }): ReviewAssurance {
@@ -723,6 +732,9 @@ function buildReviewAssurance(input: {
   ).length;
   const reasonCodes: string[] = [];
   if (!input.gateBindingPresent) reasonCodes.push("deterministic_gate_binding_missing");
+  if (input.requireIndependentReview && !input.inputManifestBinding) {
+    reasonCodes.push("review_input_manifest_binding_missing");
+  }
   if (!input.metaReviewerPresent) reasonCodes.push("meta_reviewer_not_configured");
   if (fallbackRoles.length > 0) reasonCodes.push("specialist_model_review_incomplete");
   if (input.transportReceiptFailureRoles.length > 0) {
@@ -770,7 +782,9 @@ function buildReviewAssurance(input: {
     reason_codes: normalizedReasons,
     model_review_bundle_content_sha256: input.modelReviewBundle
       ? hashCanonical(input.modelReviewBundle)
-      : null
+      : null,
+    gate_report_content_sha256: input.gateBinding?.sha256 ?? null,
+    review_input_manifest_content_sha256: input.inputManifestBinding?.sha256 ?? null
   };
   return {
     ...payload,
@@ -898,7 +912,9 @@ function buildReviewerPrompt(
   orphanCitations: string[] = [],
   paperSurfaceIssues: PaperSurfaceReviewIssue[] = [],
   riskSignals: RiskSignal[] = [],
-  figureAuditSummary?: FigureAuditSummary
+  figureAuditSummary?: FigureAuditSummary,
+  gateBinding?: ModelReviewGateBinding,
+  inputManifestBinding?: ModelReviewGateBinding
 ): string {
   const primaryComparison = resolveExplicitPrimaryComparison(report);
   const primaryEffectEstimates = primaryComparison
@@ -923,6 +939,8 @@ function buildReviewerPrompt(
       objective_metric: run.objectiveMetric,
       constraints: run.constraints
     },
+    deterministic_gate: gateBinding,
+    review_input_manifest: inputManifestBinding,
     overview: {
       objective_status: report.overview.objective_status,
       objective_summary: report.overview.objective_summary,

@@ -9,6 +9,7 @@ import {
   RunLifecycleStatus,
   RunOperatorStatusArtifact,
   RunRecord,
+  RunReviewAssuranceProjection,
   RunRecommendedNextAction,
   RunValidationScope,
   WorkflowApprovalMode
@@ -30,6 +31,7 @@ import { buildPublicExperimentDir } from "../publicArtifacts.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
 import { inspectReferenceAuthorityGate } from "../referenceAuthorityGate.js";
+import { inspectReviewAssuranceArtifacts } from "../reviewInputManifest.js";
 import { buildWorkspaceRunRoot } from "./runPaths.js";
 
 interface ReviewCritiqueProjection {
@@ -126,13 +128,33 @@ export async function buildRunOperatorStatus(input: {
   const analysisProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "analyze_results");
   const reviewProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "review");
   const paperProjectionActive = nodeArtifactsBelongToCurrentGraph(input.run, "write_paper");
-  const evidenceAdequacyPromise = buildRunEvidenceAdequacyProjection({
-    workspaceRoot: input.workspaceRoot,
-    runDir,
-    run: input.run,
+  const [evidenceAdequacy, reviewAssurance] = await Promise.all([
+    buildRunEvidenceAdequacyProjection({
+      workspaceRoot: input.workspaceRoot,
+      runDir,
+      run: input.run,
+      reviewProjectionActive
+    }),
     reviewProjectionActive
-  });
-  const evidenceAdequacy = await evidenceAdequacyPromise;
+      ? inspectReviewAssuranceArtifacts({
+          runDir,
+          runId: input.run.id,
+          researchCycle: input.run.graph.researchCycle ?? 0
+        })
+      : Promise.resolve<RunReviewAssuranceProjection>({
+          status: "not_started",
+          trusted: false,
+          paper_ready_eligible: false,
+          input_manifest_valid: false,
+          gate_report_valid: false,
+          assurance_valid: false,
+          handoff_valid: false,
+          model_review_bundle_valid: false,
+          required_for_paper_ready: false,
+          reason_codes: [],
+          artifact_refs: []
+        })
+  ]);
   const analysisReady = analysisProjectionActive
     && await hasArtifacts(runDir, ["result_analysis.json", "transition_recommendation.json"]);
   const reviewReady = reviewProjectionActive
@@ -153,7 +175,8 @@ export async function buildRunOperatorStatus(input: {
   const paperReady = paperReadiness?.paper_ready === true
     && referenceAuthorityGate?.status === "pass"
     && evidenceAdequacy.trusted
-    && evidenceAdequacy.paper_evidence_allowed;
+    && evidenceAdequacy.paper_evidence_allowed
+    && reviewAssurance.paper_ready_eligible;
   const reviewRisks = reviewProjectionActive
     ? await readReadinessRisks(path.join(runDir, "review", "readiness_risks.json"))
     : undefined;
@@ -254,6 +277,7 @@ export async function buildRunOperatorStatus(input: {
       operator_label: buildPaperGateOperatorLabel(paperReadinessState, paperReady, paperReadinessReason)
     },
     evidence_adequacy: evidenceAdequacy,
+    review_assurance: reviewAssurance,
     network_dependency: networkDependency,
     validation_scope: input.validationScope || "full_run"
   };

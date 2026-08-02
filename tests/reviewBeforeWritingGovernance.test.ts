@@ -9,6 +9,7 @@ import { MockLLMClient } from "../src/core/llm/client.js";
 import { createWritePaperNode } from "../src/core/nodes/writePaper.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import type { RunRecord } from "../src/types.js";
+import { seedValidNonIndependentReviewAssurance } from "./helpers/reviewAssuranceFixture.js";
 
 const ORIGINAL_CWD = process.cwd();
 
@@ -144,6 +145,8 @@ describe("review-before-writing governance", () => {
       }),
       "utf8"
     );
+    await seedValidNonIndependentReviewAssurance({ workspaceRoot: root, run });
+    run.graph.checkpointSeq += 2;
 
     const node = createWritePaperNode({
       config: {
@@ -175,6 +178,57 @@ describe("review-before-writing governance", () => {
     expect(eligibility.allowed).toBe(true);
     await expect(access(path.join(runDir, "paper", "main.tex"))).rejects.toThrow();
   });
+  it("blocks drafting when the review handoff critique changes after review", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-handoff-tamper-"));
+    process.chdir(root);
+    const run = makeRun("run-review-handoff-tamper");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await seedValidWritePaperInputs(runDir);
+    await seedValidNonIndependentReviewAssurance({ workspaceRoot: root, run });
+    const critiquePath = path.join(runDir, "review", "paper_critique.json");
+    const critique = JSON.parse(await readFile(critiquePath, "utf8")) as Record<string, unknown>;
+    critique.manuscript_claim_risk_summary = "Changed after review.";
+    await writeFile(critiquePath, JSON.stringify(critique), "utf8");
+
+    const node = createWritePaperNode({
+      config: {
+        workflow: {
+          mode: "agent_approval",
+          wizard_enabled: true,
+          approval_mode: "minimal",
+          execution_approval_mode: "manual"
+        },
+        paper: {
+          build_pdf: false
+        }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("failure");
+    expect(result.error).toContain(
+      "review_handoff_paper_critique_binding_mismatch"
+    );
+    const eligibility = JSON.parse(
+      await readFile(path.join(runDir, "paper", "write_paper_eligibility.json"), "utf8")
+    ) as {
+      allowed: boolean;
+      review_assurance_reason_codes: string[];
+    };
+    expect(eligibility.allowed).toBe(false);
+    expect(eligibility.review_assurance_reason_codes).toContain(
+      "review_handoff_paper_critique_binding_mismatch"
+    );
+    await expect(access(path.join(runDir, "paper", "main.tex"))).rejects.toThrow();
+  });
+
 });
 
 function makeRun(runId: string): RunRecord {

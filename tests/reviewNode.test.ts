@@ -562,6 +562,43 @@ describe("review node", () => {
     expect(result.transitionRecommendation?.targetNode).not.toBe("write_paper");
   });
 
+
+  it("uses the canonical disk report when a valid cached report disagrees", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-cache-authority-"));
+    process.chdir(root);
+
+    const run = makeRun("run-review-cache-authority");
+    const runDir = path.join(root, ".autolabos", "runs", run.id);
+    await mkdir(path.join(runDir, "memory"), { recursive: true });
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const staleCachedReport = reviewAnalysisReportFixture();
+    delete staleCachedReport.primary_comparison_id;
+    await memory.put("analyze_results.last_summary", staleCachedReport);
+    await writeFile(
+      path.join(runDir, "result_analysis.json"),
+      JSON.stringify(reviewAnalysisReportFixture(), null, 2),
+      "utf8"
+    );
+
+    const node = createReviewNode({
+      config: {} as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm: new MockLLMClient(),
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const snapshot = JSON.parse(
+      await readFile(path.join(runDir, "review", "review_input_snapshot.json"), "utf8")
+    ) as { report: { primary_comparison_id?: string } };
+    expect(snapshot.report.primary_comparison_id).toBe("declared_primary_comparison");
+  });
+
   it("fails closed when a topic-discovery run reaches review without its bound probe chain", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-review-topic-probe-chain-"));
     process.chdir(root);

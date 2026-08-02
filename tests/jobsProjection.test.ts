@@ -95,6 +95,9 @@ describe("jobsProjection", () => {
       authorization_probe_allowed: false,
       bounded_probe_paper_evidence_allowed: false
     });
+    expect(formatRunJobProjectionLines({
+      projection: byId.get(hypothesisRun.id)!
+    })).toContain("  review assurance: not started");
   });
 
   it("keeps successful node notes out of blocker projections", async () => {
@@ -194,6 +197,73 @@ describe("jobsProjection", () => {
       paper_ready: false
     });
     expect(snapshot.runs[0]?.paper_readiness_state).toBeUndefined();
+  });
+
+  it("revalidates all cached readiness fields when artifacts change within the same run generation", async () => {
+    workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "autolabos-jobs-stale-artifacts-"));
+    const run = makeRun("run-stale-artifacts", {
+      currentNode: "review",
+      status: "paused",
+      updatedAt: "2026-07-26T01:02:03.000Z"
+    });
+    run.graph.currentNode = "review";
+    run.graph.researchCycle = 2;
+    run.graph.checkpointSeq = 12;
+    run.graph.nodeStates.analyze_results.status = "completed";
+    run.graph.nodeStates.review.status = "needs_approval";
+
+    const runDir = path.join(workspaceRoot, ".autolabos", "runs", run.id);
+    await fs.mkdir(runDir, { recursive: true });
+    await fs.writeFile(
+      path.join(runDir, "run_status.json"),
+      JSON.stringify({
+        version: 1,
+        generated_at: "2026-07-26T00:00:00.000Z",
+        run_id: run.id,
+        research_cycle: run.graph.researchCycle,
+        checkpoint_seq: run.graph.checkpointSeq,
+        run_updated_at: run.updatedAt,
+        title: run.title,
+        current_node: run.currentNode,
+        lifecycle_status: "needs_approval",
+        approval_mode: "minimal",
+        last_event_at: "2026-07-26T00:00:00.000Z",
+        analysis_ready: true,
+        review_ready: true,
+        paper_ready: false,
+        recommended_next_action: "resume_review",
+        blocking_reasons: [],
+        warning_reasons: [],
+        review_gate: {
+          status: "ready",
+          decision_outcome: "advance",
+          recommended_transition: "write_paper"
+        },
+        paper_gate: { status: "not_started" },
+        network_dependency: {
+          enabled: false,
+          policy: "blocked",
+          severity: "info",
+          operator_label: "Offline"
+        },
+        validation_scope: "full_run"
+      })
+    );
+
+    const snapshot = await buildRunJobsSnapshot({
+      workspaceRoot,
+      runs: [run],
+      approvalMode: "minimal"
+    });
+
+    expect(snapshot.runs[0]).toMatchObject({
+      analysis_ready: false,
+      review_ready: false,
+      paper_ready: false,
+      review_gate_status: undefined,
+      review_decision_outcome: undefined,
+      review_recommended_transition: undefined
+    });
   });
 
   it("surfaces review as an independent readiness stage with a resume_review next action", async () => {

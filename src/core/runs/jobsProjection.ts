@@ -20,7 +20,7 @@ import { fileExists } from "../../utils/fs.js";
 import { parseAnalysisReport } from "../resultAnalysis.js";
 import { formatReadinessRiskSection, parseReadinessRiskArtifact, type ReadinessRiskArtifact } from "../readinessRisks.js";
 import { loadResearchFunnelProjection, type ResearchFunnelProjection } from "./researchFunnelProjection.js";
-import { buildRunOperatorStatus, readRunOperatorStatus } from "./runStatus.js";
+import { buildRunOperatorStatus } from "./runStatus.js";
 
 interface ReviewPacketProjection {
   readiness?: {
@@ -282,7 +282,8 @@ function stripInternalProjection(input: RunJobProjectionInternal): RunJobProject
     validation_scope: input.validation_scope,
     research_funnel: input.research_funnel,
     evidence_readiness: input.evidence_readiness,
-    evidence_adequacy: input.evidence_adequacy
+    evidence_adequacy: input.evidence_adequacy,
+    review_assurance: input.review_assurance
   };
 }
 
@@ -428,6 +429,30 @@ export function formatRunJobProjectionLines(input: {
       ? ` | score=${input.projection.review_score_overall}/5`
       : "";
     lines.push(`  review gate: ${gateLabel}${scoreLabel}`);
+  }
+  if (input.projection.review_assurance) {
+    const assurance = input.projection.review_assurance;
+    if (assurance.status === "not_started") {
+      lines.push("  review assurance: not started");
+    } else if (assurance.status === "missing") {
+      lines.push(
+        `  review assurance: status=missing paper_ready_eligible=${yesNo(assurance.paper_ready_eligible)}`
+      );
+    } else {
+      lines.push(
+        `  review assurance: status=${assurance.status} trusted=${yesNo(assurance.trusted)} paper_ready_eligible=${yesNo(assurance.paper_ready_eligible)} input_manifest_valid=${yesNo(assurance.input_manifest_valid)} gate_report_valid=${yesNo(assurance.gate_report_valid)} handoff_valid=${yesNo(assurance.handoff_valid)} model_bundle_valid=${yesNo(assurance.model_review_bundle_valid)}`
+      );
+    }
+    if (assurance.reason_codes.length > 0) {
+      lines.push(`  review assurance reasons: ${assurance.reason_codes.join(", ")}`);
+    }
+    if (assurance.artifact_refs.length > 0) {
+      lines.push(
+        `  review assurance artifacts: ${assurance.artifact_refs
+          .map((artifact) => `${artifact.kind}=${artifact.path}`)
+          .join(" | ")}`
+      );
+    }
   }
   if (input.projection.paper_readiness_state) {
     const paperDetail = input.projection.paper_readiness_reason
@@ -578,21 +603,6 @@ async function loadOrBuildRunStatus(input: {
   networkPolicy?: ExperimentNetworkPolicy;
   networkPurpose?: ExperimentNetworkPurpose;
 }): Promise<RunOperatorStatusArtifact> {
-  const runDir = buildRunDir(input.workspaceRoot, input.run.id);
-  const existing = await readRunOperatorStatus(runDir);
-  if (existing && runStatusMatchesCurrentRun(existing, input.run)) {
-    const revalidated = await buildRunOperatorStatus({
-      workspaceRoot: input.workspaceRoot,
-      run: input.run,
-      approvalMode: input.approvalMode,
-      networkPolicy: input.networkPolicy,
-      networkPurpose: input.networkPurpose
-    });
-    return {
-      ...existing,
-      evidence_adequacy: revalidated.evidence_adequacy
-    };
-  }
   return buildRunOperatorStatus({
     workspaceRoot: input.workspaceRoot,
     run: input.run,
@@ -600,14 +610,6 @@ async function loadOrBuildRunStatus(input: {
     networkPolicy: input.networkPolicy,
     networkPurpose: input.networkPurpose
   });
-}
-
-function runStatusMatchesCurrentRun(status: RunOperatorStatusArtifact, run: RunRecord): boolean {
-  return status.run_id === run.id
-    && status.current_node === run.currentNode
-    && status.research_cycle === (run.graph.researchCycle ?? 0)
-    && status.checkpoint_seq === (run.graph.checkpointSeq ?? 0)
-    && status.run_updated_at === run.updatedAt;
 }
 
 function projectRunStatus(
@@ -642,6 +644,7 @@ function projectRunStatus(
     research_funnel: researchFunnel ? projectResearchFunnel(researchFunnel) : undefined,
     evidence_readiness: evidenceReadiness,
     evidence_adequacy: status.evidence_adequacy,
+    review_assurance: status.review_assurance,
     dominantFailure: status.dominant_failure
       ? {
           key: status.dominant_failure.key,

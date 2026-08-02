@@ -17,6 +17,7 @@ import { hashCanonical } from "../src/core/canonicalHash.js";
 import { buildRunOperatorStatus } from "../src/core/runs/runStatus.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
 import type { RunRecord } from "../src/types.js";
+import { seedValidNonIndependentReviewAssurance } from "./helpers/reviewAssuranceFixture.js";
 
 let workspaceRoot = "";
 
@@ -29,6 +30,7 @@ describe("run status reference authority defense", () => {
   it("does not project paper_ready from an unbound or failing reference gate", async () => {
     workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "run-status-reference-"));
     const run = makeRun("run-reference-authority");
+    run.graph.nodeStates.review.status = "completed";
     const paperDir = path.join(workspaceRoot, ".autolabos", "runs", run.id, "paper");
     await fs.mkdir(paperDir, { recursive: true });
     await fs.writeFile(
@@ -63,7 +65,18 @@ describe("run status reference authority defense", () => {
       .toBe(false);
 
     await seedEvidenceAdequacy(workspaceRoot, run, "pass");
+    await seedValidNonIndependentReviewAssurance({ workspaceRoot, run });
+    run.graph.checkpointSeq += 2;
     const bound = await buildRunOperatorStatus({ workspaceRoot, run, approvalMode: "minimal" });
+    expect(bound.evidence_adequacy.reason_codes).toEqual([]);
+    expect(bound.evidence_adequacy).toMatchObject({
+      trusted: true,
+      paper_evidence_allowed: true
+    });
+    expect(bound.review_assurance).toMatchObject({
+      trusted: true,
+      paper_ready_eligible: true
+    });
     expect(bound.paper_ready).toBe(true);
   });
 
