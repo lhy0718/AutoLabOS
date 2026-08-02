@@ -253,6 +253,17 @@ export function validateTopicDiscoverySemanticLineage(
   ) {
     reasons.push("collect_semantic_lineage_input_hash_mismatch");
   }
+  if (
+    semanticReview
+    && payloadHash
+    && !validateSemanticReviewRecoveryTrace(
+      semanticReview.recovery,
+      payloadHash,
+      semanticReview
+    )
+  ) {
+    reasons.push("collect_semantic_lineage_recovery_mismatch");
+  }
 
   if (
     qualitySemanticReview
@@ -357,6 +368,68 @@ export function validateTopicDiscoverySemanticLineage(
     trusted: reasonCodes.length === 0,
     reasonCodes
   };
+}
+
+function validateSemanticReviewRecoveryTrace(
+  value: unknown,
+  payloadHash: string,
+  semanticReview: JsonRecord
+): boolean {
+  if (value === undefined) {
+    return true;
+  }
+  const recovery = recordValue(value);
+  if (
+    !recovery
+    || recovery.policy !== "frozen_input_single_retry_v1"
+    || integerValue(recovery.maximum_attempts) !== 2
+    || exactSha256(recovery.frozen_input_sha256) !== payloadHash
+    || recovery.input_integrity_verified !== true
+    || recovery.exhausted !== false
+    || recovery.exhaustion_reason !== undefined
+    || !Array.isArray(recovery.attempts)
+  ) {
+    return false;
+  }
+  const attempts = recovery.attempts.map(recordValue);
+  const recoveryPerformed = recovery.recovery_performed === true;
+  if (
+    attempts.some((attempt) => !attempt)
+    || attempts.length !== (recoveryPerformed ? 2 : 1)
+  ) {
+    return false;
+  }
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index]!;
+    if (
+      integerValue(attempt.attempt) !== index + 1
+      || exactSha256(attempt.reviewer_input_sha256) !== payloadHash
+      || !["complete", "partial", "operational_failure"].includes(
+        exactText(attempt.status) ?? ""
+      )
+      || !exactSha256(attempt.prompt_sha256)
+      || !exactSha256(attempt.response_sha256)
+      || !integerValue(attempt.calls_started)
+      || !Array.isArray(attempt.reasons)
+      || attempt.reasons.some((reason) => typeof reason !== "string")
+    ) {
+      return false;
+    }
+  }
+  const first = attempts[0]!;
+  const finalAttempt = attempts.at(-1)!;
+  return (
+    recoveryPerformed
+      ? first.status !== "complete" && finalAttempt.status === "complete"
+      : first.status === "complete"
+  )
+    && finalAttempt.status === semanticReview.status
+    && exactSha256(finalAttempt.prompt_sha256)
+      === exactSha256(semanticReview.prompt_sha256)
+    && exactSha256(finalAttempt.response_sha256)
+      === exactSha256(semanticReview.response_sha256)
+    && integerValue(finalAttempt.calls_started)
+      === integerValue(recordValue(semanticReview.execution)?.calls_started);
 }
 
 function validateSemanticExecutionTrace(input: {

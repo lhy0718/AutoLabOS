@@ -824,6 +824,14 @@ describe("loadResearchFunnelProjection", () => {
       reason: "collect_semantic_lineage_input_hash_mismatch"
     },
     {
+      name: "review recovery frozen input hash",
+      artifact: "collect_semantic_review.json",
+      mutate(value: Record<string, any>) {
+        value.recovery.frozen_input_sha256 = "0".repeat(64);
+      },
+      reason: "collect_semantic_lineage_recovery_mismatch"
+    },
+    {
       name: "reviewed pair universe",
       artifact: "collect_semantic_review.json",
       mutate(value: Record<string, any>) {
@@ -2400,6 +2408,23 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       evidence_status: "semantic_review_judgment_only",
       paper_evidence_allowed: false,
       reviewer_identity: "fixture_reviewer",
+      recovery: {
+        policy: "frozen_input_single_retry_v1",
+        maximum_attempts: 2,
+        frozen_input_sha256: reviewerInputSha256,
+        input_integrity_verified: true,
+        recovery_performed: false,
+        exhausted: false,
+        attempts: [{
+          attempt: 1,
+          status: "complete",
+          reviewer_input_sha256: reviewerInputSha256,
+          prompt_sha256: promptSha256,
+          response_sha256: responseSha256,
+          calls_started: 1,
+          reasons: []
+        }]
+      },
       judgments
     },
     candidatesRaw: serializeJsonl(papers.map((paper) => ({

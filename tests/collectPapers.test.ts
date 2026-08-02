@@ -24,24 +24,37 @@ import { RunRecord } from "../src/types.js";
 const ORIGINAL_CWD = process.cwd();
 
 class JsonLLMClient extends MockLLMClient {
+  semanticAuditCalls = 0;
+  planningCalls = 0;
+
   constructor(
     private readonly response: string,
     private readonly failSemanticAudit = false,
-    private readonly partialSemanticAudit = false
+    private readonly partialSemanticAudit = false,
+    private readonly recoverSemanticAuditOnSecondCall = false
   ) {
     super();
   }
 
   override async complete(prompt: string): Promise<{ text: string }> {
+    const semanticAudit = prompt.startsWith(
+      "Conservatively triage every requested paper-family pair."
+    );
+    if (semanticAudit) {
+      this.semanticAuditCalls += 1;
+    } else {
+      this.planningCalls += 1;
+    }
     if (
       this.failSemanticAudit
-      && prompt.startsWith("Conservatively triage every requested paper-family pair.")
+      && semanticAudit
     ) {
       throw new Error("semantic_audit_fixture_outage");
     }
     if (
       this.partialSemanticAudit
-      && prompt.startsWith("Conservatively triage every requested paper-family pair.")
+      && semanticAudit
+      && (!this.recoverSemanticAuditOnSecondCall || this.semanticAuditCalls === 1)
     ) {
       return { text: partialSemanticAuditFixtureResponse(prompt) };
     }
@@ -3582,18 +3595,19 @@ describe("collectPapers bibtex", () => {
         authors: ["Example Author"]
       }));
     });
+    const llm = new JsonLLMClient(JSON.stringify({
+      shared_anchor: "document retrieval evaluation",
+      families: [
+        { axis: "ranking stability" },
+        { axis: "annotation disagreement" }
+      ],
+      assumptions: []
+    }), failSemanticAudit, partialSemanticAudit);
     const node = createCollectPapersNode({
       config: { papers: { max_results: 20 } } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new JsonLLMClient(JSON.stringify({
-        shared_anchor: "document retrieval evaluation",
-        families: [
-          { axis: "ranking stability" },
-          { axis: "annotation disagreement" }
-        ],
-        assumptions: []
-      }), failSemanticAudit, partialSemanticAudit),
+      llm,
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {
@@ -3608,8 +3622,14 @@ describe("collectPapers bibtex", () => {
 
     const result = await node.execute({ run, graph: run.graph });
 
-    expect(result.error).toContain(errorText);
-    expect(result).toMatchObject({ status: "failure", toolCallsUsed: 2 });
+    expect(result.error?.toLowerCase()).toContain(errorText);
+    expect(result).toMatchObject({ status: "failure", toolCallsUsed: 3 });
+    expect(result.error).toContain(
+      "topic_discovery_semantic_review_recovery_exhausted:"
+    );
+    expect(llm.planningCalls).toBe(1);
+    expect(llm.semanticAuditCalls).toBe(2);
+    expect(streamSearchPapers).toHaveBeenCalledTimes(4);
     expect(await readRunContextValue(
       root,
       runId,
@@ -3631,15 +3651,169 @@ describe("collectPapers bibtex", () => {
     const semanticReview = JSON.parse(await readFile(
       path.join(root, ".autolabos", "runs", runId, "collect_semantic_review.json"),
       "utf8"
-    )) as { status?: string; paper_evidence_allowed?: boolean };
+    )) as {
+      status?: string;
+      paper_evidence_allowed?: boolean;
+      recovery?: {
+        policy?: string;
+        input_integrity_verified?: boolean;
+        recovery_performed?: boolean;
+        exhausted?: boolean;
+        attempts?: Array<{
+          status?: string;
+          reviewer_input_sha256?: string;
+        }>;
+      };
+    };
     expect(semanticReview).toMatchObject({
       status: reviewStatus,
-      paper_evidence_allowed: false
+      paper_evidence_allowed: false,
+      recovery: {
+        policy: "frozen_input_single_retry_v1",
+        input_integrity_verified: true,
+        recovery_performed: true,
+        exhausted: true
+      }
     });
+    expect(semanticReview.recovery?.attempts).toHaveLength(2);
+    expect(new Set(
+      semanticReview.recovery?.attempts?.map(
+        (attempt) => attempt.reviewer_input_sha256
+      )
+    ).size).toBe(1);
     expect(await readFile(
       path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"),
       "utf8"
     )).toBe("");
+  });
+
+  it("recovers one incomplete semantic review without rerunning planning or retrieval", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-review-recovery-"));
+    process.chdir(root);
+
+    const runId = "run-collect-review-recovery";
+    const run = makeRun(runId);
+    run.title = "Retrieval Reliability";
+    run.topic = "Document retrieval evaluation reliability";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "run_brief.raw",
+          value: buildTopicDiscoveryScopeBrief(
+            run.topic,
+            "document retrieval evaluation",
+            [
+              "ranking stability under finite samples",
+              "annotation disagreement across judges"
+            ]
+          ),
+          updatedAt: new Date().toISOString()
+        }]
+      }),
+      "utf8"
+    );
+
+    const firstQuery = '"document retrieval evaluation" ranking stability';
+    const secondQuery = '"document retrieval evaluation" annotation disagreement';
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      const axis = request.query === firstQuery
+        ? "Ranking Stability"
+        : request.query === secondQuery
+          ? "Annotation Disagreement"
+          : undefined;
+      if (!axis) {
+        throw new Error(`unexpected query: ${request.query}`);
+      }
+      yield Array.from({ length: 4 }, (_, index) => ({
+        paperId: `${axis.toLowerCase().replace(/\s+/gu, "-")}-${index + 1}`,
+        title: `Document Retrieval Evaluation ${axis} ${index + 1}`,
+        abstract:
+          `Document retrieval evaluation evidence for ${axis.toLowerCase()}.`,
+        authors: ["Example Author"]
+      }));
+    });
+    const llm = new JsonLLMClient(JSON.stringify({
+      shared_anchor: "document retrieval evaluation",
+      families: [
+        { axis: "ranking stability" },
+        { axis: "annotation disagreement" }
+      ],
+      assumptions: []
+    }), false, true, true);
+    const eventStream = new InMemoryEventStream();
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 20 } } as any,
+      runStore: {} as any,
+      eventStream,
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result).toMatchObject({
+      status: "success",
+      needsApproval: true,
+      toolCallsUsed: 3
+    });
+    expect(llm.planningCalls).toBe(1);
+    expect(llm.semanticAuditCalls).toBe(2);
+    expect(streamSearchPapers).toHaveBeenCalledTimes(4);
+    expect(eventStream.history(100, runId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "OBS_RECEIVED",
+        payload: expect.objectContaining({
+          text: expect.stringContaining(
+            "retrieval and query planning remain unchanged"
+          )
+        })
+      })
+    ]));
+    const semanticReview = JSON.parse(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "collect_semantic_review.json"),
+      "utf8"
+    )) as {
+      status?: string;
+      recovery?: {
+        input_integrity_verified?: boolean;
+        recovery_performed?: boolean;
+        exhausted?: boolean;
+        attempts?: Array<{
+          status?: string;
+          reviewer_input_sha256?: string;
+        }>;
+      };
+    };
+    expect(semanticReview).toMatchObject({
+      status: "complete",
+      recovery: {
+        input_integrity_verified: true,
+        recovery_performed: true,
+        exhausted: false,
+        attempts: [
+          expect.objectContaining({ status: "partial" }),
+          expect.objectContaining({ status: "complete" })
+        ]
+      }
+    });
+    expect(new Set(
+      semanticReview.recovery?.attempts?.map(
+        (attempt) => attempt.reviewer_input_sha256
+      )
+    ).size).toBe(1);
   });
 
   it("recovers a persisted deferred enrichment job after restart", async () => {

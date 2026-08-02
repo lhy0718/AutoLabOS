@@ -171,7 +171,12 @@ Workflow-native topic discovery has a distinct run-scoped artifact class:
   `paper_evidence_allowed=false`; it is diagnostic input, not paper evidence.
 - `collect_semantic_review_input.json` preserves the exact bounded reviewer
   input and its hash, while `collect_semantic_review.json` preserves pair-level
-  judgments and reviewer identity without promoting the candidate pool.
+  judgments and reviewer identity without promoting the candidate pool. An
+  incomplete or transiently failed review may receive one node-internal retry
+  only when the reviewer-input hash remains unchanged. The review artifact
+  records both attempts, input-integrity status, and budget exhaustion under a
+  `frozen_input_single_retry_v1` recovery trace; query planning and provider
+  retrieval are not rerun for this recovery.
 - `collect_corpus_quality.json` version 4 admits only direct-support pairs,
   exposes application-only and uncertain counts plus per-family semantic
   precision, and fails closed when the review is partial or operationally

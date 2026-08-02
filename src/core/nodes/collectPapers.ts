@@ -73,7 +73,8 @@ import {
 } from "../collection/topicDiscoveryCorpusQuality.js";
 import {
   runTopicDiscoverySemanticAudit,
-  TopicDiscoverySemanticAuditTrace
+  TopicDiscoverySemanticAuditTrace,
+  type RunTopicDiscoverySemanticAuditInput
 } from "../collection/topicDiscoverySemanticAudit.js";
 import {
   CollectAttemptArchivePhase,
@@ -110,6 +111,8 @@ const TOPIC_DISCOVERY_RETRIEVAL_OVERFETCH_MULTIPLIER = 2;
 const MAX_TOPIC_DISCOVERY_FEEDBACK_TITLES = 18;
 const TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT =
   "collect_topic_discovery_candidates.jsonl";
+const TOPIC_DISCOVERY_SEMANTIC_REVIEW_RECOVERY_POLICY =
+  "frozen_input_single_retry_v1" as const;
 const CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT =
   "collect_candidate_prior_search_plan.json";
 const CANDIDATE_PRIOR_SEARCH_RECEIPT_ARTIFACT =
@@ -135,6 +138,26 @@ interface CollectPapersNodeRequest {
   };
   bibtexMode?: BibtexMode;
   candidatePriorSearchPlan?: CandidatePriorSearchPlan;
+}
+
+interface TopicDiscoverySemanticReviewRecovery {
+  policy: typeof TOPIC_DISCOVERY_SEMANTIC_REVIEW_RECOVERY_POLICY;
+  maximum_attempts: 2;
+  frozen_input_sha256: string;
+  input_integrity_verified: boolean;
+  recovery_performed: boolean;
+  exhausted: boolean;
+  exhaustion_reason?: string;
+  attempts: Array<{
+    attempt: number;
+    status: TopicDiscoverySemanticAuditTrace["status"];
+    reviewer_input_sha256: string;
+    prompt_sha256: string;
+    response_sha256: string;
+    calls_started: number;
+    reasons: string[];
+  }>;
+  audit: TopicDiscoverySemanticAuditTrace;
 }
 
 interface CollectResultMeta {
@@ -1298,6 +1321,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
       let topicDiscoveryQualityAudit: TopicDiscoveryCorpusQualityAudit | undefined;
       let topicDiscoverySemanticAudit: TopicDiscoverySemanticAuditTrace | undefined;
+      let topicDiscoverySemanticReviewRecovery:
+        TopicDiscoverySemanticReviewRecovery | undefined;
       let topicDiscoveryQualityFailure: string | undefined;
       if (normalizedRequest.strategy === "topic_portfolio" && mode === "replace") {
         const topicDiscoveryRows = Array.from(topicDiscoveryLexicalRows.values());
@@ -1349,7 +1374,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             );
           }
         }
-        topicDiscoverySemanticAudit = await runTopicDiscoverySemanticAudit({
+        const semanticAuditInput: RunTopicDiscoverySemanticAuditInput = {
           llm: deps.llm,
           rows: topicDiscoveryCandidatePoolRows,
           searchFamilies: searchFamilies.map((family) => ({
@@ -1364,7 +1389,25 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             topicDiscoveryCandidatePaperIdsByFamily,
           timeoutMs: resolveTopicDiscoverySemanticAuditTimeoutMs(),
           abortSignal
-        });
+        };
+        topicDiscoverySemanticReviewRecovery =
+          await runTopicDiscoverySemanticReviewWithRecovery({
+            input: semanticAuditInput,
+            onRetry: (frozenInputSha256) => {
+              deps.eventStream.emit({
+                type: "OBS_RECEIVED",
+                runId: run.id,
+                node: "collect_papers",
+                payload: {
+                  text:
+                    "Retrying topic-discovery semantic review once against "
+                    + `frozen input ${frozenInputSha256.slice(0, 12)}; `
+                    + "retrieval and query planning remain unchanged."
+                }
+              });
+            }
+          });
+        topicDiscoverySemanticAudit = topicDiscoverySemanticReviewRecovery.audit;
         const reviewerIdentity = resolveResearchLlmIdentity(deps.config);
         const reviewerInputSha256 = createHash("sha256")
           .update(JSON.stringify(topicDiscoverySemanticAudit.reviewer_input_payload), "utf8")
@@ -1395,7 +1438,22 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           execution: topicDiscoverySemanticAudit.execution,
           reasons: topicDiscoverySemanticAudit.reasons,
           protocol_violations: topicDiscoverySemanticAudit.protocol_violations,
-          judgments: topicDiscoverySemanticAudit.judgments
+          judgments: topicDiscoverySemanticAudit.judgments,
+          recovery: {
+            policy: topicDiscoverySemanticReviewRecovery.policy,
+            maximum_attempts:
+              topicDiscoverySemanticReviewRecovery.maximum_attempts,
+            frozen_input_sha256:
+              topicDiscoverySemanticReviewRecovery.frozen_input_sha256,
+            input_integrity_verified:
+              topicDiscoverySemanticReviewRecovery.input_integrity_verified,
+            recovery_performed:
+              topicDiscoverySemanticReviewRecovery.recovery_performed,
+            exhausted: topicDiscoverySemanticReviewRecovery.exhausted,
+            exhaustion_reason:
+              topicDiscoverySemanticReviewRecovery.exhaustion_reason,
+            attempts: topicDiscoverySemanticReviewRecovery.attempts
+          }
         }, null, 2)}\n`;
         collectAttemptArtifactContents["collect_semantic_review_input.json"] =
           semanticReviewInputContent;
@@ -1567,8 +1625,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           });
           const semanticOperationalFailure =
             topicDiscoverySemanticAudit.status === "operational_failure";
-          const semanticRecoveryExhausted = topicDiscoverySemanticAudit.reasons
-            .includes("semantic_audit_timeout_partitions_exhausted");
+          const semanticRecoveryExhausted =
+            topicDiscoverySemanticReviewRecovery.exhausted;
           const semanticReviewComplete = topicDiscoverySemanticAudit.status === "complete";
           let accumulatedFeedback = {
             candidateTitles: semanticReviewComplete ? candidateTitles : [],
@@ -1673,6 +1731,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           governanceWarnings.splice(0, governanceWarnings.length);
           topicDiscoveryQualityFailure = semanticRecoveryExhausted
             ? `topic_discovery_semantic_review_recovery_exhausted: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
+              + `Recovery reason: ${topicDiscoverySemanticReviewRecovery.exhaustion_reason ?? "semantic_review_retry_incomplete"}. `
               + "The frozen semantic-review recovery budget is exhausted; do not rerun retrieval automatically."
             : !semanticReviewComplete
               ? `Topic-discovery semantic review ${semanticOperationalFailure ? "failed operationally" : "was incomplete"}: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
@@ -1717,7 +1776,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       }
 
       const collectToolCallsUsed = topicDiscoverySemanticAudit
-        ? 1 + topicDiscoverySemanticAudit.execution.calls_started
+        ? 1 + (
+            topicDiscoverySemanticReviewRecovery?.attempts.reduce(
+              (sum, attempt) => sum + attempt.calls_started,
+              0
+            ) ?? topicDiscoverySemanticAudit.execution.calls_started
+          )
         : 1;
 
       const zeroResultFailure =
@@ -1995,6 +2059,101 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         toolCallsUsed: collectToolCallsUsed
       };
     }
+  };
+}
+
+async function runTopicDiscoverySemanticReviewWithRecovery(input: {
+  input: RunTopicDiscoverySemanticAuditInput;
+  onRetry?: (frozenInputSha256: string) => void;
+}): Promise<TopicDiscoverySemanticReviewRecovery> {
+  const first = await runTopicDiscoverySemanticAudit(input.input);
+  const frozenInputSha256 = hashTopicDiscoverySemanticReviewerInput(first);
+  const attempts = [buildTopicDiscoverySemanticReviewAttempt(1, first)];
+  if (first.status === "complete") {
+    return {
+      policy: TOPIC_DISCOVERY_SEMANTIC_REVIEW_RECOVERY_POLICY,
+      maximum_attempts: 2,
+      frozen_input_sha256: frozenInputSha256,
+      input_integrity_verified: true,
+      recovery_performed: false,
+      exhausted: false,
+      attempts,
+      audit: first
+    };
+  }
+
+  const nonRetryableReason = resolveNonRetryableSemanticReviewReason(first);
+  if (nonRetryableReason) {
+    return {
+      policy: TOPIC_DISCOVERY_SEMANTIC_REVIEW_RECOVERY_POLICY,
+      maximum_attempts: 2,
+      frozen_input_sha256: frozenInputSha256,
+      input_integrity_verified: true,
+      recovery_performed: false,
+      exhausted: true,
+      exhaustion_reason: nonRetryableReason,
+      attempts,
+      audit: first
+    };
+  }
+
+  input.onRetry?.(frozenInputSha256);
+  const second = await runTopicDiscoverySemanticAudit(input.input);
+  const secondInputSha256 = hashTopicDiscoverySemanticReviewerInput(second);
+  attempts.push(buildTopicDiscoverySemanticReviewAttempt(2, second));
+  const inputIntegrityVerified = secondInputSha256 === frozenInputSha256;
+  const recovered = inputIntegrityVerified && second.status === "complete";
+  return {
+    policy: TOPIC_DISCOVERY_SEMANTIC_REVIEW_RECOVERY_POLICY,
+    maximum_attempts: 2,
+    frozen_input_sha256: frozenInputSha256,
+    input_integrity_verified: inputIntegrityVerified,
+    recovery_performed: true,
+    exhausted: !recovered,
+    ...(!recovered
+      ? {
+          exhaustion_reason: inputIntegrityVerified
+            ? "semantic_review_retry_incomplete"
+            : "semantic_review_frozen_input_mismatch"
+        }
+      : {}),
+    attempts,
+    audit: inputIntegrityVerified ? second : first
+  };
+}
+
+function resolveNonRetryableSemanticReviewReason(
+  audit: TopicDiscoverySemanticAuditTrace
+): string | undefined {
+  if (audit.counts.budget_excluded_pairs > 0) {
+    return "semantic_review_input_budget_exhausted";
+  }
+  return audit.reasons.find((reason) =>
+    reason === "semantic_audit_timeout_partitions_exhausted"
+    || reason === "semantic_audit_partition_cumulative_input_budget_exceeded"
+  );
+}
+
+function hashTopicDiscoverySemanticReviewerInput(
+  audit: TopicDiscoverySemanticAuditTrace
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify(audit.reviewer_input_payload), "utf8")
+    .digest("hex");
+}
+
+function buildTopicDiscoverySemanticReviewAttempt(
+  attempt: number,
+  audit: TopicDiscoverySemanticAuditTrace
+): TopicDiscoverySemanticReviewRecovery["attempts"][number] {
+  return {
+    attempt,
+    status: audit.status,
+    reviewer_input_sha256: hashTopicDiscoverySemanticReviewerInput(audit),
+    prompt_sha256: audit.prompt_sha256,
+    response_sha256: audit.response_sha256,
+    calls_started: audit.execution.calls_started,
+    reasons: audit.reasons
   };
 }
 

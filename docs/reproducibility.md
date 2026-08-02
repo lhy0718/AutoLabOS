@@ -9,6 +9,9 @@ Reproducibility claims must be backed by concrete artifacts.
 - Topic-discovery prior-work probe receipt when substantive probes are
   executable (`collect_prior_work_probe_receipt.json`); its titles are
   planning hints, not paper evidence
+- Topic-discovery semantic review recovery trace when used
+  (`collect_semantic_review.json`); every attempt must bind to one frozen input
+  hash and one collection attempt without repeating query planning or retrieval
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
 - Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)
