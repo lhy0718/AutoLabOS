@@ -49,6 +49,15 @@ class JsonLLMClient extends MockLLMClient {
   }
 }
 
+class CapturingJsonLLMClient extends JsonLLMClient {
+  readonly prompts: string[] = [];
+
+  override async complete(prompt: string): Promise<{ text: string }> {
+    this.prompts.push(prompt);
+    return super.complete(prompt);
+  }
+}
+
 function semanticAuditFixtureResponse(prompt: string): string | undefined {
   const marker = "\nInput:\n";
   if (!prompt.startsWith("Conservatively triage every requested paper-family pair.")) {
@@ -109,6 +118,9 @@ interface SearchPaperFixture {
   title: string;
   abstract: string;
   authors: string[];
+  year?: number;
+  doi?: string;
+  arxivId?: string;
 }
 
 interface CollectQueryAttemptFixture {
@@ -548,7 +560,7 @@ describe("topic-discovery deterministic collection portfolio", () => {
     });
     expect(queryPlan.planner?.scientific_scope_contract).toMatchObject({
       version: 3,
-      termNormalizationVersion: 2,
+      termNormalizationVersion: 4,
       briefFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       scopeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       contractFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u)
@@ -572,6 +584,76 @@ describe("topic-discovery deterministic collection portfolio", () => {
         corpusRows.filter((row) => row.query_families?.includes(family.query_family ?? "")).length
       ).toBe(family.relevant_paper_count);
     }
+  });
+
+  it("counts one work once when preprint and published records arrive in separate lanes", async () => {
+    const { run, runDir } = await createTopicDiscoveryFixture(
+      "run-topic-cross-lane-work-deduplication",
+      8
+    );
+    const duplicateTitle =
+      "Document retrieval evaluation with confidence calibration across editions";
+    const { streamSearchPapers } = createSearchHarness(
+      (request, familyIndex) =>
+        Array.from({ length: 4 }, (_, paperIndex) => {
+          const isCalibration = request.query.includes("confidence calibration");
+          if (isCalibration && paperIndex === 0) {
+            return {
+              paperId: familyIndex === 0
+                ? "preprint-provider-id"
+                : "published-provider-id",
+              title: duplicateTitle,
+              abstract:
+                "Document retrieval evaluation measures confidence calibration under controlled evidence.",
+              authors: ["Fixture Author"],
+              year: familyIndex === 0 ? 2025 : 2026
+            };
+          }
+          return {
+            paperId: `cross-lane-${familyIndex}-${paperIndex}`,
+            title: isCalibration
+              ? `Document retrieval evaluation confidence calibration ${familyIndex}-${paperIndex}`
+              : `Document retrieval evaluation distribution shift ${familyIndex}-${paperIndex}`,
+            abstract:
+              "The study evaluates document retrieval with the named measurement axis under controlled evidence.",
+            authors: ["Fixture Author"]
+          };
+        })
+    );
+    const node = createTestNode({
+      maxResults: 8,
+      eventStream: new InMemoryEventStream(),
+      streamSearchPapers,
+      llm: new JsonLLMClient(JSON.stringify({
+        shared_anchor: "document retrieval evaluation",
+        families: [
+          { id: "calibration", axis: "confidence calibration" },
+          { id: "shift", axis: "distribution shift" }
+        ],
+        assumptions: []
+      }))
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status).toBe("success");
+    const semanticInput = await readJson<{
+      payload?: { papers?: Array<{ paper_id?: string; title?: string }> };
+    }>(path.join(runDir, "collect_semantic_review_input.json"));
+    expect(semanticInput.payload?.papers?.filter(
+      (paper) => paper.title === duplicateTitle
+    )).toHaveLength(1);
+    const sidecarRows = (await readFile(
+      path.join(runDir, "collect_topic_discovery_candidates.jsonl"),
+      "utf8"
+    )).trim().split("\n").map((line) => JSON.parse(line) as {
+      paper_id?: string;
+      title?: string;
+      query_families?: string[];
+    });
+    const duplicateRows = sidecarRows.filter((row) => row.title === duplicateTitle);
+    expect(duplicateRows).toHaveLength(1);
+    expect(duplicateRows[0]?.query_families).toHaveLength(1);
   });
 
   it("suppresses provider-taxonomy fields during cross-provider topic discovery and records the policy", async () => {
@@ -930,6 +1012,108 @@ describe("topic-discovery deterministic collection portfolio", () => {
       failure_reason: "literature_query_timeout_after_5ms"
     });
     expect(queryPlan.selected_families).toEqual([]);
+  });
+
+  it("uses prior-work probe titles as planner hints without publishing them as corpus evidence", async () => {
+    const { run, runDir } = await createTopicDiscoveryFixture(
+      "run-topic-prior-work-probe-hints",
+      12
+    );
+    const runContext = new RunContextMemory(run.memoryRefs.runContextPath);
+    await runContext.put("run_brief.raw", [
+      "# Research Brief",
+      "",
+      "## Research Mode",
+      "topic_discovery",
+      "",
+      "## Topic",
+      "Review evidence defects under controlled records.",
+      "",
+      "## Scientific Scope",
+      "### Scientific Object",
+      "- document review evidence",
+      "",
+      "### Empirical Problems",
+      "- defect localization under incomplete records",
+      "- revision consistency across reviewer rounds",
+      "- metric mismatch across result tables",
+      "",
+      "### Prior-Work Probes",
+      "- automatic reviewers detect faulty reasoning",
+      "",
+      "## Research Question",
+      "Which evidence defects alter review conclusions?"
+    ].join("\n"));
+    const llm = new CapturingJsonLLMClient(JSON.stringify({
+      shared_anchor: "document review evidence",
+      families: [
+        { axis: "defect localization" },
+        { axis: "revision consistency" },
+        { axis: "metric mismatch" }
+      ],
+      assumptions: []
+    }));
+    const { observedRequests, streamSearchPapers } = createSearchHarness(
+      (request, familyIndex) =>
+        request.query.includes("automatic reviewers")
+          ? [{
+              paperId: "paper_prior_probe_only",
+              title: "Automatic Reviewers Detect Faulty Reasoning",
+              abstract: "A closest-prior vocabulary hint.",
+              authors: ["Fixture Author"]
+            }]
+          : [1, 2].map((paperIndex) => ({
+              paperId: `paper_scientific_family_${familyIndex}_${paperIndex}`,
+              title: `${request.query} controlled comparison ${familyIndex}-${paperIndex}`,
+              abstract: `${request.query} is studied as the central scientific relation.`,
+              authors: ["Fixture Author"]
+            }))
+    );
+    const node = createTestNode({
+      maxResults: 12,
+      eventStream: new InMemoryEventStream(),
+      streamSearchPapers,
+      llm
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result.status, JSON.stringify(result)).toBe("success");
+    expect(observedRequests).toHaveLength(7);
+    expect(observedRequests[0]?.query).toBe(
+      "automatic reviewers detect faulty reasoning"
+    );
+    expect(llm.prompts[0]).toContain(
+      "Automatic Reviewers Detect Faulty Reasoning"
+    );
+    const receipt = await readJson<{
+      evidence_status?: string;
+      paper_evidence_allowed?: boolean;
+      candidate_titles?: string[];
+    }>(path.join(runDir, "collect_prior_work_probe_receipt.json"));
+    expect(receipt).toMatchObject({
+      evidence_status: "query_hint_only",
+      paper_evidence_allowed: false,
+      candidate_titles: ["Automatic Reviewers Detect Faulty Reasoning"]
+    });
+    const corpus = await readFile(path.join(runDir, "corpus.jsonl"), "utf8");
+    const candidatePool = await readFile(
+      path.join(runDir, "collect_topic_discovery_candidates.jsonl"),
+      "utf8"
+    );
+    expect(corpus).not.toContain("paper_prior_probe_only");
+    expect(candidatePool).not.toContain("paper_prior_probe_only");
+    const queryPlan = await readJson<{
+      selected_families?: Array<{ source?: string }>;
+      prior_work_probe_receipt?: {
+        paper_evidence_allowed?: boolean;
+      };
+    }>(path.join(runDir, "collect_query_plan.json"));
+    expect(queryPlan.selected_families).toHaveLength(6);
+    expect(queryPlan.selected_families?.every(
+      (family) => family.source === "llm_query_planner"
+    )).toBe(true);
+    expect(queryPlan.prior_work_probe_receipt?.paper_evidence_allowed).toBe(false);
   });
 
   it("does not let one explicit query bypass the multi-family topic-discovery gate", async () => {

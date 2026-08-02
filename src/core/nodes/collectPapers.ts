@@ -92,6 +92,13 @@ import {
   type CandidatePriorSearchAttemptResult,
   type CandidatePriorSearchPlan
 } from "../candidatePriorSearch.js";
+import { buildTopicDiscoveryScopeContract } from "../topicDiscoveryScopeContract.js";
+import {
+  buildTopicDiscoveryPriorWorkProbePlanningHints,
+  runTopicDiscoveryPriorWorkProbes,
+  TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT,
+  type TopicDiscoveryPriorWorkProbeReceipt
+} from "../collection/topicDiscoveryPriorWorkProbes.js";
 
 const ENRICHMENT_CONCURRENCY = 6;
 const ENRICHMENT_PROGRESS_INTERVAL = 10;
@@ -366,6 +373,11 @@ async function beginCollectGeneration(
       await writeRunArtifact(run as any, "collect_semantic_review.json", "");
       await writeRunArtifact(run as any, "collect_query_reformulation_hints.json", "");
       await writeRunArtifact(run as any, TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT, "");
+      await writeRunArtifact(
+        run as any,
+        TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT,
+        ""
+      );
     }
     await runContextMemory.put("collect_papers.current_generation_id", attemptId);
     await runContextMemory.put("collect_papers.active_attempt_id", attemptId);
@@ -515,6 +527,43 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         runContextMemory,
         researchMode === "topic_discovery" && mode === "replace"
       );
+      const searchProviders = buildSearchProviders(deps);
+      let priorWorkProbeReceipt: TopicDiscoveryPriorWorkProbeReceipt | undefined;
+      if (
+        researchMode === "topic_discovery"
+        && !requestFromContext?.query
+        && !candidatePriorSearchPlan
+      ) {
+        priorWorkProbeReceipt = await runTopicDiscoveryPriorWorkProbes({
+          contract: buildTopicDiscoveryScopeContract(rawBrief),
+          providers: searchProviders,
+          asOfDate: run.createdAt.slice(0, 10),
+          abortSignal
+        });
+        const receiptContent =
+          `${JSON.stringify(priorWorkProbeReceipt, null, 2)}\n`;
+        await publishForCollectGeneration({
+          run,
+          attemptId: collectAttemptId,
+          action: async () => writeRunArtifact(
+            run,
+            TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT,
+            receiptContent
+          )
+        });
+        deps.eventStream.emit({
+          type: "OBS_RECEIVED",
+          runId: run.id,
+          node: "collect_papers",
+          payload: {
+            text:
+              `Prior-work probe lane ${priorWorkProbeReceipt.status}: `
+              + `${priorWorkProbeReceipt.executed_probe_count}/`
+              + `${priorWorkProbeReceipt.planned_probe_count} probes executed; `
+              + `${priorWorkProbeReceipt.candidate_titles.length} title hints retained as non-evidence.`
+          }
+        });
+      }
       const extractedBrief = await runContextMemory.get<{ topic?: string }>("run_brief.extracted");
       const generatedQueries =
         requestFromContext?.query || candidatePriorSearchPlan
@@ -529,7 +578,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               node: "collect_papers",
               abortSignal,
               timeoutMs: planningTimeoutPolicy.literature_query_timeout_ms,
-              plannerIdentity: resolveResearchLlmIdentity(deps.config)
+              plannerIdentity: resolveResearchLlmIdentity(deps.config),
+              priorWorkProbeHints: priorWorkProbeReceipt
+                ? buildTopicDiscoveryPriorWorkProbePlanningHints(
+                    priorWorkProbeReceipt
+                  )
+                : []
             });
       const normalizedRequest = normalizeCollectRequest({
         request: requestFromContext,
@@ -579,6 +633,21 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   assumptions: []
                 },
             candidate_prior_search_plan: candidatePriorSearchPlan,
+            prior_work_probe_receipt: priorWorkProbeReceipt
+              ? {
+                  artifact: TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT,
+                  status: priorWorkProbeReceipt.status,
+                  scope_fingerprint: priorWorkProbeReceipt.scope_fingerprint,
+                  evidence_status: priorWorkProbeReceipt.evidence_status,
+                  paper_evidence_allowed:
+                    priorWorkProbeReceipt.paper_evidence_allowed,
+                  planned_probe_count:
+                    priorWorkProbeReceipt.planned_probe_count,
+                  executed_probe_count:
+                    priorWorkProbeReceipt.executed_probe_count,
+                  candidate_titles: priorWorkProbeReceipt.candidate_titles
+                }
+              : undefined,
             selected_families: normalizedRequest.searchPlan.map((search) => ({
               query: search.request.query,
               query_family: search.queryFamily,
@@ -599,6 +668,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       const collectQueryPlanContent = `${JSON.stringify(collectQueryPlanArtifact, null, 2)}\n`;
       const collectAttemptArtifactContents: Record<string, string> = {
         "collect_query_plan.json": collectQueryPlanContent,
+        ...(priorWorkProbeReceipt
+          ? {
+              [TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT]:
+                `${JSON.stringify(priorWorkProbeReceipt, null, 2)}\n`
+            }
+          : {}),
         ...(candidatePriorSearchPlan
           ? {
               [CANDIDATE_PRIOR_SEARCH_PLAN_ARTIFACT]:
@@ -771,7 +846,6 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         normalizedRequest
       );
       let effectiveRequest = normalizedRequest.primaryRequest;
-      const searchProviders = buildSearchProviders(deps);
       await syncCollectRunContext({
         run,
         runContextMemory,
@@ -923,17 +997,19 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 detail: screening.recommendation
               });
             }
+            let effectiveRecord = record;
             if (topicDiscoveryRelevanceProfile) {
-              rememberTopicDiscoveryCandidate({
+              effectiveRecord = rememberTopicDiscoveryCandidate({
                 rows: topicDiscoveryCandidateRows,
+                papers: topicDiscoveryCandidatePapers,
                 paperQueryFamilies,
                 paperIdsByFamily: topicDiscoveryCandidatePaperIdsByFamily,
                 row: record.row,
+                paper: record.paper,
                 queryFamily: plannedSearch.queryFamily
               });
-              topicDiscoveryCandidatePapers.set(record.row.paper_id, record.paper);
               const relevance = assessTopicDiscoveryPaperRelevance({
-                row: record.row,
+                row: effectiveRecord.row,
                 profile: topicDiscoveryRelevanceProfile,
                 eligibleQueryFamilies: new Set([plannedSearch.queryFamily])
               });
@@ -941,11 +1017,14 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                 continue;
               }
               relevantFetched += 1;
-              topicDiscoveryLexicalRows.set(record.row.paper_id, record.row);
+              topicDiscoveryLexicalRows.set(
+                effectiveRecord.row.paper_id,
+                effectiveRecord.row
+              );
             } else {
               relevantFetched += 1;
             }
-            const currentRow = storedRows.get(record.paper.paperId);
+            const currentRow = storedRows.get(effectiveRecord.paper.paperId);
             if (!currentRow && additionalLimit !== undefined && newPaperIds.size >= additionalLimit) {
               continue;
             }
@@ -963,17 +1042,17 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             ) {
               continue;
             }
-            fetchedPapers.set(record.paper.paperId, record.paper);
+            fetchedPapers.set(effectiveRecord.paper.paperId, effectiveRecord.paper);
             const incomingRow =
               normalizedRequest.strategy === "candidate_prior_portfolio"
                 ? {
-                    ...record.row,
+                    ...effectiveRecord.row,
                     query_families: [
-                      ...(record.row.query_families ?? []),
+                      ...(effectiveRecord.row.query_families ?? []),
                       plannedSearch.queryFamily
                     ]
                   }
-                : record.row;
+                : effectiveRecord.row;
             const mergedRow =
               normalizedRequest.strategy === "candidate_prior_portfolio"
                 && currentRow
@@ -988,14 +1067,14 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             const prevSerialized = currentRow ? JSON.stringify(currentRow) : undefined;
             const nextSerialized = JSON.stringify(mergedRow);
             if (!currentRow) {
-              newPaperIds.add(record.paper.paperId);
+              newPaperIds.add(effectiveRecord.paper.paperId);
               newPapersStoredThisSearch += 1;
               changed = true;
             } else if (prevSerialized !== nextSerialized) {
               changed = true;
             }
-            storedRows.set(record.paper.paperId, mergedRow);
-            selectedPaperIdsThisSearch.add(record.paper.paperId);
+            storedRows.set(effectiveRecord.paper.paperId, mergedRow);
+            selectedPaperIdsThisSearch.add(effectiveRecord.paper.paperId);
           }
 
           if (normalizedRequest.strategy === "candidate_prior_portfolio") {
@@ -2335,24 +2414,142 @@ function resolveTopicDiscoveryRetrievalLimit(
 
 function rememberTopicDiscoveryCandidate(input: {
   rows: Map<string, StoredCorpusRow>;
+  papers: Map<string, AggregatedSearchPaper>;
   paperQueryFamilies: Map<string, Set<string>>;
   paperIdsByFamily: Map<string, string[]>;
   row: StoredCorpusRow;
+  paper: AggregatedSearchPaper;
   queryFamily: string;
-}): void {
-  input.rows.set(
-    input.row.paper_id,
-    mergeStoredCorpusRows(input.rows.get(input.row.paper_id), input.row)
+}): AggregatedSearchRecord {
+  const canonicalPaperId = findEquivalentTopicDiscoveryPaperId(
+    input.rows,
+    input.row
+  ) ?? input.row.paper_id;
+  const normalizedIncomingRow = {
+    ...input.row,
+    paper_id: canonicalPaperId
+  };
+  const mergedRow = {
+    ...mergeStoredCorpusRows(
+      input.rows.get(canonicalPaperId),
+      normalizedIncomingRow
+    ),
+    paper_id: canonicalPaperId
+  };
+  input.rows.set(canonicalPaperId, mergedRow);
+  const mergedPaper = mergeTopicDiscoveryCandidatePaper(
+    input.papers.get(canonicalPaperId),
+    input.paper,
+    mergedRow
   );
+  input.papers.set(canonicalPaperId, mergedPaper);
   const queryFamilies =
-    input.paperQueryFamilies.get(input.row.paper_id) ?? new Set<string>();
+    input.paperQueryFamilies.get(canonicalPaperId) ?? new Set<string>();
   queryFamilies.add(input.queryFamily);
-  input.paperQueryFamilies.set(input.row.paper_id, queryFamilies);
+  input.paperQueryFamilies.set(canonicalPaperId, queryFamilies);
   const familyPaperIds = input.paperIdsByFamily.get(input.queryFamily) ?? [];
-  if (!familyPaperIds.includes(input.row.paper_id)) {
-    familyPaperIds.push(input.row.paper_id);
+  if (!familyPaperIds.includes(canonicalPaperId)) {
+    familyPaperIds.push(canonicalPaperId);
     input.paperIdsByFamily.set(input.queryFamily, familyPaperIds);
   }
+  return { row: mergedRow, paper: mergedPaper };
+}
+
+function findEquivalentTopicDiscoveryPaperId(
+  rows: ReadonlyMap<string, StoredCorpusRow>,
+  incoming: StoredCorpusRow
+): string | undefined {
+  const incomingDoi = normalizeTopicDiscoveryStableId(incoming.doi);
+  const incomingArxivId = normalizeTopicDiscoveryStableId(incoming.arxiv_id);
+  const incomingWorkFingerprint = buildTopicDiscoveryWorkFingerprint(incoming);
+  for (const [paperId, existing] of rows) {
+    if (paperId === incoming.paper_id) {
+      return paperId;
+    }
+    if (
+      incomingDoi
+      && incomingDoi === normalizeTopicDiscoveryStableId(existing.doi)
+    ) {
+      return paperId;
+    }
+    if (
+      incomingArxivId
+      && incomingArxivId === normalizeTopicDiscoveryStableId(existing.arxiv_id)
+    ) {
+      return paperId;
+    }
+    if (
+      incomingWorkFingerprint
+      && incomingWorkFingerprint === buildTopicDiscoveryWorkFingerprint(existing)
+    ) {
+      return paperId;
+    }
+  }
+  return undefined;
+}
+
+function buildTopicDiscoveryWorkFingerprint(
+  row: Pick<StoredCorpusRow, "title" | "authors">
+): string | undefined {
+  const title = normalizeTopicDiscoveryWorkText(row.title);
+  const firstAuthor = normalizeTopicDiscoveryWorkText(row.authors[0] ?? "");
+  if (title.length < 24 || !firstAuthor) {
+    return undefined;
+  }
+  return `${title}::${firstAuthor}`;
+}
+
+function normalizeTopicDiscoveryStableId(value: string | undefined): string | undefined {
+  const normalized = value?.trim().toLowerCase();
+  return normalized || undefined;
+}
+
+function normalizeTopicDiscoveryWorkText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function mergeTopicDiscoveryCandidatePaper(
+  existing: AggregatedSearchPaper | undefined,
+  incoming: AggregatedSearchPaper,
+  row: StoredCorpusRow
+): AggregatedSearchPaper {
+  const preferred = !existing || (!existing.doi && incoming.doi)
+    ? incoming
+    : existing;
+  const provenance = [...(existing?.provenance ?? []), ...incoming.provenance]
+    .filter((candidate, index, values) => {
+      const key = JSON.stringify(candidate);
+      return values.findIndex((value) => JSON.stringify(value) === key) === index;
+    });
+  return {
+    ...preferred,
+    paperId: row.paper_id,
+    title: row.title,
+    abstract: row.abstract,
+    year: row.year,
+    venue: row.venue,
+    url: row.url,
+    landingUrl: row.landing_url,
+    openAccessPdfUrl: row.pdf_url,
+    authors: row.authors,
+    doi: row.doi,
+    arxivId: row.arxiv_id,
+    citationCount: row.citation_count,
+    influentialCitationCount: row.influential_citation_count,
+    publicationDate: row.publication_date,
+    publicationTypes: row.publication_types,
+    fieldsOfStudy: row.fields_of_study,
+    searchProviders: [...new Set([
+      ...(existing?.searchProviders ?? []),
+      ...incoming.searchProviders
+    ])],
+    provenance
+  };
 }
 
 function mergePaperSearchAggregationReports(
@@ -3350,7 +3547,8 @@ async function archiveCurrentCollectAttempt(input: {
       "collect_semantic_review_input.json",
       "collect_semantic_review.json",
       "collect_query_reformulation_hints.json",
-      TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT
+      TOPIC_DISCOVERY_CANDIDATE_POOL_ARTIFACT,
+      TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT
     );
   }
   if (input.includeCandidatePriorArtifacts) {

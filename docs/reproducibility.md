@@ -6,6 +6,9 @@ Reproducibility claims must be backed by concrete artifacts.
 
 - Runtime event trace (`events.jsonl`)
 - Deferred background recovery record when used (`collect_background_job.json`)
+- Topic-discovery prior-work probe receipt when substantive probes are
+  executable (`collect_prior_work_probe_receipt.json`); its titles are
+  planning hints, not paper evidence
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
 - Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)
@@ -110,6 +113,9 @@ Validation and test runs should not write transient state into the repository ch
 - Set `AUTOLABOS_VALIDATION_WORKSPACE_ROOT` to override that root.
 - `npm test` sets `TMPDIR`, `TMP`, and `TEMP` to
   `<validation-workspace>/.tmp`.
+- Vitest owns only its generated `.tmp/run-*` directory. Global test
+  setup/teardown must preserve every direct child of the validation root
+  because named children may contain resumable real TUI/web runs.
 - Live fixture workspaces are created under `<validation-workspace>/.live/`.
 - Real TUI/web validation workspaces should live under the validation root, with
   run artifacts in `<validation-workspace>/.autolabos/...` and public outputs in

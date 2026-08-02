@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   normalizeTopicDiscoveryScientificTerms
 } from "../src/core/topicDiscoveryScientificTerms.js";
 
@@ -51,6 +53,23 @@ describe("topic-discovery scientific term semantics", () => {
     expect(
       normalizeTopicDiscoveryCandidateTerms("sample size limited by budget")
     ).toEqual(["sample", "size", "limit", "budget"]);
+  });
+
+  it("preserves compositional paper-review terms only in object-aware normalization", () => {
+    expect(normalizeTopicDiscoveryScientificTerms("scientific paper review"))
+      .toEqual(["scientific"]);
+    expect(normalizeTopicDiscoveryScientificObjectTerms("scientific paper review"))
+      .toEqual(["scientific", "paper", "review"]);
+    expect(normalizeTopicDiscoveryCandidateObjectTerms(
+      "Paper review limited-sample uncertainty"
+    )).toEqual(["paper", "review", "finite", "sample", "uncertainty"]);
+    expect(JSON.parse(buildTopicDiscoveryCandidateFamilySignature({
+      sharedAnchorTerms: ["paper", "review"],
+      axisTerms: ["defect", "localization"]
+    }))).toEqual({
+      sharedAnchorTerms: ["paper", "review"],
+      axisTerms: ["defect", "localization"]
+    });
   });
 
   it("assigns one family signature to finite-sample surface variants", () => {

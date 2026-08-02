@@ -1,10 +1,27 @@
 import { extractLiteratureTermSequence } from "./runConstraints.js";
 
-export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 2 as const;
+export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 4 as const;
 export const TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION = 5 as const;
+
+const TOPIC_DISCOVERY_OBJECT_STOPWORDS: string[] = [
+  "paper",
+  "papers",
+  "review",
+  "reviews"
+];
 
 export function normalizeTopicDiscoveryScientificTerms(value: string): string[] {
   return extractLiteratureTermSequence(value)
+    .map(normalizeTopicDiscoveryScientificTerm)
+    .filter(Boolean);
+}
+
+export function normalizeTopicDiscoveryScientificObjectTerms(
+  value: string
+): string[] {
+  return extractLiteratureTermSequence(value, {
+    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS
+  })
     .map(normalizeTopicDiscoveryScientificTerm)
     .filter(Boolean);
 }
@@ -14,6 +31,14 @@ export function normalizeTopicDiscoveryCandidateTerms(value: string): string[] {
     .map(normalizeTopicDiscoveryScientificTerm)
     .filter(Boolean);
   return terms;
+}
+
+export function normalizeTopicDiscoveryCandidateObjectTerms(value: string): string[] {
+  return extractLiteratureTermSequence(normalizeCandidateRecallPhrases(value), {
+    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS
+  })
+    .map(normalizeTopicDiscoveryScientificTerm)
+    .filter(Boolean);
 }
 
 function normalizeCandidateRecallPhrases(value: string): string {
@@ -28,7 +53,7 @@ export function buildTopicDiscoveryCandidateFamilySignature(input: {
   axisTerms: string[];
 }): string {
   const sharedAnchorTerms = uniqueSorted(
-    normalizeTopicDiscoveryScientificTerms((input.sharedAnchorTerms ?? []).join(" "))
+    normalizeTopicDiscoveryScientificObjectTerms((input.sharedAnchorTerms ?? []).join(" "))
   );
   const anchorSet = new Set(sharedAnchorTerms);
   const axisTerms = uniqueSorted(

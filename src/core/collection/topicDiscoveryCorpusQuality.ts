@@ -8,8 +8,9 @@ import {
 } from "../runConstraints.js";
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
-  normalizeTopicDiscoveryScientificTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
@@ -186,7 +187,7 @@ export function assessTopicDiscoveryPaperRelevance(input: {
       matchedQueryFamilies: []
     };
   }
-  const paperTermSequence = normalizeTopicDiscoveryCandidateTerms(
+  const paperTermSequence = normalizeTopicDiscoveryCandidateObjectTerms(
     `${input.row.title}\n${input.row.abstract}`
   );
   const anchorProximate = containsTermsWithinWindow(
@@ -621,7 +622,7 @@ function deduplicateSearchFamilies(searchFamilies: TopicDiscoverySearchFamily[])
       continue;
     }
     const parsed = parseTopicDiscoveryLiteratureQuery(family.query);
-    const sharedAnchorTerms = normalizeExplicitTerms(
+    const sharedAnchorTerms = normalizeExplicitAnchorTerms(
       family.sharedAnchorTerms ?? parsed?.sharedAnchorTerms ?? []
     );
     const anchorSet = new Set(sharedAnchorTerms);
@@ -648,8 +649,8 @@ function deduplicateSearchFamilies(searchFamilies: TopicDiscoverySearchFamily[])
   return families;
 }
 
-function normalizeExplicitTerms(terms: string[]): string[] {
-  return [...new Set(normalizeTopicDiscoveryScientificTerms(terms.join(" ")))];
+function normalizeExplicitAnchorTerms(terms: string[]): string[] {
+  return [...new Set(normalizeTopicDiscoveryScientificObjectTerms(terms.join(" ")))];
 }
 
 function normalizeCandidateTerms(terms: string[]): string[] {

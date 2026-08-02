@@ -15956,7 +15956,7 @@ Path placeholders:
 
 ## Issue: LV-332
 
-- Status: in_progress
+- Status: resolved; focused regression and direct named-workspace preservation probe pass
 - Validation target: P6 real live validation workspace artifacts must survive targeted Vitest regression runs so helper tests do not erase active run evidence.
 - Environment/session context:
   - validation workspace root: `<validation-workspace>`
@@ -15989,21 +15989,29 @@ Path placeholders:
   - Hypothesis: the validation-root cleanup allowlist predates the P6 real live workspace convention and treats any unknown validation-root child directory as disposable test state.
 
 - Code/test changes:
-  - Code: `tests/globalTeardown.ts` pending
-  - Tests: `tests/p6ContinueScript.test.ts` pending
+  - Code: `tests/globalTeardown.ts` no longer guesses that unknown
+    validation-root children are disposable. `run-tests.mjs` remains the
+    sole owner of its isolated `.tmp/run-*` directory.
+  - Tests: `tests/liveValidationContinueScript.test.ts` requires arbitrary
+    named live workspaces to be preserved.
 
 - Regression status:
-  - Automated regression test linked: no
-  - Re-validation result: pending
+  - Automated regression test linked: yes
+  - Re-validation result: `npm test -- tests/liveValidationContinueScript.test.ts`
+    passed all 10 tests. A direct child named
+    `named-live-workspace-preservation-probe` remained present after real
+    Vitest global setup/teardown and was removed only after that assertion.
 
 - Follow-up risks:
-  - Other future named live-validation workspaces may need an explicit preservation convention rather than a one-off allowlist entry.
   - The deleted `df02a1b7-75be-4ab6-9fa8-9774ee4a0492` run cannot be used as reproducibility evidence; P6 must continue from a new run.
+  - Test helpers that create state outside the isolated `.tmp/run-*` root
+    must own their cleanup explicitly.
 
 - Evidence/artifacts:
   - `outputs/p6-preflight/p6-live-run-id.txt`
   - `outputs/p6-preflight/p6-live-start-output.txt`
   - `tests/globalTeardown.ts`
+  - `tests/liveValidationContinueScript.test.ts`
 
 ## Issue: LV-331
 

@@ -3,7 +3,7 @@ import {
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
 
-export const TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_VERSION = 6 as const;
+export const TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_VERSION = 7 as const;
 export const TOPIC_DISCOVERY_SEMANTIC_REVIEW_INPUT_ARTIFACT_VERSION = 1 as const;
 export const TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION = 2 as const;
 

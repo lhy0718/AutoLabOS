@@ -302,5 +302,6 @@ describe("live-validation continue helper", () => {
   it("preserves the live-validation workspace during test cleanup", () => {
     expect(shouldPreserveValidationRootEntry("live-validation")).toBe(true);
     expect(shouldPreserveValidationRootEntry(".live")).toBe(true);
+    expect(shouldPreserveValidationRootEntry("named-live-workspace")).toBe(true);
   });
 });

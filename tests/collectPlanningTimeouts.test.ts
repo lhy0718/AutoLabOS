@@ -118,6 +118,60 @@ describe("collect-time LLM helpers", () => {
     }
   });
 
+  it("uses closest-prior titles only as cache-bound planning hints", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-prior-hints-"));
+    const runId = "run-query-prior-hints";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const response = JSON.stringify({
+      shared_anchor: "document retrieval",
+      families: [
+        { axis: "confidence calibration" },
+        { axis: "ranking variance" },
+        { axis: "external population" }
+      ],
+      assumptions: []
+    });
+    const llm = new SequencedJsonLLMClient([response, response]);
+    const input = {
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "confidence calibration under distribution shift",
+        "ranking variance under finite samples",
+        "external population generalization"
+      ]),
+      runContextMemory: new RunContextMemory(contextPath),
+      llm
+    };
+
+    await resolveGeneratedLiteratureQueries({
+      ...input,
+      priorWorkProbeHints: [{
+        probeId: "prior_probe_fixture",
+        query: "review defect localization",
+        candidateTitles: ["Traceable Review Defect Localization"]
+      }]
+    });
+    await resolveGeneratedLiteratureQueries({
+      ...input,
+      priorWorkProbeHints: [{
+        probeId: "prior_probe_fixture",
+        query: "review defect localization",
+        candidateTitles: ["Auditable Review Defect Localization"]
+      }]
+    });
+
+    expect(llm.prompts).toHaveLength(2);
+    expect(llm.prompts[0]).toContain("Separate closest-prior retrieval hints:");
+    expect(llm.prompts[0]).toContain("Traceable Review Defect Localization");
+    expect(llm.prompts[0]).toContain(
+      "cannot authorize an axis, establish novelty, count as direct support, or enter the evidence corpus"
+    );
+    expect(llm.prompts[1]).toContain("Auditable Review Defect Localization");
+  });
+
   it("keeps partial configuration fixtures bounded when providers are omitted", () => {
     expect(resolveCollectPlanningTimeoutPolicy({})).toMatchObject({
       llm_mode: "codex",
@@ -1390,7 +1444,7 @@ describe("collect-time LLM helpers", () => {
     expect(result?.topicDiscoveryPlan?.families).toHaveLength(2);
     expect(result?.topicDiscoveryPlan).toMatchObject({
       version: 4,
-      termNormalizationVersion: 2,
+      termNormalizationVersion: 4,
       candidateRecallSemanticsVersion: TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
       families: expect.arrayContaining([
         expect.objectContaining({

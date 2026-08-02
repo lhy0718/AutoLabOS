@@ -68,6 +68,13 @@ starts from a complete `ResearchBrief` whose `Research Mode` is
   retrieval. Planning fails closed when the brief does not expose enough
   role-authorized scientific material, and
   feedback from a different scope fingerprint is quarantined instead of merged.
+  Before query-family planning, at most four brief-declared prior-work probes
+  with at least two substantive terms run through a separate bounded retrieval
+  lane. Each probe retains at most four titles from eight provider candidates.
+  Those titles are cache-bound vocabulary hints only: they cannot authorize an
+  axis, enter the corpus, count toward family precision, establish novelty, or
+  become paper evidence. Generic closest-prior process reminders are recorded
+  in the scope contract but do not trigger provider searches.
 - `analyze_papers` materializes `ResearchGapMap` from evidence-linked
   typed research opportunities and retains supported versus provisional
   epistemic status. The admissible opportunity types are explicit scientific
@@ -146,13 +153,18 @@ Harness and runtime work must preserve both TUI and web behaviors unless a chang
 
 Workflow-native topic discovery has a distinct run-scoped artifact class:
 
-- `collect_query_plan.json` version 4 records the versioned query-family
+- `collect_query_plan.json` version 7 records the versioned query-family
   contracts, their stable identifiers, the hash-bound scientific-scope
   contract, sentence-role audit units, and per-family scope-lineage diagnostics.
   The scope artifact uses
   a brief fingerprint, an anchor-independent scope fingerprint, and an
   anchor-bound contract fingerprint so resumed planning cannot silently reuse
   stale feedback or replace the executed anchor.
+- `collect_prior_work_probe_receipt.json` records every executed
+  brief-declared probe, provider diagnostics, bounded candidate titles, and the
+  explicit `query_hint_only` / `paper_evidence_allowed=false` boundary.
+  It remains outside both the retrieval candidate sidecar and the retained
+  evidence corpus.
 - `collect_topic_discovery_candidates.jsonl` preserves the retrieval candidate
   universe with retrieval-family, lexical-match, semantic-selection, and
   final-corpus publication states. It always has

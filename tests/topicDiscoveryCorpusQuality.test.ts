@@ -120,6 +120,38 @@ describe("topic discovery corpus quality", () => {
     });
   });
 
+  it("preserves a paper-review object through profile and candidate matching", () => {
+    const profile = buildTopicDiscoveryCorpusRelevanceProfile([
+      {
+        queryFamily: "family-defect-localization",
+        query: '"paper review" manuscript defect localization',
+        source: "llm_query_planner",
+        sharedAnchorTerms: ["paper", "review"],
+        axisTerms: ["manuscript", "defect", "localization"]
+      }
+    ]);
+    const relevance = assessTopicDiscoveryPaperRelevance({
+      row: paper(
+        "paper-review-localization",
+        "Paper review with manuscript defect localization and grounded evidence"
+      ),
+      profile,
+      eligibleQueryFamilies: new Set(["family-defect-localization"])
+    });
+
+    expect(profile.sharedAnchorTerms).toEqual(["paper", "review"]);
+    expect(profile.families[0]?.familySignature).toBe(JSON.stringify({
+      sharedAnchorTerms: ["paper", "review"],
+      axisTerms: ["defect", "localization", "manuscript"]
+    }));
+    expect(relevance).toMatchObject({
+      relevant: true,
+      anchorProximate: true,
+      anchorAxisProximate: true,
+      matchedQueryFamilies: ["family-defect-localization"]
+    });
+  });
+
   it("requires two thirds of a three-term axis before semantic review", () => {
     const profile = buildTopicDiscoveryCorpusRelevanceProfile([
       {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  normalizeTopicDiscoveryScientificObjectTerms,
   normalizeTopicDiscoveryScientificTerms,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "./topicDiscoveryScientificTerms.js";
@@ -154,7 +155,7 @@ const GENERIC_SCOPE_TERMS = new Set(normalizeTopicDiscoveryScientificTerms([
 ].join(" ")));
 
 const GENERIC_ANCHOR_TERMS = new Set(normalizeTopicDiscoveryScientificTerms([
-  "about", "broad", "candidate", "contribution", "empirical", "gap", "paper",
+  "about", "broad", "candidate", "contribution", "empirical", "gap",
   "problem", "research", "scope", "search", "scientific", "study", "topic", "workshop"
 ].join(" ")));
 
@@ -589,7 +590,7 @@ function splitScopeUnits(value: string | undefined): string[] {
 }
 
 function extractScientificObjectTerms(value: string): string[] {
-  return uniqueTerms(normalizeTopicDiscoveryScientificTerms(value))
+  return uniqueTerms(normalizeTopicDiscoveryScientificObjectTerms(value))
     .filter((term) => /\p{L}/u.test(term))
     .filter((term) => !GENERIC_ANCHOR_TERMS.has(term));
 }
@@ -646,7 +647,9 @@ function buildScopeContractFingerprint(
 }
 
 function canonicalizeAnchorTerms(value: string[]): string[] {
-  return uniqueTerms(normalizeTopicDiscoveryScientificTerms(value.join(" ")));
+  return uniqueTerms(
+    normalizeTopicDiscoveryScientificObjectTerms(value.join(" "))
+  );
 }
 
 function uniqueTerms(values: string[]): string[] {

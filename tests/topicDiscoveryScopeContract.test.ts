@@ -45,7 +45,7 @@ describe("topic-discovery scientific scope contract", () => {
     expect(first).toEqual(second);
     expect(first.enforced).toBe(true);
     expect(first.version).toBe(3);
-    expect(first.termNormalizationVersion).toBe(2);
+    expect(first.termNormalizationVersion).toBe(4);
     expect(first.contractSource).toBe("explicit_scientific_scope");
     expect(first.sourceSections).toEqual(["scientific_scope"]);
     expect(first.declaredAnchorTerms).toEqual(["document", "ranking"]);
@@ -206,6 +206,35 @@ describe("topic-discovery scientific scope contract", () => {
       novelTerms: [],
       passed: true
     });
+  });
+
+  it("accepts the compositional paper-review object without admitting procedural paper phrases", () => {
+    const buildWithObject = (scientificObject: string) =>
+      buildTopicDiscoveryScopeContract([
+        "# Research Brief",
+        "",
+        "## Research Mode",
+        "topic_discovery",
+        "",
+        "## Scientific Scope",
+        "### Scientific Object",
+        `- ${scientificObject}`,
+        "",
+        "### Empirical Problems",
+        "- defect localization under incomplete evidence",
+        "- reviewer consistency across revision rounds"
+      ].join("\n"));
+
+    const paperReview = buildWithObject("scientific paper review");
+    const researchPaper = buildWithObject("research paper");
+    const paperTopic = buildWithObject("paper topic");
+
+    expect(paperReview.declaredAnchorTerms).toEqual(["paper", "review"]);
+    expect(paperReview.enforced).toBe(true);
+    expect(researchPaper.declaredAnchorTerms).toEqual(["paper"]);
+    expect(researchPaper.enforced).toBe(false);
+    expect(paperTopic.declaredAnchorTerms).toEqual(["paper"]);
+    expect(paperTopic.enforced).toBe(false);
   });
 
   it("fails closed during recovery when the brief lacks an enforceable scope", () => {

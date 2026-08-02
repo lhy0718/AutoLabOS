@@ -31,6 +31,9 @@ import {
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "./topicDiscoveryScientificTerms.js";
 import { RunRecord } from "../types.js";
+import type {
+  TopicDiscoveryPriorWorkProbePlanningHint
+} from "./collection/topicDiscoveryPriorWorkProbes.js";
 
 const QUERY_PLAN_CACHE_KEY = "collect_papers.llm_query_plan";
 const QUERY_PLAN_FEEDBACK_KEY = "collect_papers.llm_query_plan_feedback";
@@ -342,6 +345,7 @@ interface ResolveGeneratedLiteratureQueriesInput {
   abortSignal?: AbortSignal;
   timeoutMs?: number;
   plannerIdentity?: string;
+  priorWorkProbeHints?: TopicDiscoveryPriorWorkProbePlanningHint[];
 }
 
 export async function resolveGeneratedLiteratureQueries(
@@ -382,13 +386,17 @@ export async function resolveGeneratedLiteratureQueries(
     });
   }
   const plannerIdentity = cleanText(input.plannerIdentity) || "unspecified";
+  const priorWorkProbeHints = normalizePriorWorkProbeHints(
+    input.priorWorkProbeHints
+  );
   const fingerprint = buildLiteratureQueryFingerprint(
     input.run,
     input.rawBrief,
     input.extractedBriefTopic,
     feedback,
     plannerIdentity,
-    scientificScopeContract?.contractFingerprint
+    scientificScopeContract?.contractFingerprint,
+    priorWorkProbeHints
   );
   const minimumIndependentQueries = topicDiscovery ? 2 : 1;
   const cached = await input.runContextMemory.get<StoredLiteratureQueryPlan>(QUERY_PLAN_CACHE_KEY);
@@ -445,7 +453,8 @@ export async function resolveGeneratedLiteratureQueries(
               input.rawBrief,
               input.extractedBriefTopic,
               planningFeedback,
-              scientificScopeContract
+              scientificScopeContract,
+              priorWorkProbeHints
             ),
             {
               systemPrompt: buildLiteratureQuerySystemPrompt(),
@@ -544,7 +553,8 @@ export async function resolveGeneratedLiteratureQueries(
                 input.extractedBriefTopic,
                 feedback,
                 plannerIdentity,
-                scientificScopeContract?.contractFingerprint
+                scientificScopeContract?.contractFingerprint,
+                priorWorkProbeHints
               ),
               plan: repaired.plan,
               attemptDiagnostics,
@@ -621,7 +631,8 @@ export async function resolveGeneratedLiteratureQueries(
           input.extractedBriefTopic,
           feedback,
           plannerIdentity,
-          scientificScopeContract?.contractFingerprint
+          scientificScopeContract?.contractFingerprint,
+          priorWorkProbeHints
         ),
         plan,
         attemptDiagnostics,
@@ -734,7 +745,8 @@ export async function resolveGeneratedLiteratureQueries(
               input.extractedBriefTopic,
               feedback,
               plannerIdentity,
-              scientificScopeContract?.contractFingerprint
+              scientificScopeContract?.contractFingerprint,
+              priorWorkProbeHints
             ),
             plan,
             attemptDiagnostics,
@@ -803,7 +815,8 @@ function buildLiteratureQueryPrompt(
   rawBrief: string | undefined,
   extractedBriefTopic: string | undefined,
   feedback: LiteratureQueryPlanFeedback,
-  scientificScopeContract?: TopicDiscoveryScopeContract
+  scientificScopeContract?: TopicDiscoveryScopeContract,
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = []
 ): string {
   const sections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
   const explicitBriefTopic = extractResearchBriefTopic(rawBrief);
@@ -872,6 +885,18 @@ function buildLiteratureQueryPrompt(
             : ["  - none"]),
           "- Admissibility constraints, process rules, publication goals, and exclusions are not scientific axis authority.",
           "- Candidate-title matches are queryability hints only; they are not novelty or direct-support evidence."
+        ]
+      : []),
+    ...(topicDiscovery && priorWorkProbeHints.length > 0
+      ? [
+          "",
+          "Separate closest-prior retrieval hints:",
+          "- These titles came from brief-declared prior-work probes. Use them only to improve literature vocabulary within the frozen scientific scope.",
+          "- They cannot authorize an axis, establish novelty, count as direct support, or enter the evidence corpus.",
+          ...priorWorkProbeHints.flatMap((hint) => [
+            `  - ${hint.probeId}: ${hint.query}`,
+            ...hint.candidateTitles.map((title) => `    - ${title}`)
+          ])
         ]
       : []),
     "- Prefer paper-title/abstract terms: method family, task, modality, domain, and benchmark family only when central.",
@@ -1570,7 +1595,8 @@ function buildLiteratureQueryFingerprint(
   extractedBriefTopic: string | undefined,
   feedback: LiteratureQueryPlanFeedback,
   plannerIdentity: string,
-  topicDiscoveryScopeContractFingerprint?: string
+  topicDiscoveryScopeContractFingerprint?: string,
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = []
 ): string {
   return createHash("sha256")
     .update(
@@ -1587,10 +1613,27 @@ function buildLiteratureQueryFingerprint(
         constraints: run.constraints,
         rawBrief: rawBrief || "",
         extractedBriefTopic: extractedBriefTopic || "",
-        feedback
+        feedback,
+        priorWorkProbeHints
       })
     )
     .digest("hex");
+}
+
+function normalizePriorWorkProbeHints(
+  value: TopicDiscoveryPriorWorkProbePlanningHint[] | undefined
+): TopicDiscoveryPriorWorkProbePlanningHint[] {
+  return (value ?? []).flatMap((hint) => {
+    const probeId = cleanText(hint.probeId);
+    const query = cleanText(hint.query);
+    const candidateTitles = mergeUniqueStrings(
+      hint.candidateTitles.map(cleanText),
+      []
+    ).slice(0, 4);
+    return probeId && query && candidateTitles.length > 0
+      ? [{ probeId, query, candidateTitles }]
+      : [];
+  }).slice(0, 4);
 }
 
 async function resolveStoredTopicDiscoveryScopeContract(
