@@ -3687,6 +3687,202 @@ describe("collectPapers bibtex", () => {
     )).toBe("");
   });
 
+  it("does not train query rejection feedback from degraded provider coverage", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-provider-coverage-"));
+    process.chdir(root);
+
+    const runId = "run-collect-provider-coverage";
+    const run = makeRun(runId);
+    run.title = "Retrieval Reliability";
+    run.topic = "Document retrieval evaluation reliability";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "run_brief.raw",
+          value: buildTopicDiscoveryScopeBrief(
+            run.topic,
+            "document retrieval evaluation",
+            [
+              "ranking stability under finite samples",
+              "annotation disagreement across judges"
+            ]
+          ),
+          updatedAt: new Date().toISOString()
+        }]
+      }),
+      "utf8"
+    );
+
+    let planningCalls = 0;
+    let semanticAuditCalls = 0;
+    const llm = new class extends MockLLMClient {
+      override async complete(prompt: string): Promise<{ text: string }> {
+        if (!prompt.startsWith("Conservatively triage every requested paper-family pair.")) {
+          planningCalls += 1;
+          return {
+            text: JSON.stringify({
+              shared_anchor: "document retrieval evaluation",
+              families: [
+                { axis: "ranking stability" },
+                { axis: "annotation disagreement" }
+              ],
+              assumptions: []
+            })
+          };
+        }
+        semanticAuditCalls += 1;
+        const marker = "\nInput:\n";
+        const payload = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length)) as {
+          papers: Array<{ paper_id: string; title: string }>;
+          requested_pairs: Array<{ paper_id: string; family_id: string }>;
+        };
+        const titleByPaper = new Map(
+          payload.papers.map((paper) => [paper.paper_id, paper.title] as const)
+        );
+        return {
+          text: JSON.stringify({
+            judgments: payload.requested_pairs.map((pair) => ({
+              ...pair,
+              verdict: "uncertain",
+              reason: "The supplied candidate does not establish the family-specific comparison.",
+              evidence_span: titleByPaper.get(pair.paper_id) ?? ""
+            }))
+          })
+        };
+      }
+    }();
+
+    const healthyProvider = (provider: "crossref" | "arxiv") => {
+      let query = "";
+      return {
+        provider,
+        async searchPapers(request: {
+          query: string;
+          filters?: { publicationDateOrYear?: string };
+          topicDiscoveryFamily?: { familyId?: string; axisTerms?: string[] };
+        }) {
+          query = request.query;
+          const lane = request.filters?.publicationDateOrYear ? "Recent" : "Broad";
+          const axis = request.topicDiscoveryFamily?.axisTerms?.join(" ") ?? "comparative reliability";
+          return [{
+            provider,
+            providerId: `${provider}-${request.topicDiscoveryFamily?.familyId}-${lane.toLowerCase()}`,
+            title: `Document Retrieval Evaluation ${axis} ${lane} ${provider}`,
+            abstract: `Document retrieval evaluation ${axis} is mentioned without establishing the required comparison.`,
+            authors: ["Example Author"]
+          }];
+        },
+        getLastSearchDiagnostics() {
+          return {
+            provider,
+            query,
+            fetched: 1,
+            attemptCount: 1,
+            attempts: [{ provider, attempt: 1, ok: true, status: 200, endpoint: provider }]
+          };
+        }
+      };
+    };
+    let openAlexQuery = "";
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 20 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers: vi.fn(() =>
+          failingBatchStream([], new Error("Semantic Scholar request failed: 429"))
+        ),
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 429,
+          attempts: [{ attempt: 1, ok: false, status: 429, endpoint: "semantic-scholar" }]
+        }))
+      } as any,
+      openAlex: {
+        provider: "openalex",
+        async searchPapers(request: { query: string }) {
+          openAlexQuery = request.query;
+          return [];
+        },
+        getLastSearchDiagnostics() {
+          return {
+            provider: "openalex",
+            query: openAlexQuery,
+            fetched: 0,
+            attemptCount: 1,
+            attempts: [{
+              provider: "openalex",
+              attempt: 1,
+              ok: false,
+              status: 429,
+              endpoint: "openalex"
+            }],
+            error: "OpenAlex search failed with status 429"
+          };
+        }
+      } as any,
+      crossref: healthyProvider("crossref") as any,
+      arxiv: healthyProvider("arxiv") as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(result).toMatchObject({
+      status: "failure",
+      failureKind: "environment"
+    });
+    expect(result.error).toContain(
+      "topic_discovery_retrieval_provider_coverage_degraded"
+    );
+    expect(result.error).toContain("OpenAlex, Semantic Scholar");
+    expect(planningCalls).toBe(1);
+    expect(semanticAuditCalls).toBe(1);
+    expect(await readRunContextValue(
+      root,
+      runId,
+      "collect_papers.llm_query_plan_feedback"
+    )).toBeUndefined();
+
+    const hints = JSON.parse(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "collect_query_reformulation_hints.json"),
+      "utf8"
+    )) as {
+      active?: boolean;
+      failure_class?: string;
+      feedback_applied?: boolean;
+      candidate_titles?: string[];
+      current_retrieval_candidate_titles?: string[];
+      rejected_queries?: string[];
+      provider_coverage?: {
+        status?: string;
+        unavailable_providers?: string[];
+      };
+    };
+    expect(hints).toMatchObject({
+      active: false,
+      failure_class: "retrieval_provider_coverage_degraded",
+      feedback_applied: false,
+      candidate_titles: [],
+      rejected_queries: [],
+      provider_coverage: {
+        status: "degraded",
+        unavailable_providers: ["openalex", "semantic_scholar"]
+      }
+    });
+    expect(hints.current_retrieval_candidate_titles?.length).toBeGreaterThan(0);
+    expect(await readFile(
+      path.join(root, ".autolabos", "runs", runId, "corpus.jsonl"),
+      "utf8"
+    )).toBe("");
+  });
+
   it("recovers one incomplete semantic review without rerunning planning or retrieval", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-review-recovery-"));
     process.chdir(root);

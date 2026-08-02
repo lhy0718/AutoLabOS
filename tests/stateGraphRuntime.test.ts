@@ -1340,6 +1340,57 @@ describe("StateGraphRuntime", () => {
     ).toBe(true);
   });
 
+  it("does not retry or roll back a typed collection environment block", async () => {
+    let executions = 0;
+    const registry = new Registry({
+      collect_papers: {
+        id: "collect_papers",
+        execute: async () => {
+          executions += 1;
+          return {
+            status: "failure",
+            failureKind: "environment",
+            error:
+              "topic_discovery_retrieval_provider_coverage_degraded: configured providers unavailable",
+            toolCallsUsed: 4
+          };
+        }
+      }
+    });
+    const { store, runtime, eventStream } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Typed collection environment block",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.status = "running";
+    run.graph.retryPolicy.maxAttemptsPerNode = 3;
+    run.graph.retryPolicy.maxAutoRollbacksPerNode = 2;
+    await store.updateRun(run);
+
+    const updated = await runtime.step(run.id);
+    const events = eventStream.history(50, run.id);
+
+    expect(executions).toBe(1);
+    expect(updated.status).toBe("failed");
+    expect(updated.currentNode).toBe("collect_papers");
+    expect(updated.graph.currentNode).toBe("collect_papers");
+    expect(updated.graph.retryCounters.collect_papers).toBe(3);
+    expect(updated.graph.rollbackCounters.collect_papers).toBeUndefined();
+    expect(events.map((event) => event.type)).not.toContain("NODE_RETRY");
+    expect(
+      events.some(
+        (event) =>
+          event.type === "OBS_RECEIVED" &&
+          String(event.payload?.text || "").includes("typed environment block")
+      )
+    ).toBe(true);
+  });
+
   it("fails design_experiments without retry or rollback when the brief contract blocks progression", async () => {
     const registry = new Registry({
       design_experiments: {

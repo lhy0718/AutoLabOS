@@ -12,6 +12,10 @@ Reproducibility claims must be backed by concrete artifacts.
 - Topic-discovery semantic review recovery trace when used
   (`collect_semantic_review.json`); every attempt must bind to one frozen input
   hash and one collection attempt without repeating query planning or retrieval
+- Topic-discovery provider coverage in `collect_query_reformulation_hints.json`;
+  when at least half of three or more configured providers are unavailable in
+  every lane, the artifact must record `retrieval_provider_coverage_degraded`
+  with `feedback_applied=false` while the scientific quality gate remains failed
 - Planned portfolio / trial-group structure (`experiment_portfolio.json`)
 - Run manifest (`run_manifest.json`)
 - Matrix trial-group index when managed bundle execution materializes dataset/profile slices (`trial_group_matrix.json`)

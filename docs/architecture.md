@@ -52,6 +52,11 @@ starts from a complete `ResearchBrief` whose `Research Mode` is
   the corpus cap never removes a lexical pair before semantic precision is
   computed. A partial or unavailable reviewer causes a reviewer-only retry and
   must not train query reformulation feedback.
+  Provider coverage is also part of this failure boundary. When at least half
+  of a portfolio of three or more configured providers is unavailable across
+  every retrieval lane, the attempt remains quality-gate failed but is
+  classified as degraded retrieval coverage. Rejected-query and candidate-title
+  feedback from that incomplete retrieval universe must not be learned.
   Before retrieval, the node freezes a role-bearing scientific-scope contract.
   A `topic_discovery` brief should declare `Scientific Scope` with separate
   `Scientific Object`, `Empirical Problems`, `Scientific Relations`,

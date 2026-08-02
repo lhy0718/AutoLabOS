@@ -71,6 +71,7 @@ import {
   TopicDiscoveryCorpusQualityAudit,
   TopicDiscoverySearchFamily
 } from "../collection/topicDiscoveryCorpusQuality.js";
+import { assessTopicDiscoveryProviderCoverage } from "../collection/topicDiscoveryProviderCoverage.js";
 import {
   runTopicDiscoverySemanticAudit,
   TopicDiscoverySemanticAuditTrace,
@@ -1324,6 +1325,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       let topicDiscoverySemanticReviewRecovery:
         TopicDiscoverySemanticReviewRecovery | undefined;
       let topicDiscoveryQualityFailure: string | undefined;
+      let topicDiscoveryProviderCoverageDegraded = false;
       if (normalizedRequest.strategy === "topic_portfolio" && mode === "replace") {
         const topicDiscoveryRows = Array.from(topicDiscoveryLexicalRows.values());
         const topicDiscoveryCandidatePoolRows = Array.from(
@@ -1628,14 +1630,21 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           const semanticRecoveryExhausted =
             topicDiscoverySemanticReviewRecovery.exhausted;
           const semanticReviewComplete = topicDiscoverySemanticAudit.status === "complete";
+          const providerCoverage = assessTopicDiscoveryProviderCoverage(
+            aggregationReport?.providerDiagnostics ?? []
+          );
+          const providerCoverageDegraded = providerCoverage.status === "degraded";
+          topicDiscoveryProviderCoverageDegraded = providerCoverageDegraded;
+          const queryFeedbackAllowed =
+            semanticReviewComplete && !providerCoverageDegraded;
           let accumulatedFeedback = {
-            candidateTitles: semanticReviewComplete ? candidateTitles : [],
-            rejectedQueries: semanticReviewComplete
+            candidateTitles: queryFeedbackAllowed ? candidateTitles : [],
+            rejectedQueries: queryFeedbackAllowed
               ? rejectedQueryFamilies.map((family) => family.query)
               : [],
-            supportedQueryFamilies: semanticReviewComplete ? supportedQueryFamilies : []
+            supportedQueryFamilies: queryFeedbackAllowed ? supportedQueryFamilies : []
           };
-          if (semanticReviewComplete) {
+          if (queryFeedbackAllowed) {
             const feedbackPublication = await publishForCollectGeneration({
               run,
               attemptId: collectAttemptId,
@@ -1681,15 +1690,18 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               strategy: "anchor_proximate_title_pseudo_relevance_feedback",
               evidence_status: "query_hint_only",
               paper_evidence_allowed: false,
-              active: semanticReviewComplete,
+              active: queryFeedbackAllowed,
               failure_class: semanticReviewComplete
-                ? "query_quality_failure"
+                ? providerCoverageDegraded
+                  ? "retrieval_provider_coverage_degraded"
+                  : "query_quality_failure"
                 : semanticOperationalFailure
                   ? "semantic_review_operational_failure"
                   : "semantic_review_incomplete",
-              feedback_applied: semanticReviewComplete,
+              feedback_applied: queryFeedbackAllowed,
               semantic_review_status: topicDiscoverySemanticAudit.status,
               feedback_scope: "bounded_retry_history",
+              provider_coverage: providerCoverage,
               shared_anchor_terms: topicDiscoveryQualityAudit.observed.shared_anchor_terms,
               candidate_titles: accumulatedFeedback.candidateTitles,
               current_retrieval_candidate_titles: candidateTitles,
@@ -1736,6 +1748,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             : !semanticReviewComplete
               ? `Topic-discovery semantic review ${semanticOperationalFailure ? "failed operationally" : "was incomplete"}: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
                 + "Retry the semantic review without learning from or revising the query plan."
+            : providerCoverageDegraded
+              ? "topic_discovery_retrieval_provider_coverage_degraded: "
+                + `${providerCoverage.unavailable_providers.map(formatProviderName).join(", ")} `
+                + "were unavailable across every retrieval lane. "
+                + `${topicDiscoveryQualityAudit.reasons.join(" ")} `
+                + "Retry collection without learning from or revising the query plan."
             : `Topic-discovery corpus quality gate failed: ${topicDiscoveryQualityAudit.reasons.join(" ")} `
               + "Revise the independent query families before this corpus can be approved.";
         } else {
@@ -2008,6 +2026,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       if (topicDiscoveryQualityFailure) {
         return {
           status: "failure",
+          ...(topicDiscoveryProviderCoverageDegraded
+            ? { failureKind: "environment" as const }
+            : {}),
           error: topicDiscoveryQualityFailure,
           summary: topicDiscoveryQualityFailure,
           toolCallsUsed: collectToolCallsUsed
