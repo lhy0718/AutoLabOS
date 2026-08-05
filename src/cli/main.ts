@@ -10,6 +10,7 @@ import {
 } from "../web/server.js";
 import { runCompareAnalysisCli } from "./compareAnalysis.js";
 import { runEvalHarnessCli } from "./evalHarness.js";
+import { runReviewReasoningBenchmarkCli } from "./reviewReasoningBenchmark.js";
 import { runEvolveCli } from "./evolveRun.js";
 import { runPaperReadinessAuditCli } from "./audit.js";
 import { resolvePortableExternalAuditOutputDir } from "../core/audit/externalArtifactIntake.js";
@@ -53,6 +54,7 @@ function printHelp(): void {
     "  HTTP Basic authentication does not encrypt traffic; use TLS or a trusted tunnel outside a trusted local network.",
     "  autolabos compare-analysis --run <run-id> [--limit 3] [--no-judge]",
     "  autolabos eval-harness [--run <run-id>] [--limit 10] [--output outputs/eval-harness/latest.json] [--no-history]",
+    "  autolabos review-benchmark [--provider codex|openai] [--model <model>] [--effort high|xhigh|max] [--repetitions 3] [--split development|test] [--output <dir>] [--dry-run]",
     "  autolabos evolve [--max-cycles 3] [--target skills|prompts|all] [--dry-run]",
     "  autolabos audit (--run <run-artifact-root> | --external <artifact-root> [--draft <draft.md>] [--log <run.log>] [--support-root <root> --support-manifest <manifest.json>]) [--out-dir outputs/audit]",
     "  autolabos research <new|audit|review|improve|pack|verify-pack|verify-milestone|run-validation> [options]",
@@ -266,6 +268,20 @@ async function main(): Promise<void> {
       limit: action.limit,
       outputPath: action.outputPath,
       noHistory: action.noHistory
+    });
+    return;
+  }
+
+  if (action.kind === "review-benchmark") {
+    await runReviewReasoningBenchmarkCli({
+      cwd: process.cwd(),
+      provider: action.provider,
+      model: action.model,
+      efforts: action.efforts.length > 0 ? action.efforts : undefined,
+      repetitions: action.repetitions,
+      split: action.split,
+      outputDir: action.outputDir,
+      dryRun: action.dryRun
     });
     return;
   }

@@ -222,4 +222,21 @@ describe("normalizeConstraintProfile", () => {
       )
     ).toBe('"document retrieval evaluation" ranking stability');
   });
+
+  it("preserves an interior scientific compound token in a governed anchor", () => {
+    expect(
+      buildTopicDiscoveryLiteratureQuery(
+        "automated research workflow",
+        "retrieval coverage calibration"
+      )
+    ).toBe('"automated research workflow" retrieval coverage calibration');
+    expect(
+      normalizeTopicDiscoveryLiteratureQuery(
+        '"automated research workflow" premature stopping'
+      )
+    ).toBe('"automated research workflow" premature stopping');
+    expect(
+      buildTopicDiscoveryLiteratureQuery("research paper", "retrieval coverage")
+    ).toBeUndefined();
+  });
 });

@@ -1,6 +1,11 @@
 import { GovernanceBenchmarkConditionName } from "../core/benchmark/governanceCondition.js";
 import type { MetaHarnessNode } from "../core/metaHarness/metaHarness.js";
 import { NodeOptionPackageName } from "../types.js";
+import type {
+  ReviewReasoningBenchmarkEffort,
+  ReviewReasoningBenchmarkSplit
+} from "../core/evaluation/reviewReasoningBenchmark.js";
+import type { ReviewReasoningBenchmarkProvider } from "./reviewReasoningBenchmark.js";
 
 const META_HARNESS_CLI_NODES = [
   "generate_hypotheses",
@@ -14,6 +19,16 @@ export type CliAction =
   | { kind: "web"; host?: string; port?: number; benchmarkCondition?: GovernanceBenchmarkConditionName }
   | { kind: "compare-analysis"; runId: string; limit: number; judge: boolean }
   | { kind: "eval-harness"; runIds: string[]; limit: number; outputPath?: string; noHistory?: boolean }
+  | {
+      kind: "review-benchmark";
+      provider?: ReviewReasoningBenchmarkProvider;
+      model?: string;
+      efforts: ReviewReasoningBenchmarkEffort[];
+      repetitions: number;
+      split: ReviewReasoningBenchmarkSplit;
+      outputDir?: string;
+      dryRun: boolean;
+    }
   | { kind: "evolve"; maxCycles: number; target: "skills" | "prompts" | "all"; dryRun: boolean }
   | { kind: "audit"; runRoot?: string; externalRoot?: string; draftPath?: string; logPath?: string; supportRoot?: string; supportManifestPath?: string; outDir?: string }
   | { kind: "audit-help" }
@@ -218,6 +233,67 @@ export function resolveCliAction(args: string[]): CliAction {
       };
     }
     return { kind: "eval-harness", runIds, limit, outputPath, noHistory };
+  }
+
+  if (first === "review-benchmark") {
+    let provider: ReviewReasoningBenchmarkProvider | undefined;
+    let model: string | undefined;
+    const efforts: ReviewReasoningBenchmarkEffort[] = [];
+    let repetitions = 3;
+    let split: ReviewReasoningBenchmarkSplit = "test";
+    let outputDir: string | undefined;
+    let dryRun = false;
+    for (let index = 1; index < args.length; index += 1) {
+      const token = args[index];
+      if (token === "--dry-run") {
+        dryRun = true;
+        continue;
+      }
+      const value = args[index + 1];
+      if (!value) return { kind: "error", message: "Missing value for " + token + "." };
+      if (token === "--provider") {
+        if (value !== "codex" && value !== "openai") {
+          return { kind: "error", message: "Unsupported review benchmark provider: " + value + "." };
+        }
+        provider = value;
+      } else if (token === "--model") {
+        model = value;
+      } else if (token === "--effort") {
+        if (value !== "high" && value !== "xhigh" && value !== "max") {
+          return { kind: "error", message: "Unsupported review benchmark effort: " + value + "." };
+        }
+        if (efforts.includes(value)) {
+          return { kind: "error", message: "Duplicate review benchmark effort: " + value + "." };
+        }
+        efforts.push(value);
+      } else if (token === "--repetitions") {
+        const parsed = Number(value);
+        if (!Number.isInteger(parsed) || parsed < 1) {
+          return { kind: "error", message: "Invalid review benchmark repetitions: " + value + "." };
+        }
+        repetitions = parsed;
+      } else if (token === "--split") {
+        if (value !== "development" && value !== "test") {
+          return { kind: "error", message: "Unsupported review benchmark split: " + value + "." };
+        }
+        split = value;
+      } else if (token === "--output") {
+        outputDir = value;
+      } else {
+        return { kind: "error", message: "Unsupported review-benchmark argument: " + token + "." };
+      }
+      index += 1;
+    }
+    return {
+      kind: "review-benchmark",
+      ...(provider ? { provider } : {}),
+      ...(model ? { model } : {}),
+      efforts,
+      repetitions,
+      split,
+      ...(outputDir ? { outputDir } : {}),
+      dryRun
+    };
   }
 
   if (first === "evolve") {
@@ -445,7 +521,7 @@ export function resolveCliAction(args: string[]): CliAction {
   return {
     kind: "error",
     message:
-      "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
+      "Unsupported CLI arguments. Run `autolabos`, `autolabos web`, `autolabos compare-analysis`, `autolabos eval-harness`, `autolabos review-benchmark`, `autolabos evolve`, `autolabos meta-harness`, or use slash commands inside the TUI."
   };
 }
 

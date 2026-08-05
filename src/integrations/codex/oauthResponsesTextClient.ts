@@ -4,6 +4,7 @@ import { describeOpenAiFetchError, isAbortLikeError } from "../openai/networkErr
 import { computeModelUsageCostUsd } from "../../core/llm/modelPricing.js";
 import { OpenAiResponsesUsage, extractOpenAiResponsesUsage } from "../openai/usage.js";
 import { CodexOAuthCredentials } from "./oauthAuth.js";
+import { RECOMMENDED_CODEX_MODEL } from "./modelCatalog.js";
 
 export interface CodexOAuthResponsesTextResult {
   text: string;
@@ -72,7 +73,7 @@ export class CodexOAuthResponsesTextClient {
     defaults: CodexOAuthResponsesTextDefaults = {}
   ) {
     this.defaults = {
-      model: defaults.model || "gpt-5.3-codex",
+      model: defaults.model || RECOMMENDED_CODEX_MODEL,
       reasoningEffort: defaults.reasoningEffort || "high"
     };
   }

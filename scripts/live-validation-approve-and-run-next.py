@@ -1952,6 +1952,10 @@ def main() -> int:
             # TUI states do not emit a Bye line after /quit, so keep the
             # transcript and let process cleanup in finally terminate the PTY.
             buffer_text = exc.transcript
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     except WaitTimeout as exc:
         output_path.write_text(exc.transcript, encoding="utf-8")
         timeout_message = helper_timeout_message(wait_node, timeout, max_wall_seconds)
@@ -1961,7 +1965,8 @@ def main() -> int:
         print(f"FAIL: Validation continue timed out waiting for {exc.pattern}; output={output_path}")
         return 1
     finally:
-        terminate_process_group(proc)
+        if proc.poll() is None:
+            terminate_process_group(proc)
         try:
             os.close(master_fd)
         except OSError:

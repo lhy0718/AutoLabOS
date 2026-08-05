@@ -7,7 +7,7 @@ import { ensureDir, fileExists } from "../../utils/fs.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_SOURCE_CHARS = 16_000;
-const TEXT_CACHE_SEMANTICS_VERSION = 2;
+const TEXT_CACHE_SEMANTICS_VERSION = 3;
 const THUMBNAIL_SCALE = 160;
 const DEFAULT_HYBRID_PAGE_IMAGE_LIMIT = 12;
 
@@ -183,6 +183,7 @@ export async function resolvePaperTextSource(args: {
 
   try {
     const pageTexts = await extractPdfPageTexts(pdfCachePath, args.abortSignal);
+    const groundingPageTexts = await extractPdfReadingOrderPageTexts(pdfCachePath, args.abortSignal);
     let extracted = cachedText;
     let groundingText = cachedGroundingText;
     if (!cachedText) {
@@ -195,11 +196,11 @@ export async function resolvePaperTextSource(args: {
       }
     }
     if (!groundingText) {
-      groundingText = buildFullPdfGroundingText(pageTexts) || undefined;
+      groundingText = buildFullPdfGroundingText(pageTexts, groundingPageTexts) || undefined;
       if (groundingText) {
         await ensureDir(path.dirname(groundingTextCachePath));
         await fs.writeFile(groundingTextCachePath, groundingText, "utf8");
-        args.onProgress?.("Lossless PDF grounding text extraction completed.");
+        args.onProgress?.("Reading-order PDF grounding text extraction completed.");
       }
     }
 
@@ -275,7 +276,13 @@ export async function resolvePaperTextSource(args: {
   }
 }
 
-export function buildFullPdfGroundingText(pageTexts: string[]): string {
+export function buildFullPdfGroundingText(
+  layoutPageTexts: string[],
+  readingOrderPageTexts: string[] = []
+): string {
+  const pageTexts = readingOrderPageTexts.some((pageText) => Boolean(normalizeWhitespace(pageText)))
+    ? readingOrderPageTexts
+    : layoutPageTexts;
   return pageTexts
     .map((pageText, index) => {
       const normalized = normalizeWhitespace(pageText);
@@ -542,8 +549,23 @@ function safeHost(url: string): string | undefined {
 }
 
 async function extractPdfPageTexts(filePath: string, abortSignal?: AbortSignal): Promise<string[]> {
+  return extractPdfTextPages(filePath, ["-layout", "-enc", "UTF-8"], abortSignal);
+}
+
+async function extractPdfReadingOrderPageTexts(
+  filePath: string,
+  abortSignal?: AbortSignal
+): Promise<string[]> {
+  return extractPdfTextPages(filePath, ["-enc", "UTF-8"], abortSignal);
+}
+
+async function extractPdfTextPages(
+  filePath: string,
+  options: string[],
+  abortSignal?: AbortSignal
+): Promise<string[]> {
   try {
-    const { stdout } = await execFileAsync("pdftotext", ["-layout", "-enc", "UTF-8", filePath, "-"], {
+    const { stdout } = await execFileAsync("pdftotext", [...options, filePath, "-"], {
       signal: abortSignal,
       maxBuffer: 16 * 1024 * 1024
     });

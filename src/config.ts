@@ -25,6 +25,7 @@ import {
 import { CodexNativeClient } from "./integrations/codex/codexCliClient.js";
 import { checkCodexOAuthStatus } from "./integrations/codex/oauthAuth.js";
 import {
+  DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
   DEFAULT_OPENAI_RESPONSES_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
@@ -53,9 +54,9 @@ import {
 
 export const DEFAULT_PRIMARY_LLM_MODE = "openai_api" as const;
 export const DEFAULT_PDF_ANALYSIS_MODE = "codex_text_image_hybrid" as const;
-export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.5" as const;
+export const DEFAULT_CODEX_CHAT_SETUP_MODEL = "gpt-5.6-terra" as const;
 export const DEFAULT_CODEX_CHAT_SETUP_REASONING_EFFORT = "medium" as const;
-export const DEFAULT_BACKEND_REASONING_EFFORT = "medium" as const;
+export const DEFAULT_BACKEND_REASONING_EFFORT = "high" as const;
 export const DEFAULT_RESEARCH_TOPIC = "" as const;
 export const DEFAULT_RESEARCH_CONSTRAINTS: readonly string[] = [];
 export const DEFAULT_RESEARCH_OBJECTIVE_METRIC = "" as const;
@@ -400,10 +401,10 @@ export async function runSetupWizard(
     llmMode === "openai_api"
       ? await askOpenAiResponsesModel(
           OPENAI_API_GENERAL_CHAT_MODEL_PROMPT,
-          DEFAULT_OPENAI_RESPONSES_MODEL,
+          DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
           promptReader
         )
-      : DEFAULT_OPENAI_RESPONSES_MODEL;
+      : DEFAULT_OPENAI_RESPONSES_CHAT_MODEL;
   const codexChatModelChoice =
     isCodexLlmMode(llmMode)
       ? await askCodexModel(
@@ -537,7 +538,7 @@ export async function runNonInteractiveSetup(
       input.codexExperimentReasoningEffort ||
       input.codexResearchBackendReasoningEffort ||
       DEFAULT_BACKEND_REASONING_EFFORT,
-    openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_MODEL,
+    openAiChatModel: input.openAiChatModel || DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
     openAiChatReasoningEffort:
       input.openAiChatReasoningEffort ||
       (DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"]),
@@ -630,7 +631,7 @@ function normalizeLoadedConfig(config: PersistedAppConfig): AppConfig {
   if (!config.providers.openai) {
     config.providers.openai = {
       model: DEFAULT_OPENAI_RESPONSES_MODEL,
-      chat_model: DEFAULT_OPENAI_RESPONSES_MODEL,
+      chat_model: DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
       experiment_model: DEFAULT_OPENAI_RESPONSES_MODEL,
       reasoning_effort: DEFAULT_BACKEND_REASONING_EFFORT as AppConfig["providers"]["openai"]["reasoning_effort"],
       chat_reasoning_effort: DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,

@@ -3,24 +3,26 @@ import { createHash } from "node:crypto";
 import { parseStructuredModelJsonObject } from "../analysis/modelJson.js";
 import type { LLMClient } from "../llm/client.js";
 import {
+  normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
 import type { StoredCorpusRow } from "./types.js";
 
-export const TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION = 5 as const;
+export const TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION = 6 as const;
 export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_MAX_PAIRS = 64;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_PAIRS = 128;
 export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_MAX_INPUT_BYTES = 128 * 1024;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_INPUT_BYTES = 512 * 1024;
 export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_ABSTRACT_CHARS = 2_000;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_ABSTRACT_CHARS = 4_000;
-export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 30_000;
+export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 120_000;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 120_000;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_REASON_CHARS = 240;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_EVIDENCE_SPAN_CHARS = 240;
-export const TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY = 4;
+export const TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY = 8;
 export const TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY =
   "single_then_timeout_partition_v1" as const;
 export const TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS = 4;
@@ -37,6 +39,7 @@ export type TopicDiscoverySemanticVerdict =
 export interface TopicDiscoverySemanticSearchFamilyContract {
   queryFamily: string;
   query: string;
+  sharedAnchorTerms?: string[];
   axisTerms: string[];
   lens: string;
   contributionIntent: string;
@@ -78,6 +81,7 @@ export interface TopicDiscoverySemanticProtocolViolation {
     | "unknown_requested_pair"
     | "unknown_response_pair"
     | "malformed_response_judgment"
+    | "invalid_direct_support_evidence_span"
     | "duplicate_response_pair"
     | "conflicting_response_pair";
   judgment_index?: number;
@@ -663,16 +667,26 @@ export function buildTopicDiscoverySemanticAuditPrompt(
   return [
     "Conservatively triage every requested paper-family pair.",
     "Use direct_support only when the paper centrally and directly studies the family lens and its main contribution addresses the contribution intent.",
-    "For direct_support, evidence_span is required and must be a short, exact, case-sensitive span copied from that paper's supplied title or abstract.",
+    `For direct_support, evidence_span is required and must be one contiguous, exact, case-sensitive span copied from that paper's supplied title or abstract; it must be ${MIN_TOPIC_DISCOVERY_SEMANTIC_EVIDENCE_SPAN_CHARS}-${MAX_TOPIC_DISCOVERY_SEMANTIC_EVIDENCE_SPAN_CHARS} characters long and contain at least ${MIN_TOPIC_DISCOVERY_SEMANTIC_EVIDENCE_SPAN_TERMS} normalized content terms.`,
     "For lexical_match pairs, direct_support evidence_span must contain a literal supplied axis term.",
     "For provider_provenance_floor pairs, a scholarly synonym or acronym may support the verdict, but a span containing only non-axis terms from the family query is insufficient.",
+    "If every direct_support evidence_span requirement cannot be met exactly, do not use direct_support; choose application_only or uncertain and omit evidence_span.",
     "Use application_only when the family lens is only an application, task, tool, example, or context for a different central contribution.",
     "Use uncertain when the title and abstract are insufficient, ambiguous, or support neither classification.",
     "Lexical overlap alone is never enough for direct_support.",
     "Use only supplied IDs. Return exactly one judgment for every requested pair and invent none.",
-    "Each judgment must contain paper_id, family_id, verdict, and a concise reason. verdict must be direct_support, application_only, or uncertain.",
+    "Each judgment must contain paper_id, family_id, verdict, and a concise reason. verdict must be direct_support, application_only, or uncertain. Add evidence_span only for direct_support.",
     "Return JSON only as an object with a judgments array.",
-    JSON.stringify({ judgments: [] }),
+    "Output shape; angle-bracketed values are instructions and must not be returned literally:",
+    JSON.stringify({
+      judgments: [{
+        paper_id: "<copy a requested paper_id exactly>",
+        family_id: "<copy its requested family_id exactly>",
+        verdict: "<direct_support|application_only|uncertain>",
+        reason: "<concise evidence-based reason>",
+        evidence_span: "<required only for direct_support; exact source span>"
+      }]
+    }),
     "Input:",
     JSON.stringify(payload)
   ].join("\n");
@@ -888,16 +902,16 @@ function normalizeResponse(
       papers.get(pair.paperId)!,
       families.get(pair.familyId)!
     );
-    if (!parsed) {
+    if (!parsed.judgment) {
       malformed += 1;
       violations.push({
-        ...violation("malformed_response_judgment", pair),
+        ...violation(parsed.violationCode, pair),
         judgment_index: entries[0]!.index
       });
-      byPair.set(key, uncertainJudgment(pair, "malformed_model_judgment"));
+      byPair.set(key, uncertainJudgment(pair, parsed.reason));
       continue;
     }
-    byPair.set(key, parsed);
+    byPair.set(key, parsed.judgment);
   }
 
   return {
@@ -917,8 +931,18 @@ function parseJudgment(
   pair: RequestedPair,
   paper: { title: string; abstract: string },
   family: { query: string; axis_terms: string[] }
-): TopicDiscoverySemanticJudgment | undefined {
-  if (!isRecord(value)) return undefined;
+): {
+  judgment?: TopicDiscoverySemanticJudgment;
+  violationCode:
+    | "malformed_response_judgment"
+    | "invalid_direct_support_evidence_span";
+  reason: "malformed_model_judgment" | "invalid_direct_support_evidence_span";
+} {
+  const malformed = {
+    violationCode: "malformed_response_judgment" as const,
+    reason: "malformed_model_judgment" as const
+  };
+  if (!isRecord(value)) return malformed;
   const verdict = normalizeVerdict(value.verdict);
   const reason = boundedReason(value.reason);
   if (
@@ -927,7 +951,7 @@ function parseJudgment(
     || !verdict
     || !reason
   ) {
-    return undefined;
+    return malformed;
   }
   const span = exactString(value.evidence_span);
   const hasValidEvidenceSpan = validEvidenceSpan(
@@ -937,14 +961,21 @@ function parseJudgment(
     pair.selectionSource
   );
   if (verdict === "direct_support" && !hasValidEvidenceSpan) {
-    return undefined;
+    return {
+      violationCode: "invalid_direct_support_evidence_span",
+      reason: "invalid_direct_support_evidence_span"
+    };
   }
   return {
-    paper_id: pair.paperId,
-    family_id: pair.familyId,
-    verdict,
-    reason,
-    ...(hasValidEvidenceSpan ? { evidence_span: span } : {})
+    violationCode: "malformed_response_judgment",
+    reason: "malformed_model_judgment",
+    judgment: {
+      paper_id: pair.paperId,
+      family_id: pair.familyId,
+      verdict,
+      reason,
+      ...(hasValidEvidenceSpan ? { evidence_span: span } : {})
+    }
   };
 }
 
@@ -1124,8 +1155,12 @@ function collectPairs(input: RunTopicDiscoverySemanticAuditInput): RequestedPair
     }
     const familyPairs = pairsByFamily.get(familyId) ?? new Map();
     if (familyPairs.size < TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY) {
-      const providerCandidates =
-        input.providerCandidatePaperIdsByFamily?.get(familyId) ?? [];
+      const family = families.values.get(familyId)!;
+      const providerCandidates = rankTopicDiscoveryProviderRecallCandidates({
+        paperIds: input.providerCandidatePaperIdsByFamily?.get(familyId) ?? [],
+        rows: rows.values,
+        family
+      });
       for (const paperId of providerCandidates) {
         if (familyPairs.size >= TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY) {
           break;
@@ -1180,6 +1215,85 @@ function collectPairs(input: RunTopicDiscoverySemanticAuditInput): RequestedPair
     }
   }
   return pairs;
+}
+
+export function rankTopicDiscoveryProviderRecallCandidates(input: {
+  paperIds: readonly string[];
+  rows: ReadonlyMap<string, StoredCorpusRow>;
+  family: TopicDiscoverySemanticSearchFamilyContract;
+}): string[] {
+  const axisTerms = uniqueNormalizedTerms(
+    normalizeTopicDiscoveryCandidateTerms(input.family.axisTerms.join(" "))
+  );
+  const axisSet = new Set(axisTerms);
+  const declaredAnchorTerms = input.family.sharedAnchorTerms?.length
+    ? normalizeTopicDiscoveryScientificObjectTerms(
+        input.family.sharedAnchorTerms.join(" ")
+      )
+    : normalizeTopicDiscoveryScientificObjectTerms(input.family.query)
+        .filter((term) => !axisSet.has(term));
+  const anchorTerms = uniqueNormalizedTerms(declaredAnchorTerms);
+  const seen = new Set<string>();
+
+  return input.paperIds
+    .flatMap((paperId, providerRank) => {
+      if (seen.has(paperId)) return [];
+      seen.add(paperId);
+      const row = input.rows.get(paperId);
+      if (!row) return [];
+      const bodyTerms = new Set(normalizeTopicDiscoveryCandidateObjectTerms(
+        `${row.title}\n${row.abstract}`
+      ));
+      const titleTermSequence = normalizeTopicDiscoveryCandidateObjectTerms(row.title);
+      const titleTerms = new Set(titleTermSequence);
+      const anchorMatches = countContainedTerms(anchorTerms, bodyTerms);
+      const axisMatches = countContainedTerms(axisTerms, bodyTerms);
+      const titleAnchorMatches = countContainedTerms(anchorTerms, titleTerms);
+      const titleAxisMatches = countContainedTerms(axisTerms, titleTerms);
+      return [{
+        paperId,
+        providerRank,
+        titleAnchorSequence: containsTermSequence(titleTermSequence, anchorTerms) ? 1 : 0,
+        fullAnchor: anchorTerms.length > 0 && anchorMatches === anchorTerms.length ? 1 : 0,
+        anchorMatches,
+        axisMatches,
+        titleFullAnchor:
+          anchorTerms.length > 0 && titleAnchorMatches === anchorTerms.length ? 1 : 0,
+        titleAnchorMatches,
+        titleAxisMatches,
+        hasAbstract: row.abstract.trim().length > 0 ? 1 : 0
+      }];
+    })
+    .sort((left, right) =>
+      right.titleAnchorSequence - left.titleAnchorSequence
+      || right.fullAnchor - left.fullAnchor
+      || right.axisMatches - left.axisMatches
+      || right.anchorMatches - left.anchorMatches
+      || right.titleFullAnchor - left.titleFullAnchor
+      || right.titleAxisMatches - left.titleAxisMatches
+      || right.titleAnchorMatches - left.titleAnchorMatches
+      || right.hasAbstract - left.hasAbstract
+      || left.providerRank - right.providerRank
+      || compare(left.paperId, right.paperId)
+    )
+    .map((candidate) => candidate.paperId);
+}
+
+function uniqueNormalizedTerms(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function countContainedTerms(terms: string[], candidateTerms: ReadonlySet<string>): number {
+  return terms.filter((term) => candidateTerms.has(term)).length;
+}
+
+function containsTermSequence(candidateTerms: string[], requiredTerms: string[]): boolean {
+  if (requiredTerms.length === 0 || candidateTerms.length < requiredTerms.length) {
+    return false;
+  }
+  return candidateTerms.some((_, start) =>
+    requiredTerms.every((required, offset) => candidateTerms[start + offset] === required)
+  );
 }
 
 function indexUnique<T>(items: T[], id: (item: T) => string): Indexed<T> {

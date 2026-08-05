@@ -45,6 +45,22 @@ const TOKEN_PRICED_MODELS: Record<string, TokenPricedModelBilling> = {
 };
 
 const UNPRICED_MODELS: Record<string, UnpricedModelBilling> = {
+  "gpt-5.6-sol": {
+    kind: "unpriced",
+    reason: "The verified Codex credit rate is not an OpenAI API USD token price."
+  },
+  "gpt-5.6-terra": {
+    kind: "unpriced",
+    reason: "The verified Codex credit rate is not an OpenAI API USD token price."
+  },
+  "gpt-5.6-luna": {
+    kind: "unpriced",
+    reason: "The verified Codex credit rate is not an OpenAI API USD token price."
+  },
+  "gpt-5.4-mini": {
+    kind: "unpriced",
+    reason: "No verified OpenAI API USD token rate is recorded for this Codex compatibility model."
+  },
   "gpt-5.3-codex-spark": {
     kind: "unpriced",
     reason: "No verifiable token-priced public rate was available from accessible sources."

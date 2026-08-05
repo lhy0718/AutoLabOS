@@ -55,7 +55,7 @@ describe("writePaper related-work enrichment", () => {
     );
     await mkdir(cacheDir, { recursive: true });
     await writeFile(
-      path.join(cacheDir, "paper_scout_1.v2.txt"),
+      path.join(cacheDir, "paper_scout_1.v3.txt"),
       "Full text about stateful coordination, revision stability, and reproducibility.",
       "utf8"
     );
@@ -137,7 +137,7 @@ describe("writePaper related-work enrichment", () => {
     );
     await mkdir(cacheDir, { recursive: true });
     await writeFile(
-      path.join(cacheDir, "paper_scout_1.v2.txt"),
+      path.join(cacheDir, "paper_scout_1.v3.txt"),
       "Full text about stateful coordination, revision stability, and reproducibility.",
       "utf8"
     );

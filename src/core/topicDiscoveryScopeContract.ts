@@ -5,6 +5,11 @@ import {
   normalizeTopicDiscoveryScientificTerms,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "./topicDiscoveryScientificTerms.js";
+import {
+  extractTopicDiscoveryAnchorSurfaceTerms,
+  TOPIC_DISCOVERY_MAX_ANCHOR_TERMS,
+  TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
+} from "./runConstraints.js";
 import { parseMarkdownRunBriefSections } from "./runs/runBriefParser.js";
 
 export { normalizeTopicDiscoveryScientificTerms } from "./topicDiscoveryScientificTerms.js";
@@ -73,6 +78,7 @@ export interface TopicDiscoveryScopeContract {
   enforced: boolean;
   sourceSections: TopicDiscoveryScientificBriefSection[];
   declaredAnchorTerms: string[];
+  queryAnchorTerms: string[];
   sharedAnchorTerms: string[];
   axes: TopicDiscoveryScopeAxis[];
   priorWorkProbes: TopicDiscoveryPriorWorkProbe[];
@@ -120,6 +126,7 @@ export interface TopicDiscoveryScientificScopeDiagnostic {
   contractFingerprint: string;
   sourceSections: TopicDiscoveryScientificBriefSection[];
   declaredAnchorTerms: string[];
+  queryAnchorTerms: string[];
   lockedAnchorTerms: string[];
   priorWorkProbes: TopicDiscoveryPriorWorkProbe[];
   anchor: TopicDiscoveryScopeAnchorDiagnostic;
@@ -129,8 +136,6 @@ export interface TopicDiscoveryScientificScopeDiagnostic {
 
 const MINIMUM_SCOPE_AXES = 2;
 const MINIMUM_SCOPE_TERMS = 4;
-const MINIMUM_ANCHOR_TERMS = 2;
-const MAXIMUM_ANCHOR_TERMS = 5;
 const MINIMUM_TECHNICAL_EXPANSION_TITLE_SUPPORT = 2;
 
 const GENERIC_SCOPE_TERMS = new Set(normalizeTopicDiscoveryScientificTerms([
@@ -156,7 +161,7 @@ const GENERIC_SCOPE_TERMS = new Set(normalizeTopicDiscoveryScientificTerms([
 
 const GENERIC_ANCHOR_TERMS = new Set(normalizeTopicDiscoveryScientificTerms([
   "about", "broad", "candidate", "contribution", "empirical", "gap",
-  "problem", "research", "scope", "search", "scientific", "study", "topic", "workshop"
+  "problem", "research", "scope", "search", "study", "topic", "workshop"
 ].join(" ")));
 
 const EXCLUSION_PATTERN =
@@ -217,9 +222,10 @@ export function buildTopicDiscoveryScopeContract(
   )];
   const distinctScopeTerms = new Set(axes.flatMap((axis) => axis.sourceTerms));
   const requestedAnchorTerms = canonicalizeAnchorTerms(sharedAnchorTerms);
-  const sharedAnchor = declaredAnchorTerms.length >= MINIMUM_ANCHOR_TERMS
+  const queryAnchorTerms = resolveQueryAnchorTerms(units, declaredAnchorTerms);
+  const sharedAnchor = declaredAnchorTerms.length >= TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
     ? [...declaredAnchorTerms]
-    : requestedAnchorTerms.slice(0, MAXIMUM_ANCHOR_TERMS);
+    : requestedAnchorTerms.slice(0, TOPIC_DISCOVERY_MAX_ANCHOR_TERMS);
   const briefFingerprint = sha256(normalizedBrief);
   const scopeFingerprint = buildScientificScopeFingerprint({
     contractSource,
@@ -228,8 +234,8 @@ export function buildTopicDiscoveryScopeContract(
     priorWorkProbes
   });
   const enforced =
-    declaredAnchorTerms.length >= MINIMUM_ANCHOR_TERMS
-    && declaredAnchorTerms.length <= MAXIMUM_ANCHOR_TERMS
+    declaredAnchorTerms.length >= TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
+    && declaredAnchorTerms.length <= TOPIC_DISCOVERY_MAX_ANCHOR_TERMS
     && axes.length >= MINIMUM_SCOPE_AXES
     && distinctScopeTerms.size >= MINIMUM_SCOPE_TERMS;
   return {
@@ -238,10 +244,15 @@ export function buildTopicDiscoveryScopeContract(
     contractSource,
     briefFingerprint,
     scopeFingerprint,
-    contractFingerprint: buildScopeContractFingerprint(scopeFingerprint, sharedAnchor),
+    contractFingerprint: buildScopeContractFingerprint(
+      scopeFingerprint,
+      sharedAnchor,
+      queryAnchorTerms
+    ),
     enforced,
     sourceSections,
     declaredAnchorTerms,
+    queryAnchorTerms,
     sharedAnchorTerms: sharedAnchor,
     axes,
     priorWorkProbes,
@@ -254,11 +265,11 @@ export function bindTopicDiscoveryScopeAnchor(
   sharedAnchorTerms: string[]
 ): TopicDiscoveryScopeContract {
   const normalizedAnchorTerms = canonicalizeAnchorTerms(sharedAnchorTerms);
-  if (normalizedAnchorTerms.length < MINIMUM_ANCHOR_TERMS) {
+  if (normalizedAnchorTerms.length < TOPIC_DISCOVERY_MIN_ANCHOR_TERMS) {
     throw new Error("topic_discovery_scope_anchor_missing");
   }
   if (
-    contract.declaredAnchorTerms.length < MINIMUM_ANCHOR_TERMS
+    contract.declaredAnchorTerms.length < TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
     || !haveSameTerms(contract.declaredAnchorTerms, normalizedAnchorTerms)
   ) {
     throw new Error(
@@ -279,7 +290,11 @@ export function bindTopicDiscoveryScopeAnchor(
   return {
     ...contract,
     sharedAnchorTerms: boundAnchorTerms,
-    contractFingerprint: buildScopeContractFingerprint(contract.scopeFingerprint, boundAnchorTerms)
+    contractFingerprint: buildScopeContractFingerprint(
+      contract.scopeFingerprint,
+      boundAnchorTerms,
+      contract.queryAnchorTerms
+    )
   };
 }
 
@@ -295,7 +310,7 @@ export function assessTopicDiscoveryScientificScope(input: {
   const expectedAnchorTerms = input.contract.declaredAnchorTerms.length
     ? [...input.contract.declaredAnchorTerms]
     : [...input.contract.sharedAnchorTerms];
-  const authority = expectedAnchorTerms.length >= MINIMUM_ANCHOR_TERMS
+  const authority = expectedAnchorTerms.length >= TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
     ? "brief_declared" as const
     : "unavailable" as const;
   const anchorPassed = authority === "brief_declared"
@@ -400,6 +415,7 @@ export function assessTopicDiscoveryScientificScope(input: {
     contractFingerprint: input.contract.contractFingerprint,
     sourceSections: [...input.contract.sourceSections],
     declaredAnchorTerms: [...input.contract.declaredAnchorTerms],
+    queryAnchorTerms: [...input.contract.queryAnchorTerms],
     lockedAnchorTerms: [...input.contract.sharedAnchorTerms],
     priorWorkProbes: input.contract.priorWorkProbes.map((probe) => ({
       ...probe,
@@ -590,9 +606,26 @@ function splitScopeUnits(value: string | undefined): string[] {
 }
 
 function extractScientificObjectTerms(value: string): string[] {
-  return uniqueTerms(normalizeTopicDiscoveryScientificObjectTerms(value))
-    .filter((term) => /\p{L}/u.test(term))
-    .filter((term) => !GENERIC_ANCHOR_TERMS.has(term));
+  const terms = uniqueTerms(normalizeTopicDiscoveryScientificObjectTerms(value))
+    .filter((term) => /\p{L}/u.test(term));
+  return terms.filter((term, index) =>
+    !GENERIC_ANCHOR_TERMS.has(term)
+    || isInteriorScientificObjectTerm(terms, index)
+  );
+}
+
+function isInteriorScientificObjectTerm(terms: string[], index: number): boolean {
+  if (index === 0 || index === terms.length - 1) {
+    return false;
+  }
+  const left = terms[index - 1];
+  const right = terms[index + 1];
+  return Boolean(
+    left
+    && right
+    && !GENERIC_ANCHOR_TERMS.has(left)
+    && !GENERIC_ANCHOR_TERMS.has(right)
+  );
 }
 
 function extractDistinctiveScopeTerms(value: string): string[] {
@@ -638,12 +671,34 @@ function buildScientificScopeFingerprint(input: {
 
 function buildScopeContractFingerprint(
   scopeFingerprint: string,
-  sharedAnchorTerms: string[]
+  sharedAnchorTerms: string[],
+  queryAnchorTerms: string[]
 ): string {
   return sha256(JSON.stringify({
     scopeFingerprint,
-    sharedAnchorTerms: [...sharedAnchorTerms].sort()
+    sharedAnchorTerms: [...sharedAnchorTerms].sort(),
+    queryAnchorTerms
   }));
+}
+
+function resolveQueryAnchorTerms(
+  units: TopicDiscoveryScopeUnit[],
+  declaredAnchorTerms: string[]
+): string[] {
+  for (const unit of units) {
+    if (unit.disposition !== "anchor_authority") {
+      continue;
+    }
+    const surfaceTerms = extractTopicDiscoveryAnchorSurfaceTerms(unit.sourceText);
+    if (
+      surfaceTerms.length >= TOPIC_DISCOVERY_MIN_ANCHOR_TERMS
+      && surfaceTerms.length <= TOPIC_DISCOVERY_MAX_ANCHOR_TERMS
+      && haveSameTerms(canonicalizeAnchorTerms(surfaceTerms), declaredAnchorTerms)
+    ) {
+      return surfaceTerms;
+    }
+  }
+  return [...declaredAnchorTerms];
 }
 
 function canonicalizeAnchorTerms(value: string[]): string[] {

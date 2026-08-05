@@ -253,6 +253,36 @@ describe("validateResearchBriefMarkdown", () => {
     expect(completeness.contract_ready).toBe(true);
   });
 
+  it("blocks a scientific object longer than the executable query anchor", () => {
+    const brief = fullBrief().replace(
+      "## Topic",
+      [
+        "## Research Mode",
+        "topic_discovery",
+        "",
+        "## Scientific Scope",
+        "### Scientific Object",
+        "- acoustic event boundary detection",
+        "",
+        "### Empirical Problems",
+        "- segmentation stability under sensor noise",
+        "- label efficiency under domain shift",
+        "",
+        "## Topic"
+      ].join("\n")
+    );
+
+    const result = validateResearchBriefMarkdown(brief);
+    const completeness = buildBriefCompletenessArtifact(brief);
+
+    expect(result.errors).toContain(
+      'Make "## Scientific Scope" explicit: declare one 2-to-3-term Scientific Object and at least two Empirical Problems or Scientific Relations with four distinctive terms in total.'
+    );
+    expect(completeness.paper_scale_ready).toBe(false);
+    expect(completeness.contract_ready).toBe(false);
+    expect(completeness.missing_sections).toContain("Scientific Scope");
+  });
+
   it("blocks a minimal brief that omits required paper-scale sections", () => {
     const result = validateResearchBriefMarkdown(minimalBrief());
     expect(result.errors).not.toHaveLength(0);
@@ -263,11 +293,13 @@ describe("validateResearchBriefMarkdown", () => {
   });
 
   it("blocks the generated template until placeholder sections are replaced", () => {
-    const result = validateResearchBriefMarkdown(buildResearchBriefTemplate());
+    const template = buildResearchBriefTemplate();
+    const result = validateResearchBriefMarkdown(template);
     expect(result.errors.some((error) => error.includes("Replace the placeholder text"))).toBe(true);
     expect(result.errors.some((error) => error.includes("Topic"))).toBe(true);
     expect(result.errors.some((error) => error.includes("Objective Metric"))).toBe(true);
     expect(result.errors.some((error) => error.includes("Minimum Experiment Plan"))).toBe(true);
+    expect(template).toContain("- one concise 2-to-3-term domain object");
   });
 
   it("produces errors for malformed brief", () => {

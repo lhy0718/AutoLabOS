@@ -9,6 +9,20 @@ import {
 } from "../src/core/topicDiscoveryScientificTerms.js";
 
 describe("topic-discovery scientific term semantics", () => {
+  it("normalizes automatic-process derivations to one scientific term", () => {
+    for (const variant of ["automatic", "automated", "automation", "automating"]) {
+      expect(normalizeTopicDiscoveryScientificTerms(variant)).toEqual(["automat"]);
+      expect(normalizeTopicDiscoveryCandidateTerms(variant)).toEqual(["automat"]);
+    }
+  });
+
+  it("expands common agent-literature surface forms for candidate recall only", () => {
+    expect(normalizeTopicDiscoveryCandidateObjectTerms("LLM agents and agentic LLMs"))
+      .toEqual(["language", "model", "agent", "agent", "language", "model"]);
+    expect(normalizeTopicDiscoveryScientificObjectTerms("LLM agents"))
+      .toEqual(["llm", "agent"]);
+  });
+
   it("keeps contextual equivalence out of scientific fingerprints", () => {
     expect(normalizeTopicDiscoveryScientificTerms("detection limit")).toEqual([
       "detection",
@@ -70,6 +84,17 @@ describe("topic-discovery scientific term semantics", () => {
       sharedAnchorTerms: ["paper", "review"],
       axisTerms: ["defect", "localization"]
     });
+  });
+
+  it("preserves an interior scientific compound token without promoting generic prefixes", () => {
+    expect(normalizeTopicDiscoveryScientificTerms("automated research workflows"))
+      .toEqual(["automat", "workflow"]);
+    expect(normalizeTopicDiscoveryScientificObjectTerms("automated research workflows"))
+      .toEqual(["automat", "research", "workflow"]);
+    expect(normalizeTopicDiscoveryCandidateObjectTerms("automated research workflows"))
+      .toEqual(["automat", "research", "workflow"]);
+    expect(normalizeTopicDiscoveryScientificObjectTerms("research paper"))
+      .toEqual(["paper"]);
   });
 
   it("assigns one family signature to finite-sample surface variants", () => {

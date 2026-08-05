@@ -625,7 +625,11 @@ describe("loadResearchFunnelProjection", () => {
     const fixture = buildFunnelFixture();
     await writeFunnelFixture(runDir, fixture);
     const candidates = parseJsonl(fixture.raw.collectCandidates);
-    candidates[0]!.published_in_corpus = false;
+    const retainedCandidate = candidates.find(
+      (candidate) => candidate.published_in_corpus === true
+    );
+    expect(retainedCandidate).toBeDefined();
+    retainedCandidate!.published_in_corpus = false;
     await writeRawArtifact(
       runDir,
       "collect_topic_discovery_candidates.jsonl",
@@ -708,6 +712,54 @@ describe("loadResearchFunnelProjection", () => {
     expect(projection.authorizationTrusted).toBe(false);
     expect(projection.reasonCodes).toContain(
       "collect_semantic_lineage_execution_mismatch"
+    );
+  });
+
+  it("revokes authorization when retrieval lanes duplicate a family contract", async () => {
+    const runDir = await createRunDir();
+    const fixture = buildFunnelFixture();
+    await writeFunnelFixture(runDir, fixture);
+    const queryPlan = JSON.parse(fixture.raw.collectQueryPlan) as Record<string, any>;
+    const firstFamily = queryPlan.selected_families[0];
+    queryPlan.selected_families.splice(1, 0, {
+      ...firstFamily,
+      retrieval_lane: "broad_relevance"
+    });
+    queryPlan.selected_families[0] = {
+      ...firstFamily,
+      retrieval_lane: "recent_direct_prior"
+    };
+    await writeRawArtifact(
+      runDir,
+      "collect_query_plan.json",
+      JSON.stringify(queryPlan)
+    );
+
+    const projection = await loadTopicDiscoveryProjection(runDir);
+
+    expect(projection.authorizationTrusted).toBe(false);
+    expect(projection.reasonCodes).toContain(
+      "collect_semantic_lineage_query_plan_invalid"
+    );
+  });
+
+  it("revokes authorization when corpus quality self-attests family qualification", async () => {
+    const runDir = await createRunDir();
+    const fixture = buildFunnelFixture();
+    await writeFunnelFixture(runDir, fixture);
+    const quality = JSON.parse(fixture.raw.collectQuality) as Record<string, any>;
+    quality.query_families[0].qualifies_for_coverage = false;
+    await writeRawArtifact(
+      runDir,
+      "collect_corpus_quality.json",
+      JSON.stringify(quality)
+    );
+
+    const projection = await loadTopicDiscoveryProjection(runDir);
+
+    expect(projection.authorizationTrusted).toBe(false);
+    expect(projection.reasonCodes).toContain(
+      "collect_semantic_lineage_quality_family_mismatch"
     );
   });
 
@@ -2216,34 +2268,57 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       contractSource: "planner_declared"
     }
   ];
-  const papers = families.flatMap((family, familyIndex) => {
-    const paperIds = familyIndex === 0
-      ? ["prior_methods", "prior_audit", "lineage_a3", "lineage_a4"]
-      : ["lineage_b1", "lineage_b2", "lineage_b3", "lineage_b4"];
-    return paperIds.map((paperId, paperIndex) => ({
-      paper_id: paperId,
-      title:
-        `Bounded evaluation ${family.axisTerms.join(" ")} study ${paperIndex + 1}`,
-      abstract:
-        `This bounded evaluation study directly examines ${family.axisTerms.join(" and ")}.`,
-      query_families: [family.familyId]
-    }));
-  });
-  const requestedPairs = papers.map((paper) => ({
-    paper_id: paper.paper_id,
-    family_id: paper.query_families[0]!,
-    selection_source: "lexical_match" as const
-  }));
+  const papers = families.flatMap((family, familyIndex) =>
+    Array.from({ length: 10 }, (_, paperIndex) => {
+      const evidenceIndex = paperIndex - 1;
+      const selectionSource = paperIndex < 2
+        ? undefined
+        : paperIndex < 6
+          ? "lexical_match" as const
+          : "provider_provenance_floor" as const;
+      const title = paperIndex < 2
+        ? `Background record ${familyIndex + 1}-${paperIndex + 1}`
+        : paperIndex < 6
+          ? `Bounded evaluation ${family.axisTerms.join(" ")} study ${evidenceIndex}`
+          : `Bounded ${family.axisTerms.join(" ")} evidence ${evidenceIndex}`;
+      const paperId = familyIndex === 0 && paperIndex === 2
+        ? "prior_methods"
+        : familyIndex === 0 && paperIndex === 3
+          ? "prior_audit"
+          : `lineage_${familyIndex + 1}_${paperIndex + 1}`;
+      return {
+        paper_id: paperId,
+        title,
+        abstract: paperIndex < 2
+          ? "A generic background record without the declared relation."
+          : `This study examines ${family.axisTerms.join(" and ")} under bounded evidence.`,
+        query_families: [family.familyId],
+        selection_source: selectionSource
+      };
+    })
+  );
+  const requestedPairs = papers.flatMap((paper) => paper.selection_source
+    ? [{
+        paper_id: paper.paper_id,
+        family_id: paper.query_families[0]!,
+        selection_source: paper.selection_source
+      }]
+    : []);
+  const retainedPapers = papers.filter(
+    (paper) => paper.selection_source === "lexical_match"
+  );
   const payload = {
     version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
     term_normalization_version: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
     candidate_recall_semantics_version:
       TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
-    papers: papers.map(({ paper_id, title, abstract }) => ({
+    papers: papers
+      .filter((paper) => paper.selection_source)
+      .map(({ paper_id, title, abstract }) => ({
       paper_id,
       title,
       abstract
-    })),
+      })),
     family_contracts: families.map((family) => ({
       family_id: family.familyId,
       query: family.query,
@@ -2257,21 +2332,30 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
   const reviewerInputBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
   const promptSha256 = sha256(buildTopicDiscoverySemanticAuditPrompt(payload));
   const responseSha256 = sha256("generic semantic review response");
-  const judgments = papers.map((paper) => ({
-    paper_id: paper.paper_id,
-    family_id: paper.query_families[0]!,
-    verdict: "direct_support",
-    reason: "The work directly studies the declared family contract.",
-    evidence_span: paper.title
-  }));
+  const judgments = requestedPairs.map((pair) => {
+    const paper = papers.find((candidate) => candidate.paper_id === pair.paper_id)!;
+    return {
+      paper_id: paper.paper_id,
+      family_id: paper.query_families[0]!,
+      verdict: pair.selection_source === "lexical_match"
+        ? "direct_support" as const
+        : "uncertain" as const,
+      reason: pair.selection_source === "lexical_match"
+        ? "The work directly studies the declared family contract."
+        : "The provider fallback record is insufficient for direct support.",
+      ...(pair.selection_source === "lexical_match"
+        ? { evidence_span: paper.title }
+        : {})
+    };
+  });
   const counts = {
-    requested_pairs: papers.length,
-    reviewed_pairs: papers.length,
+    requested_pairs: requestedPairs.length,
+    reviewed_pairs: requestedPairs.length,
     budget_excluded_pairs: 0,
-    returned_judgments: papers.length,
-    direct_support: papers.length,
+    returned_judgments: requestedPairs.length,
+    direct_support: retainedPapers.length,
     application_only: 0,
-    uncertain: 0,
+    uncertain: requestedPairs.length - retainedPapers.length,
     omitted_judgments: 0,
     duplicate_judgments: 0,
     conflicting_judgments: 0,
@@ -2283,15 +2367,15 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
     max_pairs: 64,
     max_input_bytes: 131_072,
     abstract_chars: 2_000,
-    timeout_ms: 30_000
+    timeout_ms: 120_000
   };
   const execution = {
     policy: TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY,
     maximum_calls: TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
     maximum_fallback_partitions:
       TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
-    total_deadline_ms: 120_000,
-    fallback_partition_size: Math.ceil(papers.length / 3),
+    total_deadline_ms: 480_000,
+    fallback_partition_size: Math.ceil(requestedPairs.length / 3),
     calls_started: 1,
     calls_completed: 1,
     cumulative_reviewer_input_bytes: reviewerInputBytes,
@@ -2299,8 +2383,8 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       call_index: 1,
       mode: "primary",
       pair_start_index: 0,
-      pair_end_index_exclusive: papers.length,
-      requested_pair_count: papers.length,
+      pair_end_index_exclusive: requestedPairs.length,
+      requested_pair_count: requestedPairs.length,
       reviewer_input_sha256: reviewerInputSha256,
       reviewer_input_bytes: reviewerInputBytes,
       prompt_sha256: promptSha256,
@@ -2318,9 +2402,10 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
     limits,
     counts,
     recall: {
-      provider_recall_floor_per_family: 4,
-      lexical_requested_pairs: papers.length,
-      provider_provenance_requested_pairs: 0
+      provider_recall_floor_per_family: 8,
+      lexical_requested_pairs: retainedPapers.length,
+      provider_provenance_requested_pairs:
+        requestedPairs.length - retainedPapers.length
     },
     execution,
     reasons: [],
@@ -2351,17 +2436,17 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       },
       observed: {
         total_papers: papers.length,
-        relevant_papers: papers.length,
-        relevant_share: 1,
-        lexical_relevant_papers: papers.length,
-        semantic_requested_papers: papers.length,
-        direct_support_papers: papers.length,
+        relevant_papers: retainedPapers.length,
+        relevant_share: retainedPapers.length / papers.length,
+        lexical_relevant_papers: retainedPapers.length,
+        semantic_requested_papers: requestedPairs.length,
+        direct_support_papers: retainedPapers.length,
         application_only_pairs: 0,
-        uncertain_pairs: 0,
+        uncertain_pairs: requestedPairs.length - retainedPapers.length,
         shared_anchor_terms: sharedAnchorTerms,
         required_anchor_matches_per_paper: sharedAnchorTerms.length,
-        anchor_proximate_papers: papers.length,
-        anchor_axis_proximate_papers: papers.length,
+        anchor_proximate_papers: retainedPapers.length,
+        anchor_axis_proximate_papers: retainedPapers.length,
         covered_query_families: families.length
       },
       query_families: families.map((family) => ({
@@ -2379,19 +2464,22 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
         }),
         required_axis_matches: 2,
         lexical_relevant_paper_count: 4,
-        semantic_reviewed_paper_count: 4,
-        provider_recall_paper_count: 0,
+        semantic_reviewed_paper_count: 8,
+        provider_recall_paper_count: 4,
         direct_support_paper_count: 4,
+        qualifies_for_coverage: true,
         application_only_paper_count: 0,
-        uncertain_paper_count: 0,
-        semantic_precision: 1,
+        uncertain_paper_count: 4,
+        semantic_precision: 0.5,
         retained_paper_count: 4,
         relevant_paper_count: 4
       })),
       semantic_review: semanticReviewSummary,
       semantic_judgments: judgments,
-      retained_paper_ids: papers.map((paper) => paper.paper_id),
-      excluded_paper_ids: []
+      retained_paper_ids: retainedPapers.map((paper) => paper.paper_id),
+      excluded_paper_ids: papers
+        .filter((paper) => paper.selection_source !== "lexical_match")
+        .map((paper) => paper.paper_id)
     },
     semanticInput: {
       version: 1,
@@ -2427,8 +2515,18 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       },
       judgments
     },
-    candidatesRaw: serializeJsonl(papers.map((paper) => ({
-      ...paper,
+    candidatesRaw: serializeJsonl(papers.map((paper) => {
+      const selections = paper.selection_source
+        ? [{
+            family_id: paper.query_families[0],
+            selection_source: paper.selection_source
+          }]
+        : [];
+      return {
+      paper_id: paper.paper_id,
+      title: paper.title,
+      abstract: paper.abstract,
+      query_families: paper.query_families,
       schema_version: TOPIC_DISCOVERY_CANDIDATE_SIDECAR_VERSION,
       collect_attempt_id: collectAttemptId,
       evidence_status: "semantic_screening_candidate_only",
@@ -2444,16 +2542,17 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
       }],
       canonical_search_source: "semantic_scholar",
       search_providers: ["semantic_scholar"],
-      lexical_matched_query_families: paper.query_families,
-      semantic_review_selections: [{
-        family_id: paper.query_families[0],
-        selection_source: "lexical_match"
-      }],
-      semantic_review_requested_query_families: paper.query_families,
-      semantic_review_requested: true,
-      selected_by_semantic_quality: true,
-      published_in_corpus: true
-    }))),
+      lexical_matched_query_families:
+        paper.selection_source === "lexical_match" ? paper.query_families : [],
+      semantic_review_selections: selections,
+      semantic_review_requested_query_families:
+        selections.map((selection) => selection.family_id),
+      semantic_review_requested: selections.length > 0,
+      selected_by_semantic_quality:
+        paper.selection_source === "lexical_match",
+      published_in_corpus: paper.selection_source === "lexical_match"
+    };
+    })),
     queryPlan: {
       ...TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT,
       collect_attempt_id: collectAttemptId,
@@ -2473,7 +2572,13 @@ function buildSemanticLineageFixture(collectAttemptId: string) {
         }
       }))
     },
-    corpusRows: papers.map((paper) => ({ ...paper, authors: [] }))
+    corpusRows: retainedPapers.map((paper) => ({
+      paper_id: paper.paper_id,
+      title: paper.title,
+      abstract: paper.abstract,
+      query_families: paper.query_families,
+      authors: []
+    }))
   };
 }
 
@@ -2528,7 +2633,7 @@ function buildTimeoutPartitionExecutionFixture(
       maximum_calls: TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
       maximum_fallback_partitions:
         TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
-      total_deadline_ms: 120_000,
+      total_deadline_ms: 480_000,
       fallback_partition_size: Math.ceil(pairCount / 3),
       calls_started: calls.length,
       calls_completed: calls.length - 1,

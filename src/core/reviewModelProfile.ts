@@ -1,5 +1,9 @@
 import type { AppConfig } from "../types.js";
+import { getReasoningEffortChoicesForModel } from "../integrations/codex/modelCatalog.js";
+import { normalizeOpenAiResponsesReasoningEffort } from "../integrations/openai/modelCatalog.js";
 import type { ReviewActorProfile } from "./reviewSystem.js";
+
+const REVIEW_REASONING_EFFORT = "xhigh";
 
 export interface ReviewActorProfiles {
   configured: boolean;
@@ -11,18 +15,15 @@ export function resolveReviewActorProfiles(config: AppConfig): ReviewActorProfil
   const mode = config.providers?.llm_mode;
   if (mode === "openai_api") {
     const provider = config.providers.openai;
-    return finalizeProfiles(
-      {
-        provider: "openai",
-        model: provider.model,
-        reasoning_effort: provider.reasoning_effort
-      },
-      {
-        provider: "openai",
-        model: provider.experiment_model || provider.model,
-        reasoning_effort: provider.experiment_reasoning_effort || provider.reasoning_effort
-      }
-    );
+    const profile = {
+      provider: "openai",
+      model: provider.model,
+      reasoning_effort: normalizeOpenAiResponsesReasoningEffort(
+        provider.model,
+        REVIEW_REASONING_EFFORT
+      )
+    };
+    return finalizeProfiles(profile, profile);
   }
 
   if (mode === "ollama") {
@@ -43,24 +44,26 @@ export function resolveReviewActorProfiles(config: AppConfig): ReviewActorProfil
 
   if (mode === "codex" || mode === "codex_chatgpt_only") {
     const provider = config.providers.codex;
-    return finalizeProfiles(
-      {
-        provider: "codex",
-        model: provider.model,
-        reasoning_effort: provider.reasoning_effort
-      },
-      {
-        provider: "codex",
-        model: provider.experiment_model || provider.model,
-        reasoning_effort: provider.experiment_reasoning_effort || provider.reasoning_effort
-      }
-    );
+    const profile = {
+      provider: "codex",
+      model: provider.model,
+      reasoning_effort: resolveCodexReviewReasoningEffort(provider.model)
+    };
+    return finalizeProfiles(profile, profile);
   }
 
   return finalizeProfiles(
     { provider: "unconfigured", model: "unconfigured", reasoning_effort: "unconfigured" },
     { provider: "unconfigured", model: "unconfigured", reasoning_effort: "unconfigured" }
   );
+}
+
+function resolveCodexReviewReasoningEffort(model: string): string {
+  const supported = getReasoningEffortChoicesForModel(model);
+  if (supported.includes(REVIEW_REASONING_EFFORT)) {
+    return REVIEW_REASONING_EFFORT;
+  }
+  return supported.at(-1) || "medium";
 }
 
 function finalizeProfiles(

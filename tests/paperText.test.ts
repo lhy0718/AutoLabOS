@@ -66,7 +66,7 @@ describe("paperText", () => {
       "run-1",
       "analysis_cache",
       "texts",
-      "paper-1.v2.txt"
+      "paper-1.v3.txt"
     );
     await mkdir(path.dirname(textPath), { recursive: true });
     await writeFile(textPath, "Full text from cache", "utf8");
@@ -91,7 +91,7 @@ describe("paperText", () => {
       "run-1",
       "analysis_cache",
       "texts",
-      "paper-1.v2.txt"
+      "paper-1.v3.txt"
     );
     const imageDir = path.join(
       ".autolabos",
@@ -250,6 +250,29 @@ describe("paperText", () => {
     expect(excerpt).not.toContain(exactMiddleSentence);
     expect(groundingText).toContain(exactMiddleSentence);
     expect(groundingText).not.toContain("[PAGE EXCERPT]");
+  });
+
+  it("uses reading-order text for grounding when layout text interleaves two columns", () => {
+    const layoutPageText = [
+      "as well as detecting more missing comparisons. However, our unrelated left-column continuation",
+      "systems still suffer from constructiveness due to factuality",
+      "errors."
+    ].join("\n");
+    const readingOrderPageText = [
+      "as well as detecting more missing comparisons. However, our",
+      "systems still suffer from constructiveness due to factuality",
+      "errors."
+    ].join("\n");
+
+    const groundingText = buildFullPdfGroundingText(
+      [layoutPageText],
+      [readingOrderPageText]
+    );
+
+    expect(groundingText).toContain(
+      "However, our\nsystems still suffer from constructiveness due to factuality\nerrors."
+    );
+    expect(groundingText).not.toContain("unrelated left-column continuation");
   });
 
   it("returns a single page when page count is unavailable", () => {

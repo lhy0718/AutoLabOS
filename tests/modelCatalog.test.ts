@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CODEX_MODEL,
   GPT_5_4_FAST_MODEL_LABEL,
+  GPT_5_6_LUNA_MODEL,
+  GPT_5_6_SOL_MODEL,
+  GPT_5_6_TERRA_MODEL,
   OFFICIAL_CODEX_MODELS,
   buildCodexModelSelectionChoices,
   getCurrentCodexModelSelectionValue,
@@ -14,13 +17,16 @@ import {
 } from "../src/integrations/codex/modelCatalog.js";
 
 describe("modelCatalog", () => {
-  it("matches the official Codex model list and excludes removed entries", () => {
+  it("lists current models first while retaining compatibility entries", () => {
+    expect(OFFICIAL_CODEX_MODELS).toContain(GPT_5_6_SOL_MODEL);
+    expect(OFFICIAL_CODEX_MODELS).toContain(GPT_5_6_TERRA_MODEL);
+    expect(OFFICIAL_CODEX_MODELS).toContain(GPT_5_6_LUNA_MODEL);
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.5");
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.4");
+    expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.4-mini");
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.3-codex-spark");
+    expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.3-codex");
     expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5.2");
-    expect(OFFICIAL_CODEX_MODELS).toContain("gpt-5-codex-mini");
-    expect(OFFICIAL_CODEX_MODELS).not.toContain("gpt-5.1-codex-mini");
   });
 
   it("exposes gpt-5.4 and gpt-5.4 (fast) as separate selector options", () => {
@@ -39,30 +45,33 @@ describe("modelCatalog", () => {
     expect(getCurrentCodexModelSelectionValue(undefined, false)).toBe(DEFAULT_CODEX_MODEL);
   });
 
-  it("orders model selector choices with gpt-5.5 first and remaining models in descending version order", () => {
+  it("orders the GPT-5.6 family first while retaining a configured compatibility choice", () => {
     const choices = buildCodexModelSelectionChoices("gpt-5.1-codex");
     expect(choices.slice(0, 8)).toEqual([
       RECOMMENDED_CODEX_MODEL,
-      GPT_5_4_FAST_MODEL_LABEL,
+      GPT_5_6_TERRA_MODEL,
+      GPT_5_6_LUNA_MODEL,
+      "gpt-5.5",
       "gpt-5.4",
-      "gpt-5.3-codex",
+      GPT_5_4_FAST_MODEL_LABEL,
+      "gpt-5.4-mini",
       "gpt-5.3-codex-spark",
-      "gpt-5.2-codex",
-      "gpt-5.2",
-      "gpt-5.1-codex-max"
     ]);
-    expect(choices.indexOf("gpt-5.1")).toBeLessThan(choices.indexOf("gpt-5"));
-    expect(choices.indexOf("gpt-5.1-codex")).toBeLessThan(choices.indexOf("gpt-5-codex"));
+    expect(choices).toContain("gpt-5.1-codex");
+    expect(choices.indexOf("gpt-5.3-codex-spark")).toBeLessThan(choices.indexOf("gpt-5.1-codex"));
   });
 
-  it("marks only the standard gpt-5.5 option as recommended", () => {
+  it("marks only GPT-5.6 Sol as recommended", () => {
     expect(isRecommendedCodexModelSelection(RECOMMENDED_CODEX_MODEL)).toBe(true);
     expect(isRecommendedCodexModelSelection(GPT_5_4_FAST_MODEL_LABEL)).toBe(false);
-    expect(DEFAULT_CODEX_MODEL).toBe("gpt-5.5");
+    expect(DEFAULT_CODEX_MODEL).toBe(GPT_5_6_SOL_MODEL);
     expect(isRecommendedCodexModelSelection(DEFAULT_CODEX_MODEL)).toBe(true);
   });
 
   it("exposes xhigh for Codex models that document it", () => {
+    expect(getReasoningEffortChoicesForModel(GPT_5_6_SOL_MODEL)).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getReasoningEffortChoicesForModel(GPT_5_6_TERRA_MODEL)).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getReasoningEffortChoicesForModel(GPT_5_6_LUNA_MODEL)).toEqual(["low", "medium", "high", "xhigh"]);
     expect(getReasoningEffortChoicesForModel("gpt-5.3-codex")).toEqual(["low", "medium", "high", "xhigh"]);
     expect(getReasoningEffortChoicesForModel("gpt-5.2-codex")).toEqual(["low", "medium", "high", "xhigh"]);
     expect(getReasoningEffortChoicesForModel("gpt-5.1-codex")).toEqual(["low", "medium", "high", "xhigh"]);

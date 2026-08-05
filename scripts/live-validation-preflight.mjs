@@ -52,8 +52,18 @@ const requiredPythonModules = csvEnv("AUTOLABOS_VALIDATION_REQUIRED_PYTHON_MODUL
 ]);
 const optionalPythonModules = csvEnv("AUTOLABOS_VALIDATION_OPTIONAL_PYTHON_MODULES", ["lm_eval"]);
 const hfCacheRoot = process.env.HF_HOME || join(process.env.HOME || "", ".cache", "huggingface");
-const codexModel = process.env.AUTOLABOS_VALIDATION_CODEX_MODEL || "gpt-5.5";
-const openAiModel = process.env.AUTOLABOS_VALIDATION_OPENAI_MODEL || codexModel;
+const codexResearchModel =
+  process.env.AUTOLABOS_VALIDATION_CODEX_MODEL || "gpt-5.6-sol";
+const codexChatModel =
+  process.env.AUTOLABOS_VALIDATION_CODEX_CHAT_MODEL || "gpt-5.6-terra";
+const codexExperimentModel =
+  process.env.AUTOLABOS_VALIDATION_CODEX_EXPERIMENT_MODEL || codexResearchModel;
+const openAiResearchModel =
+  process.env.AUTOLABOS_VALIDATION_OPENAI_MODEL || "gpt-5.6-sol";
+const openAiChatModel =
+  process.env.AUTOLABOS_VALIDATION_OPENAI_CHAT_MODEL || "gpt-5.6-terra";
+const openAiExperimentModel =
+  process.env.AUTOLABOS_VALIDATION_OPENAI_EXPERIMENT_MODEL || openAiResearchModel;
 const validationLlmMode = normalizeValidationLlmMode(
   process.env.AUTOLABOS_VALIDATION_LLM_MODE || "codex_chatgpt_only"
 );
@@ -103,18 +113,18 @@ function providerConfigLines() {
     "providers:",
     `  llm_mode: ${validationLlmMode}`,
     "  codex:",
-    `    model: ${yamlScalar(codexModel)}`,
-    `    chat_model: ${yamlScalar(codexModel)}`,
-    `    experiment_model: ${yamlScalar(codexModel)}`,
+    `    model: ${yamlScalar(codexResearchModel)}`,
+    `    chat_model: ${yamlScalar(codexChatModel)}`,
+    `    experiment_model: ${yamlScalar(codexExperimentModel)}`,
     "    reasoning_effort: high",
     "    chat_reasoning_effort: medium",
     "    experiment_reasoning_effort: high",
     "    auth_required: true",
     "    fast_mode: false",
     "  openai:",
-    `    model: ${yamlScalar(openAiModel)}`,
-    `    chat_model: ${yamlScalar(openAiModel)}`,
-    `    experiment_model: ${yamlScalar(openAiModel)}`,
+    `    model: ${yamlScalar(openAiResearchModel)}`,
+    `    chat_model: ${yamlScalar(openAiChatModel)}`,
+    `    experiment_model: ${yamlScalar(openAiExperimentModel)}`,
     "    reasoning_effort: medium",
     "    chat_reasoning_effort: medium",
     "    experiment_reasoning_effort: high",
@@ -206,7 +216,7 @@ function ensureWorkspace() {
       "project_name: live-validation",
       ...providerConfigLines(),
       "analysis:",
-      `  responses_model: ${yamlScalar(openAiModel)}`,
+      `  responses_model: ${yamlScalar(openAiResearchModel)}`,
       "papers:",
       "  max_results: 80",
       "  per_second_limit: 1",
@@ -286,7 +296,7 @@ async function doctorReport() {
       llmMode: validationLlmMode,
       pdfAnalysisMode,
       openAiApiKeyConfigured: Boolean(String(process.env.OPENAI_API_KEY || "").trim()),
-      codexResearchModel: codexModel,
+      codexResearchModel,
       ollamaBaseUrl,
       ollamaChatModel,
       ollamaResearchModel,

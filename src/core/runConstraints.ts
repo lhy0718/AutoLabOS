@@ -87,8 +87,8 @@ const LITERATURE_QUERY_FAMILY_STOPWORDS = new Set([
   "without"
 ]);
 const LITERATURE_QUERY_FAMILY_JACCARD_THRESHOLD = 0.72;
-const TOPIC_DISCOVERY_MIN_ANCHOR_TERMS = 2;
-const TOPIC_DISCOVERY_MAX_ANCHOR_TERMS = 3;
+export const TOPIC_DISCOVERY_MIN_ANCHOR_TERMS = 2;
+export const TOPIC_DISCOVERY_MAX_ANCHOR_TERMS = 3;
 const TOPIC_DISCOVERY_MIN_ANCHOR_MATCH_RATIO = 2 / 3;
 const TOPIC_DISCOVERY_MIN_AXIS_TERMS = 2;
 const TOPIC_DISCOVERY_MAX_AXIS_TERMS = 3;
@@ -98,6 +98,9 @@ const TOPIC_DISCOVERY_ANCHOR_STOPWORD_EXCEPTIONS = new Set([
   "papers",
   "review",
   "reviews"
+]);
+const TOPIC_DISCOVERY_ANCHOR_INTERIOR_STOPWORD_EXCEPTIONS = new Set([
+  "research"
 ]);
 const TOPIC_DISCOVERY_NON_SUBSTANTIVE_AXIS_TOKEN_KEYS = new Set(
   [
@@ -486,13 +489,19 @@ export function extractLiteratureQueryPositiveTerms(query: string | undefined): 
 
 export function extractLiteratureTermSequence(
   value: string | undefined,
-  options: { preserveStopwords?: string[] } = {}
+  options: {
+    preserveStopwords?: string[];
+    preserveInteriorStopwords?: string[];
+  } = {}
 ): string[] {
   if (!value?.trim()) {
     return [];
   }
   const preservedStopwords = new Set(
     (options.preserveStopwords ?? []).map((term) => term.trim().toLowerCase())
+  );
+  const preservedInteriorStopwords = new Set(
+    (options.preserveInteriorStopwords ?? []).map((term) => term.trim().toLowerCase())
   );
   const tokens = value
     .replace(/[+|()"]+/gu, " ")
@@ -501,11 +510,17 @@ export function extractLiteratureTermSequence(
     .match(/[\p{L}\p{N}]+/gu) ?? [];
 
   return tokens
-    .filter((token) =>
+    .filter((token, index) =>
       token.length > 1
       && (
         !LITERATURE_QUERY_FAMILY_STOPWORDS.has(token)
         || preservedStopwords.has(token)
+        || isPreservedInteriorStopword(
+          tokens,
+          index,
+          preservedStopwords,
+          preservedInteriorStopwords
+        )
       )
     )
     .map(normalizeLiteratureQueryFamilyToken)
@@ -521,10 +536,7 @@ export function buildTopicDiscoveryLiteratureQuery(
   sharedAnchor: string | undefined,
   axis: string | undefined
 ): string | undefined {
-  const anchorTerms = extractTopicDiscoveryQueryTokens(
-    sharedAnchor,
-    TOPIC_DISCOVERY_ANCHOR_STOPWORD_EXCEPTIONS
-  );
+  const anchorTerms = extractTopicDiscoveryAnchorSurfaceTerms(sharedAnchor);
   const anchorKeys = new Set(anchorTerms.map((term) => normalizeLiteratureQueryFamilyToken(term)));
   const axisTerms = extractTopicDiscoveryQueryTokens(axis).filter(
     (term) => !anchorKeys.has(normalizeLiteratureQueryFamilyToken(term))
@@ -542,6 +554,16 @@ export function buildTopicDiscoveryLiteratureQuery(
   }
 
   return `"${anchorTerms.join(" ")}" ${axisTerms.join(" ")}`;
+}
+
+export function extractTopicDiscoveryAnchorSurfaceTerms(
+  value: string | undefined
+): string[] {
+  return extractTopicDiscoveryQueryTokens(
+    value,
+    TOPIC_DISCOVERY_ANCHOR_STOPWORD_EXCEPTIONS,
+    TOPIC_DISCOVERY_ANCHOR_INTERIOR_STOPWORD_EXCEPTIONS
+  );
 }
 
 export function normalizeTopicDiscoveryLiteratureQuery(
@@ -574,10 +596,7 @@ export function parseTopicDiscoveryLiteratureQuery(
   if (!anchorMatch?.[1] || !anchorMatch[2]) {
     return undefined;
   }
-  const sharedAnchorTerms = extractTopicDiscoveryQueryTokens(
-    anchorMatch[1],
-    TOPIC_DISCOVERY_ANCHOR_STOPWORD_EXCEPTIONS
-  );
+  const sharedAnchorTerms = extractTopicDiscoveryAnchorSurfaceTerms(anchorMatch[1]);
   const anchorKeys = new Set(sharedAnchorTerms.map(normalizeLiteratureQueryFamilyToken));
   const axisTerms = extractTopicDiscoveryQueryTokens(anchorMatch[2]).filter(
     (term) => !anchorKeys.has(normalizeLiteratureQueryFamilyToken(term))
@@ -683,7 +702,8 @@ function stripNegativeLiteratureQueryClauses(value: string): string {
 
 function extractTopicDiscoveryQueryTokens(
   value: string | undefined,
-  preservedStopwords: ReadonlySet<string> = new Set()
+  preservedStopwords: ReadonlySet<string> = new Set(),
+  preservedInteriorStopwords: ReadonlySet<string> = new Set()
 ): string[] {
   const sanitized = sanitizeSemanticScholarFreeTextQuery(value);
   if (!sanitized) {
@@ -697,12 +717,18 @@ function extractTopicDiscoveryQueryTokens(
     .match(/[\p{L}\p{N}]+/gu) ?? [];
   const seen = new Set<string>();
   const selected: string[] = [];
-  for (const token of tokens) {
+  for (const [index, token] of tokens.entries()) {
     if (
       token.length <= 1
       || (
         LITERATURE_QUERY_FAMILY_STOPWORDS.has(token)
         && !preservedStopwords.has(token)
+        && !isPreservedInteriorStopword(
+          tokens,
+          index,
+          preservedStopwords,
+          preservedInteriorStopwords
+        )
       )
     ) {
       continue;
@@ -715,6 +741,33 @@ function extractTopicDiscoveryQueryTokens(
     selected.push(token);
   }
   return selected;
+}
+
+function isPreservedInteriorStopword(
+  tokens: readonly string[],
+  index: number,
+  preservedStopwords: ReadonlySet<string>,
+  preservedInteriorStopwords: ReadonlySet<string>
+): boolean {
+  const token = tokens[index];
+  if (
+    !token
+    || !preservedInteriorStopwords.has(token)
+    || index === 0
+    || index === tokens.length - 1
+  ) {
+    return false;
+  }
+  return [tokens[index - 1], tokens[index + 1]].every((neighbor) =>
+    Boolean(
+      neighbor
+      && neighbor.length > 1
+      && (
+        !LITERATURE_QUERY_FAMILY_STOPWORDS.has(neighbor)
+        || preservedStopwords.has(neighbor)
+      )
+    )
+  );
 }
 
 function hasSubstantiveTopicDiscoveryAxis(axisTerms: string[]): boolean {

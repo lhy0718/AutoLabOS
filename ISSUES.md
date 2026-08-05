@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-07-28
+Last updated: 2026-08-04
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -12,6 +12,535 @@ Usage rules:
 Path placeholders:
 - `<validation-workspace>` means the AutoLabOS live-validation workspace root. By default this is the sibling `.autolabos-validation/` directory next to the repo root, which is commonly `~/.autolabos-validation/` when the repo is checked out under the user's home directory. It can be overridden with `AUTOLABOS_VALIDATION_WORKSPACE_ROOT`.
 - `<repo-root>` means the local AutoLabOS implementation checkout.
+
+---
+
+## Issue: LV-691
+
+- Status: reproduced; repair in progress
+- Category: research completion risk / two-column PDF layout extraction causes false-negative exact evidence grounding
+- Validation target: full-document evidence spans returned from PDF analysis must be verified against a reading-order-preserving extraction of the same PDF, while page-layout text remains available for section selection and visual analysis.
+- Environment/session context: real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` after the repaired collection lineage passed and `analyze_papers` completed 9/9 papers on 2026-08-04.
+- Reproduction steps:
+  1. Analyze a two-column PDF through the Responses PDF path and inspect a source-faithful evidence span from the right column.
+  2. Compare the span with `analysis_cache/texts/*.v2.grounding.txt`, which is derived from `pdftotext -layout`.
+  3. Extract the same PDF with the normal reading-order mode and compare the same span.
+  4. Inspect `evidence_store.jsonl` and `analysis/gap_synthesis.json`.
+- Expected behavior: a verbatim sentence visible in the PDF and preserved by reading-order extraction is marked `grounded_span`; research-gap synthesis then applies its unchanged full-text, confidence, opportunity-type, and independent-paper gates.
+- Actual behavior: the layout-preserving extraction interleaves text from the left and right columns. A sentence such as the factuality limitation is present verbatim in reading order but is non-contiguous in the grounding cache, so the exact matcher marks it ungrounded. Across the live corpus, 16/20 full-text evidence rows and all five scientific/reporting limitation rows are excluded this way; gap synthesis falls back with only one eligible item.
+- Fresh vs existing session comparison:
+  - Fresh session: version 2 grounding caches are created from layout-preserving page text and reproduce the false negative.
+  - Existing session: cached version 2 grounding text deterministically preserves the same interleaving.
+  - Divergence: the model reads the PDF in semantic reading order, while the verifier uses a page-layout serialization intended for a different purpose.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `extractPdfPageTexts` serves both section-aware model context and lossless grounding. Its `-layout` mode is useful for visual structure but is not a canonical sentence-order representation for multi-column PDFs.
+- Code/test changes: pending separate layout and reading-order extraction paths, a grounding-cache semantics bump, exact-match regressions for interleaved two-column text, and same-flow analysis revalidation.
+- Regression status: pending focused analyzer/text tests, build, harness checks, and real rerun of `analyze_papers`.
+- Follow-up risks: do not replace exact grounding with permissive fuzzy matching, silently promote image-only claims, weaken the two-independent-full-text support gate, or discard layout text needed for section selection.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{evidence_store.jsonl,analysis/gap_synthesis.json,analysis/gap_map.json,analysis_cache/texts/,analysis_cache/pdfs/}`.
+
+---
+
+## Issue: LV-690
+
+- Status: resolved; focused and adjacent regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation retry state / a new collect command on the current failed node inherits the exhausted retry budget of the superseded request
+- Validation target: an explicit TUI or web collect command that replaces the collection request must reset the current collect node and downstream retry/rollback state, while an observational focus jump must remain non-mutating.
+- Environment/session context: real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` after recovery from the LV-689 contaminated request on 2026-08-04.
+- Reproduction steps:
+  1. Exhaust `collect_papers` retries on an invalid superseded request.
+  2. Submit a new query-free `/agent collect --run <run-id> --limit 80` command through the official continuation helper.
+  3. Let the new collection attempt fail the corpus gate with one qualifying family, a condition normally eligible for bounded query replanning.
+  4. Inspect retry counters and events.
+- Expected behavior: the new request receives a fresh bounded retry budget and may replan under the unchanged corpus quality gate.
+- Actual behavior: the command replaces `collect_papers.request` and executes the new portfolio, but the same-node safe jump retains `retryCounters.collect_papers=3`. The first corpus-gate failure therefore ends the node immediately with no `NODE_RETRY` or bounded replan.
+- Fresh vs existing session comparison:
+  - Fresh session: collection has up to three attempts and can use query feedback for bounded replanning.
+  - Existing session: a new user-steered request starts with the previous request's exhausted counter.
+  - Divergence: request identity changes without resetting the execution budget attached to the superseded request.
+- Root-cause hypothesis:
+  - Type: `persisted_state_bug`.
+  - Hypothesis: `handleAgentCollect` stores a new request and performs a same-node `safe` jump. `applyJumpState` resets retry state only for backward jumps, so a current-node collect command cannot distinguish intentional restart from observational focus.
+- Code/test changes: added an explicit same-node reset option for replacement requests, preserved ordinary focus semantics, and covered runtime, orchestrator, TUI/web command, and collection behavior.
+- Regression status: focused and adjacent regressions plus build passed. In the same real run, the replacement query-free collect request received a fresh budget: attempt 1 and attempt 2 emitted `NODE_RETRY`, and attempt 3 passed with nine retained papers. The old exhausted counter did not terminate the new request.
+- Follow-up risks: do not reset counters for read-only run selection or focus, increment the research cycle for a same-node request replacement, or erase upstream completed evidence.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{run_record.json,events.jsonl,collect_query_plan.json,collect_corpus_quality.json}` and `<validation-output>/automated-peer-review-topic-portfolio-lv687b/live-validation-continue-collect_papers-output.txt`.
+
+---
+
+## Issue: LV-689
+
+- Status: resolved; focused and adjacent regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation resume/reload / automatic rollback restores an internal topic-discovery retrieval lane as an explicit user query
+- Validation target: rollback from `analyze_papers` to `collect_papers` must restore a replayable user request or typed candidate-prior plan, while a brief-driven topic portfolio must return to portfolio planning rather than replaying one internal provider lane.
+- Environment/session context: real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` after the LV-688 analysis-lineage failure and automatic rollback on 2026-08-04.
+- Reproduction steps:
+  1. Complete a brief-driven topic-discovery collection with multiple families and two retrieval lanes per family.
+  2. Let `analyze_papers` exhaust retries on a deterministic lineage prerequisite and auto-rollback to `collect_papers`.
+  3. Resume `collect_papers` through the official live-validation continuation helper.
+  4. Inspect `memory/run_context.json`, the immediate collection failures, and retry counters.
+- Expected behavior: rollback clears the internal lane request and reruns brief-governed portfolio planning; an explicit ordinary collect query remains replayable.
+- Actual behavior: deferred enrichment leaves the final broad-relevance lane in `collect_papers.last_request`. Rollback copies that effective provider request into `collect_papers.request`, including `retrievalIntent=topic_discovery` and one family contract. The collection node correctly refuses this single-query bypass three times and ends failed before planning or retrieval.
+- Fresh vs existing session comparison:
+  - Fresh session: the original run begins without an explicit query and generates the full portfolio from the brief.
+  - Existing session: rollback injects the final internal family query as if it were an explicit user request.
+  - Divergence: `last_request` is an operational lane receipt, not necessarily a replayable workflow request.
+- Root-cause hypothesis:
+  - Type: `resume_reload_bug`.
+  - Hypothesis: `restoreRollbackCollectRequest` treats any pending or successful `collect_papers.last_request` with a nonempty `query` as replayable. It does not distinguish ordinary user queries and typed candidate-prior requests from internal topic-discovery lane requests.
+- Code/test changes: added a typed replayability guard, cleared internal portfolio-lane request state on rollback, preserved ordinary explicit-query and candidate-prior replay behavior, and added runtime/orchestrator regressions.
+- Regression status: focused and adjacent regressions plus build passed. In the same real run, an official query-free collect command after rollback regenerated three unique scientific families and six retrieval lanes instead of replaying the final internal lane.
+- Follow-up risks: do not disable the single-query topic-discovery gate, erase complete candidate-prior requests, or infer replayability from query text alone.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{memory/run_context.json,run_record.json,events.jsonl,checkpoints/0015-collect_papers-jump.json,checkpoints/0016-collect_papers-before.json}`.
+
+---
+
+## Issue: LV-688
+
+- Status: resolved; 267 focused and adjacent tests, build, and same-flow real TUI revalidation passed
+- Category: live-validation research governance / collection query-plan family contracts duplicate per retrieval lane and disagree with the downstream lineage gate
+- Validation target: a topic-discovery query-plan artifact must represent each scientific query family exactly once while preserving every executed retrieval lane, and `analyze_papers` must independently accept the same minimum-qualified-family semantics enforced by the version 8 corpus gate.
+- Environment/session context: fresh real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` in the isolated scientific-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Complete `collect_papers` with three planned query families and the normal recent-direct-prior plus broad-relevance lanes for each family.
+  2. Pass the version 8 corpus gate with two qualifying families and one nonqualifying diagnostic family.
+  3. Approve `analyze_papers --top-n 12` through the official live-validation continuation helper.
+  4. Inspect `collect_query_plan.json`, the three immediate analysis failures, and the automatic rollback to `collect_papers`.
+- Expected behavior: `selected_families` contains three unique family contracts, retrieval-lane provenance remains auditable, and analysis verifies the two-family minimum plus retained-corpus restriction before proceeding.
+- Actual behavior:
+  - The first reproduction persisted six `selected_families` entries because each family contract was repeated once per retrieval lane. The collection quality path deduplicated them, but both downstream lineage parsers rejected the artifact.
+  - After separating three unique family contracts from six `planned_searches`, a same-flow collection passed with nine retained direct-support papers from two qualifying families and one weak diagnostic family. The next official analysis approval still failed three times and rolled back.
+  - The remaining drift has two independent causes. The query plan persists planner surface terms such as a derivational axis variant and an object-level review term, while semantic input and quality artifacts persist canonical terms. One lineage parser removes the object term with the non-object stopword policy; both parsers compare surface and canonical axes inconsistently. Separately, the semantic audit ranks provider fallback candidates by anchor/axis evidence, but both lineage verifiers reconstruct fallback pairs from raw retrieval rank. The real 24-pair audit therefore disagrees with the verifier-created pair universe even though the persisted sidecar is internally consistent with collection.
+- Fresh vs existing session comparison:
+  - Fresh session: the duplicate contracts are present from the planning revision onward; enrichment does not introduce them.
+  - Existing session: the exact same malformed plan is archived in planning, collection, and enrichment revisions.
+  - Divergence: collection execution treats two retrieval lanes as two search jobs, while the persisted and downstream contracts treat `selected_families` as a unique family set.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+- Hypothesis: the original producer projection duplicated lane-level contracts. That part is repaired, but the family contract still lacks one canonical representation shared by producer, semantic input, quality audit, and downstream validators. The provider fallback selector is also independently reimplemented in two validators, and those copies omit the scientific reranking used by collection.
+- Code/test changes: implemented unique canonical family contracts and separate surface-lane provenance, object-preserving anchor normalization, synchronized minimum-qualified-family semantics, and one shared provider fallback ranker used by collection and both lineage verifiers. Regressions cover derivational normalization, object-preserving anchors, and provider order that differs from raw retrieval rank.
+- Regression status: 267 focused and adjacent tests plus build passed. Same-flow collection passed version 8 with three unique families, six planned searches, two qualifying families, nine retained papers, and a clean 24-pair semantic audit. The official next-node approval then produced `analysis/collect_lineage_gate.json` with `valid=true` and no reason codes, and `analyze_papers` completed all 9 selected papers with 36 evidence rows.
+- Follow-up risks: do not discard retrieval-lane auditability, silently deduplicate malformed externally supplied artifacts inside downstream validators, count duplicate signatures toward coverage, weaken quality floors, or let nonqualifying-family papers enter the retained corpus.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{collect_query_plan.json,collect_semantic_review.json,collect_corpus_quality.json,corpus.jsonl,run_record.json,events.jsonl,collect_attempts/20260804193651572-4dedf61dc430/revisions/,collect_attempts/20260804201516390-fc52022c102f/}`.
+
+---
+
+## Issue: LV-687
+
+- Status: resolved; focused and adjacent regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation research governance / corpus gate treats every exploratory query family as mandatory despite a two-family minimum contract
+- Validation target: topic discovery must require at least the declared minimum number of independent qualifying families and the global direct-support floor, while preserving additional weak families as diagnostics rather than letting one exploratory family veto an otherwise admissible corpus.
+- Environment/session context: fresh real TUI run `4b554710-1891-4599-ba7c-539e8a2e7294` in the isolated scientific-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Let bounded replanning select three independent families under the same scientific object.
+  2. Complete a 24-pair version 6 semantic review with no malformed judgments or protocol violations.
+  3. Produce five direct-support papers at precision 0.625 for each of two families and three direct-support papers at precision 0.375 for the third family.
+  4. Inspect the final corpus audit and node failure.
+- Expected behavior: two independent families satisfy the per-family floors, their ten retained direct-support papers exceed the global floor of eight, and the third family remains a visible nonqualifying diagnostic without vetoing the corpus.
+- Actual behavior: the audit observes 13 direct-support papers and two qualifying families but fails solely because the third family has precision 0.375. The same module already selects retained papers only from qualifying families and separately enforces `minimum_covered_query_families=2`, so the unconditional all-family failure loop contradicts its own threshold contract.
+- Fresh vs existing session comparison:
+  - Fresh session: the first two-family attempt fails legitimately because only one family qualifies.
+  - Existing session: bounded replanning adds generation, meta-generation, and a third exploratory quality/agreement family; two families qualify, but the extra family vetoes attempts two and three.
+  - Divergence: the defect appears only when a valid minimum portfolio also contains a nonqualifying exploratory family.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `assessTopicDiscoveryCorpusQuality` correctly computes `qualifyingFamilies`, `coveredQueryFamilies`, and retained papers from qualifying family IDs, but then appends a blocking reason for every family below the per-family floor. A diagnostic family is therefore projected as a mandatory family even after the explicit minimum coverage contract is satisfied.
+- Code/test changes: corpus-quality semantics version 8 records `qualifies_for_coverage`, emits nonqualifying-family blocking reasons only while minimum independent coverage remains unmet, and restricts a passing retained corpus to direct-support papers from qualifying families. A domain-neutral three-family regression covers two qualifying families plus one weak diagnostic family.
+- Regression status: 198 focused and adjacent collection/projection/public-sanitization tests pass, `npm run build` passes, and fresh real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` reaches `NODE_AWAITING_APPROVAL` at `collect_papers`. Its version 8 audit passes with two qualifying families (five direct-support papers each, precision 0.625), excludes the third family (`qualifies_for_coverage=false`, retained count 0), retains ten papers total, and reports no semantic-review malformed judgments or protocol violations.
+- Follow-up risks: do not lower per-family precision, count weak families toward coverage, retain papers from nonqualifying families, hide weak-family diagnostics, or allow duplicate family signatures to satisfy independence.
+- Evidence/artifacts: reproduction at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/4b554710-1891-4599-ba7c-539e8a2e7294/{collect_query_plan.json,collect_semantic_review.json,collect_corpus_quality.json,events.jsonl}`; passing same-flow revalidation at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{collect_query_plan.json,collect_semantic_review.json,collect_corpus_quality.json,corpus.jsonl,events.jsonl}`.
+
+---
+
+## Issue: LV-686
+
+- Status: resolved; focused and adjacent regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / semantic reviewer receives an incomplete projection of the evidence-span protocol
+- Validation target: the semantic reviewer must receive every deterministic constraint needed to produce validator-compatible judgments, and persisted violations must identify the failed rule precisely enough for the review gate and meta harness to strengthen the responsible node.
+- Environment/session context: fresh real TUI run `e9240162-c89a-4f45-b88b-f7d4e09f5120` in the isolated scientific-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Execute a topic-discovery collection attempt with three accepted query families and 24 frozen paper-family pairs.
+  2. Allow the primary semantic-review call to return all 24 requested judgments.
+  3. Observe one `direct_support` judgment fail local validation and trigger the single permitted frozen-input recovery call.
+  4. Inspect the recovery trace and the persisted protocol violation after the second call returns all 24 judgments.
+- Expected behavior: the reviewer either emits a valid exact evidence span for `direct_support` or uses a conservative non-direct verdict; if validation still fails, the artifact identifies the evidence-span rule rather than reporting an undifferentiated malformed judgment.
+- Actual behavior: both the primary call and exact frozen-input retry return 24/24 judgments but repeat one malformed judgment for the same paper-family pair. The final trace reports only `malformed_response_judgment`; the run fails closed with one malformed judgment and one protocol violation even though two query families otherwise meet the unchanged direct-support and precision floors.
+- Fresh vs existing session comparison:
+  - Fresh session: the primary 24-pair call returns the malformed direct-support judgment.
+  - Existing session: the bounded recovery reuses byte-identical input `b0774ed63ffb...` and repeats the same pair-level failure.
+  - Divergence: none; the same incomplete reviewer contract produces the same invalid pair across both calls.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: the validator requires a contiguous, case-sensitive 12-240 character span with at least two normalized terms and, for lexical pairs, a literal normalized axis term. The reviewer prompt describes only a short exact span and the lexical-axis rule, omits the numeric and fallback requirements, and provides no judgment-shaped schema example. `parseJudgment` then collapses every evidence failure into the generic malformed category.
+- Code/test changes:
+  - Bumped the semantic-audit contract to version 6 and projected the validator's contiguous-span, 12-240 character, minimum-term, lexical-axis, and conservative fallback rules into the reviewer prompt.
+  - Added a concrete domain-neutral judgment schema while explicitly forbidding literal placeholder reuse.
+  - Added `invalid_direct_support_evidence_span` as a distinct persisted protocol violation and uncertain-judgment reason; unrelated schema failures remain `malformed_response_judgment`.
+- Regression status:
+  - 219 focused and adjacent semantic-audit, corpus-quality, collection, analysis-handoff, research-funnel, and public-code-sanitization tests passed; the shipped TypeScript and web build passed.
+  - The first fresh revalidation run `1e8e4faa-edc2-43dd-a8e8-f0047b1c25ac` reached version 6 but ended operationally before any model judgment returned because both the primary call and first partition timed out; it was treated as inconclusive rather than a pass.
+  - A bounded second fresh run `79a171a6-e3e4-4763-8945-f35016b6ff4c` completed a 16-pair version 6 audit through frozen 6/6/4-pair timeout partitions: all 16 judgments returned, `status=complete`, `malformed_judgments=0`, and `protocol_violations=0`.
+  - The unchanged corpus gate then rejected the portfolio for only five direct-support papers and one qualifying family. Later retries remained fail-closed, and no residual live process or lock remained after exit.
+- Follow-up risks: do not accept approximate quotations, silently promote invalid direct support, reuse retrieval to obtain a favorable review, expose raw model responses in public artifacts, or weaken corpus thresholds.
+- Evidence/artifacts: reproduction in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/e9240162-c89a-4f45-b88b-f7d4e09f5120/`; passing live revalidation in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/79a171a6-e3e4-4763-8945-f35016b6ff4c/collect_attempts/20260804183404924-fc554c9e8973/{collect_semantic_review_input.json,collect_semantic_review.json,collect_corpus_quality.json}`.
+
+---
+
+## Issue: LV-685
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / scientific-scope canonicalization drops a discriminative object modifier and splits derivational equivalents
+- Validation target: explicit Scientific Object terms must remain an authoritative, human-readable retrieval anchor when they disambiguate the research domain, and ordinary derivational variants must compare as the same scientific term across planner, scope, fallback, and candidate-recall contracts.
+- Environment/session context: fresh real TUI run `e5c37a97-362a-4cc5-be65-dff53c630250` in the isolated scientific-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Declare `scientific peer review` as the Scientific Object and `automated review generation` plus other broad lineages as Empirical Problems.
+  2. Start a fresh topic-discovery run and inspect all accepted and rejected planner diagnostics.
+  3. Observe the bound anchor and provider-facing queries.
+  4. Allow all three collection attempts to finish and inspect semantic precision and scope-rejection reasons.
+- Expected behavior: the bound/query anchor preserves `scientific/peer/review`; planner terms `automatic`, `automated`, `automation`, and `automating` compare under one canonical scientific term.
+- Actual behavior:
+  - The explicit object is reduced to `peer/review`, so provider queries such as `"peer review" error detection` retrieve large numbers of generic review reports and unrelated peer-review records. The final attempt reviews broad candidate pools but reaches family precision only 0.150 and 0.069.
+  - A bounded retry using `automatic generation` is rejected as `unsupported_technical_expansion` against the brief-declared `automated review generation`, with `automatic` reported as the sole novel term.
+- Fresh vs existing session comparison:
+  - Fresh session: both defects reproduced from the newly edited and frozen brief.
+  - Existing session: retries consistently reloaded the reduced `peer/review` anchor; the derivational mismatch appeared when a new planner surface form was compared against the same frozen scope.
+  - Divergence: the anchor loss is persistent; the derivational rejection is surface-form dependent.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `scientific` is always removed as a generic edge anchor even when it disambiguates an explicit Scientific Object, while the shared scientific-term canonicalizer maps stemmed `automated/automating` to `automat` but leaves `automatic/automation` distinct.
+- Code/test changes:
+  - Preserved `scientific` when it is explicitly authorized by the Scientific Object role while retaining procedural-scope filtering elsewhere.
+  - Canonicalized `automatic`, `automated`, `automation`, and `automating` to one scientific term and bumped term-normalization semantics to version 8.
+  - Replaced version literals with the exported contract constant and added domain-neutral term and scope regressions.
+- Regression status:
+  - 118 focused term, scope, planning, portfolio, semantic-audit, corpus-quality, and public-code-sanitization tests passed; the shipped TypeScript and web build passed.
+  - Same-flow real TUI run `e9240162-c89a-4f45-b88b-f7d4e09f5120` persisted `declaredAnchorTerms`, `queryAnchorTerms`, and `lockedAnchorTerms` as `scientific/peer/review` under normalization version 8.
+  - Every provider-facing family preserved `"scientific peer review"`; `automated generation` passed as a lexical refinement with no novel terms or unsupported-expansion rejection.
+  - Collection later stopped fail-closed for the separately tracked LV-686 semantic-review protocol failure. No residual live process or lock remained after exit, and no corpus gate was weakened.
+- Follow-up risks: do not preserve procedural words from Topic, Constraints, or Publication Goals as anchors; do not treat general synonyms as equivalent without a deterministic derivational rule; do not weaken semantic corpus gates.
+- Evidence/artifacts: reproduction in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/e5c37a97-362a-4cc5-be65-dff53c630250/`; passing anchor/normalization revalidation in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/e9240162-c89a-4f45-b88b-f7d4e09f5120/{collect_query_plan.json,collect_attempts/,events.jsonl}`.
+
+---
+
+## Issue: LV-684
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / provider-recall ranking excludes exact scientific-object titles from semantic review
+- Validation target: when strict lexical family matching yields too few candidates, the bounded provider-provenance recall floor must prioritize candidates whose titles express the declared scientific object before loose body-level term coincidences. Selection only authorizes semantic review; it must not promote a paper into the evidence corpus.
+- Environment/session context: fresh real TUI run `a583e7b2-1874-46d1-8d2a-fad027ddd658` in the isolated automated-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Run a topic-discovery portfolio whose exact scientific-object phrase is present in retrieved directly related paper titles but whose narrow axes use different terminology from those papers.
+  2. Let lexical screening return zero matches and invoke the eight-pair provider-provenance floor for each family.
+  3. Inspect `collect_topic_discovery_candidates.jsonl` and `collect_semantic_review.json`.
+  4. Compare exact scientific-object title candidates with the eight selected candidates per family.
+- Expected behavior: candidates with the normalized scientific-object terms in the declared order as a contiguous title phrase are reviewed before candidates whose title and abstract merely contain the same anchor and axis terms in unrelated contexts.
+- Actual behavior: provider-recall ranking scores full body-level anchor coverage and loose axis-term counts before title-level scientific-object phrase fidelity. Directly related papers were retrieved and persisted at family ranks above 200 but were never semantically reviewed, while unrelated cybersecurity, funding-screening, and dataset peer-review-report records filled the review floor. The run therefore cannot support a no-literature conclusion.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced on all three bounded collection attempts.
+  - Existing session: not applicable; each attempt rebuilt a fresh candidate pool and repeated the ranking failure.
+  - Divergence: none observed across retries with different narrow axes.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `rankProviderRecallCandidates` treats title plus abstract as an unordered term set and sorts `fullAnchor`, loose `axisMatches`, and `anchorMatches` before title fidelity. Generic terms distributed anywhere in an abstract can therefore outrank an exact normalized scientific-object phrase in a title.
+- Code/test changes:
+  - Added a domain-neutral normalized contiguous title-anchor sequence signal ahead of loose body anchor/axis counts in provider-recall ranking.
+  - Bumped candidate-recall semantics to version 7 so stale artifacts cannot be mistaken for current selection behavior.
+  - Added a bounded nine-candidate regression where eight loose body-level axis coincidences can no longer exclude the exact title-object candidate from the eight-pair review floor.
+- Regression status:
+  - 55 focused semantic-audit, corpus-quality, collect-portfolio, and public-code-sanitization tests passed; the shipped TypeScript and web build passed.
+  - Same-flow real TUI run `f10b109f-81b8-4d9d-9677-508feeb2592c` completed all three bounded attempts. In its second attempt, an exact scientific-object title retrieved at family ranks 105 and 119 entered both families' provider-provenance review floor; in the final attempt the same title at ranks 98 and 114 was reviewed through lexical and provider-provenance selection respectively.
+  - The reviewer retained both judgments as `uncertain`, and the unchanged corpus-quality gate rejected the portfolio. The ranking fix therefore increased review recall without promoting title matches into evidence.
+  - No malformed scientific-object query, residual live process, or lock remained after exit.
+- Follow-up risks: do not turn exact title wording into evidence, require exact phrase matching for semantic acceptance, weaken the final semantic precision gate, or hardcode this run's domain vocabulary.
+- Evidence/artifacts: reproduction in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/a583e7b2-1874-46d1-8d2a-fad027ddd658/`; passing live revalidation in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/f10b109f-81b8-4d9d-9677-508feeb2592c/{events.jsonl,collect_attempts/*/collect_topic_discovery_candidates.jsonl,collect_attempts/*/collect_semantic_review.json,collect_attempts/*/collect_corpus_quality.json}`.
+
+---
+
+## Issue: LV-683
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / normalized scientific-anchor stems leak into provider query text
+- Validation target: topic-discovery scope validation may use canonical or stemmed terms for equality and lineage checks, but every provider-facing literature query must preserve a valid human-readable surface form from the brief-declared Scientific Object.
+- Environment/session context: fresh real TUI run `3d155165-02a5-45c0-9b20-f48580dc7e88` in the isolated automated-peer-review topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Validate and start a complete `topic_discovery` brief whose Scientific Object is `automated peer review`.
+  2. Inspect the first accepted planner artifact and all later query replans.
+  3. Observe the immutable shared anchor and provider-facing queries.
+  4. Let all three bounded collection attempts reach their normal stop boundary.
+- Expected behavior: the scope contract compares the normalized terms `automat/peer/review` internally while the planner and provider queries use the source surface `automated peer review`.
+- Actual behavior: the contract sends `automat peer review` back to the planner as the exact required phrase, and every executed family uses queries such as `"automat peer review" topology defect recall`. The first attempt retained one direct-support paper from 24 reviewed pairs; the second retained none, and the third fallback stopped after candidate-title support failed. Candidate feedback nevertheless contained directly relevant titles including PaperAudit-Bench, confirming that the run cannot be interpreted as a valid no-literature result.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in the first planner output generated from a newly frozen brief.
+  - Existing session: the malformed anchor was persisted and correctly reloaded as immutable across both retries.
+  - Divergence: none; the same projection defect affects fresh generation, retry feedback, and deterministic fallback construction.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `TopicDiscoveryScopeContract.declaredAnchorTerms` and `sharedAnchorTerms` intentionally contain normalized comparison terms, but query prompts and fallback builders reuse those terms as provider search text instead of retaining the brief-declared surface tokens.
+- Code/test changes:
+  - Added a source-surface `queryAnchorTerms` projection while retaining normalized `declaredAnchorTerms` and `sharedAnchorTerms` as the scope-comparison authority.
+  - Updated generated planner prompts, retry feedback, recovery anchors, and deterministic timeout fallbacks to use the validated query surface.
+  - Bumped the topic-discovery term-normalization semantics version and added planner/provider/fallback regressions for a surface form whose normalized stem differs.
+- Regression status:
+  - 78 focused scope, planning, portfolio, term-normalization, and public-code-sanitization tests passed; the shipped TypeScript build passed.
+  - Same-flow real TUI run `a583e7b2-1874-46d1-8d2a-fad027ddd658` completed all three bounded collection attempts with provider-facing queries such as `"automated peer review" statistical defect detection` and no `"automat peer review"` occurrence anywhere in the run artifacts.
+  - The final planner artifact preserves `queryAnchorTerms=automated/peer/review` alongside normalized `declaredAnchorTerms` and `sharedAnchorTerms=automat/peer/review`.
+  - The run stopped honestly at the unchanged semantic corpus-quality gate; no live process or lock remained after exit.
+- Follow-up risks: surface preservation must not weaken normalized anchor equality, permit anchor drift, trust arbitrary planner spelling, invalidate scope fingerprints silently, or introduce experiment-specific lexical substitutions.
+- Evidence/artifacts: reproduction in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3d155165-02a5-45c0-9b20-f48580dc7e88/`; passing live revalidation in `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/a583e7b2-1874-46d1-8d2a-fad027ddd658/{collect_query_plan.json,events.jsonl,collect_attempts/}`.
+
+---
+
+## Issue: LV-682
+
+- Status: repair implemented; focused regressions and build passed; exact rejected-fallback live branch revalidation pending
+- Category: live-validation reliability / compiled timeout fallback loses its validation rejection at the final stop boundary
+- Validation target: when an explicit-scope timeout fallback compiles candidate families but the unchanged query-plan contract rejects them, the planner artifact and final TUI failure must preserve that rejection instead of reporting only the upstream timeout.
+- Environment/session context: fresh real TUI run `864110c8-e8ff-434c-bfb0-d701478af62a` in the isolated function-calling topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Let an initial function-calling literature portfolio execute and fail the semantic corpus gate.
+  2. Allow retry planning to reject two generated portfolios for insufficient candidate-title support.
+  3. Let the second planner call time out after 180 seconds.
+  4. Observe the deterministic explicit-scope fallback compile two axes with one supporting title each, then fail the two-title family contract.
+- Expected behavior: persist a structured fallback-rejected diagnostic with selected scope axes and the exact validation failure, and include that reason in the final collection stop.
+- Actual behavior: `events.jsonl` records the title-support rejection, but `collect_query_plan.json` and the final node failure retain only `literature_query_timeout_after_180000ms`; a later reviewer or meta harness cannot recover the decisive rejection from the planner artifact alone.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced on the second collection attempt of a newly created run.
+  - Existing session: accumulated feedback and scope were reloaded consistently.
+  - Divergence: the event stream is more informative than the persisted planner/final error.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: the ready timeout-fallback branch emits `fallbackRejection` and then falls through to the generic timeout return, discarding the compiled-family diagnostic and validation reason.
+- Code/test changes: a compiled explicit-scope fallback that fails the unchanged query-plan contract now returns immediately with a structured `explicit_scope_timeout_fallback_rejected` diagnostic. The diagnostic records the selected and excluded scope axes, exact validation failure, queryability-title provenance, and unchanged corpus-gate marker; the serialized final failure retains both the upstream timeout and the fallback rejection. A focused regression covers the one-title/zero-title support boundary that originally exposed the loss.
+- Regression status: 51 focused timeout-planning and topic-discovery portfolio tests passed, followed by the full TypeScript/Web build. A same-run forced 5 ms timeout exercised the adjacent successful-fallback path: two admissible explicit-scope families were searched by real providers and the unchanged corpus gate rejected the resulting one-paper direct-support corpus. The exact branch in which a compiled fallback is itself rejected has not yet recurred in a real TUI run, so this issue remains open rather than being reported as fully resolved.
+- Follow-up risks: preserving a rejection must not execute the rejected families, lower title-support requirements, or treat prior-work hints as evidence.
+- Evidence/artifacts: `<validation-workspace>/function-calling-topic-search/.autolabos/runs/864110c8-e8ff-434c-bfb0-d701478af62a/{events.jsonl,collect_query_plan.json,memory/run_context.json}`.
+
+---
+
+## Issue: LV-681
+
+- Status: resolved; focused and adjacent regressions, build, and forced-timeout same-run real TUI revalidation passed
+- Category: live-validation reliability / exhausted explicit-scope timeout fallback loses its unavailable reason
+- Validation target: when a topic-discovery planner times out after prior query families have failed, the final TUI error and `collect_query_plan.json` must distinguish an operational timeout from an evidence-bounded fallback that cannot assemble enough unused, title-queryable axes.
+- Environment/session context: fresh real TUI run `2eb92faa-20bb-4c1e-8f4a-762d387eef1c` in the isolated tool-calling topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Start a valid `topic_discovery` brief with the two-term Scientific Object `tool calling`, eight explicit scientific axes, and four executed prior-work probes.
+  2. Let two collection attempts execute five query families and fail the unchanged semantic corpus gate.
+  3. Allow the third planner call to reach its 180-second timeout.
+  4. Inspect the final TUI stop, `events.jsonl`, and `collect_query_plan.json`.
+- Expected behavior: if the timeout fallback cannot select two unused title-queryable axes, it persists an auditable unavailable diagnostic naming the exclusion and queryability boundary and surfaces that reason in the final stop message.
+- Actual behavior: the final artifact records `source=deterministic_fallback`, `queries=[]`, and only `failure_reason=literature_query_timeout_after_180000ms`; the TUI says that deterministic fallback produced no usable query. The explicit scope is present, but there is no persisted explanation that remaining axes failed the title-queryability requirement after rejected axes were excluded.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced on the third bounded attempt of a newly created run.
+  - Existing session: persisted rejected-query feedback and scope were reloaded consistently across retries.
+  - Divergence: none; the missing explanation is shared by the persisted planner artifact and rendered failure.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `buildDeterministicTopicDiscoveryTimeoutFallback(...)` returns only a usable plan or `undefined`. The catch path therefore discards candidate/exclusion counts and the no-plan reason before constructing the event, resolution, and final collection error.
+- Code/test changes: timeout fallback resolution now has an explicit unavailable diagnostic with a bounded reason enum, required and eligible family counts, title-supported count, rejected-axis ids, queryability provenance, and unchanged-gate marker. The diagnostic is persisted in the planner artifact and serialized into the event and final failure reason without removing the original timeout. Focused and node-level regressions cover both usable and unavailable explicit-scope fallback paths.
+- Regression status: 70 focused planner, portfolio, scope, and public-code tests passed, followed by the full TypeScript/Web build. A same-run forced 5 ms timeout through the official real TUI helper persisted `reason=no_title_supported_unused_scope_axis`, `required=2`, `eligible=5`, `title_supported=0`, and three excluded scope-axis ids in `collect_query_plan.json`; the event and final node failure carried the same explanation. No TUI process or session lock remained after exit.
+- Follow-up risks: an unavailable diagnostic must not promote zero-title axes, reuse rejected families, treat prior-work titles as paper evidence, or weaken semantic and corpus gates.
+- Evidence/artifacts: `<validation-workspace>/tool-calling-topic-search/.autolabos/runs/2eb92faa-20bb-4c1e-8f4a-762d387eef1c/{events.jsonl,collect_query_plan.json,collect_prior_work_probe_receipt.json,memory/run_context.json}`.
+
+---
+
+## Issue: LV-680
+
+- Status: resolved; focused and adjacent regressions, build, and forced-timeout same-run real TUI revalidation passed
+- Category: live-validation reliability / advertised deterministic topic fallback emits no query despite an enforceable explicit scope
+- Validation target: after a topic-discovery planner timeout, collection must either construct an auditable bounded plan from unused brief-authorized axes or stop with an honest unavailable-fallback reason; it must not label an empty result as a deterministic fallback while discarding executable scope.
+- Environment/session context: fresh real TUI run `72bce883-2a78-4344-bf31-cee9983194b6` after the LV-679 anchor-contract repair on 2026-08-04.
+- Reproduction steps:
+  1. Start a valid topic-discovery brief with a three-term Scientific Object, eight explicit scientific axes, and prior-work probe title hints.
+  2. Let the first query plan retrieve candidates and complete a 24-pair semantic review.
+  3. Allow the zero-direct-support result to trigger bounded query-family replanning.
+  4. Observe two consecutive 180-second planner timeouts and inspect the final `collect_query_plan.json`.
+- Expected behavior: a timeout-only fallback uses unused explicit scope axes, excludes already rejected query families, uses title hints only for queryability ranking, and leaves semantic review and corpus quality gates unchanged.
+- Actual behavior: the final planner artifact reports `source=deterministic_fallback` but contains `queries=[]` and no selected families, even though its persisted scope contract contains unused authorized axes and the prior-work receipt contains relevant title hints. The node cannot execute a second scientific retrieval portfolio.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced on retry attempts two and three after one fully executed collection attempt.
+  - Existing session: not applicable; the same persisted feedback and scope were correctly reloaded on each retry.
+  - Divergence: none; the failure is deterministic after the LLM timeout.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: the timeout catch returns a hard-coded empty `deterministic_fallback` result and never projects the enforceable scope contract, rejected-family feedback, or non-evidence prior-work title hints into bounded replacement families.
+- Code/test changes: timeout-only recovery now compiles exactly two families from an enforceable explicit scientific scope, ranks queryability with bounded non-evidence title hints, excludes every previously rejected query by parsing the append-only query text rather than trusting reusable family ids, emits an auditable repair diagnostic, and leaves structural-output failures plus all semantic/corpus gates unchanged. The stale provider-recall fixture was aligned with the existing eight-pair family floor.
+- Regression status: the final planner/portfolio/public-code set passed 55 tests; the broader planner, collection, portfolio, scope, and sanitization set passed 107 tests before the final ID-collision hardening; the full TypeScript/Web build passed. In the same persisted real run, a forced 5 ms planner timeout emitted `source=deterministic_fallback`, selected two explicit scope axes, searched all four providers, reviewed 16 candidates, retained two direct-support papers, and then failed honestly at the unchanged eight-paper/two-family corpus gate. The process and session lock were clean after exit.
+- Follow-up risks: fallback must activate only for operational planner timeout, never rescue structurally invalid LLM output, never reuse rejected families, never treat title hints as paper evidence, and never weaken final semantic or corpus quality gates.
+- Evidence/artifacts: `<validation-workspace>/language-model-tool-use-topic-search-anchor-fix/.autolabos/runs/72bce883-2a78-4344-bf31-cee9983194b6/{events.jsonl,collect_query_plan.json,collect_prior_work_probe_receipt.json,memory/run_context.json}`.
+
+---
+
+## Issue: LV-679
+
+- Status: resolved; 99 focused regressions, build, preflight, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / research brief preflight accepts a scientific object that the literature-query runtime contract rejects
+- Validation target: a topic-discovery brief accepted by validation and marked contract-ready must be structurally executable by the first collection node without requiring an LLM to repair an immutable brief-declared anchor.
+- Environment/session context: fresh real TUI run `87714fd9-865e-4145-bf3d-a0aa31a190cf` in the isolated language-model tool-use topic-search workspace on 2026-08-04.
+- Reproduction steps:
+  1. Create a complete `topic_discovery` brief whose explicit Scientific Object normalizes to four terms.
+  2. Run the repository brief validator and completeness projection; observe no validation errors plus `paper_scale_ready=true` and `contract_ready=true`.
+  3. Start the brief through the official real TUI live-validation helper.
+  4. Inspect all three `collect_papers` attempts and their query-plan diagnostics.
+- Expected behavior: preflight rejects a Scientific Object that cannot satisfy the runtime shared-anchor contract, with the same 2-to-3-term boundary exposed by the generated and documented brief template.
+- Actual behavior: the scientific-scope contract allows two to five declared anchor terms while the runtime literature-query parser allows only two to three. The run spent three bounded attempts and repeated LLM replans on the immutable four-term anchor before failing with `shared_anchor has 4 terms (requires 2-3)`.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced before the first persisted collection checkpoint and on all three retries.
+  - Existing session: not applicable; the incompatible brief was accepted before run creation.
+  - Divergence: none; retry persistence correctly retained the same incompatible scope.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: brief validation delegates to a scope contract with a five-term maximum, while the downstream query-family parser independently enforces a three-term maximum; generated and documented templates advertise the broader, non-executable range.
+- Code/test changes: the runtime query constants are now the single anchor-length source for the scientific-scope contract; generated and documented brief templates advertise the executable 2-to-3-term range; validation and completeness fail closed above that range; the governed tool-use brief now declares the semantically preserved three-term object `language model tools`.
+- Regression status: 49 focused scope/parser/brief tests, 50 template/planner/public-code tests, and the full TypeScript/Web build passed. Official preflight returned `ready=yes`. The same real TUI flow froze `language/model/tools`, generated three valid query families, searched all four providers, canonicalized up to 189 candidates in one lane, and completed a 24-pair semantic review without the prior anchor error.
+- Follow-up risks: keep the runtime retrieval precision contract unchanged; do not silently truncate a user-declared Scientific Object because that would alter the authoritative scientific scope after validation.
+- Evidence/artifacts: `<validation-workspace>/language-model-tool-use-topic-search/.autolabos/runs/87714fd9-865e-4145-bf3d-a0aa31a190cf/{events.jsonl,collect_query_plan.json,run_record.json,brief/source_brief.md}`.
+
+---
+
+## Issue: LV-678
+
+- Status: resolved; 209 focused and adjacent regressions, build, and same-flow real TUI revalidation passed
+- Category: research completion risk / minimum provider recall makes the global direct-support corpus floor practically unreachable at the declared precision floor
+- Validation target: the bounded semantic-review universe must make every combination of advertised corpus and family quality floors attainable without requiring perfect precision.
+- Environment/session context: real TUI run `870f9f3f-8d0c-41fa-8202-7ef4c0d2ecd6` after candidate-ranking and reviewer-timeout repairs on 2026-08-04.
+- Reproduction steps:
+  1. Retain the minimum two independent query families after bounded query reformulation.
+  2. Fill each family to the provider recall floor of four semantic-review pairs.
+  3. Obtain two direct-support and two application-only judgments per family, exactly meeting the declared 0.50 precision and two-direct family floors.
+  4. Observe the global eight-direct-paper gate.
+- Expected behavior: meeting all advertised family floors leaves enough reviewed candidates to attain the global eight-paper direct-support floor at the declared precision boundary.
+- Actual behavior: two families yield only eight reviewed pairs total, so the global floor requires all eight to be direct support, effectively imposing precision 1.0 instead of the advertised 0.50. The live run returned four direct and four application-only judgments and could not pass despite both retained families meeting their local floors.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced across all three attempts of the new isolated live run.
+  - Existing session: not applicable; the contradiction is deterministic from the persisted thresholds and pair counts.
+  - Divergence: none.
+- Root-cause hypothesis:
+  - Type: research-integrity policy bug.
+  - Hypothesis: the global corpus floor, minimum covered-family count, family precision floor, and provider recall floor were chosen independently instead of checking their joint feasibility.
+- Code/test changes: the provider-provenance recall floor is eight papers per family. A cross-floor regression derives the minimum feasible review count from the global eight-paper floor, two-family floor, and 0.50 precision floor so these contracts cannot silently diverge again.
+- Regression status: 209 semantic-review, corpus-quality, collection, provider-query, analysis-lineage, and funnel tests passed with a full build. The same real TUI flow reviewed eight pairs for each of three families, retained six direct-support papers, and failed only on actual family support, precision, and one malformed judgment rather than an impossible review-universe ceiling.
+- Follow-up risks: increase review recall rather than lowering evidence gates; retain deterministic ranking, pair/input budgets, semantic reviewer authority, and explicit no-pass behavior.
+- Evidence/artifacts: `<validation-workspace>/language-model-agent-evaluation-topic-search-timeout-fix/.autolabos/runs/870f9f3f-8d0c-41fa-8202-7ef4c0d2ecd6/{collect_semantic_review.json,collect_corpus_quality.json,collect_query_plan.json,events.jsonl}`.
+
+---
+
+## Issue: LV-677
+
+- Status: resolved; focused and adjacent regressions plus same-flow real TUI revalidation passed
+- Category: live-validation reliability / strong-model semantic review default timeout is shorter than observed bounded completion latency
+- Validation target: the topic-discovery semantic reviewer must have enough bounded time to complete a strong-reasoning call or its frozen partitions without weakening pair coverage or rerunning retrieval.
+- Environment/session context: fresh real TUI run `3d2e9e47-f525-41bd-b5b0-a845984b13d0` using the configured Codex research model on 2026-08-04.
+- Reproduction steps:
+  1. Collect three topic-discovery families with 12 total semantic-review pairs.
+  2. Leave `AUTOLABOS_CORPUS_SEMANTIC_AUDIT_TIMEOUT_MS` unset.
+  3. Observe the 30-second primary call timeout and frozen four-pair partition recovery.
+  4. Inspect `collect_semantic_review.json` after the stop boundary.
+- Expected behavior: the bounded primary or all required frozen partitions complete within the declared review budget.
+- Actual behavior: the 12-pair primary timed out, the first four-pair partition completed, and the next partition timed out; the node stopped with `semantic_audit_timeout_partitions_exhausted` despite valid frozen inputs.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced through `validation:start-live`.
+  - Existing session: not applicable; the failure occurred on the first collection attempt.
+  - Divergence: none known; checkpoint and failure artifacts are internally consistent.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`.
+  - Hypothesis: the 30-second default was calibrated for smaller or faster reviewers and is incompatible with the configured strong-reasoning research model; the existing hard maximum already permits 120 seconds per call.
+- Code/test changes: the default per-call semantic-review timeout now uses the existing 120-second hard ceiling; the total frozen-review deadline remains bounded at 480 seconds, with parent abort, maximum calls, partition count, and cumulative input-byte limits unchanged. Integrity fixtures now derive the matching execution contract.
+- Regression status: 145 semantic-audit, analysis-lineage, and research-funnel tests passed with a full build. In the same real TUI flow, every semantic-review attempt completed without an operational timeout; the final eight-pair review returned all eight judgments with zero protocol violations.
+- Follow-up risks: larger timeout bounds latency rather than guaranteeing provider availability; parent abort, maximum call count, frozen input, total deadline, and cumulative-byte limits must remain enforced.
+- Evidence/artifacts: `<validation-workspace>/language-model-agent-evaluation-topic-search-recall-fix/.autolabos/runs/3d2e9e47-f525-41bd-b5b0-a845984b13d0/{events.jsonl,collect_semantic_review.json,collect_semantic_review_input.json,collect_corpus_quality.json}`.
+
+---
+
+## Issue: LV-676
+
+- Status: resolved; focused and adjacent regressions plus repeated real TUI candidate-selection revalidation passed
+- Category: research completion risk / semantic-review provider recall sampled raw retrieval order instead of the most scope-proximate candidates
+- Validation target: when exact lexical matching yields fewer than the semantic-review recall floor, provider-provenance fallback must review the candidates most closely aligned with the declared scientific object and family axis before unrelated raw-ranked results.
+- Environment/session context: fresh real TUI topic-discovery run `2d04d314-df69-4fcf-bf24-a2200944c11c` in the isolated language-model-agent evaluation workspace on 2026-08-04.
+- Reproduction steps:
+  1. Run a governed topic-discovery brief with the shared anchor `language model agent` and independent environment-validity and trajectory-attribution families.
+  2. Allow all three bounded `collect_papers` attempts to finish.
+  3. Inspect `collect_topic_discovery_candidates.jsonl`, `collect_semantic_review.json`, and `collect_corpus_quality.json` from the final attempt.
+  4. Compare the four provider-provenance pairs chosen per family with lower-ranked candidates in the same provider-derived family pool.
+- Expected behavior: fallback review prioritizes anchor-proximate candidates with partial family-axis support while leaving the semantic reviewer and final direct-support floors unchanged.
+- Actual behavior: 509 candidates included 157 anchor-proximate papers and relevant lower-ranked titles about cross-environment agent benchmarks, agent trajectory analysis, and multi-agent error attribution, but the fallback reviewed the first four raw provider candidates per family. All eight selected pairs were unrelated or indeterminate, producing zero direct support.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced through the official `validation:start-live` flow.
+  - Existing session: not applicable; the defect occurs while projecting a fresh candidate pool into semantic-review pairs.
+  - Divergence: none known; persisted artifacts accurately expose the bad in-memory selection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: `collectPairs(...)` preserves raw provider candidate order when filling `provider_provenance_floor` and has no declared-term proximity ranking, even though rows and family contracts are available.
+- Code/test changes:
+  - Candidate-only recall normalization expands common `LLM` and `agentic` surface forms without changing the frozen scientific-object fingerprint.
+  - Provider-provenance fallback ranks each family deterministically by declared-anchor coverage, family-axis coverage, title support, metadata completeness, then original provider rank.
+  - The collection node passes the explicit shared anchor into semantic review, and focused tests cover acronym recall plus lower-ranked scope-proximate selection.
+- Regression status: focused semantic-audit, scientific-term, corpus-quality, collection, provider-query, analysis, and funnel tests passed. Repeated real TUI flows increased lexical candidates from zero to six, selected scope-proximate papers from retrieval ranks beyond 100 instead of unrelated raw leaders, and produced six direct-support judgments after LV-677 was repaired.
+- Follow-up risks: ranking must remain domain-neutral, deterministic, and recall-oriented; it must not promote a candidate to evidence or weaken semantic precision and direct-support gates.
+- Evidence/artifacts: `<validation-workspace>/language-model-agent-evaluation-topic-search/.autolabos/runs/2d04d314-df69-4fcf-bf24-a2200944c11c/{collect_topic_discovery_candidates.jsonl,collect_semantic_review.json,collect_corpus_quality.json,collect_query_plan.json}`.
+
+---
+
+## Issue: LV-675
+
+- Status: resolved; focused regression and actual same-flow TUI revalidation passed
+- Category: live-validation reliability / helper-driven TUI shutdown leaves a dead session lock after a clean `Bye` boundary
+- Validation target: official live-validation helpers must release their TUI session lock after a completed `/quit` flow.
+- Environment/session context: existing real TUI topic-discovery workspace with a paused `collect_papers` node, resumed through `scripts/live-validation-resume-check.py` on 2026-08-04.
+- Reproduction steps:
+  1. Leave a real run paused at `collect_papers` with no active TUI process.
+  2. Run `validation:resume-check` against the persisted run id.
+  3. Observe a passing `/doctor`, a rendered `Bye`, and helper exit code 0.
+  4. Inspect `.autolabos/runtime/tui-session-lock.json` and the process table.
+- Expected behavior: the helper exits with no TUI process and no session-lock file.
+- Actual behavior: no TUI process remains, but the lock file still names the helper's dead Node PID. The same result reproduced after `validation:continue`. The next TUI can recover it, so the defect is non-blocking but creates repeated stale-lock recovery.
+- Fresh vs existing session comparison:
+  - Fresh session: not yet checked with this helper.
+  - Existing session: reproduced after a clean resume-check boundary.
+  - Divergence: unknown; the observed boundary is specific to helper-driven shutdown rather than run-state restoration.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`.
+  - Hypothesis: the helper matches `Bye` and terminates the process group before the asynchronous `finally` path completes `releaseTerminalSessionLock(...)`.
+- Code/test changes:
+  - Code: `scripts/live-validation-start-run.py`, `scripts/live-validation-resume-check.py`, and `scripts/live-validation-approve-and-run-next.py` now give a clean TUI exit up to five seconds before using forced process-group termination.
+  - Tests: `tests/liveValidationContinueScript.test.ts` checks the clean-exit wait and forced-termination guard in every helper that sends `/quit`.
+- Regression status:
+  - Automated regression test linked: yes; Python compilation and all 11 focused helper tests passed.
+  - Re-validation result: pass; the repaired `validation:resume-check` recovered the pre-existing stale lock, completed `/doctor` and `/quit`, left no session-lock file or TUI process, and preserved the failed research run byte-for-byte at its persisted node boundary.
+- Follow-up risks: a reused PID is already rejected by command-line and working-directory checks, but repeated stale locks add avoidable recovery noise and can obscure a genuinely active-session conflict.
+- Evidence/artifacts: `outputs/web-search-agent-topic-search/live-validation-{resume-check,continue-collect_papers}-output.txt`, `<validation-workspace>/.autolabos/runtime/tui-session-lock.json`, the three live-validation helper scripts, and `src/tui/TerminalApp.ts`.
+
+---
+
+## Issue: LV-674
+
+- Status: resolved; both interior stopword and interior generic-term cases live-revalidated
+- Category: research completion risk / scientific-object normalization removed an interior compound token before literature retrieval
+- Validation target: a governed multiword Scientific Object must retain a meaningful interior token when it forms the literature-domain phrase, while generic leading process phrases remain non-authoritative.
+- Environment/session context: fresh real TUI topic-discovery run in <validation-workspace> using the configured real provider and high-reasoning research profile.
+- Reproduction steps:
+  1. Start a complete topic_discovery brief whose three-term scientific object contains research as its middle token.
+  2. Run /doctor, then /brief start <brief-path> through the real TUI.
+  3. Inspect collect_query_plan.json, events.jsonl, and all three archived collection attempts.
+- Expected behavior: the immutable shared anchor preserves all three scientific-object terms and emits queries against the intended literature phrase.
+- Actual behavior: object normalization removed the middle token, froze a different two-term phrase, and all three bounded collection attempts ended with zero semantic direct-support papers.
+- Fresh vs existing session comparison:
+  - Fresh session: reproduced in a newly prepared isolated workspace.
+  - Existing session: not applicable; the defect was present before the first checkpoint and then correctly persisted across retries.
+  - Divergence: no; retry immutability preserved the already malformed anchor.
+- Root-cause hypothesis:
+  - Type: in_memory_projection_bug.
+  - Hypothesis: the general literature stopword filter was reused for a brief-declared scientific object, so an interior domain-compound token was discarded before the scope contract and query-family fingerprints were frozen.
+- Code/test changes:
+  - Code: src/core/runConstraints.ts, src/core/topicDiscoveryScientificTerms.ts, src/core/topicDiscoveryScopeContract.ts
+  - Tests: tests/topicDiscoveryScientificTerms.test.ts, tests/runConstraints.test.ts, tests/topicDiscoveryScopeContract.test.ts, and version-bound collection fixtures
+- Regression status:
+  - Automated regression test linked: yes; 83 focused tests passed on 2026-08-04.
+  - Re-validation result: pass; the stopword case preserved the full three-term anchor in a fresh TUI run, and the adjacent generic-term case preserved all of `web`, `search`, and `agent` through a fresh real TUI run and three bounded collection attempts. The collection gate then failed for insufficient direct literature support, which is a separate scientific-scope no-pass rather than normalization drift.
+- Follow-up risks: only explicitly allowed interior compound tokens are preserved; broader phrase modeling remains conservative and future additions must not promote generic process phrases.
+- Evidence/artifacts: <validation-workspace>/.autolabos/runs/<validation-run-id>/events.jsonl, collect_query_plan.json, collect_semantic_review.json, collect_corpus_quality.json, and collect_attempts/.
 
 ---
 

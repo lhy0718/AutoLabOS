@@ -59,6 +59,7 @@
     "test:web": "npm --prefix web run test",
     "test:watch": "vitest",
     "eval:harness": "tsx src/cli/main.ts eval-harness",
+    "benchmark:review": "tsx src/cli/main.ts review-benchmark",
     "evolve:skills": "bash scripts/evolve-skills.sh",
     "validation:preflight": "node scripts/live-validation-preflight.mjs",
     "validation:doctor": "python3 scripts/live-validation-doctor-pty-smoke.py",

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   buildTopicDiscoverySemanticAuditPrompt,
+  rankTopicDiscoveryProviderRecallCandidates,
   TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
   TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
   TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY,
@@ -23,7 +24,8 @@ import {
 } from "../collection/topicDiscoveryArtifactVersions.js";
 import {
   buildTopicDiscoveryCandidateFamilySignature,
-  normalizeTopicDiscoveryScientificTerms,
+  normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
@@ -750,13 +752,42 @@ function validateIndependentScientificAuthorization(input: {
     reasons.push("collect_semantic_lineage_lexical_projection_mismatch");
   }
   const expectedSelectionSources = new Map<string, PairSelectionSource>();
+  const providerRows = new Map(
+    Array.from(input.candidatePool.candidates.values()).map((candidate) => [
+      candidate.paperId,
+      {
+        paper_id: candidate.paperId,
+        title: candidate.title,
+        abstract: candidate.abstract,
+        authors: []
+      }
+    ])
+  );
   for (const familyId of input.queryPlan.families.keys()) {
-    const rankedCandidates = Array.from(input.candidatePool.candidates.values())
+    const retrievalOrderedCandidates = Array.from(
+      input.candidatePool.candidates.values()
+    )
       .filter((candidate) => candidate.familyRanks.has(familyId))
       .sort((left, right) =>
         left.familyRanks.get(familyId)! - right.familyRanks.get(familyId)!
         || left.paperId.localeCompare(right.paperId)
       );
+    const family = input.queryPlan.families.get(familyId)!;
+    const rankedCandidates = rankTopicDiscoveryProviderRecallCandidates({
+      paperIds: retrievalOrderedCandidates.map((candidate) => candidate.paperId),
+      rows: providerRows,
+      family: {
+        queryFamily: familyId,
+        query: family.query,
+        sharedAnchorTerms: family.sharedAnchorTerms,
+        axisTerms: family.axisTerms,
+        lens: family.lens,
+        contributionIntent: family.contributionIntent
+      }
+    }).flatMap((paperId) => {
+      const candidate = input.candidatePool.candidates.get(paperId);
+      return candidate ? [candidate] : [];
+    });
     const selectedPaperIds = new Set<string>();
     for (const candidate of rankedCandidates) {
       if (!candidate.lexicalFamilies.includes(familyId)) continue;
@@ -924,6 +955,7 @@ function validateIndependentScientificAuthorization(input: {
       const stats = familyStats.get(planned.familyId)!;
       const axisTerms = exactStringArray(family?.axis_terms, false);
       const precision = stats.reviewed > 0 ? stats.direct / stats.reviewed : 0;
+      const qualifiesForCoverage = qualifyingFamilies.has(planned.familyId);
       return !family
         || exactText(family.query) !== planned.query
         || exactText(family.source) !== planned.source
@@ -940,6 +972,7 @@ function validateIndependentScientificAuthorization(input: {
         || numberValue(family.application_only_paper_count) !== stats.application
         || numberValue(family.uncertain_paper_count) !== stats.uncertain
         || numberValue(family.semantic_precision) !== precision
+        || family.qualifies_for_coverage !== qualifiesForCoverage
         || numberValue(family.retained_paper_count)
           !== (retainedCounts.get(planned.familyId) ?? 0)
         || numberValue(family.relevant_paper_count)
@@ -1198,13 +1231,24 @@ function parseQueryPlan(
     const query = exactText(family?.query);
     const source = exactText(family?.source);
     const contractFamilyId = exactText(contract?.familyId);
-    const sharedAnchorTerms = exactStringArray(contract?.sharedAnchorTerms, false);
+    const declaredSharedAnchorTerms = exactStringArray(
+      contract?.sharedAnchorTerms,
+      false
+    );
+    const sharedAnchorTerms = declaredSharedAnchorTerms
+      ? Array.from(new Set(normalizeTopicDiscoveryScientificObjectTerms(
+          declaredSharedAnchorTerms.join(" ")
+        )))
+      : undefined;
     const normalizedSharedAnchorTerms = sharedAnchorTerms
-      ? Array.from(new Set(
-          normalizeTopicDiscoveryScientificTerms(sharedAnchorTerms.join(" "))
-        ))
+      ? sharedAnchorTerms
       : [];
-    const axisTerms = exactStringArray(contract?.axisTerms, false);
+    const declaredAxisTerms = exactStringArray(contract?.axisTerms, false);
+    const axisTerms = declaredAxisTerms
+      ? Array.from(new Set(normalizeTopicDiscoveryCandidateTerms(
+          declaredAxisTerms.join(" ")
+        )))
+      : undefined;
     const lens = exactText(contract?.lens);
     const contributionIntent = exactText(contract?.contributionIntent);
     const contractSource = exactText(contract?.contractSource);
@@ -1213,10 +1257,14 @@ function parseQueryPlan(
       || !query
       || !source
       || contractFamilyId !== familyId
+      || !declaredSharedAnchorTerms
       || !sharedAnchorTerms
       || sharedAnchorTerms.length < 2
-      || !sameOrderedValues(sharedAnchorTerms, normalizedSharedAnchorTerms)
+      || !sameOrderedValues(declaredSharedAnchorTerms, normalizedSharedAnchorTerms)
+      || !declaredAxisTerms
       || !axisTerms
+      || axisTerms.length === 0
+      || !sameOrderedValues(declaredAxisTerms, axisTerms)
       || !lens
       || !contributionIntent
       || !contractSource

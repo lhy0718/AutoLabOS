@@ -217,6 +217,35 @@ describe("resolveCliAction", () => {
     });
   });
 
+  it("supports bounded review reasoning benchmark options", () => {
+    expect(resolveCliAction([
+      "review-benchmark",
+      "--provider", "openai",
+      "--model", "configured-review-model",
+      "--effort", "high",
+      "--effort", "xhigh",
+      "--effort", "max",
+      "--repetitions", "3",
+      "--split", "test",
+      "--output", "outputs/review-benchmark",
+      "--dry-run"
+    ])).toEqual({
+      kind: "review-benchmark",
+      provider: "openai",
+      model: "configured-review-model",
+      efforts: ["high", "xhigh", "max"],
+      repetitions: 3,
+      split: "test",
+      outputDir: "outputs/review-benchmark",
+      dryRun: true
+    });
+  });
+
+  it("rejects duplicate review reasoning efforts", () => {
+    expect(resolveCliAction(["review-benchmark", "--effort", "xhigh", "--effort", "xhigh"]))
+      .toEqual({ kind: "error", message: "Duplicate review benchmark effort: xhigh." });
+  });
+
   it("supports evolve mode", () => {
     expect(resolveCliAction(["evolve", "--max-cycles", "2", "--target", "prompts", "--dry-run"])).toEqual({
       kind: "evolve",

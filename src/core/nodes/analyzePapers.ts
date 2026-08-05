@@ -57,11 +57,14 @@ import {
   TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
 } from "../collection/topicDiscoveryCorpusQuality.js";
 import {
+  rankTopicDiscoveryProviderRecallCandidates,
   TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY,
   TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
 } from "../collection/topicDiscoverySemanticAudit.js";
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
@@ -380,6 +383,7 @@ interface CollectAnalysisLineageAudit {
     semanticReviewedPaperCount: number;
     providerRecallPaperCount: number;
     directSupportPaperCount: number;
+    qualifiesForCoverage?: boolean;
     applicationOnlyPaperCount: number;
     uncertainPaperCount: number;
     retainedPaperCount: number;
@@ -459,16 +463,34 @@ function parseTopicDiscoveryPlanFamilies(value: unknown): ParsedTopicDiscoveryPl
     const queryFamily = stringValue(selected?.query_family);
     const familyId = stringValue(contract?.familyId);
     const query = stringValue(selected?.query);
-    const sharedAnchorTerms = exactStringArrayValue(contract?.sharedAnchorTerms);
-    const axisTerms = exactStringArrayValue(contract?.axisTerms);
+    const declaredSharedAnchorTerms = exactStringArrayValue(
+      contract?.sharedAnchorTerms
+    );
+    const declaredAxisTerms = exactStringArrayValue(contract?.axisTerms);
+    const sharedAnchorTerms = declaredSharedAnchorTerms
+      ? [...new Set(normalizeTopicDiscoveryScientificObjectTerms(
+          declaredSharedAnchorTerms.join(" ")
+        ))]
+      : undefined;
+    const axisTerms = declaredAxisTerms
+      ? [...new Set(normalizeTopicDiscoveryCandidateTerms(
+          declaredAxisTerms.join(" ")
+        ))]
+      : undefined;
     const lens = stringValue(contract?.lens);
     const contributionIntent = stringValue(contract?.contributionIntent);
     if (
       !queryFamily
       || familyId !== queryFamily
       || !query
+      || !declaredSharedAnchorTerms
       || !sharedAnchorTerms
+      || sharedAnchorTerms.length < 2
+      || !sameStringArray(declaredSharedAnchorTerms, sharedAnchorTerms)
+      || !declaredAxisTerms
       || !axisTerms
+      || axisTerms.length === 0
+      || !sameStringArray(declaredAxisTerms, axisTerms)
       || !lens
       || !contributionIntent
       || families.has(queryFamily)
@@ -1004,13 +1026,42 @@ function reconstructTopicDiscoverySemanticPairUniverse(input: {
     string,
     "lexical_match" | "provider_provenance_floor"
   >();
+  const providerRows = new Map(
+    Array.from(input.candidates.candidates.values()).map((candidate) => [
+      candidate.paperId,
+      {
+        paper_id: candidate.paperId,
+        title: candidate.title,
+        abstract: candidate.abstract,
+        authors: []
+      } satisfies StoredCorpusRow
+    ])
+  );
   for (const familyId of input.plannedFamilies.families.keys()) {
-    const rankedCandidates = Array.from(input.candidates.candidates.values())
+    const retrievalOrderedCandidates = Array.from(
+      input.candidates.candidates.values()
+    )
       .filter((candidate) => candidate.familyRanks.has(familyId))
       .sort((left, right) =>
         left.familyRanks.get(familyId)! - right.familyRanks.get(familyId)!
         || left.paperId.localeCompare(right.paperId)
       );
+    const family = input.plannedFamilies.families.get(familyId)!;
+    const rankedCandidates = rankTopicDiscoveryProviderRecallCandidates({
+      paperIds: retrievalOrderedCandidates.map((candidate) => candidate.paperId),
+      rows: providerRows,
+      family: {
+        queryFamily: familyId,
+        query: family.query,
+        sharedAnchorTerms: family.sharedAnchorTerms,
+        axisTerms: family.axisTerms,
+        lens: family.lens,
+        contributionIntent: family.contributionIntent
+      }
+    }).flatMap((paperId) => {
+      const candidate = input.candidates.candidates.get(paperId);
+      return candidate ? [candidate] : [];
+    });
     const selectedPaperIds = new Set<string>();
     for (const candidate of rankedCandidates) {
       if (!candidate.declaredLexicalFamilies.includes(familyId)) continue;
@@ -1620,6 +1671,7 @@ async function auditCollectAnalysisLineage(input: {
         const semanticReviewedCount = numberValue(family.semantic_reviewed_paper_count);
         const providerRecallCount = numberValue(family.provider_recall_paper_count);
         const directSupportCount = numberValue(family.direct_support_paper_count);
+        const qualifiesForCoverage = family.qualifies_for_coverage;
         const applicationOnlyCount = numberValue(family.application_only_paper_count);
         const uncertainCount = numberValue(family.uncertain_paper_count);
         const retainedPaperCount = numberValue(family.retained_paper_count);
@@ -1658,6 +1710,7 @@ async function auditCollectAnalysisLineage(input: {
           semanticPrecision < 0 ||
           semanticPrecision > 1 ||
           semanticPrecision !== expectedPrecision ||
+          typeof qualifiesForCoverage !== "boolean" ||
           familyCounts.has(queryFamily)
         ) {
           malformedFamily = true;
@@ -1692,6 +1745,7 @@ async function auditCollectAnalysisLineage(input: {
           semanticReviewedPaperCount: semanticReviewedCount!,
           providerRecallPaperCount: providerRecallCount!,
           directSupportPaperCount: directSupportCount!,
+          qualifiesForCoverage,
           applicationOnlyPaperCount: applicationOnlyCount!,
           uncertainPaperCount: uncertainCount!,
           retainedPaperCount: retainedPaperCount!,
@@ -1720,12 +1774,25 @@ async function auditCollectAnalysisLineage(input: {
       ) {
         reasons.push("collect_lineage_topic_family_quality_thresholds_invalid");
       }
-      if (parsedQueryFamilies.some((family) =>
-        family.directSupportPaperCount
-          < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
-        || family.semanticPrecision
-          < TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY
-      )) {
+      const declaredQualifyingFamilySignatures = new Set(
+        parsedQueryFamilies.flatMap((family) => {
+          const expectedQualification =
+            family.directSupportPaperCount
+              >= TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+            && family.semanticPrecision
+              >= TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY;
+          if (family.qualifiesForCoverage !== expectedQualification) {
+            reasons.push("collect_lineage_topic_family_qualification_mismatch");
+          }
+          return family.qualifiesForCoverage
+            ? [family.canonicalFamilySignature]
+            : [];
+        })
+      );
+      if (
+        declaredQualifyingFamilySignatures.size
+          < TOPIC_DISCOVERY_MINIMUM_COVERED_QUERY_FAMILIES
+      ) {
         reasons.push("collect_lineage_topic_family_quality_floor_not_met");
       }
       const observed =
@@ -1957,23 +2024,22 @@ async function auditCollectAnalysisLineage(input: {
             || family.directSupportPaperCount !== counts.directSupport
             || family.applicationOnlyPaperCount !== counts.applicationOnly
             || family.uncertainPaperCount !== counts.uncertain
-            || family.semanticPrecision !== precision;
+            || family.semanticPrecision !== precision
+            || family.qualifiesForCoverage !== (
+              counts.directSupport
+                >= TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
+              && precision
+                >= TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY
+            );
         });
       if (qualityFamilyJudgmentsMismatch) {
         reasons.push("collect_lineage_topic_family_quality_judgment_mismatch");
       }
       if (
-        directSupportPaperIds.size < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS
+        input.corpusRows.length < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS
+        || directSupportPaperIds.size
+          < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PAPERS
         || coveredQueryFamilyCount < TOPIC_DISCOVERY_MINIMUM_COVERED_QUERY_FAMILIES
-        || Array.from(judgmentCountsByFamily.values()).some((counts) => {
-          const reviewedCount = counts.directSupport
-            + counts.applicationOnly
-            + counts.uncertain;
-          const precision = reviewedCount > 0 ? counts.directSupport / reviewedCount : 0;
-          return counts.directSupport
-              < TOPIC_DISCOVERY_MINIMUM_DIRECT_SUPPORT_PER_FAMILY
-            || precision < TOPIC_DISCOVERY_MINIMUM_SEMANTIC_PRECISION_PER_FAMILY;
-        })
       ) {
         reasons.push("collect_lineage_topic_family_quality_floor_not_met");
       }

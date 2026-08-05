@@ -5,6 +5,7 @@ import {
   bindTopicDiscoveryScopeAnchor,
   buildTopicDiscoveryScopeContract
 } from "../src/core/topicDiscoveryScopeContract.js";
+import { TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION } from "../src/core/topicDiscoveryScientificTerms.js";
 
 const COMPLETE_BRIEF = [
   "# Research Brief",
@@ -45,7 +46,7 @@ describe("topic-discovery scientific scope contract", () => {
     expect(first).toEqual(second);
     expect(first.enforced).toBe(true);
     expect(first.version).toBe(3);
-    expect(first.termNormalizationVersion).toBe(4);
+    expect(first.termNormalizationVersion).toBe(TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION);
     expect(first.contractSource).toBe("explicit_scientific_scope");
     expect(first.sourceSections).toEqual(["scientific_scope"]);
     expect(first.declaredAnchorTerms).toEqual(["document", "ranking"]);
@@ -229,12 +230,122 @@ describe("topic-discovery scientific scope contract", () => {
     const researchPaper = buildWithObject("research paper");
     const paperTopic = buildWithObject("paper topic");
 
-    expect(paperReview.declaredAnchorTerms).toEqual(["paper", "review"]);
+    expect(paperReview.declaredAnchorTerms).toEqual(["scientific", "paper", "review"]);
     expect(paperReview.enforced).toBe(true);
     expect(researchPaper.declaredAnchorTerms).toEqual(["paper"]);
     expect(researchPaper.enforced).toBe(false);
     expect(paperTopic.declaredAnchorTerms).toEqual(["paper"]);
     expect(paperTopic.enforced).toBe(false);
+  });
+
+  it("accepts equivalent automatic-process wording without a technical expansion", () => {
+    const contract = bindTopicDiscoveryScopeAnchor(
+      buildTopicDiscoveryScopeContract([
+        "# Research Brief",
+        "",
+        "## Research Mode",
+        "topic_discovery",
+        "",
+        "## Scientific Scope",
+        "### Scientific Object",
+        "- scientific document assessment",
+        "",
+        "### Empirical Problems",
+        "- automated report generation",
+        "- error detection under sparse evidence"
+      ].join("\n")),
+      ["scientific", "document", "assessment"]
+    );
+    const diagnostic = assessTopicDiscoveryScientificScope({
+      contract,
+      sharedAnchorTerms: ["scientific", "document", "assessment"],
+      families: [
+        { id: "report_generation", axisTerms: ["automatic", "generation"] },
+        { id: "error_detection", axisTerms: ["error", "detection"] }
+      ],
+      rejectedQueries: [],
+      candidateTitles: []
+    });
+
+    expect(contract.declaredAnchorTerms).toEqual([
+      "scientific",
+      "document",
+      "assessment"
+    ]);
+    expect(diagnostic.status).toBe("passed");
+    expect(diagnostic.families[0]).toMatchObject({
+      relation: "lexical_refinement",
+      retainedSourceTerms: ["automat", "generation"],
+      novelTerms: [],
+      passed: true
+    });
+  });
+
+  it("keeps an interior scientific compound token in the declared anchor", () => {
+    const contract = buildTopicDiscoveryScopeContract([
+      "# Research Brief",
+      "",
+      "## Research Mode",
+      "topic_discovery",
+      "",
+      "## Scientific Scope",
+      "### Scientific Object",
+      "- automated research workflows",
+      "",
+      "### Empirical Problems",
+      "- retrieval coverage calibration under finite budgets",
+      "- premature stopping on open-ended target sets"
+    ].join("\n"));
+
+    expect(contract.declaredAnchorTerms).toEqual(["automat", "research", "workflow"]);
+    expect(contract.queryAnchorTerms).toEqual(["automated", "research", "workflows"]);
+    expect(contract.enforced).toBe(true);
+
+    const genericCompound = buildTopicDiscoveryScopeContract([
+      "# Research Brief",
+      "",
+      "## Research Mode",
+      "topic_discovery",
+      "",
+      "## Scientific Scope",
+      "### Scientific Object",
+      "- adaptive search controllers",
+      "",
+      "### Empirical Problems",
+      "- retrieval coverage under finite budgets",
+      "- query robustness across task variants"
+    ].join("\n"));
+    expect(genericCompound.declaredAnchorTerms).toEqual([
+      "adaptive",
+      "search",
+      "controller"
+    ]);
+    expect(genericCompound.enforced).toBe(true);
+  });
+
+  it("rejects a declared anchor longer than the executable query contract", () => {
+    const contract = buildTopicDiscoveryScopeContract([
+      "# Research Brief",
+      "",
+      "## Research Mode",
+      "topic_discovery",
+      "",
+      "## Scientific Scope",
+      "### Scientific Object",
+      "- acoustic event boundary detection",
+      "",
+      "### Empirical Problems",
+      "- segmentation stability under sensor noise",
+      "- label efficiency under domain shift"
+    ].join("\n"));
+
+    expect(contract.declaredAnchorTerms).toEqual([
+      "acoustic",
+      "event",
+      "boundary",
+      "detection"
+    ]);
+    expect(contract.enforced).toBe(false);
   });
 
   it("fails closed during recovery when the brief lacks an enforceable scope", () => {

@@ -12,6 +12,8 @@ import {
   getReasoningEffortChoicesForModel
 } from "../integrations/codex/modelCatalog.js";
 import {
+  DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
+  DEFAULT_OPENAI_RESPONSES_MODEL,
   buildOpenAiResponsesModelChoices,
   buildOpenAiResponsesReasoningChoices
 } from "../integrations/openai/modelCatalog.js";
@@ -1097,8 +1099,8 @@ function buildConfigFormData(
   const codexModel = config?.providers.codex.model || DEFAULT_CODEX_MODEL;
   const codexChatModel = config?.providers.codex.chat_model || DEFAULT_CODEX_CHAT_SETUP_MODEL;
   const codexExperimentModel = config?.providers.codex.experiment_model || codexModel;
-  const openAiModel = config?.providers.openai.model || "gpt-5.4";
-  const openAiChatModel = config?.providers.openai.chat_model || openAiModel;
+  const openAiModel = config?.providers.openai.model || DEFAULT_OPENAI_RESPONSES_MODEL;
+  const openAiChatModel = config?.providers.openai.chat_model || DEFAULT_OPENAI_RESPONSES_CHAT_MODEL;
   const openAiExperimentModel = config?.providers.openai.experiment_model || openAiModel;
 
   return {

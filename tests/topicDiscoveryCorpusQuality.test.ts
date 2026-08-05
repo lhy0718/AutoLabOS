@@ -4,6 +4,7 @@ import {
   assessTopicDiscoveryCorpusQuality,
   assessTopicDiscoveryPaperRelevance,
   buildTopicDiscoveryCorpusRelevanceProfile,
+  TOPIC_DISCOVERY_CORPUS_QUALITY_FLOORS,
   TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION
 } from "../src/core/collection/topicDiscoveryCorpusQuality.js";
 import type {
@@ -12,6 +13,7 @@ import type {
 } from "../src/core/collection/topicDiscoverySemanticAudit.js";
 import {
   runTopicDiscoverySemanticAudit,
+  TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY,
   TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION
 } from "../src/core/collection/topicDiscoverySemanticAudit.js";
 import { StoredCorpusRow } from "../src/core/collection/types.js";
@@ -22,6 +24,17 @@ import {
 } from "../src/core/topicDiscoveryScientificTerms.js";
 
 describe("topic discovery corpus quality", () => {
+  it("keeps provider recall jointly feasible with the global and family floors", () => {
+    const minimumReviewedPerFamily = Math.ceil(
+      TOPIC_DISCOVERY_CORPUS_QUALITY_FLOORS.minimumRelevantPapers
+      / TOPIC_DISCOVERY_CORPUS_QUALITY_FLOORS.minimumCoveredQueryFamilies
+      / TOPIC_DISCOVERY_CORPUS_QUALITY_FLOORS.minimumSemanticPrecisionPerFamily
+    );
+
+    expect(TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY)
+      .toBeGreaterThanOrEqual(minimumReviewedPerFamily);
+  });
+
   it("retains an on-topic corpus backed by multiple independent query families", () => {
     const rows = [
       ...Array.from({ length: 8 }, (_, index) =>
@@ -72,10 +85,108 @@ describe("topic discovery corpus quality", () => {
       expect.arrayContaining([
         expect.objectContaining({
           direct_support_paper_count: 4,
+          qualifies_for_coverage: true,
           semantic_precision: 1
         })
       ])
     );
+  });
+
+  it("keeps a weak exploratory family diagnostic when two independent families qualify", () => {
+    const exploratoryFamily = {
+      queryFamily: "family-exploratory",
+      query: '"document retrieval" reviewer agreement',
+      source: "llm_query_planner",
+      sharedAnchorTerms: ["document", "retrieval"],
+      axisTerms: ["reviewer", "agreement"],
+      lens: "reviewer agreement for document retrieval evaluations",
+      contributionIntent: "measurement",
+      contractSource: "planner_declared" as const
+    };
+    const families = [...searchFamilies(), exploratoryFamily];
+    const calibrationRows = Array.from({ length: 4 }, (_, index) =>
+      paper(
+        `calibration-qualifying-${index + 1}`,
+        `Document retrieval uncertainty calibration evaluation ${index + 1}`
+      )
+    );
+    const shiftRows = Array.from({ length: 4 }, (_, index) =>
+      paper(
+        `shift-qualifying-${index + 1}`,
+        `Document retrieval distribution shift evaluation ${index + 1}`
+      )
+    );
+    const exploratoryRows = Array.from({ length: 8 }, (_, index) =>
+      paper(
+        `agreement-exploratory-${index + 1}`,
+        `Document retrieval reviewer agreement analysis ${index + 1}`
+      )
+    );
+    const rows = [...calibrationRows, ...shiftRows, ...exploratoryRows];
+    const paperQueryFamilies = new Map<string, Set<string>>([
+      ...calibrationRows.map((row) => [
+        row.paper_id,
+        new Set(["family-calibration"])
+      ] as const),
+      ...shiftRows.map((row) => [
+        row.paper_id,
+        new Set(["family-shift"])
+      ] as const),
+      ...exploratoryRows.map((row) => [
+        row.paper_id,
+        new Set(["family-exploratory"])
+      ] as const)
+    ]);
+    const verdictOverrides = new Map<string, TopicDiscoverySemanticVerdict>(
+      exploratoryRows.slice(3).map((row) => [
+        `${row.paper_id}|family-exploratory`,
+        "application_only"
+      ])
+    );
+    const audit = semanticAudit(rows, paperQueryFamilies, verdictOverrides);
+    audit.reviewer_input_payload.family_contracts.push({
+      family_id: exploratoryFamily.queryFamily,
+      query: exploratoryFamily.query,
+      axis_terms: exploratoryFamily.axisTerms,
+      lens: exploratoryFamily.lens,
+      contribution_intent: exploratoryFamily.contributionIntent
+    });
+
+    const assessment = assessTopicDiscoveryCorpusQuality({
+      rows,
+      searchFamilies: families,
+      paperQueryFamilies,
+      semanticAudit: audit,
+      globalLimit: 20,
+      generatedAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    expect(assessment.audit.passed).toBe(true);
+    expect(assessment.audit.reasons).toEqual([]);
+    expect(assessment.audit.observed).toMatchObject({
+      relevant_papers: 8,
+      direct_support_papers: 11,
+      covered_query_families: 2
+    });
+    expect(assessment.audit.query_families).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        query_family: "family-calibration",
+        qualifies_for_coverage: true,
+        retained_paper_count: 4
+      }),
+      expect.objectContaining({
+        query_family: "family-shift",
+        qualifies_for_coverage: true,
+        retained_paper_count: 4
+      }),
+      expect.objectContaining({
+        query_family: "family-exploratory",
+        direct_support_paper_count: 3,
+        semantic_precision: 3 / 8,
+        qualifies_for_coverage: false,
+        retained_paper_count: 0
+      })
+    ]));
   });
 
   it("rejects incidental or distant axis mentions even when the anchor is present", () => {
@@ -556,7 +667,7 @@ describe("topic discovery corpus quality", () => {
     audit.reviewer_input_payload.requested_pairs[0]!.selection_source =
       "provider_provenance_floor";
     audit.recall = {
-      provider_recall_floor_per_family: 4,
+      provider_recall_floor_per_family: 8,
       lexical_requested_pairs: 0,
       provider_provenance_requested_pairs: 1
     };
@@ -748,7 +859,7 @@ function semanticAudit(
       protocol_violations: 0
     },
     recall: {
-      provider_recall_floor_per_family: 4,
+      provider_recall_floor_per_family: 8,
       lexical_requested_pairs: judgments.length,
       provider_provenance_requested_pairs: 0
     },

@@ -43,6 +43,7 @@ import {
   requireOllamaModel,
   type OllamaModelRole
 } from "../integrations/ollama/modelCatalog.js";
+import { RECOMMENDED_CODEX_MODEL } from "../integrations/codex/modelCatalog.js";
 import { recoverCollectEnrichmentJobs } from "../core/nodes/collectPapers.js";
 import { detectExecutionProfile } from "./executionProfile.js";
 import { resolveNodeOptionsForPackage } from "../core/stateGraph/defaults.js";
@@ -138,8 +139,8 @@ export async function createAutoLabOSRuntime(
   const resolvedExecutionProfile = executionProfile || (await detectExecutionProfile());
   const runStore = new RunStore(paths, { nodeOptionPackageName });
   const codex = new CodexNativeClient(paths.cwd, {
-    model: config.providers.codex.model || "gpt-5.5",
-    reasoningEffort: config.providers.codex.reasoning_effort || "medium",
+    model: config.providers.codex.model || RECOMMENDED_CODEX_MODEL,
+    reasoningEffort: config.providers.codex.reasoning_effort || "high",
     fastMode: config.providers.codex.fast_mode === true
   });
   const openAiText = new OpenAiResponsesTextClient(() => resolveOpenAiApiKey(paths.cwd));

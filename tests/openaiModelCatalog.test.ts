@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
   buildOpenAiResponsesModelChoices,
@@ -18,18 +19,28 @@ describe("openaiModelCatalog", () => {
     expect(buildOpenAiResponsesModelChoices()).toEqual(
       OPENAI_RESPONSES_MODEL_OPTIONS.map((option) => option.value)
     );
+    expect(buildOpenAiResponsesModelChoices().slice(0, 3)).toEqual([
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna"
+    ]);
+    expect(DEFAULT_OPENAI_RESPONSES_MODEL).toBe("gpt-5.6-sol");
+    expect(DEFAULT_OPENAI_RESPONSES_CHAT_MODEL).toBe("gpt-5.6-terra");
     expect(buildOpenAiResponsesModelChoices()).toContain("gpt-5.4");
     expect(buildOpenAiResponsesModelChoices()).toContain("gpt-4o-mini");
   });
 
   it("returns readable descriptions", () => {
-    expect(getOpenAiResponsesModelDescription("gpt-5.4")).toContain("Highest-quality");
+    expect(getOpenAiResponsesModelDescription("gpt-5.6-sol")).toContain("Flagship");
     expect(getOpenAiResponsesModelDescription("gpt-4o")).toContain("multimodal");
   });
 
   it("normalizes unknown models and reasoning effort", () => {
     expect(normalizeOpenAiResponsesModel("")).toBe(DEFAULT_OPENAI_RESPONSES_MODEL);
     expect(normalizeOpenAiResponsesModel("unknown-model")).toBe(DEFAULT_OPENAI_RESPONSES_MODEL);
+    expect(normalizeOpenAiResponsesReasoningEffort("gpt-5.6-sol", "none")).toBe("none");
+    expect(normalizeOpenAiResponsesReasoningEffort("gpt-5.6-sol", "max")).toBe("max");
+    expect(normalizeOpenAiResponsesReasoningEffort("gpt-5.6-sol", "minimal")).toBe("medium");
     expect(normalizeOpenAiResponsesReasoningEffort("gpt-5.4", "xhigh")).toBe("xhigh");
     expect(normalizeOpenAiResponsesReasoningEffort("gpt-4o", "xhigh")).toBe("medium");
     expect(supportsOpenAiResponsesReasoning("gpt-5")).toBe(true);
@@ -37,6 +48,14 @@ describe("openaiModelCatalog", () => {
   });
 
   it("exposes reasoning choices only for supported models", () => {
+    expect(buildOpenAiResponsesReasoningChoices("gpt-5.6-sol")).toEqual([
+      "none",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]);
     expect(buildOpenAiResponsesReasoningChoices("gpt-5.4")).toEqual([
       "minimal",
       "low",

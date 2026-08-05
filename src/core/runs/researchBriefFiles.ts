@@ -111,7 +111,7 @@ const RESEARCH_BRIEF_SECTION_SPECS: Array<{
     lines: [
       "Required for topic_discovery.",
       "### Scientific Object",
-      "- one concise 2-to-5-term domain object",
+      "- one concise 2-to-3-term domain object",
       "### Empirical Problems",
       "- first observable problem or failure relation",
       "- second independent observable problem or failure relation",
@@ -636,7 +636,7 @@ export function validateResearchBriefMarkdown(markdown: string): BriefValidation
         || !scopeContract.enforced
       ) {
         errors.push(
-          'Make "## Scientific Scope" explicit: declare one 2-to-5-term Scientific Object and at least two Empirical Problems or Scientific Relations with four distinctive terms in total.'
+          'Make "## Scientific Scope" explicit: declare one 2-to-3-term Scientific Object and at least two Empirical Problems or Scientific Relations with four distinctive terms in total.'
         );
       }
     }

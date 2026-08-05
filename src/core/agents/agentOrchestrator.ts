@@ -140,9 +140,10 @@ export class AgentOrchestrator {
     runId: string,
     targetNode: GraphNodeId,
     mode: JumpMode,
-    reason: string
+    reason: string,
+    options: { resetCurrent?: boolean } = {}
   ): Promise<RunRecord> {
-    await this.runtime.jumpToNode(runId, targetNode, mode, reason);
+    await this.runtime.jumpToNode(runId, targetNode, mode, reason, options);
     return this.getPersistedRunOrThrow(runId);
   }
 

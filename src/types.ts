@@ -294,10 +294,10 @@ export interface AppConfig {
       model: string;
       chat_model?: string;
       experiment_model?: string;
-      reasoning_effort: "minimal" | "low" | "medium" | "high" | "xhigh";
-      chat_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-      experiment_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
-      command_reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
+      reasoning_effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+      chat_reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+      experiment_reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+      command_reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
       api_key_required: true;
     };
     ollama?: {

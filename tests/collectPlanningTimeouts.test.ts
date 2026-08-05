@@ -18,7 +18,10 @@ import {
   resolveGeneratedLiteratureQueries
 } from "../src/core/literatureQueryGeneration.js";
 import { createDefaultGraphState } from "../src/core/stateGraph/defaults.js";
-import { TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION } from "../src/core/topicDiscoveryScientificTerms.js";
+import {
+  TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+  TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
+} from "../src/core/topicDiscoveryScientificTerms.js";
 import type { RunRecord } from "../src/types.js";
 
 class HangingLLMClient extends MockLLMClient {
@@ -170,6 +173,50 @@ describe("collect-time LLM helpers", () => {
       "cannot authorize an axis, establish novelty, count as direct support, or enter the evidence corpus"
     );
     expect(llm.prompts[1]).toContain("Auditable Review Defect Localization");
+  });
+
+  it("preserves the brief anchor surface in planner and provider queries", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-anchor-surface-"));
+    const runId = "run-query-anchor-surface";
+    const contextPath = path.join(root, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const llm = new SequencedJsonLLMClient([
+      JSON.stringify({
+        shared_anchor: "automated peer review",
+        families: [
+          { axis: "defect detection" },
+          { axis: "false positive" }
+        ],
+        assumptions: []
+      })
+    ]);
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "controlled defect detection",
+        "false positive control"
+      ], "automated peer review"),
+      runContextMemory: new RunContextMemory(contextPath),
+      llm
+    });
+
+    expect(llm.prompts[0]).toContain(
+      "Return this exact brief-declared shared anchor: automated peer review."
+    );
+    expect(llm.prompts[0]).not.toContain(
+      "Return this exact brief-declared shared anchor: automat peer review."
+    );
+    expect(result?.queries).toEqual([
+      '"automated peer review" defect detection',
+      '"automated peer review" false positive'
+    ]);
+    expect(result?.scientificScopeDiagnostic).toMatchObject({
+      declaredAnchorTerms: ["automat", "peer", "review"],
+      queryAnchorTerms: ["automated", "peer", "review"],
+      lockedAnchorTerms: ["automat", "peer", "review"],
+      anchor: { passed: true }
+    });
   });
 
   it("keeps partial configuration fixtures bounded when providers are omitted", () => {
@@ -333,6 +380,219 @@ describe("collect-time LLM helpers", () => {
       )
     ).toBe(true);
     expect(callerOverrideLlm.calls).toBe(1);
+  });
+
+  it("compiles unused explicit scope axes when topic planning times out", async () => {
+    process.env.AUTOLABOS_LITERATURE_QUERY_TIMEOUT_MS = "5";
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-scope-timeout-"));
+    const runId = "run-scope-timeout-query";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const memory = new RunContextMemory(contextPath);
+    await recordLiteratureQueryPlanRejection(memory, {
+      rejectedQueries: ['"automated peer review" confidence calibration'],
+      qualityReasons: ["No direct-support papers met the family floor."],
+      sharedAnchorTerms: ["automated", "peer", "review"],
+      candidateTitles: [],
+      queryFamilies: [{
+        queryFamily: "topic_family_1",
+        query: '"automated peer review" external population validity',
+        axisTerms: ["external", "population", "validity"],
+        relevantPaperCount: 0
+      }],
+      scientificScopeFingerprint: undefined
+    });
+    const eventStream = new InMemoryEventStream();
+    const llm = new HangingLLMClient();
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "confidence calibration under distribution shift",
+        "stateful interaction robustness",
+        "annotation disagreement stability",
+        "external population validity"
+      ], "automated peer review"),
+      runContextMemory: memory,
+      llm,
+      eventStream,
+      node: "collect_papers",
+      priorWorkProbeHints: [{
+        probeId: "prior_probe_fixture",
+        query: "stateful interaction robustness",
+        candidateTitles: [
+          "Stateful Interaction Robustness for Automated Peer Review",
+          "Automated Peer Review under Stateful Interaction Robustness"
+        ]
+      }]
+    });
+
+    expect(result).toMatchObject({
+      source: "deterministic_fallback",
+      queries: [
+        '"automated peer review" stateful interaction robustness',
+        '"automated peer review" annotation disagreement stability'
+      ],
+      repairDiagnostic: {
+        strategy: "explicit_scope_timeout_fallback",
+        selectedScopeAxisIds: expect.any(Array),
+        excludedRejectedScopeAxisIds: expect.any(Array),
+        queryabilityTitleSource:
+          "executed_candidates_plus_prior_work_probe_hints",
+        finalCorpusGateUnchanged: true
+      }
+    });
+    expect(result?.failureReason).toBeUndefined();
+    expect(result?.topicDiscoveryPlan?.families).toHaveLength(2);
+    expect(result?.topicDiscoveryPlan?.families.every(
+      (family) => family.contractSource === "bounded_inference"
+    )).toBe(true);
+    expect(result?.queries).not.toContain(
+      '"automated peer review" confidence calibration'
+    );
+    expect(
+      eventStream.history().some((event) =>
+        JSON.stringify(event).includes(
+          "Prior-work titles affected queryability ranking only"
+        )
+      )
+    ).toBe(true);
+    expect(llm.calls).toBe(1);
+  });
+
+  it("preserves the contract rejection when a compiled timeout fallback is inadmissible", async () => {
+    process.env.AUTOLABOS_LITERATURE_QUERY_TIMEOUT_MS = "5";
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-scope-rejected-"));
+    const runId = "run-scope-rejected-query";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const memory = new RunContextMemory(contextPath);
+    await recordLiteratureQueryPlanRejection(memory, {
+      rejectedQueries: ['"document retrieval" prior baseline failure'],
+      qualityReasons: ["The previous retrieval portfolio failed."],
+      sharedAnchorTerms: ["document", "retrieval"],
+      candidateTitles: [
+        "Stateful Interaction Robustness for Document Retrieval"
+      ],
+      queryFamilies: [],
+      scientificScopeFingerprint: undefined
+    });
+    const eventStream = new InMemoryEventStream();
+    const llm = new HangingLLMClient();
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "stateful interaction robustness",
+        "annotation disagreement stability"
+      ]),
+      runContextMemory: memory,
+      llm,
+      eventStream,
+      node: "collect_papers"
+    });
+
+    expect(result).toMatchObject({
+      source: "deterministic_fallback",
+      queries: [],
+      failureReason: expect.stringContaining(
+        "explicit_scope_timeout_fallback_rejected:literature_query_plan_candidate_title_support_below_floor:"
+      ),
+      repairDiagnostic: {
+        strategy: "explicit_scope_timeout_fallback_rejected",
+        sourceAttempt: 1,
+        selectedScopeAxisIds: expect.any(Array),
+        excludedRejectedScopeAxisIds: [],
+        validationFailureReason: expect.stringContaining(
+          "literature_query_plan_candidate_title_support_below_floor:"
+        ),
+        queryabilityTitleSource:
+          "executed_candidates_plus_prior_work_probe_hints",
+        finalCorpusGateUnchanged: true
+      }
+    });
+    expect(
+      eventStream.history().some((event) =>
+        JSON.stringify(event).includes(
+          "Deterministic explicit-scope timeout fallback was unavailable"
+        )
+      )
+    ).toBe(true);
+    expect(llm.calls).toBe(1);
+  });
+
+  it("explains why an explicit-scope timeout fallback has no admissible portfolio", async () => {
+    process.env.AUTOLABOS_LITERATURE_QUERY_TIMEOUT_MS = "5";
+
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-scope-exhausted-"));
+    const runId = "run-scope-exhausted-query";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const memory = new RunContextMemory(contextPath);
+    await recordLiteratureQueryPlanRejection(memory, {
+      rejectedQueries: [
+        '"document retrieval" confidence calibration',
+        '"document retrieval" stateful interaction robustness',
+        '"document retrieval" annotation disagreement stability',
+        '"document retrieval" external population validity'
+      ],
+      qualityReasons: ["Every executed family missed the direct-support floor."],
+      sharedAnchorTerms: ["document", "retrieval"],
+      candidateTitles: ["Document Retrieval: A General Overview"],
+      queryFamilies: [],
+      scientificScopeFingerprint: undefined
+    });
+    const eventStream = new InMemoryEventStream();
+    const llm = new HangingLLMClient();
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "confidence calibration",
+        "stateful interaction robustness",
+        "annotation disagreement stability",
+        "external population validity"
+      ]),
+      runContextMemory: memory,
+      llm,
+      eventStream,
+      node: "collect_papers"
+    });
+
+    expect(result).toMatchObject({
+      source: "deterministic_fallback",
+      queries: [],
+      failureReason: expect.stringContaining(
+        "explicit_scope_timeout_fallback_unavailable:insufficient_unused_scope_axes"
+      ),
+      repairDiagnostic: {
+        strategy: "explicit_scope_timeout_fallback_unavailable",
+        reason: "insufficient_unused_scope_axes",
+        requiredFamilyCount: 2,
+        eligibleCandidateCount: 1,
+        titleSupportedCandidateCount: 0,
+        excludedRejectedScopeAxisIds: expect.any(Array),
+        queryabilityTitleSource:
+          "executed_candidates_plus_prior_work_probe_hints",
+        finalCorpusGateUnchanged: true
+      }
+    });
+    expect(
+      eventStream.history().some((event) =>
+        JSON.stringify(event).includes(
+          "deterministic explicit-scope timeout fallback was unavailable"
+        )
+      )
+    ).toBe(true);
+    expect(llm.calls).toBe(1);
   });
 
   it("replans once when the first topic-discovery anchor is structurally too broad", async () => {
@@ -1444,7 +1704,7 @@ describe("collect-time LLM helpers", () => {
     expect(result?.topicDiscoveryPlan?.families).toHaveLength(2);
     expect(result?.topicDiscoveryPlan).toMatchObject({
       version: 4,
-      termNormalizationVersion: 4,
+      termNormalizationVersion: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
       candidateRecallSemanticsVersion: TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
       families: expect.arrayContaining([
         expect.objectContaining({

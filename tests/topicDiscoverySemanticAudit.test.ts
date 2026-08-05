@@ -56,10 +56,13 @@ describe("topic discovery semantic audit", () => {
         application_only: 1,
         uncertain: 1
       },
+      limits: {
+        timeout_ms: 120_000
+      },
       reasons: []
     });
     expect(audit.recall).toEqual({
-      provider_recall_floor_per_family: 4,
+      provider_recall_floor_per_family: 8,
       lexical_requested_pairs: 3,
       provider_provenance_requested_pairs: 0
     });
@@ -72,6 +75,13 @@ describe("topic discovery semantic audit", () => {
       "Consistency assessment for structured records"
     );
     expect(llm.calls[0]?.options?.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(llm.calls[0]?.prompt).toContain("12-240 characters long");
+    expect(llm.calls[0]?.prompt).toContain(
+      "do not use direct_support; choose application_only or uncertain"
+    );
+    expect(llm.calls[0]?.prompt).toContain(
+      '"verdict":"<direct_support|application_only|uncertain>"'
+    );
     expect(audit).not.toHaveProperty("response");
     expect(audit).not.toHaveProperty("completion");
   });
@@ -97,9 +107,37 @@ describe("topic discovery semantic audit", () => {
       paper_id: "paper-a",
       family_id: "family-a",
       verdict: "uncertain",
-      reason: "malformed_model_judgment"
+      reason: "invalid_direct_support_evidence_span"
     });
     expect(audit.counts.malformed_judgments).toBe(1);
+    expect(audit.protocol_violations).toContainEqual(expect.objectContaining({
+      code: "invalid_direct_support_evidence_span",
+      paper_id: "paper-a",
+      family_id: "family-a"
+    }));
+  });
+
+  it("keeps non-evidence schema failures in the generic malformed category", async () => {
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new CapturingLlm(response([{
+        paper_id: "paper-a",
+        family_id: "family-a",
+        verdict: "uncertain"
+      }])),
+      rows: rows(),
+      searchFamilies: families(),
+      lexicalMatchedFamilyIdsByPaper: matches([["paper-a", "family-a"]])
+    });
+
+    expect(audit.judgments[0]).toMatchObject({
+      verdict: "uncertain",
+      reason: "malformed_model_judgment"
+    });
+    expect(audit.protocol_violations).toContainEqual(expect.objectContaining({
+      code: "malformed_response_judgment",
+      paper_id: "paper-a",
+      family_id: "family-a"
+    }));
   });
 
   it("rejects tiny or contract-irrelevant exact substrings as direct evidence", async () => {
@@ -129,12 +167,12 @@ describe("topic discovery semantic audit", () => {
     expect(tiny.status).toBe("partial");
     expect(tiny.judgments[0]).toMatchObject({
       verdict: "uncertain",
-      reason: "malformed_model_judgment"
+      reason: "invalid_direct_support_evidence_span"
     });
     expect(irrelevant.status).toBe("partial");
     expect(irrelevant.judgments[0]).toMatchObject({
       verdict: "uncertain",
-      reason: "malformed_model_judgment"
+      reason: "invalid_direct_support_evidence_span"
     });
   });
 
@@ -198,7 +236,7 @@ describe("topic discovery semantic audit", () => {
     expect(audit.status).toBe("partial");
     expect(audit.judgments[0]).toMatchObject({
       verdict: "uncertain",
-      reason: "malformed_model_judgment"
+      reason: "invalid_direct_support_evidence_span"
     });
     expect(audit.counts.malformed_judgments).toBe(1);
   });
@@ -228,7 +266,7 @@ describe("topic discovery semantic audit", () => {
     expect(audit.status).toBe("partial");
     expect(audit.judgments[0]).toMatchObject({
       verdict: "uncertain",
-      reason: "malformed_model_judgment"
+      reason: "invalid_direct_support_evidence_span"
     });
     expect(audit.counts.malformed_judgments).toBe(1);
   });
@@ -260,7 +298,7 @@ describe("topic discovery semantic audit", () => {
     expect(audit.status).toBe("partial");
     expect(audit.judgments).toEqual([
       expect.objectContaining({ paper_id: "paper-a", verdict: "uncertain", reason: "duplicate_model_judgment" }),
-      expect.objectContaining({ paper_id: "paper-c", verdict: "uncertain", reason: "malformed_model_judgment" }),
+      expect.objectContaining({ paper_id: "paper-c", verdict: "uncertain", reason: "invalid_direct_support_evidence_span" }),
       expect.objectContaining({ paper_id: "paper-b", verdict: "uncertain", reason: "model_judgment_omitted" }),
       expect.objectContaining({ paper_id: "paper-d", verdict: "application_only" }),
       expect.objectContaining({ paper_id: "paper-e", verdict: "uncertain", reason: "conflicting_model_judgments" })
@@ -488,23 +526,102 @@ describe("topic discovery semantic audit", () => {
 
     expect(audit.status).toBe("complete");
     expect(audit.recall).toEqual({
-      provider_recall_floor_per_family: 4,
+      provider_recall_floor_per_family: 8,
       lexical_requested_pairs: 1,
-      provider_provenance_requested_pairs: 7
+      provider_provenance_requested_pairs: 8
     });
     expect(audit.reviewer_input_payload.requested_pairs).toEqual([
       { paper_id: "paper-a", family_id: "family-a", selection_source: "lexical_match" },
+      { paper_id: "paper-b", family_id: "family-b", selection_source: "provider_provenance_floor" },
+      { paper_id: "paper-b", family_id: "family-a", selection_source: "provider_provenance_floor" },
       { paper_id: "paper-e", family_id: "family-b", selection_source: "provider_provenance_floor" },
       { paper_id: "paper-d", family_id: "family-a", selection_source: "provider_provenance_floor" },
       { paper_id: "paper-c", family_id: "family-b", selection_source: "provider_provenance_floor" },
-      { paper_id: "paper-b", family_id: "family-a", selection_source: "provider_provenance_floor" },
-      { paper_id: "paper-d", family_id: "family-b", selection_source: "provider_provenance_floor" },
       { paper_id: "paper-c", family_id: "family-a", selection_source: "provider_provenance_floor" },
-      { paper_id: "paper-b", family_id: "family-b", selection_source: "provider_provenance_floor" }
+      { paper_id: "paper-d", family_id: "family-b", selection_source: "provider_provenance_floor" },
+      { paper_id: "paper-e", family_id: "family-a", selection_source: "provider_provenance_floor" }
     ]);
     expect(audit.judgments.some((item) =>
       item.paper_id === "unknown-paper" || item.family_id === "unknown-family"
     )).toBe(false);
+  });
+
+  it("fills provider recall from declared-scope proximity before raw provider rank", async () => {
+    const searchFamily: TopicDiscoverySemanticSearchFamilyContract = {
+      queryFamily: "family-a",
+      query: "language model agent trajectory attribution",
+      sharedAnchorTerms: ["language", "model", "agent"],
+      axisTerms: ["trajectory", "attribution"],
+      lens: "failure attribution from agent trajectories",
+      contributionIntent: "measure trajectory attribution"
+    };
+    const candidateRows = [
+      paper("raw-unrelated", "Trajectory attribution in tourism recovery"),
+      paper("raw-other", "Reproducible environmental accounting"),
+      paper("scope-only", "A survey of language model agents"),
+      paper("scope-partial", "Trajectory analysis for language model agents"),
+      paper("scope-acronym", "Trajectory attribution for LLM agents"),
+      paper("scope-direct", "Language model agent trajectory attribution"),
+      paper("scope-evidence", "Evidence for attribution in language model agent trajectories"),
+      paper("scope-errors", "Error attribution from language model agent trajectories"),
+      paper("scope-audit", "Auditing language model agent trajectory attribution"),
+      paper("scope-study", "A study of trajectory attribution for language model agents")
+    ];
+
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new EchoingUncertainLlm(),
+      rows: candidateRows,
+      searchFamilies: [searchFamily],
+      lexicalMatchedFamilyIdsByPaper: matches([]),
+      providerCandidatePaperIdsByFamily: new Map([["family-a", candidateRows.map(
+        (row) => row.paper_id
+      )]])
+    });
+
+    expect(audit.reviewer_input_payload.requested_pairs).toHaveLength(8);
+    expect(audit.reviewer_input_payload.requested_pairs.every(
+      (pair) => pair.paper_id.startsWith("scope-")
+    )).toBe(true);
+  });
+
+  it("reviews an exact title object phrase before loose body-level axis coincidences", async () => {
+    const searchFamily: TopicDiscoverySemanticSearchFamilyContract = {
+      queryFamily: "family-a",
+      query: "structured review workflow error calibration",
+      sharedAnchorTerms: ["structured", "review", "workflow"],
+      axisTerms: ["error", "calibration"],
+      lens: "error calibration in structured review workflows",
+      contributionIntent: "measure calibration"
+    };
+    const distractors = Array.from({ length: 8 }, (_, index) => paper(
+      `loose-body-${index + 1}`,
+      `Calibration analysis ${index + 1}`,
+      "A structured process measures error calibration. The workflow later includes review of unrelated outputs."
+    ));
+    const exactTitle = paper(
+      "exact-title-object",
+      "Structured Review Workflow: A Controlled Study",
+      "The study reports a bounded comparison."
+    );
+    const candidateRows = [...distractors, exactTitle];
+
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new EchoingUncertainLlm(),
+      rows: candidateRows,
+      searchFamilies: [searchFamily],
+      lexicalMatchedFamilyIdsByPaper: matches([]),
+      providerCandidatePaperIdsByFamily: new Map([[
+        "family-a",
+        candidateRows.map((row) => row.paper_id)
+      ]])
+    });
+
+    const requestedIds = audit.reviewer_input_payload.requested_pairs.map(
+      (pair) => pair.paper_id
+    );
+    expect(requestedIds).toHaveLength(8);
+    expect(requestedIds[0]).toBe("exact-title-object");
+    expect(requestedIds.filter((paperId) => paperId.startsWith("loose-body-"))).toHaveLength(7);
   });
 
   it("does not promote an unprovenanced provider candidate into semantic review", async () => {
@@ -739,6 +856,7 @@ function families(): TopicDiscoverySemanticSearchFamilyContract[] {
     {
       queryFamily: "family-a",
       query: "structured records consistency assessment",
+      sharedAnchorTerms: ["structured", "records"],
       axisTerms: ["consistency", "assessment"],
       lens: "consistency of structured records",
       contributionIntent: "measure and improve consistency assessment"
@@ -746,6 +864,7 @@ function families(): TopicDiscoverySemanticSearchFamilyContract[] {
     {
       queryFamily: "family-b",
       query: "structured records transfer analysis",
+      sharedAnchorTerms: ["structured", "records"],
       axisTerms: ["transfer", "analysis"],
       lens: "transfer behavior across record formats",
       contributionIntent: "characterize transfer behavior"

@@ -96,6 +96,10 @@ import {
 } from "../candidatePriorSearch.js";
 import { buildTopicDiscoveryScopeContract } from "../topicDiscoveryScopeContract.js";
 import {
+  normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms
+} from "../topicDiscoveryScientificTerms.js";
+import {
   buildTopicDiscoveryPriorWorkProbePlanningHints,
   runTopicDiscoveryPriorWorkProbes,
   TOPIC_DISCOVERY_PRIOR_WORK_PROBE_RECEIPT_ARTIFACT,
@@ -621,6 +625,9 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         configuredLimit: deps.config.papers.max_results,
         asOfDate: run.createdAt
       });
+      const plannedSearches = normalizedRequest.searchPlan.map(
+        serializeCollectQueryPlanSearch
+      );
       const collectQueryPlanArtifact = {
             ...TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT,
             collect_attempt_id: collectAttemptId,
@@ -672,18 +679,16 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
                   candidate_titles: priorWorkProbeReceipt.candidate_titles
                 }
               : undefined,
-            selected_families: normalizedRequest.searchPlan.map((search) => ({
-              query: search.request.query,
-              query_family: search.queryFamily,
-              retrieval_lane: search.retrievalLane,
-              source: search.source,
-              source_reason: search.sourceReason,
-              reason: search.reason,
-              retrieval_intent: search.request.retrievalIntent ?? "default",
-              sort: search.request.sort,
-              filters: search.request.filters,
-              topic_discovery_family: search.topicDiscoveryFamily
-            })),
+            selected_families:
+              normalizedRequest.strategy === "topic_portfolio"
+                ? buildTopicDiscoverySelectedFamilyArtifacts(
+                    normalizedRequest.searchPlan
+                  )
+                : plannedSearches,
+            planned_searches:
+              normalizedRequest.strategy === "topic_portfolio"
+                ? plannedSearches
+                : undefined,
             filter_policy: {
               applied: normalizedRequest.primaryRequest?.filters ?? {},
               suppressed: normalizedRequest.suppressedFilters
@@ -1382,6 +1387,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           searchFamilies: searchFamilies.map((family) => ({
             queryFamily: family.queryFamily,
             query: family.query,
+            sharedAnchorTerms: semanticRelevanceProfile.sharedAnchorTerms,
             axisTerms: family.axisTerms ?? [],
             lens: family.lens ?? "",
             contributionIntent: family.contributionIntent ?? ""
@@ -2229,6 +2235,85 @@ function isMultiQueryPortfolioStrategy(
 ): boolean {
   return strategy === "topic_portfolio"
     || strategy === "candidate_prior_portfolio";
+}
+
+function serializeCollectQueryPlanSearch(search: PlannedCollectSearch) {
+  return {
+    query: search.request.query,
+    query_family: search.queryFamily,
+    retrieval_lane: search.retrievalLane,
+    source: search.source,
+    source_reason: search.sourceReason,
+    reason: search.reason,
+    retrieval_intent: search.request.retrievalIntent ?? "default",
+    sort: search.request.sort,
+    filters: search.request.filters,
+    topic_discovery_family: search.topicDiscoveryFamily
+  };
+}
+
+function buildTopicDiscoverySelectedFamilyArtifacts(
+  searchPlan: PlannedCollectSearch[]
+) {
+  const selected = new Map<string, {
+    fingerprint: string;
+    artifact: {
+      query: string;
+      query_family: string;
+      source: PlannedCollectSearch["source"];
+      reason: LiteratureQueryCandidate["reason"];
+      topic_discovery_family: TopicDiscoverySearchFamilyIntent;
+    };
+  }>();
+  for (const search of searchPlan) {
+    const family = search.topicDiscoveryFamily;
+    if (!family || family.familyId !== search.queryFamily) {
+      throw new Error("topic_discovery_query_plan_family_projection_invalid");
+    }
+    const canonicalFamily: TopicDiscoverySearchFamilyIntent = {
+      ...family,
+      sharedAnchorTerms: [
+        ...new Set(normalizeTopicDiscoveryScientificObjectTerms(
+          family.sharedAnchorTerms.join(" ")
+        ))
+      ],
+      axisTerms: [
+        ...new Set(normalizeTopicDiscoveryCandidateTerms(
+          family.axisTerms.join(" ")
+        ))
+      ]
+    };
+    if (
+      canonicalFamily.sharedAnchorTerms.length < 2
+      || canonicalFamily.axisTerms.length === 0
+    ) {
+      throw new Error("topic_discovery_query_plan_family_projection_invalid");
+    }
+    const fingerprint = JSON.stringify({
+      query: search.request.query,
+      source: search.source,
+      reason: search.reason,
+      family: canonicalFamily
+    });
+    const existing = selected.get(search.queryFamily);
+    if (existing) {
+      if (existing.fingerprint !== fingerprint) {
+        throw new Error("topic_discovery_query_plan_family_projection_invalid");
+      }
+      continue;
+    }
+    selected.set(search.queryFamily, {
+      fingerprint,
+      artifact: {
+        query: search.request.query,
+        query_family: search.queryFamily,
+        source: search.source,
+        reason: search.reason,
+        topic_discovery_family: canonicalFamily
+      }
+    });
+  }
+  return Array.from(selected.values(), ({ artifact }) => artifact);
 }
 
 function normalizeCollectRequest(input: {

@@ -75,7 +75,7 @@ Required structure:
 ## Scientific Scope
 
 ### Scientific Object
-- [one concise 2-to-5-term domain object used as the shared search anchor]
+- [one concise 2-to-3-term domain object used as the shared search anchor]
 
 ### Empirical Problems
 - [observable problem or failure relation]

@@ -166,10 +166,22 @@ Workflow-native topic discovery has a distinct run-scoped artifact class:
 - `collect_query_plan.json` version 7 records the versioned query-family
   contracts, their stable identifiers, the hash-bound scientific-scope
   contract, sentence-role audit units, and per-family scope-lineage diagnostics.
+  For topic discovery, `selected_families` contains each family contract once;
+  its shared scientific-object anchors and empirical-axis terms use the
+  versioned canonical term representation consumed by semantic review and
+  quality gates. Planner surface forms remain visible in the executable lane
+  provenance rather than becoming a second scientific contract.
+  `planned_searches` separately preserves every recent-prior and broad-relevance
+  retrieval lane so execution provenance does not duplicate family identity.
   The scope artifact uses
   a brief fingerprint, an anchor-independent scope fingerprint, and an
   anchor-bound contract fingerprint so resumed planning cannot silently reuse
   stale feedback or replace the executed anchor.
+- PDF analysis keeps layout-preserving text for section selection and page-image
+  planning, but exact evidence grounding uses a separate reading-order
+  extraction so two-column serialization cannot interleave otherwise verbatim
+  sentences. Changes to this representation invalidate both the text-cache
+  semantics and the paper-analysis evidence semantics.
 - `collect_prior_work_probe_receipt.json` records every executed
   brief-declared probe, provider diagnostics, bounded candidate titles, and the
   explicit `query_hint_only` / `paper_evidence_allowed=false` boundary.
@@ -186,8 +198,12 @@ Workflow-native topic discovery has a distinct run-scoped artifact class:
   only when the reviewer-input hash remains unchanged. The review artifact
   records both attempts, input-integrity status, and budget exhaustion under a
   `frozen_input_single_retry_v1` recovery trace; query planning and provider
-  retrieval are not rerun for this recovery.
-- `collect_corpus_quality.json` version 4 admits only direct-support pairs,
+  retrieval are not rerun for this recovery. Collection and both downstream
+  lineage validators use the same deterministic anchor/axis-aware provider
+  fallback ranking when reconstructing the frozen paper-family pair universe.
+- `collect_corpus_quality.json` version 8 admits only direct-support pairs
+  from families that independently meet the direct-support and semantic
+  precision floors,
   exposes application-only and uncertain counts plus per-family semantic
   precision, and fails closed when the review is partial or operationally
   unavailable.

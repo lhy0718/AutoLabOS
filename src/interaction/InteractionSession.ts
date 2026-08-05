@@ -1950,7 +1950,8 @@ export class InteractionSession {
       run.id,
       "collect_papers",
       "safe",
-      fromRecollectAlias ? `recollect +${request.additional ?? 0}` : "collect command"
+      fromRecollectAlias ? `recollect +${request.additional ?? 0}` : "collect command",
+      { resetCurrent: true }
     );
 
     this.pushLog(

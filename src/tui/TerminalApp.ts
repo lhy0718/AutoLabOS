@@ -24,6 +24,7 @@ import { AutoLabOSEvent, EventStream, readPersistedRunEvents } from "../core/eve
 import {
   buildCodexModelSelectionChoices,
   DEFAULT_CODEX_MODEL,
+  GPT_5_6_TERRA_MODEL,
   getCodexModelSelectionDescription,
   getCurrentCodexModelSelectionValue,
   getReasoningEffortChoicesForModel,
@@ -33,6 +34,7 @@ import {
 } from "../integrations/codex/modelCatalog.js";
 import {
   DEFAULT_OPENAI_RESPONSES_MODEL,
+  DEFAULT_OPENAI_RESPONSES_CHAT_MODEL,
   DEFAULT_OPENAI_RESPONSES_REASONING_EFFORT,
   OPENAI_RESPONSES_MODEL_OPTIONS,
   getOpenAiResponsesReasoningOptions,
@@ -4028,7 +4030,8 @@ export class TerminalApp {
       run.id,
       "collect_papers",
       "safe",
-      fromRecollectAlias ? `recollect +${request.additional ?? 0}` : "collect command"
+      fromRecollectAlias ? `recollect +${request.additional ?? 0}` : "collect command",
+      { resetCurrent: true }
     );
 
     const summaryPrefix = request.additional
@@ -5140,18 +5143,19 @@ export class TerminalApp {
     if (this.config.providers.llm_mode === "ollama") {
       return this.getRecommendedOllamaModel(slot);
     }
+    const reasoning = slot === "chat" ? "medium" : "high";
     if (this.config.providers.llm_mode === "openai_api") {
-      return `${this.getRecommendedOpenAiModel(slot)} + medium`;
+      return `${this.getRecommendedOpenAiModel(slot)} + ${reasoning}`;
     }
-    return `${this.getRecommendedCodexSelection(slot)} + medium`;
+    return `${this.getRecommendedCodexSelection(slot)} + ${reasoning}`;
   }
 
   private getRecommendedCodexSelection(slot: "chat" | "task"): string {
-    return slot === "chat" ? DEFAULT_CODEX_MODEL : RECOMMENDED_CODEX_MODEL;
+    return slot === "chat" ? GPT_5_6_TERRA_MODEL : RECOMMENDED_CODEX_MODEL;
   }
 
   private getRecommendedOpenAiModel(slot: "chat" | "task"): string {
-    return DEFAULT_OPENAI_RESPONSES_MODEL;
+    return slot === "chat" ? DEFAULT_OPENAI_RESPONSES_CHAT_MODEL : DEFAULT_OPENAI_RESPONSES_MODEL;
   }
 
   private getCurrentOllamaSlotModel(slot: "chat" | "task"): string {

@@ -227,6 +227,38 @@ export type LiteratureQueryPlanRepairDiagnostic =
       preservedQueries: string[];
       replacementFamilyIds: string[];
       finalCorpusGateUnchanged: true;
+    }
+  | {
+      strategy: "explicit_scope_timeout_fallback";
+      sourceAttempt: number;
+      selectedScopeAxisIds: string[];
+      excludedRejectedScopeAxisIds: string[];
+      queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
+      finalCorpusGateUnchanged: true;
+    }
+  | {
+      strategy: "explicit_scope_timeout_fallback_rejected";
+      sourceAttempt: number;
+      selectedScopeAxisIds: string[];
+      excludedRejectedScopeAxisIds: string[];
+      validationFailureReason: string;
+      queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
+      finalCorpusGateUnchanged: true;
+    }
+  | {
+      strategy: "explicit_scope_timeout_fallback_unavailable";
+      sourceAttempt: number;
+      reason:
+        | "scope_contract_not_executable"
+        | "insufficient_unused_scope_axes"
+        | "no_title_supported_unused_scope_axis"
+        | "family_normalization_failed";
+      requiredFamilyCount: number;
+      eligibleCandidateCount: number;
+      titleSupportedCandidateCount: number;
+      excludedRejectedScopeAxisIds: string[];
+      queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
+      finalCorpusGateUnchanged: true;
     };
 
 interface NormalizedTopicDiscoveryQueryPlan {
@@ -379,10 +411,10 @@ export async function resolveGeneratedLiteratureQueries(
         feedback.sharedAnchorTerms
       )
     : undefined;
-  if (scientificScopeContract?.sharedAnchorTerms.length) {
+  if (scientificScopeContract?.queryAnchorTerms.length) {
     feedback = normalizeLiteratureQueryPlanFeedback({
       ...feedback,
-      sharedAnchorTerms: scientificScopeContract.sharedAnchorTerms
+      sharedAnchorTerms: scientificScopeContract.queryAnchorTerms
     });
   }
   const plannerIdentity = cleanText(input.plannerIdentity) || "unspecified";
@@ -772,6 +804,121 @@ export async function resolveGeneratedLiteratureQueries(
           };
         }
       }
+      const fallbackScopeContract = scientificScopeContract;
+      const timeoutFallback =
+        topicDiscovery
+        && isLiteratureQueryTimeoutFailure(message)
+        && fallbackScopeContract
+          ? buildDeterministicTopicDiscoveryTimeoutFallback({
+              contract: fallbackScopeContract,
+              feedback: planningFeedback,
+              priorWorkProbeHints,
+              minimumIndependentQueries,
+              sourceAttempt: attempt
+            })
+          : undefined;
+      if (timeoutFallback?.status === "ready" && fallbackScopeContract) {
+        let scientificScopeDiagnostic = assessPlanAgainstScientificScope(
+          timeoutFallback.plan,
+          timeoutFallback.validationFeedback,
+          fallbackScopeContract
+        );
+        const fallbackRejection = validateTopicDiscoveryPlanAgainstFeedback(
+          timeoutFallback.plan,
+          timeoutFallback.validationFeedback,
+          scientificScopeDiagnostic
+        );
+        if (!fallbackRejection) {
+          scientificScopeContract = await bindAndPersistTopicDiscoveryScopeContract(
+            input.runContextMemory,
+            fallbackScopeContract,
+            timeoutFallback.plan.topicDiscoveryPlan?.sharedAnchorTerms ?? []
+          );
+          scientificScopeDiagnostic = assessPlanAgainstScientificScope(
+            timeoutFallback.plan,
+            timeoutFallback.validationFeedback,
+            scientificScopeContract
+          );
+          input.eventStream?.emit({
+            type: "OBS_RECEIVED",
+            runId: input.run.id,
+            node: input.node,
+            payload: {
+              text:
+                "Literature query planner timed out; using a deterministic explicit-scope fallback "
+                + "with " + timeoutFallback.plan.queries.length + " unused family/families. "
+                + "Prior-work titles affected queryability ranking only; final corpus quality gates remain unchanged."
+            }
+          });
+          return {
+            ...timeoutFallback.plan,
+            source: "deterministic_fallback",
+            repairDiagnostic: timeoutFallback.diagnostic,
+            scientificScopeContract,
+            scientificScopeDiagnostic
+          };
+        }
+        input.eventStream?.emit({
+          type: "OBS_RECEIVED",
+          runId: input.run.id,
+          node: input.node,
+          payload: {
+            text:
+              "Deterministic explicit-scope timeout fallback was unavailable: "
+              + fallbackRejection
+          }
+        });
+        const rejectionDiagnostic: Extract<
+          LiteratureQueryPlanRepairDiagnostic,
+          { strategy: "explicit_scope_timeout_fallback_rejected" }
+        > = {
+          strategy: "explicit_scope_timeout_fallback_rejected",
+          sourceAttempt: timeoutFallback.diagnostic.sourceAttempt,
+          selectedScopeAxisIds:
+            timeoutFallback.diagnostic.selectedScopeAxisIds,
+          excludedRejectedScopeAxisIds:
+            timeoutFallback.diagnostic.excludedRejectedScopeAxisIds,
+          validationFailureReason: fallbackRejection,
+          queryabilityTitleSource:
+            "executed_candidates_plus_prior_work_probe_hints",
+          finalCorpusGateUnchanged: true
+        };
+        return {
+          source: "deterministic_fallback",
+          queries: [],
+          assumptions: [],
+          failureReason:
+            `${message};explicit_scope_timeout_fallback_rejected:${fallbackRejection}`,
+          ...(attemptDiagnostics.length > 0 ? { attemptDiagnostics } : {}),
+          repairDiagnostic: rejectionDiagnostic,
+          scientificScopeContract,
+          scientificScopeDiagnostic
+        };
+      }
+      if (timeoutFallback?.status === "unavailable") {
+        const unavailableReason = formatTimeoutFallbackUnavailableReason(
+          timeoutFallback.diagnostic
+        );
+        input.eventStream?.emit({
+          type: "OBS_RECEIVED",
+          runId: input.run.id,
+          node: input.node,
+          payload: {
+            text:
+              `Literature query planner timed out (${message}); deterministic explicit-scope timeout fallback was unavailable: `
+              + unavailableReason
+          }
+        });
+        return {
+          source: "deterministic_fallback",
+          queries: [],
+          assumptions: [],
+          failureReason: `${message};${unavailableReason}`,
+          ...(attemptDiagnostics.length > 0 ? { attemptDiagnostics } : {}),
+          repairDiagnostic: timeoutFallback.diagnostic,
+          scientificScopeContract
+        };
+      }
       input.eventStream?.emit({
         type: "OBS_RECEIVED",
         runId: input.run.id,
@@ -870,7 +1017,7 @@ function buildLiteratureQueryPrompt(
       ? [
           "",
           "Authoritative scientific-scope contract:",
-          `- Return this exact brief-declared shared anchor: ${scientificScopeContract.declaredAnchorTerms.join(" ") || "unavailable"}.`,
+          `- Return this exact brief-declared shared anchor: ${scientificScopeContract.queryAnchorTerms.join(" ") || "unavailable"}.`,
           "- Axis-authority units (each family must retain at least two terms from exactly one unit):",
           ...(scientificScopeContract.axes.length > 0
             ? scientificScopeContract.axes.map((axis) =>
@@ -931,9 +1078,9 @@ function buildLiteratureQueryPrompt(
           ...(feedback.candidateTitles.length > 0
             ? feedback.candidateTitles.map((title) => `  - ${title}`)
             : ["  - none"]),
-          ...(feedback.rejectedQueries.length > 0 && scientificScopeContract?.sharedAnchorTerms.length
+          ...(feedback.rejectedQueries.length > 0 && scientificScopeContract?.queryAnchorTerms.length
             ? [
-                `- The executed shared anchor is immutable for this recovery generation: return exactly ${scientificScopeContract.sharedAnchorTerms.join(" ")}.`
+                `- The executed shared anchor is immutable for this recovery generation: return exactly ${scientificScopeContract.queryAnchorTerms.join(" ")}.`
               ]
             : []),
           ...(scientificScopeContract?.enforced
@@ -1330,6 +1477,276 @@ function buildBoundedTopicDiscoveryPlanRepair(
       )
     }
   };
+}
+
+function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
+  contract: TopicDiscoveryScopeContract;
+  feedback: LiteratureQueryPlanFeedback;
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[];
+  minimumIndependentQueries: number;
+  sourceAttempt: number;
+}):
+  | {
+      status: "ready";
+      plan: GeneratedLiteratureQueries;
+      diagnostic: Extract<
+        LiteratureQueryPlanRepairDiagnostic,
+        { strategy: "explicit_scope_timeout_fallback" }
+      >;
+      validationFeedback: LiteratureQueryPlanFeedback;
+    }
+  | {
+      status: "unavailable";
+      diagnostic: Extract<
+        LiteratureQueryPlanRepairDiagnostic,
+        { strategy: "explicit_scope_timeout_fallback_unavailable" }
+      >;
+    } {
+  const unavailable = (
+    reason: Extract<
+      LiteratureQueryPlanRepairDiagnostic,
+      { strategy: "explicit_scope_timeout_fallback_unavailable" }
+    >["reason"],
+    details: {
+      eligibleCandidateCount?: number;
+      titleSupportedCandidateCount?: number;
+      excludedRejectedScopeAxisIds?: string[];
+    } = {}
+  ) => ({
+    status: "unavailable" as const,
+    diagnostic: {
+      strategy: "explicit_scope_timeout_fallback_unavailable" as const,
+      sourceAttempt: input.sourceAttempt,
+      reason,
+      requiredFamilyCount: input.minimumIndependentQueries,
+      eligibleCandidateCount: details.eligibleCandidateCount ?? 0,
+      titleSupportedCandidateCount: details.titleSupportedCandidateCount ?? 0,
+      excludedRejectedScopeAxisIds:
+        details.excludedRejectedScopeAxisIds ?? [],
+      queryabilityTitleSource:
+        "executed_candidates_plus_prior_work_probe_hints" as const,
+      finalCorpusGateUnchanged: true as const
+    }
+  });
+  if (
+    !input.contract.enforced
+    || input.contract.contractSource !== "explicit_scientific_scope"
+    || input.contract.sharedAnchorTerms.length < 2
+    || input.contract.sharedAnchorTerms.length > 3
+  ) {
+    return unavailable("scope_contract_not_executable");
+  }
+  const queryabilityTitles = mergeCandidateTitleFeedback(
+    input.feedback.candidateTitles,
+    input.priorWorkProbeHints.flatMap((hint) => hint.candidateTitles)
+  );
+  const rejectedQueryKeys = new Set(
+    input.feedback.rejectedQueries
+      .map(normalizeQueryForComparison)
+      .filter(Boolean)
+  );
+  const rejectedAxisTerms = [
+    ...input.feedback.rejectedQueries.flatMap((query) => {
+      const parsed = parseTopicDiscoveryLiteratureQuery(query);
+      return parsed ? [parsed.axisTerms] : [];
+    }),
+    ...input.feedback.queryFamilies.flatMap((family) =>
+      rejectedQueryKeys.has(normalizeQueryForComparison(family.query))
+        ? [normalizeTopicDiscoveryScientificTerms(family.axisTerms.join(" "))]
+        : []
+    )
+  ];
+  const anchorTerms = new Set(
+    normalizeTopicDiscoveryScientificTerms(
+      input.contract.sharedAnchorTerms.join(" ")
+    )
+  );
+  const unitsByHash = new Map(
+    input.contract.units.map((unit) => [unit.sourceTextSha256, unit] as const)
+  );
+  const excludedRejectedScopeAxisIds: string[] = [];
+  const candidates = input.contract.axes.flatMap((axis, index) => {
+    const normalizedSourceTerms = [
+      ...new Set(normalizeTopicDiscoveryScientificTerms(axis.sourceTerms.join(" ")))
+    ].filter((term) => !anchorTerms.has(term));
+    if (
+      rejectedAxisTerms.some((rejectedTerms) =>
+        rejectedTerms.length >= 2
+        && rejectedTerms.every((term) => normalizedSourceTerms.includes(term))
+      )
+    ) {
+      excludedRejectedScopeAxisIds.push(axis.id);
+      return [];
+    }
+    const axisTerms = selectDeterministicScopeAxisTerms(
+      normalizedSourceTerms,
+      queryabilityTitles
+    );
+    if (!axisTerms) {
+      return [];
+    }
+    const query = buildTopicDiscoveryLiteratureQuery(
+      input.contract.queryAnchorTerms.join(" "),
+      axisTerms.join(" ")
+    );
+    const parsedQuery = parseTopicDiscoveryLiteratureQuery(query);
+    if (!parsedQuery) {
+      return [];
+    }
+    const sourceText =
+      unitsByHash.get(axis.sourceTextSha256)?.sourceText
+      || axisTerms.join(" ");
+    return [{
+      index,
+      scopeAxisId: axis.id,
+      titleSupport: countCandidateTitleSupport(
+        parsedQuery.axisTerms,
+        queryabilityTitles
+      ),
+      family: {
+        id: axis.id,
+        query: parsedQuery.query,
+        sharedAnchorTerms: parsedQuery.sharedAnchorTerms,
+        axisTerms: parsedQuery.axisTerms,
+        ...inferTopicDiscoveryFamilyContract(sourceText)
+      }
+    }];
+  });
+  const selectedCandidates = candidates
+    .sort((left, right) =>
+      right.titleSupport - left.titleSupport
+      || left.index - right.index
+      || left.scopeAxisId.localeCompare(right.scopeAxisId)
+    )
+    .slice(0, input.minimumIndependentQueries);
+  const titleSupportedCandidateCount = candidates.filter(
+    (candidate) => candidate.titleSupport > 0
+  ).length;
+  if (selectedCandidates.length < input.minimumIndependentQueries) {
+    return unavailable("insufficient_unused_scope_axes", {
+      eligibleCandidateCount: candidates.length,
+      titleSupportedCandidateCount,
+      excludedRejectedScopeAxisIds
+    });
+  }
+  if (selectedCandidates.every((candidate) => candidate.titleSupport === 0)) {
+    return unavailable("no_title_supported_unused_scope_axis", {
+      eligibleCandidateCount: candidates.length,
+      titleSupportedCandidateCount,
+      excludedRejectedScopeAxisIds
+    });
+  }
+  const normalized = selectNormalizedTopicDiscoveryFamilies(
+    selectedCandidates.map((candidate) => candidate.family)
+  );
+  if (
+    !normalized
+    || normalized.queries.length < input.minimumIndependentQueries
+  ) {
+    return unavailable("family_normalization_failed", {
+      eligibleCandidateCount: candidates.length,
+      titleSupportedCandidateCount,
+      excludedRejectedScopeAxisIds
+    });
+  }
+  return {
+    status: "ready",
+    plan: {
+      source: "llm_bounded_repair",
+      queries: normalized.queries,
+      assumptions: [
+        "The LLM query planner timed out, so replacement families were compiled only from unused explicit brief axes.",
+        "Prior-work probe titles were used only to rank queryability; semantic review and final corpus quality gates remain unchanged."
+      ],
+      topicDiscoveryPlan: normalized.plan
+    },
+    diagnostic: {
+      strategy: "explicit_scope_timeout_fallback",
+      sourceAttempt: input.sourceAttempt,
+      selectedScopeAxisIds: selectedCandidates.map(
+        (candidate) => candidate.scopeAxisId
+      ),
+      excludedRejectedScopeAxisIds,
+      queryabilityTitleSource:
+        "executed_candidates_plus_prior_work_probe_hints",
+      finalCorpusGateUnchanged: true
+    },
+    validationFeedback: normalizeLiteratureQueryPlanFeedback({
+      ...input.feedback,
+      candidateTitles: queryabilityTitles
+    })
+  };
+}
+
+function formatTimeoutFallbackUnavailableReason(
+  diagnostic: Extract<
+    LiteratureQueryPlanRepairDiagnostic,
+    { strategy: "explicit_scope_timeout_fallback_unavailable" }
+  >
+): string {
+  return [
+    `explicit_scope_timeout_fallback_unavailable:${diagnostic.reason}`,
+    `required=${diagnostic.requiredFamilyCount}`,
+    `eligible=${diagnostic.eligibleCandidateCount}`,
+    `title_supported=${diagnostic.titleSupportedCandidateCount}`,
+    `excluded=${diagnostic.excludedRejectedScopeAxisIds.length}`
+  ].join(";");
+}
+
+function selectDeterministicScopeAxisTerms(
+  sourceTerms: string[],
+  queryabilityTitles: string[]
+): string[] | undefined {
+  const genericTerms = new Set(["explicit", "tool", "tools", "versu"]);
+  const terms = [...new Set(sourceTerms)]
+    .filter(isSubstantiveTopicDiscoveryAxisTerm)
+    .filter((term) => !genericTerms.has(term));
+  if (terms.length < 2) {
+    return undefined;
+  }
+  const candidates: Array<{
+    terms: string[];
+    support: number;
+    span: number;
+    order: number;
+  }> = [];
+  let order = 0;
+  for (const size of [3, 2]) {
+    for (let first = 0; first < terms.length; first += 1) {
+      for (let second = first + 1; second < terms.length; second += 1) {
+        if (size === 2) {
+          const selected = [terms[first], terms[second]];
+          candidates.push({
+            terms: selected,
+            support: countCandidateTitleSupport(selected, queryabilityTitles),
+            span: second - first,
+            order: order++
+          });
+          continue;
+        }
+        for (let third = second + 1; third < terms.length; third += 1) {
+          const selected = [terms[first], terms[second], terms[third]];
+          candidates.push({
+            terms: selected,
+            support: countCandidateTitleSupport(selected, queryabilityTitles),
+            span: third - first,
+            order: order++
+          });
+        }
+      }
+    }
+  }
+  return candidates
+    .sort((left, right) =>
+      right.support - left.support
+      || right.terms.length - left.terms.length
+      || left.span - right.span
+      || left.order - right.order
+    )[0]?.terms;
+}
+
+function isLiteratureQueryTimeoutFailure(message: string): boolean {
+  return /^literature_query_timeout_after_\d+ms$/u.test(message);
 }
 
 function buildBoundedUnsupportedExploratoryPlan(

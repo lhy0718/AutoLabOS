@@ -22,6 +22,7 @@ import {
   validateCandidatePriorSearchReceipt
 } from "../src/core/candidatePriorSearch.js";
 import { buildPriorAbsorptionCandidateContract } from "../src/core/priorAbsorption.js";
+import { TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION } from "../src/core/topicDiscoveryScientificTerms.js";
 import type { HypothesisCandidate } from "../src/core/analysis/researchPlanning.js";
 import { createHash } from "node:crypto";
 
@@ -560,7 +561,7 @@ describe("topic-discovery deterministic collection portfolio", () => {
     });
     expect(queryPlan.planner?.scientific_scope_contract).toMatchObject({
       version: 3,
-      termNormalizationVersion: 4,
+      termNormalizationVersion: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
       briefFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       scopeFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
       contractFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u)
@@ -909,10 +910,10 @@ describe("topic-discovery deterministic collection portfolio", () => {
           && row.retrieval_status === "retrieved_governance_usable"
       )
     ).toBe(true);
-    expect(candidateRows.filter((row) => row.semantic_review_requested)).toHaveLength(10);
+    expect(candidateRows.filter((row) => row.semantic_review_requested)).toHaveLength(12);
     expect(candidateRows.flatMap((row) => row.semantic_review_selections ?? []).filter(
       (selection) => selection.selection_source === "provider_provenance_floor"
-    )).toHaveLength(4);
+    )).toHaveLength(8);
     expect(candidateRows.filter((row) => row.selected_by_semantic_quality)).toHaveLength(6);
     expect(candidateRows.some((row) => row.published_in_corpus)).toBe(false);
 
@@ -1003,13 +1004,28 @@ describe("topic-discovery deterministic collection portfolio", () => {
     ).toBe(true);
     const queryPlan = await readJson<{
       version?: number;
-      planner?: { source?: string; failure_reason?: string };
+      planner?: {
+        source?: string;
+        failure_reason?: string;
+        repair_diagnostic?: {
+          strategy?: string;
+          reason?: string;
+          requiredFamilyCount?: number;
+        };
+      };
       selected_families?: unknown[];
     }>(path.join(runDir, "collect_query_plan.json"));
     expect(queryPlan.version).toBe(TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.version);
     expect(queryPlan.planner).toMatchObject({
       source: "deterministic_fallback",
-      failure_reason: "literature_query_timeout_after_5ms"
+      failure_reason: expect.stringContaining(
+        "literature_query_timeout_after_5ms;explicit_scope_timeout_fallback_unavailable:"
+      ),
+      repair_diagnostic: {
+        strategy: "explicit_scope_timeout_fallback_unavailable",
+        reason: "no_title_supported_unused_scope_axis",
+        requiredFamilyCount: 2
+      }
     });
     expect(queryPlan.selected_families).toEqual([]);
   });
@@ -1034,7 +1050,7 @@ describe("topic-discovery deterministic collection portfolio", () => {
       "- document review evidence",
       "",
       "### Empirical Problems",
-      "- defect localization under incomplete records",
+      "- automatic localization under incomplete records",
       "- revision consistency across reviewer rounds",
       "- metric mismatch across result tables",
       "",
@@ -1047,7 +1063,7 @@ describe("topic-discovery deterministic collection portfolio", () => {
     const llm = new CapturingJsonLLMClient(JSON.stringify({
       shared_anchor: "document review evidence",
       families: [
-        { axis: "defect localization" },
+        { axis: "automatic localization" },
         { axis: "revision consistency" },
         { axis: "metric mismatch" }
       ],
@@ -1104,15 +1120,50 @@ describe("topic-discovery deterministic collection portfolio", () => {
     expect(corpus).not.toContain("paper_prior_probe_only");
     expect(candidatePool).not.toContain("paper_prior_probe_only");
     const queryPlan = await readJson<{
-      selected_families?: Array<{ source?: string }>;
+      selected_families?: Array<{
+        query_family?: string;
+        source?: string;
+        topic_discovery_family?: {
+          sharedAnchorTerms?: string[];
+          axisTerms?: string[];
+        };
+      }>;
+      planned_searches?: Array<{
+        query_family?: string;
+        retrieval_lane?: string;
+        topic_discovery_family?: {
+          axisTerms?: string[];
+        };
+      }>;
       prior_work_probe_receipt?: {
         paper_evidence_allowed?: boolean;
       };
     }>(path.join(runDir, "collect_query_plan.json"));
-    expect(queryPlan.selected_families).toHaveLength(6);
+    expect(queryPlan.selected_families).toHaveLength(3);
+    expect(new Set(queryPlan.selected_families?.map(
+      (family) => family.query_family
+    )).size).toBe(3);
     expect(queryPlan.selected_families?.every(
       (family) => family.source === "llm_query_planner"
     )).toBe(true);
+    expect(queryPlan.selected_families?.every(
+      (family) => JSON.stringify(
+        family.topic_discovery_family?.sharedAnchorTerms
+      ) === JSON.stringify(["document", "review", "evidence"])
+    )).toBe(true);
+    expect(queryPlan.selected_families?.flatMap(
+      (family) => family.topic_discovery_family?.axisTerms ?? []
+    )).toContain("automat");
+    expect(queryPlan.selected_families?.flatMap(
+      (family) => family.topic_discovery_family?.axisTerms ?? []
+    )).not.toContain("automatic");
+    expect(queryPlan.planned_searches).toHaveLength(6);
+    expect(new Set(queryPlan.planned_searches?.map(
+      (search) => search.retrieval_lane
+    ))).toEqual(new Set(["broad_relevance", "recent_direct_prior"]));
+    expect(queryPlan.planned_searches?.flatMap(
+      (search) => search.topic_discovery_family?.axisTerms ?? []
+    )).toContain("automatic");
     expect(queryPlan.prior_work_probe_receipt?.paper_evidence_allowed).toBe(false);
   });
 

@@ -42,6 +42,17 @@ describe("live-validation continue helper", () => {
     for (const scriptName of helperScripts) {
       await expect(access(path.join(repoRoot, "scripts", scriptName))).resolves.toBeUndefined();
     }
+    for (const scriptName of [
+      "live-validation-start-run.py",
+      "live-validation-resume-check.py",
+      "live-validation-approve-and-run-next.py",
+    ]) {
+      const source = await readFile(path.join(repoRoot, "scripts", scriptName), "utf8");
+      expect(source).toMatch(
+        /send_line\(master_fd, "\/quit"\)[\s\S]*?wait_for\(master_fd, r"Bye", 20,[\s\S]*?proc\.wait\(timeout=5\)/u
+      );
+      expect(source).toContain("if proc.poll() is None:");
+    }
     const scriptNames = await readdir(path.join(repoRoot, "scripts"));
     expect(scriptNames.filter((name) => /^p\d+-/iu.test(name))).toEqual([]);
 
@@ -173,6 +184,54 @@ describe("live-validation continue helper", () => {
       expect(checkIds).not.toContain("required_python_modules");
       expect(checkIds).not.toContain("cuda_visible");
       expect(checkIds).not.toContain("acl_template_available");
+    } finally {
+      await rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("writes role-specific GPT-5.6 defaults into a validation workspace", async () => {
+    const tempRoot = await mkdtemp(path.join(os.tmpdir(), "autolabos-preflight-models-"));
+    const workspace = path.join(tempRoot, "workspace");
+    const outDir = path.join(tempRoot, "out");
+    const briefRelativePath = path.join("briefs", "governed.md");
+    const target = path.join(workspace, briefRelativePath);
+    const script = path.join(repoRoot, "scripts", "live-validation-preflight.mjs");
+
+    try {
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(
+        target,
+        await readFile(
+          path.join(repoRoot, "docs", "research", "budgeted-evaluation-topic-discovery-brief.md"),
+          "utf8"
+        ),
+        "utf8"
+      );
+      await execFileAsync("node", [script], {
+        env: {
+          ...process.env,
+          AUTOLABOS_VALIDATION_WORKSPACE: workspace,
+          AUTOLABOS_VALIDATION_PREFLIGHT_OUT: outDir,
+          AUTOLABOS_VALIDATION_BRIEF: briefRelativePath,
+          AUTOLABOS_VALIDATION_BRIEF_SOURCE: "",
+          AUTOLABOS_VALIDATION_PREFLIGHT_PROFILE: "generic",
+          AUTOLABOS_VALIDATION_CODEX_MODEL: "",
+          AUTOLABOS_VALIDATION_CODEX_CHAT_MODEL: "",
+          AUTOLABOS_VALIDATION_CODEX_EXPERIMENT_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_CHAT_MODEL: "",
+          AUTOLABOS_VALIDATION_OPENAI_EXPERIMENT_MODEL: ""
+        }
+      });
+
+      const config = await readFile(
+        path.join(workspace, ".autolabos", "config.yaml"),
+        "utf8"
+      );
+      expect(config).toContain('model: "gpt-5.6-sol"');
+      expect(config).toContain('chat_model: "gpt-5.6-terra"');
+      expect(config).toContain('experiment_model: "gpt-5.6-sol"');
+      expect(config).not.toContain("gpt-5.5");
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

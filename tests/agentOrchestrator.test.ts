@@ -643,6 +643,65 @@ describe("AgentOrchestrator (state graph)", () => {
     });
   });
 
+  it("replans a topic portfolio instead of replaying its final retrieval lane", async () => {
+    const registry = new DeterministicRegistry({
+      analyze_papers: failingNode("analyze_papers", "analysis failed")
+    });
+    const { store, orchestrator } = await setup(registry);
+
+    const run = await store.createRun({
+      title: "Run",
+      topic: "structured evidence assessment under bounded retrieval",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "analyze_papers";
+    run.graph.currentNode = "analyze_papers";
+    run.status = "running";
+    run.graph.nodeStates.collect_papers = {
+      status: "completed",
+      updatedAt: new Date().toISOString(),
+      note: "Portfolio collection completed."
+    };
+    run.graph.nodeStates.analyze_papers = {
+      status: "pending",
+      updatedAt: new Date().toISOString()
+    };
+    await store.updateRun(run);
+
+    const memory = new RunContextMemory(run.memoryRefs.runContextPath);
+    const internalLaneRequest = {
+      query: '"structured evidence" bounded retrieval',
+      limit: 80,
+      retrievalIntent: "topic_discovery",
+      topicDiscoveryFamily: {
+        familyId: "query_family_bounded_retrieval"
+      },
+      sort: { field: "relevance", order: "desc" },
+      filters: {}
+    };
+    await memory.put("collect_papers.request", internalLaneRequest);
+    await memory.put("collect_papers.requested_limit", 80);
+    await memory.put("collect_papers.last_request", internalLaneRequest);
+    await memory.put("collect_papers.last_result", {
+      query: internalLaneRequest.query,
+      stored: 12,
+      completed: true
+    });
+
+    const outcome = await orchestrator.runCurrentAgentWithOptions(run.id);
+    expect(outcome.result.status).toBe("success");
+
+    const latest = await store.getRun(run.id);
+    expect(latest?.currentNode).toBe("collect_papers");
+    expect(latest?.status).toBe("paused");
+    expect(latest?.graph.nodeStates.collect_papers.note).not.toContain(
+      "reusing collect query"
+    );
+    expect(await memory.get("collect_papers.request")).toBeNull();
+    expect(await memory.get("collect_papers.requested_limit")).toBeNull();
+  });
+
   it("supports force jump and marks skipped nodes", async () => {
     const { store, orchestrator } = await setup(new DeterministicRegistry({}));
     const run = await store.createRun({

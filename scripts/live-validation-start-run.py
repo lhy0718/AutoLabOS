@@ -142,11 +142,16 @@ def main() -> int:
         buffer_text = wait_for(master_fd, STOP_PATTERN, timeout, buffer_text)
         send_line(master_fd, "/quit")
         buffer_text = wait_for(master_fd, r"Bye", 20, buffer_text)
-    finally:
         try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except Exception:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
             pass
+    finally:
+        if proc.poll() is None:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except Exception:
+                pass
         try:
             proc.wait(timeout=5)
         except Exception:

@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "artifact_type": "autonomous_topic_search_controller_state",
-  "updated_at": "2026-07-28",
+  "updated_at": "2026-08-04",
   "live_request_anchor": {
     "latest_live_request": "Autonomously pursue one long goal: distrust and revalidate all existing AutoLabOS work and code structure, restart topic selection when necessary, make broad prior-work-driven topic exploration and generation a reusable AutoLabOS capability, use multi-agent review where useful, choose a study that can run quickly on this computer, and continue through a genuinely reviewed workshop-level paper.",
     "compressed_summary_present": true,
@@ -40,7 +40,7 @@
       "archival_status": "non_archival",
       "fit_basis": "The official call covers verifier robustness, evaluation-harness red teaming, environment-grounded verification, and agents that verify other agents."
     },
-    "verified_at": "2026-07-28",
+    "verified_at": "2026-08-04",
     "selection_status": "venue_fit_verified_topic_not_selected"
   },
   "completion_condition": "One selected topic has verified closest-prior differentiation, a strong baseline, real repeated experiments, uncertainty and error analysis, claim-to-evidence mapping, a reproducibility bundle, an official template, independent review and meta-review, passing repository validation, and a reviewable commit.",
@@ -92,11 +92,8 @@
     "enabled": true,
     "parallel_sidecar_task_count": 2,
     "completed_outputs_inspected": 19,
-    "active_sidecar_task_count": 2,
-    "active_sidecar_roles": [
-      "independent_review_provenance_repair",
-      "topic_portfolio_meta_reviewer"
-    ],
+    "active_sidecar_task_count": 0,
+    "active_sidecar_roles": [],
     "consensus_is_evidence": false,
     "subagent_outputs_bypass_evidence_gates": false,
     "main_controller_retains_promotion_authority": true
@@ -749,13 +746,15 @@
     "high_risk_runtime_substitution_removed": true,
     "topic_funnel_runtime_contract_implemented": true,
     "topic_funnel_tui_web_projection_implemented": true,
-    "topic_refresh_semantic_divergence_contract_implemented": false,
-    "topic_refresh_semantic_divergence_contract_validated": false,
-    "topic_refresh_semantic_reentry_defect_reproduced": true,
-    "independent_review_provenance_repair_in_progress": true,
+    "topic_refresh_semantic_divergence_contract_implemented": true,
+    "topic_refresh_semantic_divergence_contract_validated": true,
+    "topic_refresh_semantic_reentry_defect_reproduced": false,
+    "independent_review_provenance_repair_in_progress": false,
+    "independent_review_provenance_repair_complete": true,
+    "independent_review_provenance_focused_tests_pass": true,
     "prior_absorption_axis_verification_implemented": true,
     "prior_absorption_axis_verification_focused_tests_pass": true,
-    "prior_absorption_integrated_fixture_migration_complete": false,
+    "prior_absorption_integrated_fixture_migration_complete": true,
     "empty_prior_search_receipt_rejected": true,
     "generic_result_and_manuscript_schema_refactor_complete": false,
     "collect_attempt_lineage_repair_implemented": true,
@@ -799,5 +798,5 @@
     "leading_target_is_selected": false,
     "next_action": "Wide resampling across a different research object, evidence modality, and evaluation unit; held narrow routes remain comparison points rather than default winners."
   },
-  "next_allowed_state": "Finish and integrate the independent-review provenance boundary, semantic topic reentry gate, and prior-absorption fixture migration; re-run focused, build, public-sanitization, harness, TUI, and Web validation; then independently verify and score the held and newly audited candidates. Select only a candidate with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, and freeze an outcome-blind protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
+  "next_allowed_state": "Re-run build, focused, public-sanitization, harness, TUI, and Web validation against the completed provenance, semantic-reentry, and prior-absorption contracts; then widely resample research objects, evidence modalities, and evaluation units from current primary literature rather than promoting a held narrow route by default. Independently verify and score every surviving candidate, select only one with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, and freeze an outcome-blind protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
 }

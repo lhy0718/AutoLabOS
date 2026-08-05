@@ -2080,6 +2080,53 @@ describe("StateGraphRuntime", () => {
     expect(persisted?.graph.rollbackCounters.implement_experiments).toBeUndefined();
   });
 
+  it("resets exhausted state only when a same-node jump starts a new request", async () => {
+    const { store, runtime } = await setup(new Registry({}));
+    const run = await store.createRun({
+      title: "Restart Current Node",
+      topic: "topic",
+      constraints: [],
+      objectiveMetric: "metric"
+    });
+    run.currentNode = "collect_papers";
+    run.graph.currentNode = "collect_papers";
+    run.status = "failed";
+    run.graph.nodeStates.collect_papers.status = "failed";
+    run.graph.nodeStates.collect_papers.lastError = "superseded request failed";
+    run.graph.nodeStates.analyze_papers.status = "failed";
+    run.graph.nodeStates.analyze_papers.lastError = "stale downstream failure";
+    run.graph.retryCounters.collect_papers = 3;
+    run.graph.retryCounters.analyze_papers = 2;
+    run.graph.rollbackCounters.collect_papers = 1;
+    const originalCycle = run.graph.researchCycle;
+    await store.updateRun(run);
+
+    const focused = await runtime.jumpToNode(
+      run.id,
+      "collect_papers",
+      "safe",
+      "focus command"
+    );
+    expect(focused.graph.retryCounters.collect_papers).toBe(3);
+    expect(focused.graph.nodeStates.collect_papers.status).toBe("failed");
+
+    const restarted = await runtime.jumpToNode(
+      run.id,
+      "collect_papers",
+      "safe",
+      "collect command",
+      { resetCurrent: true }
+    );
+    expect(restarted.graph.researchCycle).toBe(originalCycle);
+    expect(restarted.graph.retryCounters.collect_papers).toBeUndefined();
+    expect(restarted.graph.retryCounters.analyze_papers).toBeUndefined();
+    expect(restarted.graph.rollbackCounters.collect_papers).toBeUndefined();
+    expect(restarted.graph.nodeStates.collect_papers.status).toBe("pending");
+    expect(restarted.graph.nodeStates.collect_papers.lastError).toBeUndefined();
+    expect(restarted.graph.nodeStates.analyze_papers.status).toBe("pending");
+    expect(restarted.graph.nodeStates.analyze_papers.lastError).toBeUndefined();
+  });
+
   it("persists a pending backward transition as one complete run mutation", async () => {
     const { store, checkpointStore, runtime } = await setup(new Registry({}));
     const run = await store.createRun({

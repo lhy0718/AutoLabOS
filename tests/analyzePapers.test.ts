@@ -20,6 +20,8 @@ import { persistCollectAttemptArchive } from "../src/core/collection/collectAtte
 import { makeTopicProbeComputeBudgetDeclaration } from "./support/topicProbeComputeBudget.js";
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  normalizeTopicDiscoveryCandidateTerms,
+  normalizeTopicDiscoveryScientificObjectTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../src/core/topicDiscoveryScientificTerms.js";
@@ -543,6 +545,7 @@ async function writeTopicDiscoveryCollectLineage(input: {
     paper_id: string;
     family_id: string;
     selection_source?: "lexical_match" | "provider_provenance_floor";
+    verdict?: "direct_support" | "application_only" | "uncertain";
   }>;
   queryPlanContractOverrides?: {
     version?: number;
@@ -551,7 +554,19 @@ async function writeTopicDiscoveryCollectLineage(input: {
   };
 }): Promise<void> {
   const runDir = path.join(".autolabos", "runs", input.run.id);
-  const sharedAnchorTerms = input.sharedAnchorTerms ?? ["document", "retrieval"];
+  const sharedAnchorTerms = [
+    ...new Set(normalizeTopicDiscoveryScientificObjectTerms(
+      (input.sharedAnchorTerms ?? ["document", "retrieval"]).join(" ")
+    ))
+  ];
+  const families = input.families.map((family) => ({
+    ...family,
+    axisTerms: [
+      ...new Set(normalizeTopicDiscoveryCandidateTerms(
+        family.axisTerms.join(" ")
+      ))
+    ]
+  }));
   const candidateRows = input.candidateRows ?? input.rows;
   const reviewedPairs = (input.reviewedPairs ?? candidateRows.flatMap((row) =>
     (row.query_families ?? []).map((familyId) => ({
@@ -560,9 +575,11 @@ async function writeTopicDiscoveryCollectLineage(input: {
     }))
   )).map((pair) => ({
     ...pair,
-    selection_source: pair.selection_source ?? "lexical_match" as const
+    selection_source: pair.selection_source ?? "lexical_match" as const,
+    verdict: pair.verdict ?? "direct_support" as const
   }));
   const reviewedPaperIds = new Set(reviewedPairs.map((pair) => pair.paper_id));
+  const retainedPaperIds = new Set(input.rows.map((row) => row.paper_id));
   const lexicalFamiliesByPaper = new Map(
     candidateRows.map((row) => [
       row.paper_id,
@@ -580,13 +597,21 @@ async function writeTopicDiscoveryCollectLineage(input: {
   const titleByPaper = new Map(
     candidateRows.map((row) => [row.paper_id, row.title] as const)
   );
-  const judgments = reviewedPairs.map((pair) => ({
-    paper_id: pair.paper_id,
-    family_id: pair.family_id,
-    verdict: "direct_support",
-    reason: "The supplied title directly supports the family contract.",
-    evidence_span: titleByPaper.get(pair.paper_id) ?? ""
-  }));
+  const judgments = reviewedPairs.map((pair) => pair.verdict === "direct_support"
+    ? {
+        paper_id: pair.paper_id,
+        family_id: pair.family_id,
+        verdict: pair.verdict,
+        reason: "The supplied title directly supports the family contract.",
+        evidence_span: titleByPaper.get(pair.paper_id) ?? ""
+      }
+    : {
+        paper_id: pair.paper_id,
+        family_id: pair.family_id,
+        verdict: pair.verdict,
+        reason: "The supplied record does not directly support this family contract."
+      }
+  );
   const payload = {
     version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
     term_normalization_version: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
@@ -603,14 +628,18 @@ async function writeTopicDiscoveryCollectLineage(input: {
         abstract: Array.from(row.abstract).slice(0, 2_000).join("")
       };
     }),
-    family_contracts: input.families.map((family) => ({
+    family_contracts: families.map((family) => ({
       family_id: family.queryFamily,
       query: family.query,
       axis_terms: family.axisTerms,
       lens: family.lens,
       contribution_intent: family.contributionIntent
     })),
-    requested_pairs: reviewedPairs
+    requested_pairs: reviewedPairs.map((pair) => ({
+      paper_id: pair.paper_id,
+      family_id: pair.family_id,
+      selection_source: pair.selection_source
+    }))
   };
   const payloadSha256 = createHash("sha256")
     .update(JSON.stringify(payload), "utf8")
@@ -625,7 +654,7 @@ async function writeTopicDiscoveryCollectLineage(input: {
     maximum_calls: TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
     maximum_fallback_partitions:
       TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
-    total_deadline_ms: 120_000,
+    total_deadline_ms: 480_000,
     fallback_partition_size: Math.max(
       1,
       Math.ceil(reviewedPairs.length / TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS)
@@ -651,9 +680,15 @@ async function writeTopicDiscoveryCollectLineage(input: {
     reviewed_pairs: reviewedPairs.length,
     budget_excluded_pairs: 0,
     returned_judgments: reviewedPairs.length,
-    direct_support: reviewedPairs.length,
-    application_only: 0,
-    uncertain: 0,
+    direct_support: reviewedPairs.filter(
+      (pair) => pair.verdict === "direct_support"
+    ).length,
+    application_only: reviewedPairs.filter(
+      (pair) => pair.verdict === "application_only"
+    ).length,
+    uncertain: reviewedPairs.filter(
+      (pair) => pair.verdict === "uncertain"
+    ).length,
     omitted_judgments: 0,
     duplicate_judgments: 0,
     conflicting_judgments: 0,
@@ -662,13 +697,39 @@ async function writeTopicDiscoveryCollectLineage(input: {
     protocol_violations: 0
   };
   const familyCounts = new Map(
-    input.families.map((family) => [
+    families.map((family) => [
       family.queryFamily,
       reviewedPairs.filter((pair) => pair.family_id === family.queryFamily).length
     ] as const)
   );
+  const familyVerdictCounts = new Map(
+    families.map((family) => {
+      const familyPairs = reviewedPairs.filter(
+        (pair) => pair.family_id === family.queryFamily
+      );
+      return [family.queryFamily, {
+        direct: familyPairs.filter(
+          (pair) => pair.verdict === "direct_support"
+        ).length,
+        applicationOnly: familyPairs.filter(
+          (pair) => pair.verdict === "application_only"
+        ).length,
+        uncertain: familyPairs.filter(
+          (pair) => pair.verdict === "uncertain"
+        ).length
+      }] as const;
+    })
+  );
+  const retainedFamilyCounts = new Map(
+    families.map((family) => [
+      family.queryFamily,
+      input.rows.filter((row) =>
+        row.query_families?.includes(family.queryFamily)
+      ).length
+    ] as const)
+  );
   const lexicalFamilyCounts = new Map(
-    input.families.map((family) => [
+    families.map((family) => [
       family.queryFamily,
       candidateRows.filter((row) =>
         lexicalFamiliesByPaper.get(row.paper_id)?.includes(family.queryFamily)
@@ -676,7 +737,7 @@ async function writeTopicDiscoveryCollectLineage(input: {
     ] as const)
   );
   const providerFamilyCounts = new Map(
-    input.families.map((family) => [
+    families.map((family) => [
       family.queryFamily,
       reviewedPairs.filter((pair) =>
         pair.family_id === family.queryFamily
@@ -688,11 +749,15 @@ async function writeTopicDiscoveryCollectLineage(input: {
     (pair) => pair.selection_source === "lexical_match"
   ).length;
   const providerRequestedPairCount = reviewedPairs.length - lexicalRequestedPairCount;
-  const coveredQueryFamilies = input.families.filter(
-    (family) => (familyCounts.get(family.queryFamily) ?? 0) >= 2
+  const coveredQueryFamilies = families.filter(
+    (family) => {
+      const reviewed = familyCounts.get(family.queryFamily) ?? 0;
+      const direct = familyVerdictCounts.get(family.queryFamily)?.direct ?? 0;
+      return direct >= 2 && reviewed > 0 && direct / reviewed >= 0.5;
+    }
   ).length;
   const relevanceProfile = buildTopicDiscoveryCorpusRelevanceProfile(
-    input.families.map((family) => ({
+    families.map((family) => ({
       queryFamily: family.queryFamily,
       query: family.query,
       source: "llm_query_planner",
@@ -735,15 +800,19 @@ async function writeTopicDiscoveryCollectLineage(input: {
     },
     observed: {
       total_papers: candidateRows.length,
-      relevant_papers: reviewedPaperIds.size,
+      relevant_papers: retainedPaperIds.size,
       relevant_share: candidateRows.length > 0
-        ? reviewedPaperIds.size / candidateRows.length
+        ? counts.direct_support / candidateRows.length
         : 0,
       lexical_relevant_papers: lexicalPaperIds.size,
       semantic_requested_papers: reviewedPaperIds.size,
-      direct_support_papers: reviewedPaperIds.size,
-      application_only_pairs: 0,
-      uncertain_pairs: 0,
+      direct_support_papers: new Set(
+        reviewedPairs
+          .filter((pair) => pair.verdict === "direct_support")
+          .map((pair) => pair.paper_id)
+      ).size,
+      application_only_pairs: counts.application_only,
+      uncertain_pairs: counts.uncertain,
       shared_anchor_terms: sharedAnchorTerms,
       required_anchor_matches_per_paper: sharedAnchorTerms.length,
       anchor_proximate_papers: candidateRelevance.filter(
@@ -754,7 +823,7 @@ async function writeTopicDiscoveryCollectLineage(input: {
       ).length,
       covered_query_families: coveredQueryFamilies
     },
-    query_families: input.families.map((family) => ({
+    query_families: families.map((family) => ({
       query_family: family.queryFamily,
       query: family.query,
       source: "llm_query_planner",
@@ -773,12 +842,23 @@ async function writeTopicDiscoveryCollectLineage(input: {
       semantic_reviewed_paper_count: familyCounts.get(family.queryFamily) ?? 0,
       provider_recall_paper_count:
         providerFamilyCounts.get(family.queryFamily) ?? 0,
-      direct_support_paper_count: familyCounts.get(family.queryFamily) ?? 0,
-      application_only_paper_count: 0,
-      uncertain_paper_count: 0,
-      semantic_precision: 1,
-      retained_paper_count: familyCounts.get(family.queryFamily) ?? 0,
-      relevant_paper_count: familyCounts.get(family.queryFamily) ?? 0
+      direct_support_paper_count:
+        familyVerdictCounts.get(family.queryFamily)?.direct ?? 0,
+      qualifies_for_coverage: (() => {
+        const reviewed = familyCounts.get(family.queryFamily) ?? 0;
+        const direct = familyVerdictCounts.get(family.queryFamily)?.direct ?? 0;
+        return direct >= 2 && reviewed > 0 && direct / reviewed >= 0.5;
+      })(),
+      application_only_paper_count:
+        familyVerdictCounts.get(family.queryFamily)?.applicationOnly ?? 0,
+      uncertain_paper_count:
+        familyVerdictCounts.get(family.queryFamily)?.uncertain ?? 0,
+      semantic_precision: (familyCounts.get(family.queryFamily) ?? 0) > 0
+        ? (familyVerdictCounts.get(family.queryFamily)?.direct ?? 0)
+          / (familyCounts.get(family.queryFamily) ?? 0)
+        : 0,
+      retained_paper_count: retainedFamilyCounts.get(family.queryFamily) ?? 0,
+      relevant_paper_count: retainedFamilyCounts.get(family.queryFamily) ?? 0
     })),
     semantic_review: {
       version: TOPIC_DISCOVERY_SEMANTIC_AUDIT_VERSION,
@@ -791,11 +871,11 @@ async function writeTopicDiscoveryCollectLineage(input: {
         max_pairs: 64,
         max_input_bytes: 131_072,
         abstract_chars: 2_000,
-        timeout_ms: 30_000
+        timeout_ms: 120_000
       },
       counts,
       recall: {
-        provider_recall_floor_per_family: 4,
+        provider_recall_floor_per_family: 8,
         lexical_requested_pairs: lexicalRequestedPairCount,
         provider_provenance_requested_pairs: providerRequestedPairCount
       },
@@ -804,10 +884,10 @@ async function writeTopicDiscoveryCollectLineage(input: {
       protocol_violations: []
     },
     semantic_judgments: judgments,
-    retained_paper_ids: Array.from(reviewedPaperIds),
+    retained_paper_ids: Array.from(retainedPaperIds),
     excluded_paper_ids: candidateRows
       .map((row) => row.paper_id)
-      .filter((paperId) => !reviewedPaperIds.has(paperId))
+      .filter((paperId) => !retainedPaperIds.has(paperId))
   };
   await writeFile(path.join(runDir, "collect_generation.json"), JSON.stringify({
     version: 1,
@@ -822,7 +902,7 @@ async function writeTopicDiscoveryCollectLineage(input: {
     collect_attempt_id: input.collectAttemptId,
     research_mode: "topic_discovery",
     strategy: "topic_portfolio",
-    selected_families: input.families.map((family) => ({
+    selected_families: families.map((family) => ({
       query: family.query,
       query_family: family.queryFamily,
       source: "llm_query_planner",
@@ -859,12 +939,12 @@ async function writeTopicDiscoveryCollectLineage(input: {
       max_pairs: 64,
       max_input_bytes: 131_072,
       abstract_chars: 2_000,
-      timeout_ms: 30_000
+      timeout_ms: 120_000
     },
     reviewer_input_bytes: reviewerInputBytes,
     counts,
     recall: {
-      provider_recall_floor_per_family: 4,
+      provider_recall_floor_per_family: 8,
       lexical_requested_pairs: lexicalRequestedPairCount,
       provider_provenance_requested_pairs: providerRequestedPairCount
     },
@@ -918,8 +998,8 @@ async function writeTopicDiscoveryCollectLineage(input: {
         semantic_review_requested_query_families:
           selections.map((selection) => selection.family_id),
         semantic_review_requested: selections.length > 0,
-        selected_by_semantic_quality: reviewedPaperIds.has(row.paper_id),
-        published_in_corpus: reviewedPaperIds.has(row.paper_id)
+        selected_by_semantic_quality: retainedPaperIds.has(row.paper_id),
+        published_in_corpus: retainedPaperIds.has(row.paper_id)
       });
     }).join("\n")}\n`,
     "utf8"
@@ -1174,7 +1254,7 @@ function overwriteCollectResultSync(runId: string, value: unknown): void {
 function writeCachedPaperTextSync(runId: string, paperId: string, text: string): void {
   const cacheDir = path.join(".autolabos", "runs", runId, "analysis_cache", "texts");
   mkdirSync(cacheDir, { recursive: true });
-  writeFileSync(path.join(cacheDir, `${paperId}.v2.txt`), text, "utf8");
+  writeFileSync(path.join(cacheDir, `${paperId}.v3.txt`), text, "utf8");
 }
 
 function writeCachedPageImagesSync(runId: string, paperId: string, count: number): void {
@@ -2089,6 +2169,148 @@ describe("analyzePapers node", () => {
       await readFile(path.join(runDir, "governance", "research_mode_guard.json"), "utf8")
     ) as { effectiveMode?: string; valid?: boolean };
     expect(modeGuard).toMatchObject({ effectiveMode: "topic_discovery", valid: true });
+  });
+
+  it("accepts two qualifying families while preserving a weak family as diagnostic", async () => {
+    const root = await mkdtemp(path.join(
+      tmpdir(),
+      "autolabos-analyze-minimum-qualified-families-"
+    ));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const runId = "run-analyze-minimum-qualified-families";
+    const run = makeRun(runId);
+    const families = [
+      {
+        queryFamily: "query_family_generation",
+        query: '"document retrieval" controlled generation',
+        axisTerms: ["controlled", "generation"],
+        lens: "Controlled generation over retrieved documents",
+        contributionIntent: "method"
+      },
+      {
+        queryFamily: "query_family_synthesis",
+        query: '"document retrieval" structured synthesis',
+        axisTerms: ["structured", "synthesis"],
+        lens: "Structured synthesis over retrieved documents",
+        contributionIntent: "method"
+      },
+      {
+        queryFamily: "query_family_resolution",
+        query: '"document retrieval" disagreement resolution',
+        axisTerms: ["disagreement", "resolution"],
+        lens: "Resolution of disagreements over retrieved documents",
+        contributionIntent: "empirical_finding"
+      }
+    ];
+    const candidateRows = families.flatMap((family, familyIndex) =>
+      Array.from({ length: 8 }, (_, paperIndex) => ({
+        paper_id: `paper_${familyIndex + 1}_${paperIndex + 1}`,
+        title:
+          `Document retrieval ${family.axisTerms.join(" ")} evidence `
+          + `${paperIndex + 1}`,
+        abstract:
+          `Document retrieval ${family.axisTerms.join(" ")} is the central `
+          + "controlled relation.",
+        query_families: [family.queryFamily]
+      }))
+    );
+    const reviewedPairs = candidateRows.map((row, index) => {
+      const familyIndex = Math.floor(index / 8);
+      const withinFamilyIndex = index % 8;
+      return {
+        paper_id: row.paper_id,
+        family_id: row.query_families[0]!,
+        verdict: familyIndex < 2
+          ? withinFamilyIndex < 5
+            ? "direct_support" as const
+            : "application_only" as const
+          : withinFamilyIndex < 3
+            ? "direct_support" as const
+            : "uncertain" as const
+      };
+    });
+    const retainedRows = candidateRows.filter((_, index) =>
+      Math.floor(index / 8) < 2 && index % 8 < 5
+    );
+    await writeCorpus(runId, retainedRows);
+    await writeTopicDiscoveryCollectLineage({
+      run,
+      collectAttemptId: "collect-attempt-minimum-qualified-families",
+      rows: retainedRows,
+      candidateRows,
+      families,
+      reviewedPairs
+    });
+    await writeTopicDiscoveryBrief(run);
+
+    const llm = new CountingJsonLLM(
+      Array.from({ length: 20 }, () => "invalid-json")
+    );
+    const node = createAnalyzePapersNode({
+      config: {
+        providers: { llm_mode: "ollama" }
+      } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {} as any,
+      responsesPdfAnalysis: new ResponsesPdfAnalysisClient(async () => undefined)
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+
+    expect(llm.callCount, result.error).toBeGreaterThan(0);
+    expect(result.error ?? "").not.toContain("collect_lineage_");
+    const gate = JSON.parse(await readFile(
+      path.join(
+        ".autolabos",
+        "runs",
+        runId,
+        "analysis",
+        "collect_lineage_gate.json"
+      ),
+      "utf8"
+    )) as {
+      valid?: boolean;
+      reasons?: string[];
+    };
+    expect(gate).toMatchObject({ valid: true, reasons: [] });
+    const quality = JSON.parse(await readFile(
+      path.join(
+        ".autolabos",
+        "runs",
+        runId,
+        "collect_corpus_quality.json"
+      ),
+      "utf8"
+    )) as {
+      query_families?: Array<{
+        query_family?: string;
+        qualifies_for_coverage?: boolean;
+        retained_paper_count?: number;
+      }>;
+    };
+    expect(quality.query_families).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        query_family: "query_family_generation",
+        qualifies_for_coverage: true,
+        retained_paper_count: 5
+      }),
+      expect.objectContaining({
+        query_family: "query_family_synthesis",
+        qualifies_for_coverage: true,
+        retained_paper_count: 5
+      }),
+      expect.objectContaining({
+        query_family: "query_family_resolution",
+        qualifies_for_coverage: false,
+        retained_paper_count: 0
+      })
+    ]));
   });
 
   it("validates two candidate-prior augmentations back to the original semantic audit", async () => {
@@ -3894,7 +4116,7 @@ describe("analyzePapers node", () => {
 
     await mkdir(path.join(".autolabos", "runs", runId, "analysis_cache", "texts"), { recursive: true });
     await writeFile(
-      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v2.txt"),
+      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v3.txt"),
       "This study presents a structured literature review of machine learning applications in African economies and digital transformation.",
       "utf8"
     );
@@ -4017,7 +4239,7 @@ describe("analyzePapers node", () => {
 
     await mkdir(path.join(".autolabos", "runs", runId, "analysis_cache", "texts"), { recursive: true });
     await writeFile(
-      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v2.txt"),
+      path.join(".autolabos", "runs", runId, "analysis_cache", "texts", "p1.v3.txt"),
       "This source text is actually an unrelated paper about economic transformation in Africa and digital inclusion.",
       "utf8"
     );

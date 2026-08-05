@@ -31,7 +31,7 @@ const MINIMUM_AXIS_TERM_MATCHES = 2;
 const MINIMUM_AXIS_TERM_MATCH_RATIO = 2 / 3;
 const MAXIMUM_ANCHOR_AXIS_WINDOW_TOKENS = 24;
 
-export const TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION = 7 as const;
+export const TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION = 8 as const;
 export const TOPIC_DISCOVERY_CORPUS_QUALITY_STRATEGY =
   "shared_anchor_bounded_provider_recall_plus_semantic_precision" as const;
 
@@ -105,6 +105,7 @@ export interface TopicDiscoveryCorpusQualityAudit {
     semantic_reviewed_paper_count: number;
     provider_recall_paper_count: number;
     direct_support_paper_count: number;
+    qualifies_for_coverage: boolean;
     application_only_paper_count: number;
     uncertain_paper_count: number;
     semantic_precision: number;
@@ -375,14 +376,16 @@ export function assessTopicDiscoveryCorpusQuality(input: {
   const coveredQueryFamilies = new Set(
     qualifyingFamilies.map((family) => family.familySignature)
   ).size;
+  const qualifyingFamilyIds = new Set(
+    qualifyingFamilies.map((family) => family.queryFamily)
+  );
   const retainedPaperIds = selectBoundedRetainedPaperIds({
     rows: input.rows,
     directSupportPaperIds,
     matchedQueryFamiliesByPaper: matchedFamiliesByPaper,
-    qualifyingFamilyIds: new Set(
-      qualifyingFamilies
-        .map((family) => family.queryFamily)
-    ),
+    qualifyingFamilyIds,
+    restrictToQualifyingFamilies:
+      coveredQueryFamilies >= MINIMUM_COVERED_QUERY_FAMILIES,
     globalLimit: input.globalLimit
   });
   const retainedCountsByFamily = new Map<string, number>();
@@ -451,22 +454,21 @@ export function assessTopicDiscoveryCorpusQuality(input: {
   for (const family of families) {
     if (!family.lens?.trim() || !family.contributionIntent?.trim()) {
       reasons.push(`Query family ${family.queryFamily} is missing its semantic lens contract.`);
-      continue;
     }
-    const direct = directCountsByFamily.get(family.queryFamily) ?? 0;
-    const precision = semanticPrecisionByFamily.get(family.queryFamily) ?? 0;
-    if (
-      direct < MINIMUM_RELEVANT_PAPERS_PER_FAMILY
-      || precision < MINIMUM_SEMANTIC_PRECISION_PER_FAMILY
-    ) {
+  }
+  if (coveredQueryFamilies < MINIMUM_COVERED_QUERY_FAMILIES) {
+    for (const family of families) {
+      if (qualifyingFamilyIds.has(family.queryFamily)) {
+        continue;
+      }
+      const direct = directCountsByFamily.get(family.queryFamily) ?? 0;
+      const precision = semanticPrecisionByFamily.get(family.queryFamily) ?? 0;
       reasons.push(
         `Query family ${family.queryFamily} produced ${direct} direct-support paper(s) ` +
         `at semantic precision ${precision.toFixed(3)}; requires at least ` +
         `${MINIMUM_RELEVANT_PAPERS_PER_FAMILY} and ${MINIMUM_SEMANTIC_PRECISION_PER_FAMILY.toFixed(2)}.`
       );
     }
-  }
-  if (coveredQueryFamilies < MINIMUM_COVERED_QUERY_FAMILIES) {
     reasons.push(
       `Only ${coveredQueryFamilies} independent query family/families met both direct-support and semantic-precision floors; ` +
       `${MINIMUM_COVERED_QUERY_FAMILIES} families required.`
@@ -528,6 +530,7 @@ export function assessTopicDiscoveryCorpusQuality(input: {
         semantic_reviewed_paper_count: semanticCountsByFamily.get(family.queryFamily) ?? 0,
         provider_recall_paper_count: providerRecallCountsByFamily.get(family.queryFamily) ?? 0,
         direct_support_paper_count: directCountsByFamily.get(family.queryFamily) ?? 0,
+        qualifies_for_coverage: qualifyingFamilyIds.has(family.queryFamily),
         application_only_paper_count: applicationCountsByFamily.get(family.queryFamily) ?? 0,
         uncertain_paper_count: uncertainCountsByFamily.get(family.queryFamily) ?? 0,
         semantic_precision: semanticPrecisionByFamily.get(family.queryFamily) ?? 0,
@@ -566,12 +569,21 @@ function selectBoundedRetainedPaperIds(input: {
   directSupportPaperIds: ReadonlySet<string>;
   matchedQueryFamiliesByPaper: ReadonlyMap<string, ReadonlySet<string>>;
   qualifyingFamilyIds: ReadonlySet<string>;
+  restrictToQualifyingFamilies: boolean;
   globalLimit: number;
 }): Set<string> {
   const limit = Math.max(1, Math.floor(input.globalLimit));
   const orderedDirectPaperIds = input.rows
     .map((row) => row.paper_id)
-    .filter((paperId) => input.directSupportPaperIds.has(paperId));
+    .filter((paperId) =>
+      input.directSupportPaperIds.has(paperId)
+      && (
+        !input.restrictToQualifyingFamilies
+        || [...(input.matchedQueryFamiliesByPaper.get(paperId) ?? [])].some(
+          (familyId) => input.qualifyingFamilyIds.has(familyId)
+        )
+      )
+    );
   const retained = new Set<string>();
 
   for (const familyId of input.qualifyingFamilyIds) {

@@ -44,6 +44,13 @@ review or when the review target is paper-scale:
    reasoning tier allowed by the active provider, account, and runtime policy.
    Record both the requested and effective routing. Do not silently substitute
    a weaker route.
+   The active GPT-5.6 automatic-review policy caps both specialists and the
+   meta reviewer at `xhigh`. API-only `max` is not selected automatically until
+   a repository benchmark demonstrates that its added latency and usage improve
+   review defect recall or adjudication quality over `xhigh`; this policy cap
+   therefore defines the highest available automatic-review tier.
+   The repository-owned evaluation procedure and conservative promotion rule
+   are defined in `docs/review-reasoning-benchmark.md`.
 3. Launch five initial reviewers in parallel with distinct execution IDs and
    these independent roles:
    - `claim_evidence`: claim scope, artifact support, citation support, and

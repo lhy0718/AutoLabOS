@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildModelWorkerContractSurface } from "../src/core/runtime/modelWorkerAdapter.js";
+import { resolveReviewActorProfiles } from "../src/core/reviewModelProfile.js";
 import { AppConfig } from "../src/types.js";
 
 describe("model worker adapter contract surface", () => {
@@ -30,6 +31,42 @@ describe("model worker adapter contract surface", () => {
   });
 });
 
+describe("review model routing", () => {
+  it("uses Sol at xhigh for Codex review without changing experiment defaults", () => {
+    const config = makeConfig();
+    const profiles = resolveReviewActorProfiles(config);
+
+    expect(profiles.specialist).toEqual({
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      reasoning_effort: "xhigh"
+    });
+    expect(profiles.meta_reviewer).toEqual(profiles.specialist);
+    expect(config.providers.codex.experiment_reasoning_effort).toBe("high");
+  });
+
+  it("caps API review at xhigh even though GPT-5.6 also exposes max", () => {
+    const config = makeConfig();
+    config.providers.llm_mode = "openai_api";
+    const profiles = resolveReviewActorProfiles(config);
+
+    expect(profiles.specialist).toEqual({
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      reasoning_effort: "xhigh"
+    });
+    expect(profiles.meta_reviewer).toEqual(profiles.specialist);
+  });
+
+  it("uses the highest supported tier for a compatibility model without xhigh", () => {
+    const config = makeConfig();
+    config.providers.codex.model = "gpt-5.3-codex-spark";
+    const profiles = resolveReviewActorProfiles(config);
+
+    expect(profiles.specialist.reasoning_effort).toBe("high");
+  });
+});
+
 function makeConfig(): AppConfig {
   return {
     version: 1,
@@ -37,16 +74,18 @@ function makeConfig(): AppConfig {
     providers: {
       llm_mode: "codex",
       codex: {
-        model: "gpt-5.4",
-        experiment_model: "gpt-5.4",
-        reasoning_effort: "medium",
-        experiment_reasoning_effort: "xhigh",
+        model: "gpt-5.6-sol",
+        experiment_model: "gpt-5.6-sol",
+        reasoning_effort: "high",
+        experiment_reasoning_effort: "high",
         fast_mode: false,
         auth_required: true
       },
       openai: {
-        model: "gpt-5.4",
-        reasoning_effort: "medium",
+        model: "gpt-5.6-sol",
+        experiment_model: "gpt-5.6-sol",
+        reasoning_effort: "high",
+        experiment_reasoning_effort: "high",
         api_key_required: true
       }
     },

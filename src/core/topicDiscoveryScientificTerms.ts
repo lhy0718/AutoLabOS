@@ -1,13 +1,16 @@
 import { extractLiteratureTermSequence } from "./runConstraints.js";
 
-export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 4 as const;
-export const TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION = 5 as const;
+export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 8 as const;
+export const TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION = 7 as const;
 
 const TOPIC_DISCOVERY_OBJECT_STOPWORDS: string[] = [
   "paper",
   "papers",
   "review",
   "reviews"
+];
+const TOPIC_DISCOVERY_OBJECT_INTERIOR_STOPWORDS: string[] = [
+  "research"
 ];
 
 export function normalizeTopicDiscoveryScientificTerms(value: string): string[] {
@@ -20,7 +23,8 @@ export function normalizeTopicDiscoveryScientificObjectTerms(
   value: string
 ): string[] {
   return extractLiteratureTermSequence(value, {
-    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS
+    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS,
+    preserveInteriorStopwords: TOPIC_DISCOVERY_OBJECT_INTERIOR_STOPWORDS
   })
     .map(normalizeTopicDiscoveryScientificTerm)
     .filter(Boolean);
@@ -35,7 +39,8 @@ export function normalizeTopicDiscoveryCandidateTerms(value: string): string[] {
 
 export function normalizeTopicDiscoveryCandidateObjectTerms(value: string): string[] {
   return extractLiteratureTermSequence(normalizeCandidateRecallPhrases(value), {
-    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS
+    preserveStopwords: TOPIC_DISCOVERY_OBJECT_STOPWORDS,
+    preserveInteriorStopwords: TOPIC_DISCOVERY_OBJECT_INTERIOR_STOPWORDS
   })
     .map(normalizeTopicDiscoveryScientificTerm)
     .filter(Boolean);
@@ -44,6 +49,8 @@ export function normalizeTopicDiscoveryCandidateObjectTerms(value: string): stri
 function normalizeCandidateRecallPhrases(value: string): string {
   return value
     .normalize("NFKC")
+    .replace(/\bllms?\b/giu, "language model")
+    .replace(/\bagentic\b/giu, "agent")
     .replace(/\blimited(?:\s*-\s*|\s+)samples?\b/giu, "finite sample")
     .replace(/\bsamples?(?:\s*-\s*|\s+)limited\b/giu, "finite sample");
 }
@@ -64,6 +71,9 @@ export function buildTopicDiscoveryCandidateFamilySignature(input: {
 }
 
 export function normalizeTopicDiscoveryScientificTerm(term: string): string {
+  if (["automatic", "automation", "automat"].includes(term)) {
+    return "automat";
+  }
   if (["reliable", "reliability"].includes(term)) {
     return "reliability";
   }

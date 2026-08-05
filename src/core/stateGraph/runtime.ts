@@ -739,10 +739,16 @@ export class StateGraphRuntime {
     return this.getRunOrThrow(runId);
   }
 
-  async jumpToNode(runId: string, targetNode: GraphNodeId, mode: JumpMode, reason: string): Promise<RunRecord> {
+  async jumpToNode(
+    runId: string,
+    targetNode: GraphNodeId,
+    mode: JumpMode,
+    reason: string,
+    options: { resetCurrent?: boolean } = {}
+  ): Promise<RunRecord> {
     const run = await this.getRunOrThrow(runId);
     assertRunHasNoDelegatedSuccessor(run, "jump");
-    this.applyJumpState(run, targetNode, mode, reason);
+    this.applyJumpState(run, targetNode, mode, reason, options);
 
     this.syncLatestSummary(run, targetNode);
     const checkpoint = await this.saveCheckpointAndPersist(run, "jump", reason);
@@ -753,6 +759,7 @@ export class StateGraphRuntime {
       payload: {
         mode,
         reason,
+        resetCurrent: options.resetCurrent === true,
         checkpoint: checkpoint.seq
       }
     });
@@ -764,7 +771,8 @@ export class StateGraphRuntime {
     run: RunRecord,
     targetNode: GraphNodeId,
     mode: JumpMode,
-    reason: string
+    reason: string,
+    options: { resetCurrent?: boolean } = {}
   ): void {
     const currentIdx = GRAPH_NODE_ORDER.indexOf(run.currentNode);
     const targetIdx = GRAPH_NODE_ORDER.indexOf(targetNode);
@@ -792,6 +800,13 @@ export class StateGraphRuntime {
     if (targetIdx < currentIdx) {
       const nextCycle = (run.graph.researchCycle || 0) + 1;
       this.resetNodeAndDownstream(run, targetNode, nextCycle, "backward jump");
+    } else if (targetIdx === currentIdx && options.resetCurrent) {
+      this.resetNodeAndDownstream(
+        run,
+        targetNode,
+        run.graph.researchCycle || 0,
+        "new node request"
+      );
     }
 
     run.graph.pendingTransition = undefined;
@@ -1475,6 +1490,11 @@ export class StateGraphRuntime {
     const runContext = new RunContextMemory(this.runStore.resolveWorkspacePath(run.memoryRefs.runContextPath));
     const pendingRequest = await runContext.get<Record<string, unknown> | null>("collect_papers.request");
     if (pendingRequest) {
+      if (isInternalTopicDiscoveryLaneRequest(pendingRequest)) {
+        await runContext.put("collect_papers.request", null);
+        await runContext.put("collect_papers.requested_limit", null);
+        return undefined;
+      }
       const pendingQuery = pendingRequest.query;
       return typeof pendingQuery === "string" && pendingQuery.trim() ? pendingQuery.trim() : undefined;
     }
@@ -1482,6 +1502,12 @@ export class StateGraphRuntime {
     const lastRequest = await runContext.get<Record<string, unknown> | null>("collect_papers.last_request");
     const lastResult = await runContext.get<{ stored?: number; completed?: boolean } | null>("collect_papers.last_result");
     if (!lastRequest || !lastResult || lastResult.completed === false || Number(lastResult.stored ?? 0) <= 0) {
+      return undefined;
+    }
+
+    if (isInternalTopicDiscoveryLaneRequest(lastRequest)) {
+      await runContext.put("collect_papers.request", null);
+      await runContext.put("collect_papers.requested_limit", null);
       return undefined;
     }
 
@@ -1629,6 +1655,16 @@ export class StateGraphRuntime {
         recommendation.reason?.startsWith("governance:")
     );
   }
+}
+
+function isInternalTopicDiscoveryLaneRequest(
+  request: Record<string, unknown>
+): boolean {
+  const candidatePriorPlan = request.candidatePriorSearchPlan;
+  return request.retrievalIntent === "topic_discovery"
+    && (!candidatePriorPlan
+      || typeof candidatePriorPlan !== "object"
+      || Array.isArray(candidatePriorPlan));
 }
 
 interface RunVerifierRoutingReport {

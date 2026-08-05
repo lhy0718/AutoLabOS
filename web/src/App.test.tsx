@@ -240,7 +240,7 @@ describe("App", () => {
     expect(codexChatSection).not.toBeNull();
     expect(screen.queryByText("OpenAI chat")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("PDF mode")).not.toBeInTheDocument();
-    expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0]).toHaveValue("gpt-5.3-codex-spark");
+    expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[0]).toHaveValue("gpt-5.6-terra");
     expect(within(codexChatSection as HTMLElement).getAllByRole("combobox")[1]).toHaveValue("medium");
   });
 

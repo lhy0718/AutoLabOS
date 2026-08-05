@@ -3,31 +3,29 @@ import { describe, expect, it } from "vitest";
 import { computeModelUsageCostUsd, resolveModelBilling } from "../src/core/llm/modelPricing.js";
 import { OFFICIAL_CODEX_MODELS } from "../src/integrations/codex/modelCatalog.js";
 import { OPENAI_RESPONSES_MODEL_OPTIONS } from "../src/integrations/openai/modelCatalog.js";
+const UNPRICED_MODELS = new Set([
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.4-mini",
+  "gpt-5.3-codex-spark",
+  "gpt-5-codex-mini"
+]);
 
 describe("modelPricing", () => {
-  it("covers every configured OpenAI Responses model with token pricing", () => {
+  it("covers every configured OpenAI Responses model with an explicit billing state", () => {
     for (const option of OPENAI_RESPONSES_MODEL_OPTIONS) {
-      expect(resolveModelBilling(option.value)).toMatchObject({
-        modelId: option.value,
-        billing: { kind: "token" }
-      });
+      const resolved = resolveModelBilling(option.value);
+      expect(resolved?.modelId).toBe(option.value);
+      expect(resolved?.billing.kind).toBe(UNPRICED_MODELS.has(option.value) ? "unpriced" : "token");
     }
   });
 
   it("covers configured Codex models with explicit billing states", () => {
-    expect(resolveModelBilling("gpt-5.3-codex-spark")).toMatchObject({
-      billing: { kind: "unpriced" }
-    });
-    expect(resolveModelBilling("gpt-5-codex-mini")).toMatchObject({
-      billing: { kind: "unpriced" }
-    });
-
-    for (const model of OFFICIAL_CODEX_MODELS.filter(
-      (value) => value !== "gpt-5.3-codex-spark" && value !== "gpt-5-codex-mini"
-    )) {
+    for (const model of OFFICIAL_CODEX_MODELS) {
       expect(resolveModelBilling(model)).toMatchObject({
         modelId: model,
-        billing: { kind: "token" }
+        billing: { kind: UNPRICED_MODELS.has(model) ? "unpriced" : "token" }
       });
     }
   });
