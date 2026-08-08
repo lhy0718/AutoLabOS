@@ -1,0 +1,52 @@
+{
+  "schema_version": "3.0",
+  "amended_at_utc": "2026-08-08T07:17:49Z",
+  "supersedes": {
+    "path": "freeze-receipt.v2.json",
+    "sha256": "ff94fe04cbf8f58429301ad468a9be3557e1d59eb8dbd103c550a26942ca1239"
+  },
+  "development_outcomes_observed_before_amendment": true,
+  "confirmatory_outcomes_observed_before_amendment": false,
+  "scientific_contract_changed": false,
+  "evidence_integrity_implementation_changed": true,
+  "amendment_reason": "Bind the frozen split to freshly downloaded paper and repository bytes, split-specific sealed-gold manifests, evidence-derived promotion, a canonical pre-gold lock manifest requiring both prediction kinds, non-reusable frontier provider calls, frozen tokenizer-version enforcement, and exact blind-corpus rederivation of frontier and deterministic rankings at receipt issuance, evaluation, and promotion validation.",
+  "claim_boundary": "Development evidence observed before this amendment cannot be treated as preregistered confirmation. Only a later promotion-gated run against the still-unread confirmatory gold may support confirmatory claims.",
+  "dataset_binding": {
+    "source_registry_sha256": "60796be6b8fd7cf01747736e34941632967cb0b4dba8fde0babb317ddfad056b",
+    "source_dataset_sha256": "6b360b757d3e8de16c494786eed51b4b9ed01948b56a9557d0dcb951b9926aa2",
+    "blind_manifest_sha256": "4badaff120e7ddbcc33123adbc409681638c0af9fe83c7cfa3110bb44e09b423",
+    "sealed_gold_manifest_sha256": {
+      "development": "bcbff69cec610823381eafac37c455341e4157b207a359d221cb83c7bf33f6af",
+      "confirmatory": "c7103d78921ffb0b4f7d13a51cce4b33407415dd72a151931685308841750009",
+      "reserve": "4df3f5eb70cbfbc9c234611dbf8f02869062d1d75dfb6aa8d780b4d47e6ad39d"
+    }
+  },
+  "files": {
+    "experiment-contract.v1.json": "094a171b79b40a12e2b64f55a8250a5e2e2d9894d19b1f0d7678f08aa7900f11",
+    "analysis-contract.v1.json": "399c42e38064933de3ef71b6ed830b6476e47cf0ec3c315a847e530d682d22fd",
+    "prompts/frontier-obligations.v1.txt": "a63241cdaa3a85e409630262fb6b0929d450a8325bd1c589a3649a574ed9833f",
+    "prompts/generic-selector.v1.txt": "4a3acd6f9663dc85fe26f97bc39cf21411fd086c98bdea03168cb79bd4d7ba5a",
+    "../lib/retrieval.py": "da8e2c4c3b9ad450faa62256dcd2542f5567c800db8762f9117de039490035fb",
+    "../lib/frontier_retrieval.py": "664baae4d9affe96bf1e566a68027c2bc3206883f188ef468c19302cc5c1f11e",
+    "../lib/governance.py": "b62230ba1c54ebab27c304ce8daf3375346e6154dab7919b7a4c823674176686",
+    "../scripts/materialize_corpus.py": "7ad2e4490f444973c0548ba0c228e3f144df16e8f06da064ee79c10d9d3fda9d",
+    "../scripts/run_deterministic_retrieval.py": "2f1d03d5b20d783145a15689a24cd51125f98641e35a2e57342f11047a7811b8",
+    "../scripts/run_frontier_retrieval.py": "1be5a8a43878313fd781888b4488abce136627d1b3e79d7b0ef7559349969707",
+    "../scripts/evaluate_rankings.py": "37a78863f7f69f379d92fed4f18869e7f71f075a1ad788aff38eb220c678b7f8",
+    "../scripts/decide_development_promotion.py": "8ded7b920b08b28275240b43af8a09451da3593b289a406d8f1d6a728ab8a222",
+    "../results/access-preflight.v2.json": "673a10b90cfbc93bda473f4a9be1635c9ed17b2adf3ce09481bea4e3dfd1dbdc",
+    "../results/materialization-preflight.v2.json": "ac718879145c187d39196fd1c539c74f0001b283509733bcf71f251b032ff741",
+    "../corpus/blind-manifest.v1.jsonl": "4badaff120e7ddbcc33123adbc409681638c0af9fe83c7cfa3110bb44e09b423"
+  },
+  "unchanged_scientific_fields": [
+    "corpus split sizes and hash ordering rule",
+    "selected-code token budget",
+    "prompts",
+    "model",
+    "reasoning effort",
+    "calls per paper per system",
+    "primary metric",
+    "primary contrast",
+    "promotion thresholds"
+  ]
+}

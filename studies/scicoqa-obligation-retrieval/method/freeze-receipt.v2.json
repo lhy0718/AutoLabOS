@@ -1,0 +1,43 @@
+{
+  "schema_version": "2.0",
+  "amended_at_utc": "2026-08-07T18:11:18Z",
+  "supersedes": {
+    "path": "freeze-receipt.v1.json",
+    "sha256": "08b54c346694ff1b8685eaf337677ce26b566193c4dd2522809216d2dd5ba229"
+  },
+  "development_outcomes_observed_before_amendment": true,
+  "confirmatory_outcomes_observed_before_amendment": false,
+  "scientific_contract_changed": false,
+  "amendment_reason": "Bind the unchanged corpus split to a materialization receipt produced by the repaired dataset-hash gate.",
+  "dataset_binding": {
+    "source_registry_sha256": "60796be6b8fd7cf01747736e34941632967cb0b4dba8fde0babb317ddfad056b",
+    "source_dataset_sha256": "6b360b757d3e8de16c494786eed51b4b9ed01948b56a9557d0dcb951b9926aa2",
+    "blind_manifest_sha256": "ffc3af485065a185d453ff760de80a467b43b36d57a675833174ae9fe3bdb234"
+  },
+  "files": {
+    "experiment-contract.v1.json": "eede01320b4dd4c97ec3ec33a903e3b88b66257f67d2dde7051c9de549f70b94",
+    "analysis-contract.v1.json": "399c42e38064933de3ef71b6ed830b6476e47cf0ec3c315a847e530d682d22fd",
+    "prompts/frontier-obligations.v1.txt": "a63241cdaa3a85e409630262fb6b0929d450a8325bd1c589a3649a574ed9833f",
+    "prompts/generic-selector.v1.txt": "4a3acd6f9663dc85fe26f97bc39cf21411fd086c98bdea03168cb79bd4d7ba5a",
+    "../lib/retrieval.py": "54c075ac21c15a7b77163e6addf5da297bccb47e184ff132723ca4a6f3224313",
+    "../lib/governance.py": "d5e076e126e6568fe8ccfc468c6c04fbeb710ff5feb145dc2340b23cc94bd84c",
+    "../scripts/run_deterministic_retrieval.py": "559c4e5b4206d487466d19a70af8b9529c84c8b8b173470e38d1816065929894",
+    "../scripts/run_frontier_retrieval.py": "af5d6089eaaea0f859842916d212a94af1bb6c9363fc5dc634d24f35a8b9a88f",
+    "../scripts/evaluate_rankings.py": "de86d82d1679890d924a12e9a457ceadb7c41b5771227fa264e1de1fc2dde5b5",
+    "../scripts/decide_development_promotion.py": "3c92af1d3024b8c59ac7d35f8aa7c0f8a14eba6b0ee272e15c4e2105de576d51",
+    "../results/access-preflight.v2.json": "673a10b90cfbc93bda473f4a9be1635c9ed17b2adf3ce09481bea4e3dfd1dbdc",
+    "../results/materialization-preflight.v2.json": "633b94196ee0ceb666ee2c5d7a911d22c3a98b4c473bfb7640587a4434b13137",
+    "blind/manifest.jsonl": "ffc3af485065a185d453ff760de80a467b43b36d57a675833174ae9fe3bdb234"
+  },
+  "unchanged_scientific_fields": [
+    "corpus split",
+    "selected-code token budget",
+    "prompts",
+    "model",
+    "reasoning effort",
+    "calls per paper per system",
+    "primary metric",
+    "primary contrast",
+    "promotion thresholds"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "artifact_type": "prediction_seal",
+  "blind_manifest_sha256": "4badaff120e7ddbcc33123adbc409681638c0af9fe83c7cfa3110bb44e09b423",
+  "contract_sha256": "094a171b79b40a12e2b64f55a8250a5e2e2d9894d19b1f0d7678f08aa7900f11",
+  "execution_receipt_sha256": null,
+  "prediction_kind": "deterministic",
+  "predictions_sha256": "b8203f98ebea58d8bd5ab60c02122f52dc4e3099e6e6c53d69610e88a9d09716",
+  "promotion_receipt_sha256": null,
+  "schema_version": "2.0",
+  "split": "development"
+}

@@ -1,6 +1,6 @@
 # ISSUES.md
 
-Last updated: 2026-08-04
+Last updated: 2026-08-08
 
 This file was compacted on 2026-03-22 to remove duplicated template fragments, malformed partial entries, and conflicting reused LV identifiers. Detailed pre-cleanup prose remains in git history.
 
@@ -15,9 +15,302 @@ Path placeholders:
 
 ---
 
+## Issue: LV-702
+
+- Status: resolved; full CI, artifact replay, staged public snapshot, and independent adversarial rereview passed
+- Category: research integrity / paper-scale promotion and provenance receipts trusted relocatable or self-asserted evidence
+- Validation target: topic preflights, development promotion, confirmatory admission, and portfolio status must be derived from immutable source bytes and recomputable result artifacts rather than caller-selected paths, copied booleans, stale receipts, or invalidated diagnostic observations.
+- Environment/session context: adversarial review of the 2026-08-07 topic portfolio and the Literal Evidence Paths, FLAWS counterfactual-attribution, and SciCoQA obligation-retrieval study bundles before public commit.
+- Reproduction steps:
+  1. Supply a noncanonical confirmatory lock path and observe that the caller can separate the lock from the sealed gold root.
+  2. Construct a `PROMOTE` receipt with passing gate booleans and plausible hashes but without reloadable development predictions, seals, and evaluations.
+  3. Inspect the FLAWS portfolio after quarantining its non-source-derived artifacts and observe that retained quantitative feasibility wording still implies verified evidence.
+  4. Compare the SciCoQA v1 materialization receipt with the repaired materializer and observe that the receipt lacks the source-registry and source-dataset bindings now required by the implementation.
+  5. Run the Literal Evidence structural preflight without a frozen contract or against altered paper-index bytes and observe that the result is not bound to the exact pre-execution inputs.
+- Expected behavior: the confirmatory lock has one fixed path in the canonical study results directory; promotion reloads and hashes every named artifact, verifies prediction seals, recomputes evaluations from split-specific sealed gold, and then recomputes the paper-level gate; invalidated observations cannot support feasibility claims; materialization receipts bind source inputs and blind corpus bytes; structural preflight binds its canonical frozen contract, registry, paper index, manual audit, result, and termination receipt while returning nonzero on KILL.
+- Actual behavior: each boundary could previously preserve the appearance of a valid progression while one or more authorizing inputs were caller-controlled, self-asserted, stale, or no longer independently reproducible.
+- Fresh vs existing session comparison:
+  - Fresh session: hand-authored or relocated receipts could authorize a later stage without replaying the evidence chain.
+  - Existing session: stale v1 receipts and portfolio prose retained stronger provenance implications than the surviving artifacts justified.
+  - Divergence: none; the defects were deterministic governance and artifact-lineage gaps.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: early study harnesses treated receipts as descriptive summaries instead of executable authorization records, so later gates compared fields without reloading every referenced byte or deriving canonical storage locations.
+- Code/test changes: fixed the confirmatory lock to the canonical study results directory and converted it to a pre-gold manifest that must bind both deterministic and frontier prediction kinds before either evaluator may read confirmatory gold; added evidence-derived promotion that verifies predictions and seals, recomputes both development evaluations from hash-bound gold, and recomputes the gate; rejected any paper-grade provider-cache reuse; required canonical freeze/contract paths, frozen tokenizer-version equality, and verified runner/library hashes; bound every blind paper and mutated repository tree by SHA-256; rejected unsafe unit and receipt paths; and reran a zero-failure 86-unit SciCoQA materialization. Frontier promotion now replays the canonical prompts and requests, reparses each raw provider response, and recomputes every ranking, selected chunk, retrieved file, and token count from the hash-bound blind corpus. Deterministic baselines are independently regenerated from the same corpus at receipt issuance, evaluation, and promotion validation. Literal Evidence now enforces all six frozen gates, canonical inputs/outputs, scanner/audit/result hashes, exact sink payload semantics, conservative scalarization, and exit code 2 on KILL. FLAWS remains `KILL_PROVENANCE` with feasibility and reproducibility unscored. The title-support fallback now excludes both prior and just-rejected axes, and normalized title counting deduplicates case/surface variants.
+- Regression status: SciCoQA passes 60 focused tests; its eight-unit, 40-prediction deterministic v3 rankings, seal, and development evaluation were regenerated from the real corpus and are byte-identical to the persisted artifacts. Literal Evidence passes 26 focused tests and its actual amended preflight reproduces `KILL` at 25/40 confirmatory and 2/5 development units with a 0/2 valid manual audit. Topic-discovery focused suites pass after correcting two stale fixture expectations. Repository build, harness, plugin operations/release, global Codex preflight, 3,057 core tests, 35 web tests, smoke, and public sanitization all pass. The exact staged tree exported a portable 892-file public snapshot, and the final independent `gpt-5.6-sol`/max adversarial rereview reported zero P0 and zero P1 findings.
+- Follow-up risks: real frontier-provider development evidence is still absent. The required 16 fresh `gpt-5.6-sol`/`high` calls transmit paper and repository-derived content to a paid external service and need explicit data-egress and cost approval. The local execution receipt is hash-bound and semantically replayed but is not a provider-signed attestation. No confirmatory run or paper-level empirical claim is authorized. Historical v1/v2 receipts remain provenance records only and must not be treated as current authorization.
+- Evidence/artifacts: `studies/scicoqa-obligation-retrieval/{method/freeze-receipt.v3.json,results/materialization-preflight.v2.json,results/development-deterministic-evaluation.v3.json,scripts/decide_development_promotion.py,lib/governance.py}`; `studies/literal-evidence-paths/{method/preflight-contract.v1.json,method/manual-development-mutation-audit.v1.json,method/termination-decision.v1.json,results/structural-preflight.v1.json}`; `studies/flaws-counterfactual-attribution/{README.md,method/termination-decision.v2.json}`; `docs/research/{topic-search-portfolio-2026-08-07.md,topic-discovery-controller-state.json}`.
+
+---
+
+## Issue: LV-701
+
+- Status: resolved; focused regressions, typecheck, build, and same-flow real TUI revalidation passed
+- Category: live-validation planning / semantic direct-support titles are omitted from bounded query feedback
+- Validation target: after a complete semantic review fails the aggregate corpus-quality gate, bounded queryability feedback must prioritize titles that the current reviewer judged `direct_support` for each family before filling the remaining title quota with lexical candidates. These titles remain query hints only and cannot bypass family precision, corpus admission, or evidence gates.
+- Environment/session context: fresh LV-700 revalidation run `6551fefd-6721-4f47-8b48-3ca4b8465346` in `<validation-workspace>/automated-peer-review-topic-search` on 2026-08-07.
+- Reproduction steps:
+  1. Run `briefs/research-brief-v3.md` through a fresh real TUI collection attempt.
+  2. Confirm that semantic review completes with six `direct_support` judgments across three families while the unchanged corpus-quality gate rejects all families on precision.
+  3. Compare the direct-support paper titles in `collect_semantic_review.json` plus `collect_semantic_review_input.json` with `collect_query_reformulation_hints.json.candidate_titles`.
+  4. Inspect `buildTopicDiscoveryCandidateTitleFeedback`.
+- Expected behavior: every current direct-support title receives priority within its family's bounded six-title feedback quota, followed by high-overlap non-direct candidates; the final global 18-title cap remains unchanged and the artifact continues to declare `query_hint_only` and `paper_evidence_allowed=false`.
+- Actual behavior: the feedback function ignores semantic judgments and sorts all anchor-proximate rows only by title-plus-abstract axis-term overlap. Direct-support titles including CLAIMCHECK, DeepReviewer 2.0, and Peerispect can be omitted, while generic or application-only titles occupy the 18-title budget. The next planner and deterministic scope recovery therefore observe weaker title support than the completed semantic review established.
+- Fresh vs existing session comparison:
+  - Fresh session: the first collection attempt independently returns six direct-support judgments, but its persisted query feedback omits several of those titles.
+  - Existing session: the second and third attempts load the same bounded feedback and report only one title of support for the best deterministic scope axis.
+  - Divergence: none; the omission is deterministic in the feedback projection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: candidate-title feedback was implemented before semantic review became the authoritative paper-family classifier and was never updated to consume `audit.semantic_judgments`.
+- Code/test changes: `buildTopicDiscoveryCandidateTitleFeedback` now consumes completed semantic judgments, emits current anchor-proximate `direct_support` titles first within each family's existing six-title quota, and deterministically fills remaining slots without changing the global cap or evidence status. A domain-neutral integration regression proves that application-only rows cannot displace the direct-support title at the quota boundary.
+- Regression status: passed `npm test -- --run tests/collectPapers.test.ts tests/collectPlanningTimeouts.test.ts` (83 tests), `npx tsc --noEmit`, `npm run build`, and `git diff --check`. Fresh real TUI run `fe8690b8-b838-4c34-ae5d-eb73171a8353` independently placed the two `topic_family_1` direct-support titles first in `candidate_titles` while preserving `query_hint_only`, `paper_evidence_allowed=false`, the six-title family quota, and the unchanged corpus-quality rejection.
+- Follow-up risks: do not treat a direct-support judgment from a failed family as corpus admission, carried paper evidence, novelty evidence, or permission to preserve the family; title feedback remains vocabulary/queryability metadata only.
+- Evidence/artifacts: reproduction at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/6551fefd-6721-4f47-8b48-3ca4b8465346/collect_attempts/20260807124416054-861f6dd39fa6/{collect_semantic_review_input.json,collect_semantic_review.json,collect_corpus_quality.json,collect_query_reformulation_hints.json}`; resolution at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/fe8690b8-b838-4c34-ae5d-eb73171a8353/collect_attempts/20260807130521941-4c4fb2092fb7/{collect_semantic_review_input.json,collect_semantic_review.json,collect_corpus_quality.json,collect_query_reformulation_hints.json}`.
+
+---
+
+## Issue: LV-700
+
+- Status: resolved; focused regressions, typecheck, build, and same-flow real TUI revalidation passed
+- Category: live-validation planning / final title-support recovery executes the last rejected subset instead of the queryability-ranked explicit scope
+- Validation target: after two title-support-only planner rejections, a topic-discovery run with an explicit scientific-scope contract and independently retrieved prior-work hints must prefer a bounded deterministic plan compiled from unused brief-authorized axes and queryability hints. Probe output must remain non-evidence, and semantic review plus corpus-quality floors must remain unchanged.
+- Environment/session context: fresh real TUI run `85d40ada-60c7-4ec5-8482-80c867c92d73` from `briefs/research-brief-v3.md` in `<validation-workspace>/automated-peer-review-topic-search` on 2026-08-07.
+- Reproduction steps:
+  1. Start the governed topic-discovery brief whose explicit scope declares multiple empirical and relation axes plus four prior-work probes.
+  2. Let three bounded collection attempts fail the unchanged semantic corpus-quality gate and inspect the final attempt's `collect_query_plan.json`.
+  3. Confirm that both internal planner attempts have `status=rejected_feedback` and that the prior-work receipt independently retrieves close titles for all four probes.
+  4. Inspect `repair_diagnostic` and `selected_families` for the final attempt.
+- Expected behavior: the final bounded recovery compiles enough independent families from unused explicit brief axes, ranks their queryability using the grouped probe hints and executed-candidate titles, validates the recovered plan against the same frozen scope and feedback, and either executes that auditable plan or fails closed.
+- Actual behavior: the runtime invokes `authorize_bounded_unsupported_exploration`, sorts only the last rejected model plan, and truncates it to the two-family minimum. The final artifact therefore executes `cross reviewer disagreement` and `matched unit performance`, despite both planner attempts being rejected and despite a separate deterministic explicit-scope recovery path already existing for planner timeouts. The two families produce only three direct-support judgments at 0.250 and 0.125 semantic precision.
+- Fresh vs existing session comparison:
+  - Fresh session: the new run independently executes all four prior-work probes, then reaches the unsupported-subset repair after two rejected internal plans.
+  - Existing session: the preceding collection attempts preserve the same explicit scope and probe receipt but repeatedly replace weak families instead of constructing a queryability-ranked scope plan.
+  - Divergence: none; the behavior is a deterministic final-recovery policy gap rather than stale state.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: explicit-scope deterministic recovery was added only to the timeout exception path. The title-support rejection path predates it and still authorizes a truncated subset of the last invalid model output, so brief-authorized axes and per-probe queryability hints cannot govern the final recovery decision.
+- Code/test changes: the final title-support rejection path now invokes the deterministic explicit-scope compiler before considering unsupported exploration, validates the result against the same scope and feedback contract, records distinct accepted/rejected diagnostics, and fails closed when a compiled plan remains below the title-support floor. Unsupported exploration remains available only when deterministic compilation is unavailable.
+- Regression status: passed `npm test -- --run tests/collectPapers.test.ts tests/collectPlanningTimeouts.test.ts` (83 tests), `npx tsc --noEmit`, `npm run build`, and `git diff --check`. Fresh real TUI run `fe8690b8-b838-4c34-ae5d-eb73171a8353` exercised `explicit_scope_title_support_fallback_rejected` after two rejected model plans and stopped before retrieval because the deterministic families had title support `1` and `0`; the final corpus gate remained unchanged.
+- Follow-up risks: do not promote probe titles to evidence, inject probe candidates into the corpus, reuse materially rejected family contracts, lower semantic precision or coverage floors, or make collection retries unbounded.
+- Evidence/artifacts: reproduction at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/85d40ada-60c7-4ec5-8482-80c867c92d73/collect_attempts/{20260807121143758-705827b625bc,20260807121601566-5501f2f3f9d2,20260807122122703-eb1cb5d2d511}/{collect_query_plan.json,collect_prior_work_probe_receipt.json,collect_semantic_review.json,collect_corpus_quality.json}`; resolution at `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/fe8690b8-b838-4c34-ae5d-eb73171a8353/collect_attempts/20260807131546413-7d6a623575da/{collect_query_plan.json,collect_prior_work_probe_receipt.json,collect_result.json}`.
+
+---
+
+## Issue: LV-699
+
+- Status: resolved; focused regressions, typecheck, build, and same-flow real TUI revalidation passed
+- Category: live-validation timing / high-reasoning semantic review exhausts a fixed 120-second call ceiling
+- Validation target: semantic review must keep its frozen input, bounded calls, exact judgment protocol, and fail-closed evidence behavior while provisioning enough per-call time for the configured research model and reasoning effort. Partition recovery must not spend the useful budget on an oversized primary call and then describe one failed partition as all partitions exhausted.
+- Environment/session context: fresh real TUI run `f5559e7d-43de-45ab-b885-be7eda44e80e` with reviewer identity `codex:gpt-5.6-sol:high` in `<validation-workspace>/automated-peer-review-topic-search` on 2026-08-07.
+- Reproduction steps:
+  1. Start `briefs/research-brief-v2.md` from a fresh TUI session and allow the three-family portfolio to retrieve from all four providers.
+  2. Confirm that the frozen semantic payload contains 26 requested pairs, 24 papers, and 40,761 reviewer-input bytes.
+  3. Let the semantic reviewer run under the default 120,000 ms limit.
+  4. Inspect `collect_semantic_review.json` and the final `collect_papers` events.
+- Expected behavior: the configured high-reasoning reviewer completes the bounded frozen payload or an auditable partition schedule with a realistic per-call budget; any unresolved pair remains uncertain and no paper becomes evidence without a valid semantic judgment.
+- Actual behavior: the 26-pair primary call times out at 120 seconds, then the first 9-pair partition also times out at 120 seconds. The implementation immediately returns `semantic_audit_timeout_partitions_exhausted` after two of four permitted calls, marks the reason non-retryable, and skips retrieval and reviewer reruns while surfacing the node as retry 3/3. No judgments are returned despite PaperAudit-Bench, Peerispect, and other close candidates being present in the frozen input.
+- Fresh vs existing session comparison:
+  - Fresh session: 26 requested pairs trigger the deterministic timeout path after successful current-provider retrieval.
+  - Existing session: an earlier smaller 16-pair semantic payload completed under the same broad workflow, so this is workload- and reasoning-latency-sensitive rather than stale state.
+  - Divergence: the fixed timeout and full-call-first policy do not adapt to the larger bounded semantic workload.
+- Root-cause hypothesis:
+  - Type: `race_timing_bug`.
+  - Hypothesis: semantic screening is capped below other high-reasoning research stages, and its fallback spends one full timeout on the largest payload before allocating the same short timeout to a partition. A single timed-out partition is then classified as complete partition exhaustion even though two bounded calls were never started.
+- Code/test changes: raised the default semantic-review call window from 120 to 240 seconds, allowed bounded operator overrides up to 300 seconds, and expanded the total deadline to retain one window for each of the four permitted calls. A timed-out fallback now reports `semantic_audit_partition_timeout` instead of falsely claiming all partitions were exhausted; both timeout exhaustion classes remain non-retryable and fail closed. Added direct default, clamp, total-budget, call-count, and failure-class regressions and updated semantic-lineage validation.
+- Regression status: 247 focused collection, semantic-audit, state-graph, analysis, and lineage tests passed before the direct budget assertions were added; the final semantic-audit suite passes 25/25. Typecheck and production build passed. In fresh real TUI run `d467b8c8-e034-4b0c-85ac-353785bf8992`, the same 26-pair workload completed in one 240-second-window call with all 26 judgments returned, five direct-support verdicts, zero protocol violations, and no operational failure. A later 16-pair review also completed in one call. The unchanged corpus-quality gate still rejected both portfolios on scientific precision and coverage.
+- Follow-up risks: do not lower reasoning quality, bypass semantic review, reinterpret lexical recall as evidence, make retries unbounded, rerun retrieval unnecessarily, or hide model identity, call count, elapsed budget, and unresolved pairs.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/f5559e7d-43de-45ab-b885-be7eda44e80e/{collect_semantic_review_input.json,collect_semantic_review.json,collect_corpus_quality.json,collect_topic_discovery_candidates.jsonl,events.jsonl}`.
+
+---
+
+## Issue: LV-698
+
+- Status: resolved; focused regressions, build, captured replay, and same-flow real TUI revalidation passed
+- Category: live-validation lineage / queryability title hints are not connected to bounded semantic recall
+- Validation target: titles retained from prior probes or a failed corpus may reserve bounded semantic-review attention only when the next retrieval independently returns the same provider-provenanced paper; title hints must remain non-evidence and cannot bypass semantic or corpus gates.
+- Environment/session context: non-mutating replay of fresh real TUI run `0ab0b7f7-469c-495b-a607-2f04c7eb4e9a` after LV-696/LV-697 repairs on 2026-08-07.
+- Reproduction steps:
+  1. Inspect the second attempt's planner feedback and confirm that CLAIMCHECK is present in `candidateTitles` from the first failed corpus.
+  2. Confirm that the second retrieval independently returns the same title, paper ID, abstract, and family provenance.
+  3. Recompute lexical relevance and provider-recall ranking with the repaired runtime.
+- Expected behavior: the independently re-retrieved title-hint candidate occupies a bounded semantic-review slot so the model, not title overlap, decides direct support.
+- Actual behavior: planning uses the candidate title to judge queryability, but `RunTopicDiscoverySemanticAuditInput` receives only rows, family contracts, lexical matches, and raw provider ranks. The title hint lineage ends before semantic recall. CLAIMCHECK therefore remains outside the review floor even though it is both hinted and independently retrieved.
+- Fresh vs existing session comparison:
+  - Fresh session: artifact replay shows that the title exists in planner feedback and the provider pool, but no semantic input field connects them.
+  - Existing session: the omission is deterministic across reload because no persisted or in-memory handoff exists.
+  - Divergence: none; this is a missing lineage projection.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: prior-work probes were deliberately isolated as non-evidence, but the implementation also discarded their safe queryability function after planning instead of carrying exact-title hints into provider-provenance recall.
+- Code/test changes: carried query-plan and prior-probe candidate-title hints into provider recall; exact normalized hints reserve a bounded lane only after independent current retrieval and strong joint anchor/axis coverage. Added regressions proving that hints cannot inject candidates and that exact-title and strong-joint lanes remain protected.
+- Regression status: 120 focused tests, typecheck, and build passed. A non-mutating replay of the original 519-row pool moved PaperAudit-Bench to family-one rank 1 and CLAIMCHECK to family-two rank 4. Fresh real TUI run `d467b8c8-e034-4b0c-85ac-353785bf8992` independently re-retrieved both titles; the final semantic input placed PaperAudit-Bench at position 7 for `topic_family_1` and CLAIMCHECK at position 8 for `topic_family_2`. Both received valid `direct_support` judgments, while the aggregate quality gate remained unchanged and failed.
+- Follow-up risks: require independent provider retrieval, exact normalized title identity, bounded slots, and unchanged semantic gates; never inject a hinted paper directly into the corpus or treat a probe receipt as paper evidence.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/0ab0b7f7-469c-495b-a607-2f04c7eb4e9a/collect_attempts/20260807104531473-3c07b77d3fce/{collect_query_plan.json,collect_topic_discovery_candidates.jsonl,collect_semantic_review_input.json}`.
+
+---
+
+## Issue: LV-697
+
+- Status: resolved; focused regressions, build, captured replay, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / generation derivations split one scientific axis during candidate recall
+- Validation target: ordinary generation derivations must compare as one scientific term across query planning, title support, lexical recall, provider-recall ranking, and persisted lineage versions.
+- Environment/session context: non-mutating replay of fresh real TUI run `0ab0b7f7-469c-495b-a607-2f04c7eb4e9a` after the LV-696 repair on 2026-08-07.
+- Reproduction steps:
+  1. Build the repaired candidate-recall runtime and replay the second attempt's 519 persisted candidates through `rankTopicDiscoveryProviderRecallCandidates`.
+  2. Inspect the `manuscript grounded generation` family and the retrieved CLAIMCHECK abstract.
+  3. Compare normalized terms for `generation`, `generate`, `generated`, and `generative`.
+- Expected behavior: generation derivations share one deterministic comparison term, so a candidate containing grounded review generation can enter the bounded joint anchor/axis recall lane for semantic judgment.
+- Actual behavior: the plan axis normalizes to `generation`, while the candidate text retains four separate forms: `generate`, `generat`, `generative`, and `generation`. CLAIMCHECK remains at provider-recall rank 67 despite explicitly discussing grounded automatically generated scientific-paper critiques.
+- Fresh vs existing session comparison:
+  - Fresh session: artifact replay reproduces the mismatch from persisted title/abstract text using the newly built runtime.
+  - Existing session: the same inputs deterministically produce separate normalized terms.
+  - Divergence: none; this is a shared scientific-term canonicalization gap.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: the shared normalizer has explicit derivational families for automation, reliability, validity, stability, calibration, and estimation, but no generation family.
+- Code/test changes: versioned the shared scientific-term normalization and canonicalized generate, generated, generative, and generation to one comparison term; added direct normalization regressions.
+- Regression status: 120 focused tests, typecheck, and build passed. Captured-candidate replay confirmed normalized recall. The fresh TUI run then executed the `grounded generation` family under term-normalization version 9, independently retrieved CLAIMCHECK, placed it inside the eight-pair provider floor, and returned a grounded `direct_support` judgment with an exact abstract span.
+- Follow-up risks: do not add contextual synonyms, conflate unrelated concepts, promote normalized overlap to evidence, or bypass semantic review.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/0ab0b7f7-469c-495b-a607-2f04c7eb4e9a/collect_attempts/20260807104531473-3c07b77d3fce/{collect_topic_discovery_candidates.jsonl,collect_semantic_review_input.json,collect_query_plan.json}`.
+
+---
+
+## Issue: LV-696
+
+- Status: resolved; focused regressions, build, captured replay, and same-flow real TUI revalidation passed
+- Category: live-validation reliability / provider-recall ranking excludes high-axis closest priors from semantic review
+- Validation target: the bounded provider-provenance recall floor must preserve both exact scientific-object title candidates and candidates with strong joint anchor/axis coverage, while leaving every inclusion decision to the semantic reviewer and unchanged corpus-quality gate.
+- Environment/session context: fresh real TUI run `0ab0b7f7-469c-495b-a607-2f04c7eb4e9a` in `<validation-workspace>/automated-peer-review-topic-search` on 2026-08-07.
+- Reproduction steps:
+  1. Start topic discovery from the corrected broad scientific-peer-review brief and allow the first corpus-quality failure to trigger bounded replanning.
+  2. Execute the repaired plan with `reasoning error detection` and `manuscript grounded generation` families.
+  3. Inspect `collect_topic_discovery_candidates.jsonl` and confirm that directly relevant candidates with abstracts are present.
+  4. Inspect `collect_semantic_review_input.json` and compare the eight provider-provenance pairs selected per family.
+- Expected behavior: candidates with strong family-axis coverage and substantial anchor coverage enter the bounded semantic-review floor alongside at least one exact-title scientific-object candidate; selection remains non-evidentiary.
+- Actual behavior: PaperAudit-Bench and CLAIMCHECK are present in the provider candidate pool with family provenance and complete abstracts, but neither enters the 16-pair semantic-review input. Ranking places exact `scientific peer review` title wording before axis coverage, so generic review papers consume the floor. The reviewer therefore returns zero direct-support judgments without seeing the closest retrieved priors.
+- Fresh vs existing session comparison:
+  - Fresh session: the defect reproduced after a new brief, new run, new query plan, and new provider retrieval.
+  - Existing session: both completed retrieval attempts preserve the same ranking policy; no stale-state divergence was observed.
+  - Divergence: none; this is a deterministic in-memory candidate projection defect.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: the LV-684 exact-title protection is implemented as a globally dominant sort key. It prevents loose body coincidences from excluding exact-object titles, but it provides no reciprocal lane for candidates with strong joint anchor and axis coverage, allowing eight generic exact-anchor titles to exclude a directly relevant closest prior.
+- Code/test changes: replaced the globally dominant exact-title sort with deterministic bounded lanes for exact scientific-object titles and strong joint anchor/axis candidates, while preserving fallback provider ranking and semantic review as the sole evidence decision. Added regressions with eight competing exact-title candidates.
+- Regression status: 120 focused tests, typecheck, and build passed. Captured-candidate replay placed both close priors inside their review floors. Fresh real TUI revalidation independently reproduced that behavior: PaperAudit-Bench and CLAIMCHECK entered different family floors at positions 7 and 8 and were reviewed as direct support. The final two-family corpus still failed at one direct-support paper and 0.125 precision per family, proving that recall selection did not become evidence or relax the gate.
+- Follow-up risks: do not turn provider rank, title wording, probe output, or lexical overlap into paper evidence; do not remove the LV-684 exact-title protection; do not weaken semantic precision or independent-family floors.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/0ab0b7f7-469c-495b-a607-2f04c7eb4e9a/collect_attempts/20260807104531473-3c07b77d3fce/{collect_topic_discovery_candidates.jsonl,collect_semantic_review_input.json,collect_semantic_review.json,collect_corpus_quality.json}`.
+
+---
+
+## Issue: LV-695
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation planning / candidate-title support is stricter than corpus axis relevance
+- Validation target: candidate-title support used only for queryability triage must apply the same bounded axis-coverage ratio as lexical corpus relevance, without treating title support as scientific evidence or bypassing final corpus gates.
+- Environment/session context: fresh real TUI run `0ab0b7f7-469c-495b-a607-2f04c7eb4e9a` in `<validation-workspace>/automated-peer-review-topic-search` on 2026-08-07.
+- Reproduction steps:
+  1. Let the first collection attempt fail with four direct-support papers and persist candidate-title feedback including `Automatic Reviewers Fail to Detect Faulty Reasoning...` and `PaperAudit-Bench...Error Detection...`.
+  2. Allow bounded query replanning to propose the `reasoning error detection` family.
+  3. Inspect `planner.attempt_diagnostics` and `repair_diagnostic.titleSupport` in the second `collect_query_plan.json`.
+- Expected behavior: a three-term family receives title support when a title covers the established two-of-three axis floor; repeated title support remains queryability-only and final semantic corpus gates remain unchanged.
+- Actual behavior: `countCandidateTitleSupport` requires every axis term in each title, while corpus relevance requires `max(2, ceil(2/3 * axis_terms))`. The two close titles each cover two of the three family terms but support is recorded as zero, forcing an unsupported exploratory plan and contributing to later plan exhaustion.
+- Fresh vs existing session comparison:
+  - Fresh session: two bounded replans independently report all three families at zero title support.
+  - Existing session: the same mismatch is persisted in attempt diagnostics and reloads consistently.
+  - Divergence: none; planner and corpus components implement different thresholds for the same axis vocabulary.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: title-support counting predates the two-thirds candidate-recall policy and still uses all-term conjunction in both literature planning and scope diagnostics.
+- Code/test changes: centralized the versioned axis-match floor and title-support counter, then reused them in query planning, scope diagnostics, corpus relevance, and semantic recall. Candidate titles remain deduplicated queryability signals only. Added one-, two-, three-, and four-term threshold regressions plus planner acceptance coverage.
+- Regression status: 120 focused tests, typecheck, and build passed. In the final fresh TUI attempt, the three-term `reasoning error detection` axis recorded one candidate-title support from a title covering the established two-of-three floor; under the former all-term conjunction this support would have been zero. The plan still required bounded exploratory authorization because only one supporting title existed, and the final corpus gate failed unchanged.
+- Follow-up risks: do not allow one-term title overlap, treat titles as evidence, relax scope authorization, reuse rejected query families, or lower final corpus-quality floors.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/0ab0b7f7-469c-495b-a607-2f04c7eb4e9a/collect_attempts/{20260807104531473-3c07b77d3fce,20260807105206080-360020ef8114}/collect_query_plan.json` and `collect_prior_work_probe_receipt.json`.
+
+---
+
+## Issue: LV-694
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation retry/resume / explicit topic-discovery retrieval focus is cleared before corpus-quality approval
+- Validation target: every bounded automatic retry triggered by one explicit `/agent collect "<focus>"` command must retain the same focus, filters, limit, and sort while allowing rejected-family feedback to revise only the structured query portfolio.
+- Environment/session context: same-flow LV-693 real TUI revalidation on run `3796f0bf-052f-4079-96af-8da7d56843eb` on 2026-08-07.
+- Reproduction steps:
+  1. Execute an explicit topic-discovery collect command whose first structured portfolio retrieves candidates but fails corpus quality.
+  2. Allow the orchestrator to schedule its bounded automatic retry.
+  3. Compare `collect_query_plan.json` across `collect_attempts/`.
+- Expected behavior: all attempts record the same `requested_query_focus`; cache identities differ only when the focus or bounded feedback changes, and successful cleanup occurs after the node passes.
+- Actual behavior: the first attempt records `scientific peer review error detection`, then `collect_papers` clears `collect_papers.request` immediately after retrieval and before semantic quality review. Automatic retries therefore record a null focus and run the default prior-work-probe path. The third attempt eventually passed with 10 papers, but it no longer represented the complete explicit command contract.
+- Fresh vs existing session comparison:
+  - Fresh session: the first attempt has the focus present; structured planning and 12 retrieval requests execute.
+  - Existing session: automatic retries lose the focus; the default planning path and prior-work probes execute.
+  - Divergence: request cleanup occurs at retrieval success instead of node success.
+- Root-cause hypothesis:
+  - Type: `resume_reload_bug`.
+  - Hypothesis: one-shot command cleanup predates the post-retrieval semantic corpus gate, so the in-memory retry re-enters without the persisted command request.
+- Code/test changes: moved one-shot request cleanup after all fetch, zero-result, and topic-quality failure returns; added a request-retention regression and documented the bounded-retry contract.
+- Regression status: 80 focused collection/planning tests, typecheck, and build passed. Same-flow real TUI revalidation produced three bounded attempts; all three recorded `requested_query_focus=scientific peer review error detection`, and the complete query, limit, sort, and filters remained persisted at the final failure boundary. The retry no longer substituted an unrelated successful corpus.
+- Follow-up risks: do not preserve internal candidate-prior lane requests across unrelated rollback, retain a successful one-shot request indefinitely, suppress query-feedback revision, or treat the successful but focus-lost corpus as evidence for the requested error-detection lineage.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/collect_attempts/{20260807101156299-d3fe4098db5c,20260807101514165-e5385ec73b65,20260807102007248-7271956420b4}/collect_query_plan.json`.
+
+---
+
+## Issue: LV-693
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation command flow / explicit topic-discovery collection query cannot produce the required structured portfolio
+- Validation target: `/agent collect "<focus>"` on a `topic_discovery` run must use the explicit query as a bounded planning focus while preserving the brief-authorized scientific scope, at least two independent query families, lineage provenance, and all final corpus gates.
+- Environment/session context: real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` on 2026-08-07 after `analyze_papers` correctly blocked hypothesis generation for lack of independent gap support.
+- Reproduction steps:
+  1. Keep a governed `topic_discovery` run at a stopped node boundary.
+  2. Run `/agent collect "scientific peer review error detection" --limit 200 --run <run>`.
+  3. Inspect `collect_query_plan.json`, `collect_request.json`, and the run record.
+- Expected behavior: the explicit query narrows the planner's attention inside the frozen scientific-scope contract, the planner emits at least two structured families, and retrieval begins only if the portfolio validates.
+- Actual behavior: explicit queries skip `resolveGeneratedLiteratureQueries`. The single `requested_query` candidate has no structured family contract and is then excluded by `selectTopicDiscoveryQueryFamilies`, so `normalizeCollectRequest` always returns an empty search plan. The node fails immediately without a provider call; both a seven-concept query and the shorter four-concept query reproduced the same failure.
+- Fresh vs existing session comparison:
+  - Fresh session: the explicit-query attempt fails deterministically before retrieval.
+  - Existing session: the no-query attempt lets the LLM planner produce three structured families and execute retrieval.
+  - Divergence: the command path bypasses the only component that can satisfy the topic-portfolio structure.
+- Root-cause hypothesis:
+  - Type: `in_memory_projection_bug`.
+  - Hypothesis: explicit-query handling was designed for first-yield collection and was not projected into the governed topic-discovery planner contract.
+- Code/test changes: added an explicit planning-focus input, bound it into the prompt and cache fingerprint, routed topic-discovery explicit queries through the structured planner, recorded `requested_query_focus`, and added unit plus node regressions.
+- Regression status: 80 focused collection/planning tests, typecheck, and build passed. Same-flow real TUI revalidation replaced the immediate zero-call planning failure with a valid three-family plan and 12 cross-provider retrieval requests; the first corpus then failed the unchanged semantic-quality gate. A later bounded attempt that could not derive an authorized replacement failed closed instead of bypassing the scope contract.
+- Follow-up risks: do not execute a single unstructured query as a topic portfolio, let the focus override the brief's scientific scope, weaken the two-family requirement, or silently reuse a plan cached for another focus.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{run_record.json,collect_query_plan.json,collect_request.json,events.jsonl,collect_attempts/}`.
+
+---
+
+## Issue: LV-692
+
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed
+- Category: live-validation resume/reload / cached full-document grounding text is truncated to the prompt excerpt limit
+- Validation target: resumed PDF analysis must verify evidence against the same complete reading-order grounding representation used immediately after extraction, while only model prompt text remains bounded.
+- Environment/session context: resumed real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` after the LV-691 reading-order extraction repair on 2026-08-07.
+- Reproduction steps:
+  1. Generate a version 3 reading-order grounding cache longer than 16,000 characters.
+  2. Resume `analyze_papers` so `resolvePaperTextSource` loads the cache instead of extracting the PDF again.
+  3. Inspect a verbatim evidence span after character 16,000 and compare it with the on-disk grounding cache.
+  4. Apply the same normalizer used by `calibrateEvidenceRows` to the persisted span and full cache.
+- Expected behavior: the prompt excerpt remains bounded, but `source.groundingText` contains the complete cache and the late verbatim span is marked `grounded_span`.
+- Actual behavior: `readCachedText` truncates both prompt text and grounding text to `MAX_SOURCE_CHARS=16_000`. The representative factuality sentence begins around normalized character 30,312 and exists in the on-disk v3 cache, but resumed analysis cannot see it and marks all four evidence rows for that paper ungrounded.
+- Fresh vs existing session comparison:
+  - Fresh session: newly extracted reading-order grounding text remains complete in memory for exact verification.
+  - Existing session: the same cache is loaded through the prompt-oriented reader and truncated.
+  - Divergence: persistence contains the correct bytes, but the resume loader projects only a bounded prefix into the verifier.
+- Root-cause hypothesis:
+  - Type: `resume_reload_bug`.
+  - Hypothesis: prompt excerpt caching and evidence-grounding caching share one reader despite having different completeness contracts.
+- Code/test changes: added a dedicated complete grounding-cache reader, preserved the bounded prompt reader, bumped evidence semantics to version 6, and added a late-span resume regression.
+- Regression status: 127 focused text/analyzer/node tests and build passed. Same-flow real `analyze_papers` revalidation completed 9/9 papers with 31/36 grounded evidence rows. Full-text grounding increased from 10/20 before the repair to 15/20 after resume; recovered KID-Review rows matched normalized source positions 20,882 and 22,624, beyond the old 16,000-character boundary. The five remaining ungrounded rows failed exact source matching and remained excluded from synthesis as intended.
+- Follow-up risks: do not remove the prompt-size bound, promote fuzzy matches, mutate persisted evidence rows without re-analysis, or treat one recovered span as sufficient independent-paper support.
+- Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{evidence_store.jsonl,analysis_manifest.json,analysis_cache/texts/24a95ff7a4f37d7d05f30e60dae40a576f49eeda.v3.grounding.txt,analysis/gap_synthesis.json,analysis/gap_map.json}`.
+
+---
+
 ## Issue: LV-691
 
-- Status: reproduced; repair in progress
+- Status: resolved; focused regressions, build, and same-flow real TUI revalidation passed after LV-692
 - Category: research completion risk / two-column PDF layout extraction causes false-negative exact evidence grounding
 - Validation target: full-document evidence spans returned from PDF analysis must be verified against a reading-order-preserving extraction of the same PDF, while page-layout text remains available for section selection and visual analysis.
 - Environment/session context: real TUI run `3796f0bf-052f-4079-96af-8da7d56843eb` after the repaired collection lineage passed and `analyze_papers` completed 9/9 papers on 2026-08-04.
@@ -35,8 +328,8 @@ Path placeholders:
 - Root-cause hypothesis:
   - Type: `in_memory_projection_bug`.
   - Hypothesis: `extractPdfPageTexts` serves both section-aware model context and lossless grounding. Its `-layout` mode is useful for visual structure but is not a canonical sentence-order representation for multi-column PDFs.
-- Code/test changes: pending separate layout and reading-order extraction paths, a grounding-cache semantics bump, exact-match regressions for interleaved two-column text, and same-flow analysis revalidation.
-- Regression status: pending focused analyzer/text tests, build, harness checks, and real rerun of `analyze_papers`.
+- Code/test changes: separated layout and reading-order extraction paths, bumped grounding-cache and evidence semantics, and added an exact-match regression for interleaved two-column text.
+- Regression status: 127 focused tests and build passed. Same-flow real revalidation completed 9/9 papers; reading-order extraction plus the LV-692 complete-cache repair increased full-text grounded rows from the original 4/20 to 15/20. The five remaining ungrounded rows failed exact matching and were not promoted.
 - Follow-up risks: do not replace exact grounding with permissive fuzzy matching, silently promote image-only claims, weaken the two-independent-full-text support gate, or discard layout text needed for section selection.
 - Evidence/artifacts: `<validation-workspace>/automated-peer-review-topic-search/.autolabos/runs/3796f0bf-052f-4079-96af-8da7d56843eb/{evidence_store.jsonl,analysis/gap_synthesis.json,analysis/gap_map.json,analysis_cache/texts/,analysis_cache/pdfs/}`.
 

@@ -80,6 +80,43 @@ describe("paperText", () => {
     expect(source.text).toBe("Full text from cache");
   }, 10000);
 
+  it("loads complete cached grounding text while keeping prompt text bounded", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-grounding-cache-"));
+    tempDirs.push(root);
+    process.chdir(root);
+
+    const textDir = path.join(
+      ".autolabos",
+      "runs",
+      "run-1",
+      "analysis_cache",
+      "texts"
+    );
+    const lateEvidence = "A late full-document limitation remains directly testable.";
+    await mkdir(textDir, { recursive: true });
+    await writeFile(
+      path.join(textDir, "paper-1.v3.txt"),
+      `${"prompt context ".repeat(2_000)}${lateEvidence}`,
+      "utf8"
+    );
+    await writeFile(
+      path.join(textDir, "paper-1.v3.grounding.txt"),
+      `${"grounding context ".repeat(2_000)}${lateEvidence}`,
+      "utf8"
+    );
+
+    const source = await resolvePaperTextSource({
+      runId: "run-1",
+      paper: makePaper({ pdf_url: "https://example.org/paper-1.pdf" }),
+      includePageImages: false
+    });
+
+    expect(source.text.length).toBeLessThanOrEqual(16_012);
+    expect(source.text).toMatch(/\n\[TRUNCATED\]$/u);
+    expect(source.text).not.toContain(lateEvidence);
+    expect(source.groundingText).toContain(lateEvidence);
+  });
+
   it("reuses cached hybrid page images when they already exist", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-text-images-"));
     tempDirs.push(root);

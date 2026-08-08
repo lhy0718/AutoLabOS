@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "frozen_at_utc": "2026-08-07T16:58:06Z",
+  "retrieval_outcomes_observed_before_freeze": false,
+  "files": {
+    "experiment-contract.v1.json": "3524eaefa30982c6f40915995ddebb8d8aaa8e87b7e7addcf6b75eda2ff63516",
+    "analysis-contract.v1.json": "399c42e38064933de3ef71b6ed830b6476e47cf0ec3c315a847e530d682d22fd",
+    "prompts/frontier-obligations.v1.txt": "a63241cdaa3a85e409630262fb6b0929d450a8325bd1c589a3649a574ed9833f",
+    "prompts/generic-selector.v1.txt": "4a3acd6f9663dc85fe26f97bc39cf21411fd086c98bdea03168cb79bd4d7ba5a",
+    "../lib/retrieval.py": "5caee9eb7c59683bf718cbcf0d78ee71ba84e47803795ff148028152da7f505e",
+    "../scripts/run_deterministic_retrieval.py": "0f6ee7e800edf3c85972f6e3348cb15de224913f901bb8fc4efe97037caf749a",
+    "../scripts/evaluate_rankings.py": "e40e958ba2d2370e655f9fed2d2c6964debec2d0f4b9c737e87b77106950425a",
+    "../results/access-preflight.v2.json": "673a10b90cfbc93bda473f4a9be1635c9ed17b2adf3ce09481bea4e3dfd1dbdc",
+    "../results/materialization-preflight.v1.json": "57da0ff4a0a8043b4ebc3fc91c1a97f078d1c141f42cfb254baeb3e083453def",
+    "blind/manifest.jsonl": "ffc3af485065a185d453ff760de80a467b43b36d57a675833174ae9fe3bdb234"
+  },
+  "post_freeze_rule": "Implementation defects may be repaired only with a versioned amendment that identifies whether development outcomes were already observed. Scientific method, primary budget, metric, contrast, and promotion thresholds cannot be silently changed."
+}

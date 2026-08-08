@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import {
   buildTopicDiscoverySemanticAuditPrompt,
+  MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TOTAL_DEADLINE_MS,
   rankTopicDiscoveryProviderRecallCandidates,
   TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
   TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS,
@@ -471,8 +472,10 @@ function validateSemanticExecutionTrace(input: {
       !== TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS
     || integerValue(execution.maximum_fallback_partitions)
       !== TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS
-    || integerValue(execution.total_deadline_ms)
-      !== Math.min(480_000, timeoutMs * 4)
+    || integerValue(execution.total_deadline_ms) !== Math.min(
+      MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TOTAL_DEADLINE_MS,
+      timeoutMs * TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS
+    )
     || integerValue(execution.fallback_partition_size) !== expectedPartitionSize
     || integerValue(execution.calls_started) !== execution.calls.length
     || execution.calls.length < 1

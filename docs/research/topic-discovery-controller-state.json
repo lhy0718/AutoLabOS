@@ -1,13 +1,12 @@
 {
   "schema_version": "1.0",
   "artifact_type": "autonomous_topic_search_controller_state",
-  "updated_at": "2026-08-04",
-  "live_request_anchor": {
-    "latest_live_request": "Autonomously pursue one long goal: distrust and revalidate all existing AutoLabOS work and code structure, restart topic selection when necessary, make broad prior-work-driven topic exploration and generation a reusable AutoLabOS capability, use multi-agent review where useful, choose a study that can run quickly on this computer, and continue through a genuinely reviewed workshop-level paper.",
-    "compressed_summary_present": true,
-    "historical_summary_messages_quarantined": true,
-    "allowed_action": "Keep all previously killed studies quarantined, repair the topic-discovery controller's provenance and execution gates, independently verify the provisional structured-output and AgentUQ kill decisions, audit the five-cluster replacement portfolio, select only a surviving candidate through a current scorecard, and freeze a new outcome-blind protocol before any model or study-arm execution.",
-    "older_requests_override_latest": false
+  "updated_at": "2026-08-07",
+  "controller_policy": {
+    "historical_candidates_quarantined": true,
+    "promotion_requires_verified_receipts": true,
+    "paper_readiness_requires_real_experiments": true,
+    "allowed_action": "Keep terminated studies quarantined; continue wide topic resampling across new research objects, evidence modalities, and evaluation units; verify public access, rights, full-text closest priors, executable baselines, independent-unit counts, bounded local cost, and outcome-blind kill signals before selecting or executing a study."
   },
   "research_program_anchor": {
     "objective": "Audit the reusable system, make literature-grounded topic discovery an AutoLabOS capability, select a locally feasible workshop-paper topic, run real experiments, and produce a workshop-level manuscript with independent review where useful.",
@@ -90,13 +89,34 @@
   ],
   "multi_agent_review": {
     "enabled": true,
-    "parallel_sidecar_task_count": 2,
-    "completed_outputs_inspected": 19,
+    "parallel_sidecar_task_count": 3,
+    "completed_outputs_inspected": 22,
     "active_sidecar_task_count": 0,
     "active_sidecar_roles": [],
     "consensus_is_evidence": false,
     "subagent_outputs_bypass_evidence_gates": false,
-    "main_controller_retains_promotion_authority": true
+    "main_controller_retains_promotion_authority": true,
+    "latest_round": {
+      "roles": [
+        "closest_prior_novelty_reviewer",
+        "methods_reviewer",
+        "scorer_conformance_auditor"
+      ],
+      "all_closed": true,
+      "combined_scorer_attribution_formulation": "KILL",
+      "independent_same_location_formulation": "HOLD_PREFLIGHT",
+      "promotion_authorized": false
+    },
+    "current_round": {
+      "status": "completed",
+      "agent_roles": [
+        "candidate_portfolio_auditor",
+        "closest_prior_auditor",
+        "study_contract_adversarial_reviewer"
+      ],
+      "consensus_is_evidence": false,
+      "promotion_authorized": false
+    }
   },
   "external_system_audit": {
     "index": "worldbench/awesome-ai-auto-research",
@@ -637,6 +657,130 @@
       "remaining_narrow_route": "Evaluate review quality at atomic obligation level against premise-matched and strongest prior comparators.",
       "narrow_route_status": "AUDIT_ONLY",
       "narrow_route_blocker": "The current design requires a large scoring workload and human gold annotations, exceeding the intended rapid local preflight budget."
+    },
+    "topic_flaws_same_location_attribution": {
+      "title": "Counterfactual Same-Location Attribution for Full-Paper Review",
+      "status": "terminated_before_model_execution",
+      "decision": "KILL_PROVENANCE",
+      "execution_allowed": false,
+      "topic_selected_for_paper": false,
+      "model_calls_completed": 0,
+      "research_question": "For matched clean and altered versions of the same paper, how often does a pinned reviewer select the injected location only after the edit rather than selecting the corresponding clean location?",
+      "primary_endpoint": "paper-clustered delta = E[A-C] = p10-p01 under the neutral prompt and layout-stable subset",
+      "key_secondary_endpoints": [
+        "complete 00/01/10/11 transition table",
+        "p10 and p01 separately",
+        "altered and clean counterpart hit rates",
+        "forced-prompt interaction",
+        "surface-placebo contrast"
+      ],
+      "closest_prior_status": "broad_claims_absorbed_narrow_same_location_unit_unresolved",
+      "score_status": {
+        "local_compute_feasibility": "NOT_SCORED_PROVENANCE_INVALID",
+        "reproducibility": "NOT_SCORED_PROVENANCE_INVALID"
+      },
+      "combined_scorer_formulation": {
+        "decision": "KILL",
+        "reason": "The prior scorer discrepancy changed 8 of 575 cells, below its frozen materiality gate; independent audits rejected repackaging scorer repair as a joint contribution.",
+        "legacy_study": "studies/reviewer-evaluator-audit/method/termination-decision.v1.json"
+      },
+      "preflight_requirements": [
+        "byte-identical deterministic edit replay for every included pair",
+        "equal-length diff-core target windows with frozen context hashes",
+        "fresh matched clean and altered builds under one pinned toolchain",
+        "model-output-blind layout-stable primary subset with at least 40 paper clusters",
+        "neutral prompt primary and presuppositional prompt secondary",
+        "random-location and surface-matched placebo controls",
+        "exact deterministic prediction matcher without an LLM judge",
+        "opaque identifiers, independent sessions, and pair-blind order",
+        "frozen numeric materiality margin and pilot sample before inference",
+        "at least 20 GB free disk and zero condition leakage"
+      ],
+      "claim_ceiling": "No empirical FLAWS result is currently admissible. A future provenance-valid rerun would be capped at injection-responsive same-location selection under the pinned FLAWS extension, models, prompts, rendering, and matcher; no true false-positive, semantic-understanding, benchmark-wide, or general reviewer claim.",
+      "portfolio_receipt": "docs/research/topic-search-portfolio-2026-08-07.md",
+      "provenance_preflight": {
+        "status": "FAIL",
+        "reason": "Archive hashes, fresh extraction, and the build toolchain were not enforced strongly enough for the diagnostic replay and layout counts to qualify as scientific gate evidence.",
+        "diagnostic_layout_count_admissible": false,
+        "empirical_evidence_verified": false,
+        "model_outputs_read": false,
+        "model_calls_completed": 0
+      },
+      "termination_receipt": "studies/flaws-counterfactual-attribution/method/termination-decision.v2.json"
+    },
+    "topic_literal_evidence_paths": {
+      "title": "Literal Result-Sink Evidence Paths",
+      "status": "terminated_before_model_execution",
+      "decision": "KILL_PREFLIGHT",
+      "execution_allowed": false,
+      "model_calls_completed": 0,
+      "reason": "The conservative frozen scan found eligible targets in 25 of 40 confirmatory workspaces and 2 of 5 development workspaces. Both eligibility floors failed, and the two surviving development mutations remain unaudited after the scalar-classifier revision, so the manual-validity gate also failed.",
+      "failed_gates": [
+        "minimum_confirmatory_workspaces_with_eligible_target",
+        "minimum_development_workspaces_with_eligible_target",
+        "manual_development_mutation_validity"
+      ],
+      "structural_preflight_exit_code": 2,
+      "contract_status": "post_scan_integrity_amendment",
+      "thresholds_frozen_before_initial_scan": true,
+      "scanner_and_audit_bindings_added_after_structural_outcomes": true,
+      "confirmatory_model_outcomes_observed": false,
+      "termination_receipt": "studies/literal-evidence-paths/method/termination-decision.v1.json"
+    },
+    "topic_scicoqa_obligation_retrieval": {
+      "title": "Obligation-Guided Retrieval for Paper-Code Audits",
+      "status": "development_deterministic_complete_external_egress_authorization_pending",
+      "decision": "HOLD_EXTERNAL_PROVIDER_AUTHORIZATION",
+      "execution_allowed": false,
+      "topic_selected_for_paper": false,
+      "model_calls_completed": 0,
+      "research_question": "Do source-linked implementation obligations improve localization of discrepancy-bearing scientific-code files over strong generic retrieval under an equal selected-code token budget?",
+      "closest_prior_scope": "SciCoQA absorbs paper-code discrepancy detection and long-context difficulty; paper-code RAG and repository retrieval absorb generic RAG and query reformulation. The residual is obligation structure versus an equal-call generic frontier selector.",
+      "access_preflight": {
+        "decision": "PASS_PREFLIGHT",
+        "eligible_units": 86,
+        "required_units": 80,
+        "receipt": "studies/scicoqa-obligation-retrieval/results/access-preflight.v2.json"
+      },
+      "materialization_preflight": {
+        "decision": "PASS_MATERIALIZATION",
+        "materialized_units": 86,
+        "independent_components": 86,
+        "duplicate_components": 0,
+        "development_units": 8,
+        "confirmatory_units": 72,
+        "reserve_units": 6,
+        "receipt": "studies/scicoqa-obligation-retrieval/results/materialization-preflight.v2.json",
+        "source_dataset_hash_verified": true,
+        "source_registry_hash_verified": true,
+        "fresh_download_failures": 0,
+        "blind_paper_bytes_hash_bound": true,
+        "blind_repository_tree_bytes_hash_bound": true,
+        "split_specific_sealed_gold_manifests_hash_bound": true
+      },
+      "deterministic_development": {
+        "alphabetical_prefix_macro_recall": 0.65625,
+        "generic_hybrid_macro_recall": 0.7604166666666666,
+        "deterministic_obligations_macro_recall": 0.8020833333333334,
+        "methods_only_bm25_macro_recall": 0.8020833333333334,
+        "whole_paper_bm25_macro_recall": 0.84375,
+        "prediction_artifact": "studies/scicoqa-obligation-retrieval/results/development-deterministic-rankings.v3.json",
+        "prediction_seal": "studies/scicoqa-obligation-retrieval/results/development-deterministic-predictions-seal.v3.json",
+        "evaluation_artifact": "studies/scicoqa-obligation-retrieval/results/development-deterministic-evaluation.v3.json",
+        "prediction_kind": "deterministic",
+        "frontier_execution_receipt_required": true,
+        "proposed_system_evaluated": false,
+        "promotion_authorized": false
+      },
+      "external_boundary": "A fresh 16-call OpenAI Responses API run with gpt-5.6-sol/high is required. It sends paper text and repository-derived content to a paid external service, so explicit data-egress and cost approval is required. Codex OAuth, codex_mock, and provider-cache replay cannot enter paper-grade evidence.",
+      "freeze_amendment": {
+        "current_receipt": "studies/scicoqa-obligation-retrieval/method/freeze-receipt.v3.json",
+        "development_outcomes_observed_before_amendment": true,
+        "confirmatory_outcomes_observed_before_amendment": false,
+        "scientific_contract_changed": false,
+        "evidence_integrity_implementation_changed": true
+      },
+      "study_root": "studies/scicoqa-obligation-retrieval"
     }
   },
   "recent_candidate_audit": {
@@ -726,6 +870,15 @@
         "decision": "KILL_CURRENT_FORMULATION",
         "execution_allowed": false,
         "verified_by_main_controller": true
+      },
+      {
+        "candidate_id": "topic_flaws_same_location_attribution",
+        "decision": "KILL_PROVENANCE",
+        "execution_allowed": false,
+        "verified_by_main_controller": true,
+        "verification_scope": "kill_decision_only",
+        "empirical_evidence_verified": false,
+        "reason": "The diagnostic replay and layout counts were invalidated because archive hashes, fresh extraction, and the build toolchain were not fully attested."
       }
     ],
     "alive_unselected_portfolio": [
@@ -738,8 +891,19 @@
     "selected_candidate_id": null,
     "subagent_output_verified_by_main_controller": false,
     "unverified_subagent_output_count": 5,
-    "requires_wide_resampling": true,
-    "multi_agent_consensus_used_as_evidence": false
+    "requires_wide_resampling": false,
+    "multi_agent_consensus_used_as_evidence": false,
+    "current_refresh": {
+      "portfolio_receipt": "docs/research/topic-search-portfolio-2026-08-07.md",
+      "candidate_count": 8,
+      "leading_candidate_id": "topic_scicoqa_obligation_retrieval",
+      "leading_candidate_selected_for_development": true,
+      "leading_candidate_selected_for_paper": false,
+      "leading_candidate_decision": "HOLD_EXTERNAL_PROVIDER_AUTHORIZATION",
+      "independent_audits_closed": true,
+      "prior_combined_formulation_killed": true,
+      "execution_allowed": false
+    }
   },
   "current_state": {
     "research_specific_runtime_contamination_reproduced": true,
@@ -761,42 +925,52 @@
     "collect_attempt_lineage_live_revalidated": true,
     "compute_budget_p0_repair_in_progress": false,
     "current_paper_ready": false,
-    "topic_portfolio_verified": false,
-    "portfolio_refresh_required": true,
+    "topic_portfolio_verified": true,
+    "portfolio_refresh_required": false,
     "open_repository_audit_completed": true,
     "open_repository_audit_count": 24,
     "killed_topic_id": "topic_relation_serialization",
     "killed_topic_decision_receipt": "docs/research/relation-serialization-probe-decision-v1.json",
-    "pilot_latent_topic_id": null,
+    "pilot_latent_topic_id": "topic_scicoqa_obligation_retrieval",
     "primary_probe_dataset": null,
     "primary_probe_sample_target": null,
     "promotion_floor_paper_unique_units": null,
     "secondary_external_validation_candidate": null,
-    "leading_refresh_route": null,
-    "leading_refresh_route_selected": false,
-    "pilot_preregistration_expected_path": null,
-    "pilot_preregistration_present": false,
-    "pilot_preregistration_frozen": false,
+    "leading_refresh_route": "topic_scicoqa_obligation_retrieval",
+    "leading_refresh_route_selected": true,
+    "pilot_preregistration_expected_path": "studies/scicoqa-obligation-retrieval/method/experiment-contract.v1.json",
+    "pilot_preregistration_present": true,
+    "pilot_preregistration_frozen": true,
+    "pilot_integrity_amended_after_development": true,
     "pilot_ready": false,
     "topic_selected": false,
-    "real_feasibility_experiment_completed": false,
-    "bounded_development_evidence_only": false,
+    "real_feasibility_experiment_completed": true,
+    "bounded_development_evidence_only": true,
     "research_model_calls_completed": 0,
-    "goal_complete": false
+    "goal_complete": false,
+    "flaws_source_replay_preflight_completed": false,
+    "flaws_source_replay_preflight_passed": false,
+    "flaws_fresh_matched_build_audit_completed": false,
+    "flaws_layout_stable_coverage_verified": false,
+    "flaws_layout_stable_coverage_passed": false,
+    "flaws_provenance_gate_failed": true,
+    "current_candidate_external_provider_required": true,
+    "current_candidate_frontier_development_completed": false,
+    "current_candidate_confirmatory_opened": false
   },
   "post_no_pass_portfolio": {
     "minimum_slots": 3,
     "maximum_slots": 5,
-    "status": "five_cluster_audit_completed_no_pilot_ready_candidate",
+    "status": "wide_refresh_complete_scicoqa_candidate_at_external_egress_authorization_gate",
     "targets": [
-      "topic_user_simulator_conditional_ranking_validity",
-      "topic_temporal_selective_reobservation",
+      "topic_scicoqa_obligation_retrieval",
       "topic_multilingual_typed_tool_normalization",
-      "topic_scope_preserving_report_revision",
-      "topic_structured_output_boundary_attribution"
+      "topic_structured_output_boundary_attribution",
+      "topic_localized_scientific_source_repair"
     ],
-    "leading_target_is_selected": false,
-    "next_action": "Wide resampling across a different research object, evidence modality, and evaluation unit; held narrow routes remain comparison points rather than default winners."
+    "leading_target_is_selected": true,
+    "next_action": "After explicit approval for paid external transfer of paper and repository-derived content, run the frozen fresh equal-call development comparison and kill the topic unless frontier obligations beat the strongest baseline by the preregistered margin. Do not replay provider caches or open confirmatory gold before development promotion."
   },
-  "next_allowed_state": "Re-run build, focused, public-sanitization, harness, TUI, and Web validation against the completed provenance, semantic-reentry, and prior-absorption contracts; then widely resample research objects, evidence modalities, and evaluation units from current primary literature rather than promoting a held narrow route by default. Independently verify and score every surviving candidate, select only one with explicit data rights, an executable strongest baseline, enough independent units, bounded local cost, and a predeclared kill signal, and freeze an outcome-blind protocol before any model or study-arm execution. Paper drafting remains forbidden until a real selected study passes execution and review gates."
+  "next_allowed_state": "Keep paper readiness and confirmatory access false. Run only the frozen fresh gpt-5.6-sol/high development calls after explicit data-egress and cost approval. Promote to confirmatory execution only if evaluations recomputed from sealed development gold satisfy the preregistered effect and per-paper direction gates; otherwise terminate the topic without changing the budget, split, baseline, or metric.",
+  "current_portfolio_receipt": "docs/research/topic-search-portfolio-2026-08-07.md"
 }

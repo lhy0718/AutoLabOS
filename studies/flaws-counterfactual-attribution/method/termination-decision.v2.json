@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "artifact_kind": "research_candidate_termination_decision",
+  "decided_at": "2026-08-07",
+  "candidate_id": "topic_flaws_same_location_attribution",
+  "decision": "KILL_PROVENANCE",
+  "candidate_status": "terminated_before_model_execution",
+  "topic_selected": false,
+  "model_calls_completed": 0,
+  "frozen_contract": {
+    "path": "method/preflight-contract.v1.json",
+    "sha256": "b162cf3f7c0c30dc430ec7fd98e2795df25553c62cdc330c3bf3e1530007946c"
+  },
+  "decision_basis": [
+    {
+      "code": "source_archives_not_runtime_bound",
+      "detail": "The diagnostic runner did not verify supplied archives against the hashes declared by the frozen contract."
+    },
+    {
+      "code": "fresh_extraction_not_enforced",
+      "detail": "The diagnostic receipt did not prove that every audited source tree came from a fresh extraction of the declared archive."
+    },
+    {
+      "code": "fresh_toolchain_not_attested",
+      "detail": "The build receipt did not bind compiler, package, and environment versions tightly enough to establish fresh-build reproducibility."
+    },
+    {
+      "code": "derived_gate_result_invalidated",
+      "detail": "The observed layout-filter count is retained only as a diagnostic observation and cannot authorize a scientific kill or promotion decision."
+    }
+  ],
+  "invalidated_public_artifacts": [
+    "source replay implementation and tests",
+    "source mismatch ledger",
+    "source replay receipt",
+    "matched-layout receipt"
+  ],
+  "prohibited_claims": [
+    "That source replay passed for the candidate",
+    "That all eligible instances built successfully",
+    "That the layout-stable confirmatory count is verified",
+    "That the candidate failed only its layout-unit floor"
+  ],
+  "next_action": "Return to wide topic search. Any future rerun must verify archive hashes before extraction, attest a fresh toolchain, and produce receipts bound to both the frozen contract and exact inputs."
+}

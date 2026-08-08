@@ -1,7 +1,10 @@
 import { extractLiteratureTermSequence } from "./runConstraints.js";
 
-export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 8 as const;
-export const TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION = 7 as const;
+export const TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION = 9 as const;
+export const TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION = 8 as const;
+
+export const TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES = 2;
+export const TOPIC_DISCOVERY_MINIMUM_AXIS_MATCH_RATIO = 2 / 3;
 
 const TOPIC_DISCOVERY_OBJECT_STOPWORDS: string[] = [
   "paper",
@@ -46,6 +49,49 @@ export function normalizeTopicDiscoveryCandidateObjectTerms(value: string): stri
     .filter(Boolean);
 }
 
+export function resolveTopicDiscoveryRequiredAxisMatches(
+  axisTerms: string[]
+): number {
+  const normalizedAxisCount = new Set(
+    normalizeTopicDiscoveryCandidateTerms(axisTerms.join(" "))
+  ).size;
+  if (normalizedAxisCount === 0) {
+    return 0;
+  }
+  return Math.min(
+    normalizedAxisCount,
+    Math.max(
+      Math.min(TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES, normalizedAxisCount),
+      Math.ceil(normalizedAxisCount * TOPIC_DISCOVERY_MINIMUM_AXIS_MATCH_RATIO)
+    )
+  );
+}
+
+export function countTopicDiscoveryCandidateTitleSupport(
+  axisTerms: string[],
+  candidateTitles: string[]
+): number {
+  const normalizedAxisTerms = [
+    ...new Set(normalizeTopicDiscoveryCandidateTerms(axisTerms.join(" ")))
+  ];
+  const requiredMatches = resolveTopicDiscoveryRequiredAxisMatches(normalizedAxisTerms);
+  if (requiredMatches === 0) {
+    return 0;
+  }
+  const uniqueNormalizedTitles = [
+    ...new Set(
+      candidateTitles
+        .map((title) => normalizeTopicDiscoveryCandidateTerms(title).join(" "))
+        .filter(Boolean)
+    )
+  ];
+  return uniqueNormalizedTitles.filter((title) => {
+    const titleTerms = new Set(title.split(" "));
+    const matches = normalizedAxisTerms.filter((term) => titleTerms.has(term)).length;
+    return matches >= requiredMatches;
+  }).length;
+}
+
 function normalizeCandidateRecallPhrases(value: string): string {
   return value
     .normalize("NFKC")
@@ -73,6 +119,9 @@ export function buildTopicDiscoveryCandidateFamilySignature(input: {
 export function normalizeTopicDiscoveryScientificTerm(term: string): string {
   if (["automatic", "automation", "automat"].includes(term)) {
     return "automat";
+  }
+  if (["generate", "generat", "generative", "generation"].includes(term)) {
+    return "generation";
   }
   if (["reliable", "reliability"].includes(term)) {
     return "reliability";

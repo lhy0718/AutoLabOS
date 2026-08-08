@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0",
+  "recorded_at_utc": "2026-08-07T18:11:18Z",
+  "supersedes": "post-freeze-implementation-note.v1.json",
+  "development_outcomes_observed": true,
+  "confirmatory_outcomes_observed": false,
+  "scientific_contract_changed": false,
+  "implementation_defects": [
+    {
+      "id": "frontier_provenance_hash_gap",
+      "contract_requirement": "Record exact input_sha256 and response_sha256 for every real provider call.",
+      "prior_behavior": "Recorded a derived request hash and output-text hash but not canonical request-body and full-response hashes.",
+      "repair": "Hash the canonical Responses API body as input_sha256 and the complete decoded response object as response_sha256."
+    },
+    {
+      "id": "invalid_frontier_output_abort",
+      "contract_requirement": "Invalid model output receives an empty ranking.",
+      "prior_behavior": "JSON or system-schema validation failure aborted the run.",
+      "repair": "Persist complete call provenance, mark the output invalid, and emit an empty ranking without an additional model call."
+    },
+    {
+      "id": "generic_selector_candidate_universe_drift",
+      "contract_requirement": "Compared systems use the same frozen candidate-code universe.",
+      "prior_behavior": "The generic selector map exposed repository files that the frozen chunk builder excluded.",
+      "repair": "Build the selector map only from paths represented in the frozen candidate chunks."
+    },
+    {
+      "id": "frozen_prompt_enforcement_gap",
+      "contract_requirement": "The frozen contract and prompts cannot drift before provider execution.",
+      "prior_behavior": "The runner loaded contract and prompt files without checking their freeze-receipt hashes.",
+      "repair": "Reject execution unless the amended experiment contract and both frontier prompts match freeze-receipt.v2.json."
+    },
+    {
+      "id": "incomplete_prediction_grid_not_rejected",
+      "contract_requirement": "Every split unit must have one budget-valid prediction and required provenance record for every declared system.",
+      "prior_behavior": "The evaluator rejected duplicate pairs but could score an incomplete unit-system grid.",
+      "repair": "Validate contract and blind-manifest hashes, complete pair coverage, code-token budgets, invalid-output emptiness, and frontier provenance before opening gold."
+    },
+    {
+      "id": "confirmatory_execution_not_promotion_bound",
+      "contract_requirement": "Confirmatory execution may occur only after the frozen development promotion gates pass.",
+      "prior_behavior": "The runner and evaluator accepted a confirmatory split without a promotion receipt, prediction seal, or durable single-prediction evaluation lock.",
+      "repair": "Derive PROMOTE or KILL from sealed development predictions and evaluations, recompute that gate before confirmatory calls, and lock the first prediction at the canonical sealed-corpus path before reading gold."
+    },
+    {
+      "id": "mutable_frontier_cache_projection",
+      "contract_requirement": "Cached frontier output and provenance must remain derivable from the complete provider response.",
+      "prior_behavior": "A cache entry could retain mutable parsed output or duplicated response metadata without re-deriving it from a raw response.",
+      "repair": "Persist the complete raw response and reject cache entries whose response hash, output hash, parsed JSON, response id, effective model, or usage disagrees with it."
+    },
+    {
+      "id": "materialization_dataset_hash_not_enforced",
+      "contract_requirement": "Materialization must use the exact dataset artifact approved by access preflight.",
+      "prior_behavior": "The materializer consumed a dataset path without comparing its bytes with both the source registry and access receipt.",
+      "repair": "Require the source registry and reject the run unless all three dataset hashes match before any corpus unit is written."
+    }
+  ],
+  "unchanged_contract_fields": [
+    "corpus split",
+    "selected-code token budget",
+    "prompts",
+    "model",
+    "reasoning effort",
+    "calls per paper per system",
+    "primary metric",
+    "primary contrast",
+    "promotion thresholds"
+  ],
+  "format_only_changes": [
+    {
+      "file": "../lib/retrieval.py",
+      "frozen_sha256": "5caee9eb7c59683bf718cbcf0d78ee71ba84e47803795ff148028152da7f505e",
+      "current_sha256": "54c075ac21c15a7b77163e6addf5da297bccb47e184ff132723ca4a6f3224313",
+      "change": "removed one trailing blank line"
+    },
+    {
+      "file": "../scripts/run_deterministic_retrieval.py",
+      "frozen_sha256": "0f6ee7e800edf3c85972f6e3348cb15de224913f901bb8fc4efe97037caf749a",
+      "current_sha256": "559c4e5b4206d487466d19a70af8b9529c84c8b8b173470e38d1816065929894",
+      "change": "removed one trailing blank line"
+    }
+  ],
+  "files": {
+    "../corpus/blind-manifest.v1.jsonl": "ffc3af485065a185d453ff760de80a467b43b36d57a675833174ae9fe3bdb234",
+    "../lib/retrieval.py": "54c075ac21c15a7b77163e6addf5da297bccb47e184ff132723ca4a6f3224313",
+    "../lib/frontier_retrieval.py": "a7b723085fd1da20427e06f936fb87b04d45eed17bd98e52b749983065ea1259",
+    "../lib/governance.py": "d5e076e126e6568fe8ccfc468c6c04fbeb710ff5feb145dc2340b23cc94bd84c",
+    "../scripts/run_deterministic_retrieval.py": "559c4e5b4206d487466d19a70af8b9529c84c8b8b173470e38d1816065929894",
+    "../scripts/run_frontier_retrieval.py": "af5d6089eaaea0f859842916d212a94af1bb6c9363fc5dc634d24f35a8b9a88f",
+    "../scripts/evaluate_rankings.py": "de86d82d1679890d924a12e9a457ceadb7c41b5771227fa264e1de1fc2dde5b5",
+    "../scripts/materialize_corpus.py": "3430e75d84971611608e8f98afe55863b9cfa84b8306854638d07f221476a39a",
+    "../scripts/decide_development_promotion.py": "3c92af1d3024b8c59ac7d35f8aa7c0f8a14eba6b0ee272e15c4e2105de576d51",
+    "../tests/test_frontier_retrieval.py": "7114eb2897f5ad756c49446042f969eda68bb7a77be58becbdc8fd992a066be5",
+    "../tests/test_evaluate_rankings.py": "f8e3224f9fc5976aaef24339271023e5376b4f7ab2b635b9cd33dabae5b3445f",
+    "../tests/test_governance.py": "8bcf90b80500891354b13788b557369ebe0341720161171031b2589576f56b9d",
+    "../tests/test_materialize_corpus.py": "524c917f4fc96ab1e216c7b6b08950c2bdd3ad25c1a3ec6dd60db70fa58ce413",
+    "../results/materialization-preflight.v2.json": "633b94196ee0ceb666ee2c5d7a911d22c3a98b4c473bfb7640587a4434b13137",
+    "../results/development-deterministic-rankings.v1.json": "77cebcb40a5a110f0cc346203753a95c883ce37de08b8512a126a69ba655fccc",
+    "../results/development-deterministic-predictions-seal.v1.json": "0c0831d7d4473e1fb08e9b237bf82b1ffd2fd6a594d6a217ce0dd558e2eedbc2",
+    "../results/development-deterministic-evaluation.v1.json": "a6a63edd2775ea439f333fa34430e51634b71ff38fb04e14e4f8cd0f4512f988",
+    "freeze-receipt.v2.json": "ff94fe04cbf8f58429301ad468a9be3557e1d59eb8dbd103c550a26942ca1239",
+    "experiment-contract.v1.json": "eede01320b4dd4c97ec3ec33a903e3b88b66257f67d2dde7051c9de549f70b94"
+  },
+  "validation": {
+    "command": "python -m pytest -q studies/scicoqa-obligation-retrieval/tests",
+    "result": "44 passed; repaired materializer reproduced all 86 units and the blind manifest byte-for-byte; sealed deterministic evaluation reproduced the same metrics under the amended artifact bindings"
+  }
+}

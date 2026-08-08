@@ -25,6 +25,7 @@ import {
 } from "./topicDiscoveryScopeContract.js";
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  countTopicDiscoveryCandidateTitleSupport,
   normalizeTopicDiscoveryCandidateTerms,
   normalizeTopicDiscoveryScientificTerms,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
@@ -132,7 +133,7 @@ interface StoredTopicDiscoveryScopeContract extends TopicDiscoveryScopeContract 
 }
 
 export interface GeneratedLiteratureQueries {
-  source: "llm" | "llm_bounded_repair";
+  source: "llm" | "llm_bounded_repair" | "deterministic_fallback";
   queries: string[];
   assumptions: string[];
   topicDiscoveryPlan?: GeneratedTopicDiscoveryPlan;
@@ -219,6 +220,15 @@ export type LiteratureQueryPlanRepairDiagnostic =
       sourceAttempt: number;
       selectedFamilyIds: string[];
       titleSupport: Array<{ id: string; titles: number }>;
+      explicitScopeFallbackUnavailable?: {
+        reason: Extract<
+          LiteratureQueryPlanRepairDiagnostic,
+          { strategy: "explicit_scope_timeout_fallback_unavailable" }
+        >["reason"];
+        eligibleCandidateCount: number;
+        titleSupportedCandidateCount: number;
+        excludedRejectedScopeAxisIds: string[];
+      };
       finalCorpusGateUnchanged: true;
     }
   | {
@@ -233,6 +243,23 @@ export type LiteratureQueryPlanRepairDiagnostic =
       sourceAttempt: number;
       selectedScopeAxisIds: string[];
       excludedRejectedScopeAxisIds: string[];
+      queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
+      finalCorpusGateUnchanged: true;
+    }
+  | {
+      strategy: "explicit_scope_title_support_fallback";
+      sourceAttempt: number;
+      selectedScopeAxisIds: string[];
+      excludedRejectedScopeAxisIds: string[];
+      queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
+      finalCorpusGateUnchanged: true;
+    }
+  | {
+      strategy: "explicit_scope_title_support_fallback_rejected";
+      sourceAttempt: number;
+      selectedScopeAxisIds: string[];
+      excludedRejectedScopeAxisIds: string[];
+      validationFailureReason: string;
       queryabilityTitleSource: "executed_candidates_plus_prior_work_probe_hints";
       finalCorpusGateUnchanged: true;
     }
@@ -370,6 +397,7 @@ interface ResolveGeneratedLiteratureQueriesInput {
   run: RunRecord;
   rawBrief?: string;
   extractedBriefTopic?: string;
+  requestedQuery?: string;
   runContextMemory: RunContextMemory;
   llm: LLMClient;
   eventStream?: EventStream;
@@ -384,7 +412,8 @@ export async function resolveGeneratedLiteratureQueries(
   input: ResolveGeneratedLiteratureQueriesInput
 ): Promise<LiteratureQueryPlanResolution | undefined> {
   const explicitBriefTopic = extractResearchBriefTopic(input.rawBrief);
-  const topicSeed = explicitBriefTopic || input.extractedBriefTopic || input.run.topic;
+  const requestedQuery = cleanText(input.requestedQuery);
+  const topicSeed = requestedQuery || explicitBriefTopic || input.extractedBriefTopic || input.run.topic;
   if (!topicSeed.trim()) {
     return undefined;
   }
@@ -428,7 +457,8 @@ export async function resolveGeneratedLiteratureQueries(
     feedback,
     plannerIdentity,
     scientificScopeContract?.contractFingerprint,
-    priorWorkProbeHints
+    priorWorkProbeHints,
+    requestedQuery
   );
   const minimumIndependentQueries = topicDiscovery ? 2 : 1;
   const cached = await input.runContextMemory.get<StoredLiteratureQueryPlan>(QUERY_PLAN_CACHE_KEY);
@@ -486,7 +516,8 @@ export async function resolveGeneratedLiteratureQueries(
               input.extractedBriefTopic,
               planningFeedback,
               scientificScopeContract,
-              priorWorkProbeHints
+              priorWorkProbeHints,
+              requestedQuery
             ),
             {
               systemPrompt: buildLiteratureQuerySystemPrompt(),
@@ -553,11 +584,123 @@ export async function resolveGeneratedLiteratureQueries(
           continue;
         }
         if (contractRejection.startsWith(TITLE_SUPPORT_REJECTION_PREFIX)) {
+          const scopeFallback = scientificScopeContract
+            ? buildDeterministicTopicDiscoveryTitleSupportFallback({
+                contract: scientificScopeContract,
+                feedback: planningFeedback,
+                justRejectedQueries: plan.queries,
+                priorWorkProbeHints,
+                minimumIndependentQueries,
+                sourceAttempt: attempt
+              })
+            : undefined;
+          if (scopeFallback?.status === "ready" && scientificScopeContract) {
+            let fallbackScopeDiagnostic = assessPlanAgainstScientificScope(
+              scopeFallback.plan,
+              scopeFallback.validationFeedback,
+              scientificScopeContract
+            );
+            const fallbackRejection = validateTopicDiscoveryPlanAgainstFeedback(
+              scopeFallback.plan,
+              scopeFallback.validationFeedback,
+              fallbackScopeDiagnostic
+            );
+            if (fallbackRejection) {
+              const rejectionDiagnostic: Extract<
+                LiteratureQueryPlanRepairDiagnostic,
+                { strategy: "explicit_scope_title_support_fallback_rejected" }
+              > = {
+                strategy: "explicit_scope_title_support_fallback_rejected",
+                sourceAttempt: scopeFallback.diagnostic.sourceAttempt,
+                selectedScopeAxisIds: scopeFallback.diagnostic.selectedScopeAxisIds,
+                excludedRejectedScopeAxisIds:
+                  scopeFallback.diagnostic.excludedRejectedScopeAxisIds,
+                validationFailureReason: fallbackRejection,
+                queryabilityTitleSource:
+                  "executed_candidates_plus_prior_work_probe_hints",
+                finalCorpusGateUnchanged: true
+              };
+              input.eventStream?.emit({
+                type: "OBS_RECEIVED",
+                runId: input.run.id,
+                node: input.node,
+                payload: {
+                  text:
+                    "Deterministic explicit-scope title-support fallback was rejected: "
+                    + fallbackRejection
+                }
+              });
+              return {
+                source: "deterministic_fallback",
+                queries: [],
+                assumptions: [],
+                failureReason:
+                  `explicit_scope_title_support_fallback_rejected:${fallbackRejection}`,
+                attemptDiagnostics,
+                repairDiagnostic: rejectionDiagnostic,
+                scientificScopeContract,
+                scientificScopeDiagnostic: fallbackScopeDiagnostic
+              };
+            }
+            scientificScopeContract = await bindAndPersistTopicDiscoveryScopeContract(
+              input.runContextMemory,
+              scientificScopeContract,
+              scopeFallback.plan.topicDiscoveryPlan?.sharedAnchorTerms ?? []
+            );
+            fallbackScopeDiagnostic = assessPlanAgainstScientificScope(
+              scopeFallback.plan,
+              scopeFallback.validationFeedback,
+              scientificScopeContract
+            );
+            await input.runContextMemory.put(QUERY_PLAN_CACHE_KEY, {
+              version: TOPIC_DISCOVERY_QUERY_PLAN_SEMANTICS_VERSION,
+              termNormalizationVersion: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
+              candidateRecallSemanticsVersion: TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+              plannerIdentity,
+              fingerprint: buildLiteratureQueryFingerprint(
+                input.run,
+                input.rawBrief,
+                input.extractedBriefTopic,
+                feedback,
+                plannerIdentity,
+                scientificScopeContract.contractFingerprint,
+                priorWorkProbeHints,
+                requestedQuery
+              ),
+              plan: scopeFallback.plan,
+              attemptDiagnostics,
+              repairDiagnostic: scopeFallback.diagnostic,
+              scientificScopeContract,
+              scientificScopeDiagnostic: fallbackScopeDiagnostic,
+              updatedAt: new Date().toISOString()
+            } satisfies StoredLiteratureQueryPlan);
+            input.eventStream?.emit({
+              type: "OBS_RECEIVED",
+              runId: input.run.id,
+              node: input.node,
+              payload: {
+                text:
+                  "Literature query plan exhausted two title-support checks; using a deterministic explicit-scope fallback "
+                  + `with ${scopeFallback.plan.queries.length} unused family/families. `
+                  + "Prior-work titles affected queryability ranking only; final corpus quality gates remain unchanged."
+              }
+            });
+            return {
+              ...scopeFallback.plan,
+              attemptDiagnostics,
+              repairDiagnostic: scopeFallback.diagnostic,
+              scientificScopeContract,
+              scientificScopeDiagnostic: fallbackScopeDiagnostic
+            };
+          }
           const repaired = buildBoundedUnsupportedExploratoryPlan(
             plan,
             planningFeedback,
             attempt,
-            minimumIndependentQueries
+            minimumIndependentQueries,
+            scopeFallback?.status === "unavailable"
+              ? scopeFallback.diagnostic
+              : undefined
           );
           if (repaired) {
             if (scientificScopeContract) {
@@ -586,7 +729,8 @@ export async function resolveGeneratedLiteratureQueries(
                 feedback,
                 plannerIdentity,
                 scientificScopeContract?.contractFingerprint,
-                priorWorkProbeHints
+                priorWorkProbeHints,
+                requestedQuery
               ),
               plan: repaired.plan,
               attemptDiagnostics,
@@ -664,7 +808,8 @@ export async function resolveGeneratedLiteratureQueries(
           feedback,
           plannerIdentity,
           scientificScopeContract?.contractFingerprint,
-          priorWorkProbeHints
+          priorWorkProbeHints,
+          requestedQuery
         ),
         plan,
         attemptDiagnostics,
@@ -778,7 +923,8 @@ export async function resolveGeneratedLiteratureQueries(
               feedback,
               plannerIdentity,
               scientificScopeContract?.contractFingerprint,
-              priorWorkProbeHints
+              priorWorkProbeHints,
+              requestedQuery
             ),
             plan,
             attemptDiagnostics,
@@ -839,6 +985,28 @@ export async function resolveGeneratedLiteratureQueries(
             timeoutFallback.validationFeedback,
             scientificScopeContract
           );
+          await input.runContextMemory.put(QUERY_PLAN_CACHE_KEY, {
+            version: TOPIC_DISCOVERY_QUERY_PLAN_SEMANTICS_VERSION,
+            termNormalizationVersion: TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION,
+            candidateRecallSemanticsVersion: TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+            plannerIdentity,
+            fingerprint: buildLiteratureQueryFingerprint(
+              input.run,
+              input.rawBrief,
+              input.extractedBriefTopic,
+              feedback,
+              plannerIdentity,
+              scientificScopeContract.contractFingerprint,
+              priorWorkProbeHints,
+              requestedQuery
+            ),
+            plan: timeoutFallback.plan,
+            attemptDiagnostics,
+            repairDiagnostic: timeoutFallback.diagnostic,
+            scientificScopeContract,
+            scientificScopeDiagnostic,
+            updatedAt: new Date().toISOString()
+          } satisfies StoredLiteratureQueryPlan);
           input.eventStream?.emit({
             type: "OBS_RECEIVED",
             runId: input.run.id,
@@ -963,7 +1131,8 @@ function buildLiteratureQueryPrompt(
   extractedBriefTopic: string | undefined,
   feedback: LiteratureQueryPlanFeedback,
   scientificScopeContract?: TopicDiscoveryScopeContract,
-  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = []
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = [],
+  requestedQuery = ""
 ): string {
   const sections = rawBrief ? parseMarkdownRunBriefSections(rawBrief) : undefined;
   const explicitBriefTopic = extractResearchBriefTopic(rawBrief);
@@ -1032,6 +1201,15 @@ function buildLiteratureQueryPrompt(
             : ["  - none"]),
           "- Admissibility constraints, process rules, publication goals, and exclusions are not scientific axis authority.",
           "- Candidate-title matches are queryability hints only; they are not novelty or direct-support evidence."
+        ]
+      : []),
+    ...(topicDiscovery && requestedQuery
+      ? [
+          "",
+          "Operator-requested retrieval focus:",
+          `- ${requestedQuery.slice(0, 500)}`,
+          "- Treat this only as a preference for choosing among brief-authorized scope axes.",
+          "- Do not change the frozen shared anchor, invent an axis, or bypass the independent-family requirement to match this focus."
         ]
       : []),
     ...(topicDiscovery && priorWorkProbeHints.length > 0
@@ -1125,6 +1303,7 @@ function buildLiteratureQueryPrompt(
     `Run topic: ${run.topic}`,
     `Explicit brief topic: ${explicitBriefTopic || "none"}`,
     `LLM-extracted brief topic: ${extractedBriefTopic || "none"}`,
+    `Requested retrieval focus: ${requestedQuery || "none"}`,
     `Objective metric: ${run.objectiveMetric || "none"}`,
     "Constraints:",
     ...(run.constraints.length > 0 ? run.constraints.map((constraint, index) => `${index + 1}. ${constraint}`) : ["none"]),
@@ -1291,7 +1470,12 @@ function normalizeGeneratedLiteratureQueries(
     return undefined;
   }
   return {
-    source: value.source === "llm_bounded_repair" ? "llm_bounded_repair" : "llm",
+    source:
+      value.source === "deterministic_fallback"
+        ? "deterministic_fallback"
+        : value.source === "llm_bounded_repair"
+          ? "llm_bounded_repair"
+          : "llm",
     queries,
     assumptions: normalizeStringArray(value.assumptions).slice(0, 4),
     ...(normalizedTopicPlan ? { topicDiscoveryPlan: normalizedTopicPlan.plan } : {})
@@ -1482,6 +1666,7 @@ function buildBoundedTopicDiscoveryPlanRepair(
 function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
   contract: TopicDiscoveryScopeContract;
   feedback: LiteratureQueryPlanFeedback;
+  additionalRejectedQueries?: string[];
   priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[];
   minimumIndependentQueries: number;
   sourceAttempt: number;
@@ -1540,13 +1725,17 @@ function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
     input.feedback.candidateTitles,
     input.priorWorkProbeHints.flatMap((hint) => hint.candidateTitles)
   );
-  const rejectedQueryKeys = new Set(
+  const rejectedQueries = mergeUniqueStrings(
+    input.additionalRejectedQueries ?? [],
     input.feedback.rejectedQueries
+  );
+  const rejectedQueryKeys = new Set(
+    rejectedQueries
       .map(normalizeQueryForComparison)
       .filter(Boolean)
   );
   const rejectedAxisTerms = [
-    ...input.feedback.rejectedQueries.flatMap((query) => {
+    ...rejectedQueries.flatMap((query) => {
       const parsed = parseTopicDiscoveryLiteratureQuery(query);
       return parsed ? [parsed.axisTerms] : [];
     }),
@@ -1599,7 +1788,7 @@ function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
     return [{
       index,
       scopeAxisId: axis.id,
-      titleSupport: countCandidateTitleSupport(
+      titleSupport: countTopicDiscoveryCandidateTitleSupport(
         parsedQuery.axisTerms,
         queryabilityTitles
       ),
@@ -1652,7 +1841,7 @@ function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
   return {
     status: "ready",
     plan: {
-      source: "llm_bounded_repair",
+      source: "deterministic_fallback",
       queries: normalized.queries,
       assumptions: [
         "The LLM query planner timed out, so replacement families were compiled only from unused explicit brief axes.",
@@ -1673,8 +1862,51 @@ function buildDeterministicTopicDiscoveryTimeoutFallback(input: {
     },
     validationFeedback: normalizeLiteratureQueryPlanFeedback({
       ...input.feedback,
+      rejectedQueries,
       candidateTitles: queryabilityTitles
     })
+  };
+}
+
+function buildDeterministicTopicDiscoveryTitleSupportFallback(input: {
+  contract: TopicDiscoveryScopeContract;
+  feedback: LiteratureQueryPlanFeedback;
+  justRejectedQueries: string[];
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[];
+  minimumIndependentQueries: number;
+  sourceAttempt: number;
+}) {
+  const fallback = buildDeterministicTopicDiscoveryTimeoutFallback({
+    contract: input.contract,
+    feedback: input.feedback,
+    additionalRejectedQueries: input.justRejectedQueries,
+    priorWorkProbeHints: input.priorWorkProbeHints,
+    minimumIndependentQueries: input.minimumIndependentQueries,
+    sourceAttempt: input.sourceAttempt
+  });
+  if (fallback.status === "unavailable") {
+    return fallback;
+  }
+  return {
+    ...fallback,
+    plan: {
+      ...fallback.plan,
+      source: "deterministic_fallback" as const,
+      assumptions: [
+        "The LLM query planner exhausted two title-support checks, so replacement families were compiled only from unused explicit brief axes.",
+        "Prior-work probe titles were used only to rank queryability; semantic review and final corpus quality gates remain unchanged."
+      ]
+    },
+    diagnostic: {
+      strategy: "explicit_scope_title_support_fallback" as const,
+      sourceAttempt: fallback.diagnostic.sourceAttempt,
+      selectedScopeAxisIds: fallback.diagnostic.selectedScopeAxisIds,
+      excludedRejectedScopeAxisIds:
+        fallback.diagnostic.excludedRejectedScopeAxisIds,
+      queryabilityTitleSource:
+        "executed_candidates_plus_prior_work_probe_hints" as const,
+      finalCorpusGateUnchanged: true as const
+    }
   };
 }
 
@@ -1718,7 +1950,7 @@ function selectDeterministicScopeAxisTerms(
           const selected = [terms[first], terms[second]];
           candidates.push({
             terms: selected,
-            support: countCandidateTitleSupport(selected, queryabilityTitles),
+            support: countTopicDiscoveryCandidateTitleSupport(selected, queryabilityTitles),
             span: second - first,
             order: order++
           });
@@ -1728,7 +1960,7 @@ function selectDeterministicScopeAxisTerms(
           const selected = [terms[first], terms[second], terms[third]];
           candidates.push({
             terms: selected,
-            support: countCandidateTitleSupport(selected, queryabilityTitles),
+            support: countTopicDiscoveryCandidateTitleSupport(selected, queryabilityTitles),
             span: third - first,
             order: order++
           });
@@ -1753,7 +1985,11 @@ function buildBoundedUnsupportedExploratoryPlan(
   plan: GeneratedLiteratureQueries,
   feedback: LiteratureQueryPlanFeedback,
   sourceAttempt: number,
-  minimumIndependentQueries: number
+  minimumIndependentQueries: number,
+  explicitScopeFallbackUnavailable?: Extract<
+    LiteratureQueryPlanRepairDiagnostic,
+    { strategy: "explicit_scope_timeout_fallback_unavailable" }
+  >
 ): {
   plan: GeneratedLiteratureQueries;
   diagnostic: LiteratureQueryPlanRepairDiagnostic;
@@ -1774,7 +2010,7 @@ function buildBoundedUnsupportedExploratoryPlan(
         normalizeQueryForComparison(supported.query) ===
         normalizeQueryForComparison(family.query)
     ),
-    titles: countCandidateTitleSupport(
+    titles: countTopicDiscoveryCandidateTitleSupport(
       family.axisTerms,
       feedback.candidateTitles
     )
@@ -1815,6 +2051,20 @@ function buildBoundedUnsupportedExploratoryPlan(
       sourceAttempt,
       selectedFamilyIds: selectedFamilies.map((family) => family.id),
       titleSupport: titleSupport.map(({ family, titles }) => ({ id: family.id, titles })),
+      ...(explicitScopeFallbackUnavailable
+        ? {
+            explicitScopeFallbackUnavailable: {
+              reason: explicitScopeFallbackUnavailable.reason,
+              eligibleCandidateCount:
+                explicitScopeFallbackUnavailable.eligibleCandidateCount,
+              titleSupportedCandidateCount:
+                explicitScopeFallbackUnavailable.titleSupportedCandidateCount,
+              excludedRejectedScopeAxisIds: [
+                ...explicitScopeFallbackUnavailable.excludedRejectedScopeAxisIds
+              ]
+            }
+          }
+        : {}),
       finalCorpusGateUnchanged: true
     }
   };
@@ -2013,7 +2263,8 @@ function buildLiteratureQueryFingerprint(
   feedback: LiteratureQueryPlanFeedback,
   plannerIdentity: string,
   topicDiscoveryScopeContractFingerprint?: string,
-  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = []
+  priorWorkProbeHints: TopicDiscoveryPriorWorkProbePlanningHint[] = [],
+  requestedQuery = ""
 ): string {
   return createHash("sha256")
     .update(
@@ -2030,6 +2281,7 @@ function buildLiteratureQueryFingerprint(
         constraints: run.constraints,
         rawBrief: rawBrief || "",
         extractedBriefTopic: extractedBriefTopic || "",
+        requestedQuery: cleanText(requestedQuery),
         feedback,
         priorWorkProbeHints
       })
@@ -2422,7 +2674,7 @@ function validateTopicDiscoveryPlanAgainstFeedback(
   const support = plan.topicDiscoveryPlan.families.map((family) => ({
     id: family.id,
     executed: executedSupported.has(buildLiteratureQueryFamilyContractFingerprint(family)),
-    titles: countCandidateTitleSupport(
+    titles: countTopicDiscoveryCandidateTitleSupport(
       family.axisTerms,
       feedback.candidateTitles
     )
@@ -2446,22 +2698,6 @@ function validateTopicDiscoveryPlanAgainstFeedback(
     + `${MINIMUM_TITLES_PER_SUPPORTED_FAMILY}_titles`
     + `;allows=${MAXIMUM_ZERO_TITLE_EXPLORATORY_FAMILIES}_zero_title_exploratory_family`
   );
-}
-
-function countCandidateTitleSupport(
-  axisTerms: string[],
-  candidateTitles: string[]
-): number {
-  const normalizedAxisTerms = [
-    ...new Set(normalizeTopicDiscoveryScientificTerms(axisTerms.join(" ")))
-  ];
-  if (normalizedAxisTerms.length === 0) {
-    return 0;
-  }
-  return candidateTitles.filter((title) => {
-    const titleTerms = new Set(normalizeTopicDiscoveryScientificTerms(title));
-    return normalizedAxisTerms.every((term) => titleTerms.has(term));
-  }).length;
 }
 
 function buildBoundedReplanFeedback(

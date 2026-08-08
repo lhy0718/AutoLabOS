@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "literal_evidence_paths_manual_development_mutation_audit",
+  "study_slug": "literal-evidence-paths",
+  "corpus_commit": "4f067cf14f4f6f68496ab67aea1b2b10941cac4d",
+  "source_registry_sha256": "acb2b06bf4a92fdc7da5cddcd434d74cea4b396cb5411c5e8cce2d82b92fb835",
+  "status": "pending_reaudit_after_conservative_scalar_revision",
+  "scope": "No manual-validity assertion is retained after conservative scalar-type validation; both generated development mutations remain unaudited.",
+  "development_workspace_count": 5,
+  "generated_mutation_count": 2,
+  "records": []
+}

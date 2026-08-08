@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildTopicDiscoveryCandidateFamilySignature,
+  countTopicDiscoveryCandidateTitleSupport,
   normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
   normalizeTopicDiscoveryScientificObjectTerms,
-  normalizeTopicDiscoveryScientificTerms
+  normalizeTopicDiscoveryScientificTerms,
+  resolveTopicDiscoveryRequiredAxisMatches
 } from "../src/core/topicDiscoveryScientificTerms.js";
 
 describe("topic-discovery scientific term semantics", () => {
@@ -13,6 +15,13 @@ describe("topic-discovery scientific term semantics", () => {
     for (const variant of ["automatic", "automated", "automation", "automating"]) {
       expect(normalizeTopicDiscoveryScientificTerms(variant)).toEqual(["automat"]);
       expect(normalizeTopicDiscoveryCandidateTerms(variant)).toEqual(["automat"]);
+    }
+  });
+
+  it("normalizes generation derivations to one scientific term", () => {
+    for (const variant of ["generate", "generated", "generative", "generation"]) {
+      expect(normalizeTopicDiscoveryScientificTerms(variant)).toEqual(["generation"]);
+      expect(normalizeTopicDiscoveryCandidateTerms(variant)).toEqual(["generation"]);
     }
   });
 
@@ -113,5 +122,32 @@ describe("topic-discovery scientific term semantics", () => {
 
     expect(limited).toBe(finite);
     expect(sampleLimited).toBe(finite);
+  });
+
+  it("uses the bounded two-thirds axis floor for candidate-title support", () => {
+    expect(resolveTopicDiscoveryRequiredAxisMatches(["error"])).toBe(1);
+    expect(resolveTopicDiscoveryRequiredAxisMatches(["trajectory", "error"])).toBe(2);
+    expect(resolveTopicDiscoveryRequiredAxisMatches([
+      "trajectory",
+      "error",
+      "detection"
+    ])).toBe(2);
+    expect(resolveTopicDiscoveryRequiredAxisMatches([
+      "trajectory",
+      "error",
+      "detection",
+      "localization"
+    ])).toBe(3);
+
+    expect(countTopicDiscoveryCandidateTitleSupport(
+      ["trajectory", "error", "detection"],
+      [
+        "Trajectory error analysis for structured evaluation",
+        "Error detection through bounded traces",
+        "ERROR DETECTION through bounded traces",
+        "Detection-only baseline",
+        "Error detection through bounded traces"
+      ]
+    )).toBe(2);
   });
 });

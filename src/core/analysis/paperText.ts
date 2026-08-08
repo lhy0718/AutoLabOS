@@ -109,7 +109,7 @@ export async function resolvePaperTextSource(args: {
   const pageImageDir = path.join(cacheDir, "page_images", sanitizeFileStem(args.paper.paper_id));
 
   const cachedText = await readCachedText(textCachePath);
-  const cachedGroundingText = await readCachedText(groundingTextCachePath);
+  const cachedGroundingText = await readCachedGroundingText(groundingTextCachePath);
   const cachedPageImages = includePageImages ? await readCachedPageImages(pageImageDir) : emptyCachedPageImages();
   const cachedPdfExists = await fileExists(pdfCachePath);
   const cachedPdfPageCount =
@@ -459,6 +459,16 @@ async function readCachedText(filePath: string): Promise<string | undefined> {
     const raw = await fs.readFile(filePath, "utf8");
     const trimmed = raw.trim();
     return trimmed ? truncateText(trimmed, MAX_SOURCE_CHARS) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readCachedGroundingText(filePath: string): Promise<string | undefined> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const trimmed = raw.trim();
+    return trimmed || undefined;
   } catch {
     return undefined;
   }

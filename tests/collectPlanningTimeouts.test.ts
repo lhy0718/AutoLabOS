@@ -219,6 +219,48 @@ describe("collect-time LLM helpers", () => {
     });
   });
 
+  it("binds an explicit topic-discovery retrieval focus to planning and cache identity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-request-focus-"));
+    const runId = "run-query-request-focus";
+    const contextPath = path.join(root, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const response = JSON.stringify({
+      shared_anchor: "document retrieval",
+      families: [
+        { axis: "confidence calibration" },
+        { axis: "ranking variance" }
+      ],
+      assumptions: []
+    });
+    const llm = new SequencedJsonLLMClient([response, response]);
+    const input = {
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "confidence calibration under distribution shift",
+        "ranking variance under finite samples"
+      ]),
+      runContextMemory: new RunContextMemory(contextPath),
+      llm
+    };
+
+    await resolveGeneratedLiteratureQueries({
+      ...input,
+      requestedQuery: "document retrieval calibration"
+    });
+    await resolveGeneratedLiteratureQueries({
+      ...input,
+      requestedQuery: "document retrieval ranking variance"
+    });
+
+    expect(llm.prompts).toHaveLength(2);
+    expect(llm.prompts[0]).toContain("Operator-requested retrieval focus:");
+    expect(llm.prompts[0]).toContain("document retrieval calibration");
+    expect(llm.prompts[0]).toContain(
+      "Treat this only as a preference for choosing among brief-authorized scope axes."
+    );
+    expect(llm.prompts[1]).toContain("document retrieval ranking variance");
+  });
+
   it("keeps partial configuration fixtures bounded when providers are omitted", () => {
     expect(resolveCollectPlanningTimeoutPolicy({})).toMatchObject({
       llm_mode: "codex",
@@ -461,6 +503,35 @@ describe("collect-time LLM helpers", () => {
       )
     ).toBe(true);
     expect(llm.calls).toBe(1);
+
+    const reentryLlm = new HangingLLMClient();
+    const reentryResult = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "confidence calibration under distribution shift",
+        "stateful interaction robustness",
+        "annotation disagreement stability",
+        "external population validity"
+      ], "automated peer review"),
+      runContextMemory: memory,
+      llm: reentryLlm,
+      node: "collect_papers",
+      priorWorkProbeHints: [{
+        probeId: "prior_probe_fixture",
+        query: "stateful interaction robustness",
+        candidateTitles: [
+          "Stateful Interaction Robustness for Automated Peer Review",
+          "Automated Peer Review under Stateful Interaction Robustness"
+        ]
+      }]
+    });
+
+    expect(reentryResult).toMatchObject({
+      source: "deterministic_fallback",
+      queries: result?.queries,
+      repairDiagnostic: result?.repairDiagnostic
+    });
+    expect(reentryLlm.calls).toBe(0);
   });
 
   it("preserves the contract rejection when a compiled timeout fallback is inadmissible", async () => {
@@ -1275,6 +1346,61 @@ describe("collect-time LLM helpers", () => {
     ]);
   });
 
+  it("accepts repeated two-thirds title support for three-term query axes", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-title-ratio-"));
+    const runId = "run-query-title-ratio";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const memory = new RunContextMemory(contextPath);
+    await recordLiteratureQueryPlanRejection(memory, {
+      rejectedQueries: ['"document retrieval" prior calibration'],
+      qualityReasons: ["The previous corpus did not meet the family floor."],
+      sharedAnchorTerms: ["document", "retrieval"],
+      candidateTitles: [
+        "Trajectory error analysis for document retrieval",
+        "Error detection through bounded retrieval traces",
+        "Evidence claim analysis for retrieved documents",
+        "Claim verification with document evidence"
+      ],
+      queryFamilies: []
+    });
+    const llm = new SequencedJsonLLMClient([
+      JSON.stringify({
+        shared_anchor: "document retrieval",
+        families: [
+          { axis: "trajectory error detection" },
+          { axis: "evidence claim verification" },
+          { axis: "resource transfer robustness" }
+        ],
+        assumptions: []
+      })
+    ]);
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "trajectory error detection",
+        "evidence claim verification",
+        "resource transfer robustness"
+      ]),
+      runContextMemory: memory,
+      llm
+    });
+
+    expect(llm.prompts).toHaveLength(1);
+    expect(result?.source).toBe("llm");
+    expect(result?.queries).toEqual([
+      '"document retrieval" trajectory error detection',
+      '"document retrieval" evidence claim verification',
+      '"document retrieval" resource transfer robustness'
+    ]);
+    expect(result?.attemptDiagnostics).toEqual([
+      expect.objectContaining({ attempt: 1, status: "accepted" })
+    ]);
+  });
+
   it("keeps the executed shared anchor immutable during bounded recovery", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-anchor-continuity-"));
     const runId = "run-query-anchor-continuity";
@@ -1601,8 +1727,115 @@ describe("collect-time LLM helpers", () => {
       strategy: "authorize_bounded_unsupported_exploration",
       sourceAttempt: 2,
       selectedFamilyIds: ["topic_family_1", "topic_family_2"],
+      explicitScopeFallbackUnavailable: {
+        reason: "insufficient_unused_scope_axes",
+        titleSupportedCandidateCount: 0
+      },
       finalCorpusGateUnchanged: true
     });
+    expect(result?.attemptDiagnostics).toEqual([
+      expect.objectContaining({ attempt: 1, status: "rejected_feedback" }),
+      expect.objectContaining({ attempt: 2, status: "rejected_feedback" })
+    ]);
+  });
+
+  it("excludes the just-rejected axes from deterministic fallback after the second title-support rejection", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "autolabos-query-scope-repair-"));
+    const runId = "run-query-scope-repair";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const contextPath = path.join(memoryDir, "run_context.json");
+    await writeFile(contextPath, JSON.stringify({ version: 1, items: [] }), "utf8");
+    const memory = new RunContextMemory(contextPath);
+    await recordLiteratureQueryPlanRejection(memory, {
+      rejectedQueries: ['"document retrieval" uncertainty calibration'],
+      qualityReasons: ["The previous corpus did not meet the family floor."],
+      sharedAnchorTerms: ["document", "retrieval"],
+      candidateTitles: ["Document retrieval ranking overview"],
+      queryFamilies: []
+    });
+    const llm = new SequencedJsonLLMClient([
+      JSON.stringify({
+        shared_anchor: "document retrieval",
+        families: [
+          { axis: "paired bootstrap" },
+          { axis: "sample efficiency" },
+          { axis: "domain transfer" }
+        ],
+        assumptions: []
+      }),
+      JSON.stringify({
+        shared_anchor: "document retrieval",
+        families: [
+          { axis: "label shift" },
+          { axis: "calibration error" },
+          { axis: "annotation variance" }
+        ],
+        assumptions: []
+      })
+    ]);
+
+    const result = await resolveGeneratedLiteratureQueries({
+      run: buildRun(runId),
+      rawBrief: buildScopedTopicDiscoveryBrief([
+        "paired bootstrap",
+        "sample efficiency",
+        "domain transfer",
+        "label shift",
+        "calibration error",
+        "annotation variance",
+        "counterfactual robustness",
+        "perturbation sensitivity"
+      ]),
+      runContextMemory: memory,
+      llm,
+      priorWorkProbeHints: [{
+        probeId: "prior_probe_fixture",
+        query: "counterfactual robustness perturbation sensitivity",
+        candidateTitles: [
+          "Counterfactual Robustness for Document Retrieval",
+          "Document Retrieval Counterfactual Robustness Analysis",
+          "Perturbation Sensitivity for Document Retrieval",
+          "Document Retrieval Perturbation Sensitivity Analysis"
+        ]
+      }]
+    });
+
+    expect(result).toMatchObject({
+      source: "deterministic_fallback",
+      queries: [
+        '"document retrieval" counterfactual robustness',
+        '"document retrieval" perturbation sensitivity'
+      ],
+      repairDiagnostic: {
+        strategy: "explicit_scope_title_support_fallback",
+        selectedScopeAxisIds: expect.any(Array),
+        excludedRejectedScopeAxisIds: expect.any(Array),
+        queryabilityTitleSource:
+          "executed_candidates_plus_prior_work_probe_hints",
+        finalCorpusGateUnchanged: true
+      }
+    });
+    const justRejectedScopeAxisIds = result?.attemptDiagnostics?.[1]
+      ?.scientificScopeDiagnostic?.families
+      .map((family) => family.scopeAxisId)
+      .filter((id): id is string => typeof id === "string") ?? [];
+    expect(justRejectedScopeAxisIds).toHaveLength(3);
+    if (result?.repairDiagnostic?.strategy !== "explicit_scope_title_support_fallback") {
+      throw new Error("Expected an explicit-scope title-support fallback diagnostic.");
+    }
+    expect(result.repairDiagnostic.excludedRejectedScopeAxisIds).toEqual(
+      expect.arrayContaining(justRejectedScopeAxisIds)
+    );
+    expect(result.repairDiagnostic.selectedScopeAxisIds).not.toEqual(
+      expect.arrayContaining(justRejectedScopeAxisIds)
+    );
+    expect(result.queries).not.toEqual(expect.arrayContaining([
+      '"document retrieval" label shift',
+      '"document retrieval" calibration error',
+      '"document retrieval" annotation variance'
+    ]));
+    expect(result?.assumptions.join(" ")).not.toContain("timed out");
     expect(result?.attemptDiagnostics).toEqual([
       expect.objectContaining({ attempt: 1, status: "rejected_feedback" }),
       expect.objectContaining({ attempt: 2, status: "rejected_feedback" })

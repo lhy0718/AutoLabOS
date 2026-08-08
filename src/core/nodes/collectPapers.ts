@@ -594,7 +594,8 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
       }
       const extractedBrief = await runContextMemory.get<{ topic?: string }>("run_brief.extracted");
       const generatedQueries =
-        requestFromContext?.query || candidatePriorSearchPlan
+        candidatePriorSearchPlan
+        || (requestFromContext?.query && researchMode !== "topic_discovery")
           ? undefined
           : await resolveGeneratedLiteratureQueries({
               run,
@@ -607,6 +608,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
               abortSignal,
               timeoutMs: planningTimeoutPolicy.literature_query_timeout_ms,
               plannerIdentity: resolveResearchLlmIdentity(deps.config),
+              requestedQuery: requestFromContext?.query,
               priorWorkProbeHints: priorWorkProbeReceipt
                 ? buildTopicDiscoveryPriorWorkProbePlanningHints(
                     priorWorkProbeReceipt
@@ -633,6 +635,7 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
             collect_attempt_id: collectAttemptId,
             research_mode: researchMode,
             strategy: normalizedRequest.strategy,
+            requested_query_focus: requestFromContext?.query,
             planning_timeout_policy: planningTimeoutPolicy,
             planner: generatedQueries
               ? {
@@ -1313,17 +1316,6 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         }
       }
 
-      if (!fetchError) {
-        await publishForCollectGeneration({
-          run,
-          attemptId: collectAttemptId,
-          action: async () => {
-            await runContextMemory.put("collect_papers.requested_limit", null);
-            await runContextMemory.put("collect_papers.request", null);
-          }
-        });
-      }
-
       const bibtexMode = normalizeBibtexMode(requestFromContext?.bibtexMode);
       let topicDiscoveryQualityAudit: TopicDiscoveryCorpusQualityAudit | undefined;
       let topicDiscoverySemanticAudit: TopicDiscoverySemanticAuditTrace | undefined;
@@ -1395,6 +1387,12 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
           lexicalMatchedFamilyIdsByPaper,
           providerCandidatePaperIdsByFamily:
             topicDiscoveryCandidatePaperIdsByFamily,
+          candidateTitleHints: [
+            ...(generatedQueries?.attemptDiagnostics ?? []).flatMap(
+              (attempt) => attempt.feedback.candidateTitles
+            ),
+            ...(priorWorkProbeReceipt?.candidate_titles ?? [])
+          ],
           timeoutMs: resolveTopicDiscoverySemanticAuditTimeoutMs(),
           abortSignal
         };
@@ -2041,6 +2039,15 @@ export function createCollectPapersNode(deps: NodeExecutionDeps): GraphNodeHandl
         };
       }
 
+      await publishForCollectGeneration({
+        run,
+        attemptId: collectAttemptId,
+        action: async () => {
+          await runContextMemory.put("collect_papers.requested_limit", null);
+          await runContextMemory.put("collect_papers.request", null);
+        }
+      });
+
       if (papersToEnrich.length > 0) {
         deps.eventStream.emit({
           type: "OBS_RECEIVED",
@@ -2157,6 +2164,7 @@ function resolveNonRetryableSemanticReviewReason(
   }
   return audit.reasons.find((reason) =>
     reason === "semantic_audit_timeout_partitions_exhausted"
+    || reason === "semantic_audit_partition_timeout"
     || reason === "semantic_audit_partition_cumulative_input_budget_exceeded"
   );
 }
@@ -2198,15 +2206,28 @@ function buildTopicDiscoveryCandidateTitleFeedback(input: {
     if (normalized && !seen.has(key)) {
       seen.add(key);
       selected.push(normalized);
+      return true;
     }
+    return false;
   };
+  const rowsByPaperId = new Map(
+    input.rows.map((row) => [row.paper_id, row] as const)
+  );
 
   for (const family of input.audit.query_families) {
     const axisTerms = new Set(family.axis_terms);
+    const directPaperIds = input.audit.semantic_judgments
+      .filter((judgment) =>
+        judgment.family_id === family.query_family
+        && judgment.verdict === "direct_support"
+      )
+      .map((judgment) => judgment.paper_id);
+    const directPaperIdSet = new Set(directPaperIds);
     const ranked = input.rows
       .filter((row) =>
         input.anchorProximatePaperIds.has(row.paper_id)
         && input.paperQueryFamilies.get(row.paper_id)?.has(family.query_family)
+        && !directPaperIdSet.has(row.paper_id)
       )
       .map((row, index) => {
         const terms = new Set(extractLiteratureTermSequence(`${row.title}\n${row.abstract}`));
@@ -2214,8 +2235,30 @@ function buildTopicDiscoveryCandidateTitleFeedback(input: {
         return { row, index, axisMatches };
       })
       .sort((left, right) => right.axisMatches - left.axisMatches || left.index - right.index);
-    for (const candidate of ranked.slice(0, 6)) {
-      push(candidate.row.title);
+    const directRows = directPaperIds.flatMap((paperId) => {
+      const row = rowsByPaperId.get(paperId);
+      return row
+        && input.anchorProximatePaperIds.has(row.paper_id)
+        && input.paperQueryFamilies.get(row.paper_id)?.has(family.query_family)
+        ? [row]
+        : [];
+    });
+    let familyTitleCount = 0;
+    for (const row of directRows) {
+      if (push(row.title)) {
+        familyTitleCount += 1;
+      }
+      if (familyTitleCount >= 6) {
+        break;
+      }
+    }
+    for (const candidate of ranked) {
+      if (familyTitleCount >= 6) {
+        break;
+      }
+      if (push(candidate.row.title)) {
+        familyTitleCount += 1;
+      }
     }
   }
 
@@ -2390,14 +2433,14 @@ function normalizeCollectRequest(input: {
       candidatePriorSearchPlan
     };
   }
+  const researchMode = parseResearchRunMode(input.rawBrief || "");
   const queryCandidates = buildLiteratureQueryCandidates({
-    requestedQuery,
+    requestedQuery: researchMode === "topic_discovery" ? undefined : requestedQuery,
     runTopic: input.topic,
     llmGeneratedQueries: input.llmGeneratedQueries,
     extractedBriefTopic: input.extractedBriefTopic,
     briefTopic: extractResearchBriefTopic(input.rawBrief)
   });
-  const researchMode = parseResearchRunMode(input.rawBrief || "");
   const strategy: PreparedCollectRequestPlan["strategy"] =
     researchMode === "topic_discovery"
       ? "topic_portfolio"

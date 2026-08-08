@@ -11,7 +11,10 @@ import {
   normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
   normalizeTopicDiscoveryScientificObjectTerms,
+  resolveTopicDiscoveryRequiredAxisMatches,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
+  TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES,
+  TOPIC_DISCOVERY_MINIMUM_AXIS_MATCH_RATIO,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
 import { StoredCorpusRow } from "./types.js";
@@ -27,8 +30,6 @@ const MINIMUM_COVERED_QUERY_FAMILIES = 2;
 const MINIMUM_RELEVANT_PAPERS_PER_FAMILY = 2;
 const MINIMUM_SEMANTIC_PRECISION_PER_FAMILY = 0.5;
 const MAXIMUM_ANCHOR_WINDOW_TOKENS = 12;
-const MINIMUM_AXIS_TERM_MATCHES = 2;
-const MINIMUM_AXIS_TERM_MATCH_RATIO = 2 / 3;
 const MAXIMUM_ANCHOR_AXIS_WINDOW_TOKENS = 24;
 
 export const TOPIC_DISCOVERY_CORPUS_QUALITY_VERSION = 8 as const;
@@ -213,12 +214,12 @@ export function assessTopicDiscoveryPaperRelevance(input: {
     ) {
       return [];
     }
-    const requiredAxisMatches = resolveRequiredAxisMatches(family.axisTerms);
+    const requiredAxisMatches = resolveTopicDiscoveryRequiredAxisMatches(family.axisTerms);
     const axisMatches = family.axisTerms.filter((term) =>
       paperTermSequence.some((paperTerm) => termsMatch(paperTerm, term))
     ).length;
     if (
-      family.axisTerms.length < MINIMUM_AXIS_TERM_MATCHES ||
+      family.axisTerms.length < TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES ||
       axisMatches < requiredAxisMatches ||
       !containsAnchorAndAxisWithinWindow(
         paperTermSequence,
@@ -496,8 +497,8 @@ export function assessTopicDiscoveryCorpusQuality(input: {
         minimum_direct_support_per_family: MINIMUM_RELEVANT_PAPERS_PER_FAMILY,
         minimum_semantic_precision_per_family: MINIMUM_SEMANTIC_PRECISION_PER_FAMILY,
         maximum_anchor_window_tokens: MAXIMUM_ANCHOR_WINDOW_TOKENS,
-        minimum_axis_term_matches: MINIMUM_AXIS_TERM_MATCHES,
-        minimum_axis_term_match_ratio: MINIMUM_AXIS_TERM_MATCH_RATIO,
+        minimum_axis_term_matches: TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES,
+        minimum_axis_term_match_ratio: TOPIC_DISCOVERY_MINIMUM_AXIS_MATCH_RATIO,
         maximum_anchor_axis_window_tokens: MAXIMUM_ANCHOR_AXIS_WINDOW_TOKENS
       },
       observed: {
@@ -525,7 +526,7 @@ export function assessTopicDiscoveryCorpusQuality(input: {
         contribution_intent: family.contributionIntent?.trim() || "",
         contract_source: family.contractSource ?? "bounded_inference",
         canonical_family_signature: family.familySignature,
-        required_axis_matches: resolveRequiredAxisMatches(family.axisTerms),
+        required_axis_matches: resolveTopicDiscoveryRequiredAxisMatches(family.axisTerms),
         lexical_relevant_paper_count: lexicalCountsByFamily.get(family.queryFamily) ?? 0,
         semantic_reviewed_paper_count: semanticCountsByFamily.get(family.queryFamily) ?? 0,
         provider_recall_paper_count: providerRecallCountsByFamily.get(family.queryFamily) ?? 0,
@@ -643,7 +644,7 @@ function deduplicateSearchFamilies(searchFamilies: TopicDiscoverySearchFamily[])
       .filter((term) => !anchorSet.has(term));
     const substantiveAxisTerms = normalizedAxisTerms
       .filter(isSubstantiveTopicDiscoveryAxisTerm);
-    const axisTerms = substantiveAxisTerms.length >= MINIMUM_AXIS_TERM_MATCHES
+    const axisTerms = substantiveAxisTerms.length >= TOPIC_DISCOVERY_MINIMUM_AXIS_MATCHES
       ? substantiveAxisTerms
       : normalizedAxisTerms;
     seen.add(family.queryFamily);
@@ -702,13 +703,6 @@ function containsTermsWithinWindow(
     }
   }
   return false;
-}
-
-function resolveRequiredAxisMatches(axisTerms: string[]): number {
-  return Math.max(
-    MINIMUM_AXIS_TERM_MATCHES,
-    Math.ceil(axisTerms.length * MINIMUM_AXIS_TERM_MATCH_RATIO)
-  );
 }
 
 function containsAnchorAndAxisWithinWindow(

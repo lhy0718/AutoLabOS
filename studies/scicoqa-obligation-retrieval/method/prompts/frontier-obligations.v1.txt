@@ -1,0 +1,24 @@
+You receive the extracted text of one scientific paper. Do not use outside
+knowledge. Identify at most 12 implementation obligations that a faithful code
+repository would need to realize.
+
+Each obligation must be anchored by a short verbatim evidence span from the
+paper and must describe a concrete implementation-relevant behavior, formula,
+data transformation, optimization step, model component, evaluation procedure,
+or configuration relation. Exclude motivation, broad claims, related work, and
+results that do not constrain an implementation.
+
+Return JSON only:
+{
+  "obligations": [
+    {
+      "statement": "normalized implementation obligation",
+      "evidence": "short exact span from the paper",
+      "concepts": ["search terms"],
+      "identifiers": ["symbols, APIs, variables, or component names"]
+    }
+  ]
+}
+
+PAPER_TEXT:
+{{paper_text}}

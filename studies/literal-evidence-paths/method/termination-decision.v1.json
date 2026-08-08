@@ -1,0 +1,111 @@
+{
+  "artifact_kind": "literal_evidence_paths_termination_decision",
+  "candidate_id": "topic_literal_evidence_path_review",
+  "confirmatory_model_calls_completed": 0,
+  "contract": {
+    "path": "studies/literal-evidence-paths/method/preflight-contract.v1.json",
+    "sha256": "bf1c9ea8d3c6c607610c67b7bbfa75492553a3b7d3a1c45a921ed7276d143890"
+  },
+  "decided_at": "2026-08-08",
+  "decision": "KILL_PREFLIGHT",
+  "decision_reason": "The actual frozen corpus failed one or more declared structural preflight gates before any reviewer output was generated. Every declared gate is reported in gate_results; no failed threshold is weakened or repaired by replacing units.",
+  "execution_allowed": false,
+  "failed_gates": [
+    "minimum_confirmatory_workspaces_with_eligible_target",
+    "minimum_development_workspaces_with_eligible_target",
+    "manual_development_mutation_validity"
+  ],
+  "forbidden_revival": [
+    "Lowering a frozen structural threshold",
+    "Promoting development units into the confirmatory set",
+    "Adding sink families after observing eligibility",
+    "Adding GPU workspaces to repair the failed CPU-only contract",
+    "Treating a structurally incomplete subset as paper-scale evidence"
+  ],
+  "frozen_gate": {
+    "action_on_failure": "KILL",
+    "manual_development_mutation_validity": 1.0,
+    "maximum_duplicate_target_hash_rate": 0.05,
+    "minimum_confirmatory_workspaces_with_eligible_target": 40,
+    "minimum_development_workspaces_with_eligible_target": 5,
+    "mutation_parse_success_rate": 1.0,
+    "python_parse_success_rate": 1.0
+  },
+  "gate_results": {
+    "manual_development_mutation_validity": {
+      "observed": 0.0,
+      "operator": ">=",
+      "passed": false,
+      "threshold": 1.0
+    },
+    "maximum_duplicate_target_hash_rate": {
+      "observed": 0.0,
+      "operator": "<=",
+      "passed": true,
+      "threshold": 0.05
+    },
+    "minimum_confirmatory_workspaces_with_eligible_target": {
+      "observed": 25,
+      "operator": ">=",
+      "passed": false,
+      "threshold": 40
+    },
+    "minimum_development_workspaces_with_eligible_target": {
+      "observed": 2,
+      "operator": ">=",
+      "passed": false,
+      "threshold": 5
+    },
+    "mutation_parse_success_rate": {
+      "observed": 1.0,
+      "operator": ">=",
+      "passed": true,
+      "threshold": 1.0
+    },
+    "python_parse_success_rate": {
+      "observed": 1.0,
+      "operator": ">=",
+      "passed": true,
+      "threshold": 1.0
+    }
+  },
+  "next_allowed_state": "Return to wide topic search with a different research object or evaluation unit.",
+  "observed_preflight": {
+    "confirmatory_count": 40,
+    "confirmatory_eligible": 25,
+    "development_count": 5,
+    "development_eligible": 2,
+    "duplicate_target_count": 0,
+    "duplicate_target_hash_rate": 0.0,
+    "manual_development_audit_count": 2,
+    "manual_development_audit_mismatches": [
+      "papers/claude/compiler_optimization_trial1",
+      "papers/kimi/causal_learning_trial1"
+    ],
+    "manual_development_mutation_validity": 0.0,
+    "manual_development_valid_count": 0,
+    "mutation_attempt_count": 27,
+    "mutation_parse_success_count": 27,
+    "mutation_parse_success_rate": 1.0,
+    "parse_failure_workspaces": 0,
+    "python_file_count": 563,
+    "python_parse_failure_count": 0,
+    "python_parse_success_count": 563,
+    "python_parse_success_rate": 1.0,
+    "selected_target_count": 27,
+    "unique_target_hash_count": 27,
+    "workspace_count": 45
+  },
+  "receipt": {
+    "corpus_commit": "4f067cf14f4f6f68496ab67aea1b2b10941cac4d",
+    "manual_development_audit_sha256": "c9041f2388a1f1b8160362b872796355a011ed0c9ab8761e19fc7f6e11f55995",
+    "paper_index_sha256": "384e3d6a83436c749b19b9c496e3541bb2b59b9f5a36515a7a16f657e699ef28",
+    "path": "studies/literal-evidence-paths/results/structural-preflight.v1.json",
+    "scanner_sha256": "a6773b7ec71e63fe6ef1c1236b17c02ee7f3b13ec469516e73410ddeb9772727",
+    "sha256": "c27636d8bfcc1b8c3098750e8bc88447cc0fbacf398e4cd224e625ff80c2eb39",
+    "source_registry_sha256": "acb2b06bf4a92fdc7da5cddcd434d74cea4b396cb5411c5e8cce2d82b92fb835"
+  },
+  "schema_version": 1,
+  "study_slug": "literal-evidence-paths",
+  "topic_selected": false
+}

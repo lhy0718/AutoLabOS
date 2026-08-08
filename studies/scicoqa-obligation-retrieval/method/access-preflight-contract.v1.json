@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "frozen_before_execution": true,
+  "status": "hold_preflight",
+  "unit": "unique versioned paper and repository pair",
+  "selection": {
+    "ordering": "ascending SHA-256 of ordering_salt, paper_url_versioned, and code_url_versioned",
+    "probe_limit": 96,
+    "development_count": 8,
+    "confirmatory_count": 40,
+    "assignment": "first 8 eligible units are development; next 40 are confirmatory",
+    "reserve": "all remaining eligible probed units"
+  },
+  "eligibility": [
+    "one versioned repository URL per paper",
+    "versioned paper PDF responds to a bounded request",
+    "repository commit archive responds to a bounded request",
+    "license text at the recorded commit is classified as MIT, Apache-2.0, BSD, or CC-BY"
+  ],
+  "forbidden_inputs": "All discrepancy descriptions, gold relevant files, gold paper sections, changed files, and changed snippets",
+  "kill_rule": "KILL_DATASET when fewer than 48 eligible independent units are found among the first 96 hash-ordered units",
+  "execution_after_pass": "Freeze the retrieval/evaluation contract before inspecting development retrieval outcomes; keep confirmatory gold sealed until the method is frozen"
+}

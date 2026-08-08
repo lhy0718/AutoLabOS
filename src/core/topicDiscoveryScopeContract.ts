@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import {
+  countTopicDiscoveryCandidateTitleSupport,
   normalizeTopicDiscoveryScientificObjectTerms,
   normalizeTopicDiscoveryScientificTerms,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
@@ -334,7 +335,10 @@ export function assessTopicDiscoveryScientificScope(input: {
       normalizeTopicDiscoveryScientificTerms(family.axisTerms.join(" "))
         .filter((term) => !anchorTermSet.has(term))
     );
-    const candidateTitleSupport = countCandidateTitleSupport(axisTerms, input.candidateTitles);
+    const candidateTitleSupport = countTopicDiscoveryCandidateTitleSupport(
+      axisTerms,
+      input.candidateTitles
+    );
     if (!input.contract.enforced) {
       return {
         id: family.id,
@@ -632,20 +636,6 @@ function extractDistinctiveScopeTerms(value: string): string[] {
   return uniqueTerms(normalizeTopicDiscoveryScientificTerms(value))
     .filter((term) => /\p{L}/u.test(term))
     .filter((term) => !GENERIC_SCOPE_TERMS.has(term));
-}
-
-function countCandidateTitleSupport(axisTerms: string[], titles: string[]): number {
-  const required = uniqueTerms(axisTerms);
-  if (required.length === 0) {
-    return 0;
-  }
-  const uniqueTitles = uniqueTerms(
-    titles.map((title) => title.trim().toLowerCase()).filter(Boolean)
-  );
-  return uniqueTitles.filter((title) => {
-    const titleTerms = new Set(normalizeTopicDiscoveryScientificTerms(title));
-    return required.every((term) => titleTerms.has(term));
-  }).length;
 }
 
 function buildScientificScopeFingerprint(input: {

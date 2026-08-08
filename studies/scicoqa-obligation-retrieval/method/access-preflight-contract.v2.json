@@ -1,0 +1,34 @@
+{
+  "schema_version": "2.0",
+  "supersedes": "access-preflight-contract.v1.json",
+  "amended_before_retrieval_outcomes": true,
+  "amendment_reason": {
+    "target_absolute_difference": 0.10,
+    "assumed_paired_difference_standard_deviation": 0.30,
+    "two_sided_alpha": 0.05,
+    "target_power": 0.80,
+    "normal_approximation_required_units": 71,
+    "selected_confirmatory_units": 72
+  },
+  "status": "hold_preflight",
+  "unit": "unique versioned paper and repository pair",
+  "selection": {
+    "ordering": "ascending SHA-256 of ordering_salt, paper_url_versioned, and code_url_versioned",
+    "probe_limit": 96,
+    "development_count": 8,
+    "confirmatory_count": 72,
+    "assignment": "first 8 eligible units are development; next 72 are confirmatory",
+    "reserve": "all remaining eligible probed units"
+  },
+  "eligibility": [
+    "one versioned repository URL per paper",
+    "one paper per exact versioned repository URL",
+    "versioned paper PDF responds to a bounded request",
+    "repository commit archive responds to a bounded request",
+    "license text at the recorded commit is classified as MIT, Apache-2.0, BSD, or CC-BY"
+  ],
+  "post_materialization_independence_gate": "Cluster exact and near-duplicate repository snapshots before final split sealing; assign connected components wholly to one split and replace collided units only from hash-ordered reserves",
+  "forbidden_inputs": "All discrepancy counts and descriptions, gold relevant files, gold paper sections, changed files, and changed snippets",
+  "kill_rule": "KILL_DATASET when fewer than 80 eligible independent units are found among the first 96 hash-ordered units, or when component-safe reassignment cannot preserve 8 development and 72 confirmatory units",
+  "execution_after_pass": "Freeze the retrieval/evaluation contract before inspecting development retrieval outcomes; keep confirmatory gold in a separate sealed evaluator input until the method is frozen"
+}

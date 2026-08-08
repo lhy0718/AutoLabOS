@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "development_outcomes_observed": true,
+  "observed_systems": [
+    "alphabetical_prefix",
+    "whole_paper_bm25",
+    "methods_only_bm25",
+    "generic_hybrid",
+    "deterministic_obligations"
+  ],
+  "scientific_contract_changed": false,
+  "addition": "Implemented the already frozen generic_frontier_selector and frontier_obligations systems, their real Responses API transport, response cache, whitelist parser, and provenance capture.",
+  "guard": "No budget, prompt, model, reasoning effort, primary metric, primary contrast, promotion threshold, split, or deterministic-system implementation changed after development outcomes were observed."
+}

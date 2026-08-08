@@ -1,0 +1,116 @@
+{
+  "schema_version": "1.0",
+  "frozen_before_development_retrieval_outcomes": true,
+  "research_question": "Do source-linked implementation obligations improve localization of discrepancy-bearing scientific-code files over strong generic retrieval under an equal selected-code token budget?",
+  "hypothesis": "Obligation-guided retrieval improves paper-level changed-file recall by at least 0.10 over the strongest non-oracle baseline.",
+  "experimental_unit": "paper-repository connected component",
+  "corpus": {
+    "source": "SciCoQA synthetic v1.1",
+    "source_registry": "corpus/source.v1.json",
+    "source_registry_sha256": "60796be6b8fd7cf01747736e34941632967cb0b4dba8fde0babb317ddfad056b",
+    "access_receipt": "results/access-preflight.v2.json",
+    "access_receipt_sha256": "673a10b90cfbc93bda473f4a9be1635c9ed17b2adf3ce09481bea4e3dfd1dbdc",
+    "materialization_receipt": "results/materialization-preflight.v2.json",
+    "materialization_receipt_sha256": "ac718879145c187d39196fd1c539c74f0001b283509733bcf71f251b032ff741",
+    "blind_manifest_sha256": "4badaff120e7ddbcc33123adbc409681638c0af9fe83c7cfa3110bb44e09b423",
+    "sealed_gold_manifest_sha256": {
+      "development": "bcbff69cec610823381eafac37c455341e4157b207a359d221cb83c7bf33f6af",
+      "confirmatory": "c7103d78921ffb0b4f7d13a51cce4b33407415dd72a151931685308841750009",
+      "reserve": "4df3f5eb70cbfbc9c234611dbf8f02869062d1d75dfb6aa8d780b4d47e6ad39d"
+    },
+    "materialized_independent_components": 86,
+    "development_units": 8,
+    "confirmatory_units": 72,
+    "reserve_units": 6,
+    "split_rule": "hash order fixed by access-preflight-contract.v2.json, followed only by component-safe reserve substitution",
+    "mutation_policy": "apply synthetic changed_code_files in source row order with last-write-wins, matching the official aggregation behavior; record conflicts without excluding them",
+    "candidate_extensions": [
+      ".c", ".cc", ".cpp", ".cu", ".h", ".hpp", ".java", ".jl", ".m", ".matlab", ".makefile", ".md", ".pl", ".ps1", ".py", ".r", ".sh", ".rs", ".scala", ".yaml", ".yml", "config.txt", "readme.txt", "requirements.txt", "requirements-dev.txt", "requirements_dev.txt", "requirements.dev.txt"
+    ],
+    "excluded_directory_names": [".git", "docs", "doc", "test", "tests", "example", "examples"],
+    "maximum_source_file_bytes": 1048576,
+    "notebook_policy": "convert code cells to text in source order and discard outputs",
+    "near_duplicate_gate": "cluster repository snapshots by exact normalized content hash and token-set similarity before split sealing; connected components cannot cross splits"
+  },
+  "blindness": {
+    "retriever_input": ["unit_id", "paper_text", "mutated_repository"],
+    "forbidden_retriever_input": ["discrepancy_type", "discrepancy_description", "relevant_code_files", "relevant_paper_sections", "changed_file_paths", "changed_snippets", "original_repository"],
+    "primary_gold": "deduplicated union of changed_code_files.file_name for each paper",
+    "gold_isolation": "materializer emits a blind corpus and a separate sealed evaluator manifest; retrieval commands accept only the blind corpus path",
+    "confirmatory_rule": "confirmatory gold is not opened by method-development or retrieval processes before predictions and provenance are hashed"
+  },
+  "context_budget": {
+    "tokenizer": "tiktoken o200k_base",
+    "tokenizer_version": "0.12.0",
+    "chunk_tokens": 512,
+    "chunk_overlap_tokens": 64,
+    "selected_code_tokens": 16384,
+    "packing": "greedy descending score with deterministic path and start-token tie breaks; headers count toward the budget"
+  },
+  "systems": [
+    {
+      "id": "alphabetical_prefix",
+      "role": "official-policy analogue",
+      "description": "pack chunks by normalized file path and source order"
+    },
+    {
+      "id": "whole_paper_bm25",
+      "role": "sparse baseline",
+      "description": "BM25 chunks using the full extracted paper as the query"
+    },
+    {
+      "id": "methods_only_bm25",
+      "role": "focused-query baseline",
+      "description": "BM25 chunks using only automatically detected Methods and Experimental Setup sections"
+    },
+    {
+      "id": "generic_hybrid",
+      "role": "strong deterministic baseline",
+      "description": "reciprocal-rank fusion of Methods BM25, path token overlap, and symbol/API overlap"
+    },
+    {
+      "id": "generic_frontier_selector",
+      "role": "strong equal-call baseline",
+      "description": "one frontier-model call over paper text and a gold-free repository map, followed by deterministic chunk packing"
+    },
+    {
+      "id": "deterministic_obligations",
+      "role": "generator-family control",
+      "description": "rule-selected implementation sentences decomposed into source-linked obligations, followed by hybrid chunk retrieval"
+    },
+    {
+      "id": "frontier_obligations",
+      "role": "proposed system",
+      "description": "one frontier-model call extracts at most twelve source-linked implementation obligations from paper text, followed by hybrid chunk retrieval"
+    }
+  ],
+  "frontier_model_fairness": {
+    "provider": "OpenAI Responses API",
+    "model": "gpt-5.6-sol",
+    "reasoning_effort": "high",
+    "calls_per_paper_per_system": 1,
+    "systems_with_calls": ["generic_frontier_selector", "frontier_obligations"],
+    "temperature": "provider_default",
+    "required_provenance": ["provider", "model", "reasoning_effort", "prompt_sha256", "input_sha256", "response_sha256", "usage", "latency_ms"],
+    "paper_grade_rule": "Codex CLI or codex_mock outputs may test the harness but cannot enter confirmatory evidence"
+  },
+  "primary_contrast": "frontier_obligations minus the best confirmatory non-oracle baseline selected by development macro changed-file recall",
+  "development_promotion": {
+    "minimum_absolute_macro_recall_gain": 0.10,
+    "minimum_papers_with_positive_difference": 5,
+    "must_beat": ["methods_only_bm25", "generic_hybrid", "generic_frontier_selector"],
+    "no_method_changes_after_promotion": true
+  },
+  "failure_conditions": [
+    "fewer than 8 development and 72 component-safe confirmatory units after materialization",
+    "confirmatory gold is accessed before prediction sealing",
+    "frontier model calls lack real-provider provenance",
+    "proposed retrieval fails the development promotion rule",
+    "selected-code budgets differ across compared systems"
+  ],
+  "claim_ceiling": {
+    "retrieval_only": "retrieval-focused workshop analysis on synthetic discrepancies",
+    "retrieval_and_downstream": "paper-code review assistance under the tested synthetic setting",
+    "prohibited": ["natural discrepancy prevalence", "general autonomous reviewer reliability", "broad scientific-code correctness", "paper acceptance decisions"]
+  }
+}

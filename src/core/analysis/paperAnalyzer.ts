@@ -4,7 +4,7 @@ import { AnalysisCorpusRow, ResolvedPaperSource, buildAbstractFallbackText } fro
 import { ResponsesPdfAnalysisClient } from "../../integrations/openai/responsesPdfAnalysisClient.js";
 import { hashCanonical } from "../canonicalHash.js";
 
-export const PAPER_ANALYSIS_EVIDENCE_SEMANTICS_VERSION = 5;
+export const PAPER_ANALYSIS_EVIDENCE_SEMANTICS_VERSION = 6;
 
 export type EvidenceLimitationKind =
   | "scientific"

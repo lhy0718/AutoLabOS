@@ -1,0 +1,170 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "literal_evidence_paths_preflight_contract",
+  "study_slug": "literal-evidence-paths",
+  "candidate_id": "topic_literal_evidence_path_review",
+  "status": "post_scan_integrity_amendment",
+  "thresholds_frozen_before_initial_scan": true,
+  "initial_contract_snapshot_sha256": "01f28873aa76ef4d88b54997b447f41936780b862dc9d1059ab86361ad6d56af",
+  "integrity_amendment": {
+    "amended_on": "2026-08-08",
+    "structural_eligibility_outcomes_observed": true,
+    "confirmatory_model_outcomes_observed": false,
+    "scientific_thresholds_changed": false,
+    "reason": "Bind the canonical registry and post-generation development audit after correcting scanner semantics and enforcing every already-declared gate. The corrected structural scan remains a termination result, not preregistered confirmatory evidence."
+  },
+  "topic_selected": false,
+  "execution_allowed": false,
+  "confirmatory_model_calls_completed": 0,
+  "research_question": "For controlled direct-sink substitutions in pinned AI-generated research workspaces, does a deterministic evidence-path packet improve exact artifact-aware reviewer detection without increasing clean-workspace false alarms?",
+  "closest_priors": [
+    {
+      "title": "How Far Are We From True Auto-Research?",
+      "url": "https://arxiv.org/abs/2605.19156",
+      "verified_full_text": true,
+      "absorbed_claim": "Artifact-aware review reveals fabricated results, underpowered experiments, and plan-execution mismatches in 117 auto-research papers.",
+      "residual": "It does not isolate result-origin substitutions with paired clean/mutated code or evaluate a source-linked detection aid."
+    },
+    {
+      "title": "SciCoQA: Quality Assurance for Scientific Paper-Code Alignment",
+      "url": "https://aclanthology.org/2026.acl-long.1795/",
+      "verified_full_text": true,
+      "absorbed_claim": "LLMs struggle to detect semantic conflicts between scientific methods described in papers and implementations in code.",
+      "residual": "Its task definition excludes general bugs and result-only reproducibility failures; it does not test direct result-sink provenance substitution."
+    },
+    {
+      "title": "scicode-lint: Detecting Methodology Bugs in Scientific Python Code with LLM-Generated Patterns",
+      "url": "https://arxiv.org/abs/2603.17893",
+      "verified_full_text": true,
+      "absorbed_claim": "Scientific-code linters can detect semantic methodology bugs using generated detection patterns.",
+      "residual": "It targets methodology anti-patterns rather than paper-result provenance paths or artifact-review sensitivity to controlled substitutions."
+    }
+  ],
+  "corpus": {
+    "registry": "studies/literal-evidence-paths/corpus/source.v1.json",
+    "registry_sha256": "acb2b06bf4a92fdc7da5cddcd434d74cea4b396cb5411c5e8cce2d82b92fb835",
+    "unit": "one CPU paper workspace",
+    "development_units": 5,
+    "maximum_confirmatory_units": 40,
+    "minimum_confirmatory_units": 40,
+    "replacement_of_ineligible_units": false
+  },
+  "intervention": {
+    "category": "literal_evidence_substitution",
+    "language": "Python",
+    "one_mutation_per_workspace": true,
+    "target": "one computed scalar expression that directly supplies a recognized result artifact sink",
+    "replacement": "a plausible scalar numeric literal deterministically drawn from the workspace manuscript and matched to the target scalar type",
+    "requirements": [
+      "original and mutated files parse with the same pinned Python grammar",
+      "the surrounding call, key, container, and output schema remain unchanged",
+      "the replacement contains no marker, comment, sentinel name, or formatting cue",
+      "the target and replacement hashes are recorded before reviewer execution",
+      "the mutation is confined to one source span"
+    ]
+  },
+  "recognized_sink_families": [
+    "json serialization",
+    "CSV or tabular serialization",
+    "NumPy or Torch artifact serialization",
+    "LaTeX table row emission",
+    "plot data supplied to a saved figure"
+  ],
+  "systems": {
+    "lexical_sink_scan": "Deterministic baseline that warns on literal values at recognized result sinks without interprocedural provenance.",
+    "artifact_review": "Pinned frontier reviewer with paper and repository context, structured output, and no evidence packet.",
+    "evidence_packet_review": "The same pinned reviewer and call budget with deterministic source-linked sink and local def-use evidence."
+  },
+  "grading": {
+    "model_judge_allowed": false,
+    "positive_match": "Exact relative file plus overlap with the frozen mutation line span plus category literal_evidence_substitution.",
+    "clean_false_positive": "Any literal_evidence_substitution finding in the paired clean workspace.",
+    "invalid_output": "Schema-invalid, missing required fields, or path outside the workspace."
+  },
+  "estimands": {
+    "primary": "paper-level Youden J = exact mutated recall - clean false-positive rate",
+    "secondary": [
+      "exact mutated recall",
+      "clean false-positive rate",
+      "invalid-output rate",
+      "file-localization accuracy",
+      "mutation-line localization accuracy",
+      "per-agent and per-domain descriptive strata"
+    ],
+    "uncertainty": "paired workspace-cluster bootstrap with 10000 replicates",
+    "meaningful_improvement": "evidence_packet_review exceeds artifact_review by at least 0.15 absolute Youden J, has exact mutated recall at least 0.50, and does not increase clean false-positive rate by more than 0.05"
+  },
+  "bounded_development": {
+    "units": 5,
+    "maximum_reviewer_calls": 20,
+    "purpose": "schema, mutation realism, packet format, and grader debugging only",
+    "paper_evidence": false
+  },
+  "confirmatory_design": {
+    "units": 40,
+    "variants_per_unit": 2,
+    "review_conditions": [
+      "artifact_review",
+      "evidence_packet_review"
+    ],
+    "fresh_repeats_per_condition": 3,
+    "maximum_reviewer_calls": 480,
+    "pair_blind_sessions": true,
+    "opaque_workspace_ids": true,
+    "condition_order": "deterministic balanced order fixed before calls",
+    "no_shared_conversation_state": true
+  },
+  "structural_preflight": {
+    "minimum_confirmatory_workspaces_with_eligible_target": 40,
+    "minimum_development_workspaces_with_eligible_target": 5,
+    "python_parse_success_rate": 1.0,
+    "mutation_parse_success_rate": 1.0,
+    "maximum_duplicate_target_hash_rate": 0.05,
+    "manual_development_mutation_validity": 1.0,
+    "action_on_failure": "KILL"
+  },
+  "structural_preflight_evidence": {
+    "manual_development_mutation_audit": {
+      "path": "studies/literal-evidence-paths/method/manual-development-mutation-audit.v1.json",
+      "sha256": "c9041f2388a1f1b8160362b872796355a011ed0c9ab8761e19fc7f6e11f55995"
+    }
+  },
+  "promotion_rules": {
+    "bounded_development_to_confirmatory": [
+      "all structural_preflight gates pass",
+      "deterministic grader precision is 1.0 on synthetic unit tests",
+      "no condition or mutation marker leaks into reviewer-visible paths",
+      "invalid reviewer output rate is at most 0.05",
+      "estimated provider cost and wall time remain inside the frozen budget"
+    ],
+    "confirmatory_to_paper": [
+      "all 40 workspaces complete every paired condition",
+      "primary and secondary metrics are reported regardless of direction",
+      "manual audit covers every claimed true positive and a frozen sample of negatives",
+      "claims remain limited to controlled direct-sink substitutions"
+    ]
+  },
+  "compute_ceiling": {
+    "bounded_probe": {
+      "max_gpu_hours": 0,
+      "max_concurrent_gpus": 0,
+      "max_trials": 20
+    },
+    "confirmatory": {
+      "max_gpu_hours": 0,
+      "max_concurrent_gpus": 0,
+      "max_trials": 480
+    }
+  },
+  "disallowed_shortcuts": [
+    "Treating exploratory code examples as confirmatory evidence",
+    "Replacing an ineligible confirmatory workspace after outcomes are observed",
+    "Using a visible sentinel, mutation comment, filename, or prompt cue",
+    "Using an LLM judge for the primary endpoint",
+    "Counting files, sinks, findings, or repeats as independent papers",
+    "Claiming natural fabrication prevalence from controlled mutations",
+    "Inferring author or agent intent",
+    "Weakening a failed gate or converting a null result into an unrelated paper"
+  ],
+  "claim_ceiling": "Detection sensitivity and clean false-alarm behavior for controlled, direct-sink numeric provenance substitutions in 40 pinned ResearchArena CPU workspaces; no natural prevalence, misconduct, general scientific-code, or universal reviewer claim."
+}

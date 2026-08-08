@@ -1,0 +1,17 @@
+You receive the extracted text of one scientific paper and a repository map
+containing file paths plus automatically extracted symbols. Rank repository
+files by how likely they are to contain implementation details needed to audit
+the paper. Do not infer or invent files. Do not report discrepancies.
+
+Return JSON only:
+{
+  "ranked_files": [
+    {"path": "exact path from the repository map", "reason": "brief relevance reason"}
+  ]
+}
+
+PAPER_TEXT:
+{{paper_text}}
+
+REPOSITORY_MAP:
+{{repository_map}}

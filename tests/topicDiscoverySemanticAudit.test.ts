@@ -57,7 +57,7 @@ describe("topic discovery semantic audit", () => {
         uncertain: 1
       },
       limits: {
-        timeout_ms: 120_000
+        timeout_ms: 240_000
       },
       reasons: []
     });
@@ -66,6 +66,7 @@ describe("topic discovery semantic audit", () => {
       lexical_requested_pairs: 3,
       provider_provenance_requested_pairs: 0
     });
+    expect(audit.execution.total_deadline_ms).toBe(960_000);
     expect(audit.judgments.map((item) => [item.paper_id, item.family_id, item.verdict])).toEqual([
       ["paper-a", "family-a", "direct_support"],
       ["paper-c", "family-b", "uncertain"],
@@ -84,6 +85,27 @@ describe("topic discovery semantic audit", () => {
     );
     expect(audit).not.toHaveProperty("response");
     expect(audit).not.toHaveProperty("completion");
+  });
+
+  it("clamps an operator timeout while preserving one bounded window per call", async () => {
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new CapturingLlm(response([
+        judgment(
+          "paper-a",
+          "family-a",
+          "uncertain",
+          "The supplied abstract is insufficient."
+        )
+      ])),
+      rows: rows(),
+      searchFamilies: families(),
+      lexicalMatchedFamilyIdsByPaper: matches([["paper-a", "family-a"]]),
+      timeoutMs: 999_999
+    });
+
+    expect(audit.limits.timeout_ms).toBe(300_000);
+    expect(audit.execution.total_deadline_ms).toBe(1_200_000);
+    expect(audit.execution.maximum_calls).toBe(4);
   });
 
   it("downgrades direct support when its exact evidence span is absent from local input", async () => {
@@ -624,6 +646,90 @@ describe("topic discovery semantic audit", () => {
     expect(requestedIds.filter((paperId) => paperId.startsWith("loose-body-"))).toHaveLength(7);
   });
 
+  it("reserves provider recall for strong joint anchor-axis candidates alongside exact titles", async () => {
+    const searchFamily: TopicDiscoverySemanticSearchFamilyContract = {
+      queryFamily: "family-a",
+      query: "structured review workflow trajectory error detection",
+      sharedAnchorTerms: ["structured", "review", "workflow"],
+      axisTerms: ["trajectory", "error", "detection"],
+      lens: "trajectory error detection in structured review workflows",
+      contributionIntent: "measure error detection"
+    };
+    const exactAnchorRows = Array.from({ length: 8 }, (_, index) => paper(
+      `exact-anchor-${index + 1}`,
+      `Structured Review Workflow: General Analysis ${index + 1}`,
+      "The study describes a broad evaluation process."
+    ));
+    const jointCandidate = paper(
+      "joint-anchor-axis",
+      "Review Workflow Trajectory Error Detection",
+      "The controlled study localizes trajectory errors in repeated reviews."
+    );
+    const candidateRows = [...exactAnchorRows, jointCandidate];
+
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new EchoingUncertainLlm(),
+      rows: candidateRows,
+      searchFamilies: [searchFamily],
+      lexicalMatchedFamilyIdsByPaper: matches([]),
+      providerCandidatePaperIdsByFamily: new Map([[
+        "family-a",
+        candidateRows.map((row) => row.paper_id)
+      ]])
+    });
+
+    const requestedIds = audit.reviewer_input_payload.requested_pairs.map(
+      (pair) => pair.paper_id
+    );
+    expect(requestedIds).toHaveLength(8);
+    expect(requestedIds[0]).toBe("exact-anchor-1");
+    expect(requestedIds[1]).toBe("joint-anchor-axis");
+    expect(requestedIds.filter((paperId) => paperId.startsWith("exact-anchor-")))
+      .toHaveLength(7);
+  });
+
+  it("prioritizes a provider-returned strong candidate with an exact planning title hint", async () => {
+    const searchFamily: TopicDiscoverySemanticSearchFamilyContract = {
+      queryFamily: "family-a",
+      query: "structured review workflow trajectory error detection",
+      sharedAnchorTerms: ["structured", "review", "workflow"],
+      axisTerms: ["trajectory", "error", "detection"],
+      lens: "trajectory error detection in structured review workflows",
+      contributionIntent: "measure error detection"
+    };
+    const exactAnchorRows = Array.from({ length: 8 }, (_, index) => paper(
+      `exact-anchor-${index + 1}`,
+      `Structured Review Workflow: General Analysis ${index + 1}`,
+      "The study describes a broad evaluation process."
+    ));
+    const hintedCandidate = paper(
+      "hinted-joint-candidate",
+      "Review Workflow Trajectory Error Detection",
+      "The controlled study localizes trajectory errors in repeated reviews."
+    );
+    const candidateRows = [...exactAnchorRows, hintedCandidate];
+
+    const audit = await runTopicDiscoverySemanticAudit({
+      llm: new EchoingUncertainLlm(),
+      rows: candidateRows,
+      searchFamilies: [searchFamily],
+      lexicalMatchedFamilyIdsByPaper: matches([]),
+      providerCandidatePaperIdsByFamily: new Map([[
+        "family-a",
+        candidateRows.map((row) => row.paper_id)
+      ]]),
+      candidateTitleHints: ["  REVIEW WORKFLOW TRAJECTORY ERROR DETECTION  "]
+    });
+
+    const requestedIds = audit.reviewer_input_payload.requested_pairs.map(
+      (pair) => pair.paper_id
+    );
+    expect(requestedIds).toHaveLength(8);
+    expect(requestedIds[0]).toBe("hinted-joint-candidate");
+    expect(requestedIds.filter((paperId) => paperId.startsWith("exact-anchor-")))
+      .toHaveLength(7);
+  });
+
   it("does not promote an unprovenanced provider candidate into semantic review", async () => {
     const audit = await runTopicDiscoverySemanticAudit({
       llm: new EchoingUncertainLlm(),
@@ -753,7 +859,8 @@ describe("topic discovery semantic audit", () => {
     });
 
     expect(timeout.status).toBe("operational_failure");
-    expect(timeout.reasons).toContain("semantic_audit_timeout_partitions_exhausted");
+    expect(timeout.reasons).toContain("semantic_audit_partition_timeout");
+    expect(timeout.reasons).not.toContain("semantic_audit_timeout_partitions_exhausted");
     expect(timeout.execution.calls_started).toBe(2);
     expect(timeoutLlm.calls).toBe(2);
     expect(rejected.status).toBe("operational_failure");

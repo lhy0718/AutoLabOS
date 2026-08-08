@@ -1,0 +1,34 @@
+{
+  "schema_version": "1.0",
+  "source_name": "SciCoQA synthetic v1.1",
+  "upstream_repository": "https://github.com/UKPLab/scicoqa.git",
+  "upstream_commit": "9ccc87cfb848f97b31c54ea9ea23355219be51d2",
+  "dataset_relative_path": "data/scicoqa-synthetic-v1.1.jsonl",
+  "dataset_sha256": "6b360b757d3e8de16c494786eed51b4b9ed01948b56a9557d0dcb951b9926aa2",
+  "dataset_license": "CC-BY-4.0",
+  "upstream_code_license": "Apache-2.0",
+  "source_paper": {
+    "title": "SciCoQA: Benchmarking Scientific Code-Paper Consistency",
+    "url": "https://aclanthology.org/2026.acl-long.1795/",
+    "pdf_sha256": "d67fcfaf9247fe931a113658c93a8d223aeadc8f3486a3859a9e24c89e01d00e"
+  },
+  "paper_unit_key": "paper_url_versioned",
+  "required_unique_units": 80,
+  "development_units": 8,
+  "confirmatory_units": 72,
+  "ordering_salt": "scicoqa-obligation-retrieval-v1",
+  "outcome_fields_forbidden_during_preflight": [
+    "discrepancy_description_gemini",
+    "discrepancy_description_gpt",
+    "discrepancy_description_pooled_gemini_2_5_pro",
+    "discrepancy_description_pooled_gpt_5",
+    "discrepancy_description_pooled_gpt_oss_20b",
+    "origin_discrepancy_text",
+    "relevant_code_files_gemini",
+    "relevant_code_files_gpt",
+    "relevant_paper_sections_gemini",
+    "relevant_paper_sections_gpt",
+    "changed_code_files",
+    "changed_code_snippets"
+  ]
+}

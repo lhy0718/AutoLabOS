@@ -43,15 +43,24 @@ starts from a complete `ResearchBrief` whose `Research Mode` is
   admissibility constraints, evidence floor, and failure conditions. The brief
   must not pretend that a final intervention, dataset, or metric has already
   been selected. It builds multiple independent query families, and every
-  family carries a scientific lens plus a contribution intent. Retrieval
-  candidates are only a screening pool: each lexically eligible paper-family
+  family carries a scientific lens plus a contribution intent. Ordinary
+  derivational variants such as generate, generated, generative, and generation
+  share one versioned scientific comparison term. Retrieval candidates are only
+  a screening pool: each lexically eligible paper-family
   pair must receive a bounded `direct_support`, `application_only`, or
   `uncertain` judgment before the paper can enter the analysis corpus. The
   retrieved candidate universe, lexically eligible pair universe, semantic
   review universe, and bounded retained corpus remain distinct and auditable;
   the corpus cap never removes a lexical pair before semantic precision is
   computed. A partial or unavailable reviewer causes a reviewer-only retry and
-  must not train query reformulation feedback.
+  must not train query reformulation feedback. Semantic review allows a
+  configurable call window bounded to 300 seconds; the default 240-second
+  window matches other high-reasoning research stages. Its total deadline
+  reserves at most one window for the frozen full payload and three for the
+  deterministic fallback partitions. One timed-out partition is reported as a
+  partition timeout, while partition exhaustion is reserved for an actually
+  depleted call, deadline, or cumulative-input budget. Every unresolved pair
+  remains uncertain and cannot enter the evidence corpus.
   Provider coverage is also part of this failure boundary. When at least half
   of a portfolio of three or more configured providers is unavailable across
   every retrieval lane, the attempt remains quality-gate failed but is
@@ -71,19 +80,47 @@ starts from a complete `ResearchBrief` whose `Research Mode` is
   prior-work probes remain a separate closest-prior lane. Briefs without this
   explicit section receive deterministic role classification and fail closed when authority is
   insufficient. Every family must retain at least two terms from one frozen
-  source axis unless two deduplicated candidate titles establish queryability;
-  free-form lens prose never counts as lineage, and candidate-title vocabulary
-  may support a technical refinement but cannot create a replacement problem or
-  direct-support evidence. A brief-declared anchor is immutable before the first
+  source axis unless two deduplicated candidate titles establish queryability.
+  Candidate-title support uses the same bounded two-thirds axis floor as corpus
+  relevance, with a minimum of two terms when available. Free-form lens prose
+  never counts as lineage, and candidate-title vocabulary may support a technical
+  refinement but cannot create a replacement problem or direct-support evidence.
+  Semantic provider recall reserves bounded attention for independently
+  retrieved candidates in three deterministic lanes: exact normalized planning
+  title hints that also have strong joint anchor/axis coverage, exact scientific-
+  object title anchors, and strong joint anchor/axis candidates. A hint must
+  match a paper returned by the current provider retrieval and remains selection
+  metadata only; it cannot inject a paper, establish relevance, or bypass
+  semantic review and corpus-quality gates. A brief-declared anchor is immutable before the first
   retrieval. Planning fails closed when the brief does not expose enough
   role-authorized scientific material, and
   feedback from a different scope fingerprint is quarantined instead of merged.
+  After a complete semantic review fails aggregate corpus quality, per-family
+  `direct_support` titles from the current retrieval receive first priority
+  inside the existing bounded query-feedback quota. Remaining slots retain the
+  deterministic anchor/axis ranking. This priority is queryability metadata
+  only: it does not preserve a failed family, admit a paper, or weaken semantic
+  precision and corpus-quality floors.
+  An explicit `/agent collect "<focus>"` command does not bypass this portfolio
+  contract. In topic-discovery mode, the requested text is hash-bound as a
+  bounded planner preference and recorded as `requested_query_focus`; only
+  brief-authorized structured families become executable searches. Changing
+  the focus invalidates the cached plan. The complete command request remains
+  persisted across bounded corpus-quality retries and is cleared only after a
+  successful node result. Outside topic-discovery mode, an explicit query
+  retains its direct-query behavior.
   Before query-family planning, at most four brief-declared prior-work probes
   with at least two substantive terms run through a separate bounded retrieval
   lane. Each probe retains at most four titles from eight provider candidates.
   Those titles are cache-bound vocabulary hints only: they cannot authorize an
   axis, enter the corpus, count toward family precision, establish novelty, or
-  become paper evidence. Generic closest-prior process reminders are recorded
+  become paper evidence. When two model plans exhaust the title-support check,
+  the final bounded recovery first compiles unused brief-authorized axes and
+  ranks their queryability with probe plus executed-candidate titles. The same
+  scope and feedback validators must accept that deterministic plan before
+  retrieval; only when this compilation is unavailable may the runtime execute
+  one capped unsupported exploratory portfolio. Semantic review and final
+  corpus-quality gates remain unchanged in both cases. Generic closest-prior process reminders are recorded
   in the scope contract but do not trigger provider searches.
 - `analyze_papers` materializes `ResearchGapMap` from evidence-linked
   typed research opportunities and retains supported versus provisional
@@ -180,8 +217,10 @@ Workflow-native topic discovery has a distinct run-scoped artifact class:
 - PDF analysis keeps layout-preserving text for section selection and page-image
   planning, but exact evidence grounding uses a separate reading-order
   extraction so two-column serialization cannot interleave otherwise verbatim
-  sentences. Changes to this representation invalidate both the text-cache
-  semantics and the paper-analysis evidence semantics.
+  sentences. Prompt cache reads remain bounded, while resumed grounding-cache
+  reads preserve the complete extracted document. Changes to this
+  representation invalidate both the text-cache semantics and the
+  paper-analysis evidence semantics.
 - `collect_prior_work_probe_receipt.json` records every executed
   brief-declared probe, provider diagnostics, bounded candidate titles, and the
   explicit `query_hint_only` / `paper_evidence_allowed=false` boundary.

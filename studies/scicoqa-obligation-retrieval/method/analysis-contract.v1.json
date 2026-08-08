@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.0",
+  "primary_metric": {
+    "name": "paper_macro_changed_file_recall",
+    "per_unit": "number of retrieved unique changed file paths divided by all unique changed file paths for the paper",
+    "aggregation": "unweighted macro mean over confirmatory paper-repository components"
+  },
+  "primary_estimator": "paired mean difference between frontier_obligations and the frozen strongest non-oracle baseline",
+  "uncertainty": {
+    "method": "paper-component paired bootstrap",
+    "replicates": 10000,
+    "seed": 20260807,
+    "interval": "two-sided percentile 95%"
+  },
+  "hypothesis_test": {
+    "method": "two-sided paired randomization test on paper-level recall differences",
+    "exact_when_components_at_most": 20,
+    "monte_carlo_replicates": 100000,
+    "seed": 20260808,
+    "alpha": 0.05
+  },
+  "workshop_success_rule": {
+    "minimum_absolute_difference": 0.10,
+    "bootstrap_lower_bound_above": 0.0,
+    "paired_test_p_at_most": 0.05,
+    "leave_one_component_out_difference_must_remain_positive": true,
+    "deterministic_obligation_direction_must_be_positive": true
+  },
+  "secondary_metrics": [
+    "mean reciprocal rank of the first changed file",
+    "all changed files retrieved per paper",
+    "changed-file recall at 8192 and 32768 selected-code tokens",
+    "end-to-end input tokens",
+    "model calls",
+    "latency",
+    "estimated API cost"
+  ],
+  "secondary_tests": {
+    "all_changed_files": "paired McNemar test",
+    "subgroups": "descriptive intervals with Holm correction; no subgroup success claims"
+  },
+  "subgroups": ["discrepancy_type", "arxiv_subject", "repository_token_size_tertile"],
+  "missingness": "No gold-based exclusions. Failed retrieval or invalid model output receives an empty ranking. Infrastructure failures trigger reserve substitution only before split sealing and are fully reported.",
+  "downstream_gate": {
+    "runs_only_after_retrieval_success": true,
+    "comparison": "same discrepancy detector and call budget over contexts selected by frontier_obligations and the frozen strongest baseline",
+    "required_for_reviewer_claim": "improved discrepancy recall without a lower precision-recall trade-off on the tested synthetic corpus"
+  }
+}

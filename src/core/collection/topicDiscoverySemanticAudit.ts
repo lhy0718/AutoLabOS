@@ -6,6 +6,7 @@ import {
   normalizeTopicDiscoveryCandidateObjectTerms,
   normalizeTopicDiscoveryCandidateTerms,
   normalizeTopicDiscoveryScientificObjectTerms,
+  resolveTopicDiscoveryRequiredAxisMatches,
   TOPIC_DISCOVERY_CANDIDATE_RECALL_SEMANTICS_VERSION,
   TOPIC_DISCOVERY_TERM_NORMALIZATION_VERSION
 } from "../topicDiscoveryScientificTerms.js";
@@ -18,8 +19,9 @@ export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_MAX_INPUT_BYTES = 128 * 1024
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_INPUT_BYTES = 512 * 1024;
 export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_ABSTRACT_CHARS = 2_000;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_ABSTRACT_CHARS = 4_000;
-export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 120_000;
-export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 120_000;
+export const DEFAULT_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 240_000;
+export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TIMEOUT_MS = 300_000;
+export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TOTAL_DEADLINE_MS = 1_200_000;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_REASON_CHARS = 240;
 export const MAX_TOPIC_DISCOVERY_SEMANTIC_EVIDENCE_SPAN_CHARS = 240;
 export const TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY = 8;
@@ -158,6 +160,7 @@ export interface RunTopicDiscoverySemanticAuditInput {
   searchFamilies: TopicDiscoverySemanticSearchFamilyContract[];
   lexicalMatchedFamilyIdsByPaper: ReadonlyMap<string, ReadonlySet<string>>;
   providerCandidatePaperIdsByFamily?: ReadonlyMap<string, readonly string[]>;
+  candidateTitleHints?: readonly string[];
   maxPairs?: number;
   maxInputBytes?: number;
   abstractChars?: number;
@@ -226,7 +229,10 @@ export async function runTopicDiscoverySemanticAudit(
       / TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_FALLBACK_PARTITIONS
     )
   );
-  const totalDeadlineMs = Math.min(480_000, limits.timeout_ms * 4);
+  const totalDeadlineMs = Math.min(
+    MAX_TOPIC_DISCOVERY_SEMANTIC_AUDIT_TOTAL_DEADLINE_MS,
+    limits.timeout_ms * TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS
+  );
   const executionBase = {
     policy: TOPIC_DISCOVERY_SEMANTIC_TIMEOUT_PARTITION_POLICY,
     maximum_calls: TOPIC_DISCOVERY_SEMANTIC_MAXIMUM_CALLS,
@@ -394,7 +400,7 @@ export async function runTopicDiscoverySemanticAudit(
         prompts,
         responses,
         operationalReason: partition.reason === "semantic_audit_timeout"
-          ? "semantic_audit_timeout_partitions_exhausted"
+          ? "semantic_audit_partition_timeout"
           : partition.reason,
         execution: buildExecutionTrace(
           executionBase,
@@ -1159,7 +1165,8 @@ function collectPairs(input: RunTopicDiscoverySemanticAuditInput): RequestedPair
       const providerCandidates = rankTopicDiscoveryProviderRecallCandidates({
         paperIds: input.providerCandidatePaperIdsByFamily?.get(familyId) ?? [],
         rows: rows.values,
-        family
+        family,
+        candidateTitleHints: input.candidateTitleHints
       });
       for (const paperId of providerCandidates) {
         if (familyPairs.size >= TOPIC_DISCOVERY_PROVIDER_RECALL_FLOOR_PER_FAMILY) {
@@ -1221,6 +1228,7 @@ export function rankTopicDiscoveryProviderRecallCandidates(input: {
   paperIds: readonly string[];
   rows: ReadonlyMap<string, StoredCorpusRow>;
   family: TopicDiscoverySemanticSearchFamilyContract;
+  candidateTitleHints?: readonly string[];
 }): string[] {
   const axisTerms = uniqueNormalizedTerms(
     normalizeTopicDiscoveryCandidateTerms(input.family.axisTerms.join(" "))
@@ -1233,9 +1241,16 @@ export function rankTopicDiscoveryProviderRecallCandidates(input: {
     : normalizeTopicDiscoveryScientificObjectTerms(input.family.query)
         .filter((term) => !axisSet.has(term));
   const anchorTerms = uniqueNormalizedTerms(declaredAnchorTerms);
+  const requiredAxisMatches = resolveTopicDiscoveryRequiredAxisMatches(axisTerms);
+  const requiredAnchorMatches = anchorTerms.length === 0
+    ? 0
+    : Math.max(1, Math.ceil(anchorTerms.length * (2 / 3)));
+  const candidateTitleHintKeys = new Set(
+    (input.candidateTitleHints ?? []).map(normalizeCandidateTitleIdentity).filter(Boolean)
+  );
   const seen = new Set<string>();
 
-  return input.paperIds
+  const rankedCandidates = input.paperIds
     .flatMap((paperId, providerRank) => {
       if (seen.has(paperId)) return [];
       seen.add(paperId);
@@ -1250,6 +1265,13 @@ export function rankTopicDiscoveryProviderRecallCandidates(input: {
       const axisMatches = countContainedTerms(axisTerms, bodyTerms);
       const titleAnchorMatches = countContainedTerms(anchorTerms, titleTerms);
       const titleAxisMatches = countContainedTerms(axisTerms, titleTerms);
+      const jointAnchorAxis =
+        requiredAnchorMatches > 0
+        && requiredAxisMatches > 0
+        && anchorMatches >= requiredAnchorMatches
+        && axisMatches >= requiredAxisMatches
+          ? 1
+          : 0;
       return [{
         paperId,
         providerRank,
@@ -1261,7 +1283,13 @@ export function rankTopicDiscoveryProviderRecallCandidates(input: {
           anchorTerms.length > 0 && titleAnchorMatches === anchorTerms.length ? 1 : 0,
         titleAnchorMatches,
         titleAxisMatches,
-        hasAbstract: row.abstract.trim().length > 0 ? 1 : 0
+        hasAbstract: row.abstract.trim().length > 0 ? 1 : 0,
+        jointAnchorAxis,
+        planningHintTitle:
+          jointAnchorAxis === 1
+          && candidateTitleHintKeys.has(normalizeCandidateTitleIdentity(row.title))
+            ? 1
+            : 0
       }];
     })
     .sort((left, right) =>
@@ -1275,8 +1303,56 @@ export function rankTopicDiscoveryProviderRecallCandidates(input: {
       || right.hasAbstract - left.hasAbstract
       || left.providerRank - right.providerRank
       || compare(left.paperId, right.paperId)
-    )
-    .map((candidate) => candidate.paperId);
+    );
+  const planningHintLane = rankedCandidates
+    .filter((candidate) => candidate.planningHintTitle === 1)
+    .sort((left, right) =>
+      right.axisMatches - left.axisMatches
+      || right.anchorMatches - left.anchorMatches
+      || right.titleAxisMatches - left.titleAxisMatches
+      || right.titleAnchorMatches - left.titleAnchorMatches
+      || right.hasAbstract - left.hasAbstract
+      || left.providerRank - right.providerRank
+      || compare(left.paperId, right.paperId)
+    );
+  const exactTitleLane = rankedCandidates.filter(
+    (candidate) => candidate.titleAnchorSequence === 1
+  );
+  const jointAnchorAxisLane = rankedCandidates
+    .filter((candidate) => candidate.jointAnchorAxis === 1)
+    .sort((left, right) =>
+      right.axisMatches - left.axisMatches
+      || right.anchorMatches - left.anchorMatches
+      || right.titleAxisMatches - left.titleAxisMatches
+      || right.titleAnchorMatches - left.titleAnchorMatches
+      || right.hasAbstract - left.hasAbstract
+      || left.providerRank - right.providerRank
+      || compare(left.paperId, right.paperId)
+    );
+  const prioritized: typeof rankedCandidates = [];
+  const selected = new Set<string>();
+  const priorityLanes = [planningHintLane, exactTitleLane, jointAnchorAxisLane];
+  const laneLength = Math.max(...priorityLanes.map((lane) => lane.length));
+  for (let index = 0; index < laneLength; index += 1) {
+    for (const lane of priorityLanes) {
+      const candidate = lane[index];
+      if (candidate && !selected.has(candidate.paperId)) {
+        selected.add(candidate.paperId);
+        prioritized.push(candidate);
+      }
+    }
+  }
+  for (const candidate of rankedCandidates) {
+    if (!selected.has(candidate.paperId)) {
+      selected.add(candidate.paperId);
+      prioritized.push(candidate);
+    }
+  }
+  return prioritized.map((candidate) => candidate.paperId);
+}
+
+function normalizeCandidateTitleIdentity(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim().toLowerCase();
 }
 
 function uniqueNormalizedTerms(values: string[]): string[] {

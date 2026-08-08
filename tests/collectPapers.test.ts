@@ -3199,7 +3199,7 @@ describe("collectPapers bibtex", () => {
     await waitForCollectEnrichmentJob(runId);
   });
 
-  it("uses the run topic seed with a role-valid topic-discovery scope", async () => {
+  it("uses an explicit query as a bounded topic-discovery planning focus", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-run-topic-llm-query-"));
     process.chdir(root);
 
@@ -3241,6 +3241,15 @@ describe("collectPapers bibtex", () => {
               ["limited labels under class imbalance", "sensor noise under domain shift"]
             ),
             updatedAt: new Date().toISOString()
+          },
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "acoustic event segmentation reliability",
+              limit: 200,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
           }
         ]
       }),
@@ -3267,6 +3276,16 @@ describe("collectPapers bibtex", () => {
       throw new Error(`unexpected query: ${request.query}`);
     });
 
+    const llm = new JsonLLMClient(
+      JSON.stringify({
+        shared_anchor: "acoustic event segmentation",
+        families: [
+          { axis: "limited labels" },
+          { axis: "sensor noise" }
+        ],
+        assumptions: ["Split the topic into smaller paper-title-style bundles."]
+      })
+    );
     const node = createCollectPapersNode({
       config: {
         papers: {
@@ -3275,16 +3294,7 @@ describe("collectPapers bibtex", () => {
       } as any,
       runStore: {} as any,
       eventStream: new InMemoryEventStream(),
-      llm: new JsonLLMClient(
-        JSON.stringify({
-          shared_anchor: "acoustic event segmentation",
-          families: [
-            { axis: "limited labels" },
-            { axis: "sensor noise" }
-          ],
-          assumptions: ["Split the topic into smaller paper-title-style bundles."]
-        })
-      ),
+      llm,
       codex: {} as any,
       aci: {} as any,
       semanticScholar: {
@@ -3306,6 +3316,7 @@ describe("collectPapers bibtex", () => {
       result.status,
       `${result.error ?? ""} ${result.summary ?? ""}`.trim()
     ).toBe("success");
+    expect(llm.planningCalls).toBe(1);
     expect(streamSearchPapers).toHaveBeenCalledTimes(4);
     expect(streamSearchPapers.mock.calls.map((call) => call[0]?.query)).toEqual([
       '"acoustic event segmentation" limited labels',
@@ -3361,6 +3372,7 @@ describe("collectPapers bibtex", () => {
       await readFile(path.join(root, ".autolabos", "runs", runId, "collect_query_plan.json"), "utf8")
     ) as {
       version?: number;
+      requested_query_focus?: string;
       planner?: {
         topic_discovery_plan?: { sharedAnchorTerms?: string[]; families?: unknown[] };
         attempt_diagnostics?: Array<{ attempt?: number; status?: string }>;
@@ -3368,6 +3380,7 @@ describe("collectPapers bibtex", () => {
       selected_families?: Array<{ topic_discovery_family?: { familyId?: string } }>;
     };
     expect(queryPlan.version).toBe(TOPIC_DISCOVERY_COLLECT_QUERY_PLAN_CONTRACT.version);
+    expect(queryPlan.requested_query_focus).toBe("acoustic event segmentation reliability");
     expect(queryPlan.planner?.topic_discovery_plan).toMatchObject({
       sharedAnchorTerms: ["acoustic", "event", "segmentation"],
       families: expect.arrayContaining([
@@ -3417,15 +3430,26 @@ describe("collectPapers bibtex", () => {
       path.join(memoryDir, "run_context.json"),
       JSON.stringify({
         version: 1,
-        items: [{
-          key: "run_brief.raw",
-          value: buildTopicDiscoveryScopeBrief(
-            run.topic,
-            "document retrieval evaluation",
-            ["ranking stability under finite samples", "annotation disagreement across judges"]
-          ),
-          updatedAt: new Date().toISOString()
-        }]
+        items: [
+          {
+            key: "run_brief.raw",
+            value: buildTopicDiscoveryScopeBrief(
+              run.topic,
+              "document retrieval evaluation",
+              ["ranking stability under finite samples", "annotation disagreement across judges"]
+            ),
+            updatedAt: new Date().toISOString()
+          },
+          {
+            key: "collect_papers.request",
+            value: {
+              query: "document retrieval ranking stability",
+              limit: 200,
+              sort: { field: "relevance", order: "desc" }
+            },
+            updatedAt: new Date().toISOString()
+          }
+        ]
       }),
       "utf8"
     );
@@ -3472,6 +3496,11 @@ describe("collectPapers bibtex", () => {
 
     const result = await node.execute({ run, graph: run.graph });
     expect(result.status).toBe("failure");
+    expect(await readRunContextValue(root, runId, "collect_papers.request")).toMatchObject({
+      query: "document retrieval ranking stability",
+      limit: 200,
+      sort: { field: "relevance", order: "desc" }
+    });
     const feedback = (await readRunContextValue(
       root,
       runId,
@@ -3509,6 +3538,138 @@ describe("collectPapers bibtex", () => {
         semantic_precision: 0
       })
     ]);
+  });
+
+  it("prioritizes current direct-support titles in bounded query feedback", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "autolabos-collect-direct-feedback-"));
+    process.chdir(root);
+
+    const runId = "run-collect-direct-feedback";
+    const run = makeRun(runId);
+    run.title = "Retrieval Evaluation";
+    run.topic = "Document retrieval evaluation reliability";
+    const memoryDir = path.join(root, ".autolabos", "runs", runId, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      path.join(memoryDir, "run_context.json"),
+      JSON.stringify({
+        version: 1,
+        items: [{
+          key: "run_brief.raw",
+          value: buildTopicDiscoveryScopeBrief(
+            run.topic,
+            "document retrieval evaluation",
+            ["ranking stability under finite samples", "annotation disagreement across judges"]
+          ),
+          updatedAt: new Date().toISOString()
+        }]
+      }),
+      "utf8"
+    );
+
+    const firstQuery = '"document retrieval evaluation" ranking stability';
+    const secondQuery = '"document retrieval evaluation" annotation disagreement';
+    const streamSearchPapers = vi.fn(async function* (request: { query: string }) {
+      const family = request.query === firstQuery
+        ? { id: "stability", label: "Ranking Stability" }
+        : request.query === secondQuery
+          ? { id: "disagreement", label: "Annotation Disagreement" }
+          : undefined;
+      if (!family) {
+        throw new Error(`unexpected query: ${request.query}`);
+      }
+      yield Array.from({ length: 8 }, (_, index) => ({
+        paperId: `${family.id}-${index + 1}`,
+        title: `Document Retrieval Evaluation ${family.label} Candidate ${index + 1}`,
+        abstract: `This study examines ${family.label.toLowerCase()} in document retrieval evaluation.`,
+        authors: ["Example Author"]
+      }));
+    });
+    const llm = new class extends MockLLMClient {
+      override async complete(prompt: string): Promise<{ text: string }> {
+        if (!prompt.startsWith("Conservatively triage every requested paper-family pair.")) {
+          return {
+            text: JSON.stringify({
+              shared_anchor: "document retrieval evaluation",
+              families: [
+                { axis: "ranking stability" },
+                { axis: "annotation disagreement" }
+              ],
+              assumptions: []
+            })
+          };
+        }
+        const marker = "\nInput:\n";
+        const payload = JSON.parse(prompt.slice(prompt.lastIndexOf(marker) + marker.length)) as {
+          papers: Array<{ paper_id: string; title: string }>;
+          requested_pairs: Array<{ paper_id: string; family_id: string }>;
+        };
+        const titleByPaper = new Map(
+          payload.papers.map((paper) => [paper.paper_id, paper.title] as const)
+        );
+        return {
+          text: JSON.stringify({
+            judgments: payload.requested_pairs.map((pair) => {
+              const direct = pair.paper_id.endsWith("-8");
+              return {
+                ...pair,
+                verdict: direct ? "direct_support" : "application_only",
+                reason: direct
+                  ? "The candidate directly evaluates the requested relationship."
+                  : "The relationship is only an application context.",
+                ...(direct
+                  ? { evidence_span: titleByPaper.get(pair.paper_id) ?? "" }
+                  : {})
+              };
+            })
+          })
+        };
+      }
+    }();
+    const node = createCollectPapersNode({
+      config: { papers: { max_results: 200 } } as any,
+      runStore: {} as any,
+      eventStream: new InMemoryEventStream(),
+      llm,
+      codex: {} as any,
+      aci: {} as any,
+      semanticScholar: {
+        streamSearchPapers,
+        getLastSearchDiagnostics: vi.fn(() => ({
+          attemptCount: 1,
+          lastStatus: 200,
+          attempts: [{ attempt: 1, ok: true, status: 200, endpoint: "search" }]
+        }))
+      } as any
+    });
+
+    const result = await node.execute({ run, graph: run.graph });
+    expect(result.status).toBe("failure");
+    const hints = JSON.parse(
+      await readFile(
+        path.join(root, ".autolabos", "runs", runId, "collect_query_reformulation_hints.json"),
+        "utf8"
+      )
+    ) as {
+      evidence_status?: string;
+      paper_evidence_allowed?: boolean;
+      current_retrieval_candidate_titles?: string[];
+    };
+    expect(hints).toMatchObject({
+      evidence_status: "query_hint_only",
+      paper_evidence_allowed: false
+    });
+    expect(hints.current_retrieval_candidate_titles).toEqual(expect.arrayContaining([
+      "Document Retrieval Evaluation Ranking Stability Candidate 8",
+      "Document Retrieval Evaluation Annotation Disagreement Candidate 8"
+    ]));
+    expect(hints.current_retrieval_candidate_titles?.indexOf(
+      "Document Retrieval Evaluation Ranking Stability Candidate 8"
+    )).toBeLessThan(
+      hints.current_retrieval_candidate_titles?.indexOf(
+        "Document Retrieval Evaluation Ranking Stability Candidate 1"
+      ) ?? Number.POSITIVE_INFINITY
+    );
   });
 
   it.each([

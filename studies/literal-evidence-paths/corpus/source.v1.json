@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "artifact_kind": "external_corpus_source_registry",
+  "corpus_id": "researcharena_cpu_workspaces",
+  "repository_url": "https://github.com/YouAreSpecialToMe/ResearchArena",
+  "commit": "4f067cf14f4f6f68496ab67aea1b2b10941cac4d",
+  "license": "MIT",
+  "paper_count_total": 117,
+  "cpu_workspace_count": 45,
+  "tracked_experiment_files_total": 2373,
+  "raw_corpus_committed_here": false,
+  "selection": {
+    "metadata_source": "https://youarespecialtome.github.io/ResearchArena/papers.html",
+    "metadata_sha256": "384e3d6a83436c749b19b9c496e3541bb2b59b9f5a36515a7a16f657e699ef28",
+    "platform": "cpu",
+    "require_paper_tex": true,
+    "require_python_under_exp": true
+  },
+  "development_split": {
+    "salt": "literal-evidence-paths-dev-v1",
+    "count": 5,
+    "reserved_after_exploratory_inspection": [
+      "papers/kimi/compiler_optimization_trial1"
+    ],
+    "lowest_hash_paths": [
+      {
+        "path": "papers/claude/compiler_optimization_trial1",
+        "sha256": "03224e9ff9debd7fe5b1b0317e5d5458d5b553f79a993aad1174918535cdac82"
+      },
+      {
+        "path": "papers/codex/compiler_optimization_trial3",
+        "sha256": "11729a543ec61c2786bf88a1efb99500618d1e46713260b74aff344e96487193"
+      },
+      {
+        "path": "papers/kimi/causal_learning_trial1",
+        "sha256": "1637152d548e016f90ece17c9bc4707828b58e5596f543d74da67b55a4cb4150"
+      },
+      {
+        "path": "papers/claude/probabilistic_methods_trial1",
+        "sha256": "17b808e9bc2e1cded45de3e34fa3d24222de24f2835d7f5eb93cf43fa2ee7afa"
+      }
+    ],
+    "excluded_from_confirmatory_analysis": true
+  },
+  "confirmatory_capacity_before_structural_gate": 40,
+  "redistribution_policy": "Commit only source identifiers, hashes, derived manifests, mutations, and measurements permitted by the upstream MIT license; do not vendor the raw corpus."
+}

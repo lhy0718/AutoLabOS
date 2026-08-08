@@ -1,0 +1,9 @@
+{
+  "artifact_type": "prediction_seal",
+  "blind_manifest_sha256": "ffc3af485065a185d453ff760de80a467b43b36d57a675833174ae9fe3bdb234",
+  "contract_sha256": "eede01320b4dd4c97ec3ec33a903e3b88b66257f67d2dde7051c9de549f70b94",
+  "predictions_sha256": "77cebcb40a5a110f0cc346203753a95c883ce37de08b8512a126a69ba655fccc",
+  "promotion_receipt_sha256": null,
+  "schema_version": "1.0",
+  "split": "development"
+}
