@@ -117,9 +117,8 @@
     "vitest": "^4.1.10"
   },
   "allowScripts": {
-    "better-sqlite3@12.8.0": true,
     "esbuild@0.28.1": true,
-    "esbuild@0.25.12": true,
-    "fsevents@2.3.3": true
+    "fsevents@2.3.3": true,
+    "better-sqlite3@13.0.3": true
   }
 }
