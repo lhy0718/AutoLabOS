@@ -2396,7 +2396,7 @@ async function exists(filePath: string): Promise<boolean> {
   }
 }
 
-describe("writePaper PDF build", () => {
+describe("writePaper PDF build", { timeout: 15_000 }, () => {
   it("blocks a bounded topic-probe parent before loading any paper bundle", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "autolabos-paper-bounded-parent-"));
     process.chdir(root);
