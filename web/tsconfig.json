@@ -10,7 +10,7 @@
     "jsx": "react-jsx",
     "noEmit": true,
     "strict": true,
-    "types": ["vitest/globals", "@testing-library/jest-dom"]
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
   "include": ["src"]
 }

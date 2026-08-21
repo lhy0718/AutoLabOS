@@ -26,6 +26,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Validate TypeScript 7 bridge compatibility
+        run: npm run typecheck:ts7-bridge
+
       - name: Audit dependency security
         run: npm run audit:security
 
